@@ -410,51 +410,9 @@ claims:
 | `include_observations` | true | Write normalized observation CSV |
 | `decimal_places` | 6 | Markdown display precision; JSON retains full precision |
 
-## `structural_model`
-
-The optional `structural_model` section configures a separate, non-certifying Bayesian analysis of
-prompt-risk heterogeneity. It selects exactly one cohort and one group. The model inherits
-`design.hierarchy`; there is no independent structural hierarchy to keep synchronized. An explicit
-`structural_model.hierarchy` is accepted only when it exactly repeats `design.hierarchy`.
-
-```yaml
-structural_model:
-  enabled: true
-  cohort: candidate
-  group: all-behaviors
-  link: cloglog
-  prompt_frailty:
-    distribution: student_t
-    degrees_of_freedom: 4
-    gaussian_sensitivity: true
-  priors:
-    reference_probability: 0.01
-    intercept_sd: 2.5
-    hierarchy_scale: 1.0
-    prompt_scale: 1.5
-  audit_metrics:
-    vulnerable_thresholds: [0.01, 0.10, 0.50]
-    concentration_mass: [0.01, 0.05, 0.10]
-    credible_interval: 0.95
-  inference:
-    chains: 4
-    draws: 1000
-    tune: 1000
-    target_accept: 0.95
-    seed: 87241
-    cross_validation_folds: 5
-```
-
-Shared hierarchy levels containing multiple prompts receive partial-pooling effects. `prompt_id`
-is represented by prompt frailty. Any terminal level that is one-to-one with prompts is explicitly
-aliased to that same frailty because its variance cannot be separately identified. The structural
-likelihood itself is not weighted; resolved design weights control posterior audit aggregation. See
-[Hierarchical safety-landscape modelling](hierarchical-model.md) for assumptions and commands.
-
 ## Generate JSON schemas
 
 ```bash
 inspect-safety-stats schema plan > plan.schema.json
 inspect-safety-stats schema report > report.schema.json
-inspect-safety-stats schema structural-report > structural-report.schema.json
 ```

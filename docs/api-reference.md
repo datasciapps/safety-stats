@@ -56,43 +56,30 @@ resolved-plan YAML, resolved-design CSV, optional normalized observations, and a
 manifest. A non-empty destination is rejected unless
 `overwrite=True`.
 
-### `certify`
+### Exact threshold planning
+
+Fixed-horizon planning functions are importable from `inspect_safety_stats.stats`:
 
 ```python
-from inspect_safety_stats import certify
-
-certification = certify(
-    empirical_report="reports/run-001",
-    plan="certification-plan.yaml",
-)
-certification.write("reports/run-001/certification")
-```
-
-This separate second-stage module evaluates specified one-sided claims of the form
-`risk <= threshold`. It returns support evidence when a multiplicity-adjusted upper bound is at or
-below the threshold, rejection evidence when the lower bound is strictly above it, and
-`INCONCLUSIVE` otherwise. See [One-sided statistical certification](certification.md).
-
-Exact fixed-horizon planning is available from `inspect_safety_stats.certification`:
-
-```python
+zero_failure_sample_size(*, threshold, alpha)
 certification_sample_size(*, true_rate, threshold, alpha, power, max_trials=1_000_000)
+certification_power(*, trials, true_rate, threshold, alpha)
+maximum_certifying_failures(*, trials, threshold, alpha)
 maximum_certifiable_failure_rate(*, trials, threshold, alpha, power)
 minimum_detectable_failure_rate(*, trials, threshold, alpha, power)
 minimum_rejecting_failures(*, trials, threshold, alpha)
 rejection_power(*, trials, true_rate, threshold, alpha)
-plan_fixed_design(*, analysis_plan, certification_plan, anticipated_rate, power=0.9,
-                  direction="support", minimum_rollouts=1, maximum_rollouts=None)
+rejection_sample_size(*, true_rate, threshold, alpha, power, max_trials=1_000_000)
+fixed_design_detectable_failure_rates(trials, weights, *, threshold, support_alpha,
+                                      rejection_alpha, power, independence_unit="rollout")
 ```
 
 The detectable-rate functions exactly invert the corresponding one-sided binomial test. They
 return `None` when the requested direction is unattainable at the supplied horizon and alpha.
+`fixed_design_detectable_failure_rates` gives the weighted-design analogue under an
+independent-rollout Hoeffding guarantee, permitting heterogeneous prompt probabilities.
 
-`plan_fixed_design` resolves the analysis manifest, hierarchy, groups, weights, certification
-targets, and multiplicity allocation without evaluation logs. It returns the minimum common
-rollout count and a feasible weight-adaptive integer allocation under independent-rollout
-Hoeffding power guarantees. The returned report writes JSON, HTML, Markdown, claim CSV, allocation
-CSV, resolved plans, and checksums.
+Use the multiplicity-adjusted local alpha when planning a claim that belongs to a family.
 
 ### `write_visualization`
 
@@ -112,27 +99,6 @@ Group-risk records expose `lower_one_sided_coverage` and `upper_one_sided_covera
 must not be read as the coverage of either individual direction. `coverage_mode`, `family_alpha`,
 `directional_family_alpha`, `coverage_scope`, and `interval_method` make the construction
 machine-readable. The default `two_sided` mode splits family alpha across the two directions.
-
-### Structural model API
-
-```python
-from inspect_safety_stats import fit_structural_model, validate_structural_inputs
-
-metadata = validate_structural_inputs(
-    plan="safety-plan.yaml",
-    empirical_report="reports/run-001",
-)
-structural = fit_structural_model(
-    plan="safety-plan.yaml",
-    empirical_report="reports/run-001",
-)
-structural.write("reports/run-001/structural-model")
-```
-
-`validate_structural_inputs` constructs and validates the content-free prompt-level model frame
-without importing PyMC or fitting a model. `fit_structural_model` requires the optional
-`hierarchical` dependencies and returns a `StructuralReport`. Structural results are always
-non-certifying and never enter the empirical decision engine.
 
 ## Statistical functions
 
@@ -236,15 +202,6 @@ equal Šidák endpoint alpha within each frontier. `aliases` may identify multip
 represent the same weighted statistic; aliases receive the same calibration without another alpha
 charge. Overlapping targets within one frontier are rejected.
 
-### Zero-failure planning
-
-```python
-zero_failure_sample_size(*, threshold, alpha)
-```
-
-Returns the smallest integer rollout count whose exact one-sided upper bound is at or below the
-threshold when zero failures are observed.
-
 ### Fixed-design risk measures
 
 ```python
@@ -262,8 +219,7 @@ spectral_risk(values, weights, *, spectrum)
 
 Weights must be nonnegative and sum to one. Scalar or item-specific thresholds are accepted.
 CVaR uses fractional boundary mass. The implementation evaluates entropic risk in a numerically
-stable form. Power mean, design quantile, and spectral risk are diagnostic-only in plan-driven
-certification.
+stable form. Power mean, design quantile, and spectral risk are diagnostic-only under the plan semantics.
 
 ### Paired and clustered comparisons
 
@@ -378,21 +334,14 @@ restricted to exploratory use by the plan semantics.
 
 ```text
 inspect-safety-stats analyze --plan PLAN --logs LOGS --output DIRECTORY
-inspect-safety-stats certify --report REPORT --plan CERTIFICATION_PLAN --output DIRECTORY
 inspect-safety-stats validate --plan PLAN --logs LOGS
 inspect-safety-stats visualize --report REPORT_OR_DIRECTORY [--output REPORT.html]
 inspect-safety-stats plan zero-failure --threshold P --alpha A
 inspect-safety-stats plan certification --threshold P --anticipated-rate Q --alpha A --power B
-inspect-safety-stats plan fixed-design --analysis-plan PLAN --certification-plan PLAN --anticipated-rate Q
+inspect-safety-stats plan detectable-rate --trials N --threshold P --alpha A --power B
 inspect-safety-stats hash-plan --plan PLAN
 inspect-safety-stats schema plan
 inspect-safety-stats schema report
-inspect-safety-stats schema structural-report
-inspect-safety-stats schema certification-plan
-inspect-safety-stats schema certification-report
-inspect-safety-stats model validate --plan PLAN --report EMPIRICAL_REPORT
-inspect-safety-stats model fit --plan PLAN --report EMPIRICAL_REPORT --output DIRECTORY
-inspect-safety-stats model visualize --report STRUCTURAL_REPORT [--output REPORT.html]
 inspect-safety-stats version
 ```
 

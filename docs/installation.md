@@ -32,12 +32,6 @@ python -m pip install -e '.[dev]'
 pytest
 ```
 
-Install the optional hierarchical safety-landscape model with:
-
-```bash
-python -m pip install -e '.[hierarchical]'
-```
-
 Install the local machine-translation dependencies used by the multilingual JailbreakBench example
 with:
 
@@ -47,12 +41,6 @@ python -m pip install -e '.[translation]'
 
 This extra installs PyTorch, Transformers, and SentencePiece. Translation is a separate preprocessing
 step that may download the selected checkpoint; the statistical analyzer remains offline.
-
-For structural-model development, combine the extras:
-
-```bash
-python -m pip install -e '.[hierarchical,dev]'
-```
 
 Run static checks when the optional tools are installed:
 
@@ -86,10 +74,6 @@ Runtime dependencies are deliberately small:
 - Typer for the CLI.
 
 No model SDK is called by the analyzer itself.
-
-The optional `hierarchical` extra installs PyMC, ArviZ, Xarray, and the NetCDF backend used for
-Bayesian sampling, diagnostics, and posterior artifacts. These dependencies are not imported by
-the empirical analyzer.
 
 The optional `translation` extra is used only by the JailbreakBench translation script. It is not
 imported by the package or required to analyze an already completed multilingual run.

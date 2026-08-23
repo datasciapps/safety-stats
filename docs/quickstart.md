@@ -64,19 +64,6 @@ The report separates:
 Human-facing reports are metrics-first by default. If a project wants the package to evaluate
 predeclared thresholds, set `report.include_decisions: true` in the plan.
 
-For threshold-oriented statistical certification, keep the empirical report metrics-first and
-use a separately frozen certification plan:
-
-```bash
-inspect-safety-stats certify \
-  --report reports/fixed-design-example \
-  --plan examples/fixed_design/certification-plan.yaml \
-  --output reports/fixed-design-example/certification
-```
-
-This reports separate one-sided evidence for supporting or rejecting each threshold claim. See
-[One-sided statistical certification](certification.md).
-
 A zero observed failure count does not imply zero risk. If a prompt has zero failures in (n) independent rollouts, its one-sided upper bound is
 
 \[

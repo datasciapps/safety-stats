@@ -8,37 +8,25 @@ import typer
 
 from inspect_safety_stats.api import analyze as run_analysis
 from inspect_safety_stats.api import validate as run_validation
-from inspect_safety_stats.certification import certify as run_certification
-from inspect_safety_stats.certification.config import CertificationPlan
-from inspect_safety_stats.certification.fixed_design_planner import (
-    FixedDesignPlanningReport,
-    plan_fixed_design,
-)
-from inspect_safety_stats.certification.planning import (
+from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
+from inspect_safety_stats.config.models import AnalysisPlan
+from inspect_safety_stats.report.visualization import write_visualization
+from inspect_safety_stats.schema.reports import SafetyReport
+from inspect_safety_stats.stats.planning import (
     certification_power,
     certification_sample_size,
     maximum_certifiable_failure_rate,
     maximum_certifying_failures,
     minimum_detectable_failure_rate,
+    zero_failure_sample_size,
 )
-from inspect_safety_stats.certification.schema import CertificationReport
-from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.report.visualization import write_visualization
-from inspect_safety_stats.schema.reports import SafetyReport
-from inspect_safety_stats.schema.structural_reports import StructuralReport
-from inspect_safety_stats.stats.planning import zero_failure_sample_size
-from inspect_safety_stats.structural.artifacts import write_structural_visualization
-from inspect_safety_stats.structural.fit import fit_structural_model, validate_structural_inputs
 from inspect_safety_stats.version import __version__
 
 app = typer.Typer(help="Fixed-design statistical risk analysis for Inspect AI evaluations.")
 plan_app = typer.Typer(help="Prospective evaluation planning tools.")
 schema_app = typer.Typer(help="Print machine-readable schemas.")
-model_app = typer.Typer(help="Non-certifying hierarchical safety-landscape modelling.")
 app.add_typer(plan_app, name="plan")
 app.add_typer(schema_app, name="schema")
-app.add_typer(model_app, name="model")
 
 
 @app.command("analyze")
@@ -107,102 +95,6 @@ def visualize_command(
         typer.echo(f"Visualization failed: {exc}", err=True)
         raise typer.Exit(code=3) from exc
     typer.echo(f"Visualization: {path}")
-
-
-@app.command("certify")
-def certify_command(
-    report: Annotated[Path, typer.Option("--report", exists=True)],
-    plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
-    output: Annotated[Path, typer.Option("--output")] = Path("certification-report"),
-    overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
-    evidence_exit_codes: Annotated[
-        bool, typer.Option("--evidence-exit-codes/--no-evidence-exit-codes")
-    ] = False,
-) -> None:
-    """Evaluate predeclared one-sided statistical certification claims."""
-
-    try:
-        certification = run_certification(empirical_report=report, plan=plan)
-        destination = certification.write(output, overwrite=overwrite)
-    except Exception as exc:
-        typer.echo(f"Certification failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
-    typer.echo(f"Certification: {certification.analysis['id']}")
-    typer.echo(f"Supported: {certification.summary['supported']}")
-    typer.echo(f"Rejected: {certification.summary['rejected']}")
-    typer.echo(f"Inconclusive: {certification.summary['inconclusive']}")
-    typer.echo(f"Report: {destination}")
-    if evidence_exit_codes:
-        code = (
-            1
-            if certification.summary["rejected"]
-            else 2
-            if certification.summary["inconclusive"]
-            else 0
-        )
-        raise typer.Exit(code=code)
-
-
-@model_app.command("validate")
-def model_validate_command(
-    plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
-    report: Annotated[Path, typer.Option("--report", exists=True)],
-) -> None:
-    """Validate the structural model frame without fitting a Bayesian model."""
-
-    try:
-        metadata = validate_structural_inputs(plan=plan, empirical_report=report)
-    except Exception as exc:
-        typer.echo(f"Structural validation failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
-    typer.echo("Structural inputs: valid")
-    typer.echo(f"Cohort: {metadata['cohort_id']}")
-    typer.echo(f"Group: {metadata['group_id']}")
-    typer.echo(f"Prompts: {metadata['prompt_count']}")
-    typer.echo(f"Rollouts: {metadata['rollout_count']}")
-
-
-@model_app.command("fit")
-def model_fit_command(
-    plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
-    report: Annotated[Path, typer.Option("--report", exists=True)],
-    output: Annotated[Path, typer.Option("--output")] = Path("structural-model-report"),
-    cross_validation: Annotated[
-        bool, typer.Option("--cross-validation/--no-cross-validation")
-    ] = True,
-    overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
-) -> None:
-    """Fit the non-certifying hierarchical safety-landscape model."""
-
-    try:
-        structural = fit_structural_model(
-            plan=plan,
-            empirical_report=report,
-            run_cross_validation=cross_validation,
-        )
-        destination = structural.write(output, overwrite=overwrite)
-    except Exception as exc:
-        typer.echo(f"Structural fit failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
-    typer.echo(f"Structural model status: {structural.status}")
-    typer.echo("Certification eligible: no")
-    typer.echo(f"Report: {destination}")
-
-
-@model_app.command("visualize")
-def model_visualize_command(
-    report: Annotated[Path, typer.Option("--report", exists=True)],
-    output: Annotated[Path | None, typer.Option("--output")] = None,
-    overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
-) -> None:
-    """Regenerate the standalone structural-model visualization."""
-
-    try:
-        path = write_structural_visualization(report, output, overwrite=overwrite)
-    except Exception as exc:
-        typer.echo(f"Structural visualization failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
-    typer.echo(f"Structural visualization: {path}")
 
 
 @plan_app.command("zero-failure")
@@ -311,53 +203,6 @@ def detectable_rate_command(
     typer.echo(f"One-sided alpha: {alpha:g}")
 
 
-@plan_app.command("fixed-design")
-def fixed_design_planning_command(
-    analysis_plan: Annotated[Path, typer.Option("--analysis-plan", exists=True, dir_okay=False)],
-    certification_plan: Annotated[
-        Path, typer.Option("--certification-plan", exists=True, dir_okay=False)
-    ],
-    anticipated_rate: Annotated[float, typer.Option("--anticipated-rate", min=0.0, max=1.0)],
-    power: Annotated[float, typer.Option("--power", min=0.0, max=1.0)] = 0.9,
-    direction: Annotated[str, typer.Option("--direction")] = "support",
-    minimum_rollouts: Annotated[int, typer.Option("--minimum-rollouts", min=1)] = 1,
-    maximum_rollouts: Annotated[int | None, typer.Option("--maximum-rollouts", min=1)] = None,
-    output: Annotated[Path, typer.Option("--output")] = Path("fixed-design-plan"),
-    overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
-) -> None:
-    """Plan fixed-design rollout counts from analysis and certification plans."""
-
-    try:
-        if direction not in {"support", "rejection"}:
-            raise ValueError("direction must be support or rejection")
-        report = plan_fixed_design(
-            analysis_plan=analysis_plan,
-            certification_plan=certification_plan,
-            anticipated_rate=anticipated_rate,
-            power=power,
-            direction=direction,  # type: ignore[arg-type]
-            minimum_rollouts=minimum_rollouts,
-            maximum_rollouts=maximum_rollouts,
-        )
-        destination = report.write(output, overwrite=overwrite)
-    except (OSError, ValueError) as exc:
-        typer.echo(f"Fixed-design planning failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
-    typer.echo(f"Feasible: {str(report.summary['feasible']).lower()}")
-    typer.echo(
-        "Required common rollouts per prompt: "
-        f"{report.summary['required_equal_rollouts_per_prompt']}"
-    )
-    typer.echo(f"Common total rollouts: {report.summary['common_total_rollouts']}")
-    typer.echo(f"Adaptive total rollouts: {report.summary['adaptive_total_rollouts']}")
-    typer.echo(
-        "Adaptive rollout range: "
-        f"{report.summary['adaptive_min_rollouts']}–"
-        f"{report.summary['adaptive_max_rollouts']}"
-    )
-    typer.echo(f"Report: {destination}")
-
-
 @schema_app.command("plan")
 def plan_schema_command() -> None:
     typer.echo(json.dumps(AnalysisPlan.model_json_schema(), indent=2, sort_keys=True))
@@ -366,26 +211,6 @@ def plan_schema_command() -> None:
 @schema_app.command("report")
 def report_schema_command() -> None:
     typer.echo(json.dumps(SafetyReport.model_json_schema(), indent=2, sort_keys=True))
-
-
-@schema_app.command("structural-report")
-def structural_report_schema_command() -> None:
-    typer.echo(json.dumps(StructuralReport.model_json_schema(), indent=2, sort_keys=True))
-
-
-@schema_app.command("certification-plan")
-def certification_plan_schema_command() -> None:
-    typer.echo(json.dumps(CertificationPlan.model_json_schema(), indent=2, sort_keys=True))
-
-
-@schema_app.command("certification-report")
-def certification_report_schema_command() -> None:
-    typer.echo(json.dumps(CertificationReport.model_json_schema(), indent=2, sort_keys=True))
-
-
-@schema_app.command("fixed-design-planning-report")
-def fixed_design_planning_report_schema_command() -> None:
-    typer.echo(json.dumps(FixedDesignPlanningReport.model_json_schema(), indent=2, sort_keys=True))
 
 
 @app.command("version")

@@ -168,33 +168,3 @@ report:
   include_prompt_text: false
   include_observations: true
   decimal_places: 6
-
-structural_model:
-  enabled: true
-  cohort: candidate
-  group: all-behaviors
-  link: cloglog
-  prompt_frailty:
-    distribution: student_t
-    degrees_of_freedom: 4
-    gaussian_sensitivity: true
-  priors:
-    reference_probability: 0.01
-    intercept_sd: 2.5
-    hierarchy_scale: 1.0
-    prompt_scale: 1.5
-  audit_metrics:
-    vulnerable_thresholds: [0.01, 0.10, 0.50]
-    concentration_mass: [0.01, 0.05, 0.10]
-    credible_interval: 0.95
-  inference:
-    chains: 4
-    draws: 1000
-    tune: 1000
-    cores: 1
-    target_accept: 0.95
-    seed: 87241
-    prior_predictive_draws: 1000
-    cross_validation_folds: 5
-    cross_validation_draws: 500
-    cross_validation_tune: 500

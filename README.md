@@ -16,8 +16,6 @@ It is designed for hand-curated safety evaluations in which prompts, questions, 
 - Optional joint stratified-Bernoulli max-T intervals and separately calibrated one-sided upper
   bounds across roots, internal nodes, cohorts, and declared risk differences, projected through
   one coherent multi-arm hierarchy region and displayed alongside the finite-sample intervals.
-- A separate one-sided statistical-certification module for specified risk thresholds, with
-  exact prompt tests, fixed-design mean claims, directional multiplicity, and sensitivity output.
 - Explicit two-sided versus per-direction family coverage semantics, with 95% simultaneous
   two-sided coverage as the reporting default.
 - Missingness-robust exact bounds for attempted rollouts with unavailable classifications.
@@ -38,9 +36,6 @@ It is designed for hand-curated safety evaluations in which prompts, questions, 
 - Bonferroni, weighted Bonferroni, Holm, Benjamini–Hochberg, and intersection-union utilities.
 - Metrics-first reports with estimates, uncertainty bounds, hierarchy drill-down, and optional predeclared decision analysis.
 - Deterministic JSON, Markdown, CSV, plan, and checksum sidecars.
-- Optional non-certifying Bayesian safety-landscape modelling with hierarchical partial pooling,
-  prompt frailty, vulnerable-prompt mass, risk concentration, predictive checks, and prompt-level
-  cross-validation.
 
 Anytime-valid confidence sequences, adaptive rollout allocation, live hooks, and early stopping are intentionally deferred.
 
@@ -58,12 +53,6 @@ For development:
 ```bash
 python -m pip install -e '.[dev]'
 pytest
-```
-
-For the optional hierarchical model:
-
-```bash
-python -m pip install -e '.[hierarchical]'
 ```
 
 See [Installation](docs/installation.md) for supported versions and troubleshooting.
@@ -89,17 +78,6 @@ inspect-safety-stats plan detectable-rate \
   --trials 500 --threshold 0.05 --alpha 0.05 --power 0.90
 ```
 
-Plan rollout counts for a complete fixed design:
-
-```bash
-inspect-safety-stats plan fixed-design \
-  --analysis-plan safety-plan.yaml \
-  --certification-plan certification-plan.yaml \
-  --anticipated-rate 0.02 \
-  --power 0.90 \
-  --output rollout-plan
-```
-
 Validate logs against a frozen design:
 
 ```bash
@@ -115,15 +93,6 @@ inspect-safety-stats analyze \
   --plan examples/fixed_design/safety-plan.yaml \
   --logs logs/ \
   --output reports/example
-```
-
-Evaluate a separately frozen threshold-certification plan:
-
-```bash
-inspect-safety-stats certify \
-  --report reports/example \
-  --plan examples/fixed_design/certification-plan.yaml \
-  --output reports/example/certification
 ```
 
 The command writes:
@@ -226,9 +195,6 @@ interpreted with their stated assumptions. Optional threshold decisions can be e
 - [Version 1 engineering design](docs/v1-design.md)
 - [Mathematical methods and justification](docs/statistical-methods.md)
 - [Joint summary-tree confidence intervals](docs/joint-tree-intervals.md)
-- [One-sided statistical certification](docs/certification.md)
-- [Hierarchical safety-landscape modelling](docs/hierarchical-model.md)
-- [Hierarchical safety-landscape model: assessment and implementation plan](docs/hierarchical-model-implementation-plan.md)
 - [Generative hierarchy evaluation planner: implementation plan](docs/generative-hierarchy-evaluation-plan.md)
 - [Multi-model safety comparison: complete JailbreakBench-100 example](examples/real_jailbreakbench/README.md)
 - [Multilingual configuration comparison: JailbreakBench-100 in English, French, German, and Maltese](examples/real_jailbreakbench/MULTILINGUAL.md)

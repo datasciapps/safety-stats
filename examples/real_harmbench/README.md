@@ -176,35 +176,6 @@ With 400 simultaneous prompt bounds and family alpha 0.05, each prompt receives 
 upper bound at or below 0.10; 176 are needed for 0.05. Low-rollout executions are therefore useful
 for finding failures and testing the pipeline, not for high-precision safety certification.
 
-## Optional hierarchical safety-landscape model
-
-New live plans include a non-certifying structural model for the `all-behaviors` group. It uses
-`task_id, risk_domain` for partial pooling and keeps prompt-specific variation in a heavy-tailed
-frailty term. `question_id` is intentionally excluded because it identifies individual prompts in
-this design.
-
-Install the modelling extra, validate the content-free model frame, and fit:
-
-```bash
-python -m pip install -e '.[hierarchical]'
-
-inspect-safety-stats model validate \
-  --plan live-runs/RUN_ID/safety-plan-e2e.yaml \
-  --report live-runs/RUN_ID/report-e2e
-
-inspect-safety-stats model fit \
-  --plan live-runs/RUN_ID/safety-plan-e2e.yaml \
-  --report live-runs/RUN_ID/report-e2e \
-  --output live-runs/RUN_ID/report-e2e/structural-model
-```
-
-The fit reports latent prompt-risk distributions, vulnerable-prompt mass, weighted risk
-concentration, prior/posterior predictive checks, prompt-held-out cross-validation, and a Gaussian
-frailty sensitivity. It does not change the empirical risk intervals or produce a safety decision.
-Older completed runs must be re-analyzed after adding the `structural_model` section to their plan
-so the empirical and structural plan hashes agree. See
-[Hierarchical safety-landscape modelling](../../docs/hierarchical-model.md).
-
 ## Files and provenance
 
 ```text

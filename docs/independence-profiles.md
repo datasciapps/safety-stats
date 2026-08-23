@@ -72,7 +72,7 @@ comparisons:
       sensitivities: [prompt, question]
 ```
 
-This interface was introduced in analysis/certification schema `2.0` and package version `0.7.0`
+This interface was introduced in analysis schema `2.0` and package version `0.7.0`
 and remains current in `0.10.0`. The removed
 `independence_unit` and `cluster_sensitivity` fields are deliberately not translated. A schema
 `1.0` or legacy-field plan fails strict validation so its assumptions cannot silently change.

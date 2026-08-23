@@ -536,81 +536,6 @@ class ReportSpec(StrictModel):
     decimal_places: int = Field(default=6, ge=0, le=15)
 
 
-class StructuralPromptFrailtySpec(StrictModel):
-    distribution: Literal["student_t", "normal"] = "student_t"
-    degrees_of_freedom: float = Field(default=4.0, gt=2)
-    gaussian_sensitivity: bool = True
-
-
-class StructuralPriorsSpec(StrictModel):
-    reference_probability: float = Field(default=0.01, gt=0, lt=1)
-    intercept_sd: float = Field(default=2.5, gt=0)
-    hierarchy_scale: float = Field(default=1.0, gt=0)
-    prompt_scale: float = Field(default=1.5, gt=0)
-
-
-class StructuralAuditMetricsSpec(StrictModel):
-    vulnerable_thresholds: list[float] = Field(default_factory=lambda: [0.01, 0.1, 0.5])
-    concentration_mass: list[float] = Field(default_factory=lambda: [0.01, 0.05, 0.1])
-    credible_interval: float = Field(default=0.95, gt=0, lt=1)
-    zero_risk_tolerance: float = Field(default=1e-12, gt=0)
-
-    @model_validator(mode="after")
-    def validate_metric_grid(self) -> StructuralAuditMetricsSpec:
-        if not self.vulnerable_thresholds or any(
-            not 0 < value < 1 for value in self.vulnerable_thresholds
-        ):
-            raise ValueError("vulnerable thresholds must be non-empty and in (0, 1)")
-        if len(set(self.vulnerable_thresholds)) != len(self.vulnerable_thresholds):
-            raise ValueError("vulnerable thresholds must be unique")
-        if not self.concentration_mass or any(
-            not 0 < value <= 1 for value in self.concentration_mass
-        ):
-            raise ValueError("concentration masses must be non-empty and in (0, 1]")
-        if len(set(self.concentration_mass)) != len(self.concentration_mass):
-            raise ValueError("concentration masses must be unique")
-        return self
-
-
-class StructuralInferenceSpec(StrictModel):
-    chains: int = Field(default=4, ge=2)
-    draws: int = Field(default=1000, ge=100)
-    tune: int = Field(default=1000, ge=100)
-    cores: int = Field(default=1, ge=1)
-    target_accept: float = Field(default=0.95, gt=0.5, lt=1)
-    seed: int = Field(default=87241, ge=0)
-    prior_predictive_draws: int = Field(default=1000, ge=100)
-    cross_validation_folds: int = Field(default=5, ge=0)
-    cross_validation_draws: int = Field(default=500, ge=100)
-    cross_validation_tune: int = Field(default=500, ge=100)
-
-    @model_validator(mode="after")
-    def validate_cross_validation(self) -> StructuralInferenceSpec:
-        if self.cross_validation_folds == 1:
-            raise ValueError("cross_validation_folds must be zero or at least two")
-        return self
-
-
-class StructuralModelSpec(StrictModel):
-    enabled: bool = False
-    cohort: str | None = None
-    group: str | None = None
-    link: Literal["cloglog"] = "cloglog"
-    hierarchy: list[str] | None = None
-    prompt_frailty: StructuralPromptFrailtySpec = Field(default_factory=StructuralPromptFrailtySpec)
-    priors: StructuralPriorsSpec = Field(default_factory=StructuralPriorsSpec)
-    audit_metrics: StructuralAuditMetricsSpec = Field(default_factory=StructuralAuditMetricsSpec)
-    inference: StructuralInferenceSpec = Field(default_factory=StructuralInferenceSpec)
-
-    @model_validator(mode="after")
-    def validate_enabled_model(self) -> StructuralModelSpec:
-        if self.enabled and (not self.cohort or not self.group):
-            raise ValueError("enabled structural_model requires cohort and group")
-        if self.hierarchy is not None and len(set(self.hierarchy)) != len(self.hierarchy):
-            raise ValueError("structural hierarchy columns must be unique")
-        return self
-
-
 class AnalysisPlan(StrictModel):
     schema_version: Literal["2.0"] = "2.0"
     analysis: AnalysisMetadata
@@ -625,7 +550,6 @@ class AnalysisPlan(StrictModel):
     claims: list[ClaimSpec]
     policy: PolicySpec = Field(default_factory=PolicySpec)
     report: ReportSpec = Field(default_factory=ReportSpec)
-    structural_model: StructuralModelSpec | None = None
 
     _source_path: Path | None = PrivateAttr(default=None)
 
@@ -669,32 +593,6 @@ class AnalysisPlan(StrictModel):
         expanded_ids = [item.id for item in self.expanded_comparisons()]
         if len(set(expanded_ids)) != len(expanded_ids):
             raise ValueError("expanded comparison identifiers must be unique")
-        return self
-
-    @model_validator(mode="after")
-    def structural_hierarchy_matches_design(self) -> AnalysisPlan:
-        spec = self.structural_model
-        if spec is None or not spec.enabled:
-            return self
-        declared = list(self.design.hierarchy)
-        if not declared or declared[-1] != "prompt_id":
-            raise ValueError("structural analysis requires design.hierarchy to end with prompt_id")
-        if spec.hierarchy is not None and spec.hierarchy != declared:
-            raise ValueError(
-                "structural_model.hierarchy must exactly match design.hierarchy; omit it to "
-                "inherit the design hierarchy"
-            )
-        group = next((item for item in self.groups if item.id == spec.group), None)
-        weights = (
-            group.weights
-            if group is not None and group.weights is not None
-            else self.design.weights
-        )
-        if weights.strategy == "nested_equal" and weights.hierarchy != declared:
-            raise ValueError(
-                "nested-equal weights and the structural model must use design.hierarchy"
-            )
-        spec.hierarchy = declared
         return self
 
     def source_path(self) -> Path | None:

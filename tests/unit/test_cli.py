@@ -20,18 +20,6 @@ def test_schema_cli_emits_json() -> None:
     assert '"SafetyReport"' in result.stdout
 
 
-def test_structural_report_schema_cli_emits_json() -> None:
-    result = runner.invoke(app, ["schema", "structural-report"])
-    assert result.exit_code == 0
-    assert '"StructuralReport"' in result.stdout
-
-
-def test_certification_schema_cli_emits_json() -> None:
-    result = runner.invoke(app, ["schema", "certification-report"])
-    assert result.exit_code == 0
-    assert '"CertificationReport"' in result.stdout
-
-
 def test_certification_planning_cli() -> None:
     result = runner.invoke(
         app,
@@ -79,5 +67,5 @@ def test_cli_help_lists_visualization_command() -> None:
     result = runner.invoke(app, ["--help"])
     assert result.exit_code == 0
     assert "visualize" in result.stdout
-    assert "model" in result.stdout
-    assert "certify" in result.stdout
+    assert "analyze" in result.stdout
+    assert "plan" in result.stdout

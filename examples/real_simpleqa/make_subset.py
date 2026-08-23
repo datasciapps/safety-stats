@@ -7,7 +7,6 @@ from pathlib import Path
 
 from inspect_ai.log import read_eval_log, write_eval_log
 
-
 PROMPT_IDS = {"9", "13", "17", "7", "5", "14", "11", "18"}
 
 

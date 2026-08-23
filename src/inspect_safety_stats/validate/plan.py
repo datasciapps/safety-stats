@@ -302,15 +302,4 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope="outputs.joint_tree_intervals",
                 )
             )
-    structural = plan.structural_model
-    if structural is not None and structural.enabled:
-        if structural.cohort not in cohorts or structural.group not in groups:
-            diagnostics.append(
-                Diagnostic(
-                    code="PLAN_UNKNOWN_REFERENCE",
-                    severity="ERROR",
-                    message="structural model references an unknown cohort or group",
-                    scope="structural_model",
-                )
-            )
     return diagnostics
