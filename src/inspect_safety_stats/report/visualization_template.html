@@ -1,0 +1,1201 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Inspect Safety Statistics</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f7fb;
+      --surface: #ffffff;
+      --surface-2: #eef2f7;
+      --text: #172033;
+      --muted: #5c677d;
+      --border: #d9dfE9;
+      --grid: #e5e9f0;
+      --accent: #3568d4;
+      --accent-soft: #e7efff;
+      --safe: #167a55;
+      --safe-soft: #dcf5e9;
+      --fail: #bd3c42;
+      --fail-soft: #fde6e7;
+      --warn: #9a6500;
+      --warn-soft: #fff0c9;
+      --shadow: 0 8px 30px rgba(33, 50, 79, 0.08);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #11151d;
+        --surface: #181e29;
+        --surface-2: #202837;
+        --text: #eef2f8;
+        --muted: #a9b3c5;
+        --border: #303a4c;
+        --grid: #293244;
+        --accent: #84aaff;
+        --accent-soft: #20365f;
+        --safe: #69d3a8;
+        --safe-soft: #193b31;
+        --fail: #ff9196;
+        --fail-soft: #4d252a;
+        --warn: #f0c66c;
+        --warn-soft: #493a1e;
+        --shadow: 0 10px 34px rgba(0, 0, 0, 0.25);
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.45;
+    }
+    button, input, select { font: inherit; }
+    button, select, input[type="search"] {
+      color: var(--text);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 0.48rem 0.65rem;
+    }
+    button { cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    button:focus-visible, select:focus-visible, input:focus-visible {
+      outline: 3px solid color-mix(in srgb, var(--accent) 35%, transparent);
+      outline-offset: 1px;
+    }
+    .shell { max-width: 1440px; margin: 0 auto; padding: 28px; }
+    header {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 24px;
+      align-items: start;
+      margin-bottom: 22px;
+    }
+    h1 { margin: 0 0 5px; font-size: clamp(1.45rem, 3vw, 2.25rem); font-weight: 500; }
+    h2 { margin: 0; font-size: 1.16rem; font-weight: 500; }
+    h3 { margin: 0; font-size: 1rem; font-weight: 500; }
+    p { margin: 0; }
+    [hidden] { display: none !important; }
+    .subtitle { color: var(--muted); max-width: 80ch; }
+    .header-badges { display: flex; gap: 8px; flex-wrap: wrap; justify-content: end; }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      color: var(--text);
+      font-size: 0.82rem;
+      font-weight: 500;
+      white-space: nowrap;
+    }
+    .badge.pass { color: var(--safe); background: var(--safe-soft); }
+    .badge.fail, .badge.error { color: var(--fail); background: var(--fail-soft); }
+    .badge.inconclusive, .badge.warning, .badge.degraded { color: var(--warn); background: var(--warn-soft); }
+    .meta-line { color: var(--muted); font-size: 0.84rem; margin-top: 8px; overflow-wrap: anywhere; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: end;
+      margin-bottom: 18px;
+      padding: 14px 0;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+    .field { display: grid; gap: 5px; min-width: 170px; }
+    .field label { color: var(--muted); font-size: 0.78rem; }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      padding: 16px;
+    }
+    .metric-label { color: var(--muted); font-size: 0.78rem; margin-bottom: 5px; }
+    .metric-value { font-size: 1.35rem; font-weight: 500; font-variant-numeric: tabular-nums; }
+    .metric-note { color: var(--muted); font-size: 0.75rem; margin-top: 3px; }
+    section { margin-top: 28px; }
+    .section-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 10px;
+    }
+    .section-note { color: var(--muted); font-size: 0.8rem; }
+    .coverage-note {
+      color: var(--muted);
+      font-size: 0.84rem;
+      line-height: 1.45;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      border-left: 3px solid var(--accent);
+      background: var(--accent-soft);
+    }
+    .chart-wrap { overflow-x: auto; padding: 8px 0 2px; }
+    svg { display: block; width: 100%; min-width: 700px; }
+    .axis-label, .row-label, .mark-label { fill: var(--muted); font-family: inherit; }
+    .row-label { fill: var(--text); }
+    .grid-line { stroke: var(--grid); stroke-width: 1; }
+    .interval { stroke: var(--accent); stroke-width: 4; stroke-linecap: round; }
+    .estimate-dot { fill: var(--surface); stroke: var(--accent); stroke-width: 3; }
+    .selected-row { fill: var(--accent-soft); }
+    .click-row { cursor: pointer; }
+    .risk-table, .data-table { width: 100%; border-collapse: collapse; font-size: 0.84rem; }
+    .risk-table th, .risk-table td, .data-table th, .data-table td {
+      border-bottom: 1px solid var(--border);
+      padding: 9px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .risk-table th, .data-table th { color: var(--muted); font-weight: 500; }
+    .num { text-align: right !important; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .table-wrap { overflow-x: auto; }
+    .claim-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .claim-title { display: flex; align-items: start; justify-content: space-between; gap: 12px; }
+    .claim-track { position: relative; height: 30px; margin: 18px 4px 9px; }
+    .claim-track::before {
+      content: ""; position: absolute; left: 0; right: 0; top: 13px; height: 4px;
+      background: linear-gradient(90deg, var(--safe-soft), var(--warn-soft) 50%, var(--fail-soft));
+      border-radius: 4px;
+    }
+    .claim-bound { position: absolute; top: 9px; height: 12px; background: var(--accent); border-radius: 6px; min-width: 2px; }
+    .claim-point { position: absolute; top: 5px; width: 4px; height: 20px; background: var(--text); transform: translateX(-2px); }
+    .threshold { position: absolute; top: 2px; width: 1px; height: 25px; background: var(--muted); opacity: 0.7; }
+    .claim-values { display: flex; justify-content: space-between; gap: 8px; color: var(--muted); font-size: 0.76rem; }
+    .claim-reason { color: var(--muted); font-size: 0.82rem; margin-top: 9px; }
+    .explorer-controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: end;
+      padding: 12px 0 14px;
+    }
+    .explorer-controls .field { min-width: 150px; flex: 1 1 150px; }
+    .explorer-controls .search { flex: 2 1 230px; }
+    .explorer-summary { color: var(--muted); font-size: 0.82rem; margin: 0 0 8px; }
+    .prompt-row { cursor: pointer; }
+    .prompt-row:hover, .prompt-row.selected { background: var(--accent-soft); }
+    .prompt-id { max-width: 330px; overflow-wrap: anywhere; }
+    .prompt-link {
+      appearance: none;
+      border: 0;
+      padding: 0;
+      background: transparent;
+      color: var(--accent);
+      text-align: left;
+      overflow-wrap: anywhere;
+    }
+    .prompt-link:hover { text-decoration: underline; }
+    .mini-axis { position: relative; width: 150px; height: 18px; background: var(--surface-2); border-radius: 9px; }
+    .mini-range { position: absolute; top: 7px; height: 4px; background: var(--accent); border-radius: 3px; }
+    .mini-dot { position: absolute; top: 4px; width: 10px; height: 10px; border: 2px solid var(--accent); background: var(--surface); border-radius: 50%; transform: translateX(-5px); }
+    .tree-toolbar { display: flex; gap: 7px; margin-bottom: 8px; }
+    .tree-toolbar button { padding: 0.3rem 0.55rem; font-size: 0.76rem; }
+    .tree-node { display: flex; align-items: center; min-width: 250px; }
+    .tree-toggle {
+      appearance: none; border: 0; background: transparent; padding: 0 4px 0 0;
+      width: 20px; color: var(--muted); line-height: 1;
+    }
+    .tree-toggle.placeholder { visibility: hidden; }
+    .tree-label { overflow-wrap: anywhere; }
+    .tree-root { font-weight: 600; }
+    .tree-level { display: block; color: var(--muted); font-size: 0.7rem; }
+    .tree-axis {
+      position: relative; width: 230px; height: 32px; border-radius: 4px;
+      background:
+        linear-gradient(90deg, transparent 24.7%, var(--grid) 25%, transparent 25.3%),
+        linear-gradient(90deg, transparent 49.7%, var(--grid) 50%, transparent 50.3%),
+        linear-gradient(90deg, transparent 74.7%, var(--grid) 75%, transparent 75.3%),
+        var(--surface-2);
+    }
+    .tree-range { position: absolute; left: 0; min-width: 2px; border-radius: 3px; }
+    .tree-range.raw { top: 6px; height: 4px; background: var(--muted); opacity: 0.42; }
+    .tree-range.primary { top: 11px; height: 6px; background: var(--accent); }
+    .tree-range.joint { top: 22px; height: 4px; background: #a78bfa; opacity: 0.95; }
+    .tree-upper-bound {
+      position: absolute; top: 18px; width: 3px; height: 12px; border-radius: 2px;
+      background: #f59e0b; transform: translateX(-1px);
+    }
+    .tree-range.sensitivity { top: 27px; height: 3px; background: var(--warn); opacity: 0.9; }
+    .tree-range.unbounded-right { background: linear-gradient(90deg, var(--accent), transparent); }
+    .tree-range.unbounded-left { background: linear-gradient(90deg, transparent, var(--accent)); }
+    .tree-reference { position: absolute; top: 3px; bottom: 3px; width: 1px; background: var(--muted); opacity: 0.65; }
+    .tree-estimate {
+      position: absolute; top: 7px; width: 10px; height: 14px; transform: translateX(-5px);
+      border: 2px solid var(--text); border-radius: 5px; background: var(--surface);
+    }
+    .tree-interval-label { color: var(--muted); font-size: 0.72rem; margin-top: 3px; }
+    .tree-calibration { max-width: 190px; color: var(--muted); font-size: 0.76rem; }
+    .tree-legend { color: var(--muted); font-size: 0.76rem; margin: 2px 0 8px; }
+    .legend-mark { display: inline-block; width: 18px; height: 4px; margin: 0 4px 2px 12px; border-radius: 2px; }
+    .legend-mark:first-child { margin-left: 0; }
+    .legend-primary { background: var(--accent); }
+    .legend-joint { background: #a78bfa; }
+    .legend-upper { width: 3px; height: 12px; background: #f59e0b; margin-bottom: -2px; }
+    .legend-raw { background: var(--muted); opacity: 0.42; }
+    .legend-sensitivity { background: var(--warn); }
+    .selected-detail { margin-top: 12px; }
+    .detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .detail-path { color: var(--muted); font-size: 0.78rem; overflow-wrap: anywhere; margin-bottom: 10px; }
+    .pagination { display: flex; align-items: center; justify-content: end; gap: 8px; margin-top: 10px; }
+    .pagination span { color: var(--muted); font-size: 0.8rem; }
+    details { border-top: 1px solid var(--border); padding: 10px 0; }
+    details:last-child { border-bottom: 1px solid var(--border); }
+    summary { cursor: pointer; font-weight: 500; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted); font-size: 0.78rem; }
+    .empty { color: var(--muted); padding: 24px 0; }
+    .footer { margin: 30px 0 10px; color: var(--muted); font-size: 0.76rem; }
+    @media (max-width: 900px) {
+      .summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .claim-grid { grid-template-columns: 1fr; }
+      .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 620px) {
+      .shell { padding: 18px 14px; }
+      header { grid-template-columns: 1fr; }
+      .header-badges { justify-content: start; }
+      .summary-grid, .detail-grid { grid-template-columns: 1fr; }
+      .toolbar .field { flex: 1 1 140px; min-width: 0; }
+    }
+    @media print {
+      :root { color-scheme: light; }
+      body { background: #fff; }
+      .shell { max-width: none; padding: 0; }
+      .card { box-shadow: none; break-inside: avoid; }
+      .toolbar, .explorer-controls, .pagination { display: none; }
+      section { break-inside: avoid; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <h1 id="title"></h1>
+        <p id="subtitle" class="subtitle"></p>
+        <p id="meta" class="meta-line"></p>
+      </div>
+      <div class="header-badges">
+        <span id="decision" class="badge"></span>
+        <span id="integrity" class="badge"></span>
+      </div>
+    </header>
+
+    <div class="toolbar" aria-label="Global visualization controls">
+      <div class="field">
+        <label for="cohort-select">Cohort</label>
+        <select id="cohort-select"></select>
+      </div>
+      <div class="field">
+        <label for="measure-select">Risk measure</label>
+        <select id="measure-select"></select>
+      </div>
+      <div class="field">
+        <label for="independence-select">Independence profile</label>
+        <select id="independence-select"></select>
+      </div>
+    </div>
+
+    <div id="summary" class="summary-grid"></div>
+
+    <section id="claims-section" aria-labelledby="claims-heading">
+      <div class="section-head">
+        <h2 id="claims-heading">Safety claims</h2>
+        <span class="section-note">Intervals against predeclared decision thresholds</span>
+      </div>
+      <div id="claims" class="claim-grid"></div>
+    </section>
+
+    <section aria-labelledby="risk-heading">
+      <div class="section-head">
+        <h2 id="risk-heading">Fixed-design risk measures</h2>
+        <span id="risk-note" class="section-note"></span>
+      </div>
+      <p id="risk-coverage" class="coverage-note"></p>
+      <div id="risk-chart" class="chart-wrap" aria-label="Propagated group risk confidence bounds"></div>
+      <div id="risk-table" class="table-wrap"></div>
+    </section>
+
+    <section id="hierarchy-risk-section" aria-labelledby="hierarchy-risk-heading">
+      <div class="section-head">
+        <h2 id="hierarchy-risk-heading">Configuration risk and comparison hierarchy</h2>
+        <span class="section-note">Within-configuration uncertainty and across-configuration effects in one tree</span>
+      </div>
+      <p id="hierarchy-risk-note" class="coverage-note"></p>
+      <div id="hierarchy-risk-toolbar" class="tree-toolbar"></div>
+      <p class="tree-legend"><span class="legend-mark legend-primary"></span>Finite-sample interval <span class="legend-mark legend-joint"></span>Joint max-T interval <span class="legend-mark legend-upper"></span>Joint max-T upper bound <span class="legend-mark legend-raw"></span>Raw interval before hierarchy projection</p>
+      <div id="hierarchy-risk-table" class="table-wrap"></div>
+    </section>
+
+    <section aria-labelledby="hierarchy-heading">
+      <div class="section-head">
+        <h2 id="hierarchy-heading">Hierarchy explorer</h2>
+        <span class="section-note">Drill from declared groups to fixed prompts</span>
+      </div>
+      <div class="explorer-controls">
+        <div class="field">
+          <label for="group-select">Declared group</label>
+          <select id="group-select"></select>
+        </div>
+        <div id="hierarchy-controls" style="display: contents"></div>
+        <div class="field search">
+          <label for="prompt-search">Prompt search</label>
+          <input id="prompt-search" type="search" placeholder="Filter identifiers">
+        </div>
+        <div class="field">
+          <label for="sort-select">Sort</label>
+          <select id="sort-select">
+            <option value="upper-desc">Upper bound, high first</option>
+            <option value="estimate-desc">Estimate, high first</option>
+            <option value="failures-desc">Failures, high first</option>
+            <option value="id-asc">Prompt identifier</option>
+          </select>
+        </div>
+      </div>
+      <p id="explorer-summary" class="explorer-summary"></p>
+      <div id="prompt-table" class="table-wrap"></div>
+      <div id="pagination" class="pagination"></div>
+      <div id="selected-detail" class="selected-detail"></div>
+    </section>
+
+    <section id="comparisons-section" aria-labelledby="comparisons-heading">
+      <div class="section-head"><h2 id="comparisons-heading">Model and configuration comparisons</h2><span>Joint arm risks, simultaneous contrasts, and rank uncertainty</span></div>
+      <div id="comparisons" class="table-wrap"></div>
+    </section>
+
+    <section aria-labelledby="audit-heading">
+      <div class="section-head"><h2 id="audit-heading">Audit trail</h2></div>
+      <div id="audit"></div>
+    </section>
+
+    <p id="footer" class="footer"></p>
+  </main>
+
+  <script id="inspect-safety-stats-data" type="application/json">__INSPECT_SAFETY_STATS_DATA__</script>
+  <script>
+  (() => {
+    "use strict";
+    const payload = JSON.parse(document.getElementById("inspect-safety-stats-data").textContent);
+    const report = payload.report || {};
+    const designRows = Array.isArray(payload.resolved_design) ? payload.resolved_design : [];
+    const plan = payload.resolved_plan || {};
+    const estimates = Array.isArray(report.prompt_estimates) ? report.prompt_estimates : [];
+    const risks = Array.isArray(report.group_risks) ? report.group_risks : [];
+    const hierarchyRisks = Array.isArray(report.hierarchy_risks) ? report.hierarchy_risks : [];
+    const claims = Array.isArray(report.claims) ? report.claims : [];
+    const showDecisions = report.presentation?.include_decisions ?? true;
+    const comparisons = Array.isArray(report.comparisons) ? report.comparisons : [];
+    const comparisonSets = Array.isArray(report.comparison_sets) ? report.comparison_sets : [];
+    const groups = (report.design && Array.isArray(report.design.groups)) ? report.design.groups : [];
+    const cohorts = unique([
+      ...risks.map(d => d.cohort_id),
+      ...estimates.map(d => d.cohort_id),
+      ...(report.cohorts || []).map(d => d.cohort_id)
+    ]);
+    const measures = unique(risks.map(d => d.measure_id));
+    const independenceProfiles = unique([
+      ...risks.flatMap(row => (row.intervals || []).map(interval => interval.independence_profile)),
+      ...hierarchyRisks.flatMap(row => (row.intervals || []).map(interval => interval.independence_profile)),
+      ...comparisons.flatMap(row => (row.intervals || []).map(interval => interval.independence_profile))
+    ]);
+    const primaryIndependence = plan.outputs?.direct_mean_intervals?.independence?.primary
+      || independenceProfiles[0] || "";
+    const hierarchy = unique(
+      (report.design && report.design.hierarchy) ||
+      (plan.design && plan.design.hierarchy) ||
+      ["task_id", "question_id", "prompt_id"]
+    );
+    const groupTitles = new Map(groups.map(g => [String(g.id), g.title || g.id]));
+    const state = {
+      cohort: cohorts[0] || "",
+      measure: measures.includes("mean") ? "mean" : (measures[0] || ""),
+      independenceProfile: primaryIndependence,
+      group: groups[0] ? String(groups[0].id) : "",
+      hierarchyFilters: {},
+      search: "",
+      sort: "upper-desc",
+      page: 0,
+      pageSize: 50,
+      selectedPrompt: null,
+      expandedHierarchyNodes: new Set(),
+      hierarchyExpansionContext: null,
+      hierarchyView: (() => {
+        const preferred = comparisons.find(row => !row.level && row.estimand === "risk_difference") || comparisons.find(row => !row.level);
+        return preferred ? `comparison:${preferred.comparison_id}` : `within:${cohorts[0] || ""}`;
+      })()
+    };
+
+    function unique(values) {
+      return [...new Set((values || []).filter(v => v !== null && v !== undefined).map(String))];
+    }
+    function el(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+    function clear(node) { while (node.firstChild) node.removeChild(node.firstChild); }
+    function humanize(value) {
+      return String(value || "").replace(/[_-]+/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+    }
+    function fmt(value, digits = 3) {
+      if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—";
+      return Number(value).toFixed(digits);
+    }
+    function pct(value, digits = 1) {
+      if (value === null || value === undefined || !Number.isFinite(Number(value))) return "—";
+      return `${(Number(value) * 100).toFixed(digits)}%`;
+    }
+    function clamp01(value) { return Math.max(0, Math.min(1, Number(value) || 0)); }
+    function statusClass(value) { return String(value || "").toLowerCase(); }
+    function boundStatus(value) {
+      return ({certifying: "Coverage-guaranteed", diagnostic: "Diagnostic", invalid: "Unavailable"})[value] || humanize(value);
+    }
+    function coverageSummary(row) {
+      if (!row || row.simultaneous_coverage === null || row.simultaneous_coverage === undefined) {
+        return "No guaranteed confidence bounds are available for this selection.";
+      }
+      const lower = row.lower_one_sided_coverage;
+      const upper = row.upper_one_sided_coverage;
+      const directional = lower === null || lower === undefined ? upper : upper === null || upper === undefined ? lower : Math.min(lower, upper);
+      const method = humanize(row.interval_method || "propagated exact prompt bounds");
+      let construction = "Propagated exact prompt envelope; does not require independence between prompts.";
+      if (row.interval_method === "weighted_hoeffding") {
+        construction = "Direct weighted Hoeffding bound; assumes independent attempted rollouts across the complete design.";
+      } else if (row.interval_method === "weighted_empirical_bernstein") {
+        construction = "Direct variance-adaptive empirical-Bernstein bound; assumes independent attempted rollouts across the complete design.";
+      }
+      return `${pct(row.simultaneous_coverage)} simultaneous two-sided coverage floor · ${pct(directional)} coverage in each direction · ${method}. ${construction} Not a standard error.`;
+    }
+    function setOptions(select, values, selected, labels) {
+      clear(select);
+      values.forEach(value => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = labels ? labels(value) : humanize(value);
+        option.selected = value === selected;
+        select.appendChild(option);
+      });
+    }
+    function hierarchyMap(groupId) {
+      const map = new Map();
+      const matching = designRows.filter(row => !groupId || String(row.group_id) === String(groupId));
+      matching.forEach(row => map.set(String(row.prompt_id), row));
+      if (!map.size) {
+        estimates.forEach(row => map.set(String(row.prompt_id), {
+          prompt_id: row.prompt_id,
+          question_id: row.question_id,
+          task_id: row.task_id,
+          group_id: groupId,
+          weight: null
+        }));
+      }
+      return map;
+    }
+    function makeMetric(label, value, note) {
+      const card = el("div", "card");
+      card.append(el("div", "metric-label", label), el("div", "metric-value", value));
+      if (note) card.append(el("div", "metric-note", note));
+      return card;
+    }
+
+    function renderHeader() {
+      document.title = report.analysis?.title || "Inspect Safety Statistics";
+      document.getElementById("title").textContent = report.analysis?.title || report.analysis?.id || "Safety analysis";
+      document.getElementById("subtitle").textContent = report.scope?.disclaimer || "Fixed-design statistical safety analysis.";
+      document.getElementById("meta").textContent = [
+        `Analysis ${report.analysis?.id || "—"}`,
+        `Package ${report.package_version || "—"}`,
+        report.analysis?.intent ? humanize(report.analysis.intent) : null
+      ].filter(Boolean).join(" · ");
+      const decision = document.getElementById("decision");
+      decision.hidden = !showDecisions;
+      decision.textContent = `Decision: ${report.decision || "—"}`;
+      decision.className = `badge ${statusClass(report.decision)}`;
+      const integrity = document.getElementById("integrity");
+      integrity.textContent = `Integrity: ${report.integrity?.status || "—"}`;
+      integrity.className = `badge ${report.integrity?.status === "valid" ? "pass" : report.integrity?.status === "degraded" ? "degraded" : "error"}`;
+      setOptions(document.getElementById("cohort-select"), cohorts, state.cohort);
+      setOptions(document.getElementById("measure-select"), measures, state.measure);
+      const independenceSelect = document.getElementById("independence-select");
+      independenceSelect.parentElement.hidden = !independenceProfiles.length;
+      setOptions(independenceSelect, independenceProfiles, state.independenceProfile);
+    }
+
+    function renderSummary() {
+      const root = document.getElementById("summary"); clear(root);
+      const cohortPrompts = estimates.filter(d => d.cohort_id === state.cohort);
+      const failures = cohortPrompts.reduce((sum, d) => sum + (Number(d.n_failure) || 0), 0);
+      const valid = cohortPrompts.reduce((sum, d) => sum + (Number(d.n_valid) || 0), 0);
+      const unclassified = cohortPrompts.reduce((sum, d) => sum + (Number(d.n_unclassified) || 0), 0);
+      root.append(
+        makeMetric("Fixed prompts", String(cohortPrompts.length), `${groups.length} declared groups`),
+        makeMetric("Classified rollouts", String(valid), `${unclassified} unclassified`),
+        makeMetric("Observed failures", String(failures), `${pct(valid ? failures / valid : null)} of classified rollouts`),
+        makeMetric("Unclassified outcomes", String(unclassified), unclassified ? "Included in robust bounds" : "None")
+      );
+    }
+
+    function renderClaims() {
+      const section = document.getElementById("claims-section");
+      section.hidden = !showDecisions;
+      const root = document.getElementById("claims"); clear(root);
+      if (!showDecisions) return;
+      const visible = claims.filter(c => !c.evidence_refs?.length || c.evidence_refs.some(ref => ref.includes(`:${state.cohort}:`)));
+      if (!visible.length) { root.append(el("p", "empty", "No claims were declared for this cohort.")); return; }
+      visible.forEach(claim => {
+        const card = el("article", "card");
+        const head = el("div", "claim-title");
+        head.append(el("h3", "", claim.title));
+        head.append(el("span", `badge ${statusClass(claim.status)}`, claim.status));
+        card.append(head);
+        const track = el("div", "claim-track");
+        const lower = clamp01(claim.lower), upper = clamp01(claim.upper), estimate = clamp01(claim.estimate);
+        const bound = el("span", "claim-bound");
+        bound.style.left = `${lower * 100}%`; bound.style.width = `${Math.max(0.3, (upper - lower) * 100)}%`;
+        const point = el("span", "claim-point"); point.style.left = `${estimate * 100}%`;
+        const acceptable = el("span", "threshold"); acceptable.style.left = `${clamp01(claim.acceptable_upper) * 100}%`;
+        const unacceptable = el("span", "threshold"); unacceptable.style.left = `${clamp01(claim.unacceptable_lower) * 100}%`;
+        track.append(bound, point, acceptable, unacceptable); card.append(track);
+        const values = el("div", "claim-values");
+        values.append(
+          el("span", "", `Estimate ${pct(claim.estimate)}`),
+          el("span", "", `Interval ${pct(claim.lower)}–${pct(claim.upper)}`),
+          el("span", "", `Safe ≤ ${pct(claim.acceptable_upper)}`),
+          el("span", "", `Unsafe ≥ ${pct(claim.unacceptable_lower)}`)
+        );
+        card.append(values);
+        const reason = [...(claim.reasons || []), ...(claim.warnings || [])].join(" ");
+        if (reason) card.append(el("p", "claim-reason", reason));
+        const disclosure = document.createElement("details");
+        disclosure.append(el("summary", "", "Claim details"));
+        disclosure.append(el("pre", "", JSON.stringify({
+          claim_id: claim.claim_id,
+          statistical_status: claim.statistical_status,
+          policy_status: claim.policy_status,
+          mandatory: claim.mandatory,
+          alpha: claim.alpha,
+          multiplicity_family: claim.multiplicity_family,
+          method: claim.method,
+          evidence_refs: claim.evidence_refs,
+          warnings: claim.warnings
+        }, null, 2)));
+        card.append(disclosure);
+        root.append(card);
+      });
+    }
+
+    function selectedRiskRows() {
+      return risks.filter(d => d.cohort_id === state.cohort && d.measure_id === state.measure);
+    }
+    function selectedInterval(row) {
+      const intervals = Array.isArray(row?.intervals) ? row.intervals : [];
+      const matching = intervals.filter(interval => interval.independence_profile === state.independenceProfile);
+      return matching.find(interval => interval.method === row.interval_method)
+        || matching.find(interval => interval.role === "primary")
+        || matching[0]
+        || null;
+    }
+    function hasProfileIntervals(row) {
+      return (row?.intervals || []).some(interval => interval.independence_profile);
+    }
+    function shownLower(row) {
+      const interval = selectedInterval(row);
+      return interval ? interval.lower : hasProfileIntervals(row) ? null : row.lower;
+    }
+    function shownUpper(row) {
+      const interval = selectedInterval(row);
+      return interval ? interval.upper : hasProfileIntervals(row) ? null : row.upper;
+    }
+    function renderRisk() {
+      const rows = selectedRiskRows();
+      document.getElementById("risk-note").textContent = `${humanize(state.measure)} · ${humanize(state.cohort)}`;
+      const coverageRow = selectedInterval(rows[0]) || (hasProfileIntervals(rows[0]) ? null : rows[0]);
+      document.getElementById("risk-coverage").textContent = coverageSummary(coverageRow);
+      const root = document.getElementById("risk-chart"); clear(root);
+      if (!rows.length) { root.append(el("p", "empty", "No group-risk results match this selection.")); renderRiskTable(rows); return; }
+      const width = 1000, left = 270, right = 70, top = 34, rowHeight = 34;
+      const height = top + rows.length * rowHeight + 34, plotWidth = width - left - right;
+      const ns = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(ns, "svg");
+      svg.setAttribute("viewBox", `0 0 ${width} ${height}`); svg.setAttribute("role", "img");
+      svg.setAttribute("aria-label", `Confidence bounds for ${state.measure} across ${rows.length} groups`);
+      [0, .25, .5, .75, 1].forEach(tick => {
+        const x = left + tick * plotWidth;
+        const line = document.createElementNS(ns, "line");
+        line.setAttribute("x1", x); line.setAttribute("x2", x); line.setAttribute("y1", top - 14); line.setAttribute("y2", height - 28); line.setAttribute("class", "grid-line"); svg.append(line);
+        const label = document.createElementNS(ns, "text"); label.setAttribute("x", x); label.setAttribute("y", height - 8); label.setAttribute("text-anchor", "middle"); label.setAttribute("class", "axis-label"); label.setAttribute("font-size", "12"); label.textContent = `${tick * 100}%`; svg.append(label);
+      });
+      rows.forEach((row, i) => {
+        const y = top + i * rowHeight;
+        const hit = document.createElementNS(ns, "rect"); hit.setAttribute("x", 0); hit.setAttribute("y", y - 17); hit.setAttribute("width", width); hit.setAttribute("height", rowHeight); hit.setAttribute("class", `click-row${String(row.group_id) === state.group ? " selected-row" : ""}`); hit.setAttribute("fill", "transparent");
+        hit.addEventListener("click", () => { state.group = String(row.group_id); state.page = 0; state.hierarchyFilters = {}; renderAllExploration(); renderRisk(); }); svg.append(hit);
+        const label = document.createElementNS(ns, "text"); label.setAttribute("x", left - 12); label.setAttribute("y", y + 5); label.setAttribute("text-anchor", "end"); label.setAttribute("class", "row-label"); label.setAttribute("font-size", "13"); label.textContent = groupTitles.get(String(row.group_id)) || row.group_id; svg.append(label);
+        const displayLower = shownLower(row), displayUpper = shownUpper(row);
+        if (displayLower !== null && displayUpper !== null) {
+          const interval = document.createElementNS(ns, "line"); interval.setAttribute("x1", left + clamp01(displayLower) * plotWidth); interval.setAttribute("x2", left + clamp01(displayUpper) * plotWidth); interval.setAttribute("y1", y); interval.setAttribute("y2", y); interval.setAttribute("class", "interval"); svg.append(interval);
+        }
+        if (row.estimate !== null) {
+          const dot = document.createElementNS(ns, "circle"); dot.setAttribute("cx", left + clamp01(row.estimate) * plotWidth); dot.setAttribute("cy", y); dot.setAttribute("r", 5); dot.setAttribute("class", "estimate-dot"); svg.append(dot);
+          const value = document.createElementNS(ns, "text"); value.setAttribute("x", width - 6); value.setAttribute("y", y + 5); value.setAttribute("text-anchor", "end"); value.setAttribute("class", "mark-label"); value.setAttribute("font-size", "12"); value.textContent = pct(row.estimate); svg.append(value);
+        }
+      });
+      root.append(svg); renderRiskTable(rows);
+    }
+    function renderRiskTable(rows) {
+      const root = document.getElementById("risk-table"); clear(root);
+      if (!rows.length) return;
+      const table = el("table", "risk-table");
+      const head = document.createElement("thead"); const hr = document.createElement("tr");
+      ["Group", "Estimate", "Lower bound", "Upper bound", "Prompts", "Coverage floor", "Bound status", "Uncertainty method"].forEach((v, i) => hr.append(el("th", i > 0 && i < 6 ? "num" : "", v))); head.append(hr); table.append(head);
+      const body = document.createElement("tbody");
+      rows.forEach(row => {
+        const tr = document.createElement("tr");
+        tr.append(
+          el("td", "", groupTitles.get(String(row.group_id)) || row.group_id),
+          el("td", "num", pct(row.estimate)), el("td", "num", pct(shownLower(row))), el("td", "num", pct(shownUpper(row))),
+          el("td", "num", `${row.valid_prompt_count}/${row.prompt_count}`),
+          el("td", "num", pct(row.simultaneous_coverage)),
+          el("td", "", boundStatus(row.eligibility)), el("td", "", humanize(row.interval_method || row.method))
+        ); body.append(tr);
+      }); table.append(body); root.append(table);
+      const selected = rows.find(row => String(row.group_id) === state.group) || rows[0];
+      if (selected) {
+        const intervals = Array.isArray(selected.intervals) ? selected.intervals : [];
+        if (intervals.length > 1) {
+          const comparison = document.createElement("details"); comparison.open = true;
+          comparison.append(el("summary", "", "Compare interval methods"));
+          const comparisonTable = el("table", "risk-table");
+          const comparisonHead = document.createElement("thead"); const comparisonRow = document.createElement("tr");
+          ["Role", "Method", "Independence profile", "Lower bound", "Upper bound", "Completion estimate range", "Coverage floor", "Scope", "Bound status"].forEach((value, index) => comparisonRow.append(el("th", index >= 3 && index <= 6 ? "num" : "", value)));
+          comparisonHead.append(comparisonRow); comparisonTable.append(comparisonHead);
+          const comparisonBody = document.createElement("tbody");
+          intervals.filter(interval => !interval.independence_profile || interval.independence_profile === state.independenceProfile).forEach(interval => {
+            const intervalRow = document.createElement("tr");
+            intervalRow.append(
+              el("td", "", humanize(interval.role)), el("td", "", humanize(interval.method)), el("td", "", humanize(interval.independence_profile)),
+              el("td", "num", pct(interval.lower)), el("td", "num", pct(interval.upper)),
+              el("td", "num", interval.completion_estimate_lower === null || interval.completion_estimate_lower === undefined ? "—" : `${pct(interval.completion_estimate_lower)}–${pct(interval.completion_estimate_upper)}`),
+              el("td", "num", pct(interval.simultaneous_coverage)), el("td", "", humanize(interval.coverage_scope)),
+              el("td", "", boundStatus(interval.eligibility))
+            ); comparisonBody.append(intervalRow);
+          });
+          comparisonTable.append(comparisonBody); comparison.append(comparisonTable); root.append(comparison);
+        }
+        const disclosure = document.createElement("details");
+        disclosure.append(el("summary", "", `${groupTitles.get(String(selected.group_id)) || selected.group_id} statistical details`));
+        disclosure.append(el("pre", "", JSON.stringify({
+          parameters: selected.parameters,
+          interval_method: selected.interval_method,
+          coverage_scope: selected.coverage_scope,
+          coverage_mode: selected.coverage_mode,
+          family_alpha: selected.family_alpha,
+          directional_family_alpha: selected.directional_family_alpha,
+          simultaneous_coverage: selected.simultaneous_coverage,
+          lower_one_sided_coverage: selected.lower_one_sided_coverage,
+          upper_one_sided_coverage: selected.upper_one_sided_coverage,
+          resolved_weight: selected.resolved_weight,
+          unresolved_weight: selected.unresolved_weight,
+          certified_safe_weight: selected.certified_safe_weight,
+          certified_unsafe_weight: selected.certified_unsafe_weight,
+          intervals: selected.intervals,
+          warnings: selected.warnings
+        }, null, 2)));
+        root.append(disclosure);
+      }
+    }
+
+    function hierarchyPath(row) {
+      return hierarchy
+        .filter(level => row.path && row.path[level] !== undefined)
+        .map(level => `${humanize(level)}: ${row.path[level]}`)
+        .join(" → ");
+    }
+    function primaryInterval(row) {
+      return selectedInterval(row);
+    }
+    function jointInterval(row) {
+      return (row?.intervals || []).find(interval =>
+        interval.method === "stratified_bernoulli_max_t" &&
+        (!interval.independence_profile || interval.independence_profile === state.independenceProfile)
+      ) || null;
+    }
+    function jointUpperBound(row) {
+      return (row?.intervals || []).find(interval =>
+        interval.method === "stratified_bernoulli_max_t_upper" &&
+        (!interval.independence_profile || interval.independence_profile === state.independenceProfile)
+      ) || null;
+    }
+    function hierarchyNodeKey(row) {
+      if (row.is_root) return `${row.cohort_id}::${row.group_id}::root`;
+      return `${row.cohort_id}::${row.group_id}::${hierarchy
+        .filter(level => level !== "prompt_id" && row.path?.[level] !== undefined)
+        .map(level => `${level}=${row.path[level]}`)
+        .join("::")}`;
+    }
+    function hierarchyTreeRows(rows, suppliedRoot = null) {
+      const directRoot = suppliedRoot || risks.find(row =>
+        row.cohort_id === state.cohort &&
+        String(row.group_id) === state.group &&
+        (row.intervals || []).some(interval => interval.role === "primary" && String(interval.interval_id || "").startsWith("direct_"))
+      );
+      const root = directRoot ? {
+        ...directRoot,
+        is_root: true,
+        level: "design_root",
+        path: {},
+        design_weight: 1,
+        prompt_count: directRoot.prompt_count,
+        valid_prompt_count: directRoot.valid_prompt_count
+      } : null;
+      const allRows = [...(root ? [root] : []), ...rows.filter(row => !suppliedRoot || row !== suppliedRoot)].map(row => ({...row}));
+      const rootKey = root ? hierarchyNodeKey(root) : null;
+      allRows.forEach(row => {
+        row._key = hierarchyNodeKey(row);
+        row._depth = row.is_root ? 0 : hierarchy.filter(level => level !== "prompt_id" && row.path?.[level] !== undefined).length;
+      });
+      const byPath = new Map(allRows.filter(row => !row.is_root).map(row => [row._key, row]));
+      allRows.forEach(row => {
+        if (row.is_root) { row._parent = null; return; }
+        const pathLevels = hierarchy.filter(level => level !== "prompt_id" && row.path?.[level] !== undefined);
+        if (pathLevels.length <= 1) { row._parent = rootKey; return; }
+        const parentPath = Object.fromEntries(pathLevels.slice(0, -1).map(level => [level, row.path[level]]));
+        const parentKey = hierarchyNodeKey({...row, path: parentPath});
+        row._parent = byPath.has(parentKey) ? parentKey : rootKey;
+      });
+      const childCounts = new Map();
+      allRows.forEach(row => {
+        if (row._parent) childCounts.set(row._parent, (childCounts.get(row._parent) || 0) + 1);
+      });
+      allRows.forEach(row => { row._hasChildren = childCounts.has(row._key); });
+      allRows.sort((left, right) => {
+        if (left.is_root) return -1;
+        if (right.is_root) return 1;
+        const leftPath = hierarchy.map(level => String(left.path?.[level] ?? "")).join("\u0000");
+        const rightPath = hierarchy.map(level => String(right.path?.[level] ?? "")).join("\u0000");
+        return leftPath.localeCompare(rightPath) || left._depth - right._depth;
+      });
+      return {allRows, rootKey};
+    }
+    function treeInterval(row) {
+      const axis = el("div", "tree-axis");
+      const primary = primaryInterval(row);
+      const joint = jointInterval(row);
+      const jointUpper = jointUpperBound(row);
+      const addRange = (lower, upper, className) => {
+        if (lower === null || lower === undefined || upper === null || upper === undefined) return;
+        const band = el("span", `tree-range ${className}`);
+        band.style.left = `${100 * clamp01(lower)}%`;
+        band.style.width = `${Math.max(0.8, 100 * (clamp01(upper) - clamp01(lower)))}%`;
+        axis.append(band);
+      };
+      if (primary && primary.raw_lower !== null && primary.raw_lower !== undefined) {
+        addRange(primary.raw_lower, primary.raw_upper, "raw");
+      }
+      addRange(shownLower(row), shownUpper(row), "primary");
+      if (joint) addRange(joint.lower, joint.upper, "joint");
+      if (jointUpper?.upper !== null && jointUpper?.upper !== undefined) {
+        const marker = el("span", "tree-upper-bound");
+        marker.style.left = `${100 * clamp01(jointUpper.upper)}%`;
+        axis.append(marker);
+      }
+      if (row.estimate !== null && row.estimate !== undefined) {
+        const dot = el("span", "tree-estimate"); dot.style.left = `${100 * clamp01(row.estimate)}%`; axis.append(dot);
+      }
+      const rawText = primary && primary.raw_lower !== null && primary.raw_lower !== undefined
+        ? `; raw ${pct(primary.raw_lower)}–${pct(primary.raw_upper)}` : "";
+      const jointText = joint ? `; joint max-T ${pct(joint.lower)}–${pct(joint.upper)}` : "";
+      const upperText = jointUpper ? `; joint max-T upper ≤ ${pct(jointUpper.upper)}` : "";
+      axis.title = `Estimate ${pct(row.estimate)}; finite-sample ${pct(shownLower(row))}–${pct(shownUpper(row))}${jointText}${upperText}${rawText}`;
+      return axis;
+    }
+    function comparisonEffectFmt(row, value) {
+      return row.estimand === "risk_ratio" ? fmt(value) : pct(value);
+    }
+    function sameHierarchyPath(left, right) {
+      const leftEntries = Object.entries(left || {}); const rightEntries = Object.entries(right || {});
+      return leftEntries.length === rightEntries.length && leftEntries.every(([key, value]) => String(right?.[key]) === String(value));
+    }
+    function withinModelRow(cohort, comparisonRow) {
+      if (!comparisonRow.level) {
+        return risks.find(row => row.cohort_id === cohort && String(row.group_id) === String(comparisonRow.group_id) && row.measure_id === comparisonRow.measure_id);
+      }
+      return hierarchyRisks.find(row => row.cohort_id === cohort && String(row.group_id) === String(comparisonRow.group_id) && row.level === comparisonRow.level && sameHierarchyPath(row.path, comparisonRow.path));
+    }
+    function comparisonDomain(rows, estimand) {
+      const finite = rows.flatMap(row => { const joint = jointInterval(row); const jointUpper = jointUpperBound(row); return [row.estimate, row.lower, row.upper, row.raw_lower, row.raw_upper, joint?.lower, joint?.upper, jointUpper?.upper]; }).map(Number).filter(Number.isFinite);
+      if (estimand === "risk_ratio") return [0, Math.max(2, 1.1 * Math.max(1, ...finite))];
+      const magnitude = Math.max(0.1, 1.1 * Math.max(0, ...finite.map(Math.abs)));
+      return [-magnitude, magnitude];
+    }
+    function comparisonIntervalAxis(row, domain) {
+      const axis = el("div", "tree-axis"); const [minimum, maximum] = domain;
+      const position = value => 100 * Math.max(0, Math.min(1, (Number(value) - minimum) / (maximum - minimum)));
+      const referenceValue = row.estimand === "risk_ratio" ? 1 : 0;
+      const reference = el("span", "tree-reference"); reference.style.left = `${position(referenceValue)}%`; axis.append(reference);
+      const addRange = (lower, upper, className) => {
+        if ((lower === null || lower === undefined) && (upper === null || upper === undefined)) return;
+        const lowerMissing = lower === null || lower === undefined; const upperMissing = upper === null || upper === undefined;
+        const resolvedLower = lowerMissing ? minimum : lower; const resolvedUpper = upperMissing ? maximum : upper;
+        const unboundedClass = lowerMissing ? " unbounded-left" : upperMissing ? " unbounded-right" : "";
+        const band = el("span", `tree-range ${className}${unboundedClass}`);
+        band.style.left = `${position(resolvedLower)}%`; band.style.width = `${Math.max(0.8, position(resolvedUpper) - position(resolvedLower))}%`; axis.append(band);
+      };
+      const primary = primaryInterval(row);
+      const joint = jointInterval(row);
+      const jointUpper = jointUpperBound(row);
+      if (primary && (primary.raw_lower !== null || primary.raw_upper !== null)) addRange(primary.raw_lower, primary.raw_upper, "raw");
+      addRange(shownLower(row), shownUpper(row), "primary");
+      if (joint) addRange(joint.lower, joint.upper, "joint");
+      if (jointUpper?.upper !== null && jointUpper?.upper !== undefined) {
+        const marker = el("span", "tree-upper-bound");
+        marker.style.left = `${position(jointUpper.upper)}%`;
+        axis.append(marker);
+      }
+      if (row.estimate !== null && row.estimate !== undefined) { const dot = el("span", "tree-estimate"); dot.style.left = `${position(row.estimate)}%`; axis.append(dot); }
+      const jointText = joint ? `; joint max-T ${comparisonEffectFmt(row, joint.lower)}–${comparisonEffectFmt(row, joint.upper)}` : "";
+      const upperText = jointUpper ? `; joint max-T upper ≤ ${comparisonEffectFmt(row, jointUpper.upper)}` : "";
+      axis.title = `${humanize(row.estimand)} ${comparisonEffectFmt(row, row.estimate)}; finite-sample ${comparisonEffectFmt(row, shownLower(row))}–${comparisonEffectFmt(row, shownUpper(row))}${jointText}${upperText}; reference ${comparisonEffectFmt(row, referenceValue)}`;
+      return axis;
+    }
+    function renderHierarchyRisks() {
+      const section = document.getElementById("hierarchy-risk-section");
+      const root = document.getElementById("hierarchy-risk-table"); clear(root);
+      const comparisonId = state.hierarchyView.startsWith("comparison:") ? state.hierarchyView.slice("comparison:".length) : null;
+      const comparisonRoot = comparisonId ? comparisons.find(row => row.comparison_id === comparisonId && !row.level) : null;
+      const selectedCohort = state.hierarchyView.startsWith("within:") ? state.hierarchyView.slice("within:".length) : state.cohort;
+      const rows = comparisonRoot
+        ? comparisons.filter(row => row.comparison_id === comparisonId && row.level)
+        : hierarchyRisks.filter(row => row.cohort_id === selectedCohort && String(row.group_id) === state.group);
+      if (!rows.length && !comparisonRoot) { section.hidden = true; return; }
+      section.hidden = false;
+      const tree = hierarchyTreeRows(rows, comparisonRoot);
+      const context = `${state.hierarchyView}::${comparisonRoot?.group_id || state.group}`;
+      if (state.hierarchyExpansionContext !== context) {
+        state.hierarchyExpansionContext = context;
+        state.expandedHierarchyNodes = new Set(tree.rootKey ? [tree.rootKey] : []);
+      }
+      const toolbar = document.getElementById("hierarchy-risk-toolbar"); clear(toolbar);
+      const viewField = el("div", "field"); const viewLabel = document.createElement("label"); viewLabel.htmlFor = "hierarchy-view-select"; viewLabel.textContent = "Hierarchy view";
+      const viewSelect = document.createElement("select"); viewSelect.id = "hierarchy-view-select";
+      cohorts.forEach(cohort => { const option = document.createElement("option"); option.value = `within:${cohort}`; option.textContent = `Within configuration · ${cohort}`; option.selected = option.value === state.hierarchyView; viewSelect.append(option); });
+      comparisons.filter(row => !row.level).forEach(row => { const option = document.createElement("option"); option.value = `comparison:${row.comparison_id}`; option.textContent = `Across configurations · ${row.candidate_cohort} vs ${row.baseline_cohort} · ${humanize(row.estimand)}`; option.selected = option.value === state.hierarchyView; viewSelect.append(option); });
+      viewSelect.addEventListener("change", () => {
+        state.hierarchyView = viewSelect.value; state.hierarchyExpansionContext = null;
+        const selectedComparison = comparisons.find(row => !row.level && `comparison:${row.comparison_id}` === state.hierarchyView);
+        if (selectedComparison) {
+          state.group = String(selectedComparison.group_id);
+          document.getElementById("group-select").value = state.group;
+        }
+        else { state.cohort = state.hierarchyView.slice("within:".length); document.getElementById("cohort-select").value = state.cohort; }
+        renderHierarchyRisks(); renderRisk();
+      });
+      viewField.append(viewLabel, viewSelect); toolbar.append(viewField);
+      const expand = el("button", "", "Expand all"); expand.type = "button";
+      expand.addEventListener("click", () => {
+        state.expandedHierarchyNodes = new Set(tree.allRows.filter(row => row._hasChildren).map(row => row._key));
+        renderHierarchyRisks();
+      });
+      const collapse = el("button", "", "Collapse all"); collapse.type = "button";
+      collapse.addEventListener("click", () => {
+        state.expandedHierarchyNodes = new Set(tree.rootKey ? [tree.rootKey] : []);
+        renderHierarchyRisks();
+      });
+      toolbar.append(expand, collapse);
+      document.getElementById("hierarchy-risk-note").textContent = comparisonRoot
+        ? `Baseline and candidate risks use their within-configuration simultaneous intervals. The ${humanize(comparisonRoot.estimand)} interval is calibrated across the comparison hierarchy and projected from one common ${String(comparisonRoot.projection_method || "").includes("two_arm") || comparisonRoot.estimand !== "risk_difference" ? "two-arm" : "contrast"} region.`
+        : `Each row averages only the fixed prompts below that declared node. Intervals use the selected ${humanize(state.independenceProfile)} independence profile and one hierarchy-constrained region.`;
+      const table = el("table", "risk-table"); const head = document.createElement("thead"); const hr = document.createElement("tr");
+      const headings = comparisonRoot
+        ? ["Hierarchy node", "Weight", "Prompts", `Baseline · ${comparisonRoot.baseline_cohort}`, `Candidate · ${comparisonRoot.candidate_cohort}`, humanize(comparisonRoot.estimand), "Effect CI", "Calibration"]
+        : ["Hierarchy node", "Design weight", "Prompts", "Estimate", "Risk interval (0–100%)", "Numerical CI", "Calibration"];
+      headings.forEach((value, index) => hr.append(el("th", index >= 1 && index <= 3 ? "num" : "", value)));
+      head.append(hr); table.append(head);
+      const body = document.createElement("tbody");
+      const visible = new Set();
+      tree.allRows.forEach(row => {
+        if (!row._parent || (visible.has(row._parent) && state.expandedHierarchyNodes.has(row._parent))) visible.add(row._key);
+      });
+      const effectDomain = comparisonRoot ? comparisonDomain([comparisonRoot, ...rows].map(row => ({...row, lower: shownLower(row), upper: shownUpper(row)})), comparisonRoot.estimand) : null;
+      tree.allRows.filter(row => visible.has(row._key)).forEach(row => {
+        const primary = primaryInterval(row);
+        const pathLevels = hierarchy.filter(level => level !== "prompt_id" && row.path?.[level] !== undefined);
+        const label = row.is_root
+          ? (groupTitles.get(String(row.group_id)) || String(row.group_id))
+          : String(row.path[pathLevels[pathLevels.length - 1]]);
+        const nodeCell = el("td", "");
+        const nodeWrap = el("div", `tree-node${row.is_root ? " tree-root" : ""}`);
+        nodeWrap.style.paddingLeft = `${Math.max(0, row._depth) * 18}px`;
+        const toggle = el("button", `tree-toggle${row._hasChildren ? "" : " placeholder"}`, row._hasChildren ? (state.expandedHierarchyNodes.has(row._key) ? "▾" : "▸") : "•");
+        toggle.type = "button";
+        toggle.setAttribute("aria-label", `${state.expandedHierarchyNodes.has(row._key) ? "Collapse" : "Expand"} ${label}`);
+        if (row._hasChildren) toggle.addEventListener("click", () => {
+          if (state.expandedHierarchyNodes.has(row._key)) state.expandedHierarchyNodes.delete(row._key);
+          else state.expandedHierarchyNodes.add(row._key);
+          renderHierarchyRisks();
+        });
+        const labelWrap = el("span", "tree-label", label);
+        labelWrap.append(el("span", "tree-level", row.is_root ? "Design root" : humanize(row.level)));
+        nodeWrap.append(toggle, labelWrap); nodeCell.append(nodeWrap);
+        const intervalCell = el("td", ""); intervalCell.append(comparisonRoot ? comparisonIntervalAxis(row, effectDomain) : treeInterval(row));
+        const selectedLower = shownLower(row), selectedUpper = shownUpper(row);
+        const numerical = el("td", "num", comparisonRoot ? `${comparisonEffectFmt(row, selectedLower)}–${comparisonEffectFmt(row, selectedUpper)}` : selectedLower === null || selectedLower === undefined ? "—" : `${pct(selectedLower)}–${pct(selectedUpper)}`);
+        const joint = jointInterval(row);
+        if (joint) numerical.append(el("div", "tree-interval-label", `Joint ${comparisonRoot ? `${comparisonEffectFmt(row, joint.lower)}–${comparisonEffectFmt(row, joint.upper)}` : `${pct(joint.lower)}–${pct(joint.upper)}`}`));
+        const jointUpper = jointUpperBound(row);
+        if (jointUpper) numerical.append(el("div", "tree-interval-label", `Upper ≤ ${comparisonRoot ? comparisonEffectFmt(row, jointUpper.upper) : pct(jointUpper.upper)}`));
+        const calibration = primary?.calibration_method === "frontier_sidak"
+          ? `Frontier Šidák · ${primary.calibration_frontier_size} node${primary.calibration_frontier_size === 1 ? "" : "s"}`
+          : humanize(primary?.calibration_method || row.interval_method || "unavailable");
+        const blockCount = primary?.independent_block_count;
+        const calibrationCell = el("td", "tree-calibration", `${calibration}${blockCount ? ` · ${blockCount} blocks` : ""}`);
+        if (primary) {
+          calibrationCell.title = [
+            primary.calibration_frontier ? `Frontier ${primary.calibration_frontier}` : null,
+            primary.calibration_frontier_alpha !== null && primary.calibration_frontier_alpha !== undefined ? `frontier alpha ${fmt(primary.calibration_frontier_alpha, 6)}` : null,
+            primary.alpha_upper !== null && primary.alpha_upper !== undefined ? `local endpoint alpha ${fmt(primary.alpha_upper, 6)}` : null,
+            primary.projection_method ? `projection ${humanize(primary.projection_method)}` : null
+          ].filter(Boolean).join(" · ");
+        }
+        const tr = document.createElement("tr");
+        if (comparisonRoot) {
+          const baseline = withinModelRow(comparisonRoot.baseline_cohort, row); const candidate = withinModelRow(comparisonRoot.candidate_cohort, row);
+          const armCell = arm => { const cell = el("td", ""); if (!arm) { cell.textContent = "—"; return cell; } cell.append(treeInterval(arm), el("div", "tree-interval-label", `${pct(arm.estimate)} · ${pct(shownLower(arm))}–${pct(shownUpper(arm))}`)); return cell; };
+          tr.append(nodeCell, el("td", "num", pct(row.resolved_weight, 2)), el("td", "num", String(row.prompt_count)), armCell(baseline), armCell(candidate), intervalCell, numerical, calibrationCell);
+        } else {
+          tr.append(nodeCell, el("td", "num", pct(row.design_weight, 2)), el("td", "num", `${row.valid_prompt_count}/${row.prompt_count}`), el("td", "num", pct(row.estimate)), intervalCell, numerical, calibrationCell);
+        }
+        body.append(tr);
+      });
+      table.append(body); root.append(table);
+    }
+
+    function renderGroupOptions() {
+      const values = groups.map(g => String(g.id));
+      if (!values.includes(state.group)) state.group = values[0] || "";
+      setOptions(document.getElementById("group-select"), values, state.group, value => groupTitles.get(value) || value);
+    }
+    function designForSelection() {
+      return hierarchyMap(state.group);
+    }
+    function filteredDesignRows(stopBeforeColumn) {
+      let rows = [...designForSelection().values()];
+      for (const column of hierarchy) {
+        if (column === stopBeforeColumn) break;
+        const selected = state.hierarchyFilters[column];
+        if (selected) rows = rows.filter(row => String(row[column] ?? "") === selected);
+      }
+      return rows;
+    }
+    function renderHierarchyControls() {
+      const root = document.getElementById("hierarchy-controls"); clear(root);
+      hierarchy.filter(column => column !== "prompt_id").forEach((column, index) => {
+        const field = el("div", "field"); const id = `hierarchy-${index}`;
+        const label = document.createElement("label"); label.htmlFor = id; label.textContent = humanize(column);
+        const select = document.createElement("select"); select.id = id;
+        const values = unique(filteredDesignRows(column).map(row => row[column])).sort((a, b) => a.localeCompare(b));
+        const all = document.createElement("option"); all.value = ""; all.textContent = `All ${humanize(column).toLowerCase()}s`; select.append(all);
+        values.forEach(value => { const option = document.createElement("option"); option.value = value; option.textContent = value; option.selected = state.hierarchyFilters[column] === value; select.append(option); });
+        select.addEventListener("change", () => {
+          state.hierarchyFilters[column] = select.value;
+          const position = hierarchy.indexOf(column);
+          hierarchy.slice(position + 1).forEach(child => delete state.hierarchyFilters[child]);
+          state.page = 0; state.selectedPrompt = null; renderAllExploration();
+        });
+        field.append(label, select); root.append(field);
+      });
+    }
+    function currentPromptRows() {
+      const map = designForSelection();
+      let rows = estimates.filter(d => d.cohort_id === state.cohort && map.has(String(d.prompt_id)));
+      rows = rows.filter(d => {
+        const item = map.get(String(d.prompt_id)) || {};
+        return hierarchy.every(column => !state.hierarchyFilters[column] || String(item[column] ?? d[column] ?? "") === state.hierarchyFilters[column]);
+      });
+      if (state.search) {
+        const needle = state.search.toLowerCase();
+        rows = rows.filter(d => {
+          const item = map.get(String(d.prompt_id)) || {};
+          return hierarchy.some(column => String(item[column] ?? d[column] ?? "").toLowerCase().includes(needle));
+        });
+      }
+      const score = value => value === null || value === undefined ? -Infinity : Number(value);
+      rows.sort((a, b) => {
+        if (state.sort === "estimate-desc") return score(b.p_hat) - score(a.p_hat) || String(a.prompt_id).localeCompare(String(b.prompt_id));
+        if (state.sort === "failures-desc") return Number(b.n_failure) - Number(a.n_failure) || String(a.prompt_id).localeCompare(String(b.prompt_id));
+        if (state.sort === "id-asc") return String(a.prompt_id).localeCompare(String(b.prompt_id));
+        return score(b.upper) - score(a.upper) || score(b.p_hat) - score(a.p_hat) || String(a.prompt_id).localeCompare(String(b.prompt_id));
+      });
+      return rows;
+    }
+    function miniInterval(row) {
+      const axis = el("div", "mini-axis");
+      if (row.lower !== null && row.upper !== null) {
+        const range = el("span", "mini-range"); range.style.left = `${clamp01(row.lower) * 100}%`; range.style.width = `${Math.max(1, (clamp01(row.upper) - clamp01(row.lower)) * 100)}%`; axis.append(range);
+      }
+      if (row.p_hat !== null) { const dot = el("span", "mini-dot"); dot.style.left = `${clamp01(row.p_hat) * 100}%`; axis.append(dot); }
+      axis.setAttribute("aria-label", `Estimate ${pct(row.p_hat)}, exact confidence bounds ${pct(row.lower)} to ${pct(row.upper)}`); return axis;
+    }
+    function renderPromptTable() {
+      const rows = currentPromptRows(); const root = document.getElementById("prompt-table"); clear(root);
+      const failures = rows.reduce((sum, d) => sum + (Number(d.n_failure) || 0), 0);
+      const valid = rows.reduce((sum, d) => sum + (Number(d.n_valid) || 0), 0);
+      const unclassified = rows.reduce((sum, d) => sum + (Number(d.n_unclassified) || 0), 0);
+      document.getElementById("explorer-summary").textContent = `${rows.length} prompts · ${failures} failures across ${valid} classified rollouts · ${unclassified} unclassified`;
+      if (!rows.length) { root.append(el("p", "empty", "No prompts match the current hierarchy and search filters.")); renderPagination(0); renderSelected(); return; }
+      const maxPage = Math.max(0, Math.ceil(rows.length / state.pageSize) - 1); state.page = Math.min(state.page, maxPage);
+      const pageRows = rows.slice(state.page * state.pageSize, (state.page + 1) * state.pageSize);
+      const table = el("table", "data-table"); const head = document.createElement("thead"); const hr = document.createElement("tr");
+      ["Prompt", "Question", "Failures", "Valid", "Estimate", "Exact bounds", "Bound status"].forEach((v, i) => hr.append(el("th", i >= 2 && i <= 4 ? "num" : "", v))); head.append(hr); table.append(head);
+      const body = document.createElement("tbody"); const map = designForSelection();
+      pageRows.forEach(row => {
+        const item = map.get(String(row.prompt_id)) || row; const tr = document.createElement("tr"); tr.className = `prompt-row${state.selectedPrompt === String(row.prompt_id) ? " selected" : ""}`;
+        const selectPrompt = () => { state.selectedPrompt = String(row.prompt_id); renderPromptTable(); renderSelected(); };
+        tr.addEventListener("click", selectPrompt);
+        const promptCell = el("td", "prompt-id"); const promptButton = el("button", "prompt-link", row.prompt_id);
+        promptButton.type = "button"; promptButton.addEventListener("click", event => { event.stopPropagation(); selectPrompt(); }); promptCell.append(promptButton);
+        tr.append(
+          promptCell, el("td", "prompt-id", item.question_id ?? row.question_id),
+          el("td", "num", String(row.n_failure)), el("td", "num", String(row.n_valid)), el("td", "num", pct(row.p_hat)),
+          (() => { const td = document.createElement("td"); td.append(miniInterval(row)); return td; })(),
+          el("td", "", boundStatus(row.eligibility))
+        ); body.append(tr);
+      }); table.append(body); root.append(table); renderPagination(rows.length); renderSelected();
+    }
+    function renderPagination(total) {
+      const root = document.getElementById("pagination"); clear(root); if (!total) return;
+      const pages = Math.ceil(total / state.pageSize); const prev = el("button", "", "Previous"); prev.disabled = state.page === 0;
+      const next = el("button", "", "Next"); next.disabled = state.page >= pages - 1;
+      prev.addEventListener("click", () => { state.page--; renderPromptTable(); }); next.addEventListener("click", () => { state.page++; renderPromptTable(); });
+      root.append(prev, el("span", "", `Page ${state.page + 1} of ${pages}`), next);
+    }
+    function renderSelected() {
+      const root = document.getElementById("selected-detail"); clear(root); if (!state.selectedPrompt) return;
+      const row = estimates.find(d => d.cohort_id === state.cohort && String(d.prompt_id) === state.selectedPrompt); if (!row) return;
+      const item = designForSelection().get(state.selectedPrompt) || row; const card = el("article", "card");
+      card.append(el("h3", "", row.prompt_id));
+      card.append(el("p", "detail-path", hierarchy.map(column => `${humanize(column)}: ${item[column] ?? row[column] ?? "—"}`).join(" → ")));
+      const grid = el("div", "detail-grid");
+      grid.append(
+        makeMetric("Estimate", pct(row.p_hat), `Method: ${row.method || "—"}`),
+        makeMetric("Exact prompt bounds", `${pct(row.lower)}–${pct(row.upper)}`, `One-sided endpoint α: lower ${fmt(row.alpha_lower, 6)} · upper ${fmt(row.alpha_upper, 6)}`),
+        makeMetric("Outcomes", `${row.n_failure} fail / ${row.n_safe} safe`, `${row.n_valid} classified · ${row.n_unclassified || 0} unclassified`),
+        makeMetric("Design weight", item.weight === null || item.weight === undefined ? "—" : pct(Number(item.weight), 2), `Bound status: ${boundStatus(row.eligibility)}`)
+      ); card.append(grid);
+      const events = showDecisions
+        ? (report.policy_events || []).filter(e => e.cohort_id === state.cohort && String(e.prompt_id) === state.selectedPrompt)
+        : [];
+      const notes = [...(row.warnings || []), ...events.map(e => `${e.type}: ${e.status || "recorded"}`)];
+      if (notes.length) card.append(el("p", "claim-reason", notes.join(" · "))); root.append(card);
+    }
+    function renderAllExploration() {
+      renderGroupOptions(); renderHierarchyControls(); renderPromptTable();
+    }
+
+    function renderComparisons() {
+      const section = document.getElementById("comparisons-section"); const root = document.getElementById("comparisons"); clear(root);
+      if (!comparisons.length) { section.hidden = true; return; } section.hidden = false;
+      root.append(el("p", "section-note", "All effects in a comparison set are derived from one jointly calibrated arm-risk region. Select an effect in the hierarchy view above to explore its node intervals. Negative risk differences and positive relative risk reductions favor the candidate."));
+      const overall = comparisons.filter(row => !row.level); const effectFmt = comparisonEffectFmt;
+      comparisonSets.forEach(set => {
+        const title = el("h3", "", humanize(set.comparison_set_id)); root.append(title);
+        const detail = set.contrast_type === "versus_reference"
+          ? `Reference: ${set.reference_cohort} · ${pct(set.simultaneous_coverage)} simultaneous coverage`
+          : `All pairs · ${pct(set.simultaneous_coverage)} simultaneous coverage`;
+        root.append(el("p", "section-note", detail));
+        const armTable = el("table", "data-table"); const armHead = document.createElement("thead"); const armHeadRow = document.createElement("tr");
+        ["Model / configuration", "Risk estimate", "Joint risk interval", "Simultaneous rank set"].forEach((value, index) => armHeadRow.append(el("th", index > 0 ? "num" : "", value))); armHead.append(armHeadRow); armTable.append(armHead);
+        const armBody = document.createElement("tbody");
+        (set.cohorts || []).forEach(cohort => {
+          const interval = (set.arm_intervals || {})[cohort]; const rank = (set.rank_intervals || {})[cohort]; const row = document.createElement("tr");
+          row.append(el("td", "", cohort), el("td", "num", pct((set.arm_estimates || {})[cohort])), el("td", "num", interval ? `${pct(interval[0])}–${pct(interval[1])}` : "—"), el("td", "num", rank ? `${rank[0]}–${rank[1]}` : "—")); armBody.append(row);
+        }); armTable.append(armBody); root.append(armTable);
+
+        if (set.contrast_type === "all_pairs") {
+          const differences = overall.filter(row => row.comparison_set_id === set.comparison_set_id && row.estimand === "risk_difference");
+          if (differences.length) {
+            const matrix = el("table", "data-table"); const mh = document.createElement("thead"); const mhr = document.createElement("tr"); mhr.append(el("th", "", "Candidate ↓ / Baseline →")); (set.cohorts || []).forEach(cohort => mhr.append(el("th", "num", cohort))); mh.append(mhr); matrix.append(mh); const mb = document.createElement("tbody");
+            (set.cohorts || []).forEach(candidate => { const mr = document.createElement("tr"); mr.append(el("th", "", candidate)); (set.cohorts || []).forEach(baseline => { if (candidate === baseline) { mr.append(el("td", "num", "—")); return; } const direct = differences.find(row => row.candidate_cohort === candidate && row.baseline_cohort === baseline); const reverse = differences.find(row => row.candidate_cohort === baseline && row.baseline_cohort === candidate); if (direct) mr.append(el("td", "num", `${pct(direct.estimate)} [${pct(shownLower(direct))}, ${pct(shownUpper(direct))}]`)); else if (reverse) mr.append(el("td", "num", `${pct(-reverse.estimate)} [${pct(-shownUpper(reverse))}, ${pct(-shownLower(reverse))}]`)); else mr.append(el("td", "num", "—")); }); mb.append(mr); }); matrix.append(mb); root.append(matrix);
+          }
+        }
+      });
+      const table = el("table", "data-table"); const head = document.createElement("thead"); const hr = document.createElement("tr");
+      ["Comparison", "Arms", "Group", "Estimand", "Candidate risk", "Baseline risk", "Effect", "Confidence interval", "Prompts", "Rollouts C / B", "Method", "Bound status"].forEach((v, i) => hr.append(el("th", i >= 4 && i <= 9 ? "num" : "", v))); head.append(hr); table.append(head);
+      const body = document.createElement("tbody"); overall.forEach(row => {
+        const displayed = selectedInterval(row);
+        const tr = document.createElement("tr"); tr.append(
+          el("td", "", row.comparison_set_id || row.comparison_id), el("td", "", `${row.candidate_cohort} / ${row.baseline_cohort}`), el("td", "", `${row.group_id} · ${row.measure_id}`), el("td", "", humanize(row.estimand)),
+          el("td", "num", pct(row.candidate_estimate)), el("td", "num", pct(row.baseline_estimate)), el("td", "num", effectFmt(row, row.estimate)),
+          el("td", "num", `${effectFmt(row, shownLower(row))}–${effectFmt(row, shownUpper(row))}`), el("td", "num", row.prompt_count ?? "—"),
+          el("td", "num", `${row.candidate_rollout_count ?? "—"} / ${row.baseline_rollout_count ?? "—"}`), el("td", "", humanize(row.interval_method || row.method)), el("td", "", boundStatus(row.eligibility))
+        ); body.append(tr);
+        const alternatives = (row.intervals || []).filter(item => item.independence_profile === state.independenceProfile && item !== displayed);
+        if (alternatives.length || Object.keys(row.diagnostic_outputs || {}).length || (row.warnings || []).length) {
+          const detail = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = 12;
+          const disclosure = document.createElement("details"); disclosure.append(el("summary", "", `${row.comparison_id} sensitivity and diagnostics`));
+          const effects = row.effect_summaries || {}; disclosure.append(el("p", "section-note", `Descriptive effects: risk difference ${pct(effects.risk_difference)} · risk ratio ${fmt(effects.risk_ratio)} · relative risk reduction ${pct(effects.relative_risk_reduction)}`));
+          if (alternatives.length) {
+            const at = el("table", "risk-table"); const ah = document.createElement("thead"); const ahr = document.createElement("tr"); ["Role", "Method", "Independence profile", "Lower", "Upper", "Coverage"].forEach((v, i) => ahr.append(el("th", i >= 3 ? "num" : "", v))); ah.append(ahr); at.append(ah); const ab = document.createElement("tbody");
+            alternatives.forEach(interval => { const ar = document.createElement("tr"); const coverage = interval.simultaneous_coverage === null || interval.simultaneous_coverage === undefined ? "pointwise" : `${pct(interval.simultaneous_coverage)} simultaneous`; ar.append(el("td", "", interval.role), el("td", "", humanize(interval.method)), el("td", "", humanize(interval.independence_profile)), el("td", "num", effectFmt(row, interval.lower)), el("td", "num", effectFmt(row, interval.upper)), el("td", "num", coverage)); ab.append(ar); }); at.append(ab); disclosure.append(at);
+          }
+          if ((row.warnings || []).length) disclosure.append(el("p", "claim-reason", row.warnings.join(" · ")));
+          if (Object.keys(row.diagnostic_outputs || {}).length) { const diagnostics = document.createElement("details"); diagnostics.append(el("summary", "", "Paired diagnostic outputs"), el("pre", "", JSON.stringify({pairs: row.pair_count, discordant_counts: row.discordant_counts, outputs: row.diagnostic_outputs}, null, 2))); disclosure.append(diagnostics); }
+          td.append(disclosure); detail.append(td); body.append(detail);
+        }
+      }); table.append(body); root.append(table);
+    }
+
+    function addAuditDetails(root, title, content) {
+      const detail = document.createElement("details"); detail.append(el("summary", "", title));
+      if (typeof content === "string") detail.append(el("p", "claim-reason", content));
+      else detail.append(el("pre", "", JSON.stringify(content, null, 2))); root.append(detail);
+    }
+    function renderAudit() {
+      const root = document.getElementById("audit"); clear(root);
+      const diagnostics = report.integrity?.diagnostics || [];
+      addAuditDetails(root, `Integrity diagnostics (${diagnostics.length})`, diagnostics);
+      if (showDecisions) addAuditDetails(root, `Policy events (${(report.policy_events || []).length})`, report.policy_events || []);
+      addAuditDetails(root, `Multiplicity families (${(report.multiplicity || []).length})`, report.multiplicity || []);
+      addAuditDetails(root, "Provenance", report.provenance || {});
+      const displayedPlan = JSON.parse(JSON.stringify(plan));
+      if (!showDecisions) {
+        delete displayedPlan.claims;
+        if (displayedPlan.policy) delete displayedPlan.policy.zero_tolerance;
+      }
+      addAuditDetails(root, "Resolved plan", displayedPlan);
+    }
+
+    function bind() {
+      document.getElementById("cohort-select").addEventListener("change", event => {
+        state.cohort = event.target.value;
+        if (state.hierarchyView.startsWith("within:")) state.hierarchyView = `within:${state.cohort}`;
+        state.page = 0; state.selectedPrompt = null; renderDynamic();
+      });
+      document.getElementById("measure-select").addEventListener("change", event => { state.measure = event.target.value; renderRisk(); });
+      document.getElementById("independence-select").addEventListener("change", event => {
+        state.independenceProfile = event.target.value;
+        renderRisk(); renderHierarchyRisks(); renderComparisons();
+      });
+      document.getElementById("group-select").addEventListener("change", event => { state.group = event.target.value; state.hierarchyFilters = {}; state.page = 0; state.selectedPrompt = null; renderAllExploration(); renderRisk(); renderHierarchyRisks(); });
+      document.getElementById("prompt-search").addEventListener("input", event => { state.search = event.target.value.trim(); state.page = 0; renderPromptTable(); });
+      document.getElementById("sort-select").addEventListener("change", event => { state.sort = event.target.value; state.page = 0; renderPromptTable(); });
+    }
+    function renderDynamic() { renderSummary(); renderClaims(); renderRisk(); renderAllExploration(); renderHierarchyRisks(); }
+    renderHeader(); bind(); renderDynamic(); renderComparisons(); renderAudit();
+    document.getElementById("footer").textContent = `Generated from inspect-safety-stats schema ${report.schema_version || "—"}. Values are fixed-design summaries; hierarchy filters do not create population-level claims.`;
+  })();
+  </script>
+</body>
+</html>

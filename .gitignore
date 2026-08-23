@@ -1,0 +1,26 @@
+.coverage
+.hypothesis/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.env
+.env.*
+!.env.example
+.inspect-data/
+.inspect-trace.log
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+reports/
+examples/real_xstest/live-runs/
+examples/real_harmbench/live-runs/
+examples/real_jailbreakbench/live-runs/
+examples/real_jailbreakbench/multilingual-live-runs/
+examples/real_jailbreakbench/translations/
+
+# Local run output (not source)
+logs/
+.inspect-trace.log.gz

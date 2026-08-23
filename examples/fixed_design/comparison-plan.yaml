@@ -1,0 +1,130 @@
+schema_version: "2.0"
+
+analysis:
+  id: fixed-design-model-comparison
+  title: Fixed-design candidate versus baseline comparison
+  description: Example only; replace model identifiers and freeze metadata.
+  intent: confirmatory
+  plan_frozen_at: 2026-08-21T00:00:00Z
+
+inputs:
+  design_manifest: design.csv
+  score:
+    name: safety_failure
+    mapping:
+      failure_values: ["FAIL"]
+      safe_values: ["PASS"]
+    missing: conservative_bounds
+    errors: end_to_end
+
+design:
+  type: fixed
+  hierarchy: [task_id, question_id, prompt_id]
+  rollout_key: [eval_id, id, epoch]
+  require_complete_manifest: true
+  require_expected_rollouts: true
+  weights:
+    strategy: nested_equal
+    hierarchy: [task_id, question_id, prompt_id]
+  independence_profiles:
+    rollout:
+      block_by: [rollout]
+      comparison_coupling: independent
+    prompt:
+      block_by: [prompt_id]
+      comparison_coupling: joint
+
+cohorts:
+  candidate:
+    match: {model: model/candidate}
+    require_uniform: [task_version, model_generate_config, solver]
+  baseline:
+    match: {model: model/baseline}
+    require_uniform: [task_version, model_generate_config, solver]
+
+groups:
+  - id: all
+    title: All fixed safety requirements
+    filter: {}
+    weights:
+      strategy: nested_equal
+      hierarchy: [task_id, question_id, prompt_id]
+
+outputs:
+  prompt_bounds:
+    enabled: true
+    simultaneous: true
+    family: displayed_prompt_bounds
+    coverage_mode: two_sided
+    alpha_allocation: equal_bonferroni
+  direct_mean_intervals:
+    enabled: true
+    method: weighted_empirical_bernstein
+    reference_methods: [weighted_hoeffding]
+    family: displayed_direct_means
+    groups: [all]
+    simultaneous: true
+    coverage_mode: two_sided
+    hierarchy_nodes: true
+    independence:
+      primary: rollout
+      sensitivities: [prompt]
+  joint_tree_intervals:
+    enabled: true
+    include_one_sided_upper: true
+    family: model_comparisons
+    groups: [all]
+    independence_profile: rollout
+    include_comparisons: true
+    replicates: 5000
+    seed: 1729
+  risk_measures:
+    - {id: mean, type: weighted_mean}
+    - {id: cvar_90, type: cvar, beta: 0.90}
+    - {id: entropic_10, type: entropic, lambda: 10}
+    - {id: worst, type: maximum}
+
+comparisons:
+  - id: candidate_vs_baseline
+    candidate: candidate
+    baseline: baseline
+    group: all
+    measure: mean
+    estimand: risk_difference
+    method: weighted_empirical_bernstein
+    reference_methods: [weighted_hoeffding]
+    family: model_comparisons
+    simultaneous: true
+    coverage_mode: two_sided
+    hierarchy_nodes: true
+    independence:
+      primary: rollout
+      sensitivities: [prompt]
+    pair_key: [prompt_id, epoch]
+    diagnostic_methods: [exact_mcnemar, newcombe_paired]
+
+multiplicity:
+  families:
+    - id: displayed_prompt_bounds
+      purpose: simultaneous_intervals
+      method: bonferroni
+      alpha: 0.05
+    - id: displayed_direct_means
+      purpose: simultaneous_intervals
+      method: bonferroni
+      alpha: 0.05
+    - id: model_comparisons
+      purpose: simultaneous_intervals
+      method: bonferroni
+      alpha: 0.05
+
+claims: []
+
+policy:
+  zero_tolerance: {enabled: false}
+
+report:
+  include_decisions: false
+  include_prompt_text: false
+  include_observations: true
+  decimal_places: 6

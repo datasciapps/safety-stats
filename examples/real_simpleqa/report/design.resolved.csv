@@ -1,0 +1,9 @@
+group_id,prompt_id,question_id,task_id,weight
+all-eight,11,q-11,simpleqa,0.125
+all-eight,13,q-13,simpleqa,0.125
+all-eight,14,q-14,simpleqa,0.125
+all-eight,17,q-17,simpleqa,0.125
+all-eight,18,q-18,simpleqa,0.125
+all-eight,5,q-5,simpleqa,0.125
+all-eight,7,q-7,simpleqa,0.125
+all-eight,9,q-9,simpleqa,0.125
