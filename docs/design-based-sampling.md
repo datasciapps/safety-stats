@@ -57,6 +57,13 @@ regime this package targets, and should be the prespecified primary.
   sampling randomness inside the bound, not by outcome completion.
 - Within a sampled item, unclassified rollouts are completed as safe for the lower endpoint
   and as failures for the upper, as everywhere else.
+- Each sampled item enters as **one bounded observation**, its failure rate. The bound never
+  reads how many rollouts produced that rate, so extra rollouts per item do not tighten it:
+  under a sampled design, budget belongs in more items rather than more rollouts. Separating
+  between-item from within-item variance would sharpen this and is not yet implemented.
+
+A worked demonstration against a known answer is in
+[the sampled HarmBench example](../examples/sampled_harmbench/README.md).
 
 ## Declaring a sampled design
 

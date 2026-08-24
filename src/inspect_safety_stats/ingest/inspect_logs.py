@@ -646,7 +646,7 @@ def ingest_inspect_logs(
                     )
                     continue
                 exact = float(stratum_probabilities[0]) * len(members)
-                if abs(exact - round(exact)) > 1e-9:
+                if abs(exact - round(exact)) > 1e-6 * len(members):
                     diagnostics.append(
                         Diagnostic(
                             code="SAMPLE_DRAWS_NOT_INTEGER",

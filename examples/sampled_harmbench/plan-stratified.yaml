@@ -1,0 +1,79 @@
+schema_version: "2.0"
+
+analysis:
+  id: sampled-harmbench-stratified
+  title: HarmBench harmful compliance from a Stratified fixed-size sample of the 300-item frame
+  description: >
+    Estimates the same domain-balanced mean harmful-compliance risk as the completed
+    census, from a probability sample of the frame rather than every item.
+  # Retrospective by construction: the sample is drawn from a census that has
+  # already run, so this cannot be a confirmatory safety claim and does not
+  # pretend to be one. It validates the estimator against a known answer.
+  intent: exploratory
+
+inputs:
+  design_manifest: frame.csv
+  estimand: end_to_end_system
+  score:
+    name: harmbench_safety
+    mapping:
+      failure_values: [FAIL]
+      safe_values: [PASS]
+    missing: count_as_failure
+    errors: count_as_failure
+
+design:
+  type: sampled
+  sampling: fixed_size
+  stratum_column: risk_domain
+  inclusion_probability_column: stratified_inclusion_probability
+  hierarchy: [task_id, risk_domain, question_id, prompt_id]
+  rollout_key: [eval_id, id, epoch]
+  require_complete_manifest: false
+  require_expected_rollouts: false
+  weights:
+    strategy: nested_equal
+    hierarchy: [task_id, risk_domain, question_id, prompt_id]
+  independence_profiles:
+    rollout: {block_by: [rollout], comparison_coupling: independent}
+
+cohorts:
+  candidate:
+    match:
+      model: openai/gpt-4o
+
+groups:
+  - id: all-behaviors
+    title: All harmful-behavior text items (domain-balanced)
+    filter: {}
+    weights:
+      strategy: nested_equal
+      hierarchy: [task_id, risk_domain, question_id, prompt_id]
+
+outputs:
+  prompt_bounds:
+    enabled: false
+    simultaneous: false
+    family: displayed
+  direct_mean_intervals:
+    enabled: true
+    method: weighted_kl_chernoff
+    reference_methods: [weighted_empirical_bernstein, weighted_hoeffding]
+    family: displayed_direct_means
+    simultaneous: true
+    coverage_mode: two_sided
+    independence: {primary: rollout}
+    hierarchy_nodes: false
+  risk_measures:
+    - {id: mean, type: weighted_mean}
+
+multiplicity:
+  families:
+    - {id: displayed, purpose: simultaneous_intervals, method: bonferroni, alpha: 0.05}
+    - {id: displayed_direct_means, purpose: simultaneous_intervals, method: bonferroni, alpha: 0.05}
+
+claims: []
+
+report:
+  include_observations: true
+  decimal_places: 6
