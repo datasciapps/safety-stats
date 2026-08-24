@@ -27,7 +27,7 @@ from inspect_safety_stats.generative.ledger import (
     write_selections,
 )
 from inspect_safety_stats.generative.schema import load_generative_plan
-from tests.unit.test_generative_taxonomy import base_plan, materialize
+from tests.generative_fixtures import base_plan, materialize
 
 
 def request_for(attempt: int = 1) -> RewriteRequest:

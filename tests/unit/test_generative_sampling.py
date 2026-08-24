@@ -16,7 +16,7 @@ from inspect_safety_stats.generative.sampling import (
 )
 from inspect_safety_stats.generative.schema import load_generative_plan
 from inspect_safety_stats.generative.taxonomy import compile_taxonomy
-from tests.unit.test_generative_taxonomy import SEEDS, base_plan, materialize
+from tests.generative_fixtures import SEEDS, base_plan, materialize
 
 
 def build(tmp_path: Path, method: str, total: int, minimum: int = 0, seeds: str = SEEDS,

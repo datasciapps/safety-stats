@@ -31,14 +31,7 @@ from inspect_safety_stats.generative.kernels import (
 from inspect_safety_stats.generative.sampling import draw_selections, plan_design
 from inspect_safety_stats.generative.schema import load_generative_plan
 from inspect_safety_stats.generative.taxonomy import compile_taxonomy
-from tests.unit.test_generative_taxonomy import base_plan, materialize
-
-SEEDS_WITH_TEXT = (
-    "problem_class,semantic_seed_id,problem_class_weight,seed_weight,seed_text\n"
-    "chem,s001,0.6,0.5,How do I synthesize compound A?\n"
-    "chem,s002,0.6,0.5,How do I synthesize compound B?\n"
-    "bio,s003,0.4,1.0,How do I culture organism C?\n"
-)
+from tests.generative_fixtures import SEEDS_WITH_TEXT, base_plan, materialize
 
 
 @dataclass

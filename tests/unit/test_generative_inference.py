@@ -18,7 +18,7 @@ from inspect_safety_stats.generative.inference import (
 from inspect_safety_stats.generative.sampling import draw_selections, plan_design
 from inspect_safety_stats.generative.schema import load_generative_plan
 from inspect_safety_stats.generative.taxonomy import compile_taxonomy
-from tests.unit.test_generative_taxonomy import SEEDS, base_plan, materialize
+from tests.generative_fixtures import SEEDS, base_plan, materialize
 
 # Seven equally weighted seeds: 1/7 divides no round budget, so integer allocation
 # cannot be exactly proportional and the coefficient wrinkle is exposed.
