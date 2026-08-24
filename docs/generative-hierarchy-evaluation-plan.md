@@ -1699,3 +1699,59 @@ the same data.
 
 Slices overlap the tree's nodes, so they cannot join its Sidak frontiers. They are reported
 pointwise and are not part of a simultaneous family.
+
+## Cohort comparisons
+
+**Status:** implemented, 24 August 2026. `generative/comparisons.py`; measured by
+`research/generative_paired_comparison.py`.
+
+This is section 20's slice 5 reduced to the part that pays. The randomized incomplete block
+schedules are not built; shared rewrites already give the pairing, and nothing measured so
+far suggests the schedules would add to it.
+
+### Construction
+
+With `target.shared_rewrites` both arms evaluate the same accepted rewrite, so each
+sampling unit yields \(D_j = X^C_j - X^B_j \in \{-1, 0, 1\}\). The dependence between arms
+lives entirely inside a unit, where it is unrestricted; independence is claimed only across
+units, which is what path selection and rewrite generation actually deliver.
+
+Two constructions, chosen the way node inference chooses its kernel:
+
+- **equal coefficients, one rollout per rewrite** -- the two discordant counts are cells of
+  a trinomial, each marginally binomial, so exact Clopper--Pearson applies to each and a
+  union bound combines them. In the sparse-discordance regime this package targets that is
+  markedly tighter than any bounded-mean bound.
+- **otherwise** -- \(Q_j = (1 + D_j)/2 \in [0,1]\) is an ordinary bounded observation and
+  the weighted engine bounds its mean before rescaling. Encoding \(D\) on a scale of two
+  rollouts makes the engine's own missingness completion reproduce the conservative pairing
+  completion exactly, so an unclassified rollout in either arm widens the difference in the
+  right direction without special handling.
+
+Unpaired arms are supported for designs that gave each cohort its own `rewrite_salt`: the
+arms are bounded separately and combined by a union bound.
+
+### Pairing helps, which is not what slice 0 would predict
+
+Pairing is a variance-reduction device, and slice 0 established that variance reduction does
+not automatically improve the bound this package reports. So it was measured before being
+offered. Root risk difference, one-sided upper bound, relative to ignoring the pairing:
+
+| how alike the arms are | budget 600 | budget 2,400 |
+|---|---:|---:|
+| identical response to prompt difficulty | 2.3x -- 5.0x | 2.1x -- 9.8x |
+| half coupled | 1.28x -- 1.42x | 1.24x -- 1.44x |
+| independent given the prompt | 1.02x | 1.02x -- 1.03x |
+
+Pairing never widens the bound, and the mechanism is the reason. Importance sampling buys
+variance by making coefficients unequal, and a bounded-weight concentration inequality
+charges for coefficient inequality. Pairing instead shrinks the **range** of each unit's
+contribution -- a concordant unit contributes exactly zero -- which is what such a bound is
+most sensitive to. The two techniques act on opposite sides of the same inequality.
+
+### Not implemented
+
+Only the risk difference. Ratios and relative reductions would follow from the two arm
+intervals under a union bound, and both arm intervals are reported on every comparison, but
+nothing derives them. Comparisons also sit outside the tree's Sidak frontiers, since they
+overlap its nodes; comparing several nodes means allocating alpha across them explicitly.

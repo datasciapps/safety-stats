@@ -9,6 +9,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from inspect_safety_stats.generative.comparisons import compare_cohorts
 from inspect_safety_stats.generative.execution import (
     execute_rewrites,
     load_seed_texts,
@@ -142,3 +143,45 @@ def test_the_materialized_dataset_is_valid_and_paired(tmp_path: Path) -> None:
     assert len(rows) == 200
     assert len({row["id"] for row in rows}) == 200
     assert all(row["input"] and row["metadata"]["path_hash"] for row in rows)
+
+
+def test_the_example_comparison_covers_its_known_difference() -> None:
+    plan = load_generative_plan(EXAMPLE / "plan-direct.yaml")
+    plan.sampling.total_rewrites = 1200
+    taxonomy = compile_taxonomy(plan, base_path=EXAMPLE)
+    fingerprint = resolve_kernel_fingerprint(plan, base_path=EXAMPLE)
+    design = plan_design(taxonomy, plan)
+    selections = draw_selections(taxonomy, design)
+    result = execute_rewrites(
+        plan,
+        selections,
+        DeterministicFakeKernel(),
+        fingerprint,
+        load_seed_texts(plan, base_path=EXAMPLE),
+    )
+    samples = simulated_target.evaluate_pair(
+        selections, result.accepted, np.random.default_rng(0)
+    )
+    baseline = join_outcomes(plan, selections, result, samples, cohort_id="baseline")
+    candidate = join_outcomes(plan, selections, result, samples, cohort_id="candidate")
+    assert not baseline.has_errors and not candidate.has_errors
+
+    truth = simulated_target.true_difference(taxonomy)
+    assert truth > 0
+    together = compare_cohorts(
+        taxonomy, design, selections, list(candidate.outcomes), list(baseline.outcomes)
+    )
+    apart = compare_cohorts(
+        taxonomy,
+        design,
+        selections,
+        list(candidate.outcomes),
+        list(baseline.outcomes),
+        paired=False,
+    )
+    assert together.method == "paired_binomial_cells"
+    assert together.upper >= truth
+    assert together.upper < apart.upper
+    # Most units agree, and an agreeing unit contributes exactly zero to the difference.
+    discordant = together.discordant_candidate_only + together.discordant_baseline_only
+    assert discordant < 0.1 * together.draws

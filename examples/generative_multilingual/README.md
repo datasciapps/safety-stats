@@ -91,7 +91,7 @@ Each replicate redraws the sample as well as the outcomes, so what is measured i
 procedure, not the noise in one fixed sample. Coverage lands just above nominal rather than
 far above it, and the mean point estimate sits on the truth.
 
-## Three things the example is built to show
+## Four things the example is built to show
 
 ### A single interval may miss, and that is the guarantee working
 
@@ -114,6 +114,39 @@ terminal paths. The draws landing in it are still independent conditional on the
 so the same exact construction applies. `estimate_slice` does exactly that, and the same
 question answered properly gives 0.027–0.112. **This estimator exists because building this
 example exposed the gap.**
+
+### Pairing is where the comparison gets its power
+
+Both cohorts evaluate the **same** accepted rewrites, so each sampling unit yields a paired
+difference in {-1, 0, +1}. The dependence between arms lives inside a unit, where it is
+unrestricted; independence is only claimed across units, which is exactly what path
+selection and rewrite generation deliver.
+
+```
+candidate versus baseline on the same rewrites
+  true risk difference   +0.01226
+  point estimate         +0.01583
+  95% upper bound        +0.02826   covers: True
+  method                 paired_binomial_cells
+  discordant units       24 candidate-only, 5 baseline-only, 1171 concordant
+  ignoring the pairing   +0.03883   (1.37x wider)
+```
+
+1,171 of 1,200 units are concordant and contribute **exactly zero**, so the bound reads
+only the 29 units where the models disagreed. How much that is worth depends entirely on
+how alike the arms are; `research/generative_paired_comparison.py` measures it:
+
+| how alike the arms are | pairing gain |
+|---|---:|
+| identical response to prompt difficulty | 2.0x – 9.8x |
+| half coupled (the case shown above) | 1.24x – 1.44x |
+| independent given the prompt | 1.02x |
+
+Pairing never *widens* the bound. That is the opposite of what
+[slice 0](../../docs/generative-hierarchy-evaluation-plan.md) found for importance
+sampling, and for a concrete reason: importance sampling buys variance by making the
+coefficients unequal, which a bounded-weight bound charges for, whereas pairing shrinks the
+*range* of each unit's contribution, which is what such a bound is most sensitive to.
 
 ### The stratum floor has a price, and it is not rounding
 
@@ -149,9 +182,11 @@ artifact containing prompt text — the ledgers carry hashes.
 
 - **There is no CLI for the generative path.** `inspect-safety-stats analyze` handles fixed
   plans only, so this example is driven by scripts.
-- **No comparisons.** `estimate_tree` covers one cohort at a time. `shared_rewrites` already
-  materializes paired arms, but nothing consumes the pairing yet.
-- **Slices are pointwise.** They overlap the tree's nodes, so they cannot join its Šidák
-  frontiers and are not part of a simultaneous family.
+- **Slices and comparisons are pointwise.** Both overlap the tree's nodes, so neither can
+  join its Šidák frontiers, and neither is part of a simultaneous family. Comparing several
+  nodes means spending alpha across them yourself.
+- **Risk difference only.** Ratios and relative reductions are not implemented; the two arm
+  intervals are reported alongside each comparison, so they can be derived by hand under a
+  union bound.
 - **The judge is not modelled.** [Judge misclassification](../../docs/judge-misclassification.md)
   applies to fixed designs; nothing here corrects for a fallible scorer.

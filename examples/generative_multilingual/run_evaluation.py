@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 import simulated_target
 
+from inspect_safety_stats.generative.comparisons import compare_cohorts
 from inspect_safety_stats.generative.execution import (
     execute_rewrites,
     load_seed_texts,
@@ -78,10 +79,11 @@ def main() -> None:
     datasets = materialize_for_cohorts(plan, selections, result, output / "datasets")
     print(f"materialized    : {datasets['baseline']}")
 
-    samples = simulated_target.evaluate(
+    samples = simulated_target.evaluate_pair(
         selections, result.accepted, np.random.default_rng(arguments.seed)
     )
     joined = join_outcomes(plan, selections, result, samples, cohort_id="baseline")
+    candidate_joined = join_outcomes(plan, selections, result, samples, cohort_id="candidate")
     for diagnostic in joined.diagnostics:
         print(f"  [{diagnostic.severity}] {diagnostic.code}: {diagnostic.message}")
 
@@ -143,6 +145,46 @@ def main() -> None:
         "  misses about one run in twenty, and four of them miss at least once about one run\n"
         "  in five. validate_coverage.py measures the long-run rate, which is what the\n"
         "  guarantee is about."
+    )
+
+    print("\ncandidate versus baseline on the same rewrites")
+    truth = simulated_target.true_difference(taxonomy)
+    together = compare_cohorts(
+        taxonomy,
+        design,
+        selections,
+        list(candidate_joined.outcomes),
+        list(joined.outcomes),
+        alpha=plan.inference.alpha,
+        coverage_mode=plan.inference.coverage_mode,
+    )
+    apart = compare_cohorts(
+        taxonomy,
+        design,
+        selections,
+        list(candidate_joined.outcomes),
+        list(joined.outcomes),
+        alpha=plan.inference.alpha,
+        coverage_mode=plan.inference.coverage_mode,
+        paired=False,
+    )
+    print(f"  true risk difference   {truth:+.5f}")
+    print(f"  point estimate         {together.estimate:+.5f}")
+    print(f"  95% upper bound        {together.upper:+.5f}   covers: {together.upper >= truth}")
+    print(f"  method                 {together.method}")
+    if together.discordant_candidate_only is not None:
+        concordant = together.draws - (
+            together.discordant_candidate_only + together.discordant_baseline_only
+        )
+        print(
+            f"  discordant units       {together.discordant_candidate_only} candidate-only, "
+            f"{together.discordant_baseline_only} baseline-only, {concordant} concordant"
+        )
+    widening = apart.upper / together.upper
+    print(f"  ignoring the pairing   {apart.upper:+.5f}   ({widening:.2f}x wider)")
+    print(
+        "  Concordant units contribute exactly zero to the difference, so the bound reads\n"
+        "  only the units where the two models disagreed."
     )
 
     print("\ndeepest reportable nodes are thin by design")

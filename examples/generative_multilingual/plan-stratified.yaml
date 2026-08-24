@@ -82,6 +82,9 @@ target:
     baseline:
       model: simulated/baseline
       generate_config: {temperature: 1.0, max_tokens: 512}
+    candidate:
+      model: simulated/candidate
+      generate_config: {temperature: 1.0, max_tokens: 512}
   shared_rewrites: true
   rollouts_per_rewrite: 1
   score:
