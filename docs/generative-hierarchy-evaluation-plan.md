@@ -1,14 +1,19 @@
 # Generative hierarchy evaluation planner: implementation plan
 
-**Status:** design proposal; no implementation is implied by this document  
+**Status:** slice G1 implemented; slices 3, 4 and 7 closed by the slice 0 measurement  
 **Target package:** `inspect-safety-stats`  
 **Relationship to the current package:** separate generative-design module that reuses ingestion,
 outcome mapping, hierarchy identifiers, and report components  
-**Scope of this plan:** implementation through cross-entropy adaptive importance sampling; SMC,
-subset simulation, evolutionary prompt mutation, and anytime-valid live stopping are deferred  
-**Last updated:** 23 August 2026; amended 24 August 2026 with the slice 0 measurement  
-**Amendment:** see *Slice 0 result* at the end -- variance reduction does not improve
-the finite-sample bound this package reports, which bears directly on slices 3, 4 and 7
+**Scope of this plan:** as written, implementation through cross-entropy adaptive importance
+sampling; as amended, direct target-distribution sampling with guaranteed stratum coverage.
+SMC, subset simulation, evolutionary prompt mutation, and anytime-valid live stopping were
+never in scope  
+**Last updated:** 24 August 2026  
+**Amendments:** *Slice 0 result* -- variance reduction does not improve the finite-sample
+bound this package reports, which closes slices 3, 4 and 7. *Slice G1 as built* -- the
+reduced roadmap, the decisions taken, and where the implementation departs from sections
+6 to 8. Both are at the end of this document and supersede the plan above where they
+disagree.
 
 ## 1. Objective
 
@@ -1504,3 +1509,56 @@ coverage of declared strata costs nothing even though it buys nothing.
 
 Before building slice 3, 4 or 7, re-run this comparison on a tree that matches the intended
 evaluation. If it still shows the same sign, build slice 2 and stop.
+
+## Slice G1 as built
+
+**Status:** implemented, 24 August 2026. Modules under
+`src/inspect_safety_stats/generative/`; tests in `tests/unit/test_generative_taxonomy.py`
+and `tests/unit/test_generative_kernels_ledger.py`.
+
+Following the slice 0 result, the seven slices of section 20 were reduced to two builds
+and a gate. G1 is section 20's slice 1; G2 is its slice 2 plus the coverage half of slice
+3. Slices 3 (Neyman), 4 and 7 are closed by measurement, and slice 6 is deferred behind a
+separate measurement of residual-range reduction.
+
+### Decisions taken
+
+**The generative plan is a separate top-level document.** The fixed analysis plan
+conditions on a materialized design; a generative plan declares the process that produces
+prompts. One file carrying both would let an author combine them into an estimand neither
+engine can state, so `GenerativePlan` shares no schema with `AnalysisPlan`.
+
+**Path selection is always reproducible; the rewrite kernel is only frozen and
+fingerprinted.** Selection is ours, so it replays exactly from `evaluation.selection_seed`.
+An LLM rewrite kernel cannot be forced to be reproducible, so the floor is a fingerprint
+over its complete resolved configuration -- template contents, decoding, validation and
+deduplication rules included -- with `rewrite.seed_replayable` as an optional declared
+property for kernels that can do better.
+
+### Deviations from sections 6 to 8
+
+- Eight modules rather than fifteen. `balance`, `variance`, `allocation`, `model_assisted`,
+  `cross_entropy` and `comparisons` are not created.
+- `node_type` has no `rewrite_kernel` value. A single kernel serves every path, so terminal
+  nodes carry `rewrite_kernel_id` and the criterion "every positive-weight node has a valid
+  route to a rewrite kernel" reduces to "every non-terminal node retained a child".
+- The `sampling` block offers `direct` and `proportional_stratified` only; the
+  `model_assisted` and `cross_entropy` blocks are absent rather than disabled.
+- The selection ledger drops `round` and renames `allocation_stratum` to `stratum`.
+  `proposal_path_probability` and `proposal_id` are kept even though direct sampling always
+  sets the proposal equal to the target, so an auditor can verify that rather than assume it.
+- Section 7.2's "explicit context-specific weights supplied in a transition table" is
+  implemented as an inline `context_weights` list on the arm rather than a separate file.
+- `|` and `=` are reserved in every identifier, because canonical node ids are built from
+  them. Compilation rejects an identifier containing either.
+
+### Invariants the compiler enforces
+
+Cycles and orphans are not rejected at runtime because they cannot be expressed: the
+hierarchy is a declared ordered list and every node id contains its parent's id as a prefix.
+What is checked is weight normalization at every frontier, one fixed parent path per
+semantic seed, a positive-weight node never losing all its children to a constraint,
+constraints that condition strictly above what they prune, and a declared `renormalization`
+rule whenever constraints prune at all. Semantically identical plans -- differing only in
+declaration order, or in `equal_within_parent` versus explicit equal weights -- compile to
+the same fingerprint.
