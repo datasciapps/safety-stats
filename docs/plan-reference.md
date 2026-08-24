@@ -289,9 +289,8 @@ comparisons:
 `risk_difference` is candidate minus baseline, so negative values favor the candidate.
 `risk_ratio` is candidate divided by baseline. `relative_risk_reduction` is one minus that ratio,
 so positive values favor the candidate. Direct weighted KL/Chernoff, empirical-Bernstein, and
-Hoeffding inference is available for `weighted_mean` measures. Other risk measures can use the legacy
-`fixed_design_bounds` envelope, which subtracts or transforms the two arms' simultaneous risk
-bounds and is generally more conservative.
+Hoeffding inference requires a `weighted_mean` measure. Every comparison names a multiplicity
+family and an independence selection.
 
 Each direct comparison names a simultaneous-interval family. With `flat_bonferroni`, error is
 allocated over every requested overall and hierarchy-node result. With `frontier_sidak`, error is
@@ -319,7 +318,6 @@ intervals only. `frontier_sidak` requires `hierarchy_nodes: true`.
 
 Pair and cluster keys for McNemar, Newcombe, and bootstrap diagnostics are supplied by the creator;
 the package never infers them. These diagnostics remain separate from the primary direct interval.
-`fixed_design_bounds` remains accepted for backward compatibility.
 
 See [Fixed-design model and configuration comparisons](model-comparisons.md) for the complete
 mathematical construction, assumptions, output fields, and visualization guide.

@@ -82,7 +82,6 @@ outputs:
     - {id: worst, type: maximum}
     - {id: exceedance_25, type: threshold_exceedance, threshold: 0.25}
     - {id: excess_25, type: threshold_excess, threshold: 0.25}
-    - {id: power_4, type: power_mean, order: 4, diagnostic_only: true}
 
 multiplicity:
   families:

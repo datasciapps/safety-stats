@@ -212,14 +212,11 @@ top_k_mean(values, *, k)
 entropic_risk(values, weights, *, lambda_)
 threshold_exceedance(values, weights, *, threshold)
 threshold_excess(values, weights, *, threshold)
-power_mean(values, weights, *, order)
-design_quantile(values, weights, *, beta)
-spectral_risk(values, weights, *, spectrum)
 ```
 
 Weights must be nonnegative and sum to one. Scalar or item-specific thresholds are accepted.
 CVaR uses fractional boundary mass. The implementation evaluates entropic risk in a numerically
-stable form. Power mean, design quantile, and spectral risk are diagnostic-only under the plan semantics.
+stable form. Any measure may be marked `diagnostic_only` in the plan to bar it from backing a claim.
 
 ### Paired and clustered comparisons
 

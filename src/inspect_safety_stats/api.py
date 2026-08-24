@@ -57,11 +57,8 @@ from inspect_safety_stats.stats.independence import (
 from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
 from inspect_safety_stats.stats.paired import exact_mcnemar, newcombe_paired_interval
 from inspect_safety_stats.stats.risk import (
-    design_quantile,
     entropic_risk,
     maximum_risk,
-    power_mean,
-    spectral_risk,
     threshold_exceedance,
     threshold_excess,
     top_k_mean,
@@ -329,14 +326,6 @@ def _risk_value(
     if measure.type == "entropic":
         assert measure.lambda_ is not None
         return entropic_risk(values, weights, lambda_=float(measure.lambda_))
-    if measure.type == "power_mean":
-        assert measure.order is not None
-        return power_mean(values, weights, order=float(measure.order))
-    if measure.type == "design_quantile":
-        assert measure.beta is not None
-        return design_quantile(values, weights, beta=float(measure.beta))
-    if measure.type == "spectral":
-        return spectral_risk(values, weights, spectrum=measure.spectrum or [])
     if measure.type == "threshold_exceedance":
         assert threshold is not None
         return threshold_exceedance(values, weights, threshold=threshold)
@@ -1637,7 +1626,7 @@ def _comparison_calibrations(
     result: dict[str, _EndpointCalibration] = {}
     simultaneous_by_family: dict[str, list[ComparisonSpec]] = {}
     for spec in plan.expanded_comparisons():
-        if spec.method == "fixed_design_bounds" or not spec.family:
+        if not spec.family:
             continue
         family = families.get(spec.family)
         if family is None:
@@ -2197,8 +2186,7 @@ def _project_comparison_hierarchy_regions(
     for comparison_id, targets in target_map.items():
         spec = specs[comparison_id]
         if (
-            spec.method == "fixed_design_bounds"
-            or not spec.hierarchy_nodes
+            not spec.hierarchy_nodes
             or spec.hierarchy_region != "linear_program"
             or not targets
         ):
@@ -2594,13 +2582,10 @@ def _comparisons(
     plan: AnalysisPlan,
     data: NormalizedData,
     estimates: list[PromptEstimate],
-    risks: list[GroupRiskResult],
     diagnostics: list[Diagnostic],
 ) -> list[ComparisonResult]:
-    risk_index = {(item.cohort_id, item.group_id, item.measure_id): item for item in risks}
     estimate_index = {(item.cohort_id, item.prompt_id): item for item in estimates}
     families = {family.id: family for family in plan.multiplicity.families}
-    bound_family = families.get(plan.outputs.prompt_bounds.family or "")
     target_map: dict[str, list[_ComparisonTarget]] = {}
     expanded_comparisons = plan.expanded_comparisons()
     for spec in expanded_comparisons:
@@ -2611,354 +2596,232 @@ def _comparisons(
     comparison_calibrations = _comparison_calibrations(plan, data, target_map, diagnostics)
     results: list[ComparisonResult] = []
     for spec in expanded_comparisons:
-        if spec.method != "fixed_design_bounds":
-            family = families.get(spec.family or "")
-            if family is None:
-                continue
-            directional_family_alpha, one_sided, joint = _coverage_floors(
-                family.alpha, spec.coverage_mode
+        family = families.get(spec.family or "")
+        if family is None:
+            continue
+        directional_family_alpha, one_sided, joint = _coverage_floors(
+            family.alpha, spec.coverage_mode
+        )
+        assert directional_family_alpha is not None
+        assert spec.independence is not None
+        for target in target_map[spec.id]:
+            candidate_items = [
+                estimate_index[(spec.candidate, prompt_id)] for prompt_id in target.prompt_ids
+            ]
+            baseline_items = [
+                estimate_index[(spec.baseline, prompt_id)] for prompt_id in target.prompt_ids
+            ]
+            weights = np.asarray(target.weights, dtype=float)
+            candidate_estimate = (
+                float(np.dot(weights, [cast(float, item.p_hat) for item in candidate_items]))
+                if all(item.p_hat is not None for item in candidate_items)
+                else None
             )
-            assert directional_family_alpha is not None
-            assert spec.independence is not None
-            for target in target_map[spec.id]:
-                candidate_items = [
-                    estimate_index[(spec.candidate, prompt_id)] for prompt_id in target.prompt_ids
-                ]
-                baseline_items = [
-                    estimate_index[(spec.baseline, prompt_id)] for prompt_id in target.prompt_ids
-                ]
-                weights = np.asarray(target.weights, dtype=float)
-                candidate_estimate = (
-                    float(np.dot(weights, [cast(float, item.p_hat) for item in candidate_items]))
-                    if all(item.p_hat is not None for item in candidate_items)
+            baseline_estimate = (
+                float(np.dot(weights, [cast(float, item.p_hat) for item in baseline_items]))
+                if all(item.p_hat is not None for item in baseline_items)
+                else None
+            )
+            summaries: dict[str, float | None] = {
+                "risk_difference": (
+                    candidate_estimate - baseline_estimate
+                    if candidate_estimate is not None and baseline_estimate is not None
                     else None
-                )
-                baseline_estimate = (
-                    float(np.dot(weights, [cast(float, item.p_hat) for item in baseline_items]))
-                    if all(item.p_hat is not None for item in baseline_items)
+                ),
+                "risk_ratio": (
+                    candidate_estimate / baseline_estimate
+                    if candidate_estimate is not None
+                    and baseline_estimate is not None
+                    and baseline_estimate > 0
                     else None
-                )
-                summaries: dict[str, float | None] = {
-                    "risk_difference": (
-                        candidate_estimate - baseline_estimate
-                        if candidate_estimate is not None and baseline_estimate is not None
-                        else None
-                    ),
-                    "risk_ratio": (
-                        candidate_estimate / baseline_estimate
-                        if candidate_estimate is not None
-                        and baseline_estimate is not None
-                        and baseline_estimate > 0
-                        else None
-                    ),
-                }
-                summaries["relative_risk_reduction"] = (
-                    1 - summaries["risk_ratio"] if summaries["risk_ratio"] is not None else None
-                )
-                intervals: list[RiskIntervalResult] = []
-                warnings: list[str] = []
-                blocked = any(
-                    item.n_total <= 0
-                    or _prompt_blocked(diagnostics, item.cohort_id, item.prompt_id)
-                    for item in [*candidate_items, *baseline_items]
-                )
-                if blocked:
-                    warnings.append("Both arms require a complete valid attempted-rollout ledger.")
-                else:
-                    methods = [spec.method, *spec.reference_methods]
-                    profile_ids = [
-                        spec.independence.primary,
-                        *spec.independence.sensitivities,
-                    ]
-                    for profile_id in profile_ids:
-                        calibration = comparison_calibrations.get(
-                            _comparison_target_key(spec.id, target.result_id, profile_id)
+                ),
+            }
+            summaries["relative_risk_reduction"] = (
+                1 - summaries["risk_ratio"] if summaries["risk_ratio"] is not None else None
+            )
+            intervals: list[RiskIntervalResult] = []
+            warnings: list[str] = []
+            blocked = any(
+                item.n_total <= 0
+                or _prompt_blocked(diagnostics, item.cohort_id, item.prompt_id)
+                for item in [*candidate_items, *baseline_items]
+            )
+            if blocked:
+                warnings.append("Both arms require a complete valid attempted-rollout ledger.")
+            else:
+                methods = [spec.method, *spec.reference_methods]
+                profile_ids = [
+                    spec.independence.primary,
+                    *spec.independence.sensitivities,
+                ]
+                for profile_id in profile_ids:
+                    calibration = comparison_calibrations.get(
+                        _comparison_target_key(spec.id, target.result_id, profile_id)
+                    )
+                    if calibration is None:
+                        warnings.append(
+                            f"Calibration is unavailable for profile {profile_id!r}."
                         )
-                        if calibration is None:
-                            warnings.append(
-                                f"Calibration is unavailable for profile {profile_id!r}."
-                            )
-                            continue
-                        profile = plan.design.independence_profiles[profile_id]
-                        contrast_blocks = comparison_contrast_blocks(
-                            data.observations,
-                            data.manifest,
-                            profile,
-                            candidate=spec.candidate,
-                            baseline=spec.baseline,
-                            prompt_ids=target.prompt_ids,
-                            prompt_weights=weights,
+                        continue
+                    profile = plan.design.independence_profiles[profile_id]
+                    contrast_blocks = comparison_contrast_blocks(
+                        data.observations,
+                        data.manifest,
+                        profile,
+                        candidate=spec.candidate,
+                        baseline=spec.baseline,
+                        prompt_ids=target.prompt_ids,
+                        prompt_weights=weights,
+                    )
+                    candidate_blocks = direct_bounded_blocks(
+                        data.observations,
+                        data.manifest,
+                        profile,
+                        cohort_id=spec.candidate,
+                        prompt_ids=target.prompt_ids,
+                        prompt_weights=weights,
+                    )
+                    baseline_blocks = direct_bounded_blocks(
+                        data.observations,
+                        data.manifest,
+                        profile,
+                        cohort_id=spec.baseline,
+                        prompt_ids=target.prompt_ids,
+                        prompt_weights=weights,
+                    )
+                    for method_index, method in enumerate(methods):
+                        role: Literal["primary", "reference", "sensitivity"] = (
+                            "sensitivity"
+                            if profile_id != spec.independence.primary
+                            else "primary"
+                            if method_index == 0
+                            else "reference"
                         )
-                        candidate_blocks = direct_bounded_blocks(
-                            data.observations,
-                            data.manifest,
-                            profile,
-                            cohort_id=spec.candidate,
-                            prompt_ids=target.prompt_ids,
-                            prompt_weights=weights,
-                        )
-                        baseline_blocks = direct_bounded_blocks(
-                            data.observations,
-                            data.manifest,
-                            profile,
-                            cohort_id=spec.baseline,
-                            prompt_ids=target.prompt_ids,
-                            prompt_weights=weights,
-                        )
-                        for method_index, method in enumerate(methods):
-                            role: Literal["primary", "reference", "sensitivity"] = (
-                                "sensitivity"
-                                if profile_id != spec.independence.primary
-                                else "primary"
-                                if method_index == 0
-                                else "reference"
-                            )
-                            try:
-                                bounds: DirectComparisonBounds | RatioComparisonBounds
-                                if spec.estimand == "risk_difference":
-                                    bounds = (
-                                        _difference_rectangle_from_blocks(
-                                            method,
-                                            candidate_blocks,
-                                            baseline_blocks,
-                                            alpha=calibration.endpoint_alpha,
-                                            profile_id=profile_id,
-                                        )
-                                        if method == "weighted_kl_chernoff"
-                                        or spec._joint_arm_region
-                                        else _difference_from_blocks(
-                                            method,
-                                            contrast_blocks,
-                                            alpha=calibration.endpoint_alpha,
-                                            profile_id=profile_id,
-                                        )
-                                    )
-                                else:
-                                    bounds = _ratio_from_blocks(
-                                        method=method,
-                                        candidate_blocks=candidate_blocks,
-                                        baseline_blocks=baseline_blocks,
+                        try:
+                            bounds: DirectComparisonBounds | RatioComparisonBounds
+                            if spec.estimand == "risk_difference":
+                                bounds = (
+                                    _difference_rectangle_from_blocks(
+                                        method,
+                                        candidate_blocks,
+                                        baseline_blocks,
                                         alpha=calibration.endpoint_alpha,
                                         profile_id=profile_id,
-                                        estimand=cast(
-                                            Literal["risk_ratio", "relative_risk_reduction"],
-                                            spec.estimand,
-                                        ),
                                     )
-                                intervals.append(
-                                    _comparison_interval(
-                                        bounds=bounds,
-                                        spec=spec,
-                                        method=method,
-                                        role=role,
-                                        independence_profile=profile_id,
-                                        independent_block_count=contrast_blocks.count,
-                                        profile_block_by=profile.block_by,
-                                        comparison_coupling=profile.comparison_coupling,
-                                        family_alpha=family.alpha,
-                                        calibration=calibration,
+                                    if method == "weighted_kl_chernoff"
+                                    or spec._joint_arm_region
+                                    else _difference_from_blocks(
+                                        method,
+                                        contrast_blocks,
+                                        alpha=calibration.endpoint_alpha,
+                                        profile_id=profile_id,
                                     )
                                 )
-                            except (TypeError, ValueError) as exc:
-                                warnings.append(str(exc))
-                                diagnostics.append(
-                                    Diagnostic(
-                                        code="COMPARISON_INTERVAL_INVALID",
-                                        severity="ERROR",
-                                        message=str(exc),
-                                        scope=target.result_id,
-                                    )
+                            else:
+                                bounds = _ratio_from_blocks(
+                                    method=method,
+                                    candidate_blocks=candidate_blocks,
+                                    baseline_blocks=baseline_blocks,
+                                    alpha=calibration.endpoint_alpha,
+                                    profile_id=profile_id,
+                                    estimand=cast(
+                                        Literal["risk_ratio", "relative_risk_reduction"],
+                                        spec.estimand,
+                                    ),
                                 )
-                primary = next((item for item in intervals if item.role == "primary"), None)
-                estimate = summaries.get(spec.estimand)
-                pair_count = cluster_count = None
-                discordant: dict[str, int] = {}
-                p_value = None
-                diagnostic_outputs: dict[str, Any] = {}
-                if target.level is None:
-                    try:
-                        (
-                            pair_count,
-                            discordant,
-                            p_value,
-                            cluster_count,
-                            diagnostic_outputs,
-                        ) = _paired_comparison_diagnostics(spec, data, set(target.prompt_ids))
-                    except ValueError as exc:
-                        diagnostics.append(
-                            Diagnostic(
-                                code="PAIR_BROKEN",
-                                severity="ERROR",
-                                message=str(exc),
-                                scope=spec.id,
+                            intervals.append(
+                                _comparison_interval(
+                                    bounds=bounds,
+                                    spec=spec,
+                                    method=method,
+                                    role=role,
+                                    independence_profile=profile_id,
+                                    independent_block_count=contrast_blocks.count,
+                                    profile_block_by=profile.block_by,
+                                    comparison_coupling=profile.comparison_coupling,
+                                    family_alpha=family.alpha,
+                                    calibration=calibration,
+                                )
                             )
+                        except (TypeError, ValueError) as exc:
+                            warnings.append(str(exc))
+                            diagnostics.append(
+                                Diagnostic(
+                                    code="COMPARISON_INTERVAL_INVALID",
+                                    severity="ERROR",
+                                    message=str(exc),
+                                    scope=target.result_id,
+                                )
+                            )
+            primary = next((item for item in intervals if item.role == "primary"), None)
+            estimate = summaries.get(spec.estimand)
+            pair_count = cluster_count = None
+            discordant: dict[str, int] = {}
+            p_value = None
+            diagnostic_outputs: dict[str, Any] = {}
+            if target.level is None:
+                try:
+                    (
+                        pair_count,
+                        discordant,
+                        p_value,
+                        cluster_count,
+                        diagnostic_outputs,
+                    ) = _paired_comparison_diagnostics(spec, data, set(target.prompt_ids))
+                except ValueError as exc:
+                    diagnostics.append(
+                        Diagnostic(
+                            code="PAIR_BROKEN",
+                            severity="ERROR",
+                            message=str(exc),
+                            scope=spec.id,
                         )
-                        warnings.append(str(exc))
-                results.append(
-                    ComparisonResult(
-                        comparison_id=spec.id,
-                        comparison_set_id=spec._comparison_set_id,
-                        result_id=target.result_id,
-                        candidate_cohort=spec.candidate,
-                        baseline_cohort=spec.baseline,
-                        group_id=spec.group,
-                        measure_id=spec.measure,
-                        estimand=spec.estimand,
-                        level=target.level,
-                        path=target.path,
-                        candidate_estimate=candidate_estimate,
-                        baseline_estimate=baseline_estimate,
-                        estimate=estimate,
-                        lower=primary.lower if primary is not None else None,
-                        upper=primary.upper if primary is not None else None,
-                        method=f"direct_fixed_design_{spec.estimand}",
-                        primary_interval_id=(primary.interval_id if primary is not None else None),
-                        intervals=intervals,
-                        interval_method=primary.method if primary is not None else None,
-                        coverage_scope=primary.coverage_scope if primary is not None else None,
-                        coverage_mode=spec.coverage_mode,
-                        family=family.id,
-                        family_alpha=family.alpha,
-                        directional_family_alpha=directional_family_alpha,
-                        simultaneous_coverage=(joint if spec.simultaneous else None),
-                        lower_one_sided_coverage=one_sided,
-                        upper_one_sided_coverage=one_sided,
-                        independence_profile=spec.independence.primary,
-                        prompt_count=len(target.prompt_ids),
-                        candidate_rollout_count=sum(item.n_total for item in candidate_items),
-                        baseline_rollout_count=sum(item.n_total for item in baseline_items),
-                        resolved_weight=target.design_weight,
-                        effect_summaries=summaries,
-                        pair_count=pair_count,
-                        discordant_counts=discordant,
-                        p_value=p_value,
-                        cluster_count=cluster_count,
-                        diagnostic_outputs=diagnostic_outputs,
-                        eligibility=(primary.eligibility if primary is not None else "invalid"),
-                        warnings=warnings + (primary.warnings if primary is not None else []),
                     )
+                    warnings.append(str(exc))
+            results.append(
+                ComparisonResult(
+                    comparison_id=spec.id,
+                    comparison_set_id=spec._comparison_set_id,
+                    result_id=target.result_id,
+                    candidate_cohort=spec.candidate,
+                    baseline_cohort=spec.baseline,
+                    group_id=spec.group,
+                    measure_id=spec.measure,
+                    estimand=spec.estimand,
+                    level=target.level,
+                    path=target.path,
+                    candidate_estimate=candidate_estimate,
+                    baseline_estimate=baseline_estimate,
+                    estimate=estimate,
+                    lower=primary.lower if primary is not None else None,
+                    upper=primary.upper if primary is not None else None,
+                    method=f"direct_fixed_design_{spec.estimand}",
+                    primary_interval_id=(primary.interval_id if primary is not None else None),
+                    intervals=intervals,
+                    interval_method=primary.method if primary is not None else None,
+                    coverage_scope=primary.coverage_scope if primary is not None else None,
+                    coverage_mode=spec.coverage_mode,
+                    family=family.id,
+                    family_alpha=family.alpha,
+                    directional_family_alpha=directional_family_alpha,
+                    simultaneous_coverage=(joint if spec.simultaneous else None),
+                    lower_one_sided_coverage=one_sided,
+                    upper_one_sided_coverage=one_sided,
+                    independence_profile=spec.independence.primary,
+                    prompt_count=len(target.prompt_ids),
+                    candidate_rollout_count=sum(item.n_total for item in candidate_items),
+                    baseline_rollout_count=sum(item.n_total for item in baseline_items),
+                    resolved_weight=target.design_weight,
+                    effect_summaries=summaries,
+                    pair_count=pair_count,
+                    discordant_counts=discordant,
+                    p_value=p_value,
+                    cluster_count=cluster_count,
+                    diagnostic_outputs=diagnostic_outputs,
+                    eligibility=(primary.eligibility if primary is not None else "invalid"),
+                    warnings=warnings + (primary.warnings if primary is not None else []),
                 )
-            continue
-
-        # Backward-compatible conservative envelope for any monotone risk measure.
-        candidate = risk_index.get((spec.candidate, spec.group, spec.measure))
-        baseline = risk_index.get((spec.baseline, spec.group, spec.measure))
-        estimate = lower = upper = None
-        eligibility: Eligibility = "invalid"
-        legacy_warnings: list[str] = []
-        if (
-            candidate
-            and baseline
-            and candidate.estimate is not None
-            and baseline.estimate is not None
-        ):
-            estimate = candidate.estimate - baseline.estimate
-        if (
-            candidate
-            and baseline
-            and candidate.eligibility == "certifying"
-            and baseline.eligibility == "certifying"
-            and candidate.lower is not None
-            and candidate.upper is not None
-            and baseline.lower is not None
-            and baseline.upper is not None
-        ):
-            if spec.estimand == "risk_difference":
-                lower = candidate.lower - baseline.upper
-                upper = candidate.upper - baseline.lower
-            elif spec.estimand == "risk_ratio":
-                lower = candidate.lower / baseline.upper if baseline.upper > 0 else None
-                upper = candidate.upper / baseline.lower if baseline.lower > 0 else None
-            else:
-                ratio_lower = candidate.lower / baseline.upper if baseline.upper > 0 else None
-                ratio_upper = candidate.upper / baseline.lower if baseline.lower > 0 else None
-                lower = 1 - ratio_upper if ratio_upper is not None else None
-                upper = 1 - ratio_lower if ratio_lower is not None else None
-            eligibility = "certifying" if lower is not None and upper is not None else "invalid"
-        else:
-            legacy_warnings.append(
-                "Both arms require complete simultaneous bounds for certification."
             )
-        legacy_pair_count = legacy_cluster_count = None
-        legacy_discordant: dict[str, int] = {}
-        legacy_p_value = None
-        legacy_diagnostic_outputs: dict[str, Any] = {}
-        try:
-            group = next(item for item in data.groups if item.id == spec.group)
-            (
-                legacy_pair_count,
-                legacy_discordant,
-                legacy_p_value,
-                legacy_cluster_count,
-                legacy_diagnostic_outputs,
-            ) = _paired_comparison_diagnostics(spec, data, set(group.prompt_ids))
-        except (StopIteration, ValueError) as exc:
-            diagnostics.append(
-                Diagnostic(code="PAIR_BROKEN", severity="ERROR", message=str(exc), scope=spec.id)
-            )
-            legacy_warnings.append(str(exc))
-        candidate_estimate = candidate.estimate if candidate is not None else None
-        baseline_estimate = baseline.estimate if baseline is not None else None
-        if candidate_estimate is not None and baseline_estimate is not None:
-            if spec.estimand == "risk_difference":
-                estimate = candidate_estimate - baseline_estimate
-            elif spec.estimand == "risk_ratio":
-                estimate = candidate_estimate / baseline_estimate if baseline_estimate > 0 else None
-            else:
-                estimate = (
-                    1 - candidate_estimate / baseline_estimate if baseline_estimate > 0 else None
-                )
-        summaries = {
-            "risk_difference": (
-                candidate_estimate - baseline_estimate
-                if candidate_estimate is not None and baseline_estimate is not None
-                else None
-            ),
-            "risk_ratio": (
-                candidate_estimate / baseline_estimate
-                if candidate_estimate is not None
-                and baseline_estimate is not None
-                and baseline_estimate > 0
-                else None
-            ),
-        }
-        summaries["relative_risk_reduction"] = (
-            1 - summaries["risk_ratio"] if summaries["risk_ratio"] is not None else None
-        )
-        results.append(
-            ComparisonResult(
-                comparison_id=spec.id,
-                result_id=spec.id,
-                candidate_cohort=spec.candidate,
-                baseline_cohort=spec.baseline,
-                group_id=spec.group,
-                measure_id=spec.measure,
-                estimand=spec.estimand,
-                candidate_estimate=candidate_estimate,
-                baseline_estimate=baseline_estimate,
-                estimate=estimate,
-                lower=lower,
-                upper=upper,
-                method="fixed_design_bounds",
-                lower_one_sided_coverage=(
-                    1 - bound_family.alpha if eligibility == "certifying" and bound_family else None
-                ),
-                upper_one_sided_coverage=(
-                    1 - bound_family.alpha if eligibility == "certifying" and bound_family else None
-                ),
-                prompt_count=candidate.prompt_count if candidate is not None else 0,
-                candidate_rollout_count=0,
-                baseline_rollout_count=0,
-                effect_summaries=summaries,
-                pair_count=legacy_pair_count,
-                discordant_counts=legacy_discordant,
-                p_value=legacy_p_value,
-                cluster_count=legacy_cluster_count,
-                diagnostic_outputs=legacy_diagnostic_outputs,
-                eligibility=eligibility,
-                warnings=legacy_warnings,
-            )
-        )
     _project_comparison_hierarchy_regions(plan, target_map, results, diagnostics)
     _project_multi_arm_comparison_regions(plan, target_map, results, diagnostics)
     return results
@@ -3218,7 +3081,7 @@ def analyze(
         hierarchy_risks,
         diagnostics,
     )
-    comparisons = _comparisons(resolved, data, estimates, risks, diagnostics)
+    comparisons = _comparisons(resolved, data, estimates, diagnostics)
     comparison_sets = _comparison_set_results(resolved, comparisons, risks)
     integrity_status = _integrity_status(diagnostics)
     integrity_certifiable = integrity_status != "invalid"

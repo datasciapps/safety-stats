@@ -4,11 +4,8 @@ import numpy as np
 import pytest
 
 from inspect_safety_stats.stats import (
-    design_quantile,
     entropic_risk,
     maximum_risk,
-    power_mean,
-    spectral_risk,
     threshold_exceedance,
     threshold_excess,
     top_k_mean,
@@ -41,12 +38,6 @@ def test_entropic_limits_and_example() -> None:
     assert entropic_risk(values, weights, lambda_=1000) == pytest.approx(0.5, abs=0.005)
 
 
-def test_power_mean_monotone_in_order() -> None:
-    values = [0.0, 0.2, 0.8]
-    weights = [1 / 3] * 3
-    assert power_mean(values, weights, order=1) <= power_mean(values, weights, order=4)
-
-
 def test_threshold_measures() -> None:
     values = [0.0, 0.2, 0.8]
     weights = [0.2, 0.3, 0.5]
@@ -54,21 +45,10 @@ def test_threshold_measures() -> None:
     assert threshold_excess(values, weights, threshold=0.1) == pytest.approx(0.38)
 
 
-def test_weighted_quantile_convention() -> None:
-    assert design_quantile([0.1, 0.9], [0.8, 0.2], beta=0.8) == 0.1
-    assert design_quantile([0.1, 0.9], [0.8, 0.2], beta=0.81) == 0.9
-    assert design_quantile([0.0, 0.5], [0.0, 1.0], beta=0.0) == 0.5
-
-
 def test_replication_invariance() -> None:
     original = entropic_risk([0.1, 0.8], [0.6, 0.4], lambda_=5)
     replicated = entropic_risk([0.1, 0.1, 0.8], [0.3, 0.3, 0.4], lambda_=5)
     assert original == pytest.approx(replicated)
-
-
-def test_spectral_risk_rejects_zero_spectrum() -> None:
-    with pytest.raises(ValueError):
-        spectral_risk([0.1, 0.9], [0.5, 0.5], spectrum=[0.0, 0.0])
 
 
 def test_monotone_bound_propagation() -> None:

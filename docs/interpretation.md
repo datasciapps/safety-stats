@@ -154,9 +154,6 @@ Diagnostic outputs help characterize sensitivity but do not have the same simult
 guarantee as the primary fixed-design bounds. These include:
 
 - fixed-cluster bootstrap intervals;
-- power means;
-- design quantiles;
-- spectral risk measures;
 - exploratory multiple-testing results;
 - plug-in estimates without complete simultaneous bounds.
 

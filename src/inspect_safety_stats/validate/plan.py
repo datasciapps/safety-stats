@@ -67,15 +67,14 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope=comparison.id,
                 )
             )
-        elif comparison.method != "fixed_design_bounds":
+        else:
             if measures[comparison.measure].type != "weighted_mean":
                 diagnostics.append(
                     Diagnostic(
                         code="PLAN_INVALID_COMPARISON",
                         severity="ERROR",
                         message=(
-                            f"direct comparison {comparison.id!r} requires a weighted_mean "
-                            "measure; use fixed_design_bounds for other measures"
+                            f"comparison {comparison.id!r} requires a weighted_mean measure"
                         ),
                         scope=comparison.id,
                     )

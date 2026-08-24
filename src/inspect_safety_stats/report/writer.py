@@ -532,8 +532,7 @@ def _markdown(report: SafetyReport) -> str:
                 "hazards are not repaired by statistical precision."
             ),
             (
-                "- Diagnostic bootstrap, quantile, power-mean, and spectral outputs "
-                "cannot independently produce a safety pass."
+                "- Outputs marked diagnostic cannot independently produce a safety pass."
             ),
             "",
             "## Provenance",

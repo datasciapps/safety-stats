@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
 
 import numpy as np
 from numpy.typing import ArrayLike, NDArray
@@ -79,22 +78,6 @@ def entropic_risk(values: ArrayLike, weights: ArrayLike, *, lambda_: float) -> f
     return maximum + math.log(float(np.dot(ws, np.exp(lambda_ * (xs - maximum))))) / lambda_
 
 
-def power_mean(values: ArrayLike, weights: ArrayLike, *, order: float) -> float:
-    x, w = _arrays(values, weights)
-    if not math.isfinite(order) or order < 1:
-        raise ValueError("order must be finite and at least one")
-    if np.any(x < 0):
-        raise ValueError("power mean requires nonnegative values")
-    if order == 1:
-        return float(np.dot(x, w))
-    positive = (x > 0) & (w > 0)
-    if not np.any(positive):
-        return 0.0
-    logs = np.log(w[positive]) + order * np.log(x[positive])
-    maximum = float(np.max(logs))
-    return math.exp((maximum + math.log(float(np.sum(np.exp(logs - maximum))))) / order)
-
-
 def threshold_exceedance(
     values: ArrayLike, weights: ArrayLike, *, threshold: float | ArrayLike
 ) -> float:
@@ -117,29 +100,3 @@ def threshold_excess(
     if t.shape != x.shape or not np.all(np.isfinite(t)):
         raise ValueError("threshold must be finite and scalar or match values")
     return float(np.dot(w, np.maximum(x - t, 0.0)))
-
-
-def design_quantile(values: ArrayLike, weights: ArrayLike, *, beta: float) -> float:
-    x, w = _arrays(values, weights)
-    if not 0 <= beta <= 1:
-        raise ValueError("beta must be in [0, 1]")
-    support = w > 0
-    x = x[support]
-    w = w[support]
-    order = np.argsort(x, kind="stable")
-    cumulative = np.cumsum(w[order])
-    idx = int(np.searchsorted(cumulative, beta, side="left"))
-    return float(x[order[min(idx, len(x) - 1)]])
-
-
-def spectral_risk(values: ArrayLike, weights: ArrayLike, *, spectrum: Sequence[float]) -> float:
-    x, w = _arrays(values, weights)
-    phi = np.asarray(spectrum, dtype=float)
-    if phi.ndim != 1 or len(phi) == 0 or not np.all(np.isfinite(phi)) or np.sum(phi) <= 0:
-        raise ValueError("spectrum must be a nonempty finite sequence")
-    if np.any(phi < 0) or np.any(np.diff(phi) < -1e-12):
-        raise ValueError("spectrum must be nonnegative and nondecreasing")
-    mass = phi / float(np.sum(phi))
-    points = (np.arange(len(phi), dtype=float) + 0.5) / len(phi)
-    quantiles = np.array([design_quantile(x, w, beta=float(p)) for p in points])
-    return float(np.dot(mass, quantiles))

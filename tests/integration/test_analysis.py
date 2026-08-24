@@ -545,7 +545,7 @@ def test_repository_example_plan_loads() -> None:
     root = Path(__file__).resolve().parents[2]
     plan = load_plan(root / "examples/fixed_design/safety-plan.yaml")
     assert plan.analysis.id == "fixed-design-example"
-    assert len(plan.outputs.risk_measures) == 7
+    assert len(plan.outputs.risk_measures) == 6
 
 
 def test_prompt_alpha_covers_every_cohort_endpoint() -> None:
@@ -644,6 +644,10 @@ def test_paired_and_clustered_comparison_outputs(
         "    baseline: baseline\n"
         "    group: cyber\n"
         "    measure: mean\n"
+        "    method: weighted_empirical_bernstein\n"
+        "    family: direct_means\n"
+        "    independence:\n"
+        "      primary: rollout\n"
         "    pair_key: [prompt_id, epoch]\n"
         "    diagnostic_methods: [exact_mcnemar, newcombe_paired, fixed_cluster_bootstrap]\n"
         "    cluster_key: question_id\n"

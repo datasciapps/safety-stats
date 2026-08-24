@@ -25,7 +25,6 @@ It is designed for hand-curated safety evaluations in which prompts, questions, 
   configurable cross-model coupling and block-overlap-aware tree calibration.
 - Equal-prompt, nested-equal, and explicit policy weights.
 - Weighted mean, worst-item, CVaR, top-k, entropic, threshold-exceedance, and threshold-excess risk.
-- Diagnostic power means, design quantiles, and spectral risk measures.
 - First-class fixed-design model/configuration comparison sets for three or more arms, with joint
   arm-risk regions, risk differences, risk ratios, relative reductions, simultaneous rank sets,
   hierarchy-frontier calibration, and named dependence sensitivities.
@@ -178,8 +177,7 @@ Every report states:
 > Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions.
 
 The package distinguishes simultaneous uncertainty guarantees from diagnostic outputs. Diagnostic
-resampling, post hoc slices, power means, design quantiles, and spectral measures should be
-interpreted with their stated assumptions. Optional threshold decisions can be enabled with
+resampling and post hoc slices should be interpreted with their stated assumptions. Optional threshold decisions can be enabled with
 `report.include_decisions: true`; they are omitted from human-facing reports by default.
 
 ## Documentation

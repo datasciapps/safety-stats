@@ -169,38 +169,25 @@ class RiskMeasureSpec(StrictModel):
         "entropic",
         "threshold_exceedance",
         "threshold_excess",
-        "power_mean",
-        "design_quantile",
-        "spectral",
     ]
     beta: float | None = None
     lambda_: float | None = Field(default=None, alias="lambda")
     k: int | None = None
-    order: float | None = None
     threshold: float | None = None
     threshold_column: str | None = None
-    spectrum: list[float] | None = None
     diagnostic_only: bool = False
 
     @model_validator(mode="after")
     def validate_parameters(self) -> RiskMeasureSpec:
         if self.type == "cvar" and (self.beta is None or not 0 <= self.beta < 1):
             raise ValueError("cvar requires beta in [0, 1)")
-        if self.type == "design_quantile" and (self.beta is None or not 0 <= self.beta <= 1):
-            raise ValueError("design_quantile requires beta in [0, 1]")
         if self.type == "entropic" and (self.lambda_ is None or self.lambda_ <= 0):
             raise ValueError("entropic risk requires lambda > 0")
         if self.type == "top_k_mean" and (self.k is None or self.k <= 0):
             raise ValueError("top_k_mean requires k > 0")
-        if self.type == "power_mean" and (self.order is None or self.order < 1):
-            raise ValueError("power_mean requires order >= 1")
         if self.type in {"threshold_exceedance", "threshold_excess"}:
             if (self.threshold is None) == (self.threshold_column is None):
                 raise ValueError(f"{self.type} requires exactly one threshold source")
-        if self.type == "spectral" and not self.spectrum:
-            raise ValueError("spectral measure requires spectrum")
-        if self.type in {"power_mean", "design_quantile", "spectral"}:
-            object.__setattr__(self, "diagnostic_only", True)
         return self
 
 
@@ -287,11 +274,10 @@ class ComparisonSpec(StrictModel):
         "relative_risk_reduction",
     ] = "risk_difference"
     method: Literal[
-        "fixed_design_bounds",
         "weighted_hoeffding",
         "weighted_empirical_bernstein",
         "weighted_kl_chernoff",
-    ] = "fixed_design_bounds"
+    ] = "weighted_kl_chernoff"
     reference_methods: list[
         Literal[
             "weighted_hoeffding",
@@ -320,17 +306,10 @@ class ComparisonSpec(StrictModel):
 
     @model_validator(mode="after")
     def validate_comparison_method(self) -> ComparisonSpec:
-        if self.method != "fixed_design_bounds" and not self.family:
-            raise ValueError("direct comparisons require a multiplicity family")
-        if self.method == "fixed_design_bounds" and (
-            self.reference_methods or self.hierarchy_nodes or self.independence is not None
-        ):
-            raise ValueError(
-                "reference methods, hierarchy nodes, and independence profiles require a "
-                "direct comparison method"
-            )
-        if self.method != "fixed_design_bounds" and self.independence is None:
-            raise ValueError("direct comparisons require an independence selection")
+        if not self.family:
+            raise ValueError("comparisons require a multiplicity family")
+        if self.independence is None:
+            raise ValueError("comparisons require an independence selection")
         if self.method in self.reference_methods:
             raise ValueError("the primary comparison method cannot be a reference method")
         if len(set(self.reference_methods)) != len(self.reference_methods):
