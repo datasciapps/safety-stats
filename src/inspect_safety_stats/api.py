@@ -43,7 +43,10 @@ from inspect_safety_stats.stats.comparisons import (
     RatioComparisonBounds,
 )
 from inspect_safety_stats.stats.design_based import (
+    DesignBasedBounds,
+    FixedSizeDesign,
     InclusionDesign,
+    fixed_size_mean_bounds,
     horvitz_thompson_mean_bounds,
 )
 from inspect_safety_stats.stats.direct_mean import (
@@ -865,14 +868,23 @@ def _sampled_frame_intervals(
 
     spec = plan.outputs.direct_mean_intervals
     column = str(plan.design.inclusion_probability_column)
+    stratified = plan.design.sampling == "fixed_size"
     manifest = data.manifest.set_index("prompt_id", drop=False)
-    frame = manifest.loc[list(prompt_ids)]
-    probabilities = load_inclusion_probabilities(frame, column)
 
-    sampled = np.zeros(len(prompt_ids), dtype=bool)
-    lower_rates = np.zeros(len(prompt_ids), dtype=float)
-    upper_rates = np.zeros(len(prompt_ids), dtype=float)
-    for index, prompt_id in enumerate(prompt_ids):
+    # Poisson inclusion is item-by-item, so only the target's own items matter. A
+    # fixed-size draw happens at stratum level, so the whole frame is needed: an item
+    # outside the target still consumed one of its stratum's draws.
+    scope = list(manifest["prompt_id"].astype(str)) if stratified else list(prompt_ids)
+    frame = manifest.loc[scope]
+    probabilities = load_inclusion_probabilities(frame, column)
+    target_weight = dict(zip(prompt_ids, np.asarray(weights, dtype=float), strict=True))
+
+    sampled = np.zeros(len(scope), dtype=bool)
+    lower_rates = np.zeros(len(scope), dtype=float)
+    upper_rates = np.zeros(len(scope), dtype=float)
+    frame_weights = np.zeros(len(scope), dtype=float)
+    for index, prompt_id in enumerate(scope):
+        frame_weights[index] = target_weight.get(prompt_id, 0.0)
         item = estimates.get((cohort_id, prompt_id))
         if item is None or item.n_total <= 0:
             continue
@@ -880,20 +892,46 @@ def _sampled_frame_intervals(
         lower_rates[index] = item.n_failure / item.n_total
         upper_rates[index] = (item.n_failure + item.n_unclassified) / item.n_total
 
-    design = InclusionDesign(weights, probabilities, sampled)
+    design: FixedSizeDesign | InclusionDesign
+    if stratified:
+        labels = (
+            frame[str(plan.design.stratum_column)].astype(str).tolist()
+            if plan.design.stratum_column
+            else ["_all"] * len(scope)
+        )
+        order = {label: position for position, label in enumerate(sorted(set(labels)))}
+        stratum_index = np.asarray([order[label] for label in labels], dtype=int)
+        draws = np.bincount(stratum_index[sampled], minlength=len(order))
+        design = FixedSizeDesign(stratum_index, frame_weights, draws, sampled)
+        estimator = "stratified_without_replacement"
+    else:
+        design = InclusionDesign(frame_weights, probabilities, sampled)
+        estimator = "horvitz_thompson"
+
     results: list[RiskIntervalResult] = []
     for method in [spec.method, *spec.reference_methods]:
-        bounds = horvitz_thompson_mean_bounds(
-            design,
-            lower_rates,
-            upper_rates,
-            alpha_lower=calibration.endpoint_alpha,
-            alpha_upper=calibration.endpoint_alpha,
-            method=method,
-        )
+        bounds: DesignBasedBounds
+        if isinstance(design, FixedSizeDesign):
+            bounds = fixed_size_mean_bounds(
+                design,
+                lower_rates,
+                upper_rates,
+                alpha_lower=calibration.endpoint_alpha,
+                alpha_upper=calibration.endpoint_alpha,
+                method=method,
+            )
+        else:
+            bounds = horvitz_thompson_mean_bounds(
+                design,
+                lower_rates,
+                upper_rates,
+                alpha_lower=calibration.endpoint_alpha,
+                alpha_upper=calibration.endpoint_alpha,
+                method=method,
+            )
         results.append(
             RiskIntervalResult(
-                interval_id=f"horvitz_thompson_{method}",
+                interval_id=f"{estimator}_{method}",
                 lower=bounds.lower,
                 upper=bounds.upper,
                 method=method,
@@ -922,8 +960,15 @@ def _sampled_frame_intervals(
                 independent_block_count=bounds.sampled_count,
                 missingness_method="all_safe_all_failure_completion",
                 assumptions=[
-                    "Frame items were included independently with the declared "
-                    "probabilities (Poisson sampling).",
+                    (
+                        "Each stratum drew exactly its planned number of frame items "
+                        "without replacement; the bound uses Hoeffding's reduction, under "
+                        "which a convex function of a without-replacement sum is dominated "
+                        "by the with-replacement one, so it is conservative."
+                        if stratified
+                        else "Frame items were included independently with the declared "
+                        "probabilities (Poisson sampling)."
+                    ),
                     "Inclusion was determined before, and independently of, the outcomes.",
                     "Design weights are declared over the whole frame and are not "
                     "renormalized to the realized sample.",

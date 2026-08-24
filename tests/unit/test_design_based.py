@@ -2,7 +2,9 @@ import numpy as np
 import pytest
 
 from inspect_safety_stats.stats.design_based import (
+    FixedSizeDesign,
     InclusionDesign,
+    fixed_size_mean_bounds,
     horvitz_thompson_mean_bounds,
 )
 from inspect_safety_stats.stats.direct_mean import weighted_bounded_kl_chernoff_mean_bounds
@@ -170,3 +172,74 @@ def test_unsampled_items_must_carry_no_observation() -> None:
             alpha_upper=0.025,
             method="bootstrap",  # type: ignore[arg-type]
         )
+
+
+def _srswor(size: int, draws: int, rng: np.random.Generator) -> tuple[np.ndarray, np.ndarray]:
+    mask = np.zeros(size, dtype=bool)
+    mask[rng.choice(size, draws, replace=False)] = True
+    return np.zeros(size, dtype=int), mask
+
+
+def test_fixed_size_equal_weights_carry_no_inflation() -> None:
+    """A fixed-size draw with equal weights is a plain sample mean, so K = 1."""
+    rng = np.random.default_rng(9)
+    size, draws = 120, 40
+    strata, mask = _srswor(size, draws, rng)
+    rates = np.zeros(size)
+    rates[mask] = 0.05
+    bounds = fixed_size_mean_bounds(
+        FixedSizeDesign(strata, _frame(size), np.array([draws]), mask),
+        rates, rates, alpha_lower=0.025, alpha_upper=0.025,
+    )
+    assert bounds.inflation == pytest.approx(1.0)
+    assert bounds.estimator == "stratified_without_replacement"
+    assert bounds.sampled_count == draws
+    assert bounds.maximum_weight == pytest.approx(1 / draws)
+
+
+def test_fixed_size_bounds_cover_the_frame_mean() -> None:
+    rng = np.random.default_rng(23)
+    size, draws, rollouts = 160, 50, 20
+    covered = 0
+    for _ in range(200):
+        risks = rng.beta(0.5, 12.0, size=size)
+        weights = _frame(size)
+        target = float(weights @ risks)
+        strata, mask = _srswor(size, draws, rng)
+        rates = np.zeros(size)
+        rates[mask] = rng.binomial(rollouts, risks[mask]) / rollouts
+        bounds = fixed_size_mean_bounds(
+            FixedSizeDesign(strata, weights, np.array([draws]), mask),
+            rates, rates, alpha_lower=0.025, alpha_upper=0.025,
+        )
+        covered += bounds.lower <= target <= bounds.upper
+    assert covered >= 195
+
+
+def test_fixed_size_rejects_a_sample_that_misses_its_plan() -> None:
+    rng = np.random.default_rng(1)
+    size, draws = 40, 10
+    strata, mask = _srswor(size, draws, rng)
+    short = mask.copy()
+    short[np.flatnonzero(short)[0]] = False
+    with pytest.raises(ValueError, match="exactly its planned draws"):
+        FixedSizeDesign(strata, _frame(size), np.array([draws]), short)
+    with pytest.raises(ValueError, match="cannot draw more items"):
+        FixedSizeDesign(strata, _frame(size), np.array([size + 1]), mask)
+
+
+def test_fixed_size_handles_a_target_confined_to_part_of_the_frame() -> None:
+    """A hierarchy node consumes stratum draws it does not use; K reflects that."""
+    rng = np.random.default_rng(31)
+    size, draws = 100, 50
+    strata, mask = _srswor(size, draws, rng)
+    weights = np.zeros(size)
+    weights[:20] = 1 / 20          # target covers a fifth of the frame
+    rates = np.zeros(size)
+    rates[mask] = 0.1
+    bounds = fixed_size_mean_bounds(
+        FixedSizeDesign(strata, weights, np.array([draws]), mask),
+        rates, rates, alpha_lower=0.025, alpha_upper=0.025,
+    )
+    assert bounds.inflation == pytest.approx(size / 20)
+    assert bounds.lower <= 0.1 <= bounds.upper

@@ -209,7 +209,9 @@ class IndependenceSelectionSpec(StrictModel):
 
 class DesignSpec(StrictModel):
     type: Literal["fixed", "sampled"] = "fixed"
+    sampling: Literal["poisson", "fixed_size"] = "poisson"
     inclusion_probability_column: str | None = None
+    stratum_column: str | None = None
     hierarchy: list[str] = Field(default_factory=lambda: ["task_id", "question_id", "prompt_id"])
     rollout_key: list[str] = Field(default_factory=lambda: ["eval_id", "id", "epoch"])
     require_complete_manifest: bool = True
@@ -224,10 +226,17 @@ class DesignSpec(StrictModel):
                 raise ValueError(
                     "a sampled design requires design.inclusion_probability_column"
                 )
-        elif self.inclusion_probability_column is not None:
+            if self.stratum_column and self.sampling != "fixed_size":
+                raise ValueError("design.stratum_column requires sampling: fixed_size")
+            return self
+        if self.inclusion_probability_column is not None:
             raise ValueError(
                 "inclusion_probability_column requires design.type: sampled"
             )
+        if self.stratum_column is not None:
+            raise ValueError("stratum_column requires design.type: sampled")
+        if self.sampling != "poisson":
+            raise ValueError("design.sampling requires design.type: sampled")
         return self
 
     @model_validator(mode="after")

@@ -49,10 +49,8 @@ regime this package targets, and should be the prespecified primary.
 
 ## Assumptions
 
-- **Inclusion is independent across frame items** (Poisson sampling). Fixed-size designs --
-  simple random sampling without replacement, or fixed stratum allocations -- induce
-  negatively correlated indicators and are not covered. Supporting them needs a separate
-  argument, not a wider interval.
+- **Inclusion is independent across frame items** (Poisson sampling). Fixed-size designs
+  break that and are handled separately, by Hoeffding's reduction -- see below.
 - **The sample was drawn without reference to outcomes.** Inclusion probabilities must be
   fixed before evaluation, exactly as design weights are.
 - Unsampled items contribute an exact zero. Their share of the estimand is carried by the
@@ -119,10 +117,57 @@ fields deserve care:
   realized as zero. Under equal weights and equal \(\pi\) it equals the frame size. It
   measures weight concentration, not information; precision is governed by `inflation`.
 
+## Fixed-size designs
+
+```yaml
+design:
+  type: sampled
+  sampling: fixed_size
+  stratum_column: sampling_stratum      # omit for plain SRS without replacement
+  inclusion_probability_column: inclusion_probability
+```
+
+Drawing exactly \(n_h\) of stratum \(h\)'s \(N_h\) frame items makes the inclusion
+indicators **negatively correlated** -- they must sum to \(n_h\) -- so the independence the
+concentration engines assume does not hold.
+
+It is recovered by **Hoeffding's reduction** (1963, Theorem 4): for any continuous convex
+\(f\), a without-replacement sum is dominated by the with-replacement one,
+
+\[
+\mathbb E\left[f\!\left(\textstyle\sum_{i\in S}v_i\right)\right]
+\le
+\mathbb E\left[f\!\left(\textstyle\sum_{i=1}^{n}v_i'\right)\right].
+\]
+
+Every engine here bounds a moment generating function, which is convex, so the bound each
+computes under independence remains valid without replacement -- and is conservative, since
+sampling without replacement has strictly smaller variance.
+
+The estimator rearranges the same way as the Poisson case. Within stratum \(h\), letting
+\(A_h\) be the largest target weight in that stratum, each drawn item carries the
+deterministic coefficient \(N_hA_h/n_h\) and the bounded value \(a_j\widehat p_j/A_h\).
+Those coefficients sum to \(K=\sum_hN_hA_h\) whichever items were drawn, so normalising by
+\(K\) again gives an ordinary bounded weighted mean.
+
+With equal design weights **there is no inflation at all**: \(A_h=1/N\) gives \(K=1\), and
+the estimator reduces to a plain sample mean. Inflation reappears only for a target confined
+to part of the frame -- a hierarchy node consumes stratum draws that land outside it, and
+\(K\) reports exactly that cost.
+
+### Declaring the plan
+
+The draw counts are inferred from the same inclusion-probability column, since a fixed-size
+design has \(\pi_j=n_h/N_h\) constant inside a stratum. Three checks enforce that reading:
+
+- `SAMPLE_STRATUM_INCONSISTENT` -- inclusion probabilities vary inside a stratum.
+- `SAMPLE_DRAWS_NOT_INTEGER` -- \(\pi_hN_h\) is not a whole number of draws.
+- `SAMPLE_DRAWS_MISMATCH` -- the run realized a different number of draws than planned.
+  Unlike the Poisson case, where a four-sigma deviation is the trigger, a fixed-size design
+  must match its plan **exactly**; any shortfall means the declared probabilities misstate
+  the sample.
+
 ## Not yet supported
 
-Fixed-size designs -- simple random sampling without replacement, or fixed stratum
-allocations -- induce negatively correlated inclusion indicators and are not covered.
-Supporting them needs a separate argument, not a wider interval. Comparisons across cohorts
-on a sampled frame are also unsupported; correcting them means giving each arm its own
-Horvitz--Thompson bounds and recombining, which is tractable but is a separate change.
+Comparisons across cohorts on a sampled frame. Correcting them means giving each arm its own
+design-based bounds and recombining, which is tractable but is a separate change.

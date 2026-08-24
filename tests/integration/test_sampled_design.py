@@ -31,7 +31,7 @@ inputs:
     mapping: {{failure_values: ["FAIL"], safe_values: ["PASS"]}}
 design:
   type: sampled
-  inclusion_probability_column: inclusion_probability
+{sampling}  inclusion_probability_column: inclusion_probability
   hierarchy: [task_id, question_id, prompt_id]
   weights: {{strategy: equal_prompt}}
   independence_profiles:
@@ -65,9 +65,13 @@ report: {{include_observations: false}}
 
 
 def _write_frame(
-    tmp_path: Path, *, measures: str = "    - {id: mean, type: weighted_mean}"
+    tmp_path: Path,
+    *,
+    measures: str = "    - {id: mean, type: weighted_mean}",
+    fixed_size: bool = False,
 ) -> tuple[Path, pd.DataFrame, pd.DataFrame]:
     rng = random.Random(4242)
+    strata = ["alpha", "beta"]
     frame, drawn = [], []
     for index in range(FRAME_SIZE):
         prompt_id = f"item-{index:03d}"
@@ -76,14 +80,28 @@ def _write_frame(
                 "prompt_id": prompt_id,
                 "question_id": f"q-{index // 4:03d}",
                 "task_id": f"task-{index % 5}",
+                "sampling_stratum": strata[index % 2],
                 "inclusion_probability": INCLUSION,
                 "expected_rollouts": ROLLOUTS,
             }
         )
-        if rng.random() < INCLUSION:
-            drawn.append((prompt_id, rng.betavariate(0.5, 12.0)))
+    if fixed_size:
+        # Draw exactly INCLUSION * stratum size from each stratum, without replacement.
+        for stratum in strata:
+            members = [row["prompt_id"] for row in frame if row["sampling_stratum"] == stratum]
+            for prompt_id in rng.sample(members, round(INCLUSION * len(members))):
+                drawn.append((prompt_id, rng.betavariate(0.5, 12.0)))
+    else:
+        for row in frame:
+            if rng.random() < INCLUSION:
+                drawn.append((row["prompt_id"], rng.betavariate(0.5, 12.0)))
     pd.DataFrame(frame).to_csv(tmp_path / "design.csv", index=False)
-    (tmp_path / "plan.yaml").write_text(_PLAN.format(measures=measures), encoding="utf-8")
+    sampling = (
+        "  sampling: fixed_size\n  stratum_column: sampling_stratum\n" if fixed_size else ""
+    )
+    (tmp_path / "plan.yaml").write_text(
+        _PLAN.format(measures=measures, sampling=sampling), encoding="utf-8"
+    )
 
     evals = pd.DataFrame(
         [
@@ -229,4 +247,58 @@ def test_fixed_designs_are_unaffected(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
     codes = {item.code for item in report.integrity.diagnostics}
     assert "PROMPT_MISSING" in codes
+    assert report.integrity.status == "invalid"
+
+
+def test_stratified_fixed_size_draws_are_estimated_without_replacement(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path, evals, samples = _write_frame(tmp_path, fixed_size=True)
+    _patch(monkeypatch, evals, samples)
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert report.integrity.status == "valid"
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    primary = next(item for item in mean.intervals if item.role == "primary")
+    assert primary.interval_id.startswith("stratified_without_replacement_")
+    assert primary.eligibility == "certifying"
+    assert any("without replacement" in text for text in primary.assumptions)
+    assert any("Hoeffding's reduction" in text for text in primary.assumptions)
+
+    # Equal design weights leave no inverse-probability inflation: the estimator is a
+    # plain sample mean, so the drawn items carry the whole weight.
+    assert primary.maximum_increment == pytest.approx(1 / primary.independent_block_count)
+    assert mean.lower is not None and mean.upper is not None and mean.lower < mean.upper
+
+
+def test_fixed_size_run_that_misses_its_plan_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A fixed-size design must realize its plan exactly, or pi misstates the sample."""
+    plan_path, evals, samples = _write_frame(tmp_path, fixed_size=True)
+    dropped = sorted(samples["id"].unique())[:3]
+    _patch(monkeypatch, evals, samples.loc[~samples["id"].isin(dropped)])
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    codes = {item.code: item for item in report.integrity.diagnostics}
+    assert "SAMPLE_DRAWS_MISMATCH" in codes
+    assert codes["SAMPLE_DRAWS_MISMATCH"].severity == "ERROR"
+    assert report.integrity.status == "invalid"
+
+
+def test_fixed_size_requires_a_constant_probability_within_each_stratum(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path, evals, samples = _write_frame(tmp_path, fixed_size=True)
+    frame = pd.read_csv(tmp_path / "design.csv")
+    frame.loc[0, "inclusion_probability"] = 0.9
+    frame.to_csv(tmp_path / "design.csv", index=False)
+    _patch(monkeypatch, evals, samples)
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "SAMPLE_STRATUM_INCONSISTENT" in codes
     assert report.integrity.status == "invalid"

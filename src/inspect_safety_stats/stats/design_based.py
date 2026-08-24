@@ -167,3 +167,156 @@ def horvitz_thompson_mean_bounds(
         alpha_upper=alpha_upper,
         method=method,
     )
+
+
+@dataclass(frozen=True)
+class FixedSizeDesign:
+    """Stratified fixed-size sampling: exactly ``draws[h]`` of stratum ``h``'s frame items.
+
+    A single stratum is simple random sampling without replacement over the whole frame.
+    Inclusion indicators are negatively correlated rather than independent, so this design
+    is handled by a different reduction from :class:`InclusionDesign`.
+
+    ``frame_weights`` are the target's weights over the whole frame, zero for frame items
+    outside the target, and summing to one.
+    """
+
+    stratum_index: np.ndarray
+    frame_weights: np.ndarray
+    draws: np.ndarray
+    sampled: np.ndarray
+
+    def __post_init__(self) -> None:
+        strata = np.asarray(self.stratum_index, dtype=int)
+        weights = np.asarray(self.frame_weights, dtype=float)
+        draws = np.asarray(self.draws, dtype=int)
+        sampled = np.asarray(self.sampled, dtype=bool)
+        if weights.ndim != 1 or len(weights) == 0:
+            raise ValueError("frame weights must be a nonempty one-dimensional array")
+        if strata.shape != weights.shape or sampled.shape != weights.shape:
+            raise ValueError("stratum index, frame weights, and mask must be aligned")
+        if not np.all(np.isfinite(weights)) or np.any(weights < 0):
+            raise ValueError("frame weights must be finite and nonnegative")
+        if not math.isclose(float(np.sum(weights)), 1.0, rel_tol=1e-10, abs_tol=1e-12):
+            raise ValueError("frame weights must sum to one over the target")
+        if draws.ndim != 1 or len(draws) == 0:
+            raise ValueError("draws must be a nonempty one-dimensional array")
+        if np.any(strata < 0) or np.any(strata >= len(draws)):
+            raise ValueError("every stratum index must address a declared stratum")
+        if np.any(draws < 0):
+            raise ValueError("planned draws must be nonnegative")
+        sizes = np.bincount(strata, minlength=len(draws))
+        if np.any(draws > sizes):
+            raise ValueError("a stratum cannot draw more items than it contains")
+        realized = np.bincount(strata[sampled], minlength=len(draws))
+        if not np.array_equal(realized, draws):
+            raise ValueError(
+                "a fixed-size design must realize exactly its planned draws per stratum; "
+                f"planned {draws.tolist()} but observed {realized.tolist()}"
+            )
+        if not bool(np.any(sampled)):
+            raise ValueError("at least one frame item must be sampled")
+
+    @property
+    def frame_size(self) -> int:
+        return len(self.frame_weights)
+
+    @property
+    def sampled_count(self) -> int:
+        return int(np.count_nonzero(self.sampled))
+
+
+def fixed_size_mean_bounds(
+    design: FixedSizeDesign,
+    completion_lower: ArrayLike,
+    completion_upper: ArrayLike,
+    *,
+    alpha_lower: float,
+    alpha_upper: float,
+    method: DesignBasedMethod = "weighted_empirical_bernstein",
+) -> DesignBasedBounds:
+    """Bound a frame mean estimated by stratified sampling without replacement.
+
+    Within stratum ``h`` of frame size ``N_h``, the target's contribution is estimated by
+
+        (N_h / n_h) * sum over drawn items of a_j * phat_j,
+
+    which is ``N_h A_h`` times a without-replacement sample mean of values
+    ``a_j phat_j / A_h`` in ``[0, 1]``, where ``A_h`` is the largest target weight in the
+    stratum. Each drawn item therefore carries the deterministic coefficient
+    ``N_h A_h / n_h``, and those coefficients sum to ``K = sum_h N_h A_h`` regardless of
+    which items were drawn. Normalising by ``K`` gives an ordinary bounded weighted mean.
+
+    Validity rests on Hoeffding's reduction (1963, Theorem 4): a convex function of a
+    without-replacement sum is dominated by the same function of a with-replacement sum.
+    Every engine here bounds a moment generating function, which is convex, so the bound
+    each computes under an independence assumption remains valid -- and is conservative,
+    since sampling without replacement has strictly smaller variance.
+    """
+
+    engine = _ENGINES.get(method)
+    if engine is None:
+        raise ValueError(f"unsupported design-based method {method!r}")
+    if not 0 < alpha_lower < 1 or not 0 < alpha_upper < 1:
+        raise ValueError("alpha levels must be in (0, 1)")
+
+    lower_rates = np.asarray(completion_lower, dtype=float)
+    upper_rates = np.asarray(completion_upper, dtype=float)
+    weights = np.asarray(design.frame_weights, dtype=float)
+    strata = np.asarray(design.stratum_index, dtype=int)
+    draws = np.asarray(design.draws, dtype=int)
+    sampled = np.asarray(design.sampled, dtype=bool)
+    if lower_rates.shape != weights.shape or upper_rates.shape != weights.shape:
+        raise ValueError("observed rates must align with the sampling frame")
+    if not np.all(np.isfinite(lower_rates)) or not np.all(np.isfinite(upper_rates)):
+        raise ValueError("observed rates must be finite")
+    if np.any(lower_rates < 0) or np.any(upper_rates > 1) or np.any(lower_rates > upper_rates):
+        raise ValueError("observed rates must satisfy 0 <= lower <= upper <= 1")
+    if np.any(lower_rates[~sampled] != 0) or np.any(upper_rates[~sampled] != 0):
+        raise ValueError("unsampled frame items must carry a zero observed rate")
+
+    sizes = np.bincount(strata, minlength=len(draws))
+    peak = np.zeros(len(draws), dtype=float)
+    np.maximum.at(peak, strata, weights)
+
+    coefficients: list[float] = []
+    values_lower: list[float] = []
+    values_upper: list[float] = []
+    for index in np.flatnonzero(sampled):
+        stratum = int(strata[index])
+        if peak[stratum] <= 0:
+            # No target member in this stratum, so it contributes nothing.
+            continue
+        coefficients.append(float(sizes[stratum]) * peak[stratum] / float(draws[stratum]))
+        values_lower.append(float(weights[index] * lower_rates[index] / peak[stratum]))
+        values_upper.append(float(weights[index] * upper_rates[index] / peak[stratum]))
+    if not coefficients:
+        raise ValueError("no sampled frame item carries positive target weight")
+
+    coefficient_array = np.asarray(coefficients, dtype=float)
+    inflation = float(np.sum(coefficient_array))
+    normalized = coefficient_array / inflation
+    bounds = engine(
+        np.asarray(values_lower, dtype=float),
+        np.asarray(values_upper, dtype=float),
+        normalized,
+        alpha_lower=alpha_lower,
+        alpha_upper=alpha_upper,
+        independence_profile="frame_item",
+    )
+    return DesignBasedBounds(
+        estimate=float(np.dot(coefficient_array, values_lower)),
+        lower=max(0.0, min(1.0, inflation * bounds.lower)),
+        upper=min(1.0, inflation * bounds.upper),
+        completion_estimate_lower=inflation * bounds.completion_estimate_lower,
+        completion_estimate_upper=inflation * bounds.completion_estimate_upper,
+        inflation=inflation,
+        maximum_weight=float(np.max(normalized)),
+        effective_sample_size=bounds.effective_sample_size,
+        frame_size=design.frame_size,
+        sampled_count=len(coefficients),
+        alpha_lower=alpha_lower,
+        alpha_upper=alpha_upper,
+        method=method,
+        estimator="stratified_without_replacement",
+    )

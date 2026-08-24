@@ -618,6 +618,83 @@ def ingest_inspect_logs(
         prompt_ids = manifest["prompt_id"].astype(str).tolist()
         expected_size = float(np.sum(probabilities))
         deviation = math.sqrt(float(np.sum(probabilities * (1 - probabilities))))
+        strata = (
+            manifest[str(plan.design.stratum_column)].astype(str).tolist()
+            if plan.design.stratum_column
+            else ["_all"] * len(prompt_ids)
+        )
+        if plan.design.sampling == "fixed_size":
+            # A fixed-size design must realize exactly its planned draws. Inferring the
+            # plan from pi requires pi to be constant inside a stratum and to imply an
+            # integer draw count.
+            planned: dict[str, int] = {}
+            for stratum in sorted(set(strata)):
+                members = [i for i, value in enumerate(strata) if value == stratum]
+                stratum_probabilities = probabilities[members]
+                if float(np.ptp(stratum_probabilities)) > 1e-12:
+                    diagnostics.append(
+                        Diagnostic(
+                            code="SAMPLE_STRATUM_INCONSISTENT",
+                            severity="ERROR",
+                            message=(
+                                f"stratum {stratum!r} has non-constant inclusion "
+                                "probabilities; a fixed-size design draws a fixed count "
+                                "from each stratum, so pi must equal draws/size within it"
+                            ),
+                            scope=stratum,
+                        )
+                    )
+                    continue
+                exact = float(stratum_probabilities[0]) * len(members)
+                if abs(exact - round(exact)) > 1e-9:
+                    diagnostics.append(
+                        Diagnostic(
+                            code="SAMPLE_DRAWS_NOT_INTEGER",
+                            severity="ERROR",
+                            message=(
+                                f"stratum {stratum!r} implies {exact:.6g} draws from "
+                                f"{len(members)} frame items; a fixed-size design needs an "
+                                "integer draw count"
+                            ),
+                            scope=stratum,
+                        )
+                    )
+                    continue
+                planned[stratum] = int(round(exact))
+            for cohort_id in plan.cohorts:
+                for stratum, count in planned.items():
+                    realized_stratum = sum(
+                        1
+                        for index, prompt_id in enumerate(prompt_ids)
+                        if strata[index] == stratum
+                        and observed_counts.get((cohort_id, prompt_id), 0) > 0
+                    )
+                    if realized_stratum != count:
+                        diagnostics.append(
+                            Diagnostic(
+                                code="SAMPLE_DRAWS_MISMATCH",
+                                severity="ERROR",
+                                message=(
+                                    f"cohort {cohort_id!r} stratum {stratum!r} realized "
+                                    f"{realized_stratum} draws against a planned {count}; a "
+                                    "fixed-size design must realize its plan exactly or the "
+                                    "declared probabilities misstate the sample"
+                                ),
+                                scope=f"{cohort_id}:{stratum}",
+                                details={
+                                    "planned_draws": count,
+                                    "realized_draws": realized_stratum,
+                                },
+                            )
+                        )
+            return NormalizedData(
+                observations=observations,
+                manifest=manifest,
+                groups=groups,
+                diagnostics=diagnostics,
+                cohorts=cohort_summaries,
+                source_hashes=source_hashes,
+            )
         for cohort_id in plan.cohorts:
             realized = sum(
                 1
