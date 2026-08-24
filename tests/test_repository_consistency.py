@@ -16,6 +16,8 @@ import yaml
 
 from inspect_safety_stats import __version__
 from inspect_safety_stats.config.models import AnalysisPlan
+from inspect_safety_stats.generative.schema import GenerativePlan, load_generative_plan
+from inspect_safety_stats.generative.taxonomy import compile_taxonomy
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -41,11 +43,37 @@ def test_every_tracked_example_plan_validates() -> None:
         if "report" in path.parts or path.name.endswith(".resolved.yaml"):
             continue
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        if not isinstance(raw, dict) or "analysis" not in raw or "schema_version" not in raw:
+        if not isinstance(raw, dict) or "schema_version" not in raw:
             continue
-        AnalysisPlan.model_validate(raw)
+        if "analysis" in raw:
+            AnalysisPlan.model_validate(raw)
+        elif "taxonomy" in raw:
+            GenerativePlan.model_validate(raw)
+        else:
+            continue
         checked += 1
     assert checked >= 8, f"expected the shipped example plans to be checked, saw {checked}"
+
+
+def test_every_tracked_generative_plan_compiles() -> None:
+    """A generative example must compile to a tree, not merely parse.
+
+    Validation checks the document; compilation checks that the seed manifest, the arm
+    sources and the constraints it names actually resolve together.
+    """
+
+    checked = 0
+    for path in _tracked("examples/**/*.yaml"):
+        raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict) or "taxonomy" not in raw:
+            continue
+        plan = load_generative_plan(path)
+        taxonomy = compile_taxonomy(plan, base_path=path.parent)
+        assert taxonomy.terminal_paths
+        total = sum(node.target_path_weight for node in taxonomy.terminal_paths)
+        assert abs(total - 1.0) < 1e-9, f"{path.name} path weights sum to {total}"
+        checked += 1
+    assert checked >= 2, f"expected the generative example plans to be checked, saw {checked}"
 
 
 def test_no_broken_internal_documentation_links() -> None:

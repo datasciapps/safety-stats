@@ -305,3 +305,87 @@ def estimate_tree(
         coverage_mode=coverage_mode,
         simultaneous=simultaneous_tree,
     )
+
+
+def estimate_slice(
+    taxonomy: CompiledTaxonomy,
+    design: SamplingDesign,
+    selections: list[SelectionRecord],
+    outcomes: list[UnitOutcome],
+    *,
+    level: str,
+    value: str,
+    alpha: float = 0.05,
+    coverage_mode: CoverageMode = "one_sided_upper",
+) -> NodeEstimate:
+    """Estimate a cross-cutting slice of the design, such as every Maltese path.
+
+    A hierarchy answers questions about subtrees. "What is the risk in Maltese?" is not
+    one of those when the semantic seed sits above language, because the Maltese paths
+    are spread across every seed. The estimand is still well defined -- a declared-weight
+    mean over the matching terminal paths -- and the draws landing in it are still
+    independent conditional on their count, so the same exact construction applies.
+
+    Slices overlap the tree's nodes, so they cannot join its Sidak frontiers. They are
+    reported pointwise at ``alpha`` and are not part of a simultaneous family.
+    """
+
+    if level not in taxonomy.levels:
+        raise ValueError(f"{level!r} is not a level of this taxonomy")
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be in (0, 1)")
+
+    def matches(node_id: str) -> bool:
+        return any(
+            part == f"{level}={value}" for part in node_id.split("|")[1:]
+        )
+
+    weight = sum(
+        node.target_path_weight for node in taxonomy.terminal_paths if matches(node.node_id)
+    )
+    if weight <= 0.0:
+        raise ValueError(f"no terminal path carries {level}={value}")
+
+    coefficients = _raw_coefficients(design, selections)
+    unit_ids = [
+        record.sampling_unit_id for record in selections if matches(record.node_id)
+    ]
+    if not unit_ids:
+        raise ValueError(f"no draw landed on {level}={value}")
+
+    by_unit = {outcome.sampling_unit_id: outcome for outcome in outcomes}
+    raw = np.array([coefficients[unit_id] for unit_id in unit_ids], dtype=float)
+    normalized = raw / raw.sum()
+    slice_outcomes = [
+        by_unit.get(unit_id, UnitOutcome(unit_id, trials=1, failures=0, unclassified=1))
+        for unit_id in unit_ids
+    ]
+    one_sided = coverage_mode == "one_sided_upper"
+    endpoint = alpha if one_sided else alpha / 2.0
+    lower, upper, method, equal = _bounds(
+        slice_outcomes,
+        normalized,
+        alpha_lower=endpoint,
+        alpha_upper=endpoint,
+        one_sided=one_sided,
+    )
+    return NodeEstimate(
+        node_id=f"slice:{level}={value}",
+        level=level,
+        depth=taxonomy.levels.index(level) + 1,
+        node_weight=weight,
+        draws=len(unit_ids),
+        trials=sum(outcome.trials for outcome in slice_outcomes),
+        failures=sum(outcome.failures for outcome in slice_outcomes),
+        unclassified=sum(outcome.unclassified for outcome in slice_outcomes),
+        estimate=_point_estimate(slice_outcomes, normalized),
+        lower=lower,
+        upper=upper,
+        method=method,
+        alpha_lower=endpoint,
+        alpha_upper=endpoint,
+        frontier_id=None,
+        equal_coefficients=equal,
+        maximum_coefficient=float(normalized.max()),
+        coefficient_ratio=float(normalized.max() / normalized.min()),
+    )

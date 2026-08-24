@@ -12,6 +12,7 @@ from inspect_safety_stats.generative.inference import (
     EXACT_METHOD,
     WEIGHTED_METHOD,
     UnitOutcome,
+    estimate_slice,
     estimate_tree,
 )
 from inspect_safety_stats.generative.sampling import draw_selections, plan_design
@@ -239,3 +240,64 @@ def test_unit_outcome_rejects_impossible_counts() -> None:
         UnitOutcome("u", trials=1, failures=1, unclassified=1)
     with pytest.raises(ValueError, match="at least one attempted rollout"):
         UnitOutcome("u", trials=0, failures=0, unclassified=0)
+
+
+def test_slice_weight_and_draws_partition_the_design(tmp_path: Path) -> None:
+    taxonomy, design, selections = prepare(tmp_path, "direct", 600)
+    outcomes = [UnitOutcome(r.sampling_unit_id, 1, 0, 0) for r in selections]
+    cuts = [
+        estimate_slice(
+            taxonomy, design, selections, outcomes, level="language", value=value
+        )
+        for value in ("english", "maltese")
+    ]
+    assert sum(cut.node_weight for cut in cuts) == pytest.approx(1.0)
+    assert sum(cut.draws for cut in cuts) == len(selections)
+    assert all(cut.node_id.startswith("slice:language=") for cut in cuts)
+
+
+def test_slice_uses_the_exact_kernel_under_direct_sampling(tmp_path: Path) -> None:
+    taxonomy, design, selections = prepare(tmp_path, "direct", 600)
+    outcomes = [UnitOutcome(r.sampling_unit_id, 1, 0, 0) for r in selections]
+    cut = estimate_slice(
+        taxonomy, design, selections, outcomes, level="wrapper", value="roleplay"
+    )
+    assert cut.method == EXACT_METHOD
+    assert cut.equal_coefficients
+    assert cut.frontier_id is None
+
+
+def test_slice_covers_its_declared_weight_mean(tmp_path: Path) -> None:
+    taxonomy, design, selections = prepare(tmp_path, "direct", 600)
+    matching = [
+        node for node in taxonomy.terminal_paths if "language=maltese" in node.node_id
+    ]
+    mass = sum(node.target_path_weight for node in matching)
+    truth = sum(
+        node.target_path_weight * risk_of(node.node_id) for node in matching
+    ) / mass
+
+    rng = np.random.default_rng(19)
+    covered = 0
+    replicates = 200
+    for _ in range(replicates):
+        cut = estimate_slice(
+            taxonomy,
+            design,
+            selections,
+            simulate(selections, rng),
+            level="language",
+            value="maltese",
+            alpha=0.05,
+        )
+        covered += cut.upper >= truth
+    assert covered / replicates >= 0.95
+
+
+def test_slice_rejects_an_unknown_level_or_value(tmp_path: Path) -> None:
+    taxonomy, design, selections = prepare(tmp_path, "direct", 100)
+    outcomes = [UnitOutcome(r.sampling_unit_id, 1, 0, 0) for r in selections]
+    with pytest.raises(ValueError, match="not a level of this taxonomy"):
+        estimate_slice(taxonomy, design, selections, outcomes, level="ghost", value="x")
+    with pytest.raises(ValueError, match="no terminal path carries"):
+        estimate_slice(taxonomy, design, selections, outcomes, level="language", value="klingon")

@@ -1676,5 +1676,26 @@ configuration explicitly rather than silently producing unpaired arms.
 
 ### Still open
 
-No worked example exercises the whole path yet, and comparisons across cohorts are not
-implemented -- G2a estimates one cohort at a time.
+Comparisons across cohorts are not implemented -- G2a estimates one cohort at a time.
+`shared_rewrites` already materializes paired arms, but nothing consumes the pairing.
+
+A worked example now exercises the whole path against a known answer:
+[generative multilingual rewrites](../examples/generative_multilingual/README.md).
+
+## Cross-cutting slices
+
+Added while building the worked example, which exposed the gap.
+
+A hierarchy answers questions about subtrees. Because semantic seeds are a mandatory
+stratification frontier, every transformation arm sits *below* them, so "what is the risk
+in Maltese?" has no node: Maltese is spread across every seed. Reading it off the tree means
+taking a worst case over dozens of thin nodes, which on the example gives bounds around
+0.13--0.36 against a truth of 0.07 -- correct, and useless.
+
+The estimand is nonetheless well defined, a declared-weight mean over the matching terminal
+paths, and the draws landing in it are still independent conditional on their count. The
+same exact construction therefore applies, and `estimate_slice` reports it: 0.027--0.112 on
+the same data.
+
+Slices overlap the tree's nodes, so they cannot join its Sidak frontiers. They are reported
+pointwise and are not part of a simultaneous family.
