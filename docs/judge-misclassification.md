@@ -178,13 +178,36 @@ The module produces no correction, and says why, when:
 - a validation row references an observation absent from the analysed logs, or one whose
   outcome was never classified (`JUDGE_VALIDATION_UNMATCHED`, an error).
 
-### Known gap
+### Effect on threshold claims
 
-Threshold claims are still evaluated against the **uncorrected** judge-system interval. When
-a validated correction is present the analysis emits
-`JUDGE_CORRECTION_NOT_USED_BY_CLAIMS`, and the corrected bounds must be compared against
-thresholds manually. Wiring the decision path to prefer the corrected interval changes
-decision semantics and is deliberately left as a separate step.
+When a validated correction is available for a claim's evidence, the claim is decided from
+the **corrected** bounds. A threshold in the plan is a statement about the model, so true
+risk is the estimand it refers to; deciding on judge-reported risk would answer a different
+question.
+
+Three consequences are recorded on every affected `ClaimResult`:
+
+- `method` becomes `validated_judge_misclassification_correction` and `evidence_refs` gains
+  `interval:judge_corrected_validated`, so the interval actually used is identifiable;
+- `alpha` becomes the **union** of the claim family budget and the judge calibration budget,
+  because that is the claim's real error probability; and
+- `estimate` is `null`. A calibration box yields a range of corrected point estimates rather
+  than a single one, and the range is stated in the claim's reasons alongside both the
+  corrected and uncorrected bounds.
+
+The analysis emits `JUDGE_CORRECTED_CLAIMS` listing which claims were retargeted. If some
+claims are corrected and others are not -- comparison claims never are -- it also emits
+`JUDGE_CORRECTION_MIXED_ESTIMANDS`, because a report whose claims sit on two different
+estimands is easy to misread.
+
+**An `assumed` correction never moves a claim.** The selection requires
+`eligibility: certifying`, which only a validated calibration produces, so a declared
+sensitivity cannot reach the decision path even if it is the only correction present.
+
+Correction can move a decision in either direction. It widens the band by adding calibration
+uncertainty, which makes both `PASS` and `FAIL` harder; but it also removes false positives,
+which can lower the upper bound enough to establish a `PASS` that the uncorrected interval
+could not. Both movements are evidence-backed, and both are visible in the claim's reasons.
 
 ## Getting to evidence
 

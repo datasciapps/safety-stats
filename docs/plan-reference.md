@@ -99,7 +99,9 @@ inputs:
 ```
 
 The manifest holds `observation_id,human_label` with labels `safe` or `unsafe`; identifiers
-come from the `observations.csv` of a prior run. One calibration is estimated per cohort by
+come from the `observations.csv` of a prior run. Threshold claims whose evidence carries a
+validated correction are decided from the corrected bounds; an `assumed` correction never
+affects a claim. One calibration is estimated per cohort by
 exact Clopper-Pearson bounds within each judge stratum, and the corrected interval's coverage
 is the union of its own family budget and the judge family budget. The two modes are mutually
 exclusive.

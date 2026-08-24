@@ -531,9 +531,19 @@ def test_validated_judge_calibration_produces_certifying_corrections(
     strata = summary["cohorts"]["candidate"]
     assert strata["judge_safe"]["labelled"] == strata["judge_safe"]["stratum_size"]
 
-    # The gap between correction and decisions is surfaced rather than left implicit.
+    # Threshold claims are decided on true risk, and say so.
     codes = {item.code for item in report.integrity.diagnostics}
-    assert "JUDGE_CORRECTION_NOT_USED_BY_CLAIMS" in codes
+    assert "JUDGE_CORRECTED_CLAIMS" in codes
+    for result in report.claims:
+        assert result.method == "validated_judge_misclassification_correction"
+        assert "interval:judge_corrected_validated" in result.evidence_refs
+        assert result.lower == pytest.approx(corrected.lower)
+        assert result.upper == pytest.approx(corrected.upper)
+        # The error budget is the union of the claim family and the calibration.
+        assert result.alpha == pytest.approx(0.05 + 0.05)
+        # A calibration box gives a range of corrected estimates, not a single one.
+        assert result.estimate is None
+        assert any("validated judge correction" in reason for reason in result.reasons)
 
     markdown = (report.write(tmp_path / "validated-report") / "report.md").read_text(
         encoding="utf-8"
@@ -581,6 +591,51 @@ def test_validated_judge_calibration_reports_unmatched_labels(
     codes = {item.code for item in report.integrity.diagnostics}
     assert "JUDGE_VALIDATION_UNMATCHED" in codes
     assert report.integrity.status == "invalid"
+
+
+def test_assumed_judge_calibration_never_moves_a_claim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A declared sensitivity carries no coverage guarantee and must not decide anything."""
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "design:\n",
+        "  judge_calibration:\n"
+        "    mode: assumed\n"
+        "    primary: declared\n"
+        "    scenarios:\n"
+        "      - id: declared\n"
+        "        rho_1: {lower: 0.9, upper: 1.0}\n"
+        "        rho_0: {lower: 0.0, upper: 0.01}\n"
+        "design:\n",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=load_plan(plan_path), logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    assumed = next(
+        item for item in mean.intervals if item.interval_id == "judge_corrected_declared"
+    )
+    assert assumed.eligibility == "diagnostic"
+    for result in report.claims:
+        if result.evidence_refs == [f"risk:candidate:{mean.group_id}:{mean.measure_id}"]:
+            # The claim still sits on the uncorrected judge-system bounds.
+            assert result.lower == pytest.approx(mean.lower)
+            assert result.upper == pytest.approx(mean.upper)
+            assert result.method != "assumed_judge_misclassification_correction"
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "JUDGE_CORRECTED_CLAIMS" not in codes
 
 
 def test_decision_presentation_is_opt_in(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

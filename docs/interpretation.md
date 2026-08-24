@@ -16,6 +16,10 @@ Threshold decisions are an optional presentation layer enabled with
 
 `INCONCLUSIVE` means neither conclusion was established or the evidence did not satisfy the design contract. It is not a near-pass.
 
+When a validated judge calibration is declared, these decisions are made against true failure
+risk rather than judge-reported risk, and the claim records both intervals. See
+[Judge misclassification](judge-misclassification.md).
+
 ## Integrity states
 
 `valid` means every required outcome was classified and no structural integrity error occurred.

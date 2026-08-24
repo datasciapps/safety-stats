@@ -1685,19 +1685,6 @@ def _apply_judge_correction(
         )
         if interval is not None:
             result.intervals.append(interval)
-    if by_cohort:
-        diagnostics.append(
-            Diagnostic(
-                code="JUDGE_CORRECTION_NOT_USED_BY_CLAIMS",
-                severity="WARNING",
-                message=(
-                    "a validated judge correction is available, but threshold claims are still "
-                    "evaluated against the uncorrected judge-system interval; compare claims "
-                    "against the judge_corrected_validated interval manually"
-                ),
-                scope="inputs.judge_calibration",
-            )
-        )
     return {
         "mode": "validated",
         "family": spec.family,
@@ -3236,16 +3223,44 @@ def _comparison_set_results(
     return results
 
 
+def _certifying_judge_correction(
+    evidence: ComparisonResult | GroupRiskResult | None,
+) -> RiskIntervalResult | None:
+    """Return the judge correction a claim may be decided from, if one exists.
+
+    Only a ``validated`` correction qualifies. An ``assumed`` correction is a declared
+    sensitivity carrying no coverage guarantee, and must never move a safety decision;
+    the eligibility check enforces that structurally rather than by naming modes.
+    """
+
+    if evidence is None:
+        return None
+    return next(
+        (
+            interval
+            for interval in evidence.intervals
+            if interval.interval_id.startswith("judge_corrected_")
+            and interval.eligibility == "certifying"
+            and interval.lower is not None
+            and interval.upper is not None
+        ),
+        None,
+    )
+
+
 def _claims(
     plan: AnalysisPlan,
     risks: list[GroupRiskResult],
     comparisons: list[ComparisonResult],
     integrity_valid: bool,
+    diagnostics: list[Diagnostic],
 ) -> list[ClaimResult]:
     risk_index = {(item.cohort_id, item.group_id, item.measure_id): item for item in risks}
     comparison_index = {item.comparison_id: item for item in comparisons if item.level is None}
     families = {family.id: family for family in plan.multiplicity.families}
     results: list[ClaimResult] = []
+    corrected_claims: list[str] = []
+    uncorrected_claims: list[str] = []
     for claim in plan.claims:
         evidence: ComparisonResult | GroupRiskResult | None
         if claim.comparison:
@@ -3263,6 +3278,36 @@ def _claims(
         lower = evidence.lower if evidence else None
         upper = evidence.upper if evidence else None
         estimate = evidence.estimate if evidence else None
+        method = evidence.method if evidence else "unavailable"
+        evidence_refs = [ref]
+        family = families[claim.family]
+        alpha = family.alpha
+        correction_note: str | None = None
+
+        # A validated correction retargets the claim from judge-reported risk onto true
+        # risk. The threshold in the plan is about the model, not about the judge.
+        correction = _certifying_judge_correction(evidence)
+        if correction is not None:
+            correction_note = (
+                f"Decided on true failure risk using the validated judge correction "
+                f"[{cast(float, correction.lower):.12g}, "
+                f"{cast(float, correction.upper):.12g}]; the uncorrected judge-system "
+                f"interval was [{cast(float, correction.raw_lower):.12g}, "
+                f"{cast(float, correction.raw_upper):.12g}]."
+            )
+            lower = correction.lower
+            upper = correction.upper
+            # Under a calibration box there is a range of corrected point estimates,
+            # not a single one, so no scalar estimate is reported.
+            estimate = None
+            method = correction.method
+            evidence_refs.append(f"interval:{correction.interval_id}")
+            if correction.family_alpha is not None:
+                alpha = family.alpha + correction.family_alpha
+            corrected_claims.append(claim.id)
+        elif evidence is not None:
+            uncorrected_claims.append(claim.id)
+
         status, reasons = decide_claim(
             lower=lower,
             upper=upper,
@@ -3283,7 +3328,13 @@ def _claims(
                 ]
             else:
                 reasons.append("Exploratory analyses cannot produce a safety pass.")
-        family = families[claim.family]
+        if correction_note is not None:
+            reasons.insert(0, correction_note)
+            if alpha != family.alpha:
+                reasons.append(
+                    f"The error budget is the union of the claim family ({family.alpha:.12g}) "
+                    f"and the judge calibration, giving {alpha:.12g}."
+                )
         results.append(
             ClaimResult(
                 claim_id=claim.id,
@@ -3296,15 +3347,42 @@ def _claims(
                 upper=upper,
                 acceptable_upper=claim.acceptable_upper,
                 unacceptable_lower=claim.unacceptable_lower,
-                alpha=family.alpha,
+                alpha=alpha,
                 multiplicity_family=claim.family,
-                method=evidence.method if evidence else "unavailable",
+                method=method,
                 mandatory=claim.mandatory,
-                evidence_refs=[ref],
+                evidence_refs=evidence_refs,
                 reasons=reasons,
                 warnings=list(evidence.warnings) if evidence else [],
             )
         )
+    if corrected_claims:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_CORRECTED_CLAIMS",
+                severity="INFO",
+                message=(
+                    "threshold claims were decided on true failure risk using the validated "
+                    "judge correction rather than the uncorrected judge-system interval"
+                ),
+                scope="claims",
+                details={"claim_ids": sorted(corrected_claims)},
+            )
+        )
+        if uncorrected_claims:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_CORRECTION_MIXED_ESTIMANDS",
+                    severity="WARNING",
+                    message=(
+                        "some claims were decided on true failure risk and others on "
+                        "judge-reported risk, because no judge correction is available for "
+                        "their evidence; comparison claims are never corrected"
+                    ),
+                    scope="claims",
+                    details={"uncorrected_claim_ids": sorted(uncorrected_claims)},
+                )
+            )
     return results
 
 
@@ -3395,7 +3473,7 @@ def analyze(
     comparison_sets = _comparison_set_results(resolved, comparisons, risks)
     integrity_status = _integrity_status(diagnostics)
     integrity_certifiable = integrity_status != "invalid"
-    claims = _claims(resolved, risks, comparisons, integrity_certifiable)
+    claims = _claims(resolved, risks, comparisons, integrity_certifiable, diagnostics)
     events = _policy_events(resolved, data)
     decision = roll_up(
         [claim.status for claim in claims if claim.mandatory],
