@@ -1,0 +1,307 @@
+"""Node and root inference for a generative design.
+
+Path selection is independent of outcomes, so conditional on the number of draws that
+landed in a node, those draws are independent observations from that node's conditional
+distribution. Exact binomial bounds are therefore valid conditionally, and a bound valid
+for every realized count is valid unconditionally.
+
+The same argument licenses Sidak calibration across siblings: conditional on the count
+vector, sibling nodes hold disjoint sets of independent draws, so their coverage events
+are independent and the product bound holds for every realization. It also licenses
+reporting only the nodes that received draws -- that selection rule reads the counts,
+which are outcome-independent, and never the failures.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Literal
+
+import numpy as np
+
+from inspect_safety_stats.generative.ledger import SelectionRecord
+from inspect_safety_stats.generative.sampling import SamplingDesign
+from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
+from inspect_safety_stats.stats.binomial import (
+    binomial_upper_bound,
+    missingness_robust_binomial_bounds,
+)
+from inspect_safety_stats.stats.direct_mean import weighted_kl_chernoff_mean_bounds
+from inspect_safety_stats.stats.tree_calibration import (
+    IndependentFrontier,
+    calibrate_independent_frontiers,
+)
+
+CoverageMode = Literal["one_sided_upper", "two_sided"]
+EXACT_METHOD = "clopper_pearson_one_sided_missingness_robust"
+WEIGHTED_METHOD = "weighted_kl_chernoff"
+COEFFICIENT_TOLERANCE = 1e-12
+
+
+@dataclass(frozen=True)
+class UnitOutcome:
+    """One sampling unit's evaluated rollouts.
+
+    A unit whose rewrite never passed validation is not dropped: it is recorded with
+    every rollout unclassified, so it is completed as safe for the lower endpoint and
+    as a failure for the upper. Dropping it would silently alter the path distribution.
+    """
+
+    sampling_unit_id: str
+    trials: int
+    failures: int
+    unclassified: int
+
+    def __post_init__(self) -> None:
+        if self.trials <= 0:
+            raise ValueError("a sampling unit must have at least one attempted rollout")
+        if self.failures < 0 or self.unclassified < 0:
+            raise ValueError("counts must be non-negative")
+        if self.failures + self.unclassified > self.trials:
+            raise ValueError("failures plus unclassified cannot exceed trials")
+
+
+@dataclass(frozen=True)
+class NodeEstimate:
+    node_id: str
+    level: str
+    depth: int
+    node_weight: float
+    draws: int
+    trials: int
+    failures: int
+    unclassified: int
+    estimate: float | None
+    lower: float
+    upper: float
+    method: str
+    alpha_lower: float
+    alpha_upper: float
+    frontier_id: str | None
+    equal_coefficients: bool
+    maximum_coefficient: float
+    coefficient_ratio: float
+
+
+@dataclass(frozen=True)
+class TreeEstimate:
+    root: NodeEstimate
+    nodes: tuple[NodeEstimate, ...]
+    unsampled_nodes: tuple[str, ...]
+    alpha: float
+    coverage_mode: CoverageMode
+    simultaneous: bool
+
+    def node(self, node_id: str) -> NodeEstimate:
+        for candidate in self.nodes:
+            if candidate.node_id == node_id:
+                return candidate
+        raise KeyError(node_id)
+
+
+def _ancestors(node_id: str) -> list[str]:
+    parts = node_id.split("|")
+    return ["|".join(parts[: index + 1]) for index in range(len(parts))]
+
+
+def _raw_coefficients(
+    design: SamplingDesign, selections: list[SelectionRecord]
+) -> dict[str, float]:
+    """The deterministic weight each sampling unit carries in the root estimator."""
+
+    if design.method == "direct":
+        share = 1.0 / len(selections)
+        return {record.sampling_unit_id: share for record in selections}
+    draws = design.draws_by_stratum
+    weights = design.weight_by_stratum
+    coefficients: dict[str, float] = {}
+    for record in selections:
+        stratum = record.stratum
+        if stratum is None:
+            raise ValueError(
+                f"selection {record.sampling_unit_id} carries no stratum under a "
+                "stratified design"
+            )
+        if stratum not in draws:
+            raise ValueError(f"selection {record.sampling_unit_id} names unknown stratum {stratum}")
+        coefficients[record.sampling_unit_id] = weights[stratum] / draws[stratum]
+    return coefficients
+
+
+def _point_estimate(
+    outcomes: list[UnitOutcome], coefficients: np.ndarray
+) -> float | None:
+    """The design-weighted mean over classified rollouts.
+
+    Unclassified rollouts are excluded rather than completed, so this is a point
+    estimate and not an endpoint; the missingness is carried by the bounds.
+    """
+
+    total = 0.0
+    mass = 0.0
+    for outcome, coefficient in zip(outcomes, coefficients, strict=True):
+        classified = outcome.trials - outcome.unclassified
+        if classified <= 0:
+            continue
+        total += float(coefficient) * outcome.failures / classified
+        mass += float(coefficient)
+    return total / mass if mass > 0.0 else None
+
+
+def _bounds(
+    outcomes: list[UnitOutcome],
+    coefficients: np.ndarray,
+    *,
+    alpha_lower: float,
+    alpha_upper: float,
+    one_sided: bool,
+) -> tuple[float, float, str, bool]:
+    equal = bool(np.allclose(coefficients, coefficients[0], rtol=COEFFICIENT_TOLERANCE, atol=0.0))
+    single_rollout = all(outcome.trials == 1 for outcome in outcomes)
+    failures = sum(outcome.failures for outcome in outcomes)
+    unclassified = sum(outcome.unclassified for outcome in outcomes)
+    trials = sum(outcome.trials for outcome in outcomes)
+
+    if equal and single_rollout:
+        if one_sided:
+            upper = binomial_upper_bound(failures + unclassified, trials, alpha=alpha_upper)
+            return 0.0, upper, EXACT_METHOD, equal
+        exact = missingness_robust_binomial_bounds(
+            failures,
+            trials - unclassified,
+            trials,
+            alpha_lower=alpha_lower,
+            alpha_upper=alpha_upper,
+        )
+        return exact.lower, exact.upper, EXACT_METHOD, equal
+
+    weighted = weighted_kl_chernoff_mean_bounds(
+        np.array([outcome.failures for outcome in outcomes], dtype=int),
+        np.array([outcome.unclassified for outcome in outcomes], dtype=int),
+        np.array([outcome.trials for outcome in outcomes], dtype=int),
+        coefficients,
+        alpha_lower=alpha_lower,
+        alpha_upper=alpha_upper,
+        independence_unit="prompt_cluster",
+    )
+    return (0.0 if one_sided else weighted.lower), weighted.upper, WEIGHTED_METHOD, equal
+
+
+def estimate_tree(
+    taxonomy: CompiledTaxonomy,
+    design: SamplingDesign,
+    selections: list[SelectionRecord],
+    outcomes: list[UnitOutcome],
+    *,
+    alpha: float = 0.05,
+    coverage_mode: CoverageMode = "one_sided_upper",
+    simultaneous_tree: bool = False,
+    report_all_nodes: bool = True,
+) -> TreeEstimate:
+    """Estimate the root and every sampled node of a compiled generative taxonomy.
+
+    With ``simultaneous_tree`` the root shares the error budget with each hierarchy
+    depth by Bonferroni, so its interval widens. A user who needs the tightest root
+    should leave it off and read the root alone, which is then covered at ``1 - alpha``
+    with the node intervals labelled pointwise.
+    """
+
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be in (0, 1)")
+    if not selections:
+        raise ValueError("no selections were supplied")
+
+    by_unit = {outcome.sampling_unit_id: outcome for outcome in outcomes}
+    unknown = sorted(set(by_unit) - {record.sampling_unit_id for record in selections})
+    if unknown:
+        raise ValueError(
+            f"{len(unknown)} outcomes reference unselected sampling units, "
+            f"starting with {unknown[0]!r}"
+        )
+
+    coefficients = _raw_coefficients(design, selections)
+    members: dict[str, list[str]] = {}
+    for record in selections:
+        for ancestor in _ancestors(record.node_id):
+            members.setdefault(ancestor, []).append(record.sampling_unit_id)
+
+    reported = [taxonomy.root_id] if not report_all_nodes else None
+    calibration = {}
+    if simultaneous_tree:
+        frontiers: dict[int, dict[str, frozenset[str]]] = {}
+        for node in taxonomy.nodes:
+            if node.node_id not in members:
+                continue
+            if reported is not None and node.node_id not in reported:
+                continue
+            frontiers.setdefault(node.depth, {})[node.node_id] = frozenset(members[node.node_id])
+        calibration = calibrate_independent_frontiers(
+            [
+                IndependentFrontier(frontier_id=f"depth-{depth}", targets=targets, aliases={})
+                for depth, targets in sorted(frontiers.items())
+            ],
+            directional_family_alpha=alpha,
+        )
+
+    one_sided = coverage_mode == "one_sided_upper"
+    estimates: list[NodeEstimate] = []
+    unsampled: list[str] = []
+    for node in taxonomy.nodes:
+        unit_ids = members.get(node.node_id)
+        if not unit_ids:
+            unsampled.append(node.node_id)
+            continue
+        if reported is not None and node.node_id not in reported:
+            continue
+
+        local = calibration[node.node_id].endpoint_alpha if simultaneous_tree else alpha
+        alpha_lower = local if one_sided else local / 2.0
+        alpha_upper = local if one_sided else local / 2.0
+
+        raw = np.array([coefficients[unit_id] for unit_id in unit_ids], dtype=float)
+        normalized = raw / raw.sum()
+        node_outcomes = [
+            by_unit.get(unit_id, UnitOutcome(unit_id, trials=1, failures=0, unclassified=1))
+            for unit_id in unit_ids
+        ]
+        lower, upper, method, equal = _bounds(
+            node_outcomes,
+            normalized,
+            alpha_lower=alpha_lower,
+            alpha_upper=alpha_upper,
+            one_sided=one_sided,
+        )
+        estimates.append(
+            NodeEstimate(
+                node_id=node.node_id,
+                level=node.level,
+                depth=node.depth,
+                node_weight=node.target_path_weight,
+                draws=len(unit_ids),
+                trials=sum(outcome.trials for outcome in node_outcomes),
+                failures=sum(outcome.failures for outcome in node_outcomes),
+                unclassified=sum(outcome.unclassified for outcome in node_outcomes),
+                estimate=_point_estimate(node_outcomes, normalized),
+                lower=lower,
+                upper=upper,
+                method=method,
+                alpha_lower=alpha_lower,
+                alpha_upper=alpha_upper,
+                frontier_id=(
+                    calibration[node.node_id].frontier_id if simultaneous_tree else None
+                ),
+                equal_coefficients=equal,
+                maximum_coefficient=float(normalized.max()),
+                coefficient_ratio=float(normalized.max() / normalized.min()),
+            )
+        )
+
+    root = next(item for item in estimates if item.node_id == taxonomy.root_id)
+    return TreeEstimate(
+        root=root,
+        nodes=tuple(estimates),
+        unsampled_nodes=tuple(unsampled),
+        alpha=alpha,
+        coverage_mode=coverage_mode,
+        simultaneous=simultaneous_tree,
+    )

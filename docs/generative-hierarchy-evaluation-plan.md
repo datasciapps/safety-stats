@@ -1562,3 +1562,64 @@ constraints that condition strictly above what they prune, and a declared `renor
 rule whenever constraints prune at all. Semantically identical plans -- differing only in
 declaration order, or in `equal_within_parent` versus explicit equal weights -- compile to
 the same fingerprint.
+
+## Slice G2a as built
+
+**Status:** implemented, 24 August 2026. `generative/sampling.py` and
+`generative/inference.py`; tests in `tests/unit/test_generative_sampling.py` and
+`tests/unit/test_generative_inference.py`.
+
+G2a is the half of section 20's slice 2 that could invalidate the design: path selection
+and inference, both testable by simulation with no provider and no Inspect. The Inspect
+bridge -- dataset materialization, kernel execution, outcome join -- is G2b.
+
+### Why the inference is exact
+
+Path selection is independent of outcomes, so conditional on the number of draws that
+landed in a node, those draws are independent observations from that node's conditional
+distribution. Exact Clopper--Pearson bounds are therefore valid conditionally, and a bound
+valid for every realized count is valid unconditionally.
+
+The same argument licenses Sidak calibration across siblings. Conditional on the count
+vector, sibling nodes hold disjoint sets of independent draws, so their coverage events are
+independent and the product bound holds for every realization; taking the expectation over
+counts preserves it. It also licenses reporting only the nodes that received draws, because
+that selection rule reads the counts -- which are outcome-independent -- and never the
+failures.
+
+Exactness needs equal coefficients and one rollout per rewrite. Where either fails the
+weighted KL/Chernoff engine takes over and the interval reports which kernel was used.
+
+### The integer-allocation question, measured
+
+Proportional stratification keeps every coefficient at exactly \(1/T\) only when
+\(Tw_v\) are whole numbers. Largest-remainder allocation makes them near-equal, which drops
+the sharp Bernoulli-KL kernel for the weighted fallback. On seven strata at \(1/7\) --
+a weight that divides no round budget -- the cost of that fallback is:
+
+| budget | kernel | root bound vs direct sampling |
+|---:|---|---:|
+| 100 | weighted | 1.036x |
+| 300 | weighted | 1.026x |
+| 700 | exact | 1.000x |
+| 1,000 | weighted | 1.008x |
+| 3,000 | weighted | 1.002x |
+
+The penalty is under 4% at the smallest budget, vanishes when the budget divides the
+weights, and is below 1% by a thousand draws. Slice 0's finding that proportional
+stratification is free survives integer allocation, so no budget-snapping machinery is
+warranted. Every node reports `coefficient_ratio` and `equal_coefficients`, so the cost is
+visible rather than assumed.
+
+### Root and node intervals are not forced to agree
+
+The root interval is computed directly from all \(T\) draws, not by aggregating node
+intervals, and no LP projection reconciles the two. They can disagree slightly. This is
+deliberate: the root is the primary estimand and deserves the tightest available bound,
+while a node interval is a conditional statement about that node. Projecting would widen
+the root to buy a coherence the report does not claim.
+
+`simultaneous_tree` is off by default. Turning it on puts the root in its own frontier and
+splits alpha across depths by Bonferroni, which widens the root -- so a reader who wants the
+tightest root should leave it off and read the root alone, with the node intervals labelled
+pointwise.
