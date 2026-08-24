@@ -384,6 +384,75 @@ def test_frontier_sidak_calibrates_disjoint_hierarchy_nodes(
     assert "Frontier Šidák" in html
 
 
+def test_judge_calibration_emits_assumed_correction_sensitivities(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "design:\n",
+        "  judge_calibration:\n"
+        "    mode: assumed\n"
+        "    primary: declared\n"
+        "    scenarios:\n"
+        "      - id: declared\n"
+        "        rho_1: {lower: 0.9, upper: 1.0}\n"
+        "        rho_0: {lower: 0.0, upper: 0.01}\n"
+        "      - id: pessimistic\n"
+        "        rho_1: {lower: 0.7, upper: 1.0}\n"
+        "        rho_0: {lower: 0.0, upper: 0.05}\n"
+        "design:\n",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    plan = load_plan(plan_path)
+    plan.outputs.direct_mean_intervals.hierarchy_nodes = True
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    corrected = {
+        interval.interval_id: interval
+        for interval in mean.intervals
+        if interval.interval_id.startswith("judge_corrected_")
+    }
+    assert set(corrected) == {"judge_corrected_declared", "judge_corrected_pessimistic"}
+
+    declared = corrected["judge_corrected_declared"]
+    # An assumption can never certify.
+    assert declared.eligibility == "diagnostic"
+    assert declared.role == "sensitivity"
+    # The uncorrected bounds are retained for comparison, and the primary is untouched.
+    assert declared.raw_lower == pytest.approx(mean.lower)
+    assert declared.raw_upper == pytest.approx(mean.upper)
+    assert mean.primary_interval_id != declared.interval_id
+    # A looser assumption box must produce a superset true-risk band.
+    pessimistic = corrected["judge_corrected_pessimistic"]
+    assert pessimistic.upper > declared.upper
+    assert pessimistic.lower <= declared.lower
+    assert pessimistic.upper - pessimistic.lower > declared.upper - declared.lower
+    assert any("declared assumptions, not measurements" in a for a in declared.assumptions)
+
+    # Hierarchy nodes are corrected too; entropic and threshold measures are not.
+    assert report.hierarchy_risks
+    for node in report.hierarchy_risks:
+        assert any(i.interval_id == "judge_corrected_declared" for i in node.intervals)
+    entropic = next(row for row in report.group_risks if row.measure_id == "entropic")
+    assert not any(i.interval_id.startswith("judge_corrected_") for i in entropic.intervals)
+
+    markdown = (report.write(tmp_path / "judge-report") / "report.md").read_text(encoding="utf-8")
+    assert "## Judge misclassification sensitivity" in markdown
+    assert "assumes the judge never errs" in markdown
+
+
 def test_decision_presentation_is_opt_in(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     plan = load_plan(_write_inputs(tmp_path))
     plan.report.include_decisions = True

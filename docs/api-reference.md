@@ -315,6 +315,19 @@ levels.
 `inspect_safety_stats.stats.clusters`. It resamples whole creator-declared clusters while
 preserving pairs. It is a fixed-design sensitivity analysis, not a population interval.
 
+### Judge misclassification
+
+```python
+JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source)
+correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration)
+```
+
+Maps a judge-system risk interval onto the true-risk scale via
+`R* = R * rho_1 + (1 - R) * rho_0`. The identity is multilinear, so the returned bounds are
+the exact extrema over the declared box. It applies unchanged to any positively homogeneous,
+translation-equivariant risk measure. See
+[Judge misclassification](judge-misclassification.md).
+
 ### Multiplicity
 
 ```python

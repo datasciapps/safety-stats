@@ -240,6 +240,77 @@ def _markdown(report: SafetyReport) -> str:
                 )
                 + " |"
             )
+    judge_rows = [
+        (risk, interval)
+        for risk in report.group_risks
+        for interval in risk.intervals
+        if interval.interval_id.startswith("judge_corrected_")
+    ]
+    if judge_rows:
+        calibration = report._resolved_plan.get("inputs", {}).get("judge_calibration") or {}
+        primary_scenario = str(calibration.get("primary", ""))
+        lines.extend(
+            [
+                "",
+                "## Judge misclassification sensitivity",
+                "",
+                (
+                    "Every other interval in this report estimates the risk that the **judge "
+                    "reports** a failure. This section maps those intervals onto the underlying "
+                    "**true** failure risk using declared conditional judge accuracies."
+                ),
+                "",
+                (
+                    "These accuracies are assumptions, not measurements. The rows below carry no "
+                    "coverage guarantee and cannot support a safety claim. They exist to make an "
+                    "otherwise invisible dependency explicit: an uncorrected report implicitly "
+                    "assumes the judge never errs."
+                ),
+                "",
+                (
+                    "| Cohort | Group | Measure | Scenario | Judge-system bounds | "
+                    "True-risk bounds | Corrected estimate range | Bound status |"
+                ),
+                "|---|---|---|---|---|---|---|---|",
+            ]
+        )
+        for risk, interval in judge_rows:
+            scenario = interval.interval_id.removeprefix("judge_corrected_")
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _escape(risk.cohort_id),
+                        _escape(risk.group_id),
+                        _escape(risk.measure_id),
+                        f"`{_escape(scenario)}`"
+                        + (" (primary)" if scenario == primary_scenario else ""),
+                        f"{_number(interval.raw_lower, places)}–"
+                        f"{_number(interval.raw_upper, places)}",
+                        f"{_number(interval.lower, places)}–{_number(interval.upper, places)}",
+                        (
+                            f"{_number(interval.completion_estimate_lower, places)}–"
+                            f"{_number(interval.completion_estimate_upper, places)}"
+                            if interval.completion_estimate_lower is not None
+                            else "—"
+                        ),
+                        _bound_status(interval.eligibility),
+                    ]
+                )
+                + " |"
+            )
+        scenarios = calibration.get("scenarios") or []
+        if scenarios:
+            lines.extend(["", "Declared scenarios:", ""])
+            for item in scenarios:
+                rho_1, rho_0 = item.get("rho_1", {}), item.get("rho_0", {})
+                lines.append(
+                    f"- `{_escape(item.get('id'))}`: "
+                    f"P(truly unsafe | judge said unsafe) in "
+                    f"[{rho_1.get('lower')}, {rho_1.get('upper')}]; "
+                    f"P(truly unsafe | judge said safe) in "
+                    f"[{rho_0.get('lower')}, {rho_0.get('upper')}]"
+                )
     if report.hierarchy_risks:
         lines.extend(
             [

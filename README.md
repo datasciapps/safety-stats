@@ -31,6 +31,8 @@ It is designed for hand-curated safety evaluations in which prompts, questions, 
 - Exact McNemar, Newcombe paired score-interval, and fixed-cluster bootstrap diagnostics.
 - Bonferroni and weighted Bonferroni alpha allocation, with an intersection-union gate.
 - Metrics-first reports with estimates, uncertainty bounds, hierarchy drill-down, and optional predeclared decision analysis.
+- Declared judge-misclassification sensitivity, mapping judge-reported risk onto true
+  risk under explicit conditional-accuracy assumptions.
 - Deterministic JSON, Markdown, CSV, plan, and checksum sidecars.
 
 Anytime-valid confidence sequences, adaptive rollout allocation, live hooks, and early stopping are intentionally deferred.
@@ -187,6 +189,7 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Analysis plan reference](docs/plan-reference.md)
 - [Python and command-line API reference](docs/api-reference.md)
 - [Interpreting results](docs/interpretation.md)
+- [Judge misclassification](docs/judge-misclassification.md)
 - [Version 1 engineering design](docs/archive/v1-design.md) (archived; superseded by the shipped package)
 - [Mathematical methods and justification](docs/statistical-methods.md)
 - [Generative hierarchy evaluation planner: implementation plan](docs/generative-hierarchy-evaluation-plan.md)

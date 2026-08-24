@@ -65,6 +65,29 @@ inputs:
     errors: end_to_end
 ```
 
+`judge_calibration` is optional. It declares assumed conditional judge accuracies and emits
+diagnostic true-risk sensitivity intervals beside the ordinary judge-system intervals:
+
+```yaml
+inputs:
+  judge_calibration:
+    mode: assumed
+    primary: declared
+    scenarios:
+      - id: declared
+        rho_1: {lower: 0.85, upper: 1.0}
+        rho_0: {lower: 0.0, upper: 0.02}
+      - id: pessimistic
+        rho_1: {lower: 0.70, upper: 1.0}
+        rho_0: {lower: 0.0, upper: 0.05}
+```
+
+`rho_1` is P(truly unsafe | judge said unsafe) and `rho_0` is P(truly unsafe | judge said
+safe). Every scenario must satisfy `rho_1.lower > rho_0.upper`. The resulting intervals are
+always `diagnostic`: an assumption carries no coverage guarantee. Corrections are applied to
+`weighted_mean`, `maximum`, `cvar`, and `top_k_mean` measures and to every hierarchy node.
+See [Judge misclassification](judge-misclassification.md).
+
 ## `design`
 
 | Field | Meaning |

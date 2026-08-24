@@ -29,6 +29,11 @@ from .hierarchy_region import (
     project_two_arm_difference_hierarchy_confidence_region,
 )
 from .independence import BoundedBlocks
+from .misclassification import (
+    CorrectedRisk,
+    JudgeCalibration,
+    correct_judge_risk,
+)
 from .multiplicity import bonferroni_allocate
 from .paired import exact_mcnemar, newcombe_paired_interval
 from .planning import zero_failure_sample_size
@@ -55,6 +60,9 @@ __all__ = [
     "BoundedBlocks",
     "missingness_robust_binomial_bounds",
     "bonferroni_allocate",
+    "correct_judge_risk",
+    "CorrectedRisk",
+    "JudgeCalibration",
     "DirectComparisonBounds",
     "DirectMeanBounds",
     "direct_ratio_bounds",

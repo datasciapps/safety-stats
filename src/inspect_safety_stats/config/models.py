@@ -74,11 +74,69 @@ class ScoreSpec(StrictModel):
     )
 
 
+class JudgeRateRangeSpec(StrictModel):
+    """A declared closed range for one conditional judge accuracy."""
+
+    lower: float = Field(ge=0, le=1)
+    upper: float = Field(ge=0, le=1)
+
+    @model_validator(mode="after")
+    def ordered(self) -> JudgeRateRangeSpec:
+        if self.lower > self.upper:
+            raise ValueError("judge rate range lower endpoint cannot exceed its upper endpoint")
+        return self
+
+
+class JudgeCalibrationScenarioSpec(StrictModel):
+    """One named assumption about the judge's conditional accuracy.
+
+    ``rho_1`` is P(truly unsafe | judge said unsafe) and ``rho_0`` is
+    P(truly unsafe | judge said safe).
+    """
+
+    id: str = Field(min_length=1)
+    rho_1: JudgeRateRangeSpec
+    rho_0: JudgeRateRangeSpec
+
+    @model_validator(mode="after")
+    def strictly_informative(self) -> JudgeCalibrationScenarioSpec:
+        if self.rho_1.lower <= self.rho_0.upper:
+            raise ValueError(
+                f"judge calibration scenario {self.id!r} is not strictly informative: "
+                "the rho_1 lower endpoint must exceed the rho_0 upper endpoint"
+            )
+        return self
+
+
+class JudgeCalibrationSpec(StrictModel):
+    """Declared judge-misclassification assumptions and their sensitivity range.
+
+    ``mode: assumed`` carries no evidence. Every corrected interval it produces is
+    reported as a diagnostic sensitivity result, never as a certifying bound.
+    """
+
+    mode: Literal["assumed"] = "assumed"
+    scenarios: list[JudgeCalibrationScenarioSpec] = Field(min_length=1)
+    primary: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_scenarios(self) -> JudgeCalibrationSpec:
+        ids = [item.id for item in self.scenarios]
+        if len(set(ids)) != len(ids):
+            raise ValueError("judge calibration scenario identifiers must be unique")
+        if self.primary not in ids:
+            raise ValueError(
+                f"judge calibration primary {self.primary!r} is not a declared scenario"
+            )
+        return self
+
+
 class InputsSpec(StrictModel):
     design_manifest: Path
     estimand: Literal["end_to_end_system", "underlying_model"] = "end_to_end_system"
     sample_join: SampleJoinSpec = Field(default_factory=SampleJoinSpec)
     score: ScoreSpec
+    judge_calibration: JudgeCalibrationSpec | None = None
 
 
 class WeightSpec(StrictModel):

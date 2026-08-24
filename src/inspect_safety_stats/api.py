@@ -54,6 +54,10 @@ from inspect_safety_stats.stats.independence import (
     direct_bounded_blocks,
     validate_profile_fields,
 )
+from inspect_safety_stats.stats.misclassification import (
+    JudgeCalibration,
+    correct_judge_risk,
+)
 from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
 from inspect_safety_stats.stats.paired import exact_mcnemar, newcombe_paired_interval
 from inspect_safety_stats.stats.risk import (
@@ -1399,6 +1403,114 @@ def _project_hierarchy_regions(
                     root_result.raw_lower = primary.raw_lower
                     root_result.raw_upper = primary.raw_upper
                     root_result.projection_method = primary.projection_method
+
+
+# Risk measures whose value is positively homogeneous and translation equivariant,
+# so the affine judge correction R* = R * rho_1 + (1 - R) * rho_0 applies unchanged.
+_JUDGE_CORRECTABLE_MEASURES = frozenset(
+    {"weighted_mean", "maximum", "cvar", "top_k_mean"}
+)
+
+
+def _judge_calibrations(plan: AnalysisPlan) -> list[JudgeCalibration]:
+    spec = plan.inputs.judge_calibration
+    if spec is None:
+        return []
+    ordered = sorted(spec.scenarios, key=lambda item: (item.id != spec.primary, item.id))
+    return [
+        JudgeCalibration(
+            scenario_id=item.id,
+            rho_1_lower=item.rho_1.lower,
+            rho_1_upper=item.rho_1.upper,
+            rho_0_lower=item.rho_0.lower,
+            rho_0_upper=item.rho_0.upper,
+            source=spec.mode,
+        )
+        for item in ordered
+    ]
+
+
+def _judge_corrected_interval(
+    *,
+    result: GroupRiskResult | HierarchyRiskResult,
+    calibration: JudgeCalibration,
+    primary_scenario: str,
+) -> RiskIntervalResult | None:
+    if result.lower is None or result.upper is None:
+        return None
+    corrected = correct_judge_risk(
+        observed_lower=result.lower,
+        observed_upper=result.upper,
+        observed_estimate=result.estimate,
+        calibration=calibration,
+    )
+    return RiskIntervalResult(
+        interval_id=f"judge_corrected_{calibration.scenario_id}",
+        lower=corrected.lower,
+        upper=corrected.upper,
+        method="assumed_judge_misclassification_correction",
+        role="sensitivity",
+        coverage_scope=(
+            f"{result.coverage_scope}_judge_corrected"
+            if result.coverage_scope
+            else "judge_corrected"
+        ),
+        completion_estimate_lower=corrected.completion_estimate_lower,
+        completion_estimate_upper=corrected.completion_estimate_upper,
+        raw_lower=result.lower,
+        raw_upper=result.upper,
+        calibration_method=f"{calibration.source}_judge_calibration",
+        assumptions=[
+            "The reported estimand is true failure risk, not judge-reported failure risk.",
+            f"P(truly unsafe | judge said unsafe) lies in "
+            f"[{calibration.rho_1_lower:.6g}, {calibration.rho_1_upper:.6g}].",
+            f"P(truly unsafe | judge said safe) lies in "
+            f"[{calibration.rho_0_lower:.6g}, {calibration.rho_0_upper:.6g}].",
+            "These conditional accuracies are declared assumptions, not measurements; "
+            "the interval inherits no coverage guarantee from them.",
+            "The declared accuracies are prevalence-dependent and are applied unchanged "
+            "to every cohort.",
+            "The underlying judge-system interval retains its own stated guarantee.",
+        ],
+        eligibility="diagnostic",
+        warnings=(
+            []
+            if calibration.scenario_id == primary_scenario
+            else ["Non-primary judge-calibration scenario; reported for sensitivity only."]
+        ),
+    )
+
+
+def _apply_judge_correction(
+    plan: AnalysisPlan,
+    risks: list[GroupRiskResult],
+    hierarchy_risks: list[HierarchyRiskResult],
+) -> None:
+    """Append assumed-misclassification sensitivity intervals to weighted risk rows."""
+
+    calibrations = _judge_calibrations(plan)
+    if not calibrations:
+        return
+    spec = plan.inputs.judge_calibration
+    assert spec is not None
+    correctable = {
+        measure.id
+        for measure in plan.outputs.risk_measures
+        if measure.type in _JUDGE_CORRECTABLE_MEASURES
+    }
+    targets: list[GroupRiskResult | HierarchyRiskResult] = [
+        *(row for row in risks if row.measure_id in correctable),
+        *hierarchy_risks,
+    ]
+    for result in targets:
+        for calibration in calibrations:
+            interval = _judge_corrected_interval(
+                result=result,
+                calibration=calibration,
+                primary_scenario=spec.primary,
+            )
+            if interval is not None:
+                result.intervals.append(interval)
 
 
 def _observation_attr(observation: Observation, name: str) -> Any:
@@ -3081,6 +3193,7 @@ def analyze(
         hierarchy_risks,
         diagnostics,
     )
+    _apply_judge_correction(resolved, risks, hierarchy_risks)
     comparisons = _comparisons(resolved, data, estimates, diagnostics)
     comparison_sets = _comparison_set_results(resolved, comparisons, risks)
     integrity_status = _integrity_status(diagnostics)

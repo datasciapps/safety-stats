@@ -19,6 +19,16 @@ inputs:
       safe_values: ["PASS"]
     missing: block
     errors: block
+  judge_calibration:
+    mode: assumed
+    primary: declared
+    scenarios:
+      - id: declared
+        rho_1: {lower: 0.85, upper: 1.0}
+        rho_0: {lower: 0.0, upper: 0.02}
+      - id: pessimistic
+        rho_1: {lower: 0.70, upper: 1.0}
+        rho_0: {lower: 0.0, upper: 0.05}
 
 design:
   type: fixed
