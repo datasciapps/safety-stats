@@ -10,10 +10,11 @@ SMC, subset simulation, evolutionary prompt mutation, and anytime-valid live sto
 never in scope  
 **Last updated:** 24 August 2026  
 **Amendments:** *Slice 0 result* -- variance reduction does not improve the finite-sample
-bound this package reports, which closes slices 3, 4 and 7. *Slice G1 as built* -- the
-reduced roadmap, the decisions taken, and where the implementation departs from sections
-6 to 8. Both are at the end of this document and supersede the plan above where they
-disagree.
+bound this package reports, which closes slices 3, 4 and 7. *Slice 6 result* -- model-assisted
+estimation fails too, by fragmenting the alpha budget rather than by distorting coefficients,
+which closes the last open slice. *Slice G1 as built* and the sections following it record
+the decisions taken and where the implementation departs from sections 6 to 8. All are at the
+end of this document and supersede the plan above where they disagree.
 
 ## 1. Objective
 
@@ -1518,8 +1519,8 @@ and `tests/unit/test_generative_kernels_ledger.py`.
 
 Following the slice 0 result, the seven slices of section 20 were reduced to two builds
 and a gate. G1 is section 20's slice 1; G2 is its slice 2 plus the coverage half of slice
-3. Slices 3 (Neyman), 4 and 7 are closed by measurement, and slice 6 is deferred behind a
-separate measurement of residual-range reduction.
+3. Slices 3 (Neyman), 4 and 7 are closed by measurement; slice 6 was deferred behind a
+separate measurement and is now closed too -- see *Slice 6 result* at the end.
 
 ### Decisions taken
 
@@ -1818,3 +1819,89 @@ than being flattened into a shared presentation. The page is self-contained, emb
 data and fetching nothing, and states the estimand in words on the page itself rather than
 only in the JSON. The JSON escaping is shared with the fixed-design renderer, since it is
 what stops embedded data from closing the script element.
+
+## Slice 6 result: model-assisted estimation does not improve the bound either
+
+**Status:** measured, 24 August 2026. Reproduce with
+`python research/generative_model_assisted.py`.
+
+Slice 6 was the last variance-reduction technique left open after the slice 0 measurement,
+and it was left open for a reason: unlike importance sampling and Neyman allocation, it does
+not make the estimator's coefficients unequal, so slice 0's mechanism does not condemn it.
+It was measured before being built, and it loses anyway -- for a different reason.
+
+Model-assisted estimation is the same construction as two-level multilevel Monte Carlo:
+
+\[
+R=\underbrace{\mathbb E[f(X)]}_{\text{level 0, cheap}}
+ +\underbrace{\mathbb E[Y-f(X)]}_{\text{level 1, expensive but concentrated}}
+\]
+
+Two variants are available here, and they fail differently.
+
+### A prompt-level predictor
+
+Bound at the root against plain direct sampling at equal budget, where \(k\) is how many
+predictor calls fit in one target evaluation. Above 1.00 favours the two-level design:
+
+| predictor | k=1 | k=3 | k=10 | k=100 |
+|---|---:|---:|---:|---:|
+| perfect | 0.68x | 0.84x | 0.95x | 1.07x |
+| excellent | 0.67x | 0.81x | 0.91x | 1.03x |
+| good | 0.58x | 0.70x | 0.79x | 0.87x |
+| fair | 0.48x | 0.61x | 0.68x | 0.77x |
+
+A **perfect** predictor does not break even until the cheap level is a hundred times
+cheaper. That ratio is not reachable here: evaluating \(f\) on a prompt requires generating
+the prompt, so both levels pay the rewrite cost and \(k\) is floored by it -- realistically
+around 3, where even a perfect predictor gives 0.84x.
+
+### A path-level predictor
+
+Defining \(f\) on the structural path instead makes level 0 **exact**: \(\mathbb E[f]=\sum_h
+w(h)f(h)\) is a weighted sum over the compiled taxonomy, with no sampling and no alpha
+spent. Giving it the oracle \(f(h)=p_h\), the best any path predictor could be:
+
+| | bound |
+|---|---:|
+| direct, exact Clopper--Pearson | 0.04518 |
+| model-assisted, oracle path predictor | 0.05960 |
+| | **0.76x** |
+
+It removes 2.3% of the variance. With failures rare, \(p(1-p)\) dominates and no function of
+the path can reach the rest. That is not enough to pay for the downgrade from an exact
+binomial bound on binary outcomes to a bounded-mean inequality on continuous residuals.
+
+### Why: bounds compose by union, not by variance addition
+
+MLMC's own accounting is \(\operatorname{Var}=V_0/n_0+V_1/n_1\), where a low-variance term
+contributes almost nothing. Bound accounting is different. The widths add **and each level
+needs its own share of alpha**. Even a perfect predictor leaves a floor of about
+\(\ln(4/\alpha)/n_1\) on the residual term, because the residual must be *proved* zero, not
+merely be zero. No amount of variance reduction buys that back.
+
+That is a second, distinct failure mode from the one slice 0 found:
+
+| technique | what it does to the bound's inputs | verdict |
+|---|---|---|
+| importance sampling, Neyman allocation | distorts the coefficient geometry | closed, slice 0 |
+| model-assisted, MLMC | fragments the alpha budget across levels | closed, here |
+| paired comparisons | neither -- same coefficients, one bound | **kept**, 2.0x--9.8x |
+
+Pairing is the only one of the three that helps, and it helps because it does neither of the
+harmful things: it leaves the coefficients alone and adds no level. It is not really variance
+reduction at all -- it changes *what is bounded*, from two common rates to two rare
+discordance rates.
+
+### What this closes
+
+Every variance-reduction slice in section 20 is now closed by measurement: 3, 4 and 7 by
+slice 0, and 6 here. Slice 5's pairing survived and is implemented. The reduced roadmap is
+final unless a qualitatively different evaluation reopens it.
+
+Two limits on the finding. Both variants were measured on one synthetic design in the
+sparse-failure regime, where Bernoulli noise is 97.8% of the variance of a draw; an
+evaluation with common failures would shift that split and deserves a re-run. And variant 1
+assumed a **binary** predictor, which is what lets level 1 use the exact two-cell
+construction; a calibrated probabilistic predictor gives continuous residuals and loses it,
+so it should be expected to do worse rather than better.
