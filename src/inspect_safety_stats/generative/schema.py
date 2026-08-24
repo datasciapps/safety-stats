@@ -133,6 +133,7 @@ class ConstraintSpec(StrictModel):
 
 class TaxonomySpec(StrictModel):
     seed_manifest: str = Field(min_length=1)
+    seed_text_column: str = "seed_text"
     root_id: str = "all"
     hierarchy: list[str] = Field(min_length=1)
     semantic_seed_level: str = Field(min_length=1)

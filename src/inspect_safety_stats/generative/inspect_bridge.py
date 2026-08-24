@@ -1,0 +1,244 @@
+"""Materialize an Inspect dataset from accepted rewrites, and join the results back.
+
+The dataset written here is the restricted materialization artifact: it necessarily
+carries prompt text, because that is what Inspect evaluates. Nothing downstream of the
+join does -- outcomes are keyed by identifier, and the statistical ledgers, reports and
+CSV outputs carry hashes only.
+"""
+
+from __future__ import annotations
+
+import json
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+
+from inspect_safety_stats.generative.execution import ExecutionResult
+from inspect_safety_stats.generative.inference import UnitOutcome
+from inspect_safety_stats.generative.ledger import SelectionRecord
+from inspect_safety_stats.generative.schema import GenerativePlan
+from inspect_safety_stats.schema.observations import Observation
+from inspect_safety_stats.schema.reports import Diagnostic
+
+
+@dataclass(frozen=True)
+class EvaluatedSample:
+    sample_id: str
+    cohort_id: str
+    epoch: int
+    failure: bool | None
+
+
+@dataclass(frozen=True)
+class JoinResult:
+    outcomes: tuple[UnitOutcome, ...]
+    diagnostics: tuple[Diagnostic, ...]
+    unevaluated: tuple[str, ...]
+
+    @property
+    def has_errors(self) -> bool:
+        return any(item.severity == "ERROR" for item in self.diagnostics)
+
+
+def materialize_dataset(
+    selections: list[SelectionRecord],
+    result: ExecutionResult,
+    path: str | Path,
+) -> int:
+    """Write accepted rewrites as an Inspect JSONL dataset. Returns the sample count."""
+
+    by_unit = {record.sampling_unit_id: record for record in selections}
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    written = 0
+    with destination.open("w", encoding="utf-8") as handle:
+        for entry in result.accepted:
+            selection = by_unit.get(entry.sampling_unit_id)
+            if selection is None:
+                raise ValueError(
+                    f"accepted rewrite {entry.sampling_unit_id} has no matching selection"
+                )
+            handle.write(
+                json.dumps(
+                    {
+                        "id": entry.prompt_id,
+                        "input": entry.prompt,
+                        "metadata": {
+                            "sampling_unit_id": entry.sampling_unit_id,
+                            "path_hash": selection.path_hash,
+                            "node_id": selection.node_id,
+                            "semantic_seed_id": selection.semantic_seed_id,
+                            "stratum": selection.stratum,
+                            "target_path_probability": selection.target_path_probability,
+                            "prompt_sha256": entry.prompt_sha256,
+                        },
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+            written += 1
+    return written
+
+
+def materialize_for_cohorts(
+    plan: GenerativePlan,
+    selections: list[SelectionRecord],
+    result: ExecutionResult,
+    directory: str | Path,
+) -> dict[str, Path]:
+    """One dataset per cohort.
+
+    Under ``target.shared_rewrites`` every cohort receives the identical file, which is
+    what makes the arms paired: the same accepted rewrite is evaluated by each model, so
+    a difference between them cannot be an artefact of different prompts.
+    """
+
+    root = Path(directory)
+    root.mkdir(parents=True, exist_ok=True)
+    if not plan.target.shared_rewrites:
+        raise ValueError(
+            "independent rewrites per cohort require executing the kernel once per "
+            "cohort with a distinct rewrite_salt; pass each result to "
+            "materialize_dataset directly"
+        )
+    shared = root / "dataset.jsonl"
+    materialize_dataset(selections, result, shared)
+    return dict.fromkeys(plan.target.cohorts, shared)
+
+
+def samples_from_observations(observations: list[Observation]) -> list[EvaluatedSample]:
+    """Adapt normalized Inspect observations to the join's input.
+
+    The generative design has no prompt manifest, so the join keys on the sample id
+    that materialization wrote, not on ``prompt_id``.
+    """
+
+    return [
+        EvaluatedSample(
+            sample_id=observation.sample_id,
+            cohort_id=observation.cohort_id,
+            epoch=observation.epoch,
+            failure=observation.failure,
+        )
+        for observation in observations
+    ]
+
+
+def join_outcomes(
+    plan: GenerativePlan,
+    selections: list[SelectionRecord],
+    result: ExecutionResult,
+    samples: list[EvaluatedSample],
+    *,
+    cohort_id: str,
+) -> JoinResult:
+    """Map evaluated samples back to sampling units, one row per selection.
+
+    Every selection produces an outcome, including units whose rewrite never passed
+    validation and units that were never evaluated. Both are completed as unclassified
+    so the conservative completion in the interval carries them, rather than the
+    realized design silently shrinking to whatever happened to run.
+    """
+
+    if cohort_id not in plan.target.cohorts:
+        raise ValueError(f"cohort {cohort_id!r} is not declared in target.cohorts")
+    rollouts = plan.target.rollouts_per_rewrite
+    unit_of_prompt = {entry.prompt_id: entry.sampling_unit_id for entry in result.accepted}
+    accepted_units = set(unit_of_prompt.values())
+
+    diagnostics: list[Diagnostic] = []
+    seen: set[tuple[str, int]] = set()
+    grouped: dict[str, list[EvaluatedSample]] = defaultdict(list)
+    for sample in samples:
+        if sample.cohort_id != cohort_id:
+            continue
+        unit = unit_of_prompt.get(sample.sample_id)
+        if unit is None:
+            diagnostics.append(
+                Diagnostic(
+                    code="GENERATIVE_SAMPLE_UNMATCHED",
+                    severity="ERROR",
+                    message=(
+                        f"sample {sample.sample_id!r} does not correspond to any accepted "
+                        "rewrite; the log and the ledger describe different runs"
+                    ),
+                    scope=cohort_id,
+                )
+            )
+            continue
+        key = (sample.sample_id, sample.epoch)
+        if key in seen:
+            diagnostics.append(
+                Diagnostic(
+                    code="GENERATIVE_SAMPLE_DUPLICATE",
+                    severity="ERROR",
+                    message=(
+                        f"sample {sample.sample_id!r} epoch {sample.epoch} appears more than "
+                        "once; a retried or re-ingested sample would be counted twice"
+                    ),
+                    scope=cohort_id,
+                )
+            )
+            continue
+        seen.add(key)
+        grouped[unit].append(sample)
+
+    outcomes: list[UnitOutcome] = []
+    unevaluated: list[str] = []
+    over_evaluated: list[str] = []
+    for selection in selections:
+        unit = selection.sampling_unit_id
+        evaluated = grouped.get(unit, [])
+        if unit not in accepted_units or not evaluated:
+            unevaluated.append(unit)
+            outcomes.append(
+                UnitOutcome(unit, trials=rollouts, failures=0, unclassified=rollouts)
+            )
+            continue
+        if len(evaluated) > rollouts:
+            over_evaluated.append(unit)
+        failures = sum(1 for sample in evaluated if sample.failure is True)
+        classified = sum(1 for sample in evaluated if sample.failure is not None)
+        trials = max(rollouts, len(evaluated))
+        outcomes.append(
+            UnitOutcome(
+                unit,
+                trials=trials,
+                failures=failures,
+                unclassified=trials - classified,
+            )
+        )
+
+    if over_evaluated:
+        diagnostics.append(
+            Diagnostic(
+                code="GENERATIVE_ROLLOUT_OVERRUN",
+                severity="ERROR",
+                message=(
+                    f"{len(over_evaluated)} sampling units have more evaluated rollouts than "
+                    f"target.rollouts_per_rewrite ({rollouts}); the declared design and the "
+                    "run disagree"
+                ),
+                scope=cohort_id,
+                details={"sampling_units": sorted(over_evaluated)[:20]},
+            )
+        )
+    if unevaluated:
+        diagnostics.append(
+            Diagnostic(
+                code="GENERATIVE_UNIT_UNEVALUATED",
+                severity="WARNING",
+                message=(
+                    f"{len(unevaluated)} of {len(selections)} sampling units produced no "
+                    "usable outcome and are completed as unclassified"
+                ),
+                scope=cohort_id,
+                details={"count": len(unevaluated)},
+            )
+        )
+    return JoinResult(
+        outcomes=tuple(outcomes),
+        diagnostics=tuple(diagnostics),
+        unevaluated=tuple(unevaluated),
+    )

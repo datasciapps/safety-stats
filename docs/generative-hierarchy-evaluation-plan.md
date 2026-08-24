@@ -1623,3 +1623,58 @@ the root to buy a coherence the report does not claim.
 splits alpha across depths by Bonferroni, which widens the root -- so a reader who wants the
 tightest root should leave it off and read the root alone, with the node intervals labelled
 pointwise.
+
+## Slice G2b as built
+
+**Status:** implemented, 24 August 2026. `generative/execution.py` and
+`generative/inspect_bridge.py`; tests in `tests/unit/test_generative_bridge.py`.
+
+G2b closes section 20's slice 2: the rewrite procedure runs, its output becomes an
+Inspect dataset, and the evaluated samples come back as sampling-unit outcomes.
+
+### The accepted distribution is produced here
+
+Validation, retry and deduplication are applied during execution rather than afterwards,
+because section 3.2 defines the kernel as the distribution the *complete* procedure
+induces. A unit whose retries are exhausted is recorded as an incomplete sampling unit and
+kept -- never dropped -- so the path distribution it was drawn to represent is preserved
+and the conservative completion inside the interval carries it.
+
+### Where prompt text is allowed to be
+
+The materialized dataset necessarily contains prompts; that is what Inspect evaluates, and
+it is the restricted artifact section 8.2 describes. Everything else keys on identifiers:
+the rewrite ledger stores `prompt_sha256` and has no text column, and the join reads only
+identifiers. `write_prompt_store` puts the text in one clearly separate file so it can be
+handled under different access rules. A test asserts the seed text cannot be found anywhere
+in a serialized ledger row.
+
+### The join keys on the materialized sample id
+
+A generative design has no prompt manifest, so the normalized `prompt_id` the fixed-design
+ingestion populates is empty. The join therefore keys on the sample id that materialization
+wrote, and `samples_from_observations` adapts normalized Inspect observations to it.
+
+Every selection yields exactly one outcome row, including units that were never evaluated
+and units whose rewrite never passed validation; both are completed as unclassified. The
+realized design cannot silently shrink to whatever happened to run.
+
+Three conditions are reported rather than absorbed: `GENERATIVE_SAMPLE_UNMATCHED` when a
+log row matches no accepted rewrite, `GENERATIVE_SAMPLE_DUPLICATE` when the same sample and
+epoch arrive twice -- a retried or re-ingested sample would otherwise be counted twice --
+and `GENERATIVE_ROLLOUT_OVERRUN` when a unit has more rollouts than the plan declares.
+`GENERATIVE_UNIT_UNEVALUATED` is a warning, since incomplete evaluation is expected and
+already handled conservatively.
+
+### Pairing
+
+Under `target.shared_rewrites` every cohort is pointed at the identical dataset file, so
+the same accepted rewrite is evaluated by each model and a difference between arms cannot
+be an artefact of different prompts. Independent rewrites per cohort are supported by
+running the kernel again with a distinct `rewrite_salt`; the paired helper refuses that
+configuration explicitly rather than silently producing unpaired arms.
+
+### Still open
+
+No worked example exercises the whole path yet, and comparisons across cohorts are not
+implemented -- G2a estimates one cohort at a time.
