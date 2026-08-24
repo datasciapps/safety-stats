@@ -1806,7 +1806,15 @@ cohort follows from which model produced the log. The score mapper is shared; no
 is. A sample whose score is missing or unmappable is returned unclassified rather than
 dropped, so the conservative completion carries it.
 
-### Not implemented
+### Report artifacts
 
-No HTML report -- JSON and CSV only. Section 19's richer artifacts, and the visual tree the
-fixed-design side renders, are not built.
+`report.html`, `report.json`, `nodes.csv`, `taxonomy.csv`, `comparisons.csv` and
+`diagnostics.csv`.
+
+The HTML page has its own template rather than an adapter onto the fixed-design one. The two
+reports answer different questions -- one about a materialized prompt set, one about a
+declared generative process -- and section 2 requires that difference to stay visible rather
+than being flattened into a shared presentation. The page is self-contained, embedding its
+data and fetching nothing, and states the estimand in words on the page itself rather than
+only in the JSON. The JSON escaping is shared with the fixed-design renderer, since it is
+what stops embedded data from closing the script element.

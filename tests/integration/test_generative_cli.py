@@ -277,3 +277,71 @@ def test_a_matching_kernel_is_not_flagged(tmp_path: Path) -> None:
     plan_path.write_text(yaml.safe_dump(edited, sort_keys=False), encoding="utf-8")
     run = materialize_run(plan_path, tmp_path / "run", kernel="fake")
     assert run.kernel_mismatch is None
+
+
+def test_the_report_directory_carries_a_self_contained_html_page(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = write_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts)
+
+    report = analyze_run(
+        plan,
+        artifacts,
+        "logs",
+        cohort="candidate",
+        slices=("language=maltese",),
+        comparisons=("candidate:baseline",),
+    )
+    path = report.write(tmp_path / "report")
+    html = (path / "report.html").read_text(encoding="utf-8")
+
+    assert "__INSPECT_SAFETY_STATS_GENERATIVE_DATA__" not in html
+    assert html.startswith("<!doctype html>")
+    # Self-contained: nothing is fetched when the page is opened.
+    for forbidden in ("<script src=", "<link rel=\"stylesheet\"", "http://", "https://"):
+        assert forbidden not in html
+    # The estimand is stated on the page itself, not only in the JSON.
+    assert "not a probability over all possible prompts" in html
+    assert report.evaluation["taxonomy_fingerprint"] in html
+
+
+def test_the_html_page_escapes_data_that_could_close_its_script(tmp_path: Path) -> None:
+    """Embedded JSON must not be able to terminate the script element."""
+
+    from inspect_safety_stats.generative.report import GenerativeReport
+    from inspect_safety_stats.generative.visualization import render_generative_report
+
+    built = GenerativeReport(
+        evaluation={"id": "x", "title": "</script><script>alert(1)</script>"},
+        design={},
+        tree=_minimal_tree(tmp_path),
+        taxonomy=_minimal_taxonomy(tmp_path),
+    )
+    html = render_generative_report(built)
+    assert "</script><script>alert(1)" not in html
+    assert "\\u003c/script" in html or "\\u003cscript" in html
+
+
+def _minimal_taxonomy(tmp_path: Path):
+    from inspect_safety_stats.generative.schema import load_generative_plan
+    from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+
+    plan_path = write_plan(tmp_path, total=20)
+    return compile_taxonomy(load_generative_plan(plan_path), base_path=tmp_path)
+
+
+def _minimal_tree(tmp_path: Path):
+    from inspect_safety_stats.generative.inference import UnitOutcome, estimate_tree
+    from inspect_safety_stats.generative.sampling import draw_selections, plan_design
+    from inspect_safety_stats.generative.schema import load_generative_plan
+
+    plan_path = write_plan(tmp_path, total=20)
+    plan = load_generative_plan(plan_path)
+    taxonomy = _minimal_taxonomy(tmp_path)
+    design = plan_design(taxonomy, plan)
+    selections = draw_selections(taxonomy, design)
+    outcomes = [UnitOutcome(r.sampling_unit_id, 1, 0, 0) for r in selections]
+    return estimate_tree(taxonomy, design, selections, outcomes, report_all_nodes=False)

@@ -76,16 +76,18 @@ jobs:
         run: |
           python -m venv /tmp/check
           /tmp/check/bin/python -m pip install --quiet dist/*.whl
-          # The wheel must carry the HTML report template, not just the modules.
+          # The wheel must carry both HTML report templates, not just the modules.
           /tmp/check/bin/python -c "
-          from pathlib import Path
           import inspect_safety_stats
           from inspect_safety_stats.report import visualization
+          from inspect_safety_stats.generative import visualization as generative
           print('version', inspect_safety_stats.__version__)
           assert visualization._TEMPLATE.is_file(), 'report template missing from wheel'
+          assert generative._TEMPLATE.is_file(), 'generative template missing from wheel'
           "
           /tmp/check/bin/inspect-safety-stats version
           /tmp/check/bin/inspect-safety-stats plan zero-failure --threshold 0.01 --alpha 0.05
+          /tmp/check/bin/inspect-safety-stats generative --help > /dev/null
       - uses: actions/upload-artifact@v4
         with:
           name: distributions

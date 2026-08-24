@@ -202,15 +202,15 @@ Cohorts are matched to logs by the model each declares in `target.cohorts`, so t
 edited between the two phases is rejected rather than silently changing the estimand — the
 ledger records what was evaluated, and the plan has to still reproduce it.
 
-The report directory carries `report.json`, `nodes.csv`, `taxonomy.csv`, `comparisons.csv`
-and `diagnostics.csv`. `report.json` names the taxonomy and kernel fingerprints it was
-produced under, so two runs cannot be pooled by accident, and states the estimand in
-words.
+The report directory carries `report.html`, `report.json`, `nodes.csv`, `taxonomy.csv`,
+`comparisons.csv` and `diagnostics.csv`. `report.html` is a self-contained page -- it
+embeds its own data and fetches nothing -- showing the root bound, the design, comparisons,
+slices, a collapsible hierarchy with unsampled nodes marked, and provenance. Both it and
+`report.json` name the taxonomy and kernel fingerprints they were produced under, so two
+runs cannot be pooled by accident, and state the estimand in words.
 
 ## Limitations
 
-- **No HTML report.** The fixed-design side renders one; the generative side writes JSON and
-  CSV only.
 - **Slices and comparisons are pointwise.** Both overlap the tree's nodes, so neither can
   join its Šidák frontiers, and neither is part of a simultaneous family. Comparing several
   nodes means spending alpha across them yourself.

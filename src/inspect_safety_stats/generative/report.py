@@ -19,10 +19,18 @@ import pandas as pd
 from inspect_safety_stats.generative.comparisons import ComparisonResult
 from inspect_safety_stats.generative.inference import NodeEstimate, TreeEstimate
 from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
+from inspect_safety_stats.generative.visualization import write_generative_report
 from inspect_safety_stats.schema.reports import Diagnostic
 from inspect_safety_stats.version import __version__
 
-ARTIFACTS = ("report.json", "nodes.csv", "taxonomy.csv", "diagnostics.csv", "comparisons.csv")
+ARTIFACTS = (
+    "report.json",
+    "report.html",
+    "nodes.csv",
+    "taxonomy.csv",
+    "diagnostics.csv",
+    "comparisons.csv",
+)
 
 
 def plan_sha256(path: str | Path) -> str:
@@ -114,4 +122,5 @@ class GenerativeReport:
             columns=["code", "severity", "message", "scope", "details"],
         ).to_csv(directory / "diagnostics.csv", index=False)
         self._comparisons_frame().to_csv(directory / "comparisons.csv", index=False)
+        write_generative_report(self, directory / "report.html")
         return directory
