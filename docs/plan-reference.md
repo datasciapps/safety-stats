@@ -114,7 +114,8 @@ every hierarchy node, and to comparisons whose primary interval exposes both arm
 
 | Field | Meaning |
 |---|---|
-| `type` | Must be `fixed` |
+| `type` | `fixed` (census of the declared design) or `sampled` (items drawn from a frame) |
+| `inclusion_probability_column` | Required with `type: sampled`; names a manifest column holding each frame item's inclusion probability in (0, 1] |
 | `hierarchy` | Creator-declared hierarchy ending in `prompt_id` |
 | `rollout_key` | Fields uniquely identifying one terminal rollout |
 | `require_complete_manifest` | Require every fixed prompt in every cohort |
@@ -123,6 +124,10 @@ every hierarchy node, and to comparisons whose primary interval exposes both arm
 | `independence_profiles` | Named independent-block partitions; see [Configuring hierarchy and independence](independence-profiles.md) |
 
 Example:
+
+With `type: sampled` the manifest is the sampling frame rather than a census, and only
+`weighted_mean` measures are available. See
+[Design-based inference for sampled item frames](design-based-sampling.md).
 
 ```yaml
 design:

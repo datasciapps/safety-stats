@@ -21,6 +21,8 @@ It is designed for hand-curated safety evaluations in which prompts, questions, 
 - Exact fixed-horizon power and detectable-failure-rate planning.
 - Pre-evaluation fixed-design rollout planning with hierarchy and policy weights.
 - Creator-declared task → question → prompt hierarchy.
+- Optional sampled-frame designs, with Horvitz–Thompson frame-mean estimation from
+  declared inclusion probabilities.
 - Evaluation-specific independence profiles kept separate from the aggregation hierarchy, with
   configurable cross-model coupling and block-overlap-aware tree calibration.
 - Equal-prompt, nested-equal, and explicit policy weights.

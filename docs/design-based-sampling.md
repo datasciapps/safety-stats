@@ -60,23 +60,69 @@ regime this package targets, and should be the prespecified primary.
 - Within a sampled item, unclassified rollouts are completed as safe for the lower endpoint
   and as failures for the upper, as everywhere else.
 
-## Status
+## Declaring a sampled design
 
-**This is an estimator core with no plan surface yet.** Nothing in the analysis pipeline calls
-it: `design.type` remains `fixed`, and wiring it needs a sampling-design block in the plan,
-manifest columns for inclusion probabilities, and changes to weight resolution and prompt
-aggregation.
+```yaml
+design:
+  type: sampled
+  inclusion_probability_column: inclusion_probability
+```
 
-That makes it, for now, public API the pipeline does not use -- the same condition that got
-`holm_adjust` and `benjamini_hochberg` deleted earlier. It is kept because it has three named
-consumers rather than none:
+The design manifest becomes the **frame**. Every frame item needs a row and a positive
+inclusion probability; items that were never drawn simply have no observations, and are no
+longer reported as `PROMPT_MISSING`. Design weights are declared over the whole frame and are
+never renormalized to the realized sample.
 
-1. **Subsampled benchmarks.** Evaluating 500 of 14,000 items is common and currently has no
-   correct treatment: reporting the sample mean ignores the design, and a superpopulation
-   standard error assumes a frame that was never sampled.
-2. **Judge-validation labelling at scale.** Non-uniform label allocation with recorded
-   probabilities needs exactly this estimator rather than a within-stratum binomial.
-3. **The generative-hierarchy extension**, whose entire inference layer is bounded
-   inverse-probability weighting under a defensive proposal.
+Enable `outputs.direct_mean_intervals` and the group and hierarchy weighted means are
+estimated by Horvitz--Thompson, reported as `horvitz_thompson_<method>` intervals with
+`independence_profile: frame_item`.
 
-If none of those is pursued, this module should be deleted rather than left standing.
+### What a sampled design refuses
+
+Four checks reject configurations that a sample cannot support:
+
+- `PLAN_SAMPLED_MEASURE_UNSUPPORTED` -- only `weighted_mean` is available. Maximum, CVaR,
+  top-k, entropic, and the threshold measures are nonlinear functionals of the whole frame's
+  risk vector and cannot be evaluated from a sample.
+- `PLAN_SAMPLED_COMPARISON_UNSUPPORTED` -- comparisons assume every declared prompt was
+  evaluated in both arms.
+- `PLAN_SAMPLED_REQUIRES_DIRECT_MEAN` -- the propagated prompt envelope has no bound for an
+  item that was never drawn.
+- `PLAN_SAMPLED_PROMPT_BOUNDS` (warning) -- simultaneous prompt bounds cover the sampled
+  items, not the frame.
+
+### Nodes with nothing drawn
+
+A hierarchy node all of whose descendants went unsampled has no identified risk. Those nodes
+report no interval and carry a row-level warning, and one aggregated
+`HIERARCHY_NODE_UNSAMPLED` diagnostic reports how many there were. This is expected on a deep
+hierarchy: in a 200-item frame at \(\pi=0.3\) with one question per four prompts, most
+question nodes will be empty.
+
+### Catching a truncated run
+
+The most dangerous failure is a partial evaluation that looks like a smaller sample: the
+declared \(\pi\) would then overstate how much of the frame each observed item represents,
+biasing the estimate with no visible symptom. The realized sample size is therefore compared
+against its Poisson-binomial distribution over the frame, and a deviation beyond four
+standard deviations raises `SAMPLE_SIZE_IMPLAUSIBLE` as an error.
+
+## Reading the reported diagnostics
+
+`inflation` and `maximum_weight` are recorded in each interval's assumptions. Two other
+fields deserve care:
+
+- `independent_block_count` is the **realized** sample size -- how many frame items were
+  actually drawn.
+- `effective_sample_size` is the concentration geometry \(1/\sum_j(c_j/C)^2\) over the
+  **whole frame**, because the estimator is a sum over every frame term, most of which
+  realized as zero. Under equal weights and equal \(\pi\) it equals the frame size. It
+  measures weight concentration, not information; precision is governed by `inflation`.
+
+## Not yet supported
+
+Fixed-size designs -- simple random sampling without replacement, or fixed stratum
+allocations -- induce negatively correlated inclusion indicators and are not covered.
+Supporting them needs a separate argument, not a wider interval. Comparisons across cohorts
+on a sampled frame are also unsupported; correcting them means giving each arm its own
+Horvitz--Thompson bounds and recombining, which is tractable but is a separate change.

@@ -208,13 +208,27 @@ class IndependenceSelectionSpec(StrictModel):
 
 
 class DesignSpec(StrictModel):
-    type: Literal["fixed"] = "fixed"
+    type: Literal["fixed", "sampled"] = "fixed"
+    inclusion_probability_column: str | None = None
     hierarchy: list[str] = Field(default_factory=lambda: ["task_id", "question_id", "prompt_id"])
     rollout_key: list[str] = Field(default_factory=lambda: ["eval_id", "id", "epoch"])
     require_complete_manifest: bool = True
     require_expected_rollouts: bool = True
     weights: WeightSpec = Field(default_factory=WeightSpec)
     independence_profiles: dict[str, IndependenceProfileSpec] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_sampling(self) -> DesignSpec:
+        if self.type == "sampled":
+            if not self.inclusion_probability_column:
+                raise ValueError(
+                    "a sampled design requires design.inclusion_probability_column"
+                )
+        elif self.inclusion_probability_column is not None:
+            raise ValueError(
+                "inclusion_probability_column requires design.type: sampled"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_independence_profile_ids(self) -> DesignSpec:

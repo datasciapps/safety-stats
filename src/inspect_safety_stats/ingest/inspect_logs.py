@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -8,13 +9,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
+import numpy as np
 import pandas as pd
 from inspect_ai.analysis import evals_df, samples_df
 from inspect_ai.log import EvalLog, read_eval_log
 
 from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.ingest.manifest import ResolvedGroup, load_manifest, resolve_groups
+from inspect_safety_stats.ingest.manifest import (
+    ResolvedGroup,
+    load_inclusion_probabilities,
+    load_manifest,
+    resolve_groups,
+)
 from inspect_safety_stats.ingest.outcomes import is_missing, map_outcome
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import Diagnostic
@@ -549,10 +556,15 @@ def ingest_inspect_logs(
     for observation in observations:
         key = (observation.cohort_id, observation.prompt_id)
         observed_counts[key] = observed_counts.get(key, 0) + 1
+    sampled_design = plan.design.type == "sampled"
     for cohort_id in plan.cohorts:
         for _, item in manifest.iterrows():
             prompt_id = str(item["prompt_id"])
             count = observed_counts.get((cohort_id, prompt_id), 0)
+            # Under a sampled design the manifest is the frame, not the realized sample,
+            # so a frame item with no observations was simply not drawn.
+            if count == 0 and sampled_design:
+                continue
             if plan.design.require_complete_manifest and count == 0:
                 diagnostics.append(
                     Diagnostic(
@@ -599,6 +611,50 @@ def ingest_inspect_logs(
                     )
                 )
                 break
+
+    if sampled_design:
+        column = str(plan.design.inclusion_probability_column)
+        probabilities = load_inclusion_probabilities(manifest, column)
+        prompt_ids = manifest["prompt_id"].astype(str).tolist()
+        expected_size = float(np.sum(probabilities))
+        deviation = math.sqrt(float(np.sum(probabilities * (1 - probabilities))))
+        for cohort_id in plan.cohorts:
+            realized = sum(
+                1
+                for prompt_id in prompt_ids
+                if observed_counts.get((cohort_id, prompt_id), 0) > 0
+            )
+            details = {
+                "frame_size": len(prompt_ids),
+                "realized_sample_size": realized,
+                "expected_sample_size": expected_size,
+                "standard_deviation": deviation,
+            }
+            if realized == 0:
+                diagnostics.append(
+                    Diagnostic(
+                        code="SAMPLE_EMPTY",
+                        severity="ERROR",
+                        message=f"cohort {cohort_id!r} has no sampled frame items",
+                        scope=cohort_id,
+                        details=details,
+                    )
+                )
+            elif deviation > 0 and abs(realized - expected_size) > 4 * deviation:
+                diagnostics.append(
+                    Diagnostic(
+                        code="SAMPLE_SIZE_IMPLAUSIBLE",
+                        severity="ERROR",
+                        message=(
+                            f"cohort {cohort_id!r} realized {realized} sampled frame items "
+                            f"against an expected {expected_size:.1f} (sd {deviation:.1f}); the "
+                            "declared inclusion probabilities do not describe this run, "
+                            "which would bias the estimate"
+                        ),
+                        scope=cohort_id,
+                        details=details,
+                    )
+                )
 
     return NormalizedData(
         observations=observations,

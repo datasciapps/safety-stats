@@ -1,0 +1,232 @@
+"""End-to-end coverage for `design.type: sampled`.
+
+The manifest is the sampling *frame*: most of its items are never evaluated, and the
+estimand remains the frame-wide weighted mean rather than the realized sample mean.
+"""
+
+from __future__ import annotations
+
+import random
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+from inspect_safety_stats import analyze
+
+FRAME_SIZE = 200
+INCLUSION = 0.3
+ROLLOUTS = 20
+
+_PLAN = """schema_version: "2.0"
+analysis:
+  id: sampled-frame
+  title: Sampled frame
+  intent: confirmatory
+  plan_frozen_at: 2026-01-01T00:00:00Z
+inputs:
+  design_manifest: design.csv
+  score:
+    name: harmful
+    mapping: {{failure_values: ["FAIL"], safe_values: ["PASS"]}}
+design:
+  type: sampled
+  inclusion_probability_column: inclusion_probability
+  hierarchy: [task_id, question_id, prompt_id]
+  weights: {{strategy: equal_prompt}}
+  independence_profiles:
+    rollout: {{block_by: [rollout], comparison_coupling: independent}}
+cohorts:
+  candidate:
+    match: {{model: model/candidate}}
+groups:
+  - id: all
+    filter: {{}}
+    weights: {{strategy: equal_prompt}}
+outputs:
+  prompt_bounds: {{enabled: false, simultaneous: false, family: displayed}}
+  direct_mean_intervals:
+    enabled: true
+    method: weighted_kl_chernoff
+    reference_methods: [weighted_hoeffding]
+    family: direct_means
+    simultaneous: true
+    independence: {{primary: rollout}}
+    hierarchy_nodes: true
+  risk_measures:
+{measures}
+multiplicity:
+  families:
+    - {{id: displayed, purpose: simultaneous_intervals, method: bonferroni, alpha: 0.05}}
+    - {{id: direct_means, purpose: simultaneous_intervals, method: bonferroni, alpha: 0.05}}
+claims: []
+report: {{include_observations: false}}
+"""
+
+
+def _write_frame(
+    tmp_path: Path, *, measures: str = "    - {id: mean, type: weighted_mean}"
+) -> tuple[Path, pd.DataFrame, pd.DataFrame]:
+    rng = random.Random(4242)
+    frame, drawn = [], []
+    for index in range(FRAME_SIZE):
+        prompt_id = f"item-{index:03d}"
+        frame.append(
+            {
+                "prompt_id": prompt_id,
+                "question_id": f"q-{index // 4:03d}",
+                "task_id": f"task-{index % 5}",
+                "inclusion_probability": INCLUSION,
+                "expected_rollouts": ROLLOUTS,
+            }
+        )
+        if rng.random() < INCLUSION:
+            drawn.append((prompt_id, rng.betavariate(0.5, 12.0)))
+    pd.DataFrame(frame).to_csv(tmp_path / "design.csv", index=False)
+    (tmp_path / "plan.yaml").write_text(_PLAN.format(measures=measures), encoding="utf-8")
+
+    evals = pd.DataFrame(
+        [
+            {
+                "eval_id": "eval-1",
+                "run_id": "run-1",
+                "log": "/x.eval",
+                "created": "2026-06-01T00:00:00Z",
+                "status": "success",
+                "task_name": "sampled",
+                "task_version": "1",
+                "model": "model/candidate",
+                "model_generate_config": {"temperature": 1},
+                "solver": "generate",
+                "solver_args": {},
+                "sandbox_type": None,
+                "sandbox_config": None,
+                "dataset_name": "frame",
+                "epochs": ROLLOUTS,
+            }
+        ]
+    )
+    rows = [
+        {
+            "sample_id": f"{prompt_id}-{epoch}",
+            "eval_id": "eval-1",
+            "log": "/x.eval",
+            "id": prompt_id,
+            "epoch": epoch,
+            "score_harmful": "FAIL" if rng.random() < risk else "PASS",
+            "error": None,
+            "retries": 0,
+        }
+        for prompt_id, risk in drawn
+        for epoch in range(1, ROLLOUTS + 1)
+    ]
+    return tmp_path / "plan.yaml", evals, pd.DataFrame(rows)
+
+
+def _patch(monkeypatch: pytest.MonkeyPatch, evals: pd.DataFrame, samples: pd.DataFrame) -> None:
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: evals
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: samples,
+    )
+
+
+def test_frame_mean_is_estimated_by_horvitz_thompson(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path, evals, samples = _write_frame(tmp_path)
+    _patch(monkeypatch, evals, samples)
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert report.integrity.status == "valid"
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    primary = next(item for item in mean.intervals if item.role == "primary")
+    assert primary.interval_id == "horvitz_thompson_weighted_kl_chernoff"
+    assert primary.eligibility == "certifying"
+    assert primary.independence_profile == "frame_item"
+
+    # The estimand is the frame, so the block count is the realized sample, not the frame.
+    sampled = sum(1 for item in report.prompt_estimates if item.n_total > 0)
+    assert len(report.prompt_estimates) == FRAME_SIZE
+    assert 0 < sampled < FRAME_SIZE
+    assert primary.independent_block_count == sampled
+
+    # The inverse-probability cost is stated rather than buried.
+    assert any("Poisson sampling" in text for text in primary.assumptions)
+    assert any("widens every endpoint" in text for text in primary.assumptions)
+    assert mean.lower is not None and mean.upper is not None and mean.lower < mean.upper
+
+
+def test_unsampled_hierarchy_nodes_warn_rather_than_invalidate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path, evals, samples = _write_frame(tmp_path)
+    _patch(monkeypatch, evals, samples)
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    codes = {item.code: item for item in report.integrity.diagnostics}
+    assert "HIERARCHY_NODE_UNSAMPLED" in codes
+    assert codes["HIERARCHY_NODE_UNSAMPLED"].severity == "WARNING"
+    # A node with nothing drawn is unidentified, not broken.
+    unestimated = [row for row in report.hierarchy_risks if row.lower is None]
+    assert unestimated
+    for row in unestimated:
+        assert any("not identified" in text for text in row.warnings)
+    assert any(row.lower is not None for row in report.hierarchy_risks)
+
+
+def test_sampled_design_rejects_functionals_it_cannot_evaluate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Only the weighted mean is linear in the frame's risk vector."""
+    plan_path, evals, samples = _write_frame(
+        tmp_path,
+        measures=(
+            "    - {id: mean, type: weighted_mean}\n"
+            "    - {id: worst, type: maximum}\n"
+            "    - {id: tail, type: cvar, beta: 0.9}"
+        ),
+    )
+    _patch(monkeypatch, evals, samples)
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "PLAN_SAMPLED_MEASURE_UNSUPPORTED" in codes
+    assert report.integrity.status == "invalid"
+
+
+def test_a_truncated_run_is_caught_rather_than_silently_biasing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Fewer realized items than the declared probabilities imply means the design is wrong."""
+    plan_path, evals, samples = _write_frame(tmp_path)
+    keep = sorted(samples["id"].unique())[:5]
+    _patch(monkeypatch, evals, samples.loc[samples["id"].isin(keep)])
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    codes = {item.code: item for item in report.integrity.diagnostics}
+    assert "SAMPLE_SIZE_IMPLAUSIBLE" in codes
+    assert codes["SAMPLE_SIZE_IMPLAUSIBLE"].severity == "ERROR"
+    assert report.integrity.status == "invalid"
+
+
+def test_fixed_designs_are_unaffected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """A fixed design must still refuse a manifest prompt with no observations."""
+    plan_path, evals, samples = _write_frame(tmp_path)
+    text = (tmp_path / "plan.yaml").read_text(encoding="utf-8")
+    text = text.replace("  type: sampled\n", "  type: fixed\n")
+    text = text.replace("  inclusion_probability_column: inclusion_probability\n", "")
+    (tmp_path / "plan.yaml").write_text(text, encoding="utf-8")
+    _patch(monkeypatch, evals, samples)
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "PROMPT_MISSING" in codes
+    assert report.integrity.status == "invalid"

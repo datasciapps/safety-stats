@@ -11,7 +11,10 @@ from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
 from inspect_safety_stats.config.models import AnalysisPlan, ComparisonSpec, RiskMeasureSpec
 from inspect_safety_stats.decision.engine import decide_claim, roll_up
 from inspect_safety_stats.ingest.inspect_logs import LogInput, NormalizedData, ingest_inspect_logs
-from inspect_safety_stats.ingest.manifest import resolve_weights
+from inspect_safety_stats.ingest.manifest import (
+    load_inclusion_probabilities,
+    resolve_weights,
+)
 from inspect_safety_stats.ingest.validation import (
     judge_stratum_counts,
     load_validation_manifest,
@@ -38,6 +41,10 @@ from inspect_safety_stats.stats.clusters import paired_cluster_bootstrap
 from inspect_safety_stats.stats.comparisons import (
     DirectComparisonBounds,
     RatioComparisonBounds,
+)
+from inspect_safety_stats.stats.design_based import (
+    InclusionDesign,
+    horvitz_thompson_mean_bounds,
 )
 from inspect_safety_stats.stats.direct_mean import (
     DirectMeanBounds,
@@ -835,6 +842,103 @@ def _direct_interval_result(
     )
 
 
+def _sampled_frame_intervals(
+    *,
+    data: NormalizedData,
+    cohort_id: str,
+    prompt_ids: tuple[str, ...] | list[str],
+    weights: np.ndarray,
+    estimates: dict[tuple[str, str], PromptEstimate],
+    plan: AnalysisPlan,
+    family_id: str | None,
+    family_alpha: float | None,
+    calibration: _EndpointCalibration,
+    one_sided_coverage: float | None,
+    interval_coverage: float | None,
+) -> list[RiskIntervalResult]:
+    """Horvitz-Thompson intervals for a frame mean estimated from an item sample.
+
+    The declared independence profiles do not apply here. Inclusion randomness lives at
+    the frame item, so the frame item is the independent block regardless of how rollouts
+    within it are grouped.
+    """
+
+    spec = plan.outputs.direct_mean_intervals
+    column = str(plan.design.inclusion_probability_column)
+    manifest = data.manifest.set_index("prompt_id", drop=False)
+    frame = manifest.loc[list(prompt_ids)]
+    probabilities = load_inclusion_probabilities(frame, column)
+
+    sampled = np.zeros(len(prompt_ids), dtype=bool)
+    lower_rates = np.zeros(len(prompt_ids), dtype=float)
+    upper_rates = np.zeros(len(prompt_ids), dtype=float)
+    for index, prompt_id in enumerate(prompt_ids):
+        item = estimates.get((cohort_id, prompt_id))
+        if item is None or item.n_total <= 0:
+            continue
+        sampled[index] = True
+        lower_rates[index] = item.n_failure / item.n_total
+        upper_rates[index] = (item.n_failure + item.n_unclassified) / item.n_total
+
+    design = InclusionDesign(weights, probabilities, sampled)
+    results: list[RiskIntervalResult] = []
+    for method in [spec.method, *spec.reference_methods]:
+        bounds = horvitz_thompson_mean_bounds(
+            design,
+            lower_rates,
+            upper_rates,
+            alpha_lower=calibration.endpoint_alpha,
+            alpha_upper=calibration.endpoint_alpha,
+            method=method,
+        )
+        results.append(
+            RiskIntervalResult(
+                interval_id=f"horvitz_thompson_{method}",
+                lower=bounds.lower,
+                upper=bounds.upper,
+                method=method,
+                role="primary" if method == spec.method else "reference",
+                coverage_scope=(
+                    f"{'simultaneous' if spec.simultaneous else 'pointwise'}"
+                    "_sampled_frame_mean_family"
+                ),
+                coverage_mode=spec.coverage_mode,
+                family=family_id,
+                family_alpha=family_alpha,
+                alpha_lower=calibration.endpoint_alpha,
+                alpha_upper=calibration.endpoint_alpha,
+                simultaneous_coverage=interval_coverage,
+                lower_one_sided_coverage=one_sided_coverage,
+                upper_one_sided_coverage=one_sided_coverage,
+                completion_estimate_lower=bounds.completion_estimate_lower,
+                completion_estimate_upper=bounds.completion_estimate_upper,
+                effective_sample_size=bounds.effective_sample_size,
+                maximum_increment=bounds.maximum_weight,
+                calibration_method=calibration.method,
+                calibration_frontier=calibration.frontier_id,
+                calibration_frontier_alpha=calibration.frontier_alpha,
+                calibration_frontier_size=calibration.frontier_size,
+                independence_profile="frame_item",
+                independent_block_count=bounds.sampled_count,
+                missingness_method="all_safe_all_failure_completion",
+                assumptions=[
+                    "Frame items were included independently with the declared "
+                    "probabilities (Poisson sampling).",
+                    "Inclusion was determined before, and independently of, the outcomes.",
+                    "Design weights are declared over the whole frame and are not "
+                    "renormalized to the realized sample.",
+                    f"Inverse-probability weighting widens every endpoint by a factor of "
+                    f"{bounds.inflation:.6g}.",
+                    f"The largest single frame item carries {bounds.maximum_weight:.6g} of "
+                    "the estimator's weight.",
+                    "Every unclassified attempted outcome has a latent binary safety label.",
+                ],
+                eligibility="certifying",
+            )
+        )
+    return results
+
+
 def _direct_intervals(
     *,
     data: NormalizedData,
@@ -848,9 +952,27 @@ def _direct_intervals(
     calibrations: dict[str, _EndpointCalibration],
     one_sided_coverage: float | None,
     interval_coverage: float | None,
+    estimates: dict[tuple[str, str], PromptEstimate] | None = None,
 ) -> list[RiskIntervalResult]:
     spec = plan.outputs.direct_mean_intervals
     assert spec.independence is not None
+    if plan.design.type == "sampled":
+        assert estimates is not None
+        return _sampled_frame_intervals(
+            data=data,
+            cohort_id=cohort_id,
+            prompt_ids=prompt_ids,
+            weights=weights,
+            estimates=estimates,
+            plan=plan,
+            family_id=family_id,
+            family_alpha=family_alpha,
+            calibration=calibrations[
+                _calibration_key(cohort_id, target_id, spec.independence.primary)
+            ],
+            one_sided_coverage=one_sided_coverage,
+            interval_coverage=interval_coverage,
+        )
     methods = [spec.method, *spec.reference_methods]
     results: list[RiskIntervalResult] = []
     profile_ids = [spec.independence.primary, *spec.independence.sensitivities]
@@ -997,7 +1119,8 @@ def _group_risks(
                             "The direct-mean multiplicity family is unavailable."
                         )
                     elif any(
-                        item.n_total <= 0 or _prompt_blocked(diagnostics, cohort_id, item.prompt_id)
+                        (item.n_total <= 0 and plan.design.type != "sampled")
+                        or _prompt_blocked(diagnostics, cohort_id, item.prompt_id)
                         for item in prompt_results
                     ):
                         direct_warnings.append(
@@ -1017,6 +1140,7 @@ def _group_risks(
                                 calibrations=direct.calibrations,
                                 one_sided_coverage=direct.one_sided_coverage,
                                 interval_coverage=direct.interval_coverage,
+                                estimates=index,
                             )
                         except (TypeError, ValueError) as exc:
                             direct_warnings.append(str(exc))
@@ -1136,6 +1260,7 @@ def _hierarchy_risks(
         return []
     index = {(item.cohort_id, item.prompt_id): item for item in estimates}
     results: list[HierarchyRiskResult] = []
+    unsampled_nodes: list[str] = []
     for cohort_id in sorted(plan.cohorts):
         for node in nodes:
             prompt_results = [index[(cohort_id, prompt_id)] for prompt_id in node.prompt_ids]
@@ -1160,8 +1285,18 @@ def _hierarchy_risks(
             )
             if calibration is None:
                 warnings.append("The direct-mean multiplicity family is unavailable.")
+            elif plan.design.type == "sampled" and not any(
+                item.n_total > 0 for item in prompt_results
+            ):
+                # The node's estimand is simply not identified by this sample.
+                unsampled_nodes.append(target_id)
+                warnings.append(
+                    "No descendant frame item was drawn into the sample, so this node's "
+                    "risk is not identified."
+                )
             elif any(
-                item.n_total <= 0 or _prompt_blocked(diagnostics, cohort_id, item.prompt_id)
+                (item.n_total <= 0 and plan.design.type != "sampled")
+                or _prompt_blocked(diagnostics, cohort_id, item.prompt_id)
                 for item in prompt_results
             ):
                 warnings.append("A complete valid attempted-rollout ledger is required.")
@@ -1179,6 +1314,7 @@ def _hierarchy_risks(
                         calibrations=direct_context.calibrations,
                         one_sided_coverage=direct_context.one_sided_coverage,
                         interval_coverage=direct_context.interval_coverage,
+                        estimates=index,
                     )
                 except (TypeError, ValueError) as exc:
                     warnings.append(str(exc))
@@ -1220,6 +1356,20 @@ def _hierarchy_risks(
                     warnings=warnings,
                 )
             )
+    if unsampled_nodes:
+        diagnostics.append(
+            Diagnostic(
+                code="HIERARCHY_NODE_UNSAMPLED",
+                severity="WARNING",
+                message=(
+                    f"{len(unsampled_nodes)} hierarchy nodes had no frame item drawn into "
+                    "the sample; their conditional risk is not identified and no interval "
+                    "is reported for them"
+                ),
+                scope="hierarchy",
+                details={"nodes": sorted(unsampled_nodes)[:20], "count": len(unsampled_nodes)},
+            )
+        )
     return results
 
 
