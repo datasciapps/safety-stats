@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "inspect-safety-stats"
-version = "0.12.0"
+version = "0.13.0"
 description = "Fixed-design statistical risk analysis for Inspect AI safety evaluations"
 readme = "README.md"
 requires-python = ">=3.10"
