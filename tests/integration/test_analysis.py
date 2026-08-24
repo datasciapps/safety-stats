@@ -239,13 +239,6 @@ def test_empirical_hierarchy_intervals_and_independence_sensitivity(
     spec.hierarchy_nodes = True
     assert spec.independence is not None
     spec.independence.sensitivities = ["prompt"]
-    joint = plan.outputs.joint_tree_intervals
-    joint.family = "direct_means"
-    joint.groups = ["cyber"]
-    joint.independence_profile = "rollout"
-    joint.replicates = 1000
-    joint.seed = 11
-    joint.enabled = True
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
@@ -256,37 +249,6 @@ def test_empirical_hierarchy_intervals_and_independence_sensitivity(
     )
 
     report = analyze(plan=plan, logs="ignored")
-
-    root = next(
-        row for row in report.group_risks if row.group_id == "cyber" and row.measure_id == "mean"
-    )
-    joint_root = next(
-        interval for interval in root.intervals if interval.method == "stratified_bernoulli_max_t"
-    )
-    joint_upper = next(
-        interval
-        for interval in root.intervals
-        if interval.method == "stratified_bernoulli_max_t_upper"
-    )
-    assert joint_root.role == "reference"
-    assert joint_root.calibration_method == "joint_max_t"
-    assert joint_root.bootstrap_replicates == 1000
-    assert joint_root.bootstrap_seed == 11
-    assert joint_root.projection_method == "joint_multi_arm_hierarchy_linear_program"
-    assert joint_root.eligibility == "diagnostic"
-    assert joint_root.upper is not None and joint_root.upper > 0
-    assert joint_upper.lower is None
-    assert joint_upper.upper_one_sided_coverage == pytest.approx(0.95)
-    assert joint_upper.simultaneous_coverage == pytest.approx(0.95)
-    assert joint_upper.calibration_method == "joint_max_t_upper"
-    assert joint_upper.critical_value_upper is not None
-    assert joint_root.critical_value_upper is not None
-    assert joint_upper.critical_value_upper <= joint_root.critical_value_upper
-    assert joint_upper.projection_method == "joint_multi_arm_hierarchy_linear_program_upper"
-    html = render_visualization(report)
-    assert "Joint max-T upper bound" in html
-    assert '"method":"stratified_bernoulli_max_t"' in html
-    assert '"method":"stratified_bernoulli_max_t_upper"' in html
 
     assert {(row.level, tuple(row.path.values())) for row in report.hierarchy_risks} == {
         ("task_id", ("t1",)),
@@ -299,10 +261,10 @@ def test_empirical_hierarchy_intervals_and_independence_sensitivity(
     mean = next(row for row in report.group_risks if row.measure_id == "mean")
     assert mean.interval_method == "weighted_empirical_bernstein"
     assert mean.intervals[0].alpha_upper == pytest.approx(expected_endpoint_alpha)
-    assert len(mean.intervals) == 7  # Direct/reference, propagation, and two joint max-T views.
+    assert len(mean.intervals) == 5  # Direct primary/reference, sensitivities, and propagation.
     for node in report.hierarchy_risks:
         assert node.interval_method == "weighted_empirical_bernstein"
-        assert len(node.intervals) == 6
+        assert len(node.intervals) == 4  # Two methods x two independence profiles.
         assert {interval.role for interval in node.intervals} == {
             "primary",
             "reference",
@@ -311,7 +273,6 @@ def test_empirical_hierarchy_intervals_and_independence_sensitivity(
         assert all(
             interval.alpha_upper == pytest.approx(expected_endpoint_alpha)
             for interval in node.intervals
-            if not interval.method.startswith("stratified_bernoulli_max_t")
         )
         sensitivity = [interval for interval in node.intervals if interval.role == "sensitivity"]
         assert {interval.independence_profile for interval in sensitivity} == {"prompt"}
@@ -980,18 +941,6 @@ def test_three_arm_comparison_set_uses_one_coherent_joint_region(
         "method: bonferroni, alpha: 0.05}\n"
         "    - {id: gate,",
     )
-    plan_text = plan_text.replace(
-        "  risk_measures:\n",
-        "  joint_tree_intervals:\n"
-        "    enabled: true\n"
-        "    family: model_comparisons\n"
-        "    groups: [cyber]\n"
-        "    independence_profile: rollout\n"
-        "    include_comparisons: true\n"
-        "    replicates: 1000\n"
-        "    seed: 19\n"
-        "  risk_measures:\n",
-    )
     plan_path.write_text(plan_text, encoding="utf-8")
 
     candidate_eval, candidate_samples = _frames()
@@ -1041,25 +990,6 @@ def test_three_arm_comparison_set_uses_one_coherent_joint_region(
         assert primary.baseline_lower is not None
         assert primary.baseline_upper is not None
         if row.estimand == "risk_difference":
-            joint = next(
-                interval
-                for interval in row.intervals
-                if interval.method == "stratified_bernoulli_max_t"
-            )
-            assert joint.calibration_target_count is not None
-            assert joint.calibration_target_count > 1
-            assert joint.projection_method == "joint_multi_arm_hierarchy_linear_program"
-            joint_upper = next(
-                interval
-                for interval in row.intervals
-                if interval.method == "stratified_bernoulli_max_t_upper"
-            )
-            assert joint_upper.lower is None
-            assert joint_upper.upper_one_sided_coverage == pytest.approx(0.95)
-            assert (
-                joint_upper.projection_method
-                == "joint_multi_arm_hierarchy_linear_program_upper"
-            )
             assert row.lower == pytest.approx(primary.candidate_lower - primary.baseline_upper)
             assert row.upper == pytest.approx(primary.candidate_upper - primary.baseline_lower)
 

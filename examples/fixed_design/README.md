@@ -1,10 +1,5 @@
 # Fixed-design example
 
-The analysis plans report both the existing finite-sample direct interval and the optional
-joint stratified-Bernoulli max-T reference interval and its separately calibrated one-sided upper
-bound. In the HTML hierarchy, blue denotes the finite-sample band, purple denotes the jointly
-calibrated two-sided band, and orange marks the simultaneous upper endpoint.
-
 This directory contains a minimal Inspect task, its creator-declared design manifest, and a
 confirmatory analysis plan.
 

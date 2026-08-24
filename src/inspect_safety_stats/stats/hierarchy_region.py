@@ -16,16 +16,6 @@ class LinearIntervalConstraint:
 
 
 @dataclass(frozen=True)
-class GeneralLinearIntervalConstraint:
-    """A linear interval constraint with arbitrary signed coefficients."""
-
-    target_id: str
-    coefficients: np.ndarray
-    lower: float
-    upper: float
-
-
-@dataclass(frozen=True)
 class HierarchyRegionProjection:
     feasible: bool
     intervals: dict[str, tuple[float, float]]
@@ -39,87 +29,6 @@ class RatioHierarchyRegionProjection:
     intervals: dict[str, tuple[float | None, float | None]]
     constraint_count: int
     message: str | None = None
-
-
-def project_general_linear_confidence_region(
-    constraints: list[GeneralLinearIntervalConstraint],
-    targets: dict[str, ArrayLike],
-    *,
-    variable_bounds: list[tuple[float, float]],
-) -> HierarchyRegionProjection:
-    """Project a signed multi-arm linear region onto requested functionals."""
-
-    variable_count = len(variable_bounds)
-    if variable_count <= 0 or not constraints or not targets:
-        raise ValueError("variable bounds, constraints, and targets must be nonempty")
-    rows: list[np.ndarray] = []
-    limits: list[float] = []
-    for constraint in constraints:
-        coefficients = np.asarray(constraint.coefficients, dtype=float)
-        if coefficients.ndim != 1 or len(coefficients) != variable_count:
-            raise ValueError("constraint coefficients must match the variable count")
-        if not np.all(np.isfinite(coefficients)):
-            raise ValueError("constraint coefficients must be finite")
-        if not np.isfinite(constraint.lower) or not np.isfinite(constraint.upper):
-            raise ValueError("constraint endpoints must be finite")
-        if constraint.lower > constraint.upper:
-            raise ValueError("constraint lower endpoint cannot exceed its upper endpoint")
-        rows.extend([coefficients, -coefficients])
-        limits.extend([constraint.upper, -constraint.lower])
-
-    matrix = np.vstack(rows)
-    vector = np.asarray(limits, dtype=float)
-    feasibility = linprog(
-        np.zeros(variable_count),
-        A_ub=matrix,
-        b_ub=vector,
-        bounds=variable_bounds,
-        method="highs",
-    )
-    if not feasibility.success:
-        return HierarchyRegionProjection(
-            feasible=False,
-            intervals={},
-            constraint_count=len(constraints),
-            message=feasibility.message,
-        )
-
-    intervals: dict[str, tuple[float, float]] = {}
-    for target_id, raw_coefficients in targets.items():
-        coefficients = np.asarray(raw_coefficients, dtype=float)
-        if coefficients.ndim != 1 or len(coefficients) != variable_count:
-            raise ValueError("target coefficients must match the variable count")
-        if not np.all(np.isfinite(coefficients)):
-            raise ValueError("target coefficients must be finite")
-        minimum = linprog(
-            coefficients,
-            A_ub=matrix,
-            b_ub=vector,
-            bounds=variable_bounds,
-            method="highs",
-        )
-        maximum = linprog(
-            -coefficients,
-            A_ub=matrix,
-            b_ub=vector,
-            bounds=variable_bounds,
-            method="highs",
-        )
-        if not minimum.success or not maximum.success:
-            message = minimum.message if not minimum.success else maximum.message
-            return HierarchyRegionProjection(
-                feasible=False,
-                intervals={},
-                constraint_count=len(constraints),
-                message=message,
-            )
-        assert minimum.fun is not None and maximum.fun is not None
-        intervals[target_id] = (float(minimum.fun), float(-maximum.fun))
-    return HierarchyRegionProjection(
-        feasible=True,
-        intervals=intervals,
-        constraint_count=len(constraints),
-    )
 
 
 def _coerce_coefficients(values: ArrayLike, variable_count: int) -> np.ndarray:

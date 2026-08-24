@@ -57,7 +57,7 @@ class RiskIntervalResult(ResultModel):
     method: str
     role: Literal["primary", "reference", "sensitivity"]
     coverage_scope: str | None = None
-    coverage_mode: Literal["two_sided", "per_direction", "upper_one_sided"] | None = None
+    coverage_mode: Literal["two_sided", "per_direction"] | None = None
     family: str | None = None
     family_alpha: float | None = None
     directional_family_alpha: float | None = None
@@ -84,12 +84,6 @@ class RiskIntervalResult(ResultModel):
     calibration_frontier: str | None = None
     calibration_frontier_alpha: float | None = None
     calibration_frontier_size: int | None = None
-    calibration_target_count: int | None = None
-    bootstrap_replicates: int | None = None
-    bootstrap_seed: int | None = None
-    critical_value_lower: float | None = None
-    critical_value_upper: float | None = None
-    variance_regularized: bool | None = None
     candidate_lower: float | None = None
     candidate_upper: float | None = None
     baseline_lower: float | None = None
@@ -117,7 +111,7 @@ class GroupRiskResult(ResultModel):
     raw_upper: float | None = None
     projection_method: str | None = None
     coverage_scope: str | None = None
-    coverage_mode: Literal["two_sided", "per_direction", "upper_one_sided"] | None = None
+    coverage_mode: Literal["two_sided", "per_direction"] | None = None
     family_alpha: float | None = None
     directional_family_alpha: float | None = None
     simultaneous_coverage: float | None = None
@@ -183,7 +177,7 @@ class ComparisonResult(ResultModel):
     raw_upper: float | None = None
     projection_method: str | None = None
     coverage_scope: str | None = None
-    coverage_mode: Literal["two_sided", "per_direction", "upper_one_sided"] | None = None
+    coverage_mode: Literal["two_sided", "per_direction"] | None = None
     family: str | None = None
     family_alpha: float | None = None
     directional_family_alpha: float | None = None

@@ -1,10 +1,5 @@
 # JailbreakBench-100 multi-model safety comparison
 
-The maintained comparison plans jointly calibrate within-model hierarchy risks and every
-declared risk difference with a stratified-Bernoulli max-T bootstrap. The resulting purple bands
-and orange one-sided upper endpoints are shown beside the existing finite-sample KL/Chernoff and
-frontier-Šidák bands; ratios retain the finite-sample multi-arm construction.
-
 This example runs the complete harmful split of
 [JBB-Behaviors](https://huggingface.co/datasets/JailbreakBench/JBB-Behaviors) through Inspect AI,
 compares three or more target models on exactly the same fixed design, performs the full empirical risk

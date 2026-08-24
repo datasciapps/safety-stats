@@ -269,37 +269,4 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope="outputs.direct_mean_intervals",
                 )
             )
-    joint_tree = plan.outputs.joint_tree_intervals
-    if joint_tree.enabled:
-        if joint_tree.family not in families:
-            diagnostics.append(
-                Diagnostic(
-                    code="PLAN_UNKNOWN_REFERENCE",
-                    severity="ERROR",
-                    message="joint tree intervals require a valid multiplicity family",
-                    scope="outputs.joint_tree_intervals",
-                )
-            )
-        unknown_groups = sorted(set(joint_tree.groups or []) - groups)
-        if unknown_groups:
-            diagnostics.append(
-                Diagnostic(
-                    code="PLAN_UNKNOWN_REFERENCE",
-                    severity="ERROR",
-                    message=(
-                        "joint tree intervals reference unknown groups: "
-                        + ", ".join(unknown_groups)
-                    ),
-                    scope="outputs.joint_tree_intervals",
-                )
-            )
-        if not any(measure.type == "weighted_mean" for measure in measures.values()):
-            diagnostics.append(
-                Diagnostic(
-                    code="PLAN_METHOD_UNUSED",
-                    severity="WARNING",
-                    message="joint tree intervals require a weighted mean risk measure",
-                    scope="outputs.joint_tree_intervals",
-                )
-            )
     return diagnostics

@@ -13,9 +13,6 @@ It is designed for hand-curated safety evaluations in which prompts, questions, 
 - Simultaneous mean-risk intervals at every declared hierarchy node, with hierarchy-aware
   frontier Šidák calibration, a common linear confidence region, and creator-declared named
   independence profiles over arbitrary observation or manifest fields.
-- Optional joint stratified-Bernoulli max-T intervals and separately calibrated one-sided upper
-  bounds across roots, internal nodes, cohorts, and declared risk differences, projected through
-  one coherent multi-arm hierarchy region and displayed alongside the finite-sample intervals.
 - Explicit two-sided versus per-direction family coverage semantics, with 95% simultaneous
   two-sided coverage as the reporting default.
 - Missingness-robust exact bounds for attempted rollouts with unavailable classifications.
@@ -194,7 +191,6 @@ interpreted with their stated assumptions. Optional threshold decisions can be e
 - [Interpreting results](docs/interpretation.md)
 - [Version 1 engineering design](docs/v1-design.md)
 - [Mathematical methods and justification](docs/statistical-methods.md)
-- [Joint summary-tree confidence intervals](docs/joint-tree-intervals.md)
 - [Generative hierarchy evaluation planner: implementation plan](docs/generative-hierarchy-evaluation-plan.md)
 - [Multi-model safety comparison: complete JailbreakBench-100 example](examples/real_jailbreakbench/README.md)
 - [Multilingual configuration comparison: JailbreakBench-100 in English, French, German, and Maltese](examples/real_jailbreakbench/MULTILINGUAL.md)

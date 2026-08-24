@@ -223,11 +223,6 @@
     .tree-range { position: absolute; left: 0; min-width: 2px; border-radius: 3px; }
     .tree-range.raw { top: 6px; height: 4px; background: var(--muted); opacity: 0.42; }
     .tree-range.primary { top: 11px; height: 6px; background: var(--accent); }
-    .tree-range.joint { top: 22px; height: 4px; background: #a78bfa; opacity: 0.95; }
-    .tree-upper-bound {
-      position: absolute; top: 18px; width: 3px; height: 12px; border-radius: 2px;
-      background: #f59e0b; transform: translateX(-1px);
-    }
     .tree-range.sensitivity { top: 27px; height: 3px; background: var(--warn); opacity: 0.9; }
     .tree-range.unbounded-right { background: linear-gradient(90deg, var(--accent), transparent); }
     .tree-range.unbounded-left { background: linear-gradient(90deg, transparent, var(--accent)); }
@@ -242,8 +237,6 @@
     .legend-mark { display: inline-block; width: 18px; height: 4px; margin: 0 4px 2px 12px; border-radius: 2px; }
     .legend-mark:first-child { margin-left: 0; }
     .legend-primary { background: var(--accent); }
-    .legend-joint { background: #a78bfa; }
-    .legend-upper { width: 3px; height: 12px; background: #f59e0b; margin-bottom: -2px; }
     .legend-raw { background: var(--muted); opacity: 0.42; }
     .legend-sensitivity { background: var(--warn); }
     .selected-detail { margin-top: 12px; }
@@ -335,7 +328,7 @@
       </div>
       <p id="hierarchy-risk-note" class="coverage-note"></p>
       <div id="hierarchy-risk-toolbar" class="tree-toolbar"></div>
-      <p class="tree-legend"><span class="legend-mark legend-primary"></span>Finite-sample interval <span class="legend-mark legend-joint"></span>Joint max-T interval <span class="legend-mark legend-upper"></span>Joint max-T upper bound <span class="legend-mark legend-raw"></span>Raw interval before hierarchy projection</p>
+      <p class="tree-legend"><span class="legend-mark legend-primary"></span>Finite-sample interval <span class="legend-mark legend-raw"></span>Raw interval before hierarchy projection</p>
       <div id="hierarchy-risk-table" class="table-wrap"></div>
     </section>
 
@@ -726,18 +719,6 @@
     function primaryInterval(row) {
       return selectedInterval(row);
     }
-    function jointInterval(row) {
-      return (row?.intervals || []).find(interval =>
-        interval.method === "stratified_bernoulli_max_t" &&
-        (!interval.independence_profile || interval.independence_profile === state.independenceProfile)
-      ) || null;
-    }
-    function jointUpperBound(row) {
-      return (row?.intervals || []).find(interval =>
-        interval.method === "stratified_bernoulli_max_t_upper" &&
-        (!interval.independence_profile || interval.independence_profile === state.independenceProfile)
-      ) || null;
-    }
     function hierarchyNodeKey(row) {
       if (row.is_root) return `${row.cohort_id}::${row.group_id}::root`;
       return `${row.cohort_id}::${row.group_id}::${hierarchy
@@ -792,8 +773,6 @@
     function treeInterval(row) {
       const axis = el("div", "tree-axis");
       const primary = primaryInterval(row);
-      const joint = jointInterval(row);
-      const jointUpper = jointUpperBound(row);
       const addRange = (lower, upper, className) => {
         if (lower === null || lower === undefined || upper === null || upper === undefined) return;
         const band = el("span", `tree-range ${className}`);
@@ -805,20 +784,12 @@
         addRange(primary.raw_lower, primary.raw_upper, "raw");
       }
       addRange(shownLower(row), shownUpper(row), "primary");
-      if (joint) addRange(joint.lower, joint.upper, "joint");
-      if (jointUpper?.upper !== null && jointUpper?.upper !== undefined) {
-        const marker = el("span", "tree-upper-bound");
-        marker.style.left = `${100 * clamp01(jointUpper.upper)}%`;
-        axis.append(marker);
-      }
       if (row.estimate !== null && row.estimate !== undefined) {
         const dot = el("span", "tree-estimate"); dot.style.left = `${100 * clamp01(row.estimate)}%`; axis.append(dot);
       }
       const rawText = primary && primary.raw_lower !== null && primary.raw_lower !== undefined
         ? `; raw ${pct(primary.raw_lower)}–${pct(primary.raw_upper)}` : "";
-      const jointText = joint ? `; joint max-T ${pct(joint.lower)}–${pct(joint.upper)}` : "";
-      const upperText = jointUpper ? `; joint max-T upper ≤ ${pct(jointUpper.upper)}` : "";
-      axis.title = `Estimate ${pct(row.estimate)}; finite-sample ${pct(shownLower(row))}–${pct(shownUpper(row))}${jointText}${upperText}${rawText}`;
+      axis.title = `Estimate ${pct(row.estimate)}; finite-sample ${pct(shownLower(row))}–${pct(shownUpper(row))}${rawText}`;
       return axis;
     }
     function comparisonEffectFmt(row, value) {
@@ -835,7 +806,7 @@
       return hierarchyRisks.find(row => row.cohort_id === cohort && String(row.group_id) === String(comparisonRow.group_id) && row.level === comparisonRow.level && sameHierarchyPath(row.path, comparisonRow.path));
     }
     function comparisonDomain(rows, estimand) {
-      const finite = rows.flatMap(row => { const joint = jointInterval(row); const jointUpper = jointUpperBound(row); return [row.estimate, row.lower, row.upper, row.raw_lower, row.raw_upper, joint?.lower, joint?.upper, jointUpper?.upper]; }).map(Number).filter(Number.isFinite);
+      const finite = rows.flatMap(row => [row.estimate, row.lower, row.upper, row.raw_lower, row.raw_upper]).map(Number).filter(Number.isFinite);
       if (estimand === "risk_ratio") return [0, Math.max(2, 1.1 * Math.max(1, ...finite))];
       const magnitude = Math.max(0.1, 1.1 * Math.max(0, ...finite.map(Math.abs)));
       return [-magnitude, magnitude];
@@ -854,20 +825,10 @@
         band.style.left = `${position(resolvedLower)}%`; band.style.width = `${Math.max(0.8, position(resolvedUpper) - position(resolvedLower))}%`; axis.append(band);
       };
       const primary = primaryInterval(row);
-      const joint = jointInterval(row);
-      const jointUpper = jointUpperBound(row);
       if (primary && (primary.raw_lower !== null || primary.raw_upper !== null)) addRange(primary.raw_lower, primary.raw_upper, "raw");
       addRange(shownLower(row), shownUpper(row), "primary");
-      if (joint) addRange(joint.lower, joint.upper, "joint");
-      if (jointUpper?.upper !== null && jointUpper?.upper !== undefined) {
-        const marker = el("span", "tree-upper-bound");
-        marker.style.left = `${position(jointUpper.upper)}%`;
-        axis.append(marker);
-      }
       if (row.estimate !== null && row.estimate !== undefined) { const dot = el("span", "tree-estimate"); dot.style.left = `${position(row.estimate)}%`; axis.append(dot); }
-      const jointText = joint ? `; joint max-T ${comparisonEffectFmt(row, joint.lower)}–${comparisonEffectFmt(row, joint.upper)}` : "";
-      const upperText = jointUpper ? `; joint max-T upper ≤ ${comparisonEffectFmt(row, jointUpper.upper)}` : "";
-      axis.title = `${humanize(row.estimand)} ${comparisonEffectFmt(row, row.estimate)}; finite-sample ${comparisonEffectFmt(row, shownLower(row))}–${comparisonEffectFmt(row, shownUpper(row))}${jointText}${upperText}; reference ${comparisonEffectFmt(row, referenceValue)}`;
+      axis.title = `${humanize(row.estimand)} ${comparisonEffectFmt(row, row.estimate)}; finite-sample ${comparisonEffectFmt(row, shownLower(row))}–${comparisonEffectFmt(row, shownUpper(row))}; reference ${comparisonEffectFmt(row, referenceValue)}`;
       return axis;
     }
     function renderHierarchyRisks() {
@@ -952,10 +913,6 @@
         const intervalCell = el("td", ""); intervalCell.append(comparisonRoot ? comparisonIntervalAxis(row, effectDomain) : treeInterval(row));
         const selectedLower = shownLower(row), selectedUpper = shownUpper(row);
         const numerical = el("td", "num", comparisonRoot ? `${comparisonEffectFmt(row, selectedLower)}–${comparisonEffectFmt(row, selectedUpper)}` : selectedLower === null || selectedLower === undefined ? "—" : `${pct(selectedLower)}–${pct(selectedUpper)}`);
-        const joint = jointInterval(row);
-        if (joint) numerical.append(el("div", "tree-interval-label", `Joint ${comparisonRoot ? `${comparisonEffectFmt(row, joint.lower)}–${comparisonEffectFmt(row, joint.upper)}` : `${pct(joint.lower)}–${pct(joint.upper)}`}`));
-        const jointUpper = jointUpperBound(row);
-        if (jointUpper) numerical.append(el("div", "tree-interval-label", `Upper ≤ ${comparisonRoot ? comparisonEffectFmt(row, jointUpper.upper) : pct(jointUpper.upper)}`));
         const calibration = primary?.calibration_method === "frontier_sidak"
           ? `Frontier Šidák · ${primary.calibration_frontier_size} node${primary.calibration_frontier_size === 1 ? "" : "s"}`
           : humanize(primary?.calibration_method || row.interval_method || "unavailable");

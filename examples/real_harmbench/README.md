@@ -1,10 +1,5 @@
 # HarmBench direct-request safety example
 
-The maintained live plan enables the joint summary-tree max-T reference for the three primary
-weighting views. It is calibrated over the benchmark root and all internal hierarchy nodes and
-is displayed in purple beside the finite-sample KL/Chernoff interval. The separately calibrated
-one-sided upper endpoint is displayed in orange. HarmBench prompts are not resampled.
-
 This is the primary safety-oriented worked example for `inspect-safety-stats`. It evaluates all
 400 text behaviors in HarmBench using its DirectRequest baseline, then computes fixed-design
 exact bounds and tail-sensitive risk summaries across repeated rollouts.

@@ -225,48 +225,6 @@ Use `hierarchy_region: none` to retain the unprojected intervals. The `independe
 one primary profile and optional prespecified sensitivity profiles. See
 [Configuring hierarchy and independence](independence-profiles.md).
 
-### Joint summary-tree max-T intervals
-
-`joint_tree_intervals` adds one dependency-aware bootstrap family alongside the direct
-finite-sample intervals:
-
-```yaml
-outputs:
-  joint_tree_intervals:
-    enabled: true
-    method: stratified_bernoulli_max_t
-    family: model_comparisons
-    groups: [all]
-    coverage_mode: two_sided
-    include_one_sided_upper: true
-    independence_profile: rollout
-    include_comparisons: true
-    replicates: 5000
-    seed: 1729
-    smoothing: jeffreys
-    hierarchy_region: linear_program
-```
-
-The selected profile must use `block_by: [rollout]` and
-`comparison_coupling: independent`. Prompts and weights remain fixed; only Bernoulli rollouts
-within each prompt/cohort stratum are regenerated. All selected roots, internal hierarchy nodes,
-cohorts, and declared risk differences share one max-T critical value. Complete binary outcomes
-are required in the first implementation. The interval is reported as an approximate reference;
-the existing direct interval remains primary. See
-[Joint summary-tree confidence intervals](joint-tree-intervals.md) for the mathematics and output
-semantics.
-
-`include_one_sided_upper: true` additionally reports a separately calibrated upper endpoint based
-on the upper-tail maximum rather than the maximum absolute deviation. It has approximate
-`1 - alpha` simultaneous upper coverage over the same selected family. It does not replace or form
-a hybrid interval with the two-sided result.
-
-For conservative reproducibility, v1 allocates the simultaneous family over the full Cartesian
-product of manifest prompts and declared cohorts. Bounds reused by overlapping groups do not spend
-alpha again.
-
-See [Interpreting results](interpretation.md) for measure semantics.
-
 ## `comparison_sets`
 
 Use a comparison set for three or more cohorts:

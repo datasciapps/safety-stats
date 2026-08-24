@@ -268,40 +268,9 @@ class DirectMeanIntervalsSpec(StrictModel):
         return self
 
 
-class JointTreeIntervalsSpec(StrictModel):
-    """Approximate joint calibration for the fixed-design summary tree."""
-
-    enabled: bool = False
-    method: Literal["stratified_bernoulli_max_t"] = "stratified_bernoulli_max_t"
-    family: str | None = None
-    groups: list[str] | None = None
-    coverage_mode: Literal["two_sided", "per_direction"] = "two_sided"
-    include_one_sided_upper: bool = True
-    independence_profile: str | None = None
-    include_comparisons: bool = True
-    replicates: int = Field(default=5000, ge=500)
-    seed: int = Field(default=1729, ge=0)
-    smoothing: Literal["jeffreys"] = "jeffreys"
-    hierarchy_region: Literal["none", "linear_program"] = "linear_program"
-
-    @model_validator(mode="after")
-    def validate_enabled_joint_tree(self) -> JointTreeIntervalsSpec:
-        if self.enabled and not self.family:
-            raise ValueError("enabled joint tree intervals require a multiplicity family")
-        if self.enabled and not self.independence_profile:
-            raise ValueError("enabled joint tree intervals require an independence profile")
-        if self.groups is not None:
-            if not self.groups:
-                raise ValueError("joint tree interval groups cannot be empty")
-            if len(set(self.groups)) != len(self.groups):
-                raise ValueError("joint tree interval groups must be unique")
-        return self
-
-
 class OutputsSpec(StrictModel):
     prompt_bounds: PromptBoundsSpec = Field(default_factory=PromptBoundsSpec)
     direct_mean_intervals: DirectMeanIntervalsSpec = Field(default_factory=DirectMeanIntervalsSpec)
-    joint_tree_intervals: JointTreeIntervalsSpec = Field(default_factory=JointTreeIntervalsSpec)
     risk_measures: list[RiskMeasureSpec] = Field(default_factory=list)
 
 
@@ -569,19 +538,6 @@ class AnalysisPlan(StrictModel):
             if unknown:
                 raise ValueError(
                     f"{location} references unknown independence profiles: " + ", ".join(unknown)
-                )
-        joint = self.outputs.joint_tree_intervals
-        if joint.independence_profile is not None:
-            if joint.independence_profile not in profiles:
-                raise ValueError(
-                    "outputs.joint_tree_intervals references unknown independence profile: "
-                    + joint.independence_profile
-                )
-            profile = self.design.independence_profiles[joint.independence_profile]
-            if profile.block_by != ["rollout"] or profile.comparison_coupling != "independent":
-                raise ValueError(
-                    "stratified Bernoulli max-T currently requires a rollout independence "
-                    "profile with comparison_coupling=independent"
                 )
         return self
 

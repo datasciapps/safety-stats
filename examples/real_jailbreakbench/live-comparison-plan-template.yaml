@@ -81,15 +81,6 @@ outputs:
     hierarchy_nodes: true
     hierarchy_calibration: frontier_sidak
     hierarchy_region: linear_program
-  joint_tree_intervals:
-    enabled: true
-    include_one_sided_upper: true
-    family: model_comparisons
-    groups: [all]
-    independence_profile: rollout
-    include_comparisons: true
-    replicates: 5000
-    seed: 1729
   risk_measures:
     - {id: mean, type: weighted_mean}
     - {id: cvar_90, type: cvar, beta: 0.90}

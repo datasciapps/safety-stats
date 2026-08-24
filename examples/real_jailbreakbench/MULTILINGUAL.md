@@ -1,11 +1,5 @@
 # JailbreakBench-100 English/French/German/Maltese comparison
 
-The four-language plan uses one joint max-T family for the English, French, German, and Maltese
-summary trees and every declared language risk difference. Shared bootstrap replicates preserve
-the parent/child overlap, and all raw bands are projected through one multi-arm hierarchy region.
-The visualiser shows these approximate intervals in purple beside the finite-sample bands and marks
-the separately calibrated one-sided upper endpoints in orange.
-
 This workflow evaluates one target model on four frozen language conditions of the same complete
 JailbreakBench harmful design. It machine-translates the 100 English goals into French and German,
 and Maltese, preserves the same semantic `prompt_id` in every arm, runs repeated rollouts through Inspect AI,

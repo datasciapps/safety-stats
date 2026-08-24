@@ -1,9 +1,5 @@
 # Worked example: eight real SimpleQA results
 
-This mechanics example now displays the joint summary-tree max-T reference interval and separately
-calibrated upper endpoint alongside the finite-sample fixed-design interval. It remains a
-reliability example rather than a safety benchmark.
-
 This example uses eight genuine samples from a completed Inspect evaluation of
 `codelion/SimpleQA-Verified` with `openai/gpt-4o`. Four received `C` and four received `I` from
 Inspect's `model_graded_qa` scorer. For this worked failure analysis, `I` is explicitly mapped to

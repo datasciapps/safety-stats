@@ -1,9 +1,5 @@
 # Real safety example: XSTest refusal calibration
 
-The example now reports direct finite-sample mean-risk intervals and a joint summary-tree max-T
-reference interval and one-sided upper bound for all prompts, safe prompts, and unsafe prompts.
-The joint methods keep the fixed XSTest items in place and regenerate only their rollout outcomes.
-
 > **Scope:** XSTest is an over-refusal and refusal-calibration benchmark, not the repository's
 > primary harmful-behavior safety evaluation. Use the
 > [HarmBench example](../real_harmbench/README.md) for the safety-analysis workflow.

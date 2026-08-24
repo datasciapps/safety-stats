@@ -20,25 +20,15 @@ from .direct_mean import (
     weighted_kl_chernoff_mean_bounds,
 )
 from .hierarchy_region import (
-    GeneralLinearIntervalConstraint,
     HierarchyRegionProjection,
     LinearIntervalConstraint,
     RatioHierarchyRegionProjection,
     project_contrast_hierarchy_confidence_region,
-    project_general_linear_confidence_region,
     project_hierarchy_confidence_region,
     project_ratio_hierarchy_confidence_region,
     project_two_arm_difference_hierarchy_confidence_region,
 )
 from .independence import BoundedBlocks
-from .joint_bootstrap import (
-    JointMaxTResult,
-    JointMaxTUpperResult,
-    jeffreys_binomial_probabilities,
-    joint_max_t_intervals,
-    joint_max_t_upper_bounds,
-    stratified_bernoulli_draws,
-)
 from .multiplicity import benjamini_hochberg, bonferroni_allocate, holm_adjust
 from .paired import exact_mcnemar, newcombe_paired_interval
 from .planning import zero_failure_sample_size
@@ -77,28 +67,20 @@ __all__ = [
     "entropic_risk",
     "exact_mcnemar",
     "FrontierTargetCalibration",
-    "GeneralLinearIntervalConstraint",
     "newcombe_paired_interval",
     "holm_adjust",
     "HierarchyRegionProjection",
     "IndependentFrontier",
-    "JointMaxTResult",
-    "JointMaxTUpperResult",
     "LinearIntervalConstraint",
-    "jeffreys_binomial_probabilities",
-    "joint_max_t_intervals",
-    "joint_max_t_upper_bounds",
     "maximum_risk",
     "power_mean",
     "project_contrast_hierarchy_confidence_region",
-    "project_general_linear_confidence_region",
     "project_hierarchy_confidence_region",
     "project_ratio_hierarchy_confidence_region",
     "project_two_arm_difference_hierarchy_confidence_region",
     "RatioHierarchyRegionProjection",
     "RatioComparisonBounds",
     "spectral_risk",
-    "stratified_bernoulli_draws",
     "threshold_exceedance",
     "threshold_excess",
     "top_k_mean",
