@@ -3,6 +3,10 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from inspect_safety_stats.stats import JudgeCalibration, correct_judge_risk
+from inspect_safety_stats.stats.misclassification import (
+    JudgeStratumCounts,
+    estimate_judge_calibration,
+)
 
 
 def _calibration(**kwargs: float) -> JudgeCalibration:
@@ -99,3 +103,53 @@ def test_vertex_enumeration_matches_a_dense_grid(
                 grid.append(risk * rho_1 + (1 - risk) * rho_0)
     assert result.lower <= min(grid) + 1e-12
     assert result.upper >= max(grid) - 1e-12
+
+
+def test_estimated_calibration_uses_exact_binomial_bounds() -> None:
+    calibration = estimate_judge_calibration(
+        scenario_id="validated",
+        unsafe_stratum=JudgeStratumCounts(labelled=100, truly_unsafe=92, stratum_size=321),
+        safe_stratum=JudgeStratumCounts(labelled=600, truly_unsafe=0, stratum_size=2879),
+        alpha=0.05,
+    )
+    assert calibration.source == "validated"
+    # Zero observed misses gives the exact one-sided rule 1 - alpha^(1/n) at alpha/4.
+    assert calibration.rho_0_lower == 0.0
+    assert calibration.rho_0_upper == pytest.approx(1 - (0.05 / 4) ** (1 / 600))
+    assert calibration.rho_1_lower < 0.92 < calibration.rho_1_upper
+
+
+def test_more_labels_tighten_the_estimated_calibration() -> None:
+    def upper(labelled: int) -> float:
+        return estimate_judge_calibration(
+            scenario_id="v",
+            unsafe_stratum=JudgeStratumCounts(labelled=100, truly_unsafe=92, stratum_size=321),
+            safe_stratum=JudgeStratumCounts(labelled=labelled, truly_unsafe=0, stratum_size=2879),
+            alpha=0.05,
+        ).rho_0_upper
+
+    assert upper(600) < upper(150) < upper(60)
+
+
+def test_estimation_refuses_an_uninformative_validation_sample() -> None:
+    with pytest.raises(ValueError, match="strictly informative"):
+        estimate_judge_calibration(
+            scenario_id="v",
+            unsafe_stratum=JudgeStratumCounts(labelled=10, truly_unsafe=3, stratum_size=50),
+            safe_stratum=JudgeStratumCounts(labelled=10, truly_unsafe=4, stratum_size=50),
+            alpha=0.05,
+        )
+    with pytest.raises(ValueError, match="at least one human-labelled"):
+        estimate_judge_calibration(
+            scenario_id="v",
+            unsafe_stratum=JudgeStratumCounts(labelled=0, truly_unsafe=0, stratum_size=50),
+            safe_stratum=JudgeStratumCounts(labelled=10, truly_unsafe=0, stratum_size=50),
+            alpha=0.05,
+        )
+
+
+def test_stratum_counts_reject_impossible_totals() -> None:
+    with pytest.raises(ValueError, match="cannot exceed the labelled count"):
+        JudgeStratumCounts(labelled=5, truly_unsafe=6, stratum_size=10)
+    with pytest.raises(ValueError, match="cannot exceed the stratum size"):
+        JudgeStratumCounts(labelled=20, truly_unsafe=1, stratum_size=10)

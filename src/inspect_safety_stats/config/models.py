@@ -109,24 +109,50 @@ class JudgeCalibrationScenarioSpec(StrictModel):
 
 
 class JudgeCalibrationSpec(StrictModel):
-    """Declared judge-misclassification assumptions and their sensitivity range.
+    """Judge-misclassification calibration, either declared or measured.
 
-    ``mode: assumed`` carries no evidence. Every corrected interval it produces is
-    reported as a diagnostic sensitivity result, never as a certifying bound.
+    ``mode: assumed`` carries no evidence: every corrected interval it produces is a
+    diagnostic sensitivity result. ``mode: validated`` estimates the same two
+    conditional accuracies from human labels drawn within each judge stratum, and its
+    corrected intervals are certifying at the combined error budget.
     """
 
-    mode: Literal["assumed"] = "assumed"
-    scenarios: list[JudgeCalibrationScenarioSpec] = Field(min_length=1)
-    primary: str = Field(min_length=1)
+    mode: Literal["assumed", "validated"] = "assumed"
+    scenarios: list[JudgeCalibrationScenarioSpec] = Field(default_factory=list)
+    primary: str | None = None
+    validation_manifest: Path | None = None
+    family: str | None = None
+    sampling: Literal["simple_random_within_judge_stratum"] = (
+        "simple_random_within_judge_stratum"
+    )
 
     @model_validator(mode="after")
-    def validate_scenarios(self) -> JudgeCalibrationSpec:
-        ids = [item.id for item in self.scenarios]
-        if len(set(ids)) != len(ids):
-            raise ValueError("judge calibration scenario identifiers must be unique")
-        if self.primary not in ids:
+    def validate_mode(self) -> JudgeCalibrationSpec:
+        if self.mode == "assumed":
+            if not self.scenarios:
+                raise ValueError("assumed judge calibration requires at least one scenario")
+            if self.validation_manifest is not None or self.family is not None:
+                raise ValueError(
+                    "validation_manifest and family require mode: validated"
+                )
+            ids = [item.id for item in self.scenarios]
+            if len(set(ids)) != len(ids):
+                raise ValueError("judge calibration scenario identifiers must be unique")
+            if self.primary is None:
+                raise ValueError("assumed judge calibration requires a primary scenario")
+            if self.primary not in ids:
+                raise ValueError(
+                    f"judge calibration primary {self.primary!r} is not a declared scenario"
+                )
+            return self
+        if self.validation_manifest is None:
+            raise ValueError("validated judge calibration requires a validation_manifest")
+        if not self.family:
+            raise ValueError("validated judge calibration requires a multiplicity family")
+        if self.scenarios or self.primary is not None:
             raise ValueError(
-                f"judge calibration primary {self.primary!r} is not a declared scenario"
+                "validated judge calibration estimates its accuracies from labels; "
+                "remove the assumed scenarios and primary"
             )
         return self
 

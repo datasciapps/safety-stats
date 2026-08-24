@@ -248,24 +248,42 @@ def _markdown(report: SafetyReport) -> str:
     ]
     if judge_rows:
         calibration = report._resolved_plan.get("inputs", {}).get("judge_calibration") or {}
-        primary_scenario = str(calibration.get("primary", ""))
+        primary_scenario = str(calibration.get("primary") or "")
+        validated = str(calibration.get("mode")) == "validated"
+        preamble = (
+            (
+                "These accuracies are exact Clopper-Pearson bounds from human labels drawn "
+                "within each judge stratum, so the corrected rows are coverage-guaranteed at "
+                "the union of the underlying interval's budget and the calibration budget. "
+                "Validity rests on the labelled rows being a simple random sample within "
+                "their stratum, which is a property of the collection protocol."
+            )
+            if validated
+            else (
+                "These accuracies are assumptions, not measurements. The rows below carry no "
+                "coverage guarantee and cannot support a safety claim. They exist to make an "
+                "otherwise invisible dependency explicit: an uncorrected report implicitly "
+                "assumes the judge never errs."
+            )
+        )
         lines.extend(
             [
                 "",
-                "## Judge misclassification sensitivity",
+                (
+                    "## Judge misclassification correction"
+                    if validated
+                    else "## Judge misclassification sensitivity"
+                ),
                 "",
                 (
                     "Every other interval in this report estimates the risk that the **judge "
                     "reports** a failure. This section maps those intervals onto the underlying "
-                    "**true** failure risk using declared conditional judge accuracies."
+                    "**true** failure risk using "
+                    + ("measured" if validated else "declared")
+                    + " conditional judge accuracies."
                 ),
                 "",
-                (
-                    "These accuracies are assumptions, not measurements. The rows below carry no "
-                    "coverage guarantee and cannot support a safety claim. They exist to make an "
-                    "otherwise invisible dependency explicit: an uncorrected report implicitly "
-                    "assumes the judge never errs."
-                ),
+                preamble,
                 "",
                 (
                     "| Cohort | Group | Measure | Scenario | Judge-system bounds | "
@@ -299,18 +317,49 @@ def _markdown(report: SafetyReport) -> str:
                 )
                 + " |"
             )
-        scenarios = calibration.get("scenarios") or []
-        if scenarios:
-            lines.extend(["", "Declared scenarios:", ""])
-            for item in scenarios:
-                rho_1, rho_0 = item.get("rho_1", {}), item.get("rho_0", {})
-                lines.append(
-                    f"- `{_escape(item.get('id'))}`: "
-                    f"P(truly unsafe | judge said unsafe) in "
-                    f"[{rho_1.get('lower')}, {rho_1.get('upper')}]; "
-                    f"P(truly unsafe | judge said safe) in "
-                    f"[{rho_0.get('lower')}, {rho_0.get('upper')}]"
+        if validated:
+            cohorts = (report.provenance.get("judge_calibration") or {}).get("cohorts") or {}
+            if cohorts:
+                lines.extend(
+                    [
+                        "",
+                        "Human labels behind each cohort's calibration:",
+                        "",
+                        (
+                            "| Cohort | Judge-unsafe labelled / stratum | Truly unsafe | "
+                            "Judge-safe labelled / stratum | Truly unsafe |"
+                        ),
+                        "|---|---|---:|---|---:|",
+                    ]
                 )
+                for cohort_id, strata in cohorts.items():
+                    unsafe, safe = strata["judge_unsafe"], strata["judge_safe"]
+                    lines.append(
+                        "| "
+                        + " | ".join(
+                            [
+                                _escape(cohort_id),
+                                f"{unsafe['labelled']} / {unsafe['stratum_size']}",
+                                str(unsafe["truly_unsafe"]),
+                                f"{safe['labelled']} / {safe['stratum_size']}",
+                                str(safe["truly_unsafe"]),
+                            ]
+                        )
+                        + " |"
+                    )
+        else:
+            scenarios = calibration.get("scenarios") or []
+            if scenarios:
+                lines.extend(["", "Declared scenarios:", ""])
+                for item in scenarios:
+                    rho_1, rho_0 = item.get("rho_1", {}), item.get("rho_0", {})
+                    lines.append(
+                        f"- `{_escape(item.get('id'))}`: "
+                        f"P(truly unsafe | judge said unsafe) in "
+                        f"[{rho_1.get('lower')}, {rho_1.get('upper')}]; "
+                        f"P(truly unsafe | judge said safe) in "
+                        f"[{rho_0.get('lower')}, {rho_0.get('upper')}]"
+                    )
     if report.hierarchy_risks:
         lines.extend(
             [

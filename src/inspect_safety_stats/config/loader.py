@@ -24,6 +24,11 @@ def load_plan(path: str | Path) -> AnalysisPlan:
     manifest = plan.inputs.design_manifest
     if not manifest.is_absolute():
         plan.inputs.design_manifest = (source.parent / manifest).resolve()
+    calibration = plan.inputs.judge_calibration
+    if calibration is not None and calibration.validation_manifest is not None:
+        validation = calibration.validation_manifest
+        if not validation.is_absolute():
+            calibration.validation_manifest = (source.parent / validation).resolve()
     return plan
 
 

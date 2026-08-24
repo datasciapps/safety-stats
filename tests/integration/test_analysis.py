@@ -453,6 +453,136 @@ def test_judge_calibration_emits_assumed_correction_sensitivities(
     assert "assumes the judge never errs" in markdown
 
 
+def test_validated_judge_calibration_produces_certifying_corrections(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "design:\n",
+        "  judge_calibration:\n"
+        "    mode: validated\n"
+        "    validation_manifest: labels.csv\n"
+        "    family: judge_error\n"
+        "design:\n",
+        1,
+    )
+    plan_text = plan_text.replace(
+        "    - {id: displayed,",
+        "    - {id: judge_error, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: displayed,",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+
+    # The shared fixture reports no failures, so both judge strata must be populated
+    # before a calibration can be estimated at all.
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    # Label every classified observation, agreeing with the judge throughout, so the
+    # calibration is as sharp as this fixture allows.
+    baseline_dir = tmp_path / "baseline"
+    baseline_dir.mkdir()
+    baseline_plan = load_plan(_write_inputs(baseline_dir))
+    baseline = analyze(plan=baseline_plan, logs="ignored")
+    rows = ["observation_id,human_label"]
+    for observation in baseline._observations:
+        if observation.failure is None:
+            continue
+        rows.append(f"{observation.observation_id},{'unsafe' if observation.failure else 'safe'}")
+    (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    plan = load_plan(plan_path)
+    plan.outputs.direct_mean_intervals.hierarchy_nodes = True
+    report = analyze(plan=plan, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    corrected = next(
+        interval
+        for interval in mean.intervals
+        if interval.interval_id == "judge_corrected_validated"
+    )
+    # Measured accuracies produce evidence, not a sensitivity.
+    assert corrected.eligibility == "certifying"
+    assert corrected.role == "reference"
+    assert corrected.method == "validated_judge_misclassification_correction"
+    assert corrected.calibration_method == "validated_judge_calibration"
+    # Coverage is the union bound over the base interval and the calibration budget.
+    base = next(item for item in mean.intervals if item.role == "primary")
+    assert base.family_alpha is not None
+    assert corrected.simultaneous_coverage == pytest.approx(1 - base.family_alpha - 0.05)
+    assert corrected.raw_lower == pytest.approx(mean.lower)
+
+    # Provenance records the labels behind each cohort's calibration.
+    summary = report.provenance["judge_calibration"]
+    assert summary["mode"] == "validated"
+    assert summary["sampling"] == "simple_random_within_judge_stratum"
+    strata = summary["cohorts"]["candidate"]
+    assert strata["judge_safe"]["labelled"] == strata["judge_safe"]["stratum_size"]
+
+    # The gap between correction and decisions is surfaced rather than left implicit.
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "JUDGE_CORRECTION_NOT_USED_BY_CLAIMS" in codes
+
+    markdown = (report.write(tmp_path / "validated-report") / "report.md").read_text(
+        encoding="utf-8"
+    )
+    assert "## Judge misclassification correction" in markdown
+    assert "Human labels behind each cohort's calibration" in markdown
+
+
+def test_validated_judge_calibration_reports_unmatched_labels(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "design:\n",
+        "  judge_calibration:\n"
+        "    mode: validated\n"
+        "    validation_manifest: labels.csv\n"
+        "    family: judge_error\n"
+        "design:\n",
+        1,
+    )
+    plan_text = plan_text.replace(
+        "    - {id: displayed,",
+        "    - {id: judge_error, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: displayed,",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    (tmp_path / "labels.csv").write_text(
+        "observation_id,human_label\nnot-a-real-observation,unsafe\n", encoding="utf-8"
+    )
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=load_plan(plan_path), logs="ignored")
+
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "JUDGE_VALIDATION_UNMATCHED" in codes
+    assert report.integrity.status == "invalid"
+
+
 def test_decision_presentation_is_opt_in(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     plan = load_plan(_write_inputs(tmp_path))
     plan.report.include_decisions = True

@@ -12,6 +12,10 @@ from inspect_safety_stats.config.models import AnalysisPlan, ComparisonSpec, Ris
 from inspect_safety_stats.decision.engine import decide_claim, roll_up
 from inspect_safety_stats.ingest.inspect_logs import LogInput, NormalizedData, ingest_inspect_logs
 from inspect_safety_stats.ingest.manifest import resolve_weights
+from inspect_safety_stats.ingest.validation import (
+    judge_stratum_counts,
+    load_validation_manifest,
+)
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import (
     ClaimResult,
@@ -57,6 +61,7 @@ from inspect_safety_stats.stats.independence import (
 from inspect_safety_stats.stats.misclassification import (
     JudgeCalibration,
     correct_judge_risk,
+    estimate_judge_calibration,
 )
 from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
 from inspect_safety_stats.stats.paired import exact_mcnemar, newcombe_paired_interval
@@ -1412,9 +1417,9 @@ _JUDGE_CORRECTABLE_MEASURES = frozenset(
 )
 
 
-def _judge_calibrations(plan: AnalysisPlan) -> list[JudgeCalibration]:
+def _assumed_judge_calibrations(plan: AnalysisPlan) -> list[JudgeCalibration]:
     spec = plan.inputs.judge_calibration
-    if spec is None:
+    if spec is None or spec.mode != "assumed":
         return []
     ordered = sorted(spec.scenarios, key=lambda item: (item.id != spec.primary, item.id))
     return [
@@ -1430,11 +1435,114 @@ def _judge_calibrations(plan: AnalysisPlan) -> list[JudgeCalibration]:
     ]
 
 
+def _validated_judge_calibrations(
+    plan: AnalysisPlan,
+    data: NormalizedData,
+    diagnostics: list[Diagnostic],
+) -> tuple[dict[str, JudgeCalibration], dict[str, dict[str, Any]], float | None]:
+    """Estimate one calibration per cohort from human labels within judge strata."""
+
+    spec = plan.inputs.judge_calibration
+    if spec is None or spec.mode != "validated":
+        return {}, {}, None
+    family = next((item for item in plan.multiplicity.families if item.id == spec.family), None)
+    if family is None:
+        diagnostics.append(
+            Diagnostic(
+                code="PLAN_UNKNOWN_REFERENCE",
+                severity="ERROR",
+                message="validated judge calibration requires a valid multiplicity family",
+                scope="inputs.judge_calibration",
+            )
+        )
+        return {}, {}, None
+    assert spec.validation_manifest is not None
+    try:
+        labels = load_validation_manifest(spec.validation_manifest)
+    except (OSError, ValueError) as exc:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_VALIDATION_INVALID",
+                severity="ERROR",
+                message=str(exc),
+                scope="inputs.judge_calibration",
+            )
+        )
+        return {}, {}, None
+
+    counts, unmatched = judge_stratum_counts(data.observations, labels)
+    if unmatched:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_VALIDATION_UNMATCHED",
+                severity="ERROR",
+                message=(
+                    f"{len(unmatched)} validation rows reference observations absent from the "
+                    "analysed logs or with unclassified outcomes"
+                ),
+                scope="inputs.judge_calibration",
+                details={"observation_ids": unmatched[:20]},
+            )
+        )
+
+    calibrations: dict[str, JudgeCalibration] = {}
+    summaries: dict[str, dict[str, Any]] = {}
+    for cohort_id in sorted(plan.cohorts):
+        strata = counts.get(cohort_id, {})
+        unsafe = strata.get("judge_unsafe")
+        safe = strata.get("judge_safe")
+        if unsafe is None or safe is None:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_VALIDATION_STRATUM_EMPTY",
+                    severity="WARNING",
+                    message=(
+                        f"cohort {cohort_id!r} has no observations in one judge stratum; "
+                        "no judge correction is reported for it"
+                    ),
+                    scope=cohort_id,
+                )
+            )
+            continue
+        try:
+            calibrations[cohort_id] = estimate_judge_calibration(
+                scenario_id="validated",
+                unsafe_stratum=unsafe,
+                safe_stratum=safe,
+                alpha=family.alpha,
+            )
+        except ValueError as exc:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_CALIBRATION_UNINFORMATIVE",
+                    severity="WARNING",
+                    message=str(exc),
+                    scope=cohort_id,
+                )
+            )
+            continue
+        summaries[cohort_id] = {
+            "judge_unsafe": {
+                "labelled": unsafe.labelled,
+                "truly_unsafe": unsafe.truly_unsafe,
+                "stratum_size": unsafe.stratum_size,
+            },
+            "judge_safe": {
+                "labelled": safe.labelled,
+                "truly_unsafe": safe.truly_unsafe,
+                "stratum_size": safe.stratum_size,
+            },
+        }
+    return calibrations, summaries, family.alpha
+
+
 def _judge_corrected_interval(
     *,
     result: GroupRiskResult | HierarchyRiskResult,
     calibration: JudgeCalibration,
-    primary_scenario: str,
+    primary_scenario: str | None,
+    family_id: str | None,
+    judge_alpha: float | None,
 ) -> RiskIntervalResult | None:
     if result.lower is None or result.upper is None:
         return None
@@ -1444,55 +1552,96 @@ def _judge_corrected_interval(
         observed_estimate=result.estimate,
         calibration=calibration,
     )
+    validated = calibration.source == "validated"
+    base = next((item for item in result.intervals if item.role == "primary"), None)
+    base_alpha = base.family_alpha if base is not None else None
+    simultaneous = (
+        1 - (base_alpha + judge_alpha)
+        if validated and base_alpha is not None and judge_alpha is not None
+        else None
+    )
+    assumptions = [
+        "The reported estimand is true failure risk, not judge-reported failure risk.",
+        f"P(truly unsafe | judge said unsafe) lies in "
+        f"[{calibration.rho_1_lower:.6g}, {calibration.rho_1_upper:.6g}].",
+        f"P(truly unsafe | judge said safe) lies in "
+        f"[{calibration.rho_0_lower:.6g}, {calibration.rho_0_upper:.6g}].",
+    ]
+    if validated:
+        assumptions.extend(
+            [
+                "Those two ranges are exact Clopper-Pearson bounds from human labels drawn "
+                "within each judge stratum.",
+                "The labelled rows are a simple random sample within their judge stratum; "
+                "this is a property of the declared collection protocol, not of the data.",
+                "Human adjudication is treated as ground truth.",
+                "One calibration is estimated per cohort and shared by every group in it.",
+                "Coverage is the union bound over the underlying interval and the four "
+                "calibration endpoints.",
+            ]
+        )
+    else:
+        assumptions.extend(
+            [
+                "These conditional accuracies are declared assumptions, not measurements; "
+                "the interval inherits no coverage guarantee from them.",
+                "The declared accuracies are prevalence-dependent and are applied unchanged "
+                "to every cohort.",
+            ]
+        )
+    assumptions.append("The underlying judge-system interval retains its own stated guarantee.")
+    warnings: list[str] = []
+    if not validated and primary_scenario is not None:
+        if calibration.scenario_id != primary_scenario:
+            warnings.append(
+                "Non-primary judge-calibration scenario; reported for sensitivity only."
+            )
     return RiskIntervalResult(
         interval_id=f"judge_corrected_{calibration.scenario_id}",
         lower=corrected.lower,
         upper=corrected.upper,
-        method="assumed_judge_misclassification_correction",
-        role="sensitivity",
+        method=(
+            "validated_judge_misclassification_correction"
+            if validated
+            else "assumed_judge_misclassification_correction"
+        ),
+        role="reference" if validated else "sensitivity",
         coverage_scope=(
             f"{result.coverage_scope}_judge_corrected"
             if result.coverage_scope
             else "judge_corrected"
         ),
+        family=family_id,
+        family_alpha=judge_alpha,
+        simultaneous_coverage=simultaneous,
         completion_estimate_lower=corrected.completion_estimate_lower,
         completion_estimate_upper=corrected.completion_estimate_upper,
         raw_lower=result.lower,
         raw_upper=result.upper,
         calibration_method=f"{calibration.source}_judge_calibration",
-        assumptions=[
-            "The reported estimand is true failure risk, not judge-reported failure risk.",
-            f"P(truly unsafe | judge said unsafe) lies in "
-            f"[{calibration.rho_1_lower:.6g}, {calibration.rho_1_upper:.6g}].",
-            f"P(truly unsafe | judge said safe) lies in "
-            f"[{calibration.rho_0_lower:.6g}, {calibration.rho_0_upper:.6g}].",
-            "These conditional accuracies are declared assumptions, not measurements; "
-            "the interval inherits no coverage guarantee from them.",
-            "The declared accuracies are prevalence-dependent and are applied unchanged "
-            "to every cohort.",
-            "The underlying judge-system interval retains its own stated guarantee.",
-        ],
-        eligibility="diagnostic",
-        warnings=(
-            []
-            if calibration.scenario_id == primary_scenario
-            else ["Non-primary judge-calibration scenario; reported for sensitivity only."]
-        ),
+        assumptions=assumptions,
+        eligibility="certifying" if validated else "diagnostic",
+        warnings=warnings,
     )
 
 
 def _apply_judge_correction(
     plan: AnalysisPlan,
+    data: NormalizedData,
     risks: list[GroupRiskResult],
     hierarchy_risks: list[HierarchyRiskResult],
-) -> None:
-    """Append assumed-misclassification sensitivity intervals to weighted risk rows."""
+    diagnostics: list[Diagnostic],
+) -> dict[str, Any]:
+    """Map judge-system risk rows onto the true-risk scale.
 
-    calibrations = _judge_calibrations(plan)
-    if not calibrations:
-        return
+    Returns a summary of the calibration actually used, for the report provenance
+    block. In ``assumed`` mode every scenario is applied to every cohort. In
+    ``validated`` mode one calibration is estimated per cohort from human labels.
+    """
+
     spec = plan.inputs.judge_calibration
-    assert spec is not None
+    if spec is None:
+        return {}
     correctable = {
         measure.id
         for measure in plan.outputs.risk_measures
@@ -1502,15 +1651,61 @@ def _apply_judge_correction(
         *(row for row in risks if row.measure_id in correctable),
         *hierarchy_risks,
     ]
+
+    if spec.mode == "assumed":
+        calibrations = _assumed_judge_calibrations(plan)
+        for result in targets:
+            for calibration in calibrations:
+                interval = _judge_corrected_interval(
+                    result=result,
+                    calibration=calibration,
+                    primary_scenario=spec.primary,
+                    family_id=None,
+                    judge_alpha=None,
+                )
+                if interval is not None:
+                    result.intervals.append(interval)
+        return {
+            "mode": "assumed",
+            "scenarios": [item.scenario_id for item in calibrations],
+            "primary": spec.primary,
+        }
+
+    by_cohort, summaries, judge_alpha = _validated_judge_calibrations(plan, data, diagnostics)
     for result in targets:
-        for calibration in calibrations:
-            interval = _judge_corrected_interval(
-                result=result,
-                calibration=calibration,
-                primary_scenario=spec.primary,
+        cohort_calibration = by_cohort.get(result.cohort_id)
+        if cohort_calibration is None:
+            continue
+        interval = _judge_corrected_interval(
+            result=result,
+            calibration=cohort_calibration,
+            primary_scenario=None,
+            family_id=spec.family,
+            judge_alpha=judge_alpha,
+        )
+        if interval is not None:
+            result.intervals.append(interval)
+    if by_cohort:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_CORRECTION_NOT_USED_BY_CLAIMS",
+                severity="WARNING",
+                message=(
+                    "a validated judge correction is available, but threshold claims are still "
+                    "evaluated against the uncorrected judge-system interval; compare claims "
+                    "against the judge_corrected_validated interval manually"
+                ),
+                scope="inputs.judge_calibration",
             )
-            if interval is not None:
-                result.intervals.append(interval)
+        )
+    return {
+        "mode": "validated",
+        "family": spec.family,
+        "family_alpha": judge_alpha,
+        "sampling": spec.sampling,
+        "validation_manifest": str(spec.validation_manifest),
+        "cohorts": summaries,
+    }
 
 
 def _observation_attr(observation: Observation, name: str) -> Any:
@@ -3193,7 +3388,9 @@ def analyze(
         hierarchy_risks,
         diagnostics,
     )
-    _apply_judge_correction(resolved, risks, hierarchy_risks)
+    judge_calibration_summary = _apply_judge_correction(
+        resolved, data, risks, hierarchy_risks, diagnostics
+    )
     comparisons = _comparisons(resolved, data, estimates, diagnostics)
     comparison_sets = _comparison_set_results(resolved, comparisons, risks)
     integrity_status = _integrity_status(diagnostics)
@@ -3222,6 +3419,11 @@ def analyze(
                 for path, digest in sorted(data.source_hashes.items())
             ],
             "inspect_version_constraint": ">=0.3.259,<0.4",
+            **(
+                {"judge_calibration": judge_calibration_summary}
+                if judge_calibration_summary
+                else {}
+            ),
         },
         scope={
             "design": "fixed",

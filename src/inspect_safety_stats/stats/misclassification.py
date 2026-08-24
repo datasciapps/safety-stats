@@ -3,6 +3,8 @@ from __future__ import annotations
 import itertools
 from dataclasses import dataclass
 
+from inspect_safety_stats.stats.binomial import binomial_bounds
+
 
 @dataclass(frozen=True)
 class JudgeCalibration:
@@ -101,4 +103,80 @@ def correct_judge_risk(
         completion_estimate_upper=estimate_upper,
         scenario_id=calibration.scenario_id,
         source=calibration.source,
+    )
+
+
+@dataclass(frozen=True)
+class JudgeStratumCounts:
+    """Human-labelled counts within one judge verdict stratum."""
+
+    labelled: int
+    truly_unsafe: int
+    stratum_size: int
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("labelled", self.labelled),
+            ("truly_unsafe", self.truly_unsafe),
+            ("stratum_size", self.stratum_size),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a nonnegative integer")
+        if self.truly_unsafe > self.labelled:
+            raise ValueError("truly_unsafe cannot exceed the labelled count")
+        if self.labelled > self.stratum_size:
+            raise ValueError("labelled count cannot exceed the stratum size")
+
+
+def estimate_judge_calibration(
+    *,
+    scenario_id: str,
+    unsafe_stratum: JudgeStratumCounts,
+    safe_stratum: JudgeStratumCounts,
+    alpha: float,
+) -> JudgeCalibration:
+    """Estimate rho_1 and rho_0 from human labels drawn within each judge stratum.
+
+    Each stratum supplies an ordinary binomial proportion, so exact Clopper-Pearson
+    bounds apply directly. ``alpha`` is the total error budget for the pair: it is
+    split equally between the two parameters, and each parameter's budget is split
+    again between its two endpoints, so a union bound over the four endpoints
+    spends no more than ``alpha``.
+
+    Validity requires the labelled rows to be a simple random sample within their
+    stratum. That is a property of the collection protocol, not of the data, and is
+    recorded as a declared assumption rather than checked here.
+    """
+
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0, 1)")
+    if unsafe_stratum.labelled == 0 or safe_stratum.labelled == 0:
+        raise ValueError("both judge strata require at least one human-labelled observation")
+
+    endpoint_alpha = alpha / 4
+    rho_1 = binomial_bounds(
+        unsafe_stratum.truly_unsafe,
+        unsafe_stratum.labelled,
+        alpha_lower=endpoint_alpha,
+        alpha_upper=endpoint_alpha,
+    )
+    rho_0 = binomial_bounds(
+        safe_stratum.truly_unsafe,
+        safe_stratum.labelled,
+        alpha_lower=endpoint_alpha,
+        alpha_upper=endpoint_alpha,
+    )
+    if rho_1.lower <= rho_0.upper:
+        raise ValueError(
+            "the validation sample does not establish a strictly informative judge: the "
+            f"rho_1 lower bound ({rho_1.lower:.6g}) does not exceed the rho_0 upper bound "
+            f"({rho_0.upper:.6g}); more labels or a better judge are required"
+        )
+    return JudgeCalibration(
+        scenario_id=scenario_id,
+        rho_1_lower=rho_1.lower,
+        rho_1_upper=rho_1.upper,
+        rho_0_lower=rho_0.lower,
+        rho_0_upper=rho_0.upper,
+        source="validated",
     )

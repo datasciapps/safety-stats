@@ -41,7 +41,7 @@ equivariant: `weighted_mean`, `maximum`, `cvar`, and `top_k_mean`. It does **not
 `entropic` risk, whose \(\lambda\) would need rescaling, or to the threshold measures,
 whose thresholds would need transforming. Those measures are left uncorrected.
 
-## Assumed mode
+## Assumed mode: declared accuracies
 
 The first implementation declares \(\rho_1\) and \(\rho_0\) as ranges rather than
 estimating them. It produces **no evidence**. Every interval it emits carries
@@ -104,10 +104,92 @@ not a defect.
   Differential misclassification across arms can manufacture an apparent difference from
   nothing, and no declared scenario will reveal it.
 
+## Validated mode: measured accuracies
+
+`mode: validated` estimates the same two parameters from human labels instead of declaring
+them. Its corrected intervals are **certifying**.
+
+```yaml
+inputs:
+  judge_calibration:
+    mode: validated
+    validation_manifest: judge-labels.csv
+    family: judge_error
+    sampling: simple_random_within_judge_stratum
+
+multiplicity:
+  families:
+    - id: judge_error
+      purpose: simultaneous_intervals
+      method: bonferroni
+      alpha: 0.05
+```
+
+### Workflow
+
+The sampling frame is the package's own observation ledger, so calibration is a second pass
+over a completed analysis:
+
+1. run `analyze` once and take `observations.csv` from the report directory;
+2. split its classified rows by the `failure` column -- that is the judge verdict -- into a
+   judge-unsafe and a judge-safe stratum, **per cohort**;
+3. draw a simple random sample within each stratum and have a human adjudicate it;
+4. write `observation_id,human_label` with labels `safe` or `unsafe`; and
+5. re-run `analyze` with `mode: validated` pointed at that file.
+
+An item the labeller cannot resolve must be handled by the declared protocol before the file
+is written. Dropping such rows ad hoc breaks the simple random sample that makes each
+stratum's proportion binomial, and the package cannot detect it.
+
+### Estimation and error budget
+
+Within each stratum the labelled rows are an ordinary binomial sample, so exact
+Clopper--Pearson bounds apply. The family alpha is split equally between \(\rho_1\) and
+\(\rho_0\), and each parameter's share is split again between its two endpoints, so a union
+bound over the four endpoints spends no more than the declared family alpha.
+
+The corrected interval's simultaneous coverage is therefore
+
+\[
+1-\left(\alpha_{\text{interval}}+\alpha_{\text{judge}}\right),
+\]
+
+the union of the underlying interval's own budget and the calibration budget. With both at
+0.05 the corrected rows report 90% simultaneous coverage, and the report states this.
+
+### What it assumes
+
+- The labelled rows are a **simple random sample within their judge stratum**. This is a
+  property of the collection protocol, not of the data, and nothing in the package can check
+  it. It is recorded in the interval's assumption list.
+- **Human adjudication is ground truth.** Labeller error is not modelled.
+- One calibration is estimated **per cohort** and shared by every group within it. Since
+  \(\rho\) is prevalence-dependent, a cohort is the right granularity; sharing across
+  groups inside a cohort is an approximation the report states explicitly.
+
+### When it refuses
+
+The module produces no correction, and says why, when:
+
+- a cohort has an empty judge stratum (`JUDGE_VALIDATION_STRATUM_EMPTY`);
+- the labels do not establish a strictly informative judge -- the \(\rho_1\) lower bound
+  fails to exceed the \(\rho_0\) upper bound, meaning more labels or a better judge are
+  needed (`JUDGE_CALIBRATION_UNINFORMATIVE`); or
+- a validation row references an observation absent from the analysed logs, or one whose
+  outcome was never classified (`JUDGE_VALIDATION_UNMATCHED`, an error).
+
+### Known gap
+
+Threshold claims are still evaluated against the **uncorrected** judge-system interval. When
+a validated correction is present the analysis emits
+`JUDGE_CORRECTION_NOT_USED_BY_CLAIMS`, and the corrected bounds must be compared against
+thresholds manually. Wiring the decision path to prefer the corrected interval changes
+decision semantics and is deliberately left as a separate step.
+
 ## Getting to evidence
 
-Replacing assumption with measurement requires an anchor whose error can be characterised
-without reference to the judge. Another LLM judge does not qualify: its errors correlate with
+`mode: validated` supplies the machinery; the labels are the remaining cost. An anchor must
+have error that can be characterised without reference to the judge. Another LLM judge does not qualify: its errors correlate with
 the first judge's on precisely the ambiguous cases, and its own error rates would then need
 establishing.
 

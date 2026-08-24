@@ -31,8 +31,8 @@ It is designed for hand-curated safety evaluations in which prompts, questions, 
 - Exact McNemar, Newcombe paired score-interval, and fixed-cluster bootstrap diagnostics.
 - Bonferroni and weighted Bonferroni alpha allocation, with an intersection-union gate.
 - Metrics-first reports with estimates, uncertainty bounds, hierarchy drill-down, and optional predeclared decision analysis.
-- Declared judge-misclassification sensitivity, mapping judge-reported risk onto true
-  risk under explicit conditional-accuracy assumptions.
+- Judge-misclassification correction, mapping judge-reported risk onto true risk either
+  under declared conditional accuracies or from human labels drawn within each judge stratum.
 - Deterministic JSON, Markdown, CSV, plan, and checksum sidecars.
 
 Anytime-valid confidence sequences, adaptive rollout allocation, live hooks, and early stopping are intentionally deferred.

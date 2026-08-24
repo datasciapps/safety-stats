@@ -319,13 +319,16 @@ preserving pairs. It is a fixed-design sensitivity analysis, not a population in
 
 ```python
 JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source)
+JudgeStratumCounts(labelled, truly_unsafe, stratum_size)
+estimate_judge_calibration(*, scenario_id, unsafe_stratum, safe_stratum, alpha)
 correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration)
 ```
 
 Maps a judge-system risk interval onto the true-risk scale via
 `R* = R * rho_1 + (1 - R) * rho_0`. The identity is multilinear, so the returned bounds are
 the exact extrema over the declared box. It applies unchanged to any positively homogeneous,
-translation-equivariant risk measure. See
+translation-equivariant risk measure. `estimate_judge_calibration` derives the same box from
+human labels by exact Clopper-Pearson bounds within each judge stratum. See
 [Judge misclassification](judge-misclassification.md).
 
 ### Multiplicity

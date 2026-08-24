@@ -83,10 +83,29 @@ inputs:
 ```
 
 `rho_1` is P(truly unsafe | judge said unsafe) and `rho_0` is P(truly unsafe | judge said
-safe). Every scenario must satisfy `rho_1.lower > rho_0.upper`. The resulting intervals are
-always `diagnostic`: an assumption carries no coverage guarantee. Corrections are applied to
-`weighted_mean`, `maximum`, `cvar`, and `top_k_mean` measures and to every hierarchy node.
-See [Judge misclassification](judge-misclassification.md).
+safe). Every scenario must satisfy `rho_1.lower > rho_0.upper`. In `assumed` mode the
+resulting intervals are always `diagnostic`: a declaration carries no coverage guarantee.
+
+`mode: validated` estimates the same two parameters from human labels instead, and its
+intervals are `certifying`:
+
+```yaml
+inputs:
+  judge_calibration:
+    mode: validated
+    validation_manifest: judge-labels.csv
+    family: judge_error
+    sampling: simple_random_within_judge_stratum
+```
+
+The manifest holds `observation_id,human_label` with labels `safe` or `unsafe`; identifiers
+come from the `observations.csv` of a prior run. One calibration is estimated per cohort by
+exact Clopper-Pearson bounds within each judge stratum, and the corrected interval's coverage
+is the union of its own family budget and the judge family budget. The two modes are mutually
+exclusive.
+
+Corrections are applied to `weighted_mean`, `maximum`, `cvar`, and `top_k_mean` measures and
+to every hierarchy node. See [Judge misclassification](judge-misclassification.md).
 
 ## `design`
 
