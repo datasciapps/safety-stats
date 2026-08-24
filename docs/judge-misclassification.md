@@ -97,9 +97,8 @@ not a defect.
   judge on a particular output distribution, so applying one declared scenario to several
   cohorts with materially different failure rates is itself an approximation. The report
   states this in the interval's assumption list.
-- Comparisons are not yet corrected. Under a shared calibration the arms must be corrected
-  individually and then differenced; the shortcut of correcting the difference directly is
-  only valid under prevalence-free \(\alpha/\beta\) parameters.
+- A single declared scenario is applied to every cohort, so comparisons corrected in
+  `assumed` mode inherit that approximation on both arms.
 - Nothing here detects a judge whose errors depend on which model produced the output.
   Differential misclassification across arms can manufacture an apparent difference from
   nothing, and no declared scenario will reveal it.
@@ -144,18 +143,49 @@ stratum's proportion binomial, and the package cannot detect it.
 ### Estimation and error budget
 
 Within each stratum the labelled rows are an ordinary binomial sample, so exact
-Clopper--Pearson bounds apply. The family alpha is split equally between \(\rho_1\) and
-\(\rho_0\), and each parameter's share is split again between its two endpoints, so a union
-bound over the four endpoints spends no more than the declared family alpha.
+Clopper--Pearson bounds apply. The judge family alpha is first divided among the declared
+cohorts (see below); each cohort's share is then split equally between \(\rho_1\) and
+\(\rho_0\), and each parameter's share again between its two endpoints. A union bound over
+those four endpoints spends no more than the cohort's share.
 
 The corrected interval's simultaneous coverage is therefore
 
 \[
-1-\left(\alpha_{\text{interval}}+\alpha_{\text{judge}}\right),
+1-\left(\alpha_{\text{interval}}+\alpha_{\text{spent}}\right),
 \]
 
-the union of the underlying interval's own budget and the calibration budget. With both at
-0.05 the corrected rows report 90% simultaneous coverage, and the report states this.
+where \(\alpha_{\text{spent}}\) is the share the calibrations it used actually consumed, and
+is reported in the interval's `family_alpha`.
+
+### Comparisons
+
+A comparison is corrected by correcting **each arm with its own cohort's calibration** and
+then recombining, rather than by rescaling the contrast. Rescaling a difference by one shared
+factor is only valid under prevalence-free \(\alpha/\beta\) parameters; since \(\rho\) is
+prevalence-dependent the two arms carry different boxes, and
+
+\[
+\Delta^{*}=R_C\left(\rho_1^{C}-\rho_0^{C}\right)+\rho_0^{C}
+-R_B\left(\rho_1^{B}-\rho_0^{B}\right)-\rho_0^{B}
+\]
+
+is not a function of \(\Delta\) alone. Risk ratios and relative reductions are derived from
+the same two corrected arm intervals.
+
+This requires a primary interval that exposes both arm bounds -- the two-arm rectangle used
+by `weighted_kl_chernoff` and by every `comparison_sets` entry. A direct contrast
+construction (`weighted_empirical_bernstein` or `weighted_hoeffding` on the difference)
+bounds only \(\Delta\) and carries no arm decomposition, so it cannot be corrected. Those
+rows stay on the judge-reported scale and the analysis emits
+`JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON`. Since the recommended primary for sparse
+binary failures is already `weighted_kl_chernoff`, the recommended path is covered.
+
+### Error budget across cohorts
+
+The judge family alpha is divided equally among the **declared cohorts**. A single risk row
+consumes one share; a comparison consumes the two shares of the cohorts it spans. A union
+over every corrected row therefore stays inside the declared family budget, and each interval
+reports the share it actually spent in `family_alpha`.
 
 ### What it assumes
 
@@ -195,10 +225,10 @@ Three consequences are recorded on every affected `ClaimResult`:
   than a single one, and the range is stated in the claim's reasons alongside both the
   corrected and uncorrected bounds.
 
-The analysis emits `JUDGE_CORRECTED_CLAIMS` listing which claims were retargeted. If some
-claims are corrected and others are not -- comparison claims never are -- it also emits
-`JUDGE_CORRECTION_MIXED_ESTIMANDS`, because a report whose claims sit on two different
-estimands is easy to misread.
+The analysis emits `JUDGE_CORRECTED_CLAIMS` listing which claims were retargeted. Comparison
+claims are corrected too, provided their comparison exposes both arm bounds. If some claims
+are corrected and others are not, it also emits `JUDGE_CORRECTION_MIXED_ESTIMANDS`, because a
+report whose claims sit on two different estimands is easy to misread.
 
 **An `assumed` correction never moves a claim.** The selection requires
 `eligibility: certifying`, which only a validated calibration produces, so a declared

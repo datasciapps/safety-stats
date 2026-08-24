@@ -1485,6 +1485,10 @@ def _validated_judge_calibrations(
             )
         )
 
+    # Every declared cohort gets an equal share of the judge family budget. A single
+    # risk row consumes one share; a comparison consumes the two cohorts it spans. A
+    # union over all of them therefore never exceeds the declared family alpha.
+    per_cohort_alpha = family.alpha / len(plan.cohorts)
     calibrations: dict[str, JudgeCalibration] = {}
     summaries: dict[str, dict[str, Any]] = {}
     for cohort_id in sorted(plan.cohorts):
@@ -1509,7 +1513,7 @@ def _validated_judge_calibrations(
                 scenario_id="validated",
                 unsafe_stratum=unsafe,
                 safe_stratum=safe,
-                alpha=family.alpha,
+                alpha=per_cohort_alpha,
             )
         except ValueError as exc:
             diagnostics.append(
@@ -1555,9 +1559,10 @@ def _judge_corrected_interval(
     validated = calibration.source == "validated"
     base = next((item for item in result.intervals if item.role == "primary"), None)
     base_alpha = base.family_alpha if base is not None else None
+    spent = calibration.alpha if calibration.alpha is not None else judge_alpha
     simultaneous = (
-        1 - (base_alpha + judge_alpha)
-        if validated and base_alpha is not None and judge_alpha is not None
+        1 - (base_alpha + spent)
+        if validated and base_alpha is not None and spent is not None
         else None
     )
     assumptions = [
@@ -1612,7 +1617,7 @@ def _judge_corrected_interval(
             else "judge_corrected"
         ),
         family=family_id,
-        family_alpha=judge_alpha,
+        family_alpha=spent,
         simultaneous_coverage=simultaneous,
         completion_estimate_lower=corrected.completion_estimate_lower,
         completion_estimate_upper=corrected.completion_estimate_upper,
@@ -1630,6 +1635,7 @@ def _apply_judge_correction(
     data: NormalizedData,
     risks: list[GroupRiskResult],
     hierarchy_risks: list[HierarchyRiskResult],
+    comparisons: list[ComparisonResult],
     diagnostics: list[Diagnostic],
 ) -> dict[str, Any]:
     """Map judge-system risk rows onto the true-risk scale.
@@ -1685,10 +1691,14 @@ def _apply_judge_correction(
         )
         if interval is not None:
             result.intervals.append(interval)
+    _apply_judge_correction_to_comparisons(plan, comparisons, by_cohort, diagnostics)
     return {
         "mode": "validated",
         "family": spec.family,
         "family_alpha": judge_alpha,
+        "per_cohort_alpha": (
+            judge_alpha / len(plan.cohorts) if judge_alpha is not None else None
+        ),
         "sampling": spec.sampling,
         "validation_manifest": str(spec.validation_manifest),
         "cohorts": summaries,
@@ -2872,6 +2882,148 @@ def _project_multi_arm_comparison_regions(
             row.coverage_scope = primary.coverage_scope
 
 
+def _judge_corrected_comparison_interval(
+    *,
+    result: ComparisonResult,
+    candidate_calibration: JudgeCalibration,
+    baseline_calibration: JudgeCalibration,
+    family_id: str | None,
+) -> RiskIntervalResult | None:
+    """Correct a comparison by correcting each arm, then recombining.
+
+    rho is prevalence-dependent, so the two arms carry different calibrations and the
+    effect cannot be corrected from the contrast alone: rescaling a difference by a
+    single shared factor is only valid under prevalence-free parameters. This therefore
+    requires an interval that exposes both arm bounds -- the two-arm rectangle used by
+    weighted KL/Chernoff and by every comparison set. A direct contrast interval, which
+    bounds only the difference, is skipped.
+    """
+
+    primary = next((item for item in result.intervals if item.role == "primary"), None)
+    if primary is None:
+        return None
+    arms = (
+        primary.candidate_lower,
+        primary.candidate_upper,
+        primary.baseline_lower,
+        primary.baseline_upper,
+    )
+    if any(value is None for value in arms):
+        return None
+    candidate = correct_judge_risk(
+        observed_lower=cast(float, primary.candidate_lower),
+        observed_upper=cast(float, primary.candidate_upper),
+        observed_estimate=result.candidate_estimate,
+        calibration=candidate_calibration,
+    )
+    baseline = correct_judge_risk(
+        observed_lower=cast(float, primary.baseline_lower),
+        observed_upper=cast(float, primary.baseline_upper),
+        observed_estimate=result.baseline_estimate,
+        calibration=baseline_calibration,
+    )
+    lower, upper = _multi_arm_effect_interval(
+        result.estimand,
+        (candidate.lower, candidate.upper),
+        (baseline.lower, baseline.upper),
+    )
+    spent = sum(
+        item.alpha or 0.0 for item in (candidate_calibration, baseline_calibration)
+    )
+    base_alpha = primary.family_alpha
+    return RiskIntervalResult(
+        interval_id="judge_corrected_validated",
+        lower=lower,
+        upper=upper,
+        method="validated_judge_misclassification_correction",
+        role="reference",
+        coverage_scope=(
+            f"{primary.coverage_scope}_judge_corrected"
+            if primary.coverage_scope
+            else "judge_corrected"
+        ),
+        family=family_id,
+        family_alpha=spent,
+        simultaneous_coverage=(
+            1 - (base_alpha + spent) if base_alpha is not None else None
+        ),
+        raw_lower=primary.lower,
+        raw_upper=primary.upper,
+        candidate_lower=candidate.lower,
+        candidate_upper=candidate.upper,
+        baseline_lower=baseline.lower,
+        baseline_upper=baseline.upper,
+        calibration_method="validated_judge_calibration",
+        independence_profile=primary.independence_profile,
+        assumptions=[
+            "The reported effect is a contrast of true failure risks, not of "
+            "judge-reported risks.",
+            "Each arm is corrected with its own cohort's calibration, because the "
+            "conditional judge accuracies are prevalence-dependent.",
+            f"Candidate P(truly unsafe | judge said unsafe) lies in "
+            f"[{candidate_calibration.rho_1_lower:.6g}, "
+            f"{candidate_calibration.rho_1_upper:.6g}]; P(truly unsafe | judge said safe) "
+            f"in [{candidate_calibration.rho_0_lower:.6g}, "
+            f"{candidate_calibration.rho_0_upper:.6g}].",
+            f"Baseline P(truly unsafe | judge said unsafe) lies in "
+            f"[{baseline_calibration.rho_1_lower:.6g}, "
+            f"{baseline_calibration.rho_1_upper:.6g}]; P(truly unsafe | judge said safe) "
+            f"in [{baseline_calibration.rho_0_lower:.6g}, "
+            f"{baseline_calibration.rho_0_upper:.6g}].",
+            "The effect is recombined from the two corrected arm intervals, so it makes "
+            "no independence assumption between arms beyond the one the underlying "
+            "two-arm region already makes.",
+            "Coverage is the union bound over that region and both arm calibrations.",
+        ],
+        eligibility="certifying",
+    )
+
+
+def _apply_judge_correction_to_comparisons(
+    plan: AnalysisPlan,
+    comparisons: list[ComparisonResult],
+    by_cohort: dict[str, JudgeCalibration],
+    diagnostics: list[Diagnostic],
+) -> None:
+    """Append validated corrections to comparisons that expose both arm bounds."""
+
+    if not by_cohort:
+        return
+    spec = plan.inputs.judge_calibration
+    assert spec is not None
+    skipped: list[str] = []
+    for result in comparisons:
+        candidate = by_cohort.get(result.candidate_cohort)
+        baseline = by_cohort.get(result.baseline_cohort)
+        if candidate is None or baseline is None:
+            skipped.append(result.result_id or result.comparison_id)
+            continue
+        interval = _judge_corrected_comparison_interval(
+            result=result,
+            candidate_calibration=candidate,
+            baseline_calibration=baseline,
+            family_id=spec.family,
+        )
+        if interval is None:
+            skipped.append(result.result_id or result.comparison_id)
+            continue
+        result.intervals.append(interval)
+    if skipped:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON",
+                severity="WARNING",
+                message=(
+                    "some comparisons could not be judge-corrected because their primary "
+                    "interval does not expose both arm bounds, or a cohort has no "
+                    "calibration; those effects remain on the judge-reported scale"
+                ),
+                scope="comparisons",
+                details={"result_ids": sorted(skipped)[:20], "count": len(skipped)},
+            )
+        )
+
+
 def _comparisons(
     plan: AnalysisPlan,
     data: NormalizedData,
@@ -3466,10 +3618,12 @@ def analyze(
         hierarchy_risks,
         diagnostics,
     )
-    judge_calibration_summary = _apply_judge_correction(
-        resolved, data, risks, hierarchy_risks, diagnostics
-    )
     comparisons = _comparisons(resolved, data, estimates, diagnostics)
+    # Applied last so it corrects the bounds that are actually displayed, after both
+    # the hierarchy and comparison region projections have settled.
+    judge_calibration_summary = _apply_judge_correction(
+        resolved, data, risks, hierarchy_risks, comparisons, diagnostics
+    )
     comparison_sets = _comparison_set_results(resolved, comparisons, risks)
     integrity_status = _integrity_status(diagnostics)
     integrity_certifiable = integrity_status != "invalid"

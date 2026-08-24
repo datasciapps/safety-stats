@@ -106,8 +106,9 @@ exact Clopper-Pearson bounds within each judge stratum, and the corrected interv
 is the union of its own family budget and the judge family budget. The two modes are mutually
 exclusive.
 
-Corrections are applied to `weighted_mean`, `maximum`, `cvar`, and `top_k_mean` measures and
-to every hierarchy node. See [Judge misclassification](judge-misclassification.md).
+Corrections are applied to `weighted_mean`, `maximum`, `cvar`, and `top_k_mean` measures, to
+every hierarchy node, and to comparisons whose primary interval exposes both arm bounds
+(`weighted_kl_chernoff` and any `comparison_sets` entry). See [Judge misclassification](judge-misclassification.md).
 
 ## `design`
 

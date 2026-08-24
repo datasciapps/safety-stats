@@ -22,6 +22,7 @@ class JudgeCalibration:
     rho_0_lower: float
     rho_0_upper: float
     source: str = "assumed"
+    alpha: float | None = None
 
     def __post_init__(self) -> None:
         for name, low, high in (
@@ -179,4 +180,5 @@ def estimate_judge_calibration(
         rho_0_lower=rho_0.lower,
         rho_0_upper=rho_0.upper,
         source="validated",
+        alpha=alpha,
     )

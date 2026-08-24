@@ -11,6 +11,7 @@ from inspect_safety_stats.config.loader import canonical_plan_hash
 from inspect_safety_stats.config.models import CohortSpec, PromptBoundsSpec
 from inspect_safety_stats.ingest.inspect_logs import ErrorContext, NormalizedData
 from inspect_safety_stats.ingest.manifest import load_manifest
+from inspect_safety_stats.schema.reports import SafetyReport
 
 
 def _write_inputs(tmp_path: Path) -> Path:
@@ -636,6 +637,168 @@ def test_assumed_judge_calibration_never_moves_a_claim(
             assert result.method != "assumed_judge_misclassification_correction"
     codes = {item.code for item in report.integrity.diagnostics}
     assert "JUDGE_CORRECTED_CLAIMS" not in codes
+
+
+def _two_cohort_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Candidate and baseline over the same fixed prompts, both with failures."""
+    candidate_eval, candidate_samples = _frames()
+    baseline_eval = candidate_eval.copy()
+    baseline_eval.loc[0, "eval_id"] = "eval-2"
+    baseline_eval.loc[0, "model"] = "model/baseline"
+    baseline_samples = candidate_samples.copy()
+    baseline_samples["eval_id"] = "eval-2"
+    baseline_samples["sample_id"] = "baseline-" + baseline_samples["sample_id"]
+    candidate_samples.loc[
+        (candidate_samples["id"] == "p1") & (candidate_samples["epoch"] <= 8),
+        "score_harmful",
+    ] = "FAIL"
+    baseline_samples.loc[
+        ((baseline_samples["id"] == "p1") & (baseline_samples["epoch"] <= 12))
+        | ((baseline_samples["id"] == "p2") & (baseline_samples["epoch"] <= 6)),
+        "score_harmful",
+    ] = "FAIL"
+    return (
+        pd.concat([candidate_eval, baseline_eval], ignore_index=True),
+        pd.concat([candidate_samples, baseline_samples], ignore_index=True),
+    )
+
+
+def _comparison_judge_plan(tmp_path: Path, *, method: str, calibrated: bool) -> Path:
+    """Two-cohort comparison plan, with or without the judge calibration block.
+
+    Labels are keyed by observation_id, so they must be generated from a run over the
+    same cohorts and logs. The uncalibrated variant produces that ledger.
+    """
+    plan_path = _write_inputs(tmp_path)
+    text = plan_path.read_text(encoding="utf-8")
+    text = text.replace(
+        "groups:\n",
+        "  baseline:\n"
+        "    match:\n"
+        "      model: model/baseline\n"
+        "    require_uniform: [task_version, model_generate_config]\n"
+        "groups:\n",
+        1,
+    )
+    if calibrated:
+        text = text.replace(
+            "design:\n",
+            "  judge_calibration:\n"
+            "    mode: validated\n"
+            "    validation_manifest: labels.csv\n"
+            "    family: judge_error\n"
+            "design:\n",
+            1,
+        )
+    text = text.replace(
+        "multiplicity:\n",
+        "comparisons:\n"
+        "  - id: candidate_vs_baseline\n"
+        "    candidate: candidate\n"
+        "    baseline: baseline\n"
+        "    group: cyber\n"
+        "    measure: mean\n"
+        "    estimand: risk_difference\n"
+        f"    method: {method}\n"
+        "    family: model_comparisons\n"
+        "    independence:\n"
+        "      primary: rollout\n"
+        "multiplicity:\n",
+        1,
+    )
+    text = text.replace(
+        "    - {id: displayed,",
+        "    - {id: judge_error, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: model_comparisons, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: displayed,",
+        1,
+    )
+    plan_path.write_text(text, encoding="utf-8")
+    return plan_path
+
+
+def _write_agreeing_labels(tmp_path: Path, report: SafetyReport) -> None:
+    rows = ["observation_id,human_label"]
+    for observation in report._observations:
+        if observation.failure is None:
+            continue
+        rows.append(f"{observation.observation_id},{'unsafe' if observation.failure else 'safe'}")
+    (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+def test_two_arm_comparisons_are_judge_corrected_per_cohort(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    method = "weighted_kl_chernoff"
+    plan_path = _comparison_judge_plan(tmp_path, method=method, calibrated=False)
+    eval_frame, sample_frame = _two_cohort_frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    _write_agreeing_labels(tmp_path, analyze(plan=load_plan(plan_path), logs="ignored"))
+
+    plan_path = _comparison_judge_plan(tmp_path, method=method, calibrated=True)
+    report = analyze(plan=load_plan(plan_path), logs="ignored")
+
+    row = next(item for item in report.comparisons if item.level is None)
+    primary = next(item for item in row.intervals if item.role == "primary")
+    corrected = next(
+        item for item in row.intervals if item.interval_id == "judge_corrected_validated"
+    )
+    assert corrected.eligibility == "certifying"
+    assert corrected.method == "validated_judge_misclassification_correction"
+
+    # The effect is recombined from the two corrected arms, not rescaled from the contrast.
+    assert corrected.candidate_lower is not None and corrected.baseline_upper is not None
+    assert corrected.lower == pytest.approx(
+        max(-1.0, corrected.candidate_lower - corrected.baseline_upper)
+    )
+    assert corrected.upper == pytest.approx(
+        min(1.0, corrected.candidate_upper - corrected.baseline_lower)
+    )
+    # It spends one share of the judge budget per cohort it spans, not the whole family.
+    assert corrected.family_alpha == pytest.approx(2 * (0.05 / 2))
+    assert primary.family_alpha is not None
+    assert corrected.simultaneous_coverage == pytest.approx(
+        1 - primary.family_alpha - corrected.family_alpha
+    )
+    assert corrected.raw_lower == pytest.approx(primary.lower)
+
+
+def test_contrast_only_comparisons_cannot_be_corrected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A difference bound with no arm decomposition is skipped, loudly."""
+    method = "weighted_empirical_bernstein"
+    plan_path = _comparison_judge_plan(tmp_path, method=method, calibrated=False)
+    eval_frame, sample_frame = _two_cohort_frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    _write_agreeing_labels(tmp_path, analyze(plan=load_plan(plan_path), logs="ignored"))
+
+    plan_path = _comparison_judge_plan(tmp_path, method=method, calibrated=True)
+    report = analyze(plan=load_plan(plan_path), logs="ignored")
+
+    row = next(item for item in report.comparisons if item.level is None)
+    assert not any(
+        item.interval_id == "judge_corrected_validated" for item in row.intervals
+    )
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON" in codes
+    # Group risks are still corrected; only the contrast is not.
+    mean = next(item for item in report.group_risks if item.measure_id == "mean")
+    assert any(item.interval_id == "judge_corrected_validated" for item in mean.intervals)
 
 
 def test_decision_presentation_is_opt_in(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
