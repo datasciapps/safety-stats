@@ -345,3 +345,41 @@ def _minimal_tree(tmp_path: Path):
     selections = draw_selections(taxonomy, design)
     outcomes = [UnitOutcome(r.sampling_unit_id, 1, 0, 0) for r in selections]
     return estimate_tree(taxonomy, design, selections, outcomes, report_all_nodes=False)
+
+
+def test_the_report_carries_allocation_ess_and_the_raw_rate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Section 25's tenth completion criterion names allocation and ESS explicitly."""
+
+    plan_path = write_plan(tmp_path)
+    edited = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
+    edited["sampling"] = {
+        "method": "proportional_stratified",
+        "total_rewrites": 200,
+        "minimum_rewrites_per_stratum": 50,
+    }
+    plan_path.write_text(yaml.safe_dump(edited, sort_keys=False), encoding="utf-8")
+    artifacts = tmp_path / "run"
+    materialize_run(plan_path, artifacts)
+    stub_logs(monkeypatch, artifacts)
+
+    report = analyze_run(
+        plan_path, artifacts, "logs", cohort="candidate", slices=("language=maltese",)
+    )
+    payload = report.to_dict()
+
+    allocation = payload["design"]["allocation"]
+    assert len(allocation) == 3
+    assert sum(item["draws"] for item in allocation) == 200
+    assert all(item["draws"] >= 50 for item in allocation)
+
+    root = payload["root"]
+    assert root["effective_sample_size"] < root["draws"]      # the floor concentrates weight
+    assert root["raw_failure_rate"] is not None
+    assert root["raw_failure_rate"] != pytest.approx(root["estimate"])
+
+    html = (report.write(tmp_path / "report") / "report.html").read_text(encoding="utf-8")
+    assert "Effective sample size" in html
+    assert "raw sampled rate" in html
+    assert "Draws if exactly proportional" in html

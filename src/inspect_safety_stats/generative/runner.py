@@ -275,6 +275,14 @@ def analyze_run(
             "selection_seed": design.selection_seed,
             "proposal_id": design.proposal_id,
             "strata": len(design.allocations),
+            "allocation": [
+                {
+                    "stratum_id": item.stratum_id,
+                    "stratum_weight": item.stratum_weight,
+                    "draws": item.draws,
+                }
+                for item in design.allocations
+            ],
             "terminal_paths": len(taxonomy.terminal_paths),
         },
         tree=tree,

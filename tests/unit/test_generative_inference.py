@@ -301,3 +301,53 @@ def test_slice_rejects_an_unknown_level_or_value(tmp_path: Path) -> None:
         estimate_slice(taxonomy, design, selections, outcomes, level="ghost", value="x")
     with pytest.raises(ValueError, match="no terminal path carries"):
         estimate_slice(taxonomy, design, selections, outcomes, level="language", value="klingon")
+
+
+def test_effective_sample_size_equals_the_draw_count_under_equal_coefficients(
+    tmp_path: Path,
+) -> None:
+    taxonomy, design, selections = prepare(tmp_path, "direct", 600)
+    outcomes = [UnitOutcome(r.sampling_unit_id, 1, 0, 0) for r in selections]
+    tree = estimate_tree(taxonomy, design, selections, outcomes, report_all_nodes=False)
+    assert tree.root.effective_sample_size == pytest.approx(600.0)
+
+
+def test_effective_sample_size_falls_when_the_weight_concentrates(tmp_path: Path) -> None:
+    taxonomy, design, selections = prepare(
+        tmp_path, "proportional_stratified", 600, SEVEN_SEEDS, minimum=80
+    )
+    outcomes = [UnitOutcome(r.sampling_unit_id, 1, 0, 0) for r in selections]
+    tree = estimate_tree(taxonomy, design, selections, outcomes, report_all_nodes=False)
+    assert not tree.root.equal_coefficients
+    assert tree.root.effective_sample_size < tree.root.draws
+
+
+def test_the_raw_rate_is_reported_apart_from_the_weighted_estimate(tmp_path: Path) -> None:
+    """They coincide only when every draw carries the same coefficient."""
+
+    taxonomy, design, selections = prepare(tmp_path, "direct", 600)
+    outcomes = [
+        UnitOutcome(record.sampling_unit_id, 1, int(index < 30), 0)
+        for index, record in enumerate(selections)
+    ]
+    tree = estimate_tree(taxonomy, design, selections, outcomes, report_all_nodes=False)
+    assert tree.root.raw_failure_rate == pytest.approx(30 / 600)
+    assert tree.root.estimate == pytest.approx(tree.root.raw_failure_rate)
+
+    taxonomy, design, selections = prepare(
+        tmp_path, "proportional_stratified", 600, SEVEN_SEEDS, minimum=80
+    )
+    outcomes = [
+        UnitOutcome(record.sampling_unit_id, 1, int(index < 30), 0)
+        for index, record in enumerate(selections)
+    ]
+    tree = estimate_tree(taxonomy, design, selections, outcomes, report_all_nodes=False)
+    assert tree.root.raw_failure_rate != pytest.approx(tree.root.estimate)
+
+
+def test_unclassified_rollouts_leave_the_raw_rate_undefined(tmp_path: Path) -> None:
+    taxonomy, design, selections = prepare(tmp_path, "direct", 100)
+    outcomes = [UnitOutcome(r.sampling_unit_id, 1, 0, 1) for r in selections]
+    tree = estimate_tree(taxonomy, design, selections, outcomes, report_all_nodes=False)
+    assert tree.root.raw_failure_rate is None
+    assert tree.root.estimate is None

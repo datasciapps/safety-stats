@@ -137,9 +137,14 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
   root.appendChild(section("Root risk"));
   root.appendChild(el("div", { class: "grid" }, [
     card(bound, pct(rootNode.upper, 3), rootNode.method),
-    card("Point estimate", pct(rootNode.estimate, 3), "not an endpoint"),
+    card("Design-weighted estimate", pct(rootNode.estimate, 3),
+         "raw sampled rate " + pct(rootNode.raw_failure_rate, 3)),
     card("Draws", String(rootNode.draws === undefined ? "—" : rootNode.draws),
          rootNode.failures + " failures, " + rootNode.unclassified + " unclassified"),
+    card("Effective sample size",
+         rootNode.effective_sample_size === undefined || rootNode.effective_sample_size === null
+           ? "—" : rootNode.effective_sample_size.toFixed(1),
+         "weight geometry, not information"),
     coverage.mode === "two_sided"
       ? card("Lower bound", pct(rootNode.lower, 3), null)
       : card("Coefficients", rootNode.equal_coefficients ? "equal" : "unequal",
@@ -158,6 +163,21 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
     card("Unsampled nodes", String((data.unsampled_nodes || []).length),
          "no draw landed there")
   ]));
+  var allocation = design.allocation || [];
+  if (allocation.length) {
+    root.appendChild(table(
+      [{ label: "Stratum" }, { label: "Target weight", num: true },
+       { label: "Draws", num: true }, { label: "Draws if exactly proportional", num: true }],
+      allocation.map(function (item) {
+        var proportional = item.stratum_weight * design.total_rewrites;
+        return [item.stratum_id, pct(item.stratum_weight, 2), String(item.draws),
+                proportional.toFixed(1)];
+      })
+    ));
+    root.appendChild(el("p", { class: "sub", text:
+      "Where the realized draws depart from the proportional column, the estimator's " +
+      "coefficients are unequal and the sharp kernel is unavailable." }));
+  }
 
   // ---- comparisons --------------------------------------------------------
   var comparisons = data.comparisons || [];
@@ -197,10 +217,13 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
     root.appendChild(section("Cross-cutting slices"));
     root.appendChild(table(
       [{ label: "Slice" }, { label: "Weight", num: true }, { label: "Draws", num: true },
-       { label: "Estimate", num: true }, { label: "Upper", num: true }, { label: "Method" }],
+       { label: "ESS", num: true }, { label: "Estimate", num: true },
+       { label: "Upper", num: true }, { label: "Method" }],
       slices.map(function (item) {
+        var ess = item.effective_sample_size;
         return [item.node_id.replace(/^slice:/, ""), pct(item.node_weight, 1),
-                String(item.draws), pct(item.estimate), pct(item.upper), item.method];
+                String(item.draws), ess === undefined || ess === null ? "—" : ess.toFixed(1),
+                pct(item.estimate), pct(item.upper), item.method];
       })
     ));
     root.appendChild(el("p", { class: "sub", text:

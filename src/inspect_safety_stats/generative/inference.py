@@ -81,6 +81,8 @@ class NodeEstimate:
     equal_coefficients: bool
     maximum_coefficient: float
     coefficient_ratio: float
+    effective_sample_size: float
+    raw_failure_rate: float | None
 
 
 @dataclass(frozen=True)
@@ -126,6 +128,31 @@ def _raw_coefficients(
             raise ValueError(f"selection {record.sampling_unit_id} names unknown stratum {stratum}")
         coefficients[record.sampling_unit_id] = weights[stratum] / draws[stratum]
     return coefficients
+
+
+def _effective_sample_size(coefficients: np.ndarray) -> float:
+    """Concentration geometry of the estimator's weights, 1 / sum of squares.
+
+    Equals the draw count when every draw carries the same coefficient, and falls as the
+    weight concentrates. It measures weight geometry, not information: under a sampled
+    design precision is governed by how many draws there are, not by this number.
+    """
+
+    return float(1.0 / np.sum(coefficients**2))
+
+
+def _raw_failure_rate(outcomes: list[UnitOutcome]) -> float | None:
+    """The unweighted rate among classified rollouts.
+
+    Reported separately from ``estimate`` because they are different quantities: the
+    estimate applies the declared design weights, this does not. They coincide only when
+    every draw carries the same coefficient.
+    """
+
+    classified = sum(item.trials - item.unclassified for item in outcomes)
+    if classified <= 0:
+        return None
+    return sum(item.failures for item in outcomes) / classified
 
 
 def _point_estimate(
@@ -293,6 +320,8 @@ def estimate_tree(
                 equal_coefficients=equal,
                 maximum_coefficient=float(normalized.max()),
                 coefficient_ratio=float(normalized.max() / normalized.min()),
+                effective_sample_size=_effective_sample_size(normalized),
+                raw_failure_rate=_raw_failure_rate(node_outcomes),
             )
         )
 
@@ -388,4 +417,6 @@ def estimate_slice(
         equal_coefficients=equal,
         maximum_coefficient=float(normalized.max()),
         coefficient_ratio=float(normalized.max() / normalized.min()),
+        effective_sample_size=_effective_sample_size(normalized),
+        raw_failure_rate=_raw_failure_rate(slice_outcomes),
     )

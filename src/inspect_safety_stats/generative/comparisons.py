@@ -29,8 +29,10 @@ from inspect_safety_stats.generative.inference import (
     NodeEstimate,
     UnitOutcome,
     _bounds,
+    _effective_sample_size,
     _point_estimate,
     _raw_coefficients,
+    _raw_failure_rate,
 )
 from inspect_safety_stats.generative.ledger import SelectionRecord
 from inspect_safety_stats.generative.sampling import SamplingDesign
@@ -116,6 +118,8 @@ def _arm_estimate(
         equal_coefficients=equal,
         maximum_coefficient=float(normalized.max()),
         coefficient_ratio=float(normalized.max() / normalized.min()),
+        effective_sample_size=_effective_sample_size(normalized),
+        raw_failure_rate=_raw_failure_rate(arm),
     )
 
 

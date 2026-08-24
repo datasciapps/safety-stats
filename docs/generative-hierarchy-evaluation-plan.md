@@ -1905,3 +1905,67 @@ evaluation with common failures would shift that split and deserves a re-run. An
 assumed a **binary** predictor, which is what lets level 1 use the exact two-cell
 construction; a calibrated probabilistic predictor gives continuous residuals and loses it,
 so it should be expected to do worse rather than better.
+
+## Reconciliation against section 25
+
+**Status:** audited, 24 August 2026, against the ten completion criteria as written.
+
+The extension is built. This section states, criterion by criterion, what was met, what was
+closed by measurement, and what is genuinely still missing.
+
+| # | criterion | status |
+|---|---|---|
+| 1 | define a deep hierarchy without enumerating prompts | met |
+| 2 | one auditable target distribution over valid paths | met |
+| 3 | materialize, **resume**, pair, and join to a ledger | partial |
+| 4 | estimators recover known node risks with validated intervals | met |
+| 5 | data-driven choice between paths, rewrites and rollouts | answered, not built |
+| 6 | incomplete schedules used only with known probabilities | vacuous |
+| 7 | model-assisted estimation | closed by measurement |
+| 8 | cross-entropy importance sampling | closed by measurement |
+| 9 | artifacts distinguish target risk from raw sampled rate | met |
+| 10 | visualization shows risk, uncertainty, allocation, ESS, comparisons | met |
+
+### Criterion 5 has a constant answer, so no planner is needed
+
+Reproduce with `python research/generative_budget_allocation.py`. Additional structural paths
+are not a separate lever -- the design draws paths in proportion to declared weight, so
+`sampling.total_rewrites` controls how many are visited. That leaves rewrites against
+rollouts, at a fixed number of target-model rollouts:
+
+| rewrites | rollouts each | kernel | root bound |
+|---:|---:|---|---:|
+| 1,200 | 1 | Clopper--Pearson | 1.00x |
+| 600 | 2 | weighted KL/Chernoff | 1.28x |
+| 300 | 4 | weighted KL/Chernoff | 1.48x |
+| 150 | 8 | weighted KL/Chernoff | 1.86x |
+
+One rollout per rewrite wins monotonically, for two compounding reasons. A unit enters the
+bound as a single bounded observation however many rollouts produced it, so extra rollouts
+buy no extra terms. And only single-rollout units keep the outcomes binary, which is what
+makes the sharp exact kernel available at all.
+
+The choice does not vary, so section 11's pilot-driven adaptive allocator would be optimising
+a decision with a constant answer. The recommendation replaces it: **spend the budget on
+rewrites and leave `rollouts_per_rewrite` at 1.**
+
+### Criteria 9 and 10 were closed by this audit
+
+`NodeEstimate` now carries `effective_sample_size` -- the concentration geometry
+\(1/\sum_j(c_j/C)^2\), equal to the draw count under equal coefficients -- and
+`raw_failure_rate`, the unweighted rate among classified rollouts, which is reported apart
+from `estimate` because the two coincide only when every draw carries the same coefficient.
+The report's design block records the realized per-stratum allocation rather than only how
+many strata there were, and the HTML page shows it beside the exactly-proportional counts, so
+the departure that costs the sharp kernel is visible rather than inferred.
+
+Discovery metrics in criterion 9 have no referent: there is no discovery mode.
+
+### What is genuinely still missing
+
+**Resume.** Counter-based selection makes a partial run a prefix of a complete one, and a test
+asserts it, so the *property* that would make resumption safe is there. The *feature* is not:
+`generative materialize` refuses to write into a non-empty directory, and `--overwrite`
+regenerates everything rather than continuing. For a long provider-backed rewrite run that is
+a real gap, and it is the one remaining item in section 25 that measurement has not disposed
+of.
