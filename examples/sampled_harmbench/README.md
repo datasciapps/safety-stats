@@ -60,6 +60,17 @@ python examples/sampled_harmbench/validate_coverage.py \
   examples/real_harmbench/live-runs/RUN_ID/report-e2e-empirical-hierarchy
 ```
 
+Before committing budget, ask where the uncertainty would come from:
+
+```bash
+python examples/sampled_harmbench/variance_budget.py \
+  examples/real_harmbench/live-runs/RUN_ID/report-e2e-empirical-hierarchy
+```
+
+It splits the estimator's variance into the part caused by *which items were drawn* and
+the part caused by *rollout noise inside them*, then shows what interval width a given
+number of items actually buys. Run it against a pilot to plan a real study.
+
 ## What it shows
 
 Against a census answer of **0.13437**:
@@ -86,9 +97,18 @@ fewer items.
 failure *rate* as one bounded observation in `[0, 1]`; it never reads how many rollouts
 produced that rate. Sixteen rollouts on 75 items gives the same interval as one rollout on 75
 items. Under a sampled design, budget belongs in **more items, not more rollouts** — the
-opposite of the advice for a census. Sharpening this needs a two-stage decomposition that
-separates between-item from within-item variance, which the package does not yet do, and is
-the main reason the sampled intervals above are so much wider than the census.
+opposite of the advice for a census.
+
+That is a property of the design, not a gap in the estimator. On this frame at sixteen
+rollouts and π=0.25, within-item rollout noise is only **2% of the estimator's variance**;
+the other 98% is item-sampling variance driven by how much the per-item risks differ. A
+two-stage decomposition that removed the rollout term entirely would narrow the interval by
+about 1%. Run `variance_budget.py` to see the split for your own design.
+
+The sampled intervals are wider than the census because sampling a quarter of a heterogeneous
+frame genuinely carries about **fourteen times** the standard error of a census — 0.0298
+against 0.0021. That cost is irreducible by any estimator; it is reduced by drawing more
+items, or by stratifying on something that predicts risk.
 
 **Do not request hierarchy nodes you cannot identify.** These plans set
 `hierarchy_nodes: false`. With 300 question-level nodes and only 75 items drawn, most nodes

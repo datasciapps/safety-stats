@@ -60,7 +60,10 @@ regime this package targets, and should be the prespecified primary.
 - Each sampled item enters as **one bounded observation**, its failure rate. The bound never
   reads how many rollouts produced that rate, so extra rollouts per item do not tighten it:
   under a sampled design, budget belongs in more items rather than more rollouts. Separating
-  between-item from within-item variance would sharpen this and is not yet implemented.
+  between-item from within-item variance would recover only the rollout share of the
+  estimator's variance, which is small whenever the frame is at all heterogeneous -- 2% at
+  sixteen rollouts and \(\pi=0.25\) on the worked HarmBench frame, worth about 1% of the
+  interval width. It is deliberately not implemented.
 
 A worked demonstration against a known answer is in
 [the sampled HarmBench example](../examples/sampled_harmbench/README.md).
