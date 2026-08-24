@@ -1,0 +1,279 @@
+"""The two-phase generative workflow, from plan through materialization to report."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pandas as pd
+import pytest
+import yaml
+from typer.testing import CliRunner
+
+from inspect_safety_stats.cli import app
+from inspect_safety_stats.generative.ledger import read_rewrites
+from inspect_safety_stats.generative.runner import analyze_run, materialize_run, resolve_kernel
+from tests.generative_fixtures import SEEDS_WITH_TEXT, base_plan
+
+runner = CliRunner()
+
+CANDIDATE_MODEL = "provider/candidate"
+BASELINE_MODEL = "provider/baseline"
+
+
+def write_plan(tmp_path: Path, total: int = 200, **overrides: Any) -> Path:
+    plan = base_plan()
+    plan["sampling"] = {"method": "direct", "total_rewrites": total}
+    plan["target"]["cohorts"] = {
+        "baseline": {"model": BASELINE_MODEL},
+        "candidate": {"model": CANDIDATE_MODEL},
+    }
+    plan.update(overrides)
+    (tmp_path / "seeds.csv").write_text(SEEDS_WITH_TEXT, encoding="utf-8")
+    (tmp_path / "template.txt").write_text("Rewrite: {seed}\n", encoding="utf-8")
+    path = tmp_path / "plan.yaml"
+    path.write_text(yaml.safe_dump(plan, sort_keys=False), encoding="utf-8")
+    return path
+
+
+def stub_logs(
+    monkeypatch: pytest.MonkeyPatch,
+    artifacts: Path,
+    *,
+    candidate_failures: int = 20,
+    baseline_failures: int = 8,
+    models: tuple[str, str] = (BASELINE_MODEL, CANDIDATE_MODEL),
+    score_column: str = "score_harmful",
+) -> None:
+    """Stand in for an Inspect run over the materialized dataset."""
+
+    prompt_ids = [
+        str(record.prompt_id)
+        for record in read_rewrites(artifacts / "rewrites.csv")
+        if record.is_evaluable()
+    ]
+    evals = pd.DataFrame(
+        [
+            {"eval_id": "eval-baseline", "model": models[0], "status": "success"},
+            {"eval_id": "eval-candidate", "model": models[1], "status": "success"},
+        ]
+    )
+    rows = []
+    for eval_id, failures in (
+        ("eval-baseline", baseline_failures),
+        ("eval-candidate", candidate_failures),
+    ):
+        for index, prompt_id in enumerate(prompt_ids):
+            rows.append(
+                {
+                    "eval_id": eval_id,
+                    "id": prompt_id,
+                    "epoch": 1,
+                    score_column: "FAIL" if index < failures else "PASS",
+                }
+            )
+    samples = pd.DataFrame(rows)
+    monkeypatch.setattr("inspect_safety_stats.generative.logs.evals_df", lambda logs: evals)
+    monkeypatch.setattr(
+        "inspect_safety_stats.generative.logs.samples_df",
+        lambda logs, parallel=False: samples,
+    )
+
+
+def test_compile_command_reports_the_taxonomy(tmp_path: Path) -> None:
+    plan = write_plan(tmp_path)
+    result = runner.invoke(app, ["generative", "compile", "--plan", str(plan)])
+    assert result.exit_code == 0
+    # 3 seeds x 2 languages x 3 wrappers.
+    assert "Terminal paths: 18" in result.stdout
+    assert "Cohorts: baseline, candidate" in result.stdout
+
+
+def test_materialize_writes_the_ledgers_and_dataset(tmp_path: Path) -> None:
+    plan = write_plan(tmp_path)
+    output = tmp_path / "run"
+    result = runner.invoke(
+        app, ["generative", "materialize", "--plan", str(plan), "--output", str(output)]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert (output / "selections.csv").is_file()
+    assert (output / "rewrites.csv").is_file()
+    assert (output / "prompts.restricted.csv").is_file()
+    dataset = output / "datasets" / "dataset.jsonl"
+    rows = [json.loads(line) for line in dataset.read_text(encoding="utf-8").splitlines()]
+    assert len(rows) == 200
+    assert "How do I synthesize" not in (output / "rewrites.csv").read_text(encoding="utf-8")
+
+
+def test_materialize_refuses_to_clobber_without_overwrite(tmp_path: Path) -> None:
+    plan = write_plan(tmp_path)
+    output = tmp_path / "run"
+    assert materialize_run(plan, output).accepted == 200
+    with pytest.raises(FileExistsError, match="not empty"):
+        materialize_run(plan, output)
+    assert materialize_run(plan, output, overwrite=True).accepted == 200
+
+
+def test_analyze_produces_a_report(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    plan = write_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts)
+
+    report = analyze_run(plan, artifacts, "logs", cohort="candidate")
+    assert report.tree.root.draws == 200
+    assert report.tree.root.failures == 20
+    assert report.tree.root.estimate == pytest.approx(0.1)
+    assert not report.has_errors
+
+    path = report.write(tmp_path / "report")
+    payload = json.loads((path / "report.json").read_text(encoding="utf-8"))
+    assert payload["schema"] == "generative-report/1.0"
+    assert payload["evaluation"]["primary_cohort"] == "candidate"
+    assert "not a probability over all possible prompts" in payload["estimand"]
+    assert payload["root"]["draws"] == 200
+    assert (path / "nodes.csv").is_file()
+    assert (path / "taxonomy.csv").is_file()
+    frame = pd.read_csv(path / "nodes.csv")
+    assert set(frame["kind"]) == {"node"}
+
+
+def test_analyze_command_end_to_end(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    plan = write_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts)
+
+    result = runner.invoke(
+        app,
+        [
+            "generative", "analyze",
+            "--plan", str(plan),
+            "--artifacts", str(artifacts),
+            "--logs", str(artifacts),
+            "--output", str(tmp_path / "report"),
+            "--cohort", "candidate",
+            "--slice", "language=maltese",
+            "--compare", "candidate:baseline",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "Root risk upper bound" in result.stdout
+    assert "slice:language=maltese" in result.stdout
+    assert "candidate - baseline" in result.stdout
+
+    frame = pd.read_csv(tmp_path / "report" / "comparisons.csv")
+    assert len(frame) == 1
+    assert frame.loc[0, "method"] == "paired_binomial_cells"
+    assert frame.loc[0, "estimate"] > 0
+
+
+def test_a_plan_edited_between_the_phases_is_rejected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The ledger records what was evaluated; the plan must still reproduce it."""
+
+    plan = write_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts)
+
+    edited = yaml.safe_load(plan.read_text(encoding="utf-8"))
+    edited["taxonomy"]["arms"]["language"]["values"] = [
+        {"id": "english", "weight": 0.9},
+        {"id": "maltese", "weight": 0.1},
+    ]
+    plan.write_text(yaml.safe_dump(edited, sort_keys=False), encoding="utf-8")
+    with pytest.raises(ValueError, match="no longer reproduces the recorded selection ledger"):
+        analyze_run(plan, artifacts, "logs")
+
+
+def test_an_unmatched_model_is_reported_not_silently_dropped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = write_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts, models=(BASELINE_MODEL, "provider/something-else"))
+
+    report = analyze_run(plan, artifacts, "logs", cohort="baseline")
+    codes = [item.code for item in report.diagnostics]
+    assert "GENERATIVE_EVAL_UNMATCHED" in codes
+    # The candidate cohort evaluated nothing, so every unit is completed as unclassified.
+    assert "GENERATIVE_UNIT_UNEVALUATED" in codes
+
+
+def test_a_missing_score_column_is_an_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = write_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts, score_column="score_something_else")
+
+    report = analyze_run(plan, artifacts, "logs")
+    assert report.has_errors
+    assert any(item.code == "GENERATIVE_SCORE_ABSENT" for item in report.diagnostics)
+    # Unclassified rather than dropped, so the bound still covers every draw.
+    assert report.tree.root.unclassified == report.tree.root.trials
+
+
+@pytest.mark.parametrize(
+    ("specification", "expected"),
+    [("fake", 0), ("fake:invalid_every=3", 3)],
+)
+def test_resolve_kernel_builds_the_fake(specification: str, expected: int) -> None:
+    kernel = resolve_kernel(specification)
+    assert kernel.kernel_id == "fake-rewriter"
+    assert kernel.invalid_every == expected
+
+
+def test_resolve_kernel_loads_an_import_path() -> None:
+    kernel = resolve_kernel("inspect_safety_stats.generative.kernels:DeterministicFakeKernel")
+    assert hasattr(kernel, "rewrite")
+
+
+@pytest.mark.parametrize(
+    "specification",
+    ["nonsense", "fake:unknown=1", "inspect_safety_stats.generative.kernels:RewriteRequest"],
+)
+def test_resolve_kernel_rejects_what_it_cannot_use(specification: str) -> None:
+    with pytest.raises((ValueError, TypeError)):
+        resolve_kernel(specification)
+
+
+def test_generative_plan_schema_command() -> None:
+    result = runner.invoke(app, ["schema", "generative-plan"])
+    assert result.exit_code == 0
+    assert '"GenerativePlan"' in result.stdout
+
+
+def test_a_kernel_that_is_not_the_declared_one_is_flagged(tmp_path: Path) -> None:
+    """The fingerprint hashes the plan, so the identifiers are the only available check."""
+
+    plan = write_plan(tmp_path)
+    run = materialize_run(plan, tmp_path / "run", kernel="fake")
+    assert run.kernel_mismatch is not None
+    assert "test-kernel" in run.kernel_mismatch
+    assert "fake-rewriter" in run.kernel_mismatch
+
+    result = runner.invoke(
+        app,
+        [
+            "generative", "materialize",
+            "--plan", str(plan),
+            "--output", str(tmp_path / "run2"),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Warning: plan declares kernel" in result.output
+
+
+def test_a_matching_kernel_is_not_flagged(tmp_path: Path) -> None:
+    plan_path = write_plan(tmp_path)
+    edited = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
+    edited["rewrite"]["kernel_id"] = "fake-rewriter"
+    plan_path.write_text(yaml.safe_dump(edited, sort_keys=False), encoding="utf-8")
+    run = materialize_run(plan_path, tmp_path / "run", kernel="fake")
+    assert run.kernel_mismatch is None

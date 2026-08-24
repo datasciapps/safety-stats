@@ -1755,3 +1755,58 @@ Only the risk difference. Ratios and relative reductions would follow from the t
 intervals under a union bound, and both arm intervals are reported on every comparison, but
 nothing derives them. Comparisons also sit outside the tree's Sidak frontiers, since they
 overlap its nodes; comparing several nodes means allocating alpha across them explicitly.
+
+## Command-line workflow
+
+**Status:** implemented, 24 August 2026. `generative/runner.py`, `generative/logs.py`,
+`generative/report.py`, and the `generative` command group in `cli.py`.
+
+Three commands under a separate `generative` group rather than an extension of `analyze`.
+Section 2 requires the generative report to stay visibly distinct from the fixed-design one,
+and auto-detecting the plan type inside `analyze` would have blurred exactly the distinction
+that matters.
+
+```
+inspect-safety-stats generative compile     --plan P
+inspect-safety-stats generative materialize --plan P --output DIR [--kernel K]
+inspect-safety-stats generative analyze     --plan P --artifacts DIR --logs L --output DIR
+```
+
+`schema generative-plan` prints the plan schema.
+
+### Two phases, because an evaluation happens between them
+
+Materialization writes the Inspect dataset and the two ledgers; analysis reads them back
+alongside the logs. `join_outcomes` was changed to take the **rewrite ledger** rather than an
+in-memory `ExecutionResult`, since the ledger is what a second process actually has.
+
+Analysis re-compiles the plan and checks that it still reproduces the recorded selection
+ledger, unit for unit and hash for hash. A plan edited between the phases is rejected. Without
+that check an edited weight would silently change the estimand while the evaluated prompts
+stayed the same, which is the one failure here with no visible symptom.
+
+### Kernels are supplied by import path
+
+`--kernel` accepts `fake`, `fake:invalid_every=N`, or `module:attribute` naming a kernel or a
+zero-argument factory. Nothing in the package depends on a particular rewriter client, and
+the offline fake keeps the test suite network-free.
+
+The kernel fingerprint hashes the plan's **declared** configuration, not the object actually
+supplied, so nothing can verify that an arbitrary implementation honours it. Materialization
+therefore compares the running kernel's identifier against `rewrite.kernel_id` and warns on a
+mismatch, which catches the realistic mistake -- a fake kernel run against a plan that
+declares a real one -- without pretending to a check it cannot perform.
+
+### Log ingestion is deliberately thin
+
+`generative/logs.py` does not reuse `ingest_inspect_logs`, which resolves groups,
+independence profiles and a prompt manifest from an `AnalysisPlan`. A generative run has none
+of those: the sample identifier written at materialization is the whole join key, and the
+cohort follows from which model produced the log. The score mapper is shared; nothing else
+is. A sample whose score is missing or unmappable is returned unclassified rather than
+dropped, so the conservative completion carries it.
+
+### Not implemented
+
+No HTML report -- JSON and CSV only. Section 19's richer artifacts, and the visual tree the
+fixed-design side renders, are not built.

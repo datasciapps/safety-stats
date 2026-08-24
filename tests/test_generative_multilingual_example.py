@@ -49,7 +49,7 @@ def pipeline(plan_name: str, budget: int, seed: int = 0):
     samples = simulated_target.evaluate(
         selections, result.accepted, np.random.default_rng(seed)
     )
-    joined = join_outcomes(plan, selections, result, samples, cohort_id="baseline")
+    joined = join_outcomes(plan, selections, list(result.rewrites), samples, cohort_id="baseline")
     return plan, taxonomy, design, selections, result, joined
 
 
@@ -162,8 +162,10 @@ def test_the_example_comparison_covers_its_known_difference() -> None:
     samples = simulated_target.evaluate_pair(
         selections, result.accepted, np.random.default_rng(0)
     )
-    baseline = join_outcomes(plan, selections, result, samples, cohort_id="baseline")
-    candidate = join_outcomes(plan, selections, result, samples, cohort_id="candidate")
+    baseline = join_outcomes(plan, selections, list(result.rewrites), samples, cohort_id="baseline")
+    candidate = join_outcomes(
+        plan, selections, list(result.rewrites), samples, cohort_id="candidate"
+    )
     assert not baseline.has_errors and not candidate.has_errors
 
     truth = simulated_target.true_difference(taxonomy)

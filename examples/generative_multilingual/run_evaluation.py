@@ -82,8 +82,10 @@ def main() -> None:
     samples = simulated_target.evaluate_pair(
         selections, result.accepted, np.random.default_rng(arguments.seed)
     )
-    joined = join_outcomes(plan, selections, result, samples, cohort_id="baseline")
-    candidate_joined = join_outcomes(plan, selections, result, samples, cohort_id="candidate")
+    joined = join_outcomes(plan, selections, list(result.rewrites), samples, cohort_id="baseline")
+    candidate_joined = join_outcomes(
+        plan, selections, list(result.rewrites), samples, cohort_id="candidate"
+    )
     for diagnostic in joined.diagnostics:
         print(f"  [{diagnostic.severity}] {diagnostic.code}: {diagnostic.message}")
 

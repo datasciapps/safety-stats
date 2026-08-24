@@ -15,7 +15,7 @@ from pathlib import Path
 
 from inspect_safety_stats.generative.execution import ExecutionResult
 from inspect_safety_stats.generative.inference import UnitOutcome
-from inspect_safety_stats.generative.ledger import SelectionRecord
+from inspect_safety_stats.generative.ledger import RewriteRecord, SelectionRecord
 from inspect_safety_stats.generative.schema import GenerativePlan
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import Diagnostic
@@ -128,12 +128,16 @@ def samples_from_observations(observations: list[Observation]) -> list[Evaluated
 def join_outcomes(
     plan: GenerativePlan,
     selections: list[SelectionRecord],
-    result: ExecutionResult,
+    rewrites: list[RewriteRecord],
     samples: list[EvaluatedSample],
     *,
     cohort_id: str,
 ) -> JoinResult:
     """Map evaluated samples back to sampling units, one row per selection.
+
+    The rewrite ledger is the input rather than the in-memory execution result, because
+    evaluation happens between the two: a second process reading the ledger from disk has
+    everything the join needs.
 
     Every selection produces an outcome, including units whose rewrite never passed
     validation and units that were never evaluated. Both are completed as unclassified
@@ -144,7 +148,11 @@ def join_outcomes(
     if cohort_id not in plan.target.cohorts:
         raise ValueError(f"cohort {cohort_id!r} is not declared in target.cohorts")
     rollouts = plan.target.rollouts_per_rewrite
-    unit_of_prompt = {entry.prompt_id: entry.sampling_unit_id for entry in result.accepted}
+    unit_of_prompt = {
+        str(record.prompt_id): record.sampling_unit_id
+        for record in rewrites
+        if record.is_evaluable() and record.prompt_id is not None
+    }
     accepted_units = set(unit_of_prompt.values())
 
     diagnostics: list[Diagnostic] = []

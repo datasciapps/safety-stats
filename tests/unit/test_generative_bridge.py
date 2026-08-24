@@ -189,7 +189,7 @@ def test_join_maps_samples_back_to_sampling_units(tmp_path: Path) -> None:
     plan, _, _, selections, fingerprint, texts = prepare(tmp_path)
     result = execute_rewrites(plan, selections, DeterministicFakeKernel(), fingerprint, texts)
     joined = join_outcomes(
-        plan, selections, result, evaluate(result, failing=7), cohort_id="baseline"
+        plan, selections, list(result.rewrites), evaluate(result, failing=7), cohort_id="baseline"
     )
     assert len(joined.outcomes) == len(selections)
     assert sum(outcome.failures for outcome in joined.outcomes) == 7
@@ -201,7 +201,9 @@ def test_join_detects_a_duplicated_sample(tmp_path: Path) -> None:
     plan, _, _, selections, fingerprint, texts = prepare(tmp_path)
     result = execute_rewrites(plan, selections, DeterministicFakeKernel(), fingerprint, texts)
     samples = evaluate(result)
-    joined = join_outcomes(plan, selections, result, samples + samples[:3], cohort_id="baseline")
+    joined = join_outcomes(
+        plan, selections, list(result.rewrites), samples + samples[:3], cohort_id="baseline"
+    )
     codes = [item.code for item in joined.diagnostics]
     assert codes.count("GENERATIVE_SAMPLE_DUPLICATE") == 3
     assert joined.has_errors
@@ -214,7 +216,7 @@ def test_join_detects_a_sample_from_another_run(tmp_path: Path) -> None:
     result = execute_rewrites(plan, selections, DeterministicFakeKernel(), fingerprint, texts)
     stray = EvaluatedSample(sample_id="p-not-ours", cohort_id="baseline", epoch=1, failure=True)
     joined = join_outcomes(
-        plan, selections, result, [*evaluate(result), stray], cohort_id="baseline"
+        plan, selections, list(result.rewrites), [*evaluate(result), stray], cohort_id="baseline"
     )
     assert any(item.code == "GENERATIVE_SAMPLE_UNMATCHED" for item in joined.diagnostics)
     assert joined.has_errors
@@ -224,7 +226,7 @@ def test_unevaluated_units_are_completed_as_unclassified(tmp_path: Path) -> None
     plan, _, _, selections, fingerprint, texts = prepare(tmp_path)
     result = execute_rewrites(plan, selections, DeterministicFakeKernel(), fingerprint, texts)
     partial = evaluate(result)[:40]
-    joined = join_outcomes(plan, selections, result, partial, cohort_id="baseline")
+    joined = join_outcomes(plan, selections, list(result.rewrites), partial, cohort_id="baseline")
     assert len(joined.outcomes) == len(selections)
     assert len(joined.unevaluated) == len(selections) - 40
     assert sum(outcome.unclassified for outcome in joined.outcomes) == len(selections) - 40
@@ -235,7 +237,7 @@ def test_join_rejects_an_undeclared_cohort(tmp_path: Path) -> None:
     plan, _, _, selections, fingerprint, texts = prepare(tmp_path)
     result = execute_rewrites(plan, selections, DeterministicFakeKernel(), fingerprint, texts)
     with pytest.raises(ValueError, match="not declared in target.cohorts"):
-        join_outcomes(plan, selections, result, [], cohort_id="ghost")
+        join_outcomes(plan, selections, list(result.rewrites), [], cohort_id="ghost")
 
 
 def test_join_detects_more_rollouts_than_the_plan_declares(tmp_path: Path) -> None:
@@ -245,7 +247,9 @@ def test_join_detects_more_rollouts_than_the_plan_declares(tmp_path: Path) -> No
     extra = [
         EvaluatedSample(sample_id=samples[0].sample_id, cohort_id="baseline", epoch=2, failure=True)
     ]
-    joined = join_outcomes(plan, selections, result, samples + extra, cohort_id="baseline")
+    joined = join_outcomes(
+        plan, selections, list(result.rewrites), samples + extra, cohort_id="baseline"
+    )
     assert any(item.code == "GENERATIVE_ROLLOUT_OVERRUN" for item in joined.diagnostics)
 
 
@@ -254,7 +258,7 @@ def test_end_to_end_from_plan_to_interval(tmp_path: Path) -> None:
     result = execute_rewrites(plan, selections, DeterministicFakeKernel(), fingerprint, texts)
     materialize_for_cohorts(plan, selections, result, tmp_path / "datasets")
     joined = join_outcomes(
-        plan, selections, result, evaluate(result, failing=8), cohort_id="baseline"
+        plan, selections, list(result.rewrites), evaluate(result, failing=8), cohort_id="baseline"
     )
     assert not joined.has_errors
 

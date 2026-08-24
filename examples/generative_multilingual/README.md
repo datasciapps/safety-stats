@@ -166,22 +166,51 @@ deliberate purchase: 2% of bound width for a guarantee that no seed goes unsampl
 
 ## Using a real model
 
-The offline path stops at `simulated_target.evaluate`. To run it for real:
+The scripts above are for reading; the CLI is for running. The workflow is two phases with
+an Inspect run between them, because the prompts have to exist before anything can evaluate
+them.
 
-1. run `run_evaluation.py` to materialize `datasets/dataset.jsonl` and the ledgers;
-2. evaluate that dataset with Inspect, scoring it with your judge;
-3. ingest the resulting logs, and pass the normalized observations through
-   `samples_from_observations`;
-4. call `join_outcomes` and `estimate_tree` exactly as the script does.
+Inspect the design without generating anything:
 
-Replace `DeterministicFakeKernel` with a provider-backed kernel implementing the
-`RewriteKernel` protocol at the same time. Note that `prompts.restricted.csv` is the only
-artifact containing prompt text — the ledgers carry hashes.
+```bash
+inspect-safety-stats generative compile --plan examples/generative_multilingual/plan-direct.yaml
+```
+
+Generate the prompts and write everything an Inspect run needs:
+
+```bash
+inspect-safety-stats generative materialize --plan examples/generative_multilingual/plan-direct.yaml --output run/generative --kernel mypackage.rewriters:build_kernel
+```
+
+`--kernel` takes `fake` (the deterministic offline kernel used above), `fake:invalid_every=N`
+to exercise the retry path, or `module:attribute` naming your own object implementing the
+`RewriteKernel` protocol — a kernel or a zero-argument factory. Nothing in this package
+depends on a particular rewriter client.
+
+That writes `datasets/dataset.jsonl` for Inspect, `selections.csv` and `rewrites.csv` as the
+ledgers, and `prompts.restricted.csv` as the only artifact containing prompt text. Evaluate
+the dataset with Inspect and your judge, then:
+
+```bash
+inspect-safety-stats generative analyze --plan examples/generative_multilingual/plan-direct.yaml --artifacts run/generative --logs run/logs --output run/report --slice language=maltese --compare candidate:baseline
+```
+
+Cohorts are matched to logs by the model each declares in `target.cohorts`, so the plan's
+`simulated/baseline` must become the model identifier you actually ran.
+
+**The plan is re-compiled during analysis and checked against the selection ledger.** A plan
+edited between the two phases is rejected rather than silently changing the estimand — the
+ledger records what was evaluated, and the plan has to still reproduce it.
+
+The report directory carries `report.json`, `nodes.csv`, `taxonomy.csv`, `comparisons.csv`
+and `diagnostics.csv`. `report.json` names the taxonomy and kernel fingerprints it was
+produced under, so two runs cannot be pooled by accident, and states the estimand in
+words.
 
 ## Limitations
 
-- **There is no CLI for the generative path.** `inspect-safety-stats analyze` handles fixed
-  plans only, so this example is driven by scripts.
+- **No HTML report.** The fixed-design side renders one; the generative side writes JSON and
+  CSV only.
 - **Slices and comparisons are pointwise.** Both overlap the tree's nodes, so neither can
   join its Šidák frontiers, and neither is part of a simultaneous family. Comparing several
   nodes means spending alpha across them yourself.

@@ -45,7 +45,7 @@ def one_replicate(plan, taxonomy, fingerprint, texts, seed: int):
     samples = simulated_target.evaluate(
         selections, result.accepted, np.random.default_rng(seed)
     )
-    joined = join_outcomes(plan, selections, result, samples, cohort_id="baseline")
+    joined = join_outcomes(plan, selections, list(result.rewrites), samples, cohort_id="baseline")
     return design, selections, list(joined.outcomes)
 
 
