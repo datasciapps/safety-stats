@@ -29,7 +29,7 @@ from .hierarchy_region import (
     project_two_arm_difference_hierarchy_confidence_region,
 )
 from .independence import BoundedBlocks
-from .multiplicity import benjamini_hochberg, bonferroni_allocate, holm_adjust
+from .multiplicity import bonferroni_allocate
 from .paired import exact_mcnemar, newcombe_paired_interval
 from .planning import zero_failure_sample_size
 from .risk import (
@@ -49,7 +49,6 @@ from .tree_calibration import (
 )
 
 __all__ = [
-    "benjamini_hochberg",
     "binomial_bounds",
     "binomial_lower_bound",
     "binomial_upper_bound",
@@ -64,7 +63,6 @@ __all__ = [
     "exact_mcnemar",
     "FrontierTargetCalibration",
     "newcombe_paired_interval",
-    "holm_adjust",
     "HierarchyRegionProjection",
     "IndependentFrontier",
     "LinearIntervalConstraint",

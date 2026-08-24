@@ -433,7 +433,7 @@ class MultiplicityFamilySpec(StrictModel):
     id: str = Field(min_length=1)
     purpose: Literal["all_mandatory", "simultaneous_intervals", "separate_claims", "exploratory"]
     method: Literal[
-        "intersection_union", "bonferroni", "weighted_bonferroni", "holm", "benjamini_hochberg"
+        "intersection_union", "bonferroni", "weighted_bonferroni"
     ]
     alpha: float = Field(gt=0, lt=1)
 

@@ -328,9 +328,7 @@ Families specify `purpose`, `method`, and `alpha`. Supported method names are:
 
 - `intersection_union`;
 - `bonferroni`;
-- `weighted_bonferroni`;
-- `holm`;
-- `benjamini_hochberg` for exploration.
+- `weighted_bonferroni`.
 
 The simultaneous prompt-bound family must use a Bonferroni method in v1.
 

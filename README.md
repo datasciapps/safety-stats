@@ -29,7 +29,7 @@ It is designed for hand-curated safety evaluations in which prompts, questions, 
   arm-risk regions, risk differences, risk ratios, relative reductions, simultaneous rank sets,
   hierarchy-frontier calibration, and named dependence sensitivities.
 - Exact McNemar, Newcombe paired score-interval, and fixed-cluster bootstrap diagnostics.
-- Bonferroni, weighted Bonferroni, Holm, Benjamini–Hochberg, and intersection-union utilities.
+- Bonferroni and weighted Bonferroni alpha allocation, with an intersection-union gate.
 - Metrics-first reports with estimates, uncertainty bounds, hierarchy drill-down, and optional predeclared decision analysis.
 - Deterministic JSON, Markdown, CSV, plan, and checksum sidecars.
 

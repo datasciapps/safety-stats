@@ -319,13 +319,11 @@ preserving pairs. It is a fixed-design sensitivity analysis, not a population in
 
 ```python
 bonferroni_allocate(alpha, count, weights=None)
-holm_adjust(p_values)
-benjamini_hochberg(p_values)
 ```
 
-Bonferroni allocation supports equal or positive prospective weights. Holm returns family-wise
-error adjusted p-values. Benjamini–Hochberg returns false-discovery-rate adjusted p-values and is
-restricted to exploratory use by the plan semantics.
+Allocation supports equal or positive prospective weights. Simultaneous interval families use
+Bonferroni across dependent frontiers and exact Sidak product calibration among disjoint siblings;
+see [Hierarchy-aware simultaneous inference](hierarchy-simultaneous-inference.md).
 
 ## Command-line interface
 
