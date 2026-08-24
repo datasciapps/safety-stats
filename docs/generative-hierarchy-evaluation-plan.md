@@ -6,7 +6,9 @@
 outcome mapping, hierarchy identifiers, and report components  
 **Scope of this plan:** implementation through cross-entropy adaptive importance sampling; SMC,
 subset simulation, evolutionary prompt mutation, and anytime-valid live stopping are deferred  
-**Last updated:** 23 August 2026
+**Last updated:** 23 August 2026; amended 24 August 2026 with the slice 0 measurement  
+**Amendment:** see *Slice 0 result* at the end -- variance reduction does not improve
+the finite-sample bound this package reports, which bears directly on slices 3, 4 and 7
 
 ## 1. Objective
 
@@ -1423,3 +1425,82 @@ The extension through cross-entropy adaptive importance sampling is complete whe
 SMC and evolutionary prompt mutation should be considered only after these foundations are working
 and simulation-tested. At that point, their incremental value can be measured against a strong
 balanced, model-assisted, defensive-importance-sampling baseline.
+
+---
+
+## Slice 0 result: variance reduction does not improve the reported bound
+
+**Status:** measured, 24 August 2026. Reproduce with
+`python research/generative_sampling_tradeoff.py`.
+
+Slices 3, 4 and 7 of this plan -- hierarchical stratification, cost-aware Neyman
+allocation, and cross-entropy adaptive importance sampling -- are all variance-reduction
+techniques. Before building them, they were compared at equal budget against plain direct
+target-distribution sampling (slice 2), scored on two things: the classical estimator
+RMSE, and the width of the finite-sample bound this package actually reports.
+
+At a budget of 1,200 evaluations over a 200-path tree, relative to direct sampling:
+
+| design | RMSE | bound width |
+|---|---:|---:|
+| direct target sampling | 1.00x | 1.00x |
+| stratified (proportional) | 0.98x | 1.00x |
+| stratified (Neyman) | 0.63x | **1.60x** |
+| oracle importance sampling | 0.54x | **1.40x** |
+
+Importance sampling was given the second-moment-optimal proposal \(q^*\propto
+w(h)\sqrt{p_h}\) for free, so the result does not depend on how well a cross-entropy
+learner performs; it upper-bounds anything a learner could reach.
+
+**The two scores move in opposite directions, and the gap widens exactly where importance
+sampling is supposed to excel.** Holding the base rate at 0.0005 and increasing the ratio
+between the risky arm and the rest:
+
+| risk ratio | IS RMSE | IS bound width |
+|---:|---:|---:|
+| 10 | 0.90x | 1.04x |
+| 100 | 0.65x | 1.19x |
+| 1,000 | 0.35x | 1.40x |
+| 10,000 | 0.27x | **1.51x** |
+
+At a 10,000-fold concentration the estimator's variance falls almost fourfold while the
+reported interval gets half again as wide.
+
+### Why
+
+Every bound in this package is a bounded-weight concentration inequality, and those pay
+for coefficient inequality. Direct sampling gives every draw the coefficient \(1/T\);
+with equal atomic weights the KL/Chernoff engine uses the sharp Bernoulli-KL kernel.
+Neyman allocation and inverse-probability weighting both deliberately create unequal
+coefficients -- that is how they reduce variance -- and the bound charges for it, partly
+through the larger maximum increment and partly by falling back to the weighted
+Poisson-Chernoff kernel. The defensive mixture that makes a finite-sample bound available
+for importance sampling at all is the same thing that caps how much variance reduction is
+reachable.
+
+The effect is not an artefact of one engine: under empirical Bernstein the penalty is
+1.32x-1.49x instead of 1.40x-1.93x -- smaller, because there is no kernel switch, but the
+same sign.
+
+Nor is it rescued by a frontier too large to stratify, the regime where importance
+sampling was expected to earn its keep. At 128 arms with 300 evaluations -- 2.3 draws per
+stratum -- importance sampling is still 1.15x wider than direct sampling, and proportional
+stratification 1.17x.
+
+### What this implies for the plan
+
+Slice 2 is not merely the baseline. On this evidence it is the **best** design for a
+package that reports finite-sample bounds, and slices 3, 4 and 7 should not be expected to
+improve the reported interval. They remain sound statistics; they optimise a quantity this
+package does not publish.
+
+Three honest limits on the finding. It uses one synthetic hierarchy family, so a
+qualitatively different risk structure could behave differently. It is specific to
+finite-sample reporting -- under asymptotic intervals importance sampling would win, which
+is precisely the trade
+[considered and declined for sampled frames](design-based-sampling.md). And proportional
+stratification is free rather than harmful (1.00x-1.01x), so stratifying to guarantee
+coverage of declared strata costs nothing even though it buys nothing.
+
+Before building slice 3, 4 or 7, re-run this comparison on a tree that matches the intended
+evaluation. If it still shows the same sign, build slice 2 and stop.
