@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  lint:
+    name: ruff
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install -e '.[dev]'
+      - run: ruff check src tests examples research
+
+  types:
+    name: mypy (strict)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # tool.mypy pins python_version 3.12; running it once is enough.
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install -e '.[dev]'
+      - run: mypy src/inspect_safety_stats
+
+  test:
+    name: pytest (${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every version the package claims to support. The development
+        # environment is 3.12, so the older two are only ever exercised here.
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install -e '.[dev]'
+      - run: pytest -ra
+
+  build:
+    name: build wheel and sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - run: python -m pip install build
+      - run: python -m build
+      - name: Install the built wheel into a clean environment
+        run: |
+          python -m venv /tmp/check
+          /tmp/check/bin/python -m pip install --quiet dist/*.whl
+          # The wheel must carry the HTML report template, not just the modules.
+          /tmp/check/bin/python -c "
+          from pathlib import Path
+          import inspect_safety_stats
+          from inspect_safety_stats.report import visualization
+          print('version', inspect_safety_stats.__version__)
+          assert visualization._TEMPLATE.is_file(), 'report template missing from wheel'
+          "
+          /tmp/check/bin/inspect-safety-stats version
+          /tmp/check/bin/inspect-safety-stats plan zero-failure --threshold 0.01 --alpha 0.05
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/
