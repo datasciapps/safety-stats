@@ -1,5 +1,7 @@
 # Inspect Safety Stats
 
+[![CI](https://github.com/aduncan001/safety_stats/actions/workflows/ci.yml/badge.svg)](https://github.com/aduncan001/safety_stats/actions/workflows/ci.yml)
+
 `inspect-safety-stats` provides fixed-design statistical risk analysis for binary safety outcomes produced by [Inspect AI](https://inspect.aisi.org.uk/).
 
 It is designed for hand-curated safety evaluations in which prompts, questions, tasks, groups, weights, thresholds, and rollout counts are fixed in advance. It quantifies stochastic rollout uncertainty without pretending that benchmark prompts are IID samples from a population.
