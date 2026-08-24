@@ -315,6 +315,21 @@ levels.
 `inspect_safety_stats.stats.clusters`. It resamples whole creator-declared clusters while
 preserving pairs. It is a fixed-design sensitivity analysis, not a population interval.
 
+### Design-based sampling
+
+```python
+InclusionDesign(design_weights, inclusion_probabilities, sampled)
+horvitz_thompson_mean_bounds(design, completion_lower, completion_upper, *,
+                             alpha_lower, alpha_upper, method="weighted_empirical_bernstein")
+```
+
+Bounds a frame-wide weighted mean from an item sample with known inclusion probabilities.
+The Horvitz-Thompson estimator is rescaled into an ordinary bounded weighted mean, so the
+existing concentration engines apply unchanged. Assumes independent inclusion. Reports
+`inflation` and `maximum_weight`, which govern the precision cost. Not yet called by the
+analysis pipeline; see
+[Design-based inference for sampled item frames](design-based-sampling.md).
+
 ### Judge misclassification
 
 ```python

@@ -10,6 +10,11 @@ from .comparisons import (
     direct_ratio_bounds,
     direct_risk_difference_bounds,
 )
+from .design_based import (
+    DesignBasedBounds,
+    InclusionDesign,
+    horvitz_thompson_mean_bounds,
+)
 from .direct_mean import (
     DirectMeanBounds,
     weighted_bounded_empirical_bernstein_mean_bounds,
@@ -64,7 +69,10 @@ __all__ = [
     "CorrectedRisk",
     "JudgeCalibration",
     "DirectComparisonBounds",
+    "DesignBasedBounds",
     "DirectMeanBounds",
+    "horvitz_thompson_mean_bounds",
+    "InclusionDesign",
     "direct_ratio_bounds",
     "direct_risk_difference_bounds",
     "entropic_risk",

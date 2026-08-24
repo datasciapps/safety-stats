@@ -190,6 +190,7 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Python and command-line API reference](docs/api-reference.md)
 - [Interpreting results](docs/interpretation.md)
 - [Judge misclassification](docs/judge-misclassification.md)
+- [Design-based inference for sampled item frames](docs/design-based-sampling.md)
 - [Version 1 engineering design](docs/archive/v1-design.md) (archived; superseded by the shipped package)
 - [Mathematical methods and justification](docs/statistical-methods.md)
 - [Generative hierarchy evaluation planner: implementation plan](docs/generative-hierarchy-evaluation-plan.md)
