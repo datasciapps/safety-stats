@@ -73,7 +73,7 @@ comparisons:
 ```
 
 This interface was introduced in analysis schema `2.0` and package version `0.7.0`
-and remains current in `0.11.0`. The removed
+and remains current in `0.12.0`. The removed
 `independence_unit` and `cluster_sensitivity` fields are deliberately not translated. A schema
 `1.0` or legacy-field plan fails strict validation so its assumptions cannot silently change.
 Existing Inspect logs remain reusable: write a schema `2.0` plan and rerun only
