@@ -187,7 +187,7 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Analysis plan reference](docs/plan-reference.md)
 - [Python and command-line API reference](docs/api-reference.md)
 - [Interpreting results](docs/interpretation.md)
-- [Version 1 engineering design](docs/v1-design.md)
+- [Version 1 engineering design](docs/archive/v1-design.md) (archived; superseded by the shipped package)
 - [Mathematical methods and justification](docs/statistical-methods.md)
 - [Generative hierarchy evaluation planner: implementation plan](docs/generative-hierarchy-evaluation-plan.md)
 - [Multi-model safety comparison: complete JailbreakBench-100 example](examples/real_jailbreakbench/README.md)

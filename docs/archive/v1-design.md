@@ -2,15 +2,24 @@
 
 ## Fixed-design statistical certification for Inspect AI evaluations
 
-**Status:** implementation-ready design proposal  
+> **Archived.** This is the original delivery plan written before implementation, kept
+> for provenance. **It is not a description of the current package.** Several components
+> it specifies were built and later removed during a scope reduction: the one-sided
+> certification module, the Bayesian structural model, the joint stratified-Bernoulli
+> max-T interval family, the `fixed_design_bounds` comparison envelope, the diagnostic-only
+> risk measures, and the Holm and Benjamini-Hochberg utilities. For the package as it
+> stands, see the [analysis plan reference](../plan-reference.md) and the
+> [API reference](../api-reference.md).
+
+**Status:** archived design proposal; superseded by the shipped package  
 **Package distribution:** `inspect-safety-stats`  
 **Python import:** `inspect_safety_stats`  
 **Initial package version:** `0.1.0`  
 **Target Inspect version:** `inspect-ai>=0.3.259,<0.4`  
 **Python:** `>=3.10`  
-**Last updated:** 18 August 2026
+**Last updated:** 18 August 2026 (archived 24 August 2026)
 
-This document specifies the first implementable version of the Inspect Safety Stats extension. The mathematical rationale is in [statistical-methods.md](statistical-methods.md). This document defines product scope, architecture, schemas, APIs, validation behavior, reports, and acceptance criteria.
+This document specified the first implementable version of the Inspect Safety Stats extension. The mathematical rationale is in [statistical-methods.md](../statistical-methods.md). It defined product scope, architecture, schemas, APIs, validation behavior, reports, and acceptance criteria.
 
 ---
 
@@ -1982,7 +1991,7 @@ The design relies on the following supported Inspect interfaces:
 
 ## 30. Relationship to the mathematical specification
 
-This design operationalizes the priorities in [statistical-methods.md](statistical-methods.md):
+This design operationalizes the priorities in [statistical-methods.md](../statistical-methods.md):
 
 - fixed-horizon methods are core;
 - anytime-valid methods are deferred;

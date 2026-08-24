@@ -7,7 +7,7 @@
 **Target framework:** [Inspect AI](https://inspect.aisi.org.uk/)  
 **Last updated:** 18 August 2026
 
-**Version 1 engineering design:** [v1-design.md](v1-design.md)
+**Version 1 engineering design:** [v1-design.md](archive/v1-design.md) (archived)
 
 ---
 
