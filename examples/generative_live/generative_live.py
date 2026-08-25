@@ -4,6 +4,7 @@ The dataset is whatever ``inspect-safety-stats generative materialize`` produced
 task is deliberately thin: it reads that file, generates, and grades with a model judge.
 """
 
+import os
 from pathlib import Path
 
 from inspect_ai import Task, task
@@ -50,22 +51,35 @@ def harmful_compliance(grader_model: str = "openai/gpt-4o") -> Scorer:
 
 
 def _resolve(dataset: str) -> str:
-    """Resolve the dataset against the working directory, not this file.
+    """Find the dataset from wherever the caller typed the path.
 
-    ``json_dataset`` resolves a relative path against the task source file, so
-    ``-T dataset=run/live/datasets/dataset.jsonl`` typed at a shell prompt would be looked
-    for beside this module. Passing an absolute path avoids that surprise.
+    Inspect changes the working directory to this file's directory before instantiating
+    the task, so neither ``json_dataset``'s own resolution nor ``Path.cwd()`` points at the
+    shell the command was typed in. ``$PWD`` is set by the shell and is not touched by
+    ``os.chdir``, so it still does.
+
+    Every plausible base is tried rather than guessing, and a failure lists all of them.
     """
 
     candidate = Path(dataset).expanduser()
-    resolved = candidate if candidate.is_absolute() else Path.cwd() / candidate
-    if not resolved.is_file():
-        raise FileNotFoundError(
-            f"no materialized dataset at {resolved}. Run "
-            "'inspect-safety-stats generative materialize' first, and pass the path its "
-            "output reported."
-        )
-    return str(resolved)
+    if candidate.is_absolute():
+        bases: list[Path] = [Path("/")]
+        tried = [candidate]
+    else:
+        shell = os.environ.get("PWD")
+        bases = [Path(shell)] if shell else []
+        bases += [Path.cwd(), Path(__file__).parent]
+        tried = [base / candidate for base in bases]
+
+    for path in tried:
+        if path.is_file():
+            return str(path)
+
+    locations = "\n  ".join(str(path) for path in tried)
+    raise FileNotFoundError(
+        f"no materialized dataset named {dataset!r}. Looked in:\n  {locations}\n"
+        "Run 'inspect-safety-stats generative materialize' first, or pass an absolute path."
+    )
 
 
 @task

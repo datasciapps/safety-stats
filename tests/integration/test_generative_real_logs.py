@@ -223,11 +223,54 @@ def test_the_live_example_plan_compiles_and_projects(tmp_path: Path) -> None:
     assert projection.expected_unsampled_nodes > 0
 
 
-def test_the_live_example_task_resolves_a_dataset_from_the_working_directory(
+def test_the_live_example_task_runs_with_a_relative_dataset_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """json_dataset resolves against the task file; the caller means their shell's cwd."""
+    """The exact invocation the runbook prints, driven through Inspect's own loader.
 
+    Inspect changes the working directory to the task file's directory before instantiating
+    the task, so neither json_dataset's resolution nor Path.cwd() points at the shell the
+    command was typed in. Nothing short of running the loader catches that -- an earlier
+    test called the resolver directly and passed while the documented command was broken.
+    """
+
+    example = Path(__file__).resolve().parents[2] / "examples" / "generative_live"
+
+    # The task lives in a subdirectory and the dataset does not, so the file's own
+    # directory cannot resolve it: only the caller's shell directory can.
+    tasks = tmp_path / "tasks"
+    tasks.mkdir()
+    (tasks / "task.py").write_text(
+        (example / "generative_live.py").read_text(encoding="utf-8"), encoding="utf-8"
+    )
+    dataset = tmp_path / "run" / "live" / "datasets" / "dataset.jsonl"
+    dataset.parent.mkdir(parents=True)
+    dataset.write_text(
+        '{"id": "p-0", "input": "a probe", "metadata": {"node_id": "all|language=english"}}\n',
+        encoding="utf-8",
+    )
+
+    # Simulate a shell: chdir sets the process directory, PWD is what the shell exports.
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PWD", str(tmp_path))
+
+    logs = tmp_path / "logs"
+    inspect_eval(
+        "tasks/task.py",
+        model=MOCK_MODEL,
+        task_args={
+            "dataset": "run/live/datasets/dataset.jsonl",
+            "grader_model": MOCK_MODEL,
+        },
+        log_dir=str(logs),
+        display="none",
+    )
+    assert list(logs.glob("*.eval")), "the task did not run"
+
+
+def test_the_live_example_task_says_where_it_looked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     import sys
 
     example = Path(__file__).resolve().parents[2] / "examples" / "generative_live"
@@ -237,13 +280,15 @@ def test_the_live_example_task_resolves_a_dataset_from_the_working_directory(
     finally:
         sys.path.remove(str(example))
 
-    dataset = tmp_path / "run" / "live" / "datasets" / "dataset.jsonl"
-    dataset.parent.mkdir(parents=True)
-    dataset.write_text('{"id": "p-0", "input": "hello"}\n', encoding="utf-8")
-
     monkeypatch.chdir(tmp_path)
-    assert _resolve("run/live/datasets/dataset.jsonl") == str(dataset)
-    assert _resolve(str(dataset)) == str(dataset)
-
-    with pytest.raises(FileNotFoundError, match="generative materialize"):
+    monkeypatch.setenv("PWD", str(tmp_path))
+    with pytest.raises(FileNotFoundError) as raised:
         _resolve("run/absent/dataset.jsonl")
+    message = str(raised.value)
+    assert "Looked in:" in message
+    assert str(tmp_path) in message
+    assert "generative materialize" in message
+
+    present = tmp_path / "here.jsonl"
+    present.write_text("{}\n", encoding="utf-8")
+    assert _resolve(str(present)) == str(present)
