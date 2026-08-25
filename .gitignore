@@ -23,4 +23,7 @@ examples/real_jailbreakbench/translations/
 
 # Local run output (not source)
 logs/
+# Generative materialization writes prompt text here -- datasets, the restricted
+# prompt store, eval logs and reports. None of it belongs in version control.
+run/
 .inspect-trace.log.gz
