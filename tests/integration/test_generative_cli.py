@@ -200,8 +200,28 @@ def test_an_unmatched_model_is_reported_not_silently_dropped(
     report = analyze_run(plan, artifacts, "logs", cohort="baseline")
     codes = [item.code for item in report.diagnostics]
     assert "GENERATIVE_EVAL_UNMATCHED" in codes
-    # The candidate cohort evaluated nothing, so every unit is completed as unclassified.
-    assert "GENERATIVE_UNIT_UNEVALUATED" in codes
+    # The candidate cohort is not part of this analysis, so it is not reported on at all.
+    assert "GENERATIVE_COHORT_NOT_EVALUATED" not in codes
+    assert report.tree.root.unclassified == 0
+
+
+def test_a_requested_cohort_with_no_logs_is_named_plainly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Distinct from partial evaluation: nothing matched this cohort's model at all."""
+
+    plan = write_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts, models=(BASELINE_MODEL, "provider/something-else"))
+
+    report = analyze_run(plan, artifacts, "logs", cohort="candidate")
+    diagnostic = next(
+        item for item in report.diagnostics if item.code == "GENERATIVE_COHORT_NOT_EVALUATED"
+    )
+    assert diagnostic.severity == "ERROR"
+    assert CANDIDATE_MODEL in diagnostic.message
+    assert report.has_errors
 
 
 def test_a_missing_score_column_is_an_error(

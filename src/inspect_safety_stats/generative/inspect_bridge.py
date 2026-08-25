@@ -232,7 +232,21 @@ def join_outcomes(
                 details={"sampling_units": sorted(over_evaluated)[:20]},
             )
         )
-    if unevaluated:
+    if len(unevaluated) == len(selections):
+        diagnostics.append(
+            Diagnostic(
+                code="GENERATIVE_COHORT_NOT_EVALUATED",
+                severity="ERROR",
+                message=(
+                    f"cohort {cohort_id!r} has no evaluated samples at all: no log matched "
+                    f"the model it declares ({plan.target.cohorts[cohort_id].model!r}), so "
+                    "every sampling unit is completed as unclassified"
+                ),
+                scope=cohort_id,
+                details={"declared_model": plan.target.cohorts[cohort_id].model},
+            )
+        )
+    elif unevaluated:
         diagnostics.append(
             Diagnostic(
                 code="GENERATIVE_UNIT_UNEVALUATED",

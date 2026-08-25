@@ -193,6 +193,26 @@ declared rate, so real heterogeneity moves individual nodes either way. What it 
 exactly is the *geometry*: a level whose median node would receive four draws cannot support
 an interval regardless of what the risk turns out to be.
 
+## How the log-reading path is verified
+
+Most generative tests stub `evals_df` and `samples_df` with synthetic frames, following the
+fixed-design suite. That exercises the join but never the log format, and cohort matching by
+model identifier and epoch handling can only be checked against a real log.
+
+`tests/integration/test_generative_real_logs.py` therefore materializes a dataset, runs a
+genuine Inspect evaluation over it with the local mock model, and analyses the `.eval` file
+that produces -- no network, no provider, no cost, in about six seconds. It asserts a clean
+run reports **no diagnostics at all**, that the structural metadata written at
+materialization survives the round trip, that a score name the log does not carry degrades
+conservatively rather than dropping samples, and that extra epochs are caught against the
+declared `rollouts_per_rewrite`.
+
+Two defects surfaced the first time it ran, neither reachable from synthetic frames. Analysis
+joined *every* declared cohort rather than the ones in use, so a cohort nobody asked about
+reported "120 of 120 sampling units produced no usable outcome" -- which reads like a failed
+run. And a cohort with no matching logs at all was reported with the same code as one that
+was partly evaluated, when the two are different situations with different fixes.
+
 ## Limits on all of this
 
 Every measurement above uses one synthetic hierarchy in the sparse-failure regime, where

@@ -289,8 +289,15 @@ def analyze_run(
     primary = cohort or next(iter(plan.target.cohorts))
     if primary not in plan.target.cohorts:
         raise ValueError(f"cohort {primary!r} is not declared in target.cohorts")
+    # Only the cohorts this analysis needs: joining the rest reports them as wholly
+    # unevaluated, which reads like a failed run rather than a cohort nobody asked about.
+    needed = {primary}
+    for specification in comparisons:
+        needed.update(part for part in specification.split(":") if part)
     joined = {}
-    for cohort_id in plan.target.cohorts:
+    for cohort_id in sorted(needed):
+        if cohort_id not in plan.target.cohorts:
+            raise ValueError(f"cohort {cohort_id!r} is not declared in target.cohorts")
         result = join_outcomes(plan, selections, rewrites, samples, cohort_id=cohort_id)
         joined[cohort_id] = list(result.outcomes)
         diagnostics.extend(result.diagnostics)
