@@ -239,6 +239,15 @@ uncertainty, which makes both `PASS` and `FAIL` harder; but it also removes fals
 which can lower the upper bound enough to establish a `PASS` that the uncorrected interval
 could not. Both movements are evidence-backed, and both are visible in the claim's reasons.
 
+## On the generative path
+
+The same correction is available for
+[generative evaluations](generative-evaluation.md), where it applies to the root, every
+hierarchy node and every cross-cutting slice. Two differences: human labels key on the
+sample identifier materialization wrote rather than an observation id, and comparisons are
+**not** corrected -- doing so would either discard the paired construction that makes them
+tight or assume a prevalence-free judge.
+
 ## Getting to evidence
 
 `mode: validated` supplies the machinery; the labels are the remaining cost. An anchor must

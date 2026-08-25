@@ -219,6 +219,51 @@ rollout per rewrite is tighter than two by 1.28x, than four by 1.48x, and than e
 A unit enters the bound as a single bounded observation however many rollouts produced it, and
 only single-rollout units keep outcomes binary.
 
+## Judge misclassification
+
+Every interval above estimates a property of the **judge-model system** -- the probability
+the judge reports a failure under the declared design -- not of the model. At low prevalence
+those differ a lot: at 1% true prevalence and 95% specificity, most of the reported number is
+judge error.
+
+```yaml
+judge_calibration:
+  mode: assumed                       # or: validated
+  primary: declared
+  alpha: 0.05
+  scenarios:
+    - id: declared
+      rho_1: {lower: 0.85, upper: 1.0}
+      rho_0: {lower: 0.0, upper: 0.02}
+    - id: pessimistic
+      rho_1: {lower: 0.70, upper: 1.0}
+      rho_0: {lower: 0.0, upper: 0.05}
+```
+
+`rho_1` is P(truly unsafe | judge said unsafe) and `rho_0` is P(truly unsafe | judge said
+safe). The identity `R* = R·rho_1 + (1-R)·rho_0` is affine in `R` with positive slope, so it
+applies to the root, every node and every slice unchanged. See
+[judge misclassification](judge-misclassification.md) for the derivation.
+
+**`assumed` mode produces no evidence.** Every interval it emits is a sensitivity result and
+cannot support a claim. The root is corrected under every declared scenario; nodes and slices
+under the primary only, which keeps the artifact readable on a large taxonomy.
+
+**`validated` mode measures the same two parameters** from human labels and is certifying.
+Point it at a `validation_manifest` keyed on the sample identifier materialization wrote --
+a generative run has no prompt manifest to key on. It needs `rollouts_per_rewrite: 1`, so
+that each unit carries a single binary verdict, and it refuses rather than correcting when
+the labels do not establish a strictly informative judge.
+
+Two movements are expected and mean different things. The corrected band is normally
+**wider**, because uncertainty about the judge is real uncertainty being added. The corrected
+estimate is normally **lower**, because false positives are being removed -- and that is an
+incentive, which is why the calibration belongs in the frozen plan.
+
+Before spending on labels, note that correction only produces a *tighter* number when the
+judge substantially over-reports; otherwise it costs precision to reach the right estimand.
+Most of the budget should go to the judge-safe stratum, which carries weight `1 - R`.
+
 ## Cross-cutting slices
 
 A hierarchy answers questions about subtrees. Because semantic seeds are a stratification
@@ -276,9 +321,8 @@ Three fields are easy to misread:
   wrapper-level nodes with single-digit draws, where no method gives an actionable interval.
   Read the root, the slices, well-populated nodes and comparisons -- and use
   `generative budget` to see which levels your budget can support before you spend it.
-- **The judge is not modelled.** [Judge misclassification](judge-misclassification.md) applies
-  to fixed designs; nothing here corrects for a fallible scorer, and judge error is typically
-  several times larger than the sampling uncertainty being bounded.
+- **Comparisons stay on the judge-reported scale.** Correcting them would either discard
+  the paired construction or assume a prevalence-free judge; neither trade is made silently.
 - **Risk difference only.** Ratios and relative reductions are not derived, though both arm
   intervals are reported.
 - **No adaptive allocation, importance sampling, or model-assisted estimation.** These were

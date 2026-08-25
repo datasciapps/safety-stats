@@ -231,6 +231,51 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
       "so it is reported pointwise." }));
   }
 
+  // ---- judge correction ---------------------------------------------------
+  var corrected = data.corrected || [];
+  if (corrected.length) {
+    var judge = (data.evaluation || {}).judge_calibration || {};
+    root.appendChild(section("Judge misclassification"));
+    var certifying = corrected.some(function (item) {
+      return item.eligibility === "certifying";
+    });
+    root.appendChild(el("p", { class: "sub", text:
+      certifying
+        ? "Measured from human labels. These bounds are on true risk and are certifying, " +
+          "at the union of the interval and calibration budgets."
+        : "Declared, not measured. These are sensitivity results and carry no evidence: " +
+          "they cannot support a claim." }));
+    if (judge.rho_1) {
+      root.appendChild(el("p", { class: "sub mono", text:
+        "rho_1 " + judge.rho_1.map(function (v) { return pct(v); }).join(" to ") +
+        ",  rho_0 " + judge.rho_0.map(function (v) { return pct(v); }).join(" to ") }));
+    }
+    var shown = corrected.filter(function (item) {
+      return item.node_id === "all" || item.node_id.indexOf("slice:") === 0;
+    });
+    root.appendChild(table(
+      [{ label: "Target" }, { label: "Scenario" },
+       { label: "Judge-reported", num: true }, { label: "True risk", num: true },
+       { label: "Corrected estimate", num: true }, { label: "Eligibility" }],
+      shown.map(function (item) {
+        return [
+          item.node_id.replace(/^slice:/, ""),
+          item.scenario_id,
+          pct(item.observed_lower) + " to " + pct(item.observed_upper),
+          pct(item.lower) + " to " + pct(item.upper),
+          item.estimate_lower === null ? "\u2014"
+            : pct(item.estimate_lower) + " to " + pct(item.estimate_upper),
+          item.eligibility
+        ];
+      })
+    ));
+    root.appendChild(el("p", { class: "sub", text:
+      "The corrected band is normally wider, because uncertainty about the judge is real " +
+      "uncertainty being added. The corrected estimate is normally lower, because false " +
+      "positives are being removed -- which is why the calibration belongs in the frozen " +
+      "plan, declared before any results are seen." }));
+  }
+
   // ---- hierarchy ----------------------------------------------------------
   root.appendChild(section("Hierarchy"));
   var nodes = data.nodes || [];

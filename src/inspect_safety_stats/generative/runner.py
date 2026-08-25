@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from inspect_safety_stats.generative.comparisons import ComparisonResult, compare_cohorts
 from inspect_safety_stats.generative.execution import (
@@ -23,12 +24,22 @@ from inspect_safety_stats.generative.execution import (
 )
 from inspect_safety_stats.generative.inference import (
     NodeEstimate,
+    TreeEstimate,
+    UnitOutcome,
     estimate_slice,
     estimate_tree,
 )
 from inspect_safety_stats.generative.inspect_bridge import (
     join_outcomes,
     materialize_for_cohorts,
+)
+from inspect_safety_stats.generative.judge import (
+    CorrectedEstimate,
+    comparison_refusal,
+    correct,
+    declared_calibration,
+    load_labels,
+    measured_calibration,
 )
 from inspect_safety_stats.generative.kernels import (
     DeterministicFakeKernel,
@@ -254,6 +265,78 @@ def materialize_run(
     )
 
 
+
+def _judge_correction(
+    plan: GenerativePlan,
+    base: Path,
+    rewrites: list[RewriteRecord],
+    outcomes: list[UnitOutcome],
+    tree: TreeEstimate,
+    slices: list[NodeEstimate],
+    comparisons: list[ComparisonResult],
+    diagnostics: list[Diagnostic],
+    *,
+    cohort_id: str,
+) -> tuple[list[CorrectedEstimate], dict[str, Any]]:
+    """Map the reported intervals onto true risk, if the plan asks for it.
+
+    The root is corrected under every declared scenario, since sensitivity to the judge is
+    mostly a root-level question. Nodes and slices are corrected under the primary scenario
+    only, which keeps the artifact readable on a taxonomy with hundreds of nodes.
+    """
+
+    spec = plan.judge_calibration
+    if spec is None:
+        return [], {}
+
+    tuples = [
+        (item.sampling_unit_id, item.trials, item.failures, item.unclassified)
+        for item in outcomes
+    ]
+    corrected: list[CorrectedEstimate] = []
+    alpha = plan.inference.alpha
+
+    if spec.mode == "assumed":
+        for scenario in spec.scenarios:
+            calibration = declared_calibration(plan, scenario.id)
+            targets = [tree.root]
+            if scenario.id == spec.primary:
+                targets = [*tree.nodes, *slices]
+            corrected.extend(correct(targets, calibration, interval_alpha=alpha))
+        meta: dict[str, Any] = {
+            "judge_calibration": {"mode": "assumed", "primary": spec.primary}
+        }
+    else:
+        labels = load_labels(base / str(spec.validation_manifest))
+        measured, judge_diagnostics = measured_calibration(
+            plan, rewrites, tuples, labels, cohort_id=cohort_id
+        )
+        diagnostics.extend(judge_diagnostics)
+        if measured is None:
+            unavailable: dict[str, Any] = {
+                "judge_calibration": {"mode": "validated", "available": False}
+            }
+            return [], unavailable
+        corrected.extend(correct([*tree.nodes, *slices], measured, interval_alpha=alpha))
+        meta = {
+            "judge_calibration": {
+                "mode": "validated",
+                "available": True,
+                "rho_1": [measured.rho_1_lower, measured.rho_1_upper],
+                "rho_0": [measured.rho_0_lower, measured.rho_0_upper],
+                "alpha_spent": measured.alpha,
+            }
+        }
+
+    for comparison in comparisons:
+        diagnostics.append(
+            comparison_refusal(
+                f"{comparison.candidate_cohort}:{comparison.baseline_cohort}"
+            )
+        )
+    return corrected, meta
+
+
 def analyze_run(
     plan_path: str | Path,
     artifacts: str | Path,
@@ -354,6 +437,18 @@ def analyze_run(
             )
         )
 
+    corrected, judge_meta = _judge_correction(
+        plan,
+        base,
+        rewrites,
+        joined[primary],
+        tree,
+        cut_results,
+        comparison_results,
+        diagnostics,
+        cohort_id=primary,
+    )
+
     return GenerativeReport(
         evaluation={
             "id": plan.evaluation.id,
@@ -363,6 +458,7 @@ def analyze_run(
             "taxonomy_fingerprint": taxonomy.fingerprint,
             "kernel_sha256": resolve_kernel_fingerprint(plan, base_path=base).sha256,
             "primary_cohort": primary,
+            **judge_meta,
         },
         design={
             "method": design.method,
@@ -384,5 +480,6 @@ def analyze_run(
         taxonomy=taxonomy,
         slices=cut_results,
         comparisons=comparison_results,
+        corrected=corrected,
         diagnostics=diagnostics,
     )

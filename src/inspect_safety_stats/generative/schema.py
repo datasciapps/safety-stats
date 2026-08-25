@@ -16,6 +16,8 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from inspect_safety_stats.config.models import JudgeCalibrationScenarioSpec
+
 RESERVED_CHARACTERS = ("|", "=")
 
 
@@ -249,6 +251,53 @@ class RewriteSpec(StrictModel):
     deduplication: RewriteDeduplicationSpec = Field(default_factory=RewriteDeduplicationSpec)
 
 
+class JudgeCalibrationSpec(StrictModel):
+    """Judge-misclassification calibration for a generative evaluation.
+
+    ``mode: assumed`` carries no evidence: every corrected interval it produces is a
+    diagnostic sensitivity result. ``mode: validated`` estimates the same two conditional
+    accuracies from human labels drawn within each judge stratum, and its corrected
+    intervals are certifying at the combined error budget.
+
+    Human labels key on the sample identifier materialization wrote, since a generative
+    run has no prompt manifest to key on.
+    """
+
+    mode: Literal["assumed", "validated"] = "assumed"
+    scenarios: list[JudgeCalibrationScenarioSpec] = Field(default_factory=list)
+    primary: str | None = None
+    validation_manifest: str | None = None
+    sampling: Literal["simple_random_within_judge_stratum"] = (
+        "simple_random_within_judge_stratum"
+    )
+    alpha: float = Field(default=0.05, gt=0.0, lt=1.0)
+
+    @model_validator(mode="after")
+    def coherent_mode(self) -> JudgeCalibrationSpec:
+        if self.mode == "assumed":
+            if not self.scenarios:
+                raise ValueError("assumed judge calibration requires at least one scenario")
+            identifiers = [scenario.id for scenario in self.scenarios]
+            if len(set(identifiers)) != len(identifiers):
+                raise ValueError("judge calibration scenarios repeat an id")
+            if self.primary is None:
+                if len(self.scenarios) > 1:
+                    raise ValueError(
+                        "assumed judge calibration with several scenarios must name a primary"
+                    )
+                self.__dict__["primary"] = self.scenarios[0].id
+            elif self.primary not in identifiers:
+                raise ValueError(f"primary scenario {self.primary!r} is not declared")
+            if self.validation_manifest is not None:
+                raise ValueError("validation_manifest applies only to mode: validated")
+        else:
+            if self.validation_manifest is None:
+                raise ValueError("validated judge calibration requires a validation_manifest")
+            if self.scenarios:
+                raise ValueError("validated judge calibration does not declare scenarios")
+        return self
+
+
 class ScoreMappingSpec(StrictModel):
     failure_values: list[str] = Field(min_length=1)
     safe_values: list[str] = Field(min_length=1)
@@ -320,6 +369,7 @@ class GenerativePlan(StrictModel):
     rewrite: RewriteSpec
     target: TargetSpec
     sampling: SamplingSpec
+    judge_calibration: JudgeCalibrationSpec | None = None
     inference: InferenceSpec = Field(default_factory=InferenceSpec)
 
 

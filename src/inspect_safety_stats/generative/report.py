@@ -18,6 +18,7 @@ import pandas as pd
 
 from inspect_safety_stats.generative.comparisons import ComparisonResult
 from inspect_safety_stats.generative.inference import NodeEstimate, TreeEstimate
+from inspect_safety_stats.generative.judge import CorrectedEstimate
 from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
 from inspect_safety_stats.generative.visualization import write_generative_report
 from inspect_safety_stats.schema.reports import Diagnostic
@@ -45,6 +46,7 @@ class GenerativeReport:
     taxonomy: CompiledTaxonomy
     slices: list[NodeEstimate] = field(default_factory=list)
     comparisons: list[ComparisonResult] = field(default_factory=list)
+    corrected: list[CorrectedEstimate] = field(default_factory=list)
     diagnostics: list[Diagnostic] = field(default_factory=list)
 
     @property
@@ -95,6 +97,7 @@ class GenerativeReport:
                 }
                 for item in self.comparisons
             ],
+            "corrected": [asdict(item) for item in self.corrected],
             "unsampled_nodes": list(self.tree.unsampled_nodes),
             "coverage": {
                 "alpha": self.tree.alpha,
