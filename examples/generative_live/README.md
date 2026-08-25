@@ -107,6 +107,14 @@ labels — prompts opening `direct_request:` or `Rollenspiel:` — while `rolepl
 roleplay and `plain` and `conversational` were near-indistinguishable. The paraphrases were
 semantically faithful and the equivalence check passed them all; the *arms* were the problem.
 
+```bash
+python examples/generative_live/review_prompts.py run/live --seed ba-02
+```
+
+groups the accepted prompts by seed, shows the arms each was drawn under, and flags the two
+things a glance misses: a rewrite that *names* its framing rather than enacting it, and
+near-duplicates within a seed that exact-hash deduplication cannot see.
+
 That matters statistically: the plan assigns 30% of the design's weight to `roleplay` and 20%
 to `nested_task`. If the kernel is not producing those variations, the hierarchy claims
 structure the prompts do not carry, and any node or slice split on `wrapper` measures noise.
