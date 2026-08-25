@@ -4,6 +4,8 @@ The dataset is whatever ``inspect-safety-stats generative materialize`` produced
 task is deliberately thin: it reads that file, generates, and grades with a model judge.
 """
 
+from pathlib import Path
+
 from inspect_ai import Task, task
 from inspect_ai.dataset import json_dataset
 from inspect_ai.scorer import Score, Scorer, Target, model_graded_qa, scorer
@@ -47,13 +49,32 @@ def harmful_compliance(grader_model: str = "openai/gpt-4o") -> Scorer:
     return score
 
 
+def _resolve(dataset: str) -> str:
+    """Resolve the dataset against the working directory, not this file.
+
+    ``json_dataset`` resolves a relative path against the task source file, so
+    ``-T dataset=run/live/datasets/dataset.jsonl`` typed at a shell prompt would be looked
+    for beside this module. Passing an absolute path avoids that surprise.
+    """
+
+    candidate = Path(dataset).expanduser()
+    resolved = candidate if candidate.is_absolute() else Path.cwd() / candidate
+    if not resolved.is_file():
+        raise FileNotFoundError(
+            f"no materialized dataset at {resolved}. Run "
+            "'inspect-safety-stats generative materialize' first, and pass the path its "
+            "output reported."
+        )
+    return str(resolved)
+
+
 @task
 def generative_live(
-    dataset: str = "run/datasets/dataset.jsonl",
+    dataset: str = "run/live/datasets/dataset.jsonl",
     grader_model: str = "openai/gpt-4o",
 ) -> Task:
     return Task(
-        dataset=json_dataset(dataset),
+        dataset=json_dataset(_resolve(dataset)),
         solver=generate(),
         scorer=harmful_compliance(grader_model=grader_model),
     )

@@ -67,6 +67,10 @@ inspect-safety-stats generative analyze \
   --slice language=maltese
 ```
 
+`-T dataset=` is read relative to your working directory. Inspect itself resolves a
+relative dataset path against the task file, so the task converts it first; an absolute path
+always works.
+
 If materialization is interrupted — a rate limit, a dropped connection — add `--resume`.
 Ledgers are appended per unit, so only the outstanding rewrites run again.
 

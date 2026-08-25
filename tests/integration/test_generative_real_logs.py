@@ -221,3 +221,29 @@ def test_the_live_example_plan_compiles_and_projects(tmp_path: Path) -> None:
     )
     assert projection.rewrite_calls > 60          # retries cost real calls
     assert projection.expected_unsampled_nodes > 0
+
+
+def test_the_live_example_task_resolves_a_dataset_from_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """json_dataset resolves against the task file; the caller means their shell's cwd."""
+
+    import sys
+
+    example = Path(__file__).resolve().parents[2] / "examples" / "generative_live"
+    sys.path.insert(0, str(example))
+    try:
+        from generative_live import _resolve
+    finally:
+        sys.path.remove(str(example))
+
+    dataset = tmp_path / "run" / "live" / "datasets" / "dataset.jsonl"
+    dataset.parent.mkdir(parents=True)
+    dataset.write_text('{"id": "p-0", "input": "hello"}\n', encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path)
+    assert _resolve("run/live/datasets/dataset.jsonl") == str(dataset)
+    assert _resolve(str(dataset)) == str(dataset)
+
+    with pytest.raises(FileNotFoundError, match="generative materialize"):
+        _resolve("run/absent/dataset.jsonl")
