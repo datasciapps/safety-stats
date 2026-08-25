@@ -10,6 +10,8 @@ estimand.
 from __future__ import annotations
 
 import importlib
+import importlib.util
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -83,6 +85,7 @@ class MaterializedRun:
     kernel: KernelFingerprint
     kernel_mismatch: str | None
     resumed: int = 0
+    first_error: str | None = None
 
 
 def resolve_kernel(specification: str) -> RewriteKernel:
@@ -105,14 +108,45 @@ def resolve_kernel(specification: str) -> RewriteKernel:
             invalid_every = int(value)
         return DeterministicFakeKernel(invalid_every=invalid_every)
 
-    module_name, separator, attribute = specification.partition(":")
-    if not separator or not attribute:
+    # rpartition, so a Windows drive letter in a file path is not mistaken for the
+    # separator.
+    target, separator, attribute = specification.rpartition(":")
+    if not separator or not attribute or not target:
         raise ValueError(
-            f"kernel {specification!r} must be 'fake', 'fake:invalid_every=N', or "
-            "'module:attribute'"
+            f"kernel {specification!r} must be 'fake', 'fake:invalid_every=N', "
+            "'module:attribute', or 'path/to/file.py:attribute'"
         )
-    module = importlib.import_module(module_name)
-    resolved = getattr(module, attribute)
+
+    candidate = Path(target)
+    if candidate.suffix == ".py":
+        if not candidate.is_file():
+            raise ValueError(f"kernel file {candidate} does not exist")
+        loader = importlib.util.spec_from_file_location(candidate.stem, candidate)
+        if loader is None or loader.loader is None:
+            raise ValueError(f"kernel file {candidate} could not be loaded")
+        module = importlib.util.module_from_spec(loader)
+        # Registered before execution so dataclasses and typing inside it resolve.
+        sys.modules[candidate.stem] = module
+        loader.loader.exec_module(module)
+    else:
+        # A console script does not put the working directory on sys.path, but someone
+        # naming a module on the command line means the one in their project.
+        working = str(Path.cwd())
+        if working not in sys.path:
+            sys.path.insert(0, working)
+        try:
+            module = importlib.import_module(target)
+        except ModuleNotFoundError as exc:
+            raise ValueError(
+                f"kernel module {target!r} could not be imported ({exc}). Name an "
+                "installed module, or point at the file directly as "
+                f"'path/to/file.py:{attribute}'."
+            ) from exc
+
+    try:
+        resolved = getattr(module, attribute)
+    except AttributeError as exc:
+        raise ValueError(f"{target!r} has no attribute {attribute!r}") from exc
     candidate = resolved() if callable(resolved) and not hasattr(resolved, "rewrite") else resolved
     if not hasattr(candidate, "rewrite"):
         raise ValueError(f"{specification!r} does not provide a rewrite() method")
@@ -265,6 +299,7 @@ def materialize_run(
         kernel=fingerprint,
         kernel_mismatch=mismatch,
         resumed=resumed,
+        first_error=result.first_error,
     )
 
 

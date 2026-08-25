@@ -313,7 +313,21 @@ def generative_materialize_command(
     typer.echo(f"Dataset: {run.dataset}")
     typer.echo(f"Artifacts: {run.output}")
     if run.accepted == 0:
-        typer.echo("No rewrite passed validation; there is nothing to evaluate.", err=True)
+        if run.errored >= run.exhausted:
+            typer.echo(
+                "Every rewrite failed with a provider error, so nothing was generated. "
+                "Check credentials, connectivity and the model name in the plan.",
+                err=True,
+            )
+            if run.first_error:
+                typer.echo(f"First error: {run.first_error}", err=True)
+        else:
+            typer.echo(
+                "No rewrite passed validation; there is nothing to evaluate. Raise "
+                "rewrite.validation.maximum_attempts, loosen rewrite.deduplication, or "
+                "check that the kernel returns usable text.",
+                err=True,
+            )
         raise typer.Exit(code=3)
 
 

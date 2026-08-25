@@ -17,6 +17,11 @@ You supply the API access. Nothing here runs without it.
 | [`generative_live.py`](generative_live.py) | the Inspect task: reads the materialized dataset, generates, grades with a model judge |
 | [`plan.yaml`](plan.yaml) | a small budget — 60 rewrites — configured for `openai/gpt-4o` and `openai/gpt-4o-mini` |
 
+`--kernel` takes either `module:attribute` for something importable, or
+`path/to/file.py:attribute` for a local file. The file form is what you want for a kernel
+that lives in your project rather than in an installed package — it needs no `__init__.py`
+and no `PYTHONPATH`.
+
 The kernel demonstrates two things the package cannot do for you.
 
 **It performs validation rather than declaring it.** `rewrite.validation.validator_id` is
@@ -45,7 +50,7 @@ Generate the prompts. This is where the spend starts:
 inspect-safety-stats generative materialize \
   --plan examples/generative_live/plan.yaml \
   --output run/live \
-  --kernel examples.generative_live.rewriter:build_kernel
+  --kernel examples/generative_live/rewriter.py:build_kernel
 ```
 
 Evaluate them, then analyse:

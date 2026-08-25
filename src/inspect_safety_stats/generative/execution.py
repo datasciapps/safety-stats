@@ -49,6 +49,7 @@ class ExecutionResult:
     duplicates_rejected: int
     exhausted: tuple[str, ...]
     errored: tuple[str, ...]
+    first_error: str | None = None
 
     @property
     def accepted_by_unit(self) -> dict[str, AcceptedRewrite]:
@@ -202,6 +203,7 @@ def execute_rewrites(
     duplicates = 0
     exhausted: list[str] = []
     errored: list[str] = []
+    first_error: str | None = None
 
     salt_seed = plan.evaluation.selection_seed
     if rewrite_salt:
@@ -259,6 +261,8 @@ def execute_rewrites(
             )
             if outcome.status == "error":
                 status = "error"
+                if first_error is None:
+                    first_error = outcome.detail
                 break
             if outcome.status == "invalid":
                 if validation.on_invalid == "fail":
@@ -324,6 +328,7 @@ def execute_rewrites(
         duplicates_rejected=duplicates,
         exhausted=tuple(exhausted),
         errored=tuple(errored),
+        first_error=first_error,
     )
 
 

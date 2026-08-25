@@ -163,16 +163,19 @@ constraints pruned, the fingerprint -- without generating anything.
 
 ```bash
 inspect-safety-stats generative materialize \
-  --plan plan.yaml --output run/ --kernel mypackage.rewriters:build_kernel
+  --plan plan.yaml --output run/ --kernel rewriters.py:build_kernel
 ```
 
 Selects paths, runs the rewrite procedure, and writes `datasets/dataset.jsonl` for Inspect,
 `selections.csv` and `rewrites.csv` as ledgers, and `prompts.restricted.csv` -- the only
 artifact carrying prompt text.
 
-`--kernel` takes `fake`, `fake:invalid_every=N`, or `module:attribute` naming a kernel or a
-zero-argument factory implementing the `RewriteKernel` protocol. Nothing here depends on a
-particular rewriter client.
+`--kernel` takes `fake`, `fake:invalid_every=N`, `module:attribute` for something
+importable, or `path/to/file.py:attribute` for a local file. The file form needs no
+`__init__.py` and no `PYTHONPATH`, which is usually what you want for a kernel that lives in
+your own project. Either way the attribute may be a kernel or a zero-argument factory
+implementing the `RewriteKernel` protocol. Nothing here depends on a particular rewriter
+client.
 
 Evaluate that dataset with Inspect and your judge, then:
 

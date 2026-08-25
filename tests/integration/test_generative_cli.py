@@ -448,3 +448,77 @@ def test_budget_command_flags_an_unaffordable_stratum_floor(tmp_path: Path) -> N
     )
     assert result.exit_code == 0, result.stdout
     assert "infeasible" in result.stdout
+
+
+def test_a_kernel_can_be_named_by_file_path(tmp_path: Path) -> None:
+    """The form a local kernel needs: no __init__.py, no PYTHONPATH."""
+
+    module = tmp_path / "my_kernel.py"
+    module.write_text(
+        "from inspect_safety_stats.generative import RewriteOutcome\n\n\n"
+        "class Mine:\n"
+        "    kernel_id = 'mine'\n\n"
+        "    def rewrite(self, request):\n"
+        "        return RewriteOutcome(status='valid', prompt='from a file')\n\n\n"
+        "def build():\n"
+        "    return Mine()\n",
+        encoding="utf-8",
+    )
+    kernel = resolve_kernel(f"{module}:build")
+    assert kernel.kernel_id == "mine"
+
+
+def test_the_shipped_live_example_kernel_resolves_as_documented() -> None:
+    """Exactly the string the runbook tells a reader to type."""
+
+    root = Path(__file__).resolve().parents[2]
+    kernel = resolve_kernel(
+        f"{root / 'examples' / 'generative_live' / 'rewriter.py'}:build_kernel"
+    )
+    assert hasattr(kernel, "rewrite")
+    assert kernel.kernel_id == "inspect-paraphrase-v1"
+
+
+def test_a_missing_kernel_file_or_attribute_says_which(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="does not exist"):
+        resolve_kernel(f"{tmp_path / 'absent.py'}:build")
+
+    module = tmp_path / "empty_kernel.py"
+    module.write_text("x = 1\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="has no attribute 'build'"):
+        resolve_kernel(f"{module}:build")
+
+
+def test_an_unimportable_module_suggests_the_file_form() -> None:
+    with pytest.raises(ValueError, match="path/to/file.py:build"):
+        resolve_kernel("no.such.module:build")
+
+
+def test_provider_errors_are_reported_as_such_not_as_validation(tmp_path: Path) -> None:
+    """A missing API key must not read as a validator problem."""
+
+    import inspect_safety_stats.generative.runner as runner_module
+    from inspect_safety_stats.generative import RewriteOutcome
+
+    class Broken:
+        kernel_id = "broken"
+
+        def rewrite(self, request):
+            return RewriteOutcome(status="error", detail="no credentials configured")
+
+    plan = write_plan(tmp_path, total=20)
+    original = runner_module.resolve_kernel
+    runner_module.resolve_kernel = lambda spec: Broken()  # type: ignore[assignment]
+    try:
+        result = runner.invoke(
+            app,
+            ["generative", "materialize", "--plan", str(plan),
+             "--output", str(tmp_path / "run")],
+        )
+    finally:
+        runner_module.resolve_kernel = original  # type: ignore[assignment]
+
+    assert result.exit_code == 3
+    assert "provider error" in result.output
+    assert "no credentials configured" in result.output
+    assert "No rewrite passed validation" not in result.output
