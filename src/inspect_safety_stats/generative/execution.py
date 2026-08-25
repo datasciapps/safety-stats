@@ -13,7 +13,7 @@ to a restricted artifact, and only its hash is recorded for provenance.
 from __future__ import annotations
 
 import hashlib
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,6 +25,7 @@ from inspect_safety_stats.generative.kernels import (
     RewriteRequest,
 )
 from inspect_safety_stats.generative.ledger import (
+    IncrementalCsvWriter,
     RewriteRecord,
     SelectionRecord,
     prompt_sha256,
@@ -94,11 +95,25 @@ def execute_rewrites(
     seed_texts: Mapping[str, str],
     *,
     rewrite_salt: str = "",
+    completed: Mapping[str, RewriteRecord] | None = None,
+    already_accepted: Mapping[str, AcceptedRewrite] | None = None,
+    on_unit: Callable[[RewriteRecord, AcceptedRewrite | None], None] | None = None,
 ) -> ExecutionResult:
     """Draw one accepted rewrite per selected path, ledgering every attempt.
 
     ``rewrite_salt`` makes a cohort's rewrites independent of another's. Leave it empty
     for the shared-rewrite pairing that ``target.shared_rewrites`` describes.
+
+    ``completed`` carries units a previous run already finished, which are replayed rather
+    than re-executed. A unit whose retries were exhausted belongs there: it is part of the
+    accepted distribution the estimand is defined against, and re-running it would grant it
+    more than ``maximum_attempts`` and quietly shift that distribution. A unit that
+    *errored* does not belong there -- an operational failure says nothing about the
+    kernel -- so the caller should omit it and let it run again.
+
+    ``on_unit`` is called as each *newly executed* unit finishes, so a caller can persist it
+    before the next one starts. Replayed units do not fire it: they are already on disk, and
+    re-emitting them would mean deleting the record before rewriting it.
     """
 
     validation = plan.rewrite.validation
@@ -126,6 +141,27 @@ def execute_rewrites(
             part.split("=", 1) for part in node_id.split("|")[1:] if "=" in part
         )
         key = _dedup_key(plan, node_id, seed_id)
+
+        prior = completed.get(unit_id) if completed else None
+        if prior is not None:
+            records.append(prior)
+            carried: AcceptedRewrite | None = None
+            if prior.is_evaluable():
+                if already_accepted is None or unit_id not in already_accepted:
+                    raise ValueError(
+                        f"unit {unit_id} is recorded as accepted but its prompt text is "
+                        "missing; the rewrite ledger and the prompt store disagree"
+                    )
+                carried = already_accepted[unit_id]
+                accepted.append(carried)
+                if key is not None:
+                    seen.setdefault(key, set()).add(carried.prompt_sha256)
+            elif prior.validation_status == "error":
+                errored.append(unit_id)
+            else:
+                exhausted.append(unit_id)
+            continue
+
         status = "invalid"
         prompt: str | None = None
         attempts = 0
@@ -171,36 +207,38 @@ def execute_rewrites(
                 attempts=attempts,
             )
             accepted.append(entry)
-            records.append(
-                RewriteRecord(
-                    sampling_unit_id=unit_id,
-                    rewrite_draw_id=f"{unit_id}-r1",
-                    rewrite_kernel_id=fingerprint.kernel_id,
-                    rewrite_kernel_sha256=fingerprint.sha256,
-                    rewrite_attempts=attempts,
-                    validation_status="valid",
-                    prompt_id=entry.prompt_id,
-                    prompt_sha256=entry.prompt_sha256,
-                    source_semantic_seed_id=seed_id,
-                )
+            fresh = RewriteRecord(
+                sampling_unit_id=unit_id,
+                rewrite_draw_id=f"{unit_id}-r1",
+                rewrite_kernel_id=fingerprint.kernel_id,
+                rewrite_kernel_sha256=fingerprint.sha256,
+                rewrite_attempts=attempts,
+                validation_status="valid",
+                prompt_id=entry.prompt_id,
+                prompt_sha256=entry.prompt_sha256,
+                source_semantic_seed_id=seed_id,
             )
+            records.append(fresh)
+            if on_unit is not None:
+                on_unit(fresh, entry)
             continue
 
         if status == "error":
             errored.append(unit_id)
         else:
             exhausted.append(unit_id)
-        records.append(
-            RewriteRecord(
-                sampling_unit_id=unit_id,
-                rewrite_draw_id=f"{unit_id}-r1",
-                rewrite_kernel_id=fingerprint.kernel_id,
-                rewrite_kernel_sha256=fingerprint.sha256,
-                rewrite_attempts=attempts,
-                validation_status="error" if status == "error" else "invalid",
-                source_semantic_seed_id=seed_id,
-            )
+        unfinished = RewriteRecord(
+            sampling_unit_id=unit_id,
+            rewrite_draw_id=f"{unit_id}-r1",
+            rewrite_kernel_id=fingerprint.kernel_id,
+            rewrite_kernel_sha256=fingerprint.sha256,
+            rewrite_attempts=attempts,
+            validation_status="error" if status == "error" else "invalid",
+            source_semantic_seed_id=seed_id,
         )
+        records.append(unfinished)
+        if on_unit is not None:
+            on_unit(unfinished, None)
 
     return ExecutionResult(
         rewrites=tuple(records),
@@ -209,6 +247,39 @@ def execute_rewrites(
         exhausted=tuple(exhausted),
         errored=tuple(errored),
     )
+
+
+def read_prompt_store(path: str | Path) -> dict[str, AcceptedRewrite]:
+    """Read back the restricted prompt artifact, keyed by sampling unit.
+
+    Resumption needs the prompt text of previously accepted rewrites, both to rebuild the
+    Inspect dataset and to reconstruct deduplication state. The ledger carries only hashes,
+    so this is the artifact that has to be read.
+    """
+
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    required = ("sampling_unit_id", "prompt_id", "prompt", "prompt_sha256")
+    missing = [column for column in required if column not in frame.columns]
+    if missing:
+        raise ValueError(f"prompt store {path} is missing columns: {', '.join(missing)}")
+    entries: dict[str, AcceptedRewrite] = {}
+    for row in frame.to_dict("records"):
+        unit_id = str(row["sampling_unit_id"])
+        entries[unit_id] = AcceptedRewrite(
+            sampling_unit_id=unit_id,
+            prompt_id=str(row["prompt_id"]),
+            prompt=str(row["prompt"]),
+            prompt_sha256=str(row["prompt_sha256"]),
+            attempts=0,
+        )
+    return entries
+
+
+PROMPT_STORE_COLUMNS = ("sampling_unit_id", "prompt_id", "prompt", "prompt_sha256")
+
+
+def prompt_store_writer(path: str | Path) -> IncrementalCsvWriter:
+    return IncrementalCsvWriter(path, PROMPT_STORE_COLUMNS)
 
 
 def write_prompt_store(accepted: tuple[AcceptedRewrite, ...], path: str | Path) -> None:

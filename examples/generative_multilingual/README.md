@@ -188,8 +188,14 @@ to exercise the retry path, or `module:attribute` naming your own object impleme
 depends on a particular rewriter client.
 
 That writes `datasets/dataset.jsonl` for Inspect, `selections.csv` and `rewrites.csv` as the
-ledgers, and `prompts.restricted.csv` as the only artifact containing prompt text. Evaluate
-the dataset with Inspect and your judge, then:
+ledgers, and `prompts.restricted.csv` as the only artifact containing prompt text.
+
+The ledgers are appended as each rewrite completes, so a run killed by a rate limit or a
+dropped connection leaves a usable record. Add `--resume` to continue it; only the outstanding
+units run again. Units whose retries were exhausted are **not** retried, since they are part of
+the accepted distribution the estimand is defined against, but units that errored are.
+
+Evaluate the dataset with Inspect and your judge, then:
 
 ```bash
 inspect-safety-stats generative analyze --plan examples/generative_multilingual/plan-direct.yaml --artifacts run/generative --logs run/logs --output run/report --slice language=maltese --compare candidate:baseline

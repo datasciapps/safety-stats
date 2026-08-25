@@ -15,9 +15,11 @@ from pathlib import Path
 
 from inspect_safety_stats.generative.comparisons import ComparisonResult, compare_cohorts
 from inspect_safety_stats.generative.execution import (
+    AcceptedRewrite,
     execute_rewrites,
     load_seed_texts,
-    write_prompt_store,
+    prompt_store_writer,
+    read_prompt_store,
 )
 from inspect_safety_stats.generative.inference import (
     NodeEstimate,
@@ -35,9 +37,11 @@ from inspect_safety_stats.generative.kernels import (
     resolve_kernel_fingerprint,
 )
 from inspect_safety_stats.generative.ledger import (
+    RewriteRecord,
+    SelectionRecord,
     read_rewrites,
     read_selections,
-    write_rewrites,
+    rewrite_ledger_writer,
     write_selections,
 )
 from inspect_safety_stats.generative.logs import LogInput, read_evaluated_samples
@@ -64,6 +68,7 @@ class MaterializedRun:
     taxonomy_fingerprint: str
     kernel: KernelFingerprint
     kernel_mismatch: str | None
+    resumed: int = 0
 
 
 def resolve_kernel(specification: str) -> RewriteKernel:
@@ -105,6 +110,49 @@ def _load(plan_path: str | Path) -> tuple[GenerativePlan, Path]:
     return load_generative_plan(path), path.parent
 
 
+def _prior_work(
+    directory: Path, selections: list[SelectionRecord]
+) -> tuple[dict[str, RewriteRecord], dict[str, AcceptedRewrite]]:
+    """Read what an earlier run finished, and check it describes this same design.
+
+    Units recorded as ``valid`` or ``invalid`` are final. An exhausted unit is part of the
+    accepted distribution the estimand is defined against, so re-running it would grant it
+    more attempts than the plan allows. A unit recorded as ``error`` is not final: an
+    operational failure says nothing about the kernel, so it is left out and runs again.
+    """
+
+    ledger = directory / REWRITE_LEDGER
+    if not ledger.exists():
+        return {}, {}
+
+    recorded = read_selections(directory / SELECTION_LEDGER)
+    if [(item.sampling_unit_id, item.path_hash) for item in recorded] != [
+        (item.sampling_unit_id, item.path_hash) for item in selections
+    ]:
+        raise ValueError(
+            "the plan no longer reproduces the selection ledger in this directory, so the "
+            "partial run it holds belongs to a different design; resume is not safe"
+        )
+
+    store = directory / PROMPT_STORE
+    prompts = read_prompt_store(store) if store.exists() else {}
+    completed: dict[str, RewriteRecord] = {}
+    accepted: dict[str, AcceptedRewrite] = {}
+    for record in read_rewrites(ledger):
+        if record.validation_status == "error":
+            continue
+        completed[record.sampling_unit_id] = record
+        if record.is_evaluable():
+            entry = prompts.get(record.sampling_unit_id)
+            if entry is None:
+                raise ValueError(
+                    f"unit {record.sampling_unit_id} is recorded as accepted but the prompt "
+                    "store has no text for it; the two artifacts disagree"
+                )
+            accepted[record.sampling_unit_id] = entry
+    return completed, accepted
+
+
 def materialize_run(
     plan_path: str | Path,
     output: str | Path,
@@ -112,15 +160,31 @@ def materialize_run(
     kernel: str = "fake",
     stage: str = "main",
     overwrite: bool = False,
+    resume: bool = False,
     rewrite_salt: str = "",
 ) -> MaterializedRun:
-    """Compile, select, run the rewrite procedure, and write everything an Inspect run needs."""
+    """Compile, select, run the rewrite procedure, and write everything an Inspect run needs.
+
+    Ledgers are written as each unit completes rather than in one batch at the end, so a run
+    killed partway leaves a usable record. ``resume`` picks that record up and executes only
+    the units still outstanding; because selection is counter-based, the units it re-derives
+    are identical to the ones the interrupted run would have gone on to draw.
+    """
 
     plan, base = _load(plan_path)
     directory = Path(output)
-    if directory.exists() and any(directory.iterdir()) and not overwrite:
-        raise FileExistsError(f"{directory} is not empty; pass --overwrite to replace it")
+    occupied = directory.exists() and any(directory.iterdir())
+    if occupied and not (overwrite or resume):
+        raise FileExistsError(
+            f"{directory} is not empty; pass --overwrite to replace it or --resume to "
+            "continue the run it holds"
+        )
+    if overwrite and resume:
+        raise ValueError("--overwrite and --resume are mutually exclusive")
     directory.mkdir(parents=True, exist_ok=True)
+    if overwrite:
+        for name in (SELECTION_LEDGER, REWRITE_LEDGER, PROMPT_STORE):
+            (directory / name).unlink(missing_ok=True)
 
     taxonomy = compile_taxonomy(plan, base_path=base)
     fingerprint = resolve_kernel_fingerprint(plan, base_path=base)
@@ -139,18 +203,41 @@ def materialize_run(
     if stage not in {"pilot", "main"}:
         raise ValueError("stage must be 'pilot' or 'main'")
     selections = draw_selections(taxonomy, design, stage_id=stage)  # type: ignore[arg-type]
-    result = execute_rewrites(
-        plan,
-        selections,
-        rewriter,
-        fingerprint,
-        load_seed_texts(plan, base_path=base),
-        rewrite_salt=rewrite_salt,
-    )
 
+    completed, accepted_before = _prior_work(directory, selections) if resume else ({}, {})
+    resumed = len(completed)
+    # Selections are known before any kernel call, so they are persisted first: an
+    # interrupted run then still records what it set out to evaluate.
     write_selections(selections, directory / SELECTION_LEDGER)
-    write_rewrites(list(result.rewrites), directory / REWRITE_LEDGER)
-    write_prompt_store(result.accepted, directory / PROMPT_STORE)
+
+    # Both artifacts are appended to, never rewritten. Resuming therefore cannot destroy
+    # the work it is building on, even if the resumed run is itself interrupted. Rows land
+    # in completion order rather than selection order; nothing downstream reads order.
+    ledger = rewrite_ledger_writer(directory / REWRITE_LEDGER)
+    prompts_out = prompt_store_writer(directory / PROMPT_STORE)
+    with ledger, prompts_out:
+        def persist(record: RewriteRecord, entry: AcceptedRewrite | None) -> None:
+            ledger.append(record.model_dump(mode="json"))
+            if entry is not None:
+                prompts_out.append({
+                    "sampling_unit_id": entry.sampling_unit_id,
+                    "prompt_id": entry.prompt_id,
+                    "prompt": entry.prompt,
+                    "prompt_sha256": entry.prompt_sha256,
+                })
+
+        result = execute_rewrites(
+            plan,
+            selections,
+            rewriter,
+            fingerprint,
+            load_seed_texts(plan, base_path=base),
+            rewrite_salt=rewrite_salt,
+            completed=completed,
+            already_accepted=accepted_before,
+            on_unit=persist,
+        )
+
     datasets = materialize_for_cohorts(plan, selections, result, directory / "datasets")
     return MaterializedRun(
         output=directory,
@@ -163,6 +250,7 @@ def materialize_run(
         taxonomy_fingerprint=taxonomy.fingerprint,
         kernel=fingerprint,
         kernel_mismatch=mismatch,
+        resumed=resumed,
     )
 
 

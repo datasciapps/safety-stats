@@ -11,10 +11,12 @@ and hashes; the prompt text lives in a separate restricted materialization artif
 
 from __future__ import annotations
 
+import csv
 import hashlib
-from collections.abc import Hashable, Mapping
+from collections.abc import Hashable, Mapping, Sequence
 from pathlib import Path
-from typing import Literal
+from types import TracebackType
+from typing import Any, Literal
 
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
@@ -61,6 +63,50 @@ class RewriteRecord(LedgerModel):
 
 SELECTION_COLUMNS = tuple(SelectionRecord.model_fields)
 REWRITE_COLUMNS = tuple(RewriteRecord.model_fields)
+
+
+class IncrementalCsvWriter:
+    """Append rows as they are produced, flushing each one.
+
+    Materialization writes its ledgers this way rather than in one batch at the end. A run
+    killed partway -- by a rate limit, a dropped connection, a spend cap -- then leaves a
+    usable record of the units it did complete, which is what makes resumption possible at
+    all. Writing only on success loses every completed unit.
+    """
+
+    def __init__(self, path: str | Path, columns: Sequence[str]) -> None:
+        self._path = Path(path)
+        self._columns = list(columns)
+        self._handle: Any = None
+        self._writer: Any = None
+
+    def __enter__(self) -> IncrementalCsvWriter:
+        existing = self._path.exists() and self._path.stat().st_size > 0
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._handle = self._path.open("a", newline="", encoding="utf-8")
+        self._writer = csv.DictWriter(self._handle, fieldnames=self._columns)
+        if not existing:
+            self._writer.writeheader()
+            self._handle.flush()
+        return self
+
+    def append(self, row: Mapping[str, object]) -> None:
+        self._writer.writerow({key: row.get(key) for key in self._columns})
+        self._handle.flush()
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        if self._handle is not None:
+            self._handle.close()
+            self._handle = None
+
+
+def rewrite_ledger_writer(path: str | Path) -> IncrementalCsvWriter:
+    return IncrementalCsvWriter(path, REWRITE_COLUMNS)
 
 
 def prompt_sha256(prompt: str) -> str:

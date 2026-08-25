@@ -1769,7 +1769,7 @@ that matters.
 
 ```
 inspect-safety-stats generative compile     --plan P
-inspect-safety-stats generative materialize --plan P --output DIR [--kernel K]
+inspect-safety-stats generative materialize --plan P --output DIR [--kernel K] [--resume]
 inspect-safety-stats generative analyze     --plan P --artifacts DIR --logs L --output DIR
 ```
 
@@ -1917,7 +1917,7 @@ closed by measurement, and what is genuinely still missing.
 |---|---|---|
 | 1 | define a deep hierarchy without enumerating prompts | met |
 | 2 | one auditable target distribution over valid paths | met |
-| 3 | materialize, **resume**, pair, and join to a ledger | partial |
+| 3 | materialize, resume, pair, and join to a ledger | met |
 | 4 | estimators recover known node risks with validated intervals | met |
 | 5 | data-driven choice between paths, rewrites and rollouts | answered, not built |
 | 6 | incomplete schedules used only with known probabilities | vacuous |
@@ -1961,11 +1961,35 @@ the departure that costs the sharp kernel is visible rather than inferred.
 
 Discovery metrics in criterion 9 have no referent: there is no discovery mode.
 
+### Criterion 3: resume
+
+Counter-based selection already made a partial run a prefix of a complete one, so the units a
+resumed run re-derives are exactly the ones the interrupted run would have gone on to draw.
+What was missing was persistence: `execute_rewrites` ran to completion before anything reached
+disk, so an interrupted run left nothing to resume *from*. The first change was therefore not a
+flag but incremental writing.
+
+Ledgers are now appended as each unit completes, and `--resume` continues from what is there.
+Three rules make it safe:
+
+- A unit recorded as **valid** or **invalid** is final. An exhausted unit is part of the
+  accepted distribution the estimand is defined against, so re-running it would grant it more
+  than `maximum_attempts` and quietly shift that distribution.
+- A unit recorded as **error** is not final. An operational failure -- a dropped connection, a
+  rate limit -- says nothing about the kernel, so it runs again.
+- Deduplication state is rebuilt from the `prompt_sha256` values already accepted, and replayed
+  in selection order, so a resumed run rejects exactly the repeats a single run would have.
+
+Both artifacts are append-only and never rewritten, so resuming cannot destroy the work it
+builds on even if the resumed run is itself interrupted; a test asserts that across two
+successive failures. Rows therefore land in completion order rather than selection order, which
+nothing downstream reads. The plan is re-compiled and checked against the recorded selection
+ledger before any of this, so a directory belonging to a different design is refused rather
+than silently continued.
+
 ### What is genuinely still missing
 
-**Resume.** Counter-based selection makes a partial run a prefix of a complete one, and a test
-asserts it, so the *property* that would make resumption safe is there. The *feature* is not:
-`generative materialize` refuses to write into a non-empty directory, and `--overwrite`
-regenerates everything rather than continuing. For a long provider-backed rewrite run that is
-a real gap, and it is the one remaining item in section 25 that measurement has not disposed
-of.
+Nothing in section 25. The criteria are met, closed by measurement, or -- for criterion 6 --
+vacuous. Section 19's richer artifacts beyond JSON, CSV and HTML remain unbuilt, and the
+`generative analyze` log-reading path has still only been exercised against synthetic
+dataframes rather than a real `.eval` file.

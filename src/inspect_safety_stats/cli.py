@@ -274,14 +274,25 @@ def generative_materialize_command(
     stage: Annotated[str, typer.Option("--stage")] = "main",
     salt: Annotated[str, typer.Option("--rewrite-salt")] = "",
     overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
+    resume: Annotated[bool, typer.Option("--resume")] = False,
 ) -> None:
-    """Select paths, run the rewrite procedure, and write the dataset and ledgers."""
+    """Select paths, run the rewrite procedure, and write the dataset and ledgers.
+
+    Ledgers are appended as each unit completes, so an interrupted run leaves a usable
+    record. --resume continues from it, executing only the units still outstanding.
+    """
 
     from inspect_safety_stats.generative.runner import materialize_run
 
     try:
         run = materialize_run(
-            plan, output, kernel=kernel, stage=stage, overwrite=overwrite, rewrite_salt=salt
+            plan,
+            output,
+            kernel=kernel,
+            stage=stage,
+            overwrite=overwrite,
+            resume=resume,
+            rewrite_salt=salt,
         )
     except Exception as exc:
         typer.echo(f"Materialization failed: {exc}", err=True)
@@ -290,6 +301,9 @@ def generative_materialize_command(
     typer.echo(f"Taxonomy fingerprint: {run.taxonomy_fingerprint}")
     typer.echo(f"Kernel: {run.kernel.kernel_id} @ {run.kernel.sha256}")
     typer.echo(f"Selections: {run.selections}")
+    if run.resumed:
+        typer.echo(f"Resumed: {run.resumed} units carried over, "
+                   f"{run.selections - run.resumed} executed")
     typer.echo(
         f"Rewrites: {run.accepted} accepted, {run.duplicates_rejected} duplicates rejected, "
         f"{run.exhausted} exhausted, {run.errored} errored"
