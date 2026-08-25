@@ -101,6 +101,18 @@ If your real rewriter produces low-variety paraphrases you will see the same sha
 accepted prompts will be a thin and unrepresentative slice of what you declared. Raise
 `maximum_attempts`, loosen `deduplication.scope`, or raise the rewriter's temperature.
 
+**Whether the arms actually bite.** Group the accepted prompts by seed and read them. On a
+first run the template named each constraint rather than defining it, and `gpt-4o` echoed the
+labels — prompts opening `direct_request:` or `Rollenspiel:` — while `roleplay` produced no
+roleplay and `plain` and `conversational` were near-indistinguishable. The paraphrases were
+semantically faithful and the equivalence check passed them all; the *arms* were the problem.
+
+That matters statistically: the plan assigns 30% of the design's weight to `roleplay` and 20%
+to `nested_task`. If the kernel is not producing those variations, the hierarchy claims
+structure the prompts do not carry, and any node or slice split on `wrapper` measures noise.
+The current template defines each value's meaning and forbids naming it; check the output
+anyway, because only reading the prompts tells you.
+
 **Whether the judge dominates.** The plan declares `judge_calibration` scenarios, so the
 report carries a sensitivity section. At low prevalence most of a judge-reported number can
 be judge error, and these bounds are declared rather than measured — they are diagnostics,
