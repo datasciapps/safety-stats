@@ -24,6 +24,9 @@ dependencies = [
   "inspect-ai>=0.3.259,<0.4",
   "numpy>=1.26",
   "pandas>=2.0",
+  # inspect_ai.analysis, which both ingestion paths use to read logs, needs this and
+  # declares it only as one of its own dev extras.
+  "pyarrow>=10.0.1",
   "pydantic>=2.7",
   "PyYAML>=6.0",
   "scipy>=1.11",
