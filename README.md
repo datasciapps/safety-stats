@@ -205,6 +205,7 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Primary safety example: HarmBench direct-request multi-rollout evaluation](examples/real_harmbench/README.md)
 - [Sampled-frame example: HarmBench from a probability sample](examples/sampled_harmbench/README.md)
 - [Generative example: multilingual jailbreak rewrites](examples/generative_multilingual/README.md)
+- [Live generative example: real providers end to end](examples/generative_live/README.md)
 - [Secondary calibration example: XSTest over-refusal](examples/real_xstest/README.md)
 
 ## License

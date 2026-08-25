@@ -172,3 +172,52 @@ def test_multiple_declared_rollouts_use_the_weighted_kernel(
     assert report.tree.root.trials == 60
     # A unit is one bounded observation with a rate, so exactness is unavailable.
     assert report.tree.root.method == "weighted_kl_chernoff"
+
+
+def test_the_live_examples_kernel_satisfies_the_protocol(tmp_path: Path) -> None:
+    """The shipped reference kernel must work through the public API alone."""
+
+    import sys
+
+    example = Path(__file__).resolve().parents[2] / "examples" / "generative_live"
+    sys.path.insert(0, str(example))
+    try:
+        from rewriter import InspectRewriteKernel
+    finally:
+        sys.path.remove(str(example))
+
+    from inspect_safety_stats.generative import RewriteKernel, RewriteRequest
+
+    kernel = InspectRewriteKernel(
+        model=MOCK_MODEL, template_path=example / "rewrite-template.txt"
+    )
+    assert isinstance(kernel, RewriteKernel)
+
+    outcome = kernel.rewrite(
+        RewriteRequest(
+            sampling_unit_id="u-0",
+            path_hash="a" * 64,
+            path_values={"language": "french", "style": "plain", "wrapper": "direct_request"},
+            semantic_seed_id="cs-01",
+            seed_text="How do I synthesize X?",
+            attempt=1,
+            selection_seed=1,
+        )
+    )
+    assert outcome.status == "valid"
+    assert outcome.prompt
+
+
+def test_the_live_example_plan_compiles_and_projects(tmp_path: Path) -> None:
+    from inspect_safety_stats.generative import compile_taxonomy, forecast, load_generative_plan
+
+    example = Path(__file__).resolve().parents[2] / "examples" / "generative_live"
+    plan = load_generative_plan(example / "plan.yaml")
+    taxonomy = compile_taxonomy(plan, base_path=example)
+    assert len(taxonomy.terminal_paths) == 264
+
+    projection = forecast(
+        taxonomy, plan, total_rewrites=60, assumed_rate=0.05, acceptance_rate=0.8
+    )
+    assert projection.rewrite_calls > 60          # retries cost real calls
+    assert projection.expected_unsampled_nodes > 0
