@@ -17,15 +17,18 @@ from typing import Any
 from inspect_safety_stats.generative.comparisons import ComparisonResult, compare_cohorts
 from inspect_safety_stats.generative.execution import (
     AcceptedRewrite,
+    acceptance_by_level,
     execute_rewrites,
     load_seed_texts,
     prompt_store_writer,
     read_prompt_store,
+    uneven_acceptance,
 )
 from inspect_safety_stats.generative.inference import (
     NodeEstimate,
     TreeEstimate,
     UnitOutcome,
+    estimate_reweighted,
     estimate_slice,
     estimate_tree,
 )
@@ -437,6 +440,42 @@ def analyze_run(
             )
         )
 
+    acceptance = acceptance_by_level(selections, rewrites)
+    for level in uneven_acceptance(acceptance):
+        spread = [row for row in acceptance if row.level == level]
+        diagnostics.append(
+            Diagnostic(
+                code="GENERATIVE_ACCEPTANCE_UNEVEN",
+                severity="WARNING",
+                message=(
+                    f"the rewrite procedure rejects values of {level!r} at materially "
+                    "different rates, so the accepted prompt distribution is shaped "
+                    "differently across that level"
+                ),
+                scope=level,
+                details={
+                    row.value: round(row.exhaustion_rate, 4)
+                    for row in sorted(spread, key=lambda item: -item.exhaustion_rate)
+                },
+            )
+        )
+
+    reweightings = [
+        estimate_reweighted(
+            taxonomy,
+            design,
+            selections,
+            joined[primary],
+            tree.root,
+            identifier=reweighting.id,
+            level=reweighting.level,
+            weights=reweighting.weights,
+            alpha=plan.inference.alpha,
+            coverage_mode=plan.inference.coverage_mode,
+        )
+        for reweighting in plan.inference.design_sensitivity
+    ]
+
     corrected, judge_meta = _judge_correction(
         plan,
         base,
@@ -481,5 +520,7 @@ def analyze_run(
         slices=cut_results,
         comparisons=comparison_results,
         corrected=corrected,
+        acceptance=acceptance,
+        reweightings=reweightings,
         diagnostics=diagnostics,
     )

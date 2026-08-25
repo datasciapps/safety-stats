@@ -342,6 +342,46 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
   ]));
   root.appendChild(el("div", { class: "tree" }, [render(rootId, 0)]));
 
+  // ---- design sensitivity -------------------------------------------------
+  var reweightings = data.design_sensitivity || [];
+  if (reweightings.length) {
+    root.appendChild(section("Sensitivity to the declared design"));
+    root.appendChild(el("p", { class: "sub", text:
+      "Design weights are a judgement, not a measurement. These re-estimate the root from " +
+      "the same draws under alternative mixes declared in the frozen plan. They are " +
+      "diagnostics: the draws were allocated for the declared design, so reweighting them " +
+      "is importance sampling and the interval widens." }));
+    root.appendChild(table(
+      [{ label: "Alternative" }, { label: "Level" }, { label: "Estimate", num: true },
+       { label: "Upper", num: true }, { label: "Declared upper", num: true },
+       { label: "ESS", num: true }],
+      reweightings.map(function (item) {
+        return [item.id, item.level, pct(item.estimate), pct(item.upper),
+                pct(item.declared_upper), item.effective_sample_size.toFixed(1)];
+      })
+    ));
+  }
+
+  // ---- rewrite acceptance -------------------------------------------------
+  var acceptance = data.acceptance || [];
+  var strained = acceptance.filter(function (row) { return row.exhaustion_rate > 0; });
+  if (strained.length) {
+    root.appendChild(section("Rewrite acceptance"));
+    root.appendChild(el("p", { class: "sub", text:
+      "The estimand is defined against the distribution the complete rewrite procedure " +
+      "induces, retries and rejections included. Where the kernel struggles on one arm and " +
+      "not another, the accepted prompts are shaped differently across the design." }));
+    root.appendChild(table(
+      [{ label: "Level" }, { label: "Value" }, { label: "Units", num: true },
+       { label: "Accepted", num: true }, { label: "Exhausted", num: true },
+       { label: "Mean attempts", num: true }],
+      strained.map(function (row) {
+        return [row.level, row.value, String(row.units), String(row.accepted),
+                pct(row.exhaustion_rate, 1), row.mean_attempts.toFixed(2)];
+      })
+    ));
+  }
+
   // ---- diagnostics --------------------------------------------------------
   root.appendChild(section("Diagnostics"));
   var diagnostics = data.diagnostics || [];

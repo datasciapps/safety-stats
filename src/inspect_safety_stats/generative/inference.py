@@ -14,6 +14,7 @@ which are outcome-independent, and never the failures.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -419,4 +420,129 @@ def estimate_slice(
         coefficient_ratio=float(normalized.max() / normalized.min()),
         effective_sample_size=_effective_sample_size(normalized),
         raw_failure_rate=_raw_failure_rate(slice_outcomes),
+    )
+
+
+@dataclass(frozen=True)
+class ReweightedEstimate:
+    """The root under an alternative declared design, from the same draws.
+
+    Reported as a **diagnostic**, never as evidence, for two reasons. The draws were
+    allocated for the declared design, so reweighting them is importance sampling and the
+    coefficients become unequal -- the interval widens, and ``effective_sample_size`` shows
+    how much the alternative strained the sample. And the construction is self-normalized,
+    so its denominator is random and the interval is not a certified bound on the
+    alternative estimand.
+
+    What it answers is the question worth asking: would the conclusion survive a different
+    but defensible declaration?
+    """
+
+    id: str
+    level: str
+    weights: dict[str, float]
+    draws: int
+    estimate: float | None
+    lower: float
+    upper: float
+    method: str
+    effective_sample_size: float
+    maximum_coefficient: float
+    declared_lower: float
+    declared_upper: float
+    eligibility: Literal["diagnostic"] = "diagnostic"
+
+
+def estimate_reweighted(
+    taxonomy: CompiledTaxonomy,
+    design: SamplingDesign,
+    selections: list[SelectionRecord],
+    outcomes: list[UnitOutcome],
+    root: NodeEstimate,
+    *,
+    identifier: str,
+    level: str,
+    weights: Mapping[str, float],
+    alpha: float = 0.05,
+    coverage_mode: CoverageMode = "one_sided_upper",
+) -> ReweightedEstimate:
+    """Re-estimate the root under a different marginal mix at one level.
+
+    The reweighting names a target *marginal* share for each value of the level, holding
+    everything else's conditional structure fixed. Each draw is then carried at
+    ``target(value) / realized(value)``, which is unbiased for the alternative estimand.
+    """
+
+    if level not in taxonomy.levels:
+        raise ValueError(f"{level!r} is not a level of this taxonomy")
+
+    def value_of(node_id: str) -> str | None:
+        for part in node_id.split("|")[1:]:
+            name, _, value = part.partition("=")
+            if name == level:
+                return value
+        return None
+
+    realized: dict[str, float] = {}
+    for node in taxonomy.terminal_paths:
+        value = value_of(node.node_id)
+        if value is not None:
+            realized[value] = realized.get(value, 0.0) + node.target_path_weight
+
+    unknown = sorted(set(weights) - set(realized))
+    if unknown:
+        raise ValueError(
+            f"reweighting names values absent from level {level!r}: {', '.join(unknown)}"
+        )
+    missing = sorted(set(realized) - set(weights))
+    if missing:
+        raise ValueError(
+            f"reweighting omits values of level {level!r}: {', '.join(missing)}; a marginal "
+            "mix must cover every declared value"
+        )
+
+    factors = {
+        value: (weights[value] / share if share > 0 else 0.0)
+        for value, share in realized.items()
+    }
+    base = _raw_coefficients(design, selections)
+    by_unit = {outcome.sampling_unit_id: outcome for outcome in outcomes}
+
+    unit_ids, raw = [], []
+    for record in selections:
+        value = value_of(record.node_id)
+        if value is None:
+            continue
+        weight = base[record.sampling_unit_id] * factors[value]
+        if weight <= 0.0:
+            continue
+        unit_ids.append(record.sampling_unit_id)
+        raw.append(weight)
+    if not unit_ids:
+        raise ValueError(f"no draw carries positive weight under reweighting {identifier!r}")
+
+    coefficients = np.array(raw, dtype=float)
+    normalized = coefficients / coefficients.sum()
+    reweighted = [
+        by_unit.get(unit_id, UnitOutcome(unit_id, trials=1, failures=0, unclassified=1))
+        for unit_id in unit_ids
+    ]
+    one_sided = coverage_mode == "one_sided_upper"
+    endpoint = alpha if one_sided else alpha / 2.0
+    lower, upper, method, _ = _bounds(
+        reweighted, normalized, alpha_lower=endpoint, alpha_upper=endpoint, one_sided=one_sided
+    )
+    return ReweightedEstimate(
+        id=identifier,
+        level=level,
+        weights=dict(weights),
+        draws=len(unit_ids),
+        estimate=_point_estimate(reweighted, normalized),
+        lower=lower,
+        upper=upper,
+        method=method,
+        effective_sample_size=_effective_sample_size(normalized),
+        maximum_coefficient=float(normalized.max()),
+        declared_lower=root.lower,
+        declared_upper=root.upper,
     )

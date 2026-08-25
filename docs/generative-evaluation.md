@@ -289,6 +289,46 @@ arms separately, the bound is 2.0x--9.8x tighter when the arms respond alike to 
 difficulty, and never worse. Comparisons are pointwise and report the risk difference only;
 both arm intervals travel with each one.
 
+## Sensitivity to the declared design
+
+The weights are a judgement. Changing a language or wrapper mix moves the root risk by about
+as much as the interval is wide, so the number is only meaningful alongside the design that
+produced it. Declare the alternatives worth checking **in the frozen plan**:
+
+```yaml
+inference:
+  design_sensitivity:
+    - id: languages_equal
+      level: language
+      weights: {english: 0.25, french: 0.25, german: 0.25, maltese: 0.25}
+```
+
+Each names a target *marginal* share for one level, holding everything else's conditional
+structure fixed, and is re-estimated from the same draws -- no re-evaluation.
+
+These are **diagnostics, never evidence**, for two reasons. The draws were allocated for the
+declared design, so reweighting them is importance sampling: the coefficients become unequal
+and the interval widens, with `effective_sample_size` showing how much the alternative
+strained the sample. And the construction is self-normalized, so its denominator is random.
+
+Declaring them in advance is what separates a sensitivity analysis from choosing the
+weighting that gives the answer you wanted.
+
+## Rewrite acceptance
+
+The estimand is defined against the distribution the **complete** rewrite procedure induces,
+including its validation and retry rules. If the kernel struggles on one arm and not another
+-- a low-resource language, an awkward wrapper -- then the accepted prompts are shaped
+differently across the design.
+
+`acceptance.csv` and the report's rewrite-acceptance section carry units, accepted, exhausted
+and mean attempts for every value of every level. When exhaustion rates within a level spread
+by more than five percentage points, `GENERATIVE_ACCEPTANCE_UNEVEN` says so.
+
+Nothing in the package validates a rewrite: `rewrite.validation.validator_id` is declared and
+fingerprinted, but the kernel's own verdict is trusted. These rates are the only visibility
+into the assumption the whole estimand rests on.
+
 ## What it refuses
 
 - a plan whose weights do not normalize at any frontier, or whose constraints prune a

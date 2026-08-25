@@ -55,6 +55,84 @@ class ExecutionResult:
         return {item.sampling_unit_id: item for item in self.accepted}
 
 
+@dataclass(frozen=True)
+class AcceptanceRow:
+    """How hard the rewrite procedure worked for one value of one hierarchy level."""
+
+    level: str
+    value: str
+    units: int
+    accepted: int
+    exhausted: int
+    errored: int
+    mean_attempts: float
+    exhaustion_rate: float
+
+
+def acceptance_by_level(
+    selections: list[SelectionRecord], rewrites: list[RewriteRecord]
+) -> list[AcceptanceRow]:
+    """Aggregate rewrite effort and rejection across each level of the taxonomy.
+
+    The estimand is defined against the distribution the *complete* procedure induces,
+    including its validation and retry rules. If the kernel struggles on one arm and not
+    another -- a low-resource language, an awkward wrapper -- then the accepted
+    distribution is differentially shaped across the design. That is a property of what
+    was measured rather than a defect, but nothing else makes it visible.
+    """
+
+    by_unit = {record.sampling_unit_id: record for record in rewrites}
+    buckets: dict[tuple[str, str], list[RewriteRecord]] = {}
+    for selection in selections:
+        record = by_unit.get(selection.sampling_unit_id)
+        if record is None:
+            continue
+        for part in selection.node_id.split("|")[1:]:
+            if "=" not in part:
+                continue
+            level, value = part.split("=", 1)
+            buckets.setdefault((level, value), []).append(record)
+
+    rows = []
+    for (level, value), records in sorted(buckets.items()):
+        exhausted = sum(1 for item in records if item.validation_status == "invalid")
+        errored = sum(1 for item in records if item.validation_status == "error")
+        rows.append(
+            AcceptanceRow(
+                level=level,
+                value=value,
+                units=len(records),
+                accepted=sum(1 for item in records if item.is_evaluable()),
+                exhausted=exhausted,
+                errored=errored,
+                mean_attempts=sum(item.rewrite_attempts for item in records) / len(records),
+                exhaustion_rate=exhausted / len(records),
+            )
+        )
+    return rows
+
+
+def uneven_acceptance(rows: list[AcceptanceRow], *, tolerance: float = 0.05) -> list[str]:
+    """Levels whose values are rejected at materially different rates.
+
+    A spread wider than ``tolerance`` in exhaustion rate means the accepted distribution is
+    shaped differently across that level, so the risk being estimated for one arm rests on
+    a differently filtered set of prompts than another's.
+    """
+
+    by_level: dict[str, list[AcceptanceRow]] = {}
+    for row in rows:
+        by_level.setdefault(row.level, []).append(row)
+    uneven = []
+    for level, group in sorted(by_level.items()):
+        if len(group) < 2:
+            continue
+        spread = max(r.exhaustion_rate for r in group) - min(r.exhaustion_rate for r in group)
+        if spread > tolerance:
+            uneven.append(level)
+    return uneven
+
+
 def load_seed_texts(plan: GenerativePlan, *, base_path: str | Path = ".") -> dict[str, str]:
     """Read the fixed seed prompts the rewrite kernel transforms."""
 

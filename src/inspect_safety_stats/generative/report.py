@@ -17,7 +17,12 @@ from typing import Any
 import pandas as pd
 
 from inspect_safety_stats.generative.comparisons import ComparisonResult
-from inspect_safety_stats.generative.inference import NodeEstimate, TreeEstimate
+from inspect_safety_stats.generative.execution import AcceptanceRow
+from inspect_safety_stats.generative.inference import (
+    NodeEstimate,
+    ReweightedEstimate,
+    TreeEstimate,
+)
 from inspect_safety_stats.generative.judge import CorrectedEstimate
 from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
 from inspect_safety_stats.generative.visualization import write_generative_report
@@ -31,6 +36,7 @@ ARTIFACTS = (
     "taxonomy.csv",
     "diagnostics.csv",
     "comparisons.csv",
+    "acceptance.csv",
 )
 
 
@@ -47,6 +53,8 @@ class GenerativeReport:
     slices: list[NodeEstimate] = field(default_factory=list)
     comparisons: list[ComparisonResult] = field(default_factory=list)
     corrected: list[CorrectedEstimate] = field(default_factory=list)
+    acceptance: list[AcceptanceRow] = field(default_factory=list)
+    reweightings: list[ReweightedEstimate] = field(default_factory=list)
     diagnostics: list[Diagnostic] = field(default_factory=list)
 
     @property
@@ -98,6 +106,8 @@ class GenerativeReport:
                 for item in self.comparisons
             ],
             "corrected": [asdict(item) for item in self.corrected],
+            "acceptance": [asdict(item) for item in self.acceptance],
+            "design_sensitivity": [asdict(item) for item in self.reweightings],
             "unsampled_nodes": list(self.tree.unsampled_nodes),
             "coverage": {
                 "alpha": self.tree.alpha,
@@ -125,5 +135,8 @@ class GenerativeReport:
             columns=["code", "severity", "message", "scope", "details"],
         ).to_csv(directory / "diagnostics.csv", index=False)
         self._comparisons_frame().to_csv(directory / "comparisons.csv", index=False)
+        pd.DataFrame([asdict(item) for item in self.acceptance]).to_csv(
+            directory / "acceptance.csv", index=False
+        )
         write_generative_report(self, directory / "report.html")
         return directory

@@ -355,11 +355,35 @@ class SamplingSpec(StrictModel):
         return self
 
 
+class ReweightingSpec(StrictModel):
+    """An alternative marginal mix at one hierarchy level, declared in advance.
+
+    Design weights are a judgement, not a measurement, and on a realistic taxonomy
+    changing them moves the root risk by about as much as the interval is wide. Declaring
+    the alternatives in the frozen plan is what separates a sensitivity analysis from
+    picking the weighting that gives the answer you wanted.
+    """
+
+    id: str = Field(min_length=1)
+    level: str = Field(min_length=1)
+    weights: dict[str, float] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def weights_are_a_distribution(self) -> ReweightingSpec:
+        if any(weight < 0.0 for weight in self.weights.values()):
+            raise ValueError(f"reweighting {self.id!r} has a negative weight")
+        total = sum(self.weights.values())
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(f"reweighting {self.id!r} weights sum to {total}, not 1")
+        return self
+
+
 class InferenceSpec(StrictModel):
     alpha: float = Field(default=0.05, gt=0.0, lt=1.0)
     coverage_mode: Literal["one_sided_upper", "two_sided"] = "one_sided_upper"
     report_all_nodes: bool = True
     simultaneous_tree: bool = False
+    design_sensitivity: list[ReweightingSpec] = Field(default_factory=list)
 
 
 class GenerativePlan(StrictModel):
