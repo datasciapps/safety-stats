@@ -1,6 +1,7 @@
 """Does variance reduction help a package that reports finite-sample bounds?
 
-Slice 0 for docs/generative-hierarchy-evaluation-plan.md. That plan proposes, in order,
+Slice 0 for the generative extension. The original proposal, now archived at
+docs/archive/generative-hierarchy-evaluation-plan.md, proposes in order
 hierarchical stratification (slice 3), cost-aware Neyman allocation (slice 4), and
 cross-entropy adaptive importance sampling (slice 7). All three are variance-reduction
 techniques. This asks whether they improve the number this package actually reports.
