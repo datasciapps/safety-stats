@@ -383,3 +383,48 @@ def test_the_report_carries_allocation_ess_and_the_raw_rate(
     assert "Effective sample size" in html
     assert "raw sampled rate" in html
     assert "Draws if exactly proportional" in html
+
+
+def test_budget_command_projects_before_anything_is_spent(tmp_path: Path) -> None:
+    plan = write_plan(tmp_path, total=1200)
+    result = runner.invoke(
+        app,
+        ["generative", "budget", "--plan", str(plan),
+         "--assumed-rate", "0.03", "--threshold", "0.05", "--target-bound", "0.04"],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "root bound" in result.stdout
+    assert "At a budget of 1200, by level:" in result.stdout
+    assert "certifying root risk below 0.05" in result.stdout
+    assert "needs about" in result.stdout
+    # Nothing was generated: the command reads only the plan.
+    assert not (tmp_path / "rewrites.csv").exists()
+    assert not (tmp_path / "datasets").exists()
+
+
+def test_budget_command_details_the_budget_the_caller_asked_for(tmp_path: Path) -> None:
+    plan = write_plan(tmp_path, total=1200)
+    result = runner.invoke(
+        app,
+        ["generative", "budget", "--plan", str(plan), "--budget", "300", "--budget", "900"],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "At a budget of 900, by level:" in result.stdout
+    assert "1200" not in result.stdout.split("by level:")[1]
+
+
+def test_budget_command_flags_an_unaffordable_stratum_floor(tmp_path: Path) -> None:
+    plan_path = write_plan(tmp_path)
+    edited = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
+    edited["sampling"] = {
+        "method": "proportional_stratified",
+        "total_rewrites": 600,
+        "minimum_rewrites_per_stratum": 150,
+    }
+    plan_path.write_text(yaml.safe_dump(edited, sort_keys=False), encoding="utf-8")
+
+    result = runner.invoke(
+        app, ["generative", "budget", "--plan", str(plan_path), "--budget", "100"]
+    )
+    assert result.exit_code == 0, result.stdout
+    assert "infeasible" in result.stdout

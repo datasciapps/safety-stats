@@ -180,6 +180,19 @@ Section 25 of the proposal listed ten. All are disposed of:
 
 Criterion 9's "discovery metrics" have no referent: there is no discovery mode.
 
+## Budget planning follows from the same measurements
+
+Every measurement above ended in some form of "you could not have afforded that", and none
+of it was available to a user in advance. `generative budget` closes that: from the compiled
+taxonomy and one assumed rate it projects the root bound, which hierarchy levels the budget
+can resolve, how many nodes will go unsampled, the retry cost of an imperfect validator, and
+whether a threshold claim would be reliable -- before a single rewrite is generated.
+
+It is a projection, not a prediction. It assumes risk is uniform across the design at the
+declared rate, so real heterogeneity moves individual nodes either way. What it reports
+exactly is the *geometry*: a level whose median node would receive four draws cannot support
+an interval regardless of what the risk turns out to be.
+
 ## Limits on all of this
 
 Every measurement above uses one synthetic hierarchy in the sparse-failure regime, where

@@ -116,6 +116,40 @@ the fixed levels are exactly the hierarchy prefix ending at `semantic_seed_level
 to less than one, and a plan that prunes without selecting `renormalize_valid_children` or
 `explicit_context_weights` is rejected rather than silently rescaled.
 
+## Deciding the budget first
+
+`sampling.total_rewrites` is the decision that costs money, and it is made before any data
+exists. Before committing to it:
+
+```bash
+inspect-safety-stats generative budget --plan plan.yaml --assumed-rate 0.03 --threshold 0.05
+```
+
+```
+   budget  root bound  paths hit  unsampled  rewrite calls   rollouts certif. power
+      300      0.0600       62%        109            300       300          0.27
+     1200      0.0450       94%         15           1200       1200         0.81
+     4800      0.0397      100%          0           4800       4800         1.00
+
+At a budget of 1200, by level:
+  level                 nodes  median draws  median bound  worst bound  unsampled
+  language                 32          32.0        0.1398       0.1534        0.0
+  wrapper                 264           3.8        0.5271       0.9500       15.2
+
+! level 'wrapper' cannot be resolved at this budget: its median node would report 0.527
+  against a root bound of 0.0450
+```
+
+Everything above comes from the compiled taxonomy and one assumed rate -- nothing is
+generated and nothing is evaluated. A five-level taxonomy at 1,200 rewrites is planning to
+report a `wrapper` level it cannot resolve at any budget under about 20,000, and that is
+worth knowing while the plan can still change.
+
+`--acceptance-rate` projects retry cost and how many units would exhaust their attempts;
+`--target-bound` inverts the question and reports the budget a desired bound needs. The
+figures assume risk is uniform across the design, so node-level rows show what the geometry
+permits rather than what will happen.
+
 ## Running it
 
 Two phases, because an Inspect evaluation happens between them.
@@ -240,7 +274,8 @@ Three fields are easy to misread:
 
 - **Deep nodes are thin by design.** A 1,200-draw run over a 264-path taxonomy leaves most
   wrapper-level nodes with single-digit draws, where no method gives an actionable interval.
-  Read the root, the slices, well-populated nodes and comparisons.
+  Read the root, the slices, well-populated nodes and comparisons -- and use
+  `generative budget` to see which levels your budget can support before you spend it.
 - **The judge is not modelled.** [Judge misclassification](judge-misclassification.md) applies
   to fixed designs; nothing here corrects for a fallible scorer, and judge error is typically
   several times larger than the sampling uncertainty being bounded.

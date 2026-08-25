@@ -374,6 +374,145 @@ def generative_analyze_command(
         raise typer.Exit(code=2)
 
 
+@generative_app.command("budget")
+def generative_budget_command(
+    plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
+    assumed_rate: Annotated[float, typer.Option("--assumed-rate", min=0.0, max=0.999)] = 0.03,
+    budget: Annotated[list[int] | None, typer.Option("--budget", min=1)] = None,
+    threshold: Annotated[float | None, typer.Option("--threshold", min=0.0, max=1.0)] = None,
+    acceptance_rate: Annotated[
+        float, typer.Option("--acceptance-rate", min=0.01, max=1.0)
+    ] = 1.0,
+    target_bound: Annotated[
+        float | None, typer.Option("--target-bound", min=0.0, max=1.0)
+    ] = None,
+) -> None:
+    """Project what a budget will buy, before generating or evaluating anything.
+
+    Everything reported comes from the compiled taxonomy and one assumed failure rate.
+    The projection assumes risk is uniform across the design; real heterogeneity moves
+    individual nodes either way, so node figures show what the geometry permits rather
+    than what will happen.
+    """
+
+    from inspect_safety_stats.generative.planning import forecast, rewrites_for_bound
+    from inspect_safety_stats.generative.schema import load_generative_plan
+    from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+
+    try:
+        parsed = load_generative_plan(plan)
+        taxonomy = compile_taxonomy(parsed, base_path=plan.parent)
+    except Exception as exc:
+        typer.echo(f"Planning failed: {exc}", err=True)
+        raise typer.Exit(code=3) from exc
+
+    declared = parsed.sampling.total_rewrites
+    budgets = sorted(set(budget)) if budget else sorted(
+        {max(1, int(declared * factor)) for factor in (0.25, 1, 4, 16)}
+    )
+
+    typer.echo(f"Evaluation: {parsed.evaluation.id}")
+    typer.echo(
+        f"Taxonomy: {len(taxonomy.terminal_paths)} terminal paths, "
+        f"{len(taxonomy.levels)} levels, declared budget {declared}"
+    )
+    typer.echo(
+        f"Assumed failure rate {assumed_rate}, alpha {parsed.inference.alpha}"
+        + (f", acceptance rate {acceptance_rate}" if acceptance_rate < 1.0 else "")
+    )
+    typer.echo("")
+
+    header = f"{'budget':>9} {'root bound':>11} {'paths hit':>10} {'unsampled':>10}"
+    header += f"{'rewrite calls':>15} {'rollouts':>10}"
+    if threshold is not None:
+        header += f"{'certif. power':>14}"
+    typer.echo(header)
+    projected = {
+        total: forecast(
+            taxonomy,
+            parsed,
+            total_rewrites=total,
+            assumed_rate=assumed_rate,
+            acceptance_rate=acceptance_rate,
+            threshold=threshold,
+        )
+        for total in budgets
+    }
+    for total, item in projected.items():
+        row = (
+            f"{total:>9} {item.root_upper:>11.4f} {item.paths_with_a_draw:>9.0%} "
+            f"{item.expected_unsampled_nodes:>10.0f}{item.rewrite_calls:>15.0f} "
+            f"{item.target_rollouts:>9}"
+        )
+        if threshold is not None and item.certification_power is not None:
+            row += f"{item.certification_power:>14.2f}"
+        if item.starved_strata:
+            row += "   infeasible: the declared stratum floor needs more"
+        typer.echo(row)
+
+    # Detail the budget the caller actually asked about.
+    detail = max(budgets) if budget else declared
+    chosen = projected.get(detail) or forecast(
+        taxonomy,
+        parsed,
+        total_rewrites=detail,
+        assumed_rate=assumed_rate,
+        acceptance_rate=acceptance_rate,
+        threshold=threshold,
+    )
+    typer.echo(f"\nAt a budget of {detail}, by level:")
+    typer.echo(
+        f"  {'level':<20} {'nodes':>6} {'median draws':>13} {'median bound':>13} "
+        f"{'worst bound':>12} {'unsampled':>10}"
+    )
+    for level in chosen.levels:
+        typer.echo(
+            f"  {level.level:<20} {level.nodes:>6} {level.median_draws:>13.1f} "
+            f"{level.median_upper:>13.4f} {level.worst_upper:>12.4f} "
+            f"{level.expected_unsampled:>10.1f}"
+        )
+
+    notes: list[str] = []
+    for level in chosen.levels:
+        if level.median_upper > 4 * chosen.root_upper:
+            notes.append(
+                f"level {level.level!r} cannot be resolved at this budget: its median node "
+                f"would report {level.median_upper:.3f} against a root bound of "
+                f"{chosen.root_upper:.4f}"
+            )
+    if chosen.exhausted_units >= 1:
+        notes.append(
+            f"about {chosen.exhausted_units:.0f} units would exhaust their retries and be "
+            "completed as unclassified"
+        )
+    if chosen.starved_strata:
+        notes.append(f"{chosen.starved_strata} strata would receive no draws")
+    elif chosen.coefficient_ratio > 1.0 and chosen.coefficient_ratio != float("inf"):
+        notes.append(
+            f"allocation is not exactly proportional (coefficient ratio "
+            f"{chosen.coefficient_ratio:.4f}), so the sharp exact kernel is unavailable"
+        )
+    if threshold is not None and chosen.certification_power is not None:
+        verdict = "would" if chosen.certification_power >= 0.8 else "would not"
+        notes.append(
+            f"certifying root risk below {threshold} {verdict} be reliable at {detail} "
+            f"rewrites (power {chosen.certification_power:.2f})"
+        )
+    if target_bound is not None:
+        needed = rewrites_for_bound(
+            assumed_rate=assumed_rate, target_upper=target_bound, alpha=parsed.inference.alpha
+        )
+        notes.append(
+            f"reaching a root bound of {target_bound} needs about {needed} rewrites"
+            if needed
+            else f"a root bound of {target_bound} is unreachable at the assumed rate"
+        )
+    if notes:
+        typer.echo("")
+        for note in notes:
+            typer.echo(f"! {note}")
+
+
 @schema_app.command("generative-plan")
 def generative_plan_schema_command() -> None:
     """Print the JSON schema for a generative evaluation plan."""
