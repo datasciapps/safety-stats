@@ -78,7 +78,8 @@ residual, because the residual must be *proved* zero rather than merely be zero.
 |---|---|---|
 | importance sampling, Neyman allocation | distorts the coefficient geometry | closed |
 | model-assisted, MLMC | fragments the alpha budget across levels | closed |
-| paired comparisons | neither: same coefficients, one bound | **kept** |
+| sequential Monte Carlo | spends the independence the bound is built on | closed |
+| paired comparisons | none of the three: same coefficients, one bound | **kept** |
 
 `python research/generative_paired_comparison.py`
 
@@ -224,3 +225,63 @@ sign holds, the conclusions hold.
 The model-assisted measurement additionally assumed a **binary** predictor, which is what lets
 the residual use the exact two-cell construction. A calibrated probabilistic predictor gives
 continuous residuals and loses it, so it should be expected to do worse rather than better.
+
+## Sequential Monte Carlo
+
+**Status:** measured, 25 August 2026. Reproduce with `python research/generative_smc.py`.
+
+SMC splits into two halves that fail differently.
+
+**Without resampling** it is sequential importance sampling with a factorized proposal over
+the tree -- exactly the cross-entropy slice, already closed by slice 0. The likelihood
+ratios become unequal coefficients and the bound charges for that.
+
+**With resampling** -- the half that makes it SMC -- particles interact. Whether particle
+\(i\) survives depends on particle \(j\)'s weight, so the estimator stops being a sum of
+independent bounded terms, which is the only object the engines here can bound. It is not a
+worse estimator; it is outside the class.
+
+There is one honest way to bound it: run \(K\) independent replicates and treat their
+estimates as \(K\) independent observations in \([0,1]\). That is valid, and it is the trade
+this measures. On 200 paths with one arm carrying a hundred-thousand-fold risk ratio, at a
+budget of 1,200:
+
+| design | RMSE | bound |
+|---|---:|---:|
+| direct sampling | 1.00x | 1.00x |
+| SMC, 400 replicates x 3 | 0.11x | 3.78x |
+| SMC, 100 replicates x 12 | 0.59x | 4.96x |
+| SMC, 25 replicates x 48 | 1.03x | 11.83x |
+| SMC, 8 replicates x 150 | 1.06x | **23.12x** |
+
+RMSE only reaches parity at the fewest, largest replicates, where the bound is already an
+order of magnitude wider than direct sampling's. At eight replicates the bound is 0.68 for a
+root risk of 0.021 -- arithmetically valid and completely useless.
+
+**The mechanism is a third distinct one.** Importance sampling distorts the coefficient
+geometry; model-assisted estimation fragments the alpha budget; SMC *spends the
+independence* the bound is built on, and buying it back through replication makes the bound
+rest on the replicate count rather than the budget.
+
+That penalty does not depend on how good the estimator is. An SMC with half the RMSE would
+still be bounded by \(K\) observations. Better focusing does not buy back independence.
+
+### Where it does belong
+
+Not in the estimator -- in the design. Section 5 of the original plan forbids turning
+risk-directed discovery into root-probability observations *without a valid sampling
+probability*, which rules out feeding SMC into the estimate. It does not rule out discovery.
+
+A two-stage separation works cleanly: run SMC, adaptive splitting or evolutionary mutation
+to find where a model actually breaks; use what it finds to write a **new declared
+taxonomy**; then sample that design directly with equal coefficients and exact bounds. The
+discovery informs what is declared, and the declaration is sampled honestly. That is more
+durable than a variance reduction, because a better taxonomy improves every subsequent run.
+
+### Limits on this one
+
+The resampling step measured here acts on a single-level draw, so it tests the coupling
+faithfully but barely tests sequential adaptation; a real SMC would descend the hierarchy
+with a proposal that adapts as it goes. The conclusion does not rest on that, for the reason
+above -- the bound's dependence on \(K\) is independent of estimator quality -- but a claim
+that *adaptation cannot help the estimate* would need the multi-level version.
