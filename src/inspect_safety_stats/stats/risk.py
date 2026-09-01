@@ -100,3 +100,20 @@ def threshold_excess(
     if t.shape != x.shape or not np.all(np.isfinite(t)):
         raise ValueError("threshold must be finite and scalar or match values")
     return float(np.dot(w, np.maximum(x - t, 0.0)))
+
+
+def worst_of_k_risk(values: ArrayLike, weights: ArrayLike, *, k: int) -> float:
+    """Weighted probability that at least one of ``k`` independent attempts fails.
+
+    Each value is a per-item failure probability, so ``values`` must lie in
+    ``[0, 1]``. The per-item transform ``1 - (1 - p) ** k`` is coordinatewise
+    monotone, so propagated prompt envelopes remain valid; it reduces to the
+    weighted mean at ``k = 1`` and is nondecreasing in ``k``.
+    """
+
+    x, w = _arrays(values, weights)
+    if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+        raise ValueError("k must be an integer of at least one")
+    if np.any(x < 0) or np.any(x > 1):
+        raise ValueError("values must be probabilities in [0, 1]")
+    return float(np.dot(w, 1.0 - np.power(1.0 - x, k)))

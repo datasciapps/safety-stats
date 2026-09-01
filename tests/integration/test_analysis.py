@@ -86,6 +86,7 @@ outputs:
     - {id: cvar, type: cvar, beta: 0.5}
     - {id: entropic, type: entropic, lambda: 10}
     - {id: worst, type: maximum}
+    - {id: worst_of_2, type: worst_of_k, k: 2}
     - {id: excess, type: threshold_excess, threshold: 0.3}
 multiplicity:
   families:
@@ -175,6 +176,7 @@ def test_end_to_end_pass_and_report(monkeypatch: pytest.MonkeyPatch, tmp_path: P
         "cvar",
         "entropic",
         "worst",
+        "worst_of_2",
         "excess",
     }
     assert report.presentation == {"include_decisions": False}
@@ -1426,3 +1428,50 @@ def test_three_arm_comparison_set_uses_one_coherent_joint_region(
     html = (output / "report.html").read_text(encoding="utf-8")
     assert "Joint risk interval" in html
     assert "Simultaneous rank set" in html
+
+
+def test_worst_of_k_measure_propagates_prompt_envelope(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+
+    worst_of_2 = next(row for row in report.group_risks if row.measure_id == "worst_of_2")
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+
+    # Zero observed failures: the point estimate is exactly zero, but the
+    # upper bound is not, and it exceeds the single-attempt mean's bound.
+    assert worst_of_2.estimate == pytest.approx(0.0)
+    envelope = next(
+        item for item in worst_of_2.intervals if item.method == "propagated_exact_prompt_bounds"
+    )
+    mean_envelope = next(
+        item for item in mean.intervals if item.method == "propagated_exact_prompt_bounds"
+    )
+    assert envelope.eligibility == "certifying"
+    assert envelope.upper is not None and mean_envelope.upper is not None
+    assert envelope.upper > mean_envelope.upper
+
+    # Both prompts share one exact upper bound u, so the k=2 envelope upper
+    # must equal 1 - (1 - u)^2 exactly.
+    uppers = {estimate.upper for estimate in report.prompt_estimates}
+    assert len(uppers) == 1
+    (u,) = uppers
+    assert envelope.upper == pytest.approx(1 - (1 - u) ** 2)
+
+
+def test_worst_of_k_is_not_judge_correctable() -> None:
+    # The affine correction R* = R*rho1 + (1-R)*rho0 commutes only with
+    # positively homogeneous, translation-equivariant measures; 1-(1-p)^k is
+    # neither, so worst_of_k must stay outside the correction whitelist.
+    from inspect_safety_stats.api import _JUDGE_CORRECTABLE_MEASURES
+
+    assert "worst_of_k" not in _JUDGE_CORRECTABLE_MEASURES

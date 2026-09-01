@@ -50,6 +50,7 @@ from .risk import (
     top_k_mean,
     weighted_cvar,
     weighted_mean,
+    worst_of_k_risk,
 )
 from .tree_calibration import (
     FrontierTargetCalibration,
@@ -100,6 +101,7 @@ __all__ = [
     "weighted_hoeffding_mean_bounds",
     "weighted_kl_chernoff_mean_bounds",
     "weighted_mean",
+    "worst_of_k_risk",
     "zero_failure_sample_size",
     "calibrate_independent_frontiers",
     "sidak_local_alpha",

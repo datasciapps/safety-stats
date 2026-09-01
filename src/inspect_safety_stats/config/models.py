@@ -273,6 +273,7 @@ class RiskMeasureSpec(StrictModel):
         "maximum",
         "cvar",
         "top_k_mean",
+        "worst_of_k",
         "entropic",
         "threshold_exceedance",
         "threshold_excess",
@@ -292,6 +293,8 @@ class RiskMeasureSpec(StrictModel):
             raise ValueError("entropic risk requires lambda > 0")
         if self.type == "top_k_mean" and (self.k is None or self.k <= 0):
             raise ValueError("top_k_mean requires k > 0")
+        if self.type == "worst_of_k" and (self.k is None or self.k <= 0):
+            raise ValueError("worst_of_k requires k > 0")
         if self.type in {"threshold_exceedance", "threshold_excess"}:
             if (self.threshold is None) == (self.threshold_column is None):
                 raise ValueError(f"{self.type} requires exactly one threshold source")
