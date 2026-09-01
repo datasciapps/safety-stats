@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import json
+from enum import Enum
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
 
 from inspect_safety_stats.api import analyze as run_analysis
 from inspect_safety_stats.api import validate as run_validation
 from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
-from inspect_safety_stats.config.models import AnalysisPlan
+from inspect_safety_stats.config.models import AnalysisPlan, WeightSpec
+from inspect_safety_stats.ingest.manifest import load_manifest, resolve_weights
 from inspect_safety_stats.report.visualization import write_visualization
 from inspect_safety_stats.schema.reports import SafetyReport
 from inspect_safety_stats.stats.planning import (
     certification_power,
     certification_sample_size,
+    fixed_design_detectable_failure_rates,
     maximum_certifiable_failure_rate,
     maximum_certifying_failures,
     minimum_detectable_failure_rate,
@@ -108,13 +111,20 @@ def visualize_command(
 def zero_failure_command(
     threshold: Annotated[float, typer.Option("--threshold", min=0.0, max=1.0)],
     alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
+    family_size: Annotated[int, typer.Option("--family-size", min=1)] = 1,
 ) -> None:
-    count = zero_failure_sample_size(threshold=threshold, alpha=alpha)
+    local_alpha = alpha / family_size
+    count = zero_failure_sample_size(threshold=threshold, alpha=local_alpha)
     typer.echo(f"Required rollouts: {count}")
     typer.echo(
         f"Decision rule: PASS only if all {count} rollouts are valid and zero failures occur"
     )
-    typer.echo(f"One-sided confidence level: {(1 - alpha) * 100:g}%")
+    if family_size > 1:
+        typer.echo(
+            f"Local alpha: {local_alpha:.8g} (Bonferroni share of {alpha:g} "
+            f"across {family_size} simultaneous claims)"
+        )
+    typer.echo(f"One-sided confidence level: {(1 - local_alpha) * 100:g}%")
 
 
 @plan_app.command("certification")
@@ -123,9 +133,12 @@ def certification_planning_command(
     anticipated_rate: Annotated[float, typer.Option("--anticipated-rate", min=0.0, max=1.0)],
     alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
     power: Annotated[float, typer.Option("--power", min=0.0, max=1.0)] = 0.9,
+    family_size: Annotated[int, typer.Option("--family-size", min=1)] = 1,
 ) -> None:
     """Plan an exact one-sided binomial certification claim."""
 
+    family_alpha = alpha
+    alpha = alpha / family_size
     try:
         trials = certification_sample_size(
             true_rate=anticipated_rate,
@@ -165,6 +178,11 @@ def certification_planning_command(
         "Minimum detectable failure rate at target power: "
         + ("unattainable" if minimum_detectable is None else f"{minimum_detectable:.8g}")
     )
+    if family_size > 1:
+        typer.echo(
+            f"Local alpha: {alpha:.8g} (Bonferroni share of {family_alpha:g} "
+            f"across {family_size} simultaneous claims)"
+        )
     typer.echo(f"One-sided alpha: {alpha:g}")
 
 
@@ -174,9 +192,12 @@ def detectable_rate_command(
     threshold: Annotated[float, typer.Option("--threshold", min=0.0, max=1.0)],
     alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
     power: Annotated[float, typer.Option("--power", min=0.0, max=1.0)] = 0.9,
+    family_size: Annotated[int, typer.Option("--family-size", min=1)] = 1,
 ) -> None:
     """Invert exact one-sided tests at a fixed rollout horizon."""
 
+    family_alpha = alpha
+    alpha = alpha / family_size
     try:
         maximum_certifiable = maximum_certifiable_failure_rate(
             trials=trials,
@@ -207,7 +228,112 @@ def detectable_rate_command(
         typer.echo(f"Support-side detectable gap: {threshold - maximum_certifiable:.8g}")
     if minimum_detectable is not None:
         typer.echo(f"Rejection-side detectable gap: {minimum_detectable - threshold:.8g}")
+    if family_size > 1:
+        typer.echo(
+            f"Local alpha: {alpha:.8g} (Bonferroni share of {family_alpha:g} "
+            f"across {family_size} simultaneous claims)"
+        )
     typer.echo(f"One-sided alpha: {alpha:g}")
+
+
+class WeightStrategyOption(str, Enum):
+    equal_prompt = "equal_prompt"
+    nested_equal = "nested_equal"
+    explicit = "explicit"
+
+
+class IndependenceUnitOption(str, Enum):
+    rollout = "rollout"
+    prompt_cluster = "prompt_cluster"
+
+
+@plan_app.command("fixed-design")
+def fixed_design_planning_command(
+    manifest: Annotated[Path, typer.Option("--manifest", exists=True, dir_okay=False)],
+    threshold: Annotated[float, typer.Option("--threshold", min=0.0, max=1.0)],
+    alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
+    power: Annotated[float, typer.Option("--power", min=0.0, max=1.0)] = 0.9,
+    rollouts: Annotated[int | None, typer.Option("--rollouts", min=1)] = None,
+    weights: Annotated[
+        WeightStrategyOption, typer.Option("--weights")
+    ] = WeightStrategyOption.nested_equal,
+    hierarchy: Annotated[str, typer.Option("--hierarchy")] = "task_id,question_id,prompt_id",
+    weight_column: Annotated[str | None, typer.Option("--weight-column")] = None,
+    independence_unit: Annotated[
+        IndependenceUnitOption, typer.Option("--independence-unit")
+    ] = IndependenceUnitOption.rollout,
+    family_size: Annotated[int, typer.Option("--family-size", min=1)] = 1,
+) -> None:
+    """Detectable rates for a declared weighted design under a Hoeffding guarantee.
+
+    Reads the design manifest so planning sees the same prompts, weights, and
+    expected rollout counts that `analyze` will resolve. Rollout counts come
+    from the manifest's `expected_rollouts` column unless `--rollouts` supplies
+    a uniform override.
+    """
+
+    local_alpha = alpha / family_size
+    unit: Literal["rollout", "prompt_cluster"] = (
+        "rollout" if independence_unit is IndependenceUnitOption.rollout else "prompt_cluster"
+    )
+    try:
+        frame = load_manifest(manifest)
+        spec = WeightSpec.model_validate(
+            {
+                "strategy": weights.value,
+                "hierarchy": [level.strip() for level in hierarchy.split(",") if level.strip()],
+                "column": weight_column,
+            }
+        )
+        weight_values = resolve_weights(frame, spec)
+        if rollouts is not None:
+            trials = [rollouts] * len(frame)
+        elif "expected_rollouts" in frame:
+            trials = [int(value) for value in frame["expected_rollouts"]]
+        else:
+            raise ValueError(
+                "the design manifest has no expected_rollouts column; "
+                "pass --rollouts for a uniform count"
+            )
+        rates = fixed_design_detectable_failure_rates(
+            trials,
+            weight_values,
+            threshold=threshold,
+            support_alpha=local_alpha,
+            rejection_alpha=local_alpha,
+            power=power,
+            independence_unit=unit,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Prompts: {len(frame)}")
+    typer.echo(f"Total rollouts: {sum(trials)}")
+    typer.echo(f"Independence unit: {rates.independence_unit}")
+    typer.echo(f"Effective sample size: {rates.effective_sample_size:.8g}")
+    typer.echo(f"Threshold: {threshold:.8g}")
+    typer.echo(f"Target power: {power:.8g}")
+    typer.echo(
+        "Maximum certifiable failure rate at target power: "
+        + (
+            "unattainable"
+            if rates.maximum_certifiable_failure_rate is None
+            else f"{rates.maximum_certifiable_failure_rate:.8g}"
+        )
+    )
+    typer.echo(
+        "Minimum detectable failure rate at target power: "
+        + (
+            "unattainable"
+            if rates.minimum_detectable_failure_rate is None
+            else f"{rates.minimum_detectable_failure_rate:.8g}"
+        )
+    )
+    if family_size > 1:
+        typer.echo(
+            f"Local alpha: {local_alpha:.8g} (Bonferroni share of {alpha:g} "
+            f"across {family_size} simultaneous claims)"
+        )
+    typer.echo(f"One-sided alpha per direction: {local_alpha:g}")
 
 
 @schema_app.command("plan")
