@@ -232,10 +232,6 @@ def hash_plan_command(
     typer.echo(canonical_plan_hash(load_plan(plan)))
 
 
-if __name__ == "__main__":
-    app()
-
-
 @generative_app.command("compile")
 def generative_compile_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
@@ -534,3 +530,7 @@ def generative_plan_schema_command() -> None:
     from inspect_safety_stats.generative.schema import GenerativePlan
 
     typer.echo(json.dumps(GenerativePlan.model_json_schema(), indent=2))
+
+
+if __name__ == "__main__":
+    app()
