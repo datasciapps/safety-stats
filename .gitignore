@@ -4,6 +4,7 @@
 .pytest_cache/
 .ruff_cache/
 .venv/
+.vscode/
 .env
 .env.*
 !.env.example
@@ -27,3 +28,8 @@ logs/
 # prompt store, eval logs and reports. None of it belongs in version control.
 run/
 .inspect-trace.log.gz
+
+# uv writes this when it resolves the environment locally. CI installs with pip
+# straight from pyproject.toml and never reads it, so committing it would pin
+# nothing that is actually enforced.
+uv.lock
