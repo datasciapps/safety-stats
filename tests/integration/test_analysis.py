@@ -3840,3 +3840,50 @@ def test_single_valued_bound_is_refused_under_a_sampled_design(tmp_path: Path) -
     ]
     assert len(refused) == 1
     assert "sampled design" in refused[0].message
+
+
+def test_betting_intervals_are_reported_at_root_and_hierarchy_nodes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = load_plan(_write_inputs(tmp_path))
+    spec = plan.outputs.direct_mean_intervals
+    spec.method = "weighted_betting"
+    spec.reference_methods = ["weighted_kl_chernoff", "weighted_hoeffding"]
+    spec.hierarchy_nodes = True
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    assert mean.interval_method == "weighted_betting"
+    primary = next(item for item in mean.intervals if item.role == "primary")
+    hoeffding = next(item for item in mean.intervals if item.method == "weighted_hoeffding")
+    assert primary.method == "weighted_betting"
+    assert primary.eligibility == "certifying"
+    assert primary.chernoff_kernel == "common_bet_mixture_jensen_exponent"
+    assert any("betting" in assumption.lower() for assumption in primary.assumptions)
+    # The fixture has zero failures: the lower bound is exactly zero and the
+    # upper bound beats the range-only Hoeffding reference on the same data.
+    assert primary.lower == 0.0
+    assert 0.0 < primary.upper < hoeffding.upper
+
+    for node in report.hierarchy_risks:
+        assert node.interval_method == "weighted_betting"
+        node_primary = next(item for item in node.intervals if item.role == "primary")
+        assert (
+            node_primary.lower
+            <= node_primary.completion_estimate_lower
+            <= node_primary.completion_estimate_upper
+            <= node_primary.upper
+        )
+
+    output = report.write(tmp_path / "betting-report")
+    assert "weighted_betting" in (output / "hierarchy-risks.csv").read_text(encoding="utf-8")
+    assert "weighted_betting" in (output / "report.html").read_text(encoding="utf-8")

@@ -149,6 +149,7 @@ weighted_bounded_hoeffding_mean_bounds(
 )
 weighted_bounded_empirical_bernstein_mean_bounds(...)
 weighted_bounded_kl_chernoff_mean_bounds(...)
+weighted_bounded_betting_mean_bounds(...)
 ```
 
 Each aligned block value lies in `[0,1]`, block weights are nonnegative and sum to one, and blocks
@@ -216,6 +217,16 @@ Each prompt's unbiased U-statistic enters `weighted_bounded_kl_chernoff_mean_bou
 `k` attempted rollouts. At `k=1` the result equals the rollout-level
 `weighted_kl_chernoff_mean_bounds`. See
 [Worst-of-k interval](statistical-methods.md#worst-of-k-interval-experimental).
+
+`weighted_bounded_betting_mean_bounds` (count form: `weighted_betting_mean_bounds`, same signature
+as the other count wrappers) tests each candidate mean with the capital of a common betting
+fraction applied to every block with exponent `A_g / max A`, mixed over a fixed
+Beta(1/2, 1/2)-quantile prior that places half its mass on the most aggressive bet. Jensen's
+inequality and the weighted AM-GM inequality make the mixture an e-value under
+`sum_g A_g E[Y_g] = m`, so `{m : capital(m) < 1/alpha}` is a confidence set. It reports
+`chernoff_kernel = "common_bet_mixture_jensen_exponent"`. The bet is common to all blocks and fixed
+in advance; a block-adaptive bet would be invalid under heterogeneous block means. See
+[Statistical methods](statistical-methods.md).
 
 When hierarchy-region projection is enabled, each reported direct interval also records
 `raw_lower`, `raw_upper`, `projection_method`, and `projection_constraint_count`. The displayed

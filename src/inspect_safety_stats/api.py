@@ -97,7 +97,9 @@ from inspect_safety_stats.stats.design_based import (
     horvitz_thompson_mean_bounds,
 )
 from inspect_safety_stats.stats.direct_mean import (
+    BETTING_KERNEL,
     DirectMeanBounds,
+    weighted_bounded_betting_mean_bounds,
     weighted_bounded_empirical_bernstein_mean_bounds,
     weighted_bounded_hoeffding_mean_bounds,
     weighted_bounded_kl_chernoff_mean_bounds,
@@ -1101,6 +1103,7 @@ def _direct_bounds(
         "weighted_hoeffding": weighted_bounded_hoeffding_mean_bounds,
         "weighted_empirical_bernstein": weighted_bounded_empirical_bernstein_mean_bounds,
         "weighted_kl_chernoff": weighted_bounded_kl_chernoff_mean_bounds,
+        "weighted_betting": weighted_bounded_betting_mean_bounds,
     }.get(method)
     if function is None:
         raise ValueError(f"unsupported direct mean interval method {method!r}")
@@ -1167,6 +1170,12 @@ def _direct_interval_result(
         assumptions.append(
             "Unequal atomic design weights use the weighted Poisson-Chernoff "
             "exponent determined by the largest atomic weight."
+        )
+    elif bounds.chernoff_kernel == BETTING_KERNEL:
+        assumptions.append(
+            "A common betting fraction, mixed over a prior fixed before any outcome was "
+            "seen, is applied to every block with exponent A_g / max A; validity follows "
+            "from Jensen's and the weighted AM-GM inequalities and needs no variance proxy."
         )
     scope_prefix = "simultaneous" if spec.simultaneous else "pointwise"
     calibration_scope = "_frontier_sidak" if calibration.method == "frontier_sidak" else ""

@@ -804,6 +804,59 @@ variance. Sparse binary safety analyses should generally prespecify weighted KL/
 primary interval and show empirical Bernstein and weighted Hoeffding as references. The package
 does not select whichever interval looks narrowest after seeing the data.
 
+##### Betting interval from a fixed mixture of common bets
+
+The three constructions above bound a moment generating function analytically. A fourth,
+`weighted_betting`, tests each candidate mean directly with a nonnegative capital process and
+inverts the test. Let the independent blocks have values \(Y_g\in[0,1]\), weights \(A_g\) with
+\(\sum_g A_g=1\), and unknown means \(m_g\), and consider the null \(H_0(\mu):\sum_g A_g m_g=\mu\).
+For a fraction \(\theta\in(0,1)\) of the maximal admissible stake define the upper-endpoint factors
+
+\[
+f_g(\theta,\mu)=1-\theta+\theta\,\frac{1-Y_g}{1-\mu},
+\qquad
+K_\theta(\mu)=\prod_g f_g(\theta,\mu)^{c_g},
+\qquad
+c_g=\frac{A_g}{\max_h A_h}\in(0,1],
+\]
+
+and symmetrically \(1-\theta+\theta Y_g/\mu\) for the lower endpoint. Under \(H_0(\mu)\),
+
+\[
+\mathbb E\,K_\theta(\mu)
+\le\prod_g\big(\mathbb E f_g\big)^{c_g}
+=\Big(\prod_g\big(\mathbb E f_g\big)^{A_g}\Big)^{1/\max_h A_h}
+\le\Big(\sum_g A_g\,\mathbb E f_g\Big)^{1/\max_h A_h}
+=1,
+\]
+
+where the first inequality is Jensen's inequality for the concave map \(x\mapsto x^{c_g}\), the
+second is the weighted AM-GM inequality, and the final equality uses
+\(\sum_g A_g\,\mathbb E f_g=1-\theta+\theta(1-\sum_g A_gm_g)/(1-\mu)=1\). A mixture
+\(K(\mu)=\sum_j\pi_jK_{\theta_j}(\mu)\) over a prior fixed before any outcome is observed is
+therefore an e-value, Markov's inequality gives \(\Pr\{K(\mu)\ge1/\alpha\}\le\alpha\), and
+\(\{\mu:K(\mu)<1/\alpha\}\) is a confidence set. Its capital is monotone in \(\mu\), so the set is
+an interval whose endpoint is found by bisection, and the plug-in estimate is never rejected.
+
+Three consequences shape the implementation. First, the bet must be **common to all blocks and
+fixed in advance**: with heterogeneous means the null constrains only the weighted sum, so a
+fraction chosen block by block, even from earlier blocks, can profit from what earlier blocks
+reveal about later ones and destroys the supermartingale property. This also means the
+construction is fixed-horizon; it does not yield an anytime-valid sequence over blocks. Second, the
+prior is the Beta(1/2, 1/2)-quantile grid of the universal portfolio [34] with half of its mass on
+the most aggressive fraction, so the sparse-failure regime, where that fraction is optimal, pays
+about \(\log 2\) rather than \(\log J\) for not knowing the best bet. Third, unequal weights enter
+through the exponents \(c_g\), which lowers the growth rate in proportion to \(1/\max_g A_g\),
+much as the KL fallback pays through its largest increment.
+
+Compared with the other engines, the betting interval needs no estimated variance proxy and so
+avoids the empirical-Bernstein padding term, which dominates at small block counts. It is
+therefore usually the tightest construction when blocks are fractional rates, as under a
+prompt-level or coarser independence profile, and it is competitive with, though not sharper
+than, the exact Bernoulli-KL inversion on sparse binary rollouts with equal weights. As with every
+engine, showing it as a prespecified primary or reference is valid; selecting it after seeing that
+it is narrowest is not [33].
+
 ##### Hierarchy nodes and configurable independence profiles
 
 For every declared non-prompt hierarchy node, the package reports the conditional fixed-design
@@ -2477,6 +2530,8 @@ That is the role this Inspect extension should fill.
 30. H. Föllmer and T. Knispel, “Entropic Risk Measures: Coherence vs. Convexity, Model Ambiguity, and Robust Large Deviations,” *Stochastics and Dynamics* 11(2–3), 333–351, 2011. [doi:10.1142/S0219493711003334](https://doi.org/10.1142/S0219493711003334)
 31. C. Acerbi, “Spectral Measures of Risk: A Coherent Representation of Subjective Risk Aversion,” *Journal of Banking & Finance* 26(7), 1505–1518, 2002. [doi:10.1016/S0378-4266(02)00281-9](https://doi.org/10.1016/S0378-4266(02)00281-9)
 32. W. Hoeffding, “Probability Inequalities for Sums of Bounded Random Variables,” *Journal of the American Statistical Association* 58(301), 13–30, 1963. [doi:10.1080/01621459.1963.10500830](https://doi.org/10.1080/01621459.1963.10500830)
+33. I. Waudby-Smith and A. Ramdas, “Estimating means of bounded random variables by betting,” *Journal of the Royal Statistical Society, Series B* 86(1), 1–27, 2024. [doi:10.1093/jrsssb/qkad009](https://doi.org/10.1093/jrsssb/qkad009)
+34. F. Orabona and K.-S. Jun, “Tight Concentrations and Confidence Sequences from the Regret of Universal Portfolio,” *IEEE Transactions on Information Theory* 70(1), 436–455, 2024. [arXiv:2110.14099](https://arxiv.org/abs/2110.14099)
 
 ### Threats to validity and small-sample evaluation
 
