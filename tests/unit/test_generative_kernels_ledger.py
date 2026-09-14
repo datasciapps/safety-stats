@@ -77,6 +77,35 @@ def test_any_procedure_change_moves_the_fingerprint(tmp_path: Path, mutate) -> N
     assert moved.sha256 != baseline.sha256
 
 
+@pytest.mark.parametrize(
+    ("validation", "expected"),
+    [
+        ({}, "6ab156af41f6d9e350fa340e588f1b4988d6c864ccd2472390b9bf91bef71c4b"),
+        (
+            {"on_invalid": "fail", "maximum_attempts": 2},
+            "4db435ecf0a253201231255026e3b60e4cca2e6dcc53501628ebdae69a92518a",
+        ),
+    ],
+    ids=["default-validation", "non-default-validation"],
+)
+def test_an_unchanged_procedure_keeps_its_fingerprint(
+    tmp_path: Path, validation: dict[str, object], expected: str
+) -> None:
+    """Every ledger row records the fingerprint it ran under, and the report recomputes it
+    from the plan. If the computation itself changes, an unchanged procedure gets a new hash
+    and the two quietly disagree -- nothing compares them automatically, so this does.
+
+    A new optional field on the rewrite spec must leave these alone until someone sets it.
+    """
+
+    plan = base_plan()
+    plan["rewrite"]["validation"].update(validation)
+    fingerprint = resolve_kernel_fingerprint(
+        load_generative_plan(materialize(tmp_path, plan)), base_path=tmp_path
+    )
+    assert fingerprint.sha256 == expected
+
+
 def test_fake_kernel_is_deterministic_and_needs_no_network() -> None:
     kernel = DeterministicFakeKernel()
     assert isinstance(kernel, RewriteKernel)
