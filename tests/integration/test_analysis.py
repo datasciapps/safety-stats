@@ -1585,3 +1585,173 @@ def test_plans_without_judges_are_unchanged(
         "sample_id",
     ]
     assert "judge" not in header
+
+
+_ACCURACY_PLAN_BLOCK = (
+    "  judges:\n"
+    "    - id: judge_a\n"
+    "      score: {name: harmful_a, "
+    "mapping: {failure_values: [FAIL], safe_values: [PASS]}}\n"
+    "      block: openai\n"
+    "      accuracy: {sensitivity: {lower: 0.8, upper: 0.95}, "
+    "specificity: {lower: 0.9, upper: 0.99}}\n"
+    "    - id: judge_b\n"
+    "      score: {name: harmful_b, "
+    "mapping: {failure_values: [FAIL], safe_values: [PASS]}}\n"
+    "      block: openai\n"
+    "      accuracy: {sensitivity: {lower: 0.7, upper: 0.9}, "
+    "specificity: {lower: 0.92, upper: 0.99}}\n"
+    "  composites:\n"
+    "    - {id: any_judge, rule: any, judges: [judge_a, judge_b]}\n"
+)
+
+
+def _composite_primary_plan(tmp_path: Path, block: str) -> Path:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "  score:\n    name: harmful\n    mapping:\n      failure_values: [\"FAIL\"]\n"
+        "      safe_values: [\"PASS\"]\n    missing: block\n",
+        "  score:\n    name: any_judge\n    mapping:\n      failure_values: [true]\n"
+        "      safe_values: [false]\n    missing: conservative_bounds\n",
+        1,
+    )
+    plan_text = plan_text.replace("design:\n", block + "design:\n", 1)
+    plan_path.write_text(plan_text, encoding="utf-8")
+    return plan_path
+
+
+def test_panel_derived_correction_is_reported_as_a_diagnostic(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from inspect_safety_stats.stats.judges import (
+        JudgeAccuracyBox,
+        composite_accuracy_box,
+        identified_risk_set,
+    )
+
+    plan_path = _composite_primary_plan(tmp_path, _ACCURACY_PLAN_BLOCK)
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    derived = next(
+        item for item in mean.intervals if item.interval_id == "judge_corrected_panel_derived"
+    )
+    assert derived.eligibility == "diagnostic"
+    assert derived.role == "sensitivity"
+    assert derived.method == "derived_panel_misclassification_correction"
+    assert any("block" in assumption.lower() for assumption in derived.assumptions)
+    box = composite_accuracy_box(
+        [
+            JudgeAccuracyBox(0.8, 0.95, 0.9, 0.99),
+            JudgeAccuracyBox(0.7, 0.9, 0.92, 0.99),
+        ],
+        ["openai", "openai"],
+        "any",
+    )
+    assert mean.lower is not None and mean.upper is not None
+    expected = identified_risk_set(mean.lower, mean.upper, box)
+    assert derived.lower == pytest.approx(expected.lower)
+    assert derived.upper == pytest.approx(expected.upper)
+    # A declared box never moves a claim: the only correction is diagnostic.
+    for claim in report.claims:
+        assert claim.method != "derived_panel_misclassification_correction"
+
+    markdown = (report.write(tmp_path / "panel-corrected") / "report.md").read_text(
+        encoding="utf-8"
+    )
+    assert "panel_derived" in markdown
+
+
+def test_panel_derived_correction_reports_an_unidentified_set_honestly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # An `any` panel is at least as sensitive as its most sensitive member, so one
+    # weak judge is not enough: both boxes must admit an uninformative judge.
+    weak = _ACCURACY_PLAN_BLOCK.replace(
+        "accuracy: {sensitivity: {lower: 0.8, upper: 0.95}, "
+        "specificity: {lower: 0.9, upper: 0.99}}",
+        "accuracy: {sensitivity: {lower: 0.4, upper: 0.95}, "
+        "specificity: {lower: 0.5, upper: 0.99}}",
+    ).replace(
+        "accuracy: {sensitivity: {lower: 0.7, upper: 0.9}, "
+        "specificity: {lower: 0.92, upper: 0.99}}",
+        "accuracy: {sensitivity: {lower: 0.4, upper: 0.9}, "
+        "specificity: {lower: 0.5, upper: 0.99}}",
+    )
+    plan_path = _composite_primary_plan(tmp_path, weak)
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    derived = next(
+        item for item in mean.intervals if item.interval_id == "judge_corrected_panel_derived"
+    )
+    assert (derived.lower, derived.upper) == (0.0, 1.0)
+    assert any("unidentified" in warning.lower() for warning in derived.warnings)
+
+
+def test_composite_primary_with_validated_labels_certifies_without_dependence_assumptions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_frames(monkeypatch, _judge_frames())
+    baseline_dir = tmp_path / "baseline"
+    baseline_dir.mkdir()
+    baseline_plan = _composite_primary_plan(baseline_dir, _JUDGE_PLAN_BLOCK)
+    baseline = analyze(plan=baseline_plan, logs="ignored")
+    rows = ["observation_id,human_label"]
+    for observation in baseline._observations:
+        if observation.failure is None:
+            continue
+        rows.append(f"{observation.observation_id},{'unsafe' if observation.failure else 'safe'}")
+    (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    plan_path = _composite_primary_plan(tmp_path, _JUDGE_PLAN_BLOCK)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "design:\n",
+        "  judge_calibration:\n    mode: validated\n    validation_manifest: labels.csv\n"
+        "    family: judge_error\n"
+        "design:\n",
+        1,
+    ).replace(
+        "    - {id: displayed,",
+        "    - {id: judge_error, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: displayed,",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    corrected = next(
+        item for item in mean.intervals if item.interval_id == "judge_corrected_validated"
+    )
+    # Stratifying labels by the composite's own verdict measures the composite's
+    # accuracy directly; no assumption about dependence among its judges is needed.
+    assert corrected.eligibility == "certifying"
+    assert corrected.method == "validated_judge_misclassification_correction"
+
+
+def test_panel_agreement_includes_an_exact_mcnemar_bias_test(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace("design:\n", _JUDGE_PLAN_BLOCK + "design:\n", 1)
+    plan_path.write_text(plan_text, encoding="utf-8")
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    (pair,) = report.provenance["judge_panel"]["agreement"]
+    stats = pair["cohorts"]["candidate"]
+    # Five discordant pairs, all in one direction: two-sided exact p = 2 * 0.5^5.
+    assert stats["discordant_first_only"] == 5
+    assert stats["discordant_second_only"] == 0
+    assert stats["mcnemar_p_value"] == pytest.approx(0.0625)

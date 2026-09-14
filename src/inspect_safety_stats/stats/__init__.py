@@ -36,8 +36,12 @@ from .hierarchy_region import (
 from .independence import BoundedBlocks
 from .judges import (
     AgreementSummary,
+    IdentifiedRiskSet,
+    JudgeAccuracyBox,
     compose_verdicts,
+    composite_accuracy_box,
     effective_votes,
+    identified_risk_set,
     pairwise_agreement,
 )
 from .misclassification import (
@@ -108,8 +112,12 @@ __all__ = [
     "weighted_mean",
     "zero_failure_sample_size",
     "AgreementSummary",
+    "IdentifiedRiskSet",
+    "JudgeAccuracyBox",
     "compose_verdicts",
+    "composite_accuracy_box",
     "effective_votes",
+    "identified_risk_set",
     "pairwise_agreement",
     "calibrate_independent_frontiers",
     "sidak_local_alpha",

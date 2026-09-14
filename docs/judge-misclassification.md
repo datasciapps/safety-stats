@@ -264,6 +264,36 @@ directly. That is the recommended route to evidence for a panel. The panel secti
 adds pairwise agreement and Cohen's kappa as diagnostics; neither carries a coverage guarantee and
 neither identifies the true failure rate on its own.
 
+### Deriving a panel's accuracy box
+
+If the primary outcome is an `any` or `all` composite and every member judge declares
+prevalence-free accuracy ranges,
+
+```yaml
+judges:
+  - id: gpt_judge
+    score: {...}
+    block: openai
+    accuracy: {sensitivity: {lower: 0.80, upper: 0.95}, specificity: {lower: 0.90, upper: 0.99}}
+```
+
+the report adds a `judge_corrected_panel_derived` sensitivity interval. The composite's
+sensitivity and specificity box follows from the members' boxes by interval arithmetic: within a
+declared dependence block the judges' errors may be arbitrarily dependent, so the block's joint
+behaviour is bounded by Fréchet inequalities; across blocks the judges are independent, so block
+probabilities multiply. For `any`, sensitivity is one minus the probability that every judge
+clears an unsafe item and specificity is the probability that every judge clears a safe one; `all`
+is the mirror image. `majority` has no closed form under partial dependence and is refused --
+calibrate the composite's own verdict instead.
+
+True risk is then the Rogan--Gladen inversion \(\pi=(q-(1-Sp))/(Se+Sp-1)\) evaluated over the box;
+it is separately monotone in each argument, so the extremes sit at the vertices. **When the box
+admits \(Se+Sp\le1\), nothing identifies the true rate and the reported set is \([0,1]\).** That is
+the identification result of the partial-identification literature made concrete: agreement among
+dependent judges cannot substitute for calibration. Because declared boxes are assumptions, this
+interval is `diagnostic` and can never move a claim; the certifying route for a panel remains a
+`validated` calibration of the composite's own verdict strata.
+
 ## Getting to evidence
 
 `mode: validated` supplies the machinery; the labels are the remaining cost. An anchor must

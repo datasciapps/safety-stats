@@ -157,6 +157,13 @@ class JudgeCalibrationSpec(StrictModel):
         return self
 
 
+class JudgeAccuracySpec(StrictModel):
+    """Declared prevalence-free accuracy ranges for one judge."""
+
+    sensitivity: JudgeRateRangeSpec
+    specificity: JudgeRateRangeSpec
+
+
 class JudgeSpec(StrictModel):
     """One declared binary judge over every rollout.
 
@@ -171,6 +178,7 @@ class JudgeSpec(StrictModel):
     score: ScoreSpec
     block: str | None = None
     kind: Literal["judge", "monitor"] = "judge"
+    accuracy: JudgeAccuracySpec | None = None
 
     @model_validator(mode="after")
     def resolve_block(self) -> JudgeSpec:

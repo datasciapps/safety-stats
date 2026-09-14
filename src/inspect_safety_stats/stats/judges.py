@@ -102,3 +102,152 @@ def pairwise_agreement(
     return AgreementSummary(
         compared=compared, disagreements=disagreements, agreement=observed, kappa=kappa
     )
+
+
+@dataclass(frozen=True)
+class JudgeAccuracyBox:
+    """Declared ranges for a judge's sensitivity ``P(flag | unsafe)`` and specificity
+    ``P(clear | safe)``.
+
+    Unlike the posterior accuracies ``rho_0, rho_1`` used for a single judge, these are
+    prevalence-free, which is what lets boxes for several judges be combined.
+    """
+
+    sensitivity_lower: float
+    sensitivity_upper: float
+    specificity_lower: float
+    specificity_upper: float
+
+    def __post_init__(self) -> None:
+        for name, low, high in (
+            ("sensitivity", self.sensitivity_lower, self.sensitivity_upper),
+            ("specificity", self.specificity_lower, self.specificity_upper),
+        ):
+            if not 0 <= low <= high <= 1:
+                raise ValueError(f"{name} must satisfy 0 <= lower <= upper <= 1")
+
+
+def _conjunction(intervals: Sequence[tuple[float, float]]) -> tuple[float, float]:
+    """Frechet bounds on ``P(all events)`` from each event's probability interval.
+
+    Valid under arbitrary dependence: the lower bound is attained when the events
+    overlap as little as possible, the upper when the rarest event implies the rest.
+    """
+
+    lower = max(0.0, sum(low for low, _ in intervals) - (len(intervals) - 1))
+    upper = min(high for _, high in intervals)
+    return lower, min(upper, 1.0)
+
+
+def _product(intervals: Sequence[tuple[float, float]]) -> tuple[float, float]:
+    lower = upper = 1.0
+    for low, high in intervals:
+        lower *= low
+        upper *= high
+    return lower, upper
+
+
+def composite_accuracy_box(
+    judges: Sequence[JudgeAccuracyBox], blocks: Sequence[str], rule: str
+) -> JudgeAccuracyBox:
+    """Accuracy box of an ``any`` or ``all`` composite from its judges' boxes.
+
+    Within a declared dependence block the judges' errors may be arbitrarily
+    dependent, so the block's joint behaviour is bounded by Frechet inequalities;
+    across blocks the judges are independent, so block probabilities multiply. Every
+    step is monotone interval arithmetic, so the result is sharp for the declared
+    structure and widens as the declared boxes widen. ``majority`` has no closed form
+    under partial dependence and is refused; calibrate such a composite directly.
+    """
+
+    if len(judges) != len(blocks):
+        raise ValueError("judge boxes and blocks must be aligned")
+    if not judges:
+        raise ValueError("a composite needs at least one judge")
+    if rule == "majority":
+        raise ValueError(
+            "majority composites have no closed-form accuracy box under partial dependence; "
+            "calibrate the composite's own verdict instead"
+        )
+    if rule not in {"any", "all"}:
+        raise ValueError(f"unsupported composite rule {rule!r}")
+    grouped: dict[str, list[JudgeAccuracyBox]] = {}
+    for judge, block in zip(judges, blocks, strict=True):
+        grouped.setdefault(block, []).append(judge)
+    if rule == "any":
+        # Sensitivity is 1 - P(every judge clears | unsafe); specificity is
+        # P(every judge clears | safe).
+        clear_given_unsafe = _product(
+            [
+                _conjunction([(1 - j.sensitivity_upper, 1 - j.sensitivity_lower) for j in members])
+                for members in grouped.values()
+            ]
+        )
+        clear_given_safe = _product(
+            [
+                _conjunction([(j.specificity_lower, j.specificity_upper) for j in members])
+                for members in grouped.values()
+            ]
+        )
+        return JudgeAccuracyBox(
+            sensitivity_lower=1 - clear_given_unsafe[1],
+            sensitivity_upper=1 - clear_given_unsafe[0],
+            specificity_lower=clear_given_safe[0],
+            specificity_upper=clear_given_safe[1],
+        )
+    # all: sensitivity is P(every judge flags | unsafe); specificity is 1 - P(every flags | safe).
+    flag_given_unsafe = _product(
+        [
+            _conjunction([(j.sensitivity_lower, j.sensitivity_upper) for j in members])
+            for members in grouped.values()
+        ]
+    )
+    flag_given_safe = _product(
+        [
+            _conjunction([(1 - j.specificity_upper, 1 - j.specificity_lower) for j in members])
+            for members in grouped.values()
+        ]
+    )
+    return JudgeAccuracyBox(
+        sensitivity_lower=flag_given_unsafe[0],
+        sensitivity_upper=flag_given_unsafe[1],
+        specificity_lower=1 - flag_given_safe[1],
+        specificity_upper=1 - flag_given_safe[0],
+    )
+
+
+@dataclass(frozen=True)
+class IdentifiedRiskSet:
+    """The set of true risks consistent with a judge-reported interval and an accuracy box."""
+
+    lower: float
+    upper: float
+    identified: bool
+
+
+def identified_risk_set(
+    observed_lower: float, observed_upper: float, box: JudgeAccuracyBox
+) -> IdentifiedRiskSet:
+    """Partial identification of true risk from judge-reported risk under an accuracy box.
+
+    With judge-reported rate ``q``, sensitivity ``Se`` and specificity ``Sp``,
+    ``q = pi * Se + (1 - pi) * (1 - Sp)``, so ``pi = (q - (1 - Sp)) / (Se + Sp - 1)``
+    (Rogan-Gladen). The inversion is separately monotone in each argument, so its
+    extrema over the box are attained at vertices. If the box admits
+    ``Se + Sp <= 1`` the panel may be uninformative and nothing identifies ``pi``:
+    the honest answer is the whole unit interval, and ``identified`` is False.
+    """
+
+    if not 0 <= observed_lower <= observed_upper <= 1:
+        raise ValueError("observed bounds must satisfy 0 <= lower <= upper <= 1")
+    if box.sensitivity_lower + box.specificity_lower <= 1:
+        return IdentifiedRiskSet(lower=0.0, upper=1.0, identified=False)
+    vertices = [
+        (q - (1 - sp)) / (se + sp - 1)
+        for q in (observed_lower, observed_upper)
+        for se in (box.sensitivity_lower, box.sensitivity_upper)
+        for sp in (box.specificity_lower, box.specificity_upper)
+    ]
+    return IdentifiedRiskSet(
+        lower=max(0.0, min(vertices)), upper=min(1.0, max(vertices)), identified=True
+    )

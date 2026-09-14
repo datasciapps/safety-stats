@@ -147,6 +147,13 @@ blocks, and pairwise agreement with Cohen's kappa. Agreement is a diagnostic, no
 that share a blind spot agree and are both wrong. Missing judge columns and unmappable judge
 values are errors (`JUDGE_SCORE_MISSING`, `JUDGE_SCORE_UNMAPPED`).
 
+A judge may declare prevalence-free accuracy ranges, `accuracy: {sensitivity: {lower, upper},
+specificity: {lower, upper}}`. When the primary outcome is an `any` or `all` composite whose judges
+all declare them, the report adds a diagnostic `judge_corrected_panel_derived` interval: the
+composite's box is derived by Fréchet bounds within blocks and products across blocks, and true
+risk is partially identified by inverting Rogan–Gladen over it (the whole unit interval when the
+box admits an uninformative panel). See [Judge misclassification](judge-misclassification.md).
+
 ## `design`
 
 | Field | Meaning |

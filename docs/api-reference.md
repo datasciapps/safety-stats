@@ -351,6 +351,9 @@ correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibra
 compose_verdicts(verdicts, rule)          # any | all | majority; None when undecidable
 effective_votes(blocks)                   # Kish count over declared dependence blocks
 pairwise_agreement(first, second)         # AgreementSummary(compared, disagreements, agreement, kappa)
+JudgeAccuracyBox(sensitivity_lower, sensitivity_upper, specificity_lower, specificity_upper)
+composite_accuracy_box(judges, blocks, rule)   # any | all; Frechet within blocks, product across
+identified_risk_set(observed_lower, observed_upper, box)  # IdentifiedRiskSet(lower, upper, identified)
 ```
 
 Bookkeeping for declared judge panels; see the `inputs.judges` section of the plan reference.

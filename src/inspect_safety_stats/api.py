@@ -70,8 +70,11 @@ from inspect_safety_stats.stats.independence import (
     validate_profile_fields,
 )
 from inspect_safety_stats.stats.judges import (
+    JudgeAccuracyBox,
     compose_verdicts,
+    composite_accuracy_box,
     effective_votes,
+    identified_risk_set,
     pairwise_agreement,
 )
 from inspect_safety_stats.stats.misclassification import (
@@ -1899,12 +1902,29 @@ def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, 
     for first, second in itertools.combinations([judge.id for judge in plan.inputs.judges], 2):
         pair_cohorts = {}
         for cohort_id in cohorts:
-            summary = pairwise_agreement(verdicts(cohort_id, first), verdicts(cohort_id, second))
+            first_votes = verdicts(cohort_id, first)
+            second_votes = verdicts(cohort_id, second)
+            summary = pairwise_agreement(first_votes, second_votes)
+            paired = [
+                (bool(a), bool(b))
+                for a, b in zip(first_votes, second_votes, strict=True)
+                if a is not None and b is not None
+            ]
+            first_only = second_only = 0
+            p_value: float | None = None
+            if paired:
+                mcnemar = exact_mcnemar([a for a, _ in paired], [b for _, b in paired])
+                first_only = mcnemar.candidate_failure_baseline_safe
+                second_only = mcnemar.candidate_safe_baseline_failure
+                p_value = mcnemar.p_value_two_sided
             pair_cohorts[cohort_id] = {
                 "compared": summary.compared,
                 "disagreements": summary.disagreements,
                 "agreement": summary.agreement,
                 "kappa": summary.kappa,
+                "discordant_first_only": first_only,
+                "discordant_second_only": second_only,
+                "mcnemar_p_value": p_value,
             }
         agreement.append({"first": first, "second": second, "cohorts": pair_cohorts})
     return {
@@ -1912,6 +1932,131 @@ def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, 
         "composites": composites,
         "agreement": agreement,
         "effective_votes_all": effective_votes(list(blocks.values())),
+    }
+
+
+def _apply_panel_derived_correction(
+    plan: AnalysisPlan,
+    risks: list[GroupRiskResult],
+    hierarchy_risks: list[HierarchyRiskResult],
+    diagnostics: list[Diagnostic],
+) -> dict[str, Any] | None:
+    """Partial identification of true risk when the primary outcome is a composite.
+
+    The composite's accuracy box is derived from its judges' declared boxes under the
+    declared dependence blocks, and the judge-reported interval is inverted over that
+    box. Declared boxes are assumptions, so every interval this adds is a diagnostic
+    sensitivity that can never move a claim.
+    """
+
+    composite = next(
+        (item for item in plan.inputs.composites if item.id == plan.inputs.score.name), None
+    )
+    if composite is None:
+        return None
+    judges = {judge.id: judge for judge in plan.inputs.judges}
+    members = [judges[judge_id] for judge_id in composite.judges]
+    if any(member.accuracy is None for member in members):
+        return None
+    if composite.rule == "majority":
+        diagnostics.append(
+            Diagnostic(
+                code="PANEL_CORRECTION_UNSUPPORTED_RULE",
+                severity="INFO",
+                message=(
+                    "a majority composite has no closed-form accuracy box under partial "
+                    "dependence; validate the composite's own verdict instead"
+                ),
+                scope=f"inputs.composites.{composite.id}",
+            )
+        )
+        return None
+    boxes = []
+    for member in members:
+        assert member.accuracy is not None
+        boxes.append(
+            JudgeAccuracyBox(
+                sensitivity_lower=member.accuracy.sensitivity.lower,
+                sensitivity_upper=member.accuracy.sensitivity.upper,
+                specificity_lower=member.accuracy.specificity.lower,
+                specificity_upper=member.accuracy.specificity.upper,
+            )
+        )
+    box = composite_accuracy_box(
+        boxes, [member.block or member.id for member in members], composite.rule
+    )
+    correctable = {
+        measure.id
+        for measure in plan.outputs.risk_measures
+        if measure.type in _JUDGE_CORRECTABLE_MEASURES
+    }
+    targets: list[GroupRiskResult | HierarchyRiskResult] = [
+        *(row for row in risks if row.measure_id in correctable),
+        *hierarchy_risks,
+    ]
+    for result in targets:
+        if result.lower is None or result.upper is None:
+            continue
+        identified = identified_risk_set(result.lower, result.upper, box)
+        estimate_range = (
+            identified_risk_set(result.estimate, result.estimate, box)
+            if result.estimate is not None
+            else None
+        )
+        result.intervals.append(
+            RiskIntervalResult(
+                interval_id="judge_corrected_panel_derived",
+                lower=identified.lower,
+                upper=identified.upper,
+                method="derived_panel_misclassification_correction",
+                role="sensitivity",
+                coverage_scope=(
+                    f"{result.coverage_scope}_panel_derived"
+                    if result.coverage_scope
+                    else "panel_derived"
+                ),
+                completion_estimate_lower=(
+                    estimate_range.lower if estimate_range is not None else None
+                ),
+                completion_estimate_upper=(
+                    estimate_range.upper if estimate_range is not None else None
+                ),
+                raw_lower=result.lower,
+                raw_upper=result.upper,
+                calibration_method="derived_panel_accuracy_box",
+                assumptions=[
+                    "The reported estimand is true failure risk, not judge-reported failure risk.",
+                    f"The composite {composite.id!r} ({composite.rule}) accuracy box is derived "
+                    "from its judges' declared sensitivity/specificity ranges: Frechet bounds "
+                    "within each declared dependence block, independence across blocks.",
+                    f"Derived sensitivity lies in [{box.sensitivity_lower:.6g}, "
+                    f"{box.sensitivity_upper:.6g}] and specificity in "
+                    f"[{box.specificity_lower:.6g}, {box.specificity_upper:.6g}].",
+                    "Judge accuracies are declared, prevalence-free, and applied unchanged to "
+                    "every prompt and cohort; they carry no coverage guarantee.",
+                    "True risk is the Rogan-Gladen inversion over the box; extrema sit at the box "
+                    "vertices because the inversion is separately monotone in each argument.",
+                ],
+                eligibility="diagnostic",
+                warnings=(
+                    []
+                    if identified.identified
+                    else [
+                        "The declared boxes admit an uninformative panel (sensitivity + "
+                        "specificity <= 1); true risk is unidentified and the reported set is "
+                        "the whole unit interval."
+                    ]
+                ),
+            )
+        )
+    return {
+        "composite": composite.id,
+        "rule": composite.rule,
+        "judges": list(composite.judges),
+        "derived_box": {
+            "sensitivity": [box.sensitivity_lower, box.sensitivity_upper],
+            "specificity": [box.specificity_lower, box.specificity_upper],
+        },
     }
 
 
@@ -3909,6 +4054,9 @@ def analyze(
     judge_calibration_summary = _apply_judge_correction(
         resolved, data, risks, hierarchy_risks, comparisons, diagnostics
     )
+    panel_correction = _apply_panel_derived_correction(
+        resolved, risks, hierarchy_risks, diagnostics
+    )
     comparison_sets = _comparison_set_results(resolved, comparisons, risks)
     integrity_status = _integrity_status(diagnostics)
     integrity_certifiable = integrity_status != "invalid"
@@ -3927,6 +4075,8 @@ def analyze(
         ),
     )
     judge_panel = _judge_panel_summary(resolved, data)
+    if judge_panel is not None and panel_correction is not None:
+        judge_panel["derived_correction"] = panel_correction
     plan_hash = canonical_plan_hash(resolved)
     report = SafetyReport(
         package_version=__version__,
