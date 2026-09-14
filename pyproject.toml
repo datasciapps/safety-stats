@@ -39,6 +39,11 @@ Repository = "https://github.com/aduncan001/safety_stats"
 Issues = "https://github.com/aduncan001/safety_stats/issues"
 
 [project.optional-dependencies]
+equivalence = [
+  "sentencepiece>=0.2,<1",
+  "torch>=2.2,<3",
+  "transformers>=4.44,<6",
+]
 openai = [
   "openai>=1.0",
 ]

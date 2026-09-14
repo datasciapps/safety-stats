@@ -229,9 +229,10 @@ class RewriteValidationSpec(StrictModel):
     """How a candidate rewrite is checked against its seed's meaning.
 
     ``validator_id`` names the check, and materialization compares it with the validator
-    that actually ran. ``model``, ``prompt_template`` and ``temperature`` describe a
-    model-graded check so that they enter the kernel fingerprint. Each stays out of the
-    fingerprint while unset, so a plan declaring none of them keeps the fingerprint it had.
+    that actually ran. ``model``, ``prompt_template``, ``temperature`` and ``threshold``
+    describe the check -- a model-graded one, or a deterministic scorer with a cutoff -- so
+    that they enter the kernel fingerprint. Each stays out of the fingerprint while unset,
+    so a plan declaring none of them keeps the fingerprint it had.
     """
 
     validator_id: str = Field(min_length=1)
@@ -241,6 +242,9 @@ class RewriteValidationSpec(StrictModel):
     model: str | None = Field(default=None, min_length=1)
     prompt_template: str | None = Field(default=None, min_length=1)
     temperature: float | None = Field(default=None, ge=0.0)
+    # A cutoff a validator compares a score against -- an entailment probability, a cosine
+    # similarity. It is part of the procedure, so it belongs in the fingerprint.
+    threshold: float | None = Field(default=None, ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def model_graded_names_its_model(self) -> RewriteValidationSpec:

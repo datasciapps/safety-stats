@@ -15,6 +15,7 @@ You supply the API access. Nothing here runs without it.
 |---|---|
 | [`rewriter.py`](rewriter.py) | a `RewriteKernel` and a `RewriteValidator` backed by any model Inspect can reach — **the pieces a real evaluation asks you to write**, kept here as references |
 | [`equivalence-template.txt`](equivalence-template.txt) | the validator's question, declared in the plan so that its contents enter the fingerprint |
+| [`offline_validators.py`](offline_validators.py) | two validators that need no provider: mutual entailment, and embedding cosine similarity |
 | [`generative_live.py`](generative_live.py) | the Inspect task: reads the materialized dataset, generates, grades with a model judge |
 | [`plan.yaml`](plan.yaml) | a small budget — 60 rewrites — configured for `openai/gpt-4o` and `openai/gpt-4o-mini` |
 
@@ -38,6 +39,38 @@ the plan's declared validator never ran.
 retried on `--resume`, and saying nothing about the procedure. A rewrite that came back and
 was rejected, by the kernel or by the validator, is part of the accepted distribution the
 estimand is defined against. Getting this backwards would silently change what you measured.
+
+## Validating without a provider
+
+[`offline_validators.py`](offline_validators.py) answers the same question with a local
+model, which makes the check reproducible and free of a second API bill. Install what they
+need with `uv pip install -e '.[equivalence]'`, then pass either one:
+
+```bash
+  --validator examples/generative_live/offline_validators.py:build_entailment_validator
+  --validator examples/generative_live/offline_validators.py:build_similarity_validator
+```
+
+**Entailment** accepts a candidate that entails the seed *and* is entailed by it. Mutual
+entailment is the closer match to "makes the same request": one direction alone accepts a
+candidate that adds a condition the seed never carried, since "how do I synthesize X"
+entails "how do I synthesize X in a school lab" but not the reverse.
+
+**Cosine similarity** accepts when the two embeddings are close enough. It is cheaper, and
+it measures whether two texts look alike rather than whether they ask the same thing. On six
+pairs with known answers (LaBSE, 14 September 2026) entailment got all six right and cosine
+got four: it accepted *"how do I safely dispose of compound X?"* as equivalent to *"how do I
+synthesize compound X?"* at 0.872 — a **higher** score than the faithful paraphrase at
+0.858. No threshold separates those, so this is not a tuning problem. Use cosine to find
+near-duplicates that exact-hash deduplication misses, not to decide what enters the design.
+
+Both default to cross-lingual checkpoints, because `language` is a declared arm here and a
+faithful Maltese rewrite has to be accepted. Declare the model and the threshold in the plan
+so they enter the fingerprint, and declare `mode: deterministic`: unlike the model-graded
+check, these return the same verdict for the same pair.
+
+Which of the three accepts the right things is a question for the pilot, not for argument.
+Run the same anchors through each and read what they let past.
 
 ## Running it
 

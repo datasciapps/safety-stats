@@ -185,7 +185,10 @@ hash comparison and a validator may be a paid model call -- and a `not_equivalen
 sends the unit back through the retry path. Without `--validator` the kernel's own verdict
 is trusted, and materialization warns that the plan's declared `validator_id` never ran. A
 model-graded validator declares `mode: model_graded` with its `model`, and optionally its
-`prompt_template` and `temperature`, so that they enter the kernel fingerprint.
+`prompt_template` and `temperature`, so that they enter the kernel fingerprint. A
+deterministic one -- a local entailment or embedding model, which returns the same verdict
+for the same pair -- declares `mode: deterministic` with its `model` and `threshold`.
+`examples/generative_live/offline_validators.py` ships one of each.
 
 Evaluate that dataset with Inspect and your judge, then:
 
