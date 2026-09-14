@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import pandas as pd
 import pytest
 import yaml
 from typer.testing import CliRunner
@@ -61,7 +62,14 @@ class ScriptedKernel:
         return RewriteOutcome(status="valid", prompt=f"rewrite of {request.sampling_unit_id}")
 
 
-def run_with(kernel: ScriptedKernel, plan: Path, artifacts: Path, *, resume: bool = False):
+def run_with(
+    kernel: ScriptedKernel,
+    plan: Path,
+    artifacts: Path,
+    *,
+    resume: bool = False,
+    validator: str | None = None,
+):
     """Materialize with a scripted kernel, returning None if it was interrupted."""
 
     import inspect_safety_stats.generative.runner as runner_module
@@ -71,9 +79,9 @@ def run_with(kernel: ScriptedKernel, plan: Path, artifacts: Path, *, resume: boo
     try:
         if kernel.survive < 10**6:
             with pytest.raises(Interrupted):
-                materialize_run(plan, artifacts, resume=resume)
+                materialize_run(plan, artifacts, resume=resume, validator=validator)
             return None
-        return materialize_run(plan, artifacts, resume=resume)
+        return materialize_run(plan, artifacts, resume=resume, validator=validator)
     finally:
         runner_module.resolve_kernel = original  # type: ignore[assignment]
 
@@ -158,6 +166,36 @@ def test_exhausted_units_are_final_and_are_not_retried(tmp_path: Path) -> None:
     records = read_rewrites(artifacts / "rewrites.csv")
     assert all(record.validation_status == "invalid" for record in records)
     assert all(record.rewrite_attempts == 5 for record in records)
+
+
+def test_validator_rejections_are_final_and_are_not_retried(tmp_path: Path) -> None:
+    """Like the kernel's own rejections: rescuing them would grant more attempts."""
+
+    plan = write_plan(tmp_path, total=30)
+    artifacts = tmp_path / "run"
+    first = run_with(ScriptedKernel(), plan, artifacts, validator="fake:reject_every=1")
+    assert first is not None and first.accepted == 0 and first.exhausted == 30
+
+    second = run_with(ScriptedKernel(), plan, artifacts, resume=True, validator="fake")
+    assert second is not None
+    assert second.resumed == 30
+    assert second.accepted == 0
+    records = read_rewrites(artifacts / "rewrites.csv")
+    assert all(record.validator_rejections == 5 for record in records)
+
+
+def test_resume_refuses_a_ledger_written_before_rejection_reasons(tmp_path: Path) -> None:
+    """Appending new rows under the old header would put them in the wrong columns."""
+
+    plan = write_plan(tmp_path, total=40)
+    artifacts = tmp_path / "run"
+    run_with(ScriptedKernel(survive=20), plan, artifacts)
+    ledger = artifacts / "rewrites.csv"
+    added = ["validator_id", "kernel_rejections", "validator_rejections", "duplicate_rejections"]
+    pd.read_csv(ledger, keep_default_na=False).drop(columns=added).to_csv(ledger, index=False)
+
+    with pytest.raises(ValueError, match="earlier version of the package"):
+        materialize_run(plan, artifacts, resume=True)
 
 
 def test_errored_units_are_retried_because_they_say_nothing_about_the_kernel(

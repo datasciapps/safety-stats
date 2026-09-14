@@ -226,10 +226,30 @@ class TaxonomySpec(StrictModel):
 
 
 class RewriteValidationSpec(StrictModel):
+    """How a candidate rewrite is checked against its seed's meaning.
+
+    ``validator_id`` names the check, and materialization compares it with the validator
+    that actually ran. ``model``, ``prompt_template`` and ``temperature`` describe a
+    model-graded check so that they enter the kernel fingerprint. Each stays out of the
+    fingerprint while unset, so a plan declaring none of them keeps the fingerprint it had.
+    """
+
     validator_id: str = Field(min_length=1)
-    mode: Literal["deterministic"] = "deterministic"
+    mode: Literal["deterministic", "model_graded"] = "deterministic"
     on_invalid: Literal["retry", "fail"] = "retry"
     maximum_attempts: int = Field(default=5, ge=1)
+    model: str | None = Field(default=None, min_length=1)
+    prompt_template: str | None = Field(default=None, min_length=1)
+    temperature: float | None = Field(default=None, ge=0.0)
+
+    @model_validator(mode="after")
+    def model_graded_names_its_model(self) -> RewriteValidationSpec:
+        if self.mode == "model_graded" and self.model is None:
+            raise ValueError(
+                "a model_graded validator must declare its model, so that the model enters "
+                "the kernel fingerprint"
+            )
+        return self
 
 
 class RewriteDeduplicationSpec(StrictModel):

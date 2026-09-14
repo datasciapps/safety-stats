@@ -23,6 +23,7 @@ from inspect_safety_stats.generative.kernels import (
     KernelFingerprint,
     RewriteKernel,
     RewriteRequest,
+    RewriteValidator,
 )
 from inspect_safety_stats.generative.ledger import (
     IncrementalCsvWriter,
@@ -50,6 +51,8 @@ class ExecutionResult:
     exhausted: tuple[str, ...]
     errored: tuple[str, ...]
     first_error: str | None = None
+    kernel_rejected: int = 0
+    validator_rejected: int = 0
 
     @property
     def accepted_by_unit(self) -> dict[str, AcceptedRewrite]:
@@ -68,6 +71,19 @@ class AcceptanceRow:
     errored: int
     mean_attempts: float
     exhaustion_rate: float
+    # Attempts rejected by each check, summed over the value's units. None when any of
+    # those units comes from a ledger written before rejections were recorded by reason.
+    kernel_rejections: int | None = None
+    validator_rejections: int | None = None
+    duplicate_rejections: int | None = None
+
+
+def _recorded_total(counts: list[int | None]) -> int | None:
+    """Sum per-unit rejection counts, or None if any unit predates their recording."""
+
+    if any(count is None for count in counts):
+        return None
+    return sum(count for count in counts if count is not None)
 
 
 def acceptance_by_level(
@@ -80,6 +96,10 @@ def acceptance_by_level(
     another -- a low-resource language, an awkward wrapper -- then the accepted
     distribution is differentially shaped across the design. That is a property of what
     was measured rather than a defect, but nothing else makes it visible.
+
+    The three rejection counts say which check did the rejecting: the kernel's own verdict,
+    the validator, or deduplication. Exhaustion alone cannot tell a rewriter that drifts
+    off meaning from one that repeats itself.
     """
 
     by_unit = {record.sampling_unit_id: record for record in rewrites}
@@ -108,6 +128,15 @@ def acceptance_by_level(
                 errored=errored,
                 mean_attempts=sum(item.rewrite_attempts for item in records) / len(records),
                 exhaustion_rate=exhausted / len(records),
+                kernel_rejections=_recorded_total(
+                    [item.kernel_rejections for item in records]
+                ),
+                validator_rejections=_recorded_total(
+                    [item.validator_rejections for item in records]
+                ),
+                duplicate_rejections=_recorded_total(
+                    [item.duplicate_rejections for item in records]
+                ),
             )
         )
     return rows
@@ -173,12 +202,18 @@ def execute_rewrites(
     fingerprint: KernelFingerprint,
     seed_texts: Mapping[str, str],
     *,
+    validator: RewriteValidator | None = None,
     rewrite_salt: str = "",
     completed: Mapping[str, RewriteRecord] | None = None,
     already_accepted: Mapping[str, AcceptedRewrite] | None = None,
     on_unit: Callable[[RewriteRecord, AcceptedRewrite | None], None] | None = None,
 ) -> ExecutionResult:
     """Draw one accepted rewrite per selected path, ledgering every attempt.
+
+    ``validator``, when given, checks every candidate that is not a duplicate against its
+    seed's meaning. Duplicates are ruled out first because that is a hash comparison while
+    a validator may be a paid model call; the accepted rewrite is the same in either order.
+    Without a validator the kernel's own verdict is trusted.
 
     ``rewrite_salt`` makes a cohort's rewrites independent of another's. Leave it empty
     for the shared-rewrite pairing that ``target.shared_rewrites`` describes.
@@ -201,6 +236,9 @@ def execute_rewrites(
     records: list[RewriteRecord] = []
     accepted: list[AcceptedRewrite] = []
     duplicates = 0
+    kernel_rejected = 0
+    validator_rejected = 0
+    validator_id = validator.validator_id if validator is not None else None
     exhausted: list[str] = []
     errored: list[str] = []
     first_error: str | None = None
@@ -245,26 +283,27 @@ def execute_rewrites(
         status = "invalid"
         prompt: str | None = None
         attempts = 0
+        kernel_rejections = validator_rejections = duplicate_rejections = 0
 
         for attempt in range(1, validation.maximum_attempts + 1):
             attempts = attempt
-            outcome = kernel.rewrite(
-                RewriteRequest(
-                    sampling_unit_id=unit_id,
-                    path_hash=record.path_hash,
-                    path_values=path_values,
-                    semantic_seed_id=seed_id,
-                    seed_text=seed_texts[seed_id],
-                    attempt=attempt,
-                    selection_seed=salt_seed,
-                )
+            request = RewriteRequest(
+                sampling_unit_id=unit_id,
+                path_hash=record.path_hash,
+                path_values=path_values,
+                semantic_seed_id=seed_id,
+                seed_text=seed_texts[seed_id],
+                attempt=attempt,
+                selection_seed=salt_seed,
             )
+            outcome = kernel.rewrite(request)
             if outcome.status == "error":
                 status = "error"
                 if first_error is None:
                     first_error = outcome.detail
                 break
             if outcome.status == "invalid":
+                kernel_rejections += 1
                 if validation.on_invalid == "fail":
                     break
                 continue
@@ -273,12 +312,28 @@ def execute_rewrites(
             if key is not None and digest in seen.get(key, set()):
                 duplicates += 1
                 if deduplication.on_duplicate == "retry":
+                    duplicate_rejections += 1
+                    continue
+            if validator is not None:
+                verdict = validator.validate(request, candidate)
+                if verdict.status == "error":
+                    status = "error"
+                    if first_error is None:
+                        first_error = f"validator: {verdict.detail}"
+                    break
+                if verdict.status == "not_equivalent":
+                    validator_rejections += 1
+                    if validation.on_invalid == "fail":
+                        break
                     continue
             if key is not None:
                 seen.setdefault(key, set()).add(digest)
             status = "valid"
             prompt = candidate
             break
+
+        kernel_rejected += kernel_rejections
+        validator_rejected += validator_rejections
 
         if status == "valid" and prompt is not None:
             entry = AcceptedRewrite(
@@ -299,6 +354,10 @@ def execute_rewrites(
                 prompt_id=entry.prompt_id,
                 prompt_sha256=entry.prompt_sha256,
                 source_semantic_seed_id=seed_id,
+                validator_id=validator_id,
+                kernel_rejections=kernel_rejections,
+                validator_rejections=validator_rejections,
+                duplicate_rejections=duplicate_rejections,
             )
             records.append(fresh)
             if on_unit is not None:
@@ -317,6 +376,10 @@ def execute_rewrites(
             rewrite_attempts=attempts,
             validation_status="error" if status == "error" else "invalid",
             source_semantic_seed_id=seed_id,
+            validator_id=validator_id,
+            kernel_rejections=kernel_rejections,
+            validator_rejections=validator_rejections,
+            duplicate_rejections=duplicate_rejections,
         )
         records.append(unfinished)
         if on_unit is not None:
@@ -329,6 +392,8 @@ def execute_rewrites(
         exhausted=tuple(exhausted),
         errored=tuple(errored),
         first_error=first_error,
+        kernel_rejected=kernel_rejected,
+        validator_rejected=validator_rejected,
     )
 
 

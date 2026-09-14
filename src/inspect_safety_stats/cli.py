@@ -271,6 +271,7 @@ def generative_materialize_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
     output: Annotated[Path, typer.Option("--output")] = Path("generative-run"),
     kernel: Annotated[str, typer.Option("--kernel")] = "fake",
+    validator: Annotated[str, typer.Option("--validator")] = "",
     stage: Annotated[str, typer.Option("--stage")] = "main",
     salt: Annotated[str, typer.Option("--rewrite-salt")] = "",
     overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
@@ -280,6 +281,8 @@ def generative_materialize_command(
 
     Ledgers are appended as each unit completes, so an interrupted run leaves a usable
     record. --resume continues from it, executing only the units still outstanding.
+    --validator checks every candidate against its seed's meaning; without it the kernel's
+    own verdict is trusted, and a warning says so.
     """
 
     from inspect_safety_stats.generative.runner import materialize_run
@@ -289,6 +292,7 @@ def generative_materialize_command(
             plan,
             output,
             kernel=kernel,
+            validator=validator or None,
             stage=stage,
             overwrite=overwrite,
             resume=resume,
@@ -300,16 +304,20 @@ def generative_materialize_command(
 
     typer.echo(f"Taxonomy fingerprint: {run.taxonomy_fingerprint}")
     typer.echo(f"Kernel: {run.kernel.kernel_id} @ {run.kernel.sha256}")
+    typer.echo(f"Validator: {run.validator_id or 'none'}")
     typer.echo(f"Selections: {run.selections}")
     if run.resumed:
         typer.echo(f"Resumed: {run.resumed} units carried over, "
                    f"{run.selections - run.resumed} executed")
     typer.echo(
         f"Rewrites: {run.accepted} accepted, {run.duplicates_rejected} duplicates rejected, "
+        f"{run.kernel_rejected} rejected by the kernel, "
+        f"{run.validator_rejected} rejected by the validator, "
         f"{run.exhausted} exhausted, {run.errored} errored"
     )
-    if run.kernel_mismatch:
-        typer.echo(f"Warning: {run.kernel_mismatch}", err=True)
+    for mismatch in (run.kernel_mismatch, run.validator_mismatch):
+        if mismatch:
+            typer.echo(f"Warning: {mismatch}", err=True)
     typer.echo(f"Dataset: {run.dataset}")
     typer.echo(f"Artifacts: {run.output}")
     if run.accepted == 0:
@@ -325,7 +333,13 @@ def generative_materialize_command(
             typer.echo(
                 "No rewrite passed validation; there is nothing to evaluate. Raise "
                 "rewrite.validation.maximum_attempts, loosen rewrite.deduplication, or "
-                "check that the kernel returns usable text.",
+                "check that the kernel returns usable text"
+                + (
+                    f" and that the validator, which rejected {run.validator_rejected} "
+                    "candidates, accepts faithful rewrites."
+                    if run.validator_rejected
+                    else "."
+                ),
                 err=True,
             )
         raise typer.Exit(code=3)

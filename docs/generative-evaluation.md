@@ -163,7 +163,8 @@ constraints pruned, the fingerprint -- without generating anything.
 
 ```bash
 inspect-safety-stats generative materialize \
-  --plan plan.yaml --output run/ --kernel rewriters.py:build_kernel
+  --plan plan.yaml --output run/ \
+  --kernel rewriters.py:build_kernel --validator rewriters.py:build_validator
 ```
 
 Selects paths, runs the rewrite procedure, and writes `datasets/dataset.jsonl` for Inspect,
@@ -176,6 +177,15 @@ importable, or `path/to/file.py:attribute` for a local file. The file form needs
 your own project. Either way the attribute may be a kernel or a zero-argument factory
 implementing the `RewriteKernel` protocol. Nothing here depends on a particular rewriter
 client.
+
+`--validator` takes `fake`, `fake:reject_every=N`, or the same two import forms, and names a
+`RewriteValidator`: a check that a candidate still makes its seed's request. It is called on
+every candidate that is not a duplicate -- duplicates are ruled out first, because that is a
+hash comparison and a validator may be a paid model call -- and a `not_equivalent` verdict
+sends the unit back through the retry path. Without `--validator` the kernel's own verdict
+is trusted, and materialization warns that the plan's declared `validator_id` never ran. A
+model-graded validator declares `mode: model_graded` with its `model`, and optionally its
+`prompt_template` and `temperature`, so that they enter the kernel fingerprint.
 
 Evaluate that dataset with Inspect and your judge, then:
 
@@ -201,6 +211,11 @@ kernel. Both artifacts are append-only, so resuming cannot destroy the work it b
 
 The plan is re-compiled and checked against the recorded selection ledger first, so a directory
 belonging to a different design is refused rather than silently continued.
+
+A rewrite ledger written before rejections were recorded by reason is refused too. Its header
+lacks those columns, and rows appended under it would land in the wrong ones. Finish such a
+run with the version that started it, or start again with `--overwrite`; analysis still
+reads it, reporting its rejection counts as unknown.
 
 ## Why the intervals are exact
 
@@ -328,9 +343,16 @@ differently across the design.
 and mean attempts for every value of every level. When exhaustion rates within a level spread
 by more than five percentage points, `GENERATIVE_ACCEPTANCE_UNEVEN` says so.
 
-Nothing in the package validates a rewrite: `rewrite.validation.validator_id` is declared and
-fingerprinted, but the kernel's own verdict is trusted. These rates are the only visibility
-into the assumption the whole estimand rests on.
+They also say which check did the rejecting: `kernel_rejections`, `validator_rejections` and
+`duplicate_rejections` count the attempts each one turned down. An arm that exhausts because
+its rewrites drift off meaning and one that exhausts because its rewrites repeat look alike
+in the exhaustion rate and nowhere else.
+
+The validator is itself a fallible judge. The risk estimate stays defined against the
+distribution the complete procedure induces, validator included, so its errors do not make
+the interval wrong. They do limit what the interval is about: until the validator is
+calibrated against human labels, any claim that the accepted rewrites preserve their seeds'
+meaning is diagnostic.
 
 ## What it refuses
 

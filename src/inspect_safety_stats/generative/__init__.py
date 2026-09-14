@@ -29,6 +29,12 @@ The public surface is organised around what you are trying to do.
 ``rewrite`` method matching :class:`RewriteKernel`. ``DeterministicFakeKernel`` stands in
 for it in tests and dry runs.
 
+**Supply a validator** to check that each rewrite still makes its seed's request: any
+object with a ``validate`` method matching :class:`RewriteValidator`, passed as
+``validator=`` alongside ``kernel=``. Without one the kernel's own verdict is trusted, and
+``MaterializedRun.validator_mismatch`` says so. ``DeterministicFakeValidator`` stands in
+for it in tests.
+
 **Compose your own flow** with the lower-level pieces -- ``plan_design``,
 ``draw_selections``, ``execute_rewrites``, ``join_outcomes``, ``estimate_tree`` -- when the
 two-phase runner does not fit.
@@ -65,10 +71,13 @@ from inspect_safety_stats.generative.inspect_bridge import (
 from inspect_safety_stats.generative.judge import CorrectedEstimate
 from inspect_safety_stats.generative.kernels import (
     DeterministicFakeKernel,
+    DeterministicFakeValidator,
     KernelFingerprint,
     RewriteKernel,
     RewriteOutcome,
     RewriteRequest,
+    RewriteValidator,
+    ValidationVerdict,
     resolve_kernel_fingerprint,
 )
 from inspect_safety_stats.generative.ledger import (
@@ -123,6 +132,10 @@ __all__ = [
     "KernelFingerprint",
     "DeterministicFakeKernel",
     "resolve_kernel_fingerprint",
+    # The rewrite validator, which the caller may supply.
+    "RewriteValidator",
+    "ValidationVerdict",
+    "DeterministicFakeValidator",
     # The two-phase workflow.
     "MaterializedRun",
     "materialize_run",

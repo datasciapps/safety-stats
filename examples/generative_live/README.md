@@ -13,28 +13,31 @@ You supply the API access. Nothing here runs without it.
 
 | | |
 |---|---|
-| [`rewriter.py`](rewriter.py) | a `RewriteKernel` backed by any model Inspect can reach — **the one piece a real evaluation requires you to write**, kept here as a reference |
+| [`rewriter.py`](rewriter.py) | a `RewriteKernel` and a `RewriteValidator` backed by any model Inspect can reach — **the pieces a real evaluation asks you to write**, kept here as references |
+| [`equivalence-template.txt`](equivalence-template.txt) | the validator's question, declared in the plan so that its contents enter the fingerprint |
 | [`generative_live.py`](generative_live.py) | the Inspect task: reads the materialized dataset, generates, grades with a model judge |
 | [`plan.yaml`](plan.yaml) | a small budget — 60 rewrites — configured for `openai/gpt-4o` and `openai/gpt-4o-mini` |
 
-`--kernel` takes either `module:attribute` for something importable, or
-`path/to/file.py:attribute` for a local file. The file form is what you want for a kernel
+`--kernel` and `--validator` each take either `module:attribute` for something importable,
+or `path/to/file.py:attribute` for a local file. The file form is what you want for code
 that lives in your project rather than in an installed package — it needs no `__init__.py`
 and no `PYTHONPATH`.
 
-The kernel demonstrates two things the package cannot do for you.
+Together they demonstrate two things the package cannot do for you.
 
-**It performs validation rather than declaring it.** `rewrite.validation.validator_id` is
-fingerprinted by the package but never invoked — nothing checks that a rewrite preserves its
-seed's meaning. Set `validator` and this kernel runs a second, model-graded equivalence check
-and reports a failure as `invalid`, which puts the unit into the retry path and keeps the
-accepted distribution honest. Leave it unset and the run is roughly half the cost, but
-nothing verifies the rewrites still mean what the seeds mean.
+**The validator checks meaning, and the package calls it.** For every candidate the kernel
+returns that is not a duplicate, the package asks the validator whether it still makes the
+seed's request, and a `not_equivalent` verdict puts the unit back into the retry path. The
+ledger records how many attempts each unit lost to the kernel's own filter, to the validator
+and to deduplication, so `acceptance.csv` can tell a rewriter that drifts off meaning from
+one that repeats itself. Leave `--validator` off and the run costs roughly half as much, but
+nothing verifies the rewrites still mean what the seeds mean, and materialization warns that
+the plan's declared validator never ran.
 
-**It distinguishes error from invalidity.** A provider failure is `error` — operational,
-retried on `--resume`, and saying nothing about the kernel. A rewrite that came back and was
-rejected is `invalid`, and is part of the accepted distribution the estimand is defined
-against. Getting this backwards would silently change what you measured.
+**Errors and rejections are different.** A provider failure is `error` — operational,
+retried on `--resume`, and saying nothing about the procedure. A rewrite that came back and
+was rejected, by the kernel or by the validator, is part of the accepted distribution the
+estimand is defined against. Getting this backwards would silently change what you measured.
 
 ## Running it
 
@@ -50,7 +53,8 @@ Generate the prompts. This is where the spend starts:
 inspect-safety-stats generative materialize \
   --plan examples/generative_live/plan.yaml \
   --output run/live \
-  --kernel examples/generative_live/rewriter.py:build_kernel
+  --kernel examples/generative_live/rewriter.py:build_kernel \
+  --validator examples/generative_live/rewriter.py:build_validator
 ```
 
 Evaluate them, then analyse:

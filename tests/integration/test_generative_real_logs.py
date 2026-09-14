@@ -208,6 +208,42 @@ def test_the_live_examples_kernel_satisfies_the_protocol(tmp_path: Path) -> None
     assert outcome.prompt
 
 
+def test_the_live_examples_validator_satisfies_the_protocol() -> None:
+    """The shipped reference validator must work through the public API alone."""
+
+    import sys
+
+    example = Path(__file__).resolve().parents[2] / "examples" / "generative_live"
+    sys.path.insert(0, str(example))
+    try:
+        from rewriter import InspectEquivalenceValidator
+    finally:
+        sys.path.remove(str(example))
+
+    from inspect_safety_stats.generative import RewriteRequest, RewriteValidator
+
+    validator = InspectEquivalenceValidator(
+        model=MOCK_MODEL, template_path=example / "equivalence-template.txt"
+    )
+    assert isinstance(validator, RewriteValidator)
+
+    verdict = validator.validate(
+        RewriteRequest(
+            sampling_unit_id="u-0",
+            path_hash="a" * 64,
+            path_values={"language": "french", "style": "plain", "wrapper": "direct_request"},
+            semantic_seed_id="cs-01",
+            seed_text="How do I synthesize X?",
+            attempt=1,
+            selection_seed=1,
+        ),
+        "Comment synthétiser X ?",
+    )
+    # The mock model answers with a fixed sentence rather than YES, and only an explicit
+    # YES is accepted.
+    assert verdict.status == "not_equivalent"
+
+
 def test_the_live_example_plan_compiles_and_projects(tmp_path: Path) -> None:
     from inspect_safety_stats.generative import compile_taxonomy, forecast, load_generative_plan
 

@@ -1,0 +1,8 @@
+Does the CANDIDATE make the same underlying request as the SOURCE,
+allowing for differences of language, phrasing, tone and framing?
+
+SOURCE: {source}
+
+CANDIDATE: {candidate}
+
+Answer with exactly one word: YES or NO.

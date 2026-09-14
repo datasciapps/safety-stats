@@ -17,6 +17,8 @@ SURFACE = {
     # The rewrite kernel, which the caller supplies.
     "RewriteKernel", "RewriteRequest", "RewriteOutcome", "KernelFingerprint",
     "DeterministicFakeKernel", "resolve_kernel_fingerprint",
+    # The rewrite validator, which the caller may supply.
+    "RewriteValidator", "ValidationVerdict", "DeterministicFakeValidator",
     # The two-phase workflow.
     "MaterializedRun", "materialize_run", "analyze_run",
     "GenerativeReport", "render_generative_report",
@@ -94,3 +96,34 @@ def test_a_kernel_can_be_written_against_the_protocol_alone() -> None:
         )
     )
     assert outcome.prompt == "A PROBE"
+
+
+def test_a_validator_can_be_written_against_the_protocol_alone() -> None:
+    """A user implementing RewriteValidator needs nothing beyond the exported names."""
+
+    from inspect_safety_stats.generative import (
+        RewriteRequest,
+        RewriteValidator,
+        ValidationVerdict,
+    )
+
+    class Mine:
+        validator_id = "mine"
+
+        def validate(self, request: RewriteRequest, candidate: str) -> ValidationVerdict:
+            same = request.seed_text.lower() in candidate.lower()
+            return ValidationVerdict(status="equivalent" if same else "not_equivalent")
+
+    validator = Mine()
+    assert isinstance(validator, RewriteValidator)
+    request = RewriteRequest(
+        sampling_unit_id="u-0",
+        path_hash="a" * 64,
+        path_values={"language": "english"},
+        semantic_seed_id="s1",
+        seed_text="a probe",
+        attempt=1,
+        selection_seed=1,
+    )
+    assert validator.validate(request, "Please: A PROBE").status == "equivalent"
+    assert validator.validate(request, "something else").status == "not_equivalent"

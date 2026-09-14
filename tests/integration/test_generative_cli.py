@@ -299,6 +299,94 @@ def test_a_matching_kernel_is_not_flagged(tmp_path: Path) -> None:
     assert run.kernel_mismatch is None
 
 
+@pytest.mark.parametrize(
+    ("specification", "expected"),
+    [("fake", 0), ("fake:reject_every=4", 4)],
+)
+def test_resolve_validator_builds_the_fake(specification: str, expected: int) -> None:
+    from inspect_safety_stats.generative.runner import resolve_validator
+
+    validator = resolve_validator(specification)
+    assert validator.validator_id == "fake-validator"
+    assert validator.reject_every == expected
+
+
+@pytest.mark.parametrize(
+    "specification",
+    [
+        "nonsense",
+        "fake:invalid_every=1",
+        "inspect_safety_stats.generative.kernels:DeterministicFakeKernel",
+    ],
+)
+def test_resolve_validator_rejects_what_it_cannot_use(specification: str) -> None:
+    from inspect_safety_stats.generative.runner import resolve_validator
+
+    with pytest.raises((ValueError, TypeError)):
+        resolve_validator(specification)
+
+
+def test_a_run_without_a_validator_says_the_kernel_was_trusted(tmp_path: Path) -> None:
+    plan = write_plan(tmp_path)
+    run = materialize_run(plan, tmp_path / "run", kernel="fake")
+    assert run.validator_id is None
+    assert run.validator_mismatch is not None
+    assert "semantic-equivalence-v1" in run.validator_mismatch
+    assert "none ran" in run.validator_mismatch
+
+    result = runner.invoke(
+        app,
+        ["generative", "materialize", "--plan", str(plan), "--output", str(tmp_path / "run2")],
+    )
+    assert result.exit_code == 0
+    assert "Validator: none" in result.output
+    assert "Warning: plan declares validator" in result.output
+
+
+def test_a_validator_that_is_not_the_declared_one_is_flagged(tmp_path: Path) -> None:
+    plan = write_plan(tmp_path)
+    run = materialize_run(plan, tmp_path / "run", validator="fake")
+    assert run.validator_id == "fake-validator"
+    assert run.validator_mismatch is not None
+    assert "fake-validator" in run.validator_mismatch
+
+
+def test_a_matching_validator_runs_unflagged_and_its_rejections_are_reported(
+    tmp_path: Path,
+) -> None:
+    plan_path = write_plan(tmp_path, total=60)
+    edited = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
+    edited["rewrite"]["validation"]["validator_id"] = "fake-validator"
+    plan_path.write_text(yaml.safe_dump(edited, sort_keys=False), encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "generative", "materialize",
+            "--plan", str(plan_path),
+            "--output", str(tmp_path / "run"),
+            "--validator", "fake:reject_every=3",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Validator: fake-validator" in result.output
+    assert "Warning: plan declares validator" not in result.output
+    assert "rejected by the validator" in result.output
+
+
+def test_the_shipped_live_example_validator_resolves_as_documented() -> None:
+    """Exactly the string the runbook tells a reader to type."""
+
+    from inspect_safety_stats.generative.runner import resolve_validator
+
+    root = Path(__file__).resolve().parents[2]
+    validator = resolve_validator(
+        f"{root / 'examples' / 'generative_live' / 'rewriter.py'}:build_validator"
+    )
+    assert hasattr(validator, "validate")
+    assert validator.validator_id == "model-graded-equivalence-v1"
+
+
 def test_the_report_directory_carries_a_self_contained_html_page(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

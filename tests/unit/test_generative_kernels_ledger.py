@@ -5,14 +5,17 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from pydantic import ValidationError
 
 from inspect_safety_stats.generative.kernels import (
     DeterministicFakeKernel,
+    DeterministicFakeValidator,
     RewriteKernel,
     RewriteOutcome,
     RewriteRequest,
+    RewriteValidator,
     resolve_kernel_fingerprint,
 )
 from inspect_safety_stats.generative.ledger import (
@@ -123,6 +126,65 @@ def test_fake_kernel_can_exercise_the_retry_path() -> None:
     assert statuses == {"valid", "invalid"}
 
 
+def test_fake_validator_is_deterministic_and_needs_no_network() -> None:
+    validator = DeterministicFakeValidator()
+    assert isinstance(validator, RewriteValidator)
+    verdict = validator.validate(request_for(), "a candidate")
+    assert verdict == validator.validate(request_for(), "a candidate")
+    assert verdict.status == "equivalent"
+
+
+def test_fake_validator_can_exercise_the_retry_path() -> None:
+    validator = DeterministicFakeValidator(reject_every=2)
+    verdicts = {validator.validate(request_for(), f"candidate {n}").status for n in range(30)}
+    assert verdicts == {"equivalent", "not_equivalent"}
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        {"mode": "model_graded", "model": "judge-model"},
+        {"model": "judge-model"},
+        {"temperature": 0.0},
+        {"prompt_template": "question.txt"},
+    ],
+    ids=["model-graded", "model", "temperature", "prompt-template"],
+)
+def test_declaring_validator_settings_moves_the_fingerprint(
+    tmp_path: Path, settings: dict[str, object]
+) -> None:
+    (tmp_path / "question.txt").write_text("Same request? {source} / {candidate}\n")
+    plan = base_plan()
+    baseline = resolve_kernel_fingerprint(
+        load_generative_plan(materialize(tmp_path, plan)), base_path=tmp_path
+    )
+    altered = copy.deepcopy(plan)
+    altered["rewrite"]["validation"].update(settings)
+    moved = resolve_kernel_fingerprint(
+        load_generative_plan(materialize(tmp_path, altered)), base_path=tmp_path
+    )
+    assert moved.sha256 != baseline.sha256
+
+
+def test_the_validators_question_is_hashed_by_its_contents(tmp_path: Path) -> None:
+    question = tmp_path / "question.txt"
+    question.write_text("Same request? {source} / {candidate}\n", encoding="utf-8")
+    plan = base_plan()
+    plan["rewrite"]["validation"]["prompt_template"] = "question.txt"
+    parsed = load_generative_plan(materialize(tmp_path, plan))
+    first = resolve_kernel_fingerprint(parsed, base_path=tmp_path)
+
+    question.write_text("Is this the same ask? {source} / {candidate}\n", encoding="utf-8")
+    assert resolve_kernel_fingerprint(parsed, base_path=tmp_path).sha256 != first.sha256
+
+
+def test_a_model_graded_validator_must_name_its_model(tmp_path: Path) -> None:
+    plan = base_plan()
+    plan["rewrite"]["validation"]["mode"] = "model_graded"
+    with pytest.raises(ValueError, match="must declare its model"):
+        load_generative_plan(materialize(tmp_path, plan))
+
+
 def test_rewrite_outcome_rejects_incoherent_states() -> None:
     with pytest.raises(ValueError, match="must carry prompt text"):
         RewriteOutcome(status="valid")
@@ -189,6 +251,33 @@ def test_unevaluated_rewrite_round_trips_with_null_prompt_fields(tmp_path: Path)
     restored = read_rewrites(tmp_path / "rewrites.csv")
     assert restored == [exhausted]
     assert restored[0].prompt_id is None
+
+
+def test_rejection_counts_round_trip(tmp_path: Path) -> None:
+    counted = rewrite("u-0").model_copy(
+        update={
+            "validator_id": "fake-validator",
+            "kernel_rejections": 1,
+            "validator_rejections": 2,
+            "duplicate_rejections": 0,
+        }
+    )
+    write_rewrites([counted], tmp_path / "rewrites.csv")
+    assert read_rewrites(tmp_path / "rewrites.csv") == [counted]
+
+
+def test_a_ledger_from_before_rejection_reasons_still_reads(tmp_path: Path) -> None:
+    """Analysis must still open a run materialized before validators were invoked."""
+
+    added = {"validator_id", "kernel_rejections", "validator_rejections", "duplicate_rejections"}
+    older = [column for column in REWRITE_COLUMNS if column not in added]
+    record = rewrite("u-0")
+    frame = pd.DataFrame([record.model_dump(mode="json")])
+    frame[older].to_csv(tmp_path / "rewrites.csv", index=False)
+
+    restored = read_rewrites(tmp_path / "rewrites.csv")
+    assert restored == [record]
+    assert restored[0].validator_rejections is None
 
 
 def test_duplicate_sampling_units_are_rejected(tmp_path: Path) -> None:

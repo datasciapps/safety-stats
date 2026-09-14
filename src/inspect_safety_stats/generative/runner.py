@@ -9,6 +9,7 @@ estimand.
 
 from __future__ import annotations
 
+import csv
 import importlib
 import importlib.util
 import sys
@@ -48,11 +49,14 @@ from inspect_safety_stats.generative.judge import (
 )
 from inspect_safety_stats.generative.kernels import (
     DeterministicFakeKernel,
+    DeterministicFakeValidator,
     KernelFingerprint,
     RewriteKernel,
+    RewriteValidator,
     resolve_kernel_fingerprint,
 )
 from inspect_safety_stats.generative.ledger import (
+    REWRITE_COLUMNS,
     RewriteRecord,
     SelectionRecord,
     read_rewrites,
@@ -86,44 +90,48 @@ class MaterializedRun:
     kernel_mismatch: str | None
     resumed: int = 0
     first_error: str | None = None
+    validator_id: str | None = None
+    validator_mismatch: str | None = None
+    kernel_rejected: int = 0
+    validator_rejected: int = 0
 
 
-def resolve_kernel(specification: str) -> RewriteKernel:
-    """Resolve ``fake``, ``fake:invalid_every=N``, or ``module:attribute``.
+def _fake_option(specification: str, *, option: str, noun: str) -> int:
+    """Read ``fake`` or ``fake:<option>=N`` as N, or zero when no option is given."""
 
-    A provider-backed kernel is supplied as an import path so nothing in this package
-    depends on a particular rewriter client. The attribute may be a kernel or a
-    zero-argument factory returning one.
+    options = specification[5:] if ":" in specification else ""
+    if not options:
+        return 0
+    key, _, value = options.partition("=")
+    if key != option or not value.isdigit():
+        raise ValueError(f"unrecognised fake {noun} option {options!r}; expected {option}=N")
+    return int(value)
+
+
+def _load_plugin(specification: str, *, noun: str, fakes: str, method: str) -> Any:
+    """Load ``module:attribute`` or ``path/to/file.py:attribute`` as a kernel or validator.
+
+    Both are supplied as import paths so nothing in this package depends on a particular
+    provider client. The attribute may be the object itself or a zero-argument factory
+    returning one.
     """
-
-    if specification == "fake" or specification.startswith("fake:"):
-        options = specification[5:] if ":" in specification else ""
-        invalid_every = 0
-        if options:
-            key, _, value = options.partition("=")
-            if key != "invalid_every" or not value.isdigit():
-                raise ValueError(
-                    f"unrecognised fake kernel option {options!r}; expected invalid_every=N"
-                )
-            invalid_every = int(value)
-        return DeterministicFakeKernel(invalid_every=invalid_every)
 
     # rpartition, so a Windows drive letter in a file path is not mistaken for the
     # separator.
     target, separator, attribute = specification.rpartition(":")
     if not separator or not attribute or not target:
         raise ValueError(
-            f"kernel {specification!r} must be 'fake', 'fake:invalid_every=N', "
+            f"{noun} {specification!r} must be {fakes}, "
             "'module:attribute', or 'path/to/file.py:attribute'"
         )
 
     candidate = Path(target)
     if candidate.suffix == ".py":
         if not candidate.is_file():
-            raise ValueError(f"kernel file {candidate} does not exist")
+            raise ValueError(f"{noun} file {candidate} does not exist")
         loader = importlib.util.spec_from_file_location(candidate.stem, candidate)
         if loader is None or loader.loader is None:
-            raise ValueError(f"kernel file {candidate} could not be loaded")
+            raise ValueError(f"{noun} file {candidate} could not be loaded")
         module = importlib.util.module_from_spec(loader)
         # Registered before execution so dataclasses and typing inside it resolve.
         sys.modules[candidate.stem] = module
@@ -138,7 +146,7 @@ def resolve_kernel(specification: str) -> RewriteKernel:
             module = importlib.import_module(target)
         except ModuleNotFoundError as exc:
             raise ValueError(
-                f"kernel module {target!r} could not be imported ({exc}). Name an "
+                f"{noun} module {target!r} could not be imported ({exc}). Name an "
                 "installed module, or point at the file directly as "
                 f"'path/to/file.py:{attribute}'."
             ) from exc
@@ -147,15 +155,49 @@ def resolve_kernel(specification: str) -> RewriteKernel:
         resolved = getattr(module, attribute)
     except AttributeError as exc:
         raise ValueError(f"{target!r} has no attribute {attribute!r}") from exc
-    candidate = resolved() if callable(resolved) and not hasattr(resolved, "rewrite") else resolved
-    if not hasattr(candidate, "rewrite"):
-        raise ValueError(f"{specification!r} does not provide a rewrite() method")
-    return candidate  # type: ignore[no-any-return]
+    plugin = resolved() if callable(resolved) and not hasattr(resolved, method) else resolved
+    if not hasattr(plugin, method):
+        raise ValueError(f"{specification!r} does not provide a {method}() method")
+    return plugin
+
+
+def resolve_kernel(specification: str) -> RewriteKernel:
+    """Resolve ``fake``, ``fake:invalid_every=N``, or an import path to a kernel."""
+
+    if specification == "fake" or specification.startswith("fake:"):
+        invalid_every = _fake_option(specification, option="invalid_every", noun="kernel")
+        return DeterministicFakeKernel(invalid_every=invalid_every)
+    return _load_plugin(  # type: ignore[no-any-return]
+        specification, noun="kernel", fakes="'fake', 'fake:invalid_every=N'", method="rewrite"
+    )
+
+
+def resolve_validator(specification: str) -> RewriteValidator:
+    """Resolve ``fake``, ``fake:reject_every=N``, or an import path to a validator.
+
+    Loaded exactly the way a kernel is, so a project can keep its kernel and its validator
+    side by side in one file.
+    """
+
+    if specification == "fake" or specification.startswith("fake:"):
+        reject_every = _fake_option(specification, option="reject_every", noun="validator")
+        return DeterministicFakeValidator(reject_every=reject_every)
+    return _load_plugin(  # type: ignore[no-any-return]
+        specification,
+        noun="validator",
+        fakes="'fake', 'fake:reject_every=N'",
+        method="validate",
+    )
 
 
 def _load(plan_path: str | Path) -> tuple[GenerativePlan, Path]:
     path = Path(plan_path)
     return load_generative_plan(path), path.parent
+
+
+def _ledger_header(path: Path) -> list[str]:
+    with path.open(newline="", encoding="utf-8") as handle:
+        return next(csv.reader(handle), [])
 
 
 def _prior_work(
@@ -172,6 +214,15 @@ def _prior_work(
     ledger = directory / REWRITE_LEDGER
     if not ledger.exists():
         return {}, {}
+
+    # The ledger is only ever appended to, under the header it was created with; rows from
+    # this version under an older header would land in the wrong columns.
+    if _ledger_header(ledger) not in ([], list(REWRITE_COLUMNS)):
+        raise ValueError(
+            "the rewrite ledger in this directory was written by an earlier version of the "
+            "package, before rejections were recorded by reason; finish the run with that "
+            "version, or start again with --overwrite"
+        )
 
     recorded = read_selections(directory / SELECTION_LEDGER)
     if [(item.sampling_unit_id, item.path_hash) for item in recorded] != [
@@ -206,6 +257,7 @@ def materialize_run(
     output: str | Path,
     *,
     kernel: str = "fake",
+    validator: str | None = None,
     stage: str = "main",
     overwrite: bool = False,
     resume: bool = False,
@@ -217,6 +269,9 @@ def materialize_run(
     killed partway leaves a usable record. ``resume`` picks that record up and executes only
     the units still outstanding; because selection is counter-based, the units it re-derives
     are identical to the ones the interrupted run would have gone on to draw.
+
+    ``validator`` names a :class:`RewriteValidator` the way ``kernel`` names a kernel.
+    Without one the kernel's own verdict is trusted, and ``validator_mismatch`` says so.
     """
 
     plan, base = _load(plan_path)
@@ -248,6 +303,20 @@ def materialize_run(
         if running == declared
         else f"plan declares kernel {declared!r} but {running!r} produced the rewrites"
     )
+    checker = resolve_validator(validator) if validator else None
+    declared_validator = plan.rewrite.validation.validator_id
+    running_validator = None if checker is None else str(getattr(checker, "validator_id", ""))
+    validator_mismatch: str | None = None
+    if running_validator is None:
+        validator_mismatch = (
+            f"plan declares validator {declared_validator!r} but none ran, so the kernel's "
+            "own verdict was trusted; supply a validator to check rewrites against their seeds"
+        )
+    elif running_validator != declared_validator:
+        validator_mismatch = (
+            f"plan declares validator {declared_validator!r} but {running_validator!r} "
+            "checked the rewrites"
+        )
     if stage not in {"pilot", "main"}:
         raise ValueError("stage must be 'pilot' or 'main'")
     selections = draw_selections(taxonomy, design, stage_id=stage)  # type: ignore[arg-type]
@@ -280,6 +349,7 @@ def materialize_run(
             rewriter,
             fingerprint,
             load_seed_texts(plan, base_path=base),
+            validator=checker,
             rewrite_salt=rewrite_salt,
             completed=completed,
             already_accepted=accepted_before,
@@ -300,6 +370,10 @@ def materialize_run(
         kernel_mismatch=mismatch,
         resumed=resumed,
         first_error=result.first_error,
+        validator_id=running_validator,
+        validator_mismatch=validator_mismatch,
+        kernel_rejected=result.kernel_rejected,
+        validator_rejected=result.validator_rejected,
     )
 
 

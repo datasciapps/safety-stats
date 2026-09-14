@@ -66,6 +66,35 @@ class RewriteKernel(Protocol):
     def rewrite(self, request: RewriteRequest) -> RewriteOutcome: ...
 
 
+VerdictStatus = Literal["equivalent", "not_equivalent", "error"]
+
+
+@dataclass(frozen=True)
+class ValidationVerdict:
+    """Whether a candidate rewrite still makes its seed's request."""
+
+    status: VerdictStatus
+    detail: str | None = None
+
+
+@runtime_checkable
+class RewriteValidator(Protocol):
+    """A check that a candidate rewrite preserves its seed's meaning.
+
+    It sees the request the kernel was given -- the seed text and the arm values the rewrite
+    was asked to realize -- so a check can accept a French rewrite of an English seed.
+    ``not_equivalent`` sends the unit back through the retry path, like a kernel's own
+    ``invalid``. ``error`` is operational and is retried on resume, like a kernel error.
+
+    The kernel's statelessness applies here too: nothing a validator observes about
+    target-model failures may influence a later verdict.
+    """
+
+    validator_id: str
+
+    def validate(self, request: RewriteRequest, candidate: str) -> ValidationVerdict: ...
+
+
 def resolve_kernel_fingerprint(
     plan: GenerativePlan, *, base_path: str | Path = "."
 ) -> KernelFingerprint:
@@ -83,9 +112,15 @@ def resolve_kernel_fingerprint(
         "temperature": spec.temperature,
         "max_tokens": spec.max_tokens,
         "seed_replayable": spec.seed_replayable,
-        "validation": spec.validation.model_dump(mode="json"),
+        # Unset validator settings are left out, so declaring none keeps an old fingerprint.
+        "validation": spec.validation.model_dump(mode="json", exclude_none=True),
         "deduplication": spec.deduplication.model_dump(mode="json"),
     }
+    # A model-graded validator's question is part of the procedure, so its contents are
+    # hashed the way the kernel's template is.
+    if spec.validation.prompt_template is not None:
+        question = (Path(base_path) / spec.validation.prompt_template).read_bytes()
+        payload["validator_prompt_template_sha256"] = hashlib.sha256(question).hexdigest()
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -127,3 +162,21 @@ class DeterministicFakeKernel:
             status="valid",
             prompt=f"[{request.semantic_seed_id}] {request.seed_text} ({rendered}) #{token[:12]}",
         )
+
+
+@dataclass
+class DeterministicFakeValidator:
+    """A network-free validator for tests and dry runs.
+
+    Its verdict depends only on the candidate text. ``reject_every`` rejects roughly one
+    candidate in N, which exercises the retry path from the validator's side.
+    """
+
+    validator_id: str = "fake-validator"
+    reject_every: int = 0
+
+    def validate(self, request: RewriteRequest, candidate: str) -> ValidationVerdict:
+        token = hashlib.sha256(candidate.encode("utf-8")).hexdigest()
+        if self.reject_every and int(token[:8], 16) % self.reject_every == 0:
+            return ValidationVerdict(status="not_equivalent", detail="synthetic rejection")
+        return ValidationVerdict(status="equivalent")

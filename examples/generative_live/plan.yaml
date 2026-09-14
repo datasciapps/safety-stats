@@ -57,7 +57,10 @@ rewrite:
   seed_replayable: false
   validation:
     validator_id: model-graded-equivalence-v1
-    mode: deterministic
+    mode: model_graded
+    model: openai/gpt-4o-mini
+    prompt_template: equivalence-template.txt
+    temperature: 0.0
     on_invalid: retry
     maximum_attempts: 3
   deduplication:

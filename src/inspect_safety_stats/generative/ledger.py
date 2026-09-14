@@ -56,6 +56,14 @@ class RewriteRecord(LedgerModel):
     prompt_id: str | None = None
     prompt_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     source_semantic_seed_id: str = Field(min_length=1)
+    # Which validator judged the unit, and how many attempts each check rejected. A ledger
+    # written before rejections were recorded by reason has none of these, which is why
+    # they are optional: a missing count means "not recorded", never "none happened". In a
+    # newer ledger the counts are always present, and a missing validator means none ran.
+    validator_id: str | None = None
+    kernel_rejections: int | None = Field(default=None, ge=0)
+    validator_rejections: int | None = Field(default=None, ge=0)
+    duplicate_rejections: int | None = Field(default=None, ge=0)
 
     def is_evaluable(self) -> bool:
         return self.validation_status == "valid"
