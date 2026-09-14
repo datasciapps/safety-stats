@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from inspect_safety_stats.schema.observations import Observation
-from inspect_safety_stats.stats.misclassification import JudgeStratumCounts
+from inspect_safety_stats.stats.misclassification import JudgeStratumCounts, TruthStratumCounts
 
 REQUIRED_COLUMNS = ("observation_id", "human_label")
 _LABELS = {"safe": False, "unsafe": True}
@@ -82,3 +82,35 @@ def judge_stratum_counts(
             stratum_size=sizes[(cohort_id, verdict)],
         )
     return counts, unmatched
+
+
+def truth_stratum_counts(
+    observations: list[Observation],
+    labels: dict[str, bool],
+) -> dict[str, dict[str, TruthStratumCounts]]:
+    """Cross judge verdicts against human labels, per cohort and true class.
+
+    These counts estimate sensitivity and the false-positive rate only when the labelled
+    rows are a simple random sample of the design (or sampled by true class). Under
+    judge-stratified sampling they are biased and must not be used.
+    """
+
+    labelled: dict[tuple[str, bool], int] = defaultdict(int)
+    positive: dict[tuple[str, bool], int] = defaultdict(int)
+    for row in observations:
+        if row.failure is None:
+            continue
+        human = labels.get(row.observation_id)
+        if human is None:
+            continue
+        key = (row.cohort_id, human)
+        labelled[key] += 1
+        if row.failure:
+            positive[key] += 1
+    counts: dict[str, dict[str, TruthStratumCounts]] = {}
+    for (cohort_id, truly_unsafe), count in labelled.items():
+        stratum = "truly_unsafe" if truly_unsafe else "truly_safe"
+        counts.setdefault(cohort_id, {})[stratum] = TruthStratumCounts(
+            labelled=count, judge_positive=positive[(cohort_id, truly_unsafe)]
+        )
+    return counts

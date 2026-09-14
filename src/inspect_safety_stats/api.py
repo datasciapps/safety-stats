@@ -9,7 +9,12 @@ import numpy as np
 
 from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
-from inspect_safety_stats.config.models import AnalysisPlan, ComparisonSpec, RiskMeasureSpec
+from inspect_safety_stats.config.models import (
+    AnalysisPlan,
+    ClaimSpec,
+    ComparisonSpec,
+    RiskMeasureSpec,
+)
 from inspect_safety_stats.decision.engine import decide_claim, roll_up
 from inspect_safety_stats.ingest.inspect_logs import LogInput, NormalizedData, ingest_inspect_logs
 from inspect_safety_stats.ingest.manifest import (
@@ -19,12 +24,14 @@ from inspect_safety_stats.ingest.manifest import (
 from inspect_safety_stats.ingest.validation import (
     judge_stratum_counts,
     load_validation_manifest,
+    truth_stratum_counts,
 )
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import (
     ClaimResult,
     ComparisonResult,
     ComparisonSetResult,
+    Decision,
     Diagnostic,
     Eligibility,
     GroupRiskResult,
@@ -80,9 +87,11 @@ from inspect_safety_stats.stats.judges import (
 from inspect_safety_stats.stats.misclassification import (
     JudgeCalibration,
     JudgeStratumCounts,
+    TruthStratumCounts,
     correct_judge_risk,
     delta_method_corrected_risk,
     estimate_judge_calibration,
+    noisy_valid_certification,
 )
 from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
 from inspect_safety_stats.stats.paired import exact_mcnemar, newcombe_paired_interval
@@ -1645,12 +1654,14 @@ def _validated_judge_calibrations(
     plan: AnalysisPlan,
     data: NormalizedData,
     diagnostics: list[Diagnostic],
-) -> tuple[dict[str, JudgeCalibration], dict[str, dict[str, Any]], float | None]:
+) -> tuple[
+    dict[str, JudgeCalibration], dict[str, dict[str, Any]], float | None, dict[str, Any]
+]:
     """Estimate one calibration per cohort from human labels within judge strata."""
 
     spec = plan.inputs.judge_calibration
     if spec is None or spec.mode != "validated":
-        return {}, {}, None
+        return {}, {}, None, {}
     family = next((item for item in plan.multiplicity.families if item.id == spec.family), None)
     if family is None:
         diagnostics.append(
@@ -1661,7 +1672,7 @@ def _validated_judge_calibrations(
                 scope="inputs.judge_calibration",
             )
         )
-        return {}, {}, None
+        return {}, {}, None, {}
     assert spec.validation_manifest is not None
     try:
         labels = load_validation_manifest(spec.validation_manifest)
@@ -1674,9 +1685,18 @@ def _validated_judge_calibrations(
                 scope="inputs.judge_calibration",
             )
         )
-        return {}, {}, None
+        return {}, {}, None, {}
 
     counts, unmatched = judge_stratum_counts(data.observations, labels)
+    truth_strata: dict[str, Any] = {}
+    if spec.sampling == "simple_random":
+        # A simple random sample of the design also estimates sensitivity and the
+        # false-positive rate by true class, which the noisy-but-valid test needs.
+        for cohort_id, by_class in truth_stratum_counts(data.observations, labels).items():
+            truth_strata[cohort_id] = {
+                name: {"labelled": item.labelled, "judge_positive": item.judge_positive}
+                for name, item in by_class.items()
+            }
     if unmatched:
         diagnostics.append(
             Diagnostic(
@@ -1743,7 +1763,7 @@ def _validated_judge_calibrations(
                 "stratum_size": safe.stratum_size,
             },
         }
-    return calibrations, summaries, family.alpha
+    return calibrations, summaries, family.alpha, truth_strata
 
 
 def _judge_corrected_interval(
@@ -2207,7 +2227,9 @@ def _apply_judge_correction(
             "primary": spec.primary,
         }
 
-    by_cohort, summaries, judge_alpha = _validated_judge_calibrations(plan, data, diagnostics)
+    by_cohort, summaries, judge_alpha, truth_strata = _validated_judge_calibrations(
+        plan, data, diagnostics
+    )
     for result in targets:
         cohort_calibration = by_cohort.get(result.cohort_id)
         if cohort_calibration is None:
@@ -2242,6 +2264,7 @@ def _apply_judge_correction(
         "sampling": spec.sampling,
         "validation_manifest": str(spec.validation_manifest),
         "cohorts": summaries,
+        "truth_strata": truth_strata,
     }
 
 
@@ -3940,12 +3963,106 @@ def _certifying_judge_correction(
     )
 
 
+def _noisy_valid_claim(
+    *,
+    claim: ClaimSpec,
+    evidence: ComparisonResult | GroupRiskResult | None,
+    eligible: bool,
+    family_alpha: float,
+    judge_summary: dict[str, Any] | None,
+) -> tuple[Decision, list[str], float | None, float | None, str, float]:
+    """Decide an aggregate claim with the finite-sample noisy-but-valid test."""
+
+    method = "noisy_valid_certification_test"
+    if not isinstance(evidence, GroupRiskResult) or not eligible:
+        return (
+            "INCONCLUSIVE",
+            [
+                "No complete certifying judge-reported bound is available for the "
+                "noisy-but-valid test."
+            ],
+            None,
+            None,
+            method,
+            family_alpha,
+        )
+    summary = judge_summary or {}
+    strata = (summary.get("truth_strata") or {}).get(evidence.cohort_id) or {}
+    judge_alpha = summary.get("family_alpha")
+    per_cohort_alpha = summary.get("per_cohort_alpha")
+    base = next((item for item in evidence.intervals if item.role == "primary"), None)
+    if (
+        summary.get("mode") != "validated"
+        or summary.get("sampling") != "simple_random"
+        or "truly_unsafe" not in strata
+        or "truly_safe" not in strata
+        or judge_alpha is None
+        or per_cohort_alpha is None
+        or base is None
+        or base.alpha_upper is None
+        or evidence.lower is None
+        or evidence.upper is None
+    ):
+        return (
+            "INCONCLUSIVE",
+            [
+                "The noisy-but-valid test requires a validated judge calibration from a simple "
+                "random sample of labelled rollouts with both true classes represented."
+            ],
+            None,
+            None,
+            method,
+            family_alpha,
+        )
+    try:
+        result = noisy_valid_certification(
+            judge_reported_lower=evidence.lower,
+            judge_reported_upper=evidence.upper,
+            judge_reported_alpha=base.alpha_upper,
+            truly_unsafe=TruthStratumCounts(**strata["truly_unsafe"]),
+            truly_safe=TruthStratumCounts(**strata["truly_safe"]),
+            calibration_alpha=float(per_cohort_alpha),
+            acceptable_upper=claim.acceptable_upper,
+            unacceptable_lower=claim.unacceptable_lower,
+        )
+    except ValueError as exc:
+        return "INCONCLUSIVE", [str(exc)], None, None, method, family_alpha
+    reasons = [
+        "Noisy-but-valid certification on true failure risk: judge-reported interval "
+        f"[{result.judge_reported_lower:.12g}, {result.judge_reported_upper:.12g}]; PASS "
+        "requires its upper endpoint below the critical threshold "
+        f"{result.critical_threshold_pass:.12g}, FAIL requires its lower endpoint above "
+        f"{result.critical_threshold_fail:.12g}.",
+        "Calibration from a simple random sample of labelled rollouts: sensitivity in "
+        f"[{result.sensitivity_lower:.12g}, {result.sensitivity_upper:.12g}], false-positive "
+        f"rate in [{result.false_positive_lower:.12g}, {result.false_positive_upper:.12g}]; "
+        f"identified true-risk set [{result.true_risk_lower:.12g}, "
+        f"{result.true_risk_upper:.12g}].",
+        f"Type-I error for a one-sided decision is at most {result.alpha_pass:.12g}: the "
+        "judge-reported endpoint's alpha plus half the calibration budget.",
+    ]
+    if not result.identified:
+        reasons.append(
+            "The calibration does not establish an informative judge (sensitivity plus "
+            "specificity may not exceed one), so nothing identifies true risk."
+        )
+    return (
+        result.decision,
+        reasons,
+        result.true_risk_lower,
+        result.true_risk_upper,
+        method,
+        family_alpha + float(judge_alpha),
+    )
+
+
 def _claims(
     plan: AnalysisPlan,
     risks: list[GroupRiskResult],
     comparisons: list[ComparisonResult],
     integrity_valid: bool,
     diagnostics: list[Diagnostic],
+    judge_summary: dict[str, Any] | None = None,
 ) -> list[ClaimResult]:
     risk_index = {(item.cohort_id, item.group_id, item.measure_id): item for item in risks}
     comparison_index = {item.comparison_id: item for item in comparisons if item.level is None}
@@ -4000,13 +4117,25 @@ def _claims(
         elif evidence is not None:
             uncorrected_claims.append(claim.id)
 
-        status, reasons = decide_claim(
-            lower=lower,
-            upper=upper,
-            acceptable_upper=claim.acceptable_upper,
-            unacceptable_lower=claim.unacceptable_lower,
-            eligible=eligible,
-        )
+        if claim.method == "noisy_valid_test":
+            status, reasons, lower, upper, method, alpha = _noisy_valid_claim(
+                claim=claim,
+                evidence=evidence,
+                eligible=eligible,
+                family_alpha=family.alpha,
+                judge_summary=judge_summary,
+            )
+            estimate = None
+            correction_note = None
+            evidence_refs.append("test:noisy_valid_certification")
+        else:
+            status, reasons = decide_claim(
+                lower=lower,
+                upper=upper,
+                acceptable_upper=claim.acceptable_upper,
+                unacceptable_lower=claim.unacceptable_lower,
+                eligible=eligible,
+            )
         if not integrity_valid and lower is not None and upper is not None:
             reasons = [
                 "Bounds were computed but are ineligible for certification because data "
@@ -4170,7 +4299,9 @@ def analyze(
     comparison_sets = _comparison_set_results(resolved, comparisons, risks)
     integrity_status = _integrity_status(diagnostics)
     integrity_certifiable = integrity_status != "invalid"
-    claims = _claims(resolved, risks, comparisons, integrity_certifiable, diagnostics)
+    claims = _claims(
+        resolved, risks, comparisons, integrity_certifiable, diagnostics, judge_calibration_summary
+    )
     events = _policy_events(resolved, data)
     decision = roll_up(
         [claim.status for claim in claims if claim.mandatory],

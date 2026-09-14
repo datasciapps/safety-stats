@@ -157,6 +157,24 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                 )
             )
     for claim in plan.claims:
+        if claim.method == "noisy_valid_test":
+            calibration = plan.inputs.judge_calibration
+            if (
+                calibration is None
+                or calibration.mode != "validated"
+                or calibration.sampling != "simple_random"
+            ):
+                diagnostics.append(
+                    Diagnostic(
+                        code="PLAN_INVALID_CLAIM",
+                        severity="ERROR",
+                        message=(
+                            f"claim {claim.id!r} uses noisy_valid_test, which requires "
+                            "judge_calibration.mode: validated with sampling: simple_random"
+                        ),
+                        scope=claim.id,
+                    )
+                )
         if claim.family not in families:
             diagnostics.append(
                 Diagnostic(

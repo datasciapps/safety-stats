@@ -1819,3 +1819,104 @@ def test_validated_correction_reports_directional_coverage_and_a_delta_reference
     # The asymptotic reference never decides a claim.
     for claim in report.claims:
         assert claim.method == "validated_judge_misclassification_correction"
+
+
+def _random_sample_validated_plan(tmp_path: Path, *, claim_method: str, sampling: str) -> Path:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "design:\n",
+        "  judge_calibration:\n    mode: validated\n    validation_manifest: labels.csv\n"
+        f"    family: judge_error\n    sampling: {sampling}\n"
+        "design:\n",
+        1,
+    ).replace(
+        "    - {id: displayed,",
+        "    - {id: judge_error, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: displayed,",
+        1,
+    ).replace(
+        "    mandatory: true\n",
+        f"    mandatory: true\n    method: {claim_method}\n",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    return plan_path
+
+
+def _label_everything(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Label every classified rollout: a 100% simple random sample of the design."""
+
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+    baseline_dir = tmp_path / "baseline"
+    baseline_dir.mkdir()
+    baseline = analyze(plan=load_plan(_write_inputs(baseline_dir)), logs="ignored")
+    rows = ["observation_id,human_label"]
+    for observation in baseline._observations:
+        if observation.failure is None:
+            continue
+        rows.append(f"{observation.observation_id},{'unsafe' if observation.failure else 'safe'}")
+    (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+def test_noisy_valid_claim_is_decided_from_truth_strata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from inspect_safety_stats.stats.misclassification import (
+        TruthStratumCounts,
+        noisy_valid_certification,
+    )
+
+    _label_everything(tmp_path, monkeypatch)
+    plan_path = _random_sample_validated_plan(
+        tmp_path, claim_method="noisy_valid_test", sampling="simple_random"
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    strata = report.provenance["judge_calibration"]["truth_strata"]["candidate"]
+    assert strata["truly_unsafe"] == {"labelled": 10, "judge_positive": 10}
+    assert strata["truly_safe"] == {"labelled": 30, "judge_positive": 0}
+
+    (claim,) = report.claims
+    assert claim.method == "noisy_valid_certification_test"
+    assert "test:noisy_valid_certification" in claim.evidence_refs
+    assert any("critical threshold" in reason.lower() for reason in claim.reasons)
+    # Union of the claim family budget and the judge calibration budget.
+    assert claim.alpha == pytest.approx(0.05 + 0.05)
+    assert claim.estimate is None
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    base = next(item for item in mean.intervals if item.role == "primary")
+    assert mean.lower is not None and mean.upper is not None and base.alpha_upper is not None
+    expected = noisy_valid_certification(
+        judge_reported_lower=mean.lower,
+        judge_reported_upper=mean.upper,
+        judge_reported_alpha=base.alpha_upper,
+        truly_unsafe=TruthStratumCounts(10, 10),
+        truly_safe=TruthStratumCounts(30, 0),
+        calibration_alpha=0.05,
+        acceptable_upper=0.30,
+        unacceptable_lower=0.60,
+    )
+    assert claim.status == expected.decision
+    assert claim.lower == pytest.approx(expected.true_risk_lower)
+    assert claim.upper == pytest.approx(expected.true_risk_upper)
+    # Forty rollouts and forty labels cannot settle a 30% threshold either way.
+    assert claim.status == "INCONCLUSIVE"
+
+
+def test_noisy_valid_claim_requires_a_random_sample_calibration(tmp_path: Path) -> None:
+    from inspect_safety_stats.validate.plan import validate_plan_references
+
+    (tmp_path / "labels.csv").write_text("observation_id,human_label\nx,safe\n", encoding="utf-8")
+    plan_path = _random_sample_validated_plan(
+        tmp_path, claim_method="noisy_valid_test", sampling="simple_random_within_judge_stratum"
+    )
+    diagnostics = validate_plan_references(load_plan(plan_path))
+    assert ("PLAN_INVALID_CLAIM", "mean_safe") in {(d.code, d.scope) for d in diagnostics}

@@ -255,6 +255,57 @@ uncertainty, which makes both `PASS` and `FAIL` harder; but it also removes fals
 which can lower the upper bound enough to establish a `PASS` that the uncorrected interval
 could not. Both movements are evidence-backed, and both are visible in the claim's reasons.
 
+## Certifying a threshold directly: the noisy-but-valid test
+
+A threshold claim may opt into a direct finite-sample test instead of comparing corrected
+interval endpoints:
+
+```yaml
+inputs:
+  judge_calibration:
+    mode: validated
+    validation_manifest: judge-labels.csv
+    family: judge_error
+    sampling: simple_random          # a random sample of rollouts, not within judge strata
+claims:
+  - id: tail_safe
+    ...
+    method: noisy_valid_test
+```
+
+With sensitivity \(Se\), false-positive rate \(FPR\) and true risk \(\pi\), the judge-reported
+rate is \(q=\pi\,Se+(1-\pi)\,FPR\), increasing in \(\pi\) for an informative judge. Under
+\(H_0:\pi\ge\tau\) it follows that \(q\ge\tau\,Se+(1-\tau)\,FPR\), and with exact lower confidence
+bounds on \(Se\) and \(FPR\) from the labelled sample the right-hand side is at least the **critical
+threshold** \(c=\tau\,Se_L+(1-\tau)\,FPR_L\). PASS rejects \(H_0\) when the judge-reported upper
+bound falls below \(c\); by the union bound over the three exact endpoints the Type-I error is at
+most the judge-reported endpoint's alpha plus half the calibration budget. FAIL mirrors the
+construction with the upper calibration endpoints. The same box gives the identified true-risk set,
+so the decision and the interval agree by construction, and when the calibration cannot establish
+an informative judge the outcome is INCONCLUSIVE.
+
+Two things differ from the corrected-interval path. The parameters are prevalence-free, which is
+why they require labels drawn as a **simple random sample of the design** (or by true class):
+labels drawn within judge strata over-represent the judge's own positives and would bias
+sensitivity upward, so the plan validator refuses `noisy_valid_test` under
+`simple_random_within_judge_stratum`. And the test needs both true classes among the labels; with
+very rare failures that may require many labels, in which case the honest outcome is INCONCLUSIVE.
+The construction follows the structure of Feng et al.'s "Noisy but Valid" framework (a calibration
+set for the judge's error rates and a variance-corrected critical threshold on the judge-labelled
+set, with finite-sample validity); it is realised here with the package's exact Clopper--Pearson
+endpoints and a union bound rather than as a reproduction of that paper's threshold.
+
+Power is the trade-off to understand before choosing this path.
+`research/noisy_valid_power.py` simulates both decisions from the *same* random label sample
+(sensitivity 0.90, specificity 0.97, 2,000 rollouts, threshold 10%): at 2% true prevalence with
+300 labels the noisy-but-valid test passes 28% of the time against 93% for the corrected-interval
+decision, and with 100 labels almost never against 22%; both have zero false passes at the
+boundary. The reason is label efficiency: a random sample at low prevalence contains very few
+truly unsafe items from which to bound sensitivity, whereas labels drawn within judge strata are
+enriched for exactly those items. Prefer the corrected interval when labels are scarce; prefer this
+test when the judge's error rates must be prevalence-free and transportable, or when sensitivity
+can be bounded from seeded known-unsafe items rather than from a random sample.
+
 ## On the generative path
 
 The same correction is available for

@@ -99,7 +99,10 @@ inputs:
 ```
 
 The manifest holds `observation_id,human_label` with labels `safe` or `unsafe`; identifiers
-come from the `observations.csv` of a prior run. Threshold claims whose evidence carries a
+come from the `observations.csv` of a prior run. `sampling` is
+`simple_random_within_judge_stratum` (the default) or `simple_random`; only the latter also
+estimates sensitivity and the false-positive rate by true class, which a claim with
+`method: noisy_valid_test` requires (the validator emits `PLAN_INVALID_CLAIM` otherwise). Threshold claims whose evidence carries a
 validated correction are decided from the corrected bounds; an `assumed` correction never
 affects a claim. One calibration is estimated per cohort by
 exact Clopper-Pearson bounds within each judge stratum, and the corrected interval's coverage

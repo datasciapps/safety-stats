@@ -122,7 +122,7 @@ class JudgeCalibrationSpec(StrictModel):
     primary: str | None = None
     validation_manifest: Path | None = None
     family: str | None = None
-    sampling: Literal["simple_random_within_judge_stratum"] = (
+    sampling: Literal["simple_random_within_judge_stratum", "simple_random"] = (
         "simple_random_within_judge_stratum"
     )
 
@@ -619,9 +619,12 @@ class ClaimSpec(StrictModel):
     acceptable_upper: float = Field(ge=-1, le=1)
     unacceptable_lower: float = Field(ge=-1, le=1)
     mandatory: bool = True
+    method: Literal["corrected_interval", "noisy_valid_test"] = "corrected_interval"
 
     @model_validator(mode="after")
     def validate_source_and_thresholds(self) -> ClaimSpec:
+        if self.method == "noisy_valid_test" and self.comparison is not None:
+            raise ValueError("noisy_valid_test applies to aggregate claims, not comparisons")
         aggregate = self.cohort is not None or self.group is not None or self.measure is not None
         if self.comparison is not None:
             if aggregate:
