@@ -248,6 +248,22 @@ sample identifier materialization wrote rather than an observation id, and compa
 **not** corrected -- doing so would either discard the paired construction that makes them
 tight or assume a prevalence-free judge.
 
+## Declaring a judge panel
+
+When several judges score every rollout, declare them under `inputs.judges` and, crucially,
+declare which of them are one opinion. Judges built on related models share training data,
+prompts and blind spots; a panel that agrees is not a panel that is right. Each judge carries a
+dependence `block`, and a composite's **effective votes** is the Kish count over blocks: three
+judges in two blocks of sizes two and one carry \(3^2/(2^2+1^2)=1.8\) votes, not three.
+
+Composites (`any`, `all`, `majority`) become score columns and can be the primary outcome. They
+are also just judges: the single-judge correction on this page applies to a composite verbatim,
+and a `validated` calibration stratified by the *composite's* verdict needs no assumption at all
+about dependence among the judges it combines, because it measures the composite's own accuracy
+directly. That is the recommended route to evidence for a panel. The panel section of the report
+adds pairwise agreement and Cohen's kappa as diagnostics; neither carries a coverage guarantee and
+neither identifies the true failure rate on its own.
+
 ## Getting to evidence
 
 `mode: validated` supplies the machinery; the labels are the remaining cost. An anchor must

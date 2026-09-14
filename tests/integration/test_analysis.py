@@ -1426,3 +1426,162 @@ def test_three_arm_comparison_set_uses_one_coherent_joint_region(
     html = (output / "report.html").read_text(encoding="utf-8")
     assert "Joint risk interval" in html
     assert "Simultaneous rank set" in html
+
+
+_JUDGE_PLAN_BLOCK = (
+    "  judges:\n"
+    "    - id: judge_a\n"
+    "      score: {name: harmful_a, "
+    "mapping: {failure_values: [FAIL], safe_values: [PASS]}}\n"
+    "      block: openai\n"
+    "    - id: judge_b\n"
+    "      score: {name: harmful_b, "
+    "mapping: {failure_values: [FAIL], safe_values: [PASS]}}\n"
+    "      block: openai\n"
+    "      kind: monitor\n"
+    "  composites:\n"
+    "    - {id: any_judge, rule: any, judges: [judge_a, judge_b]}\n"
+    "    - {id: majority_judge, rule: majority, judges: [judge_a, judge_b]}\n"
+)
+
+
+def _judge_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Two extra judges: a flags p1 epochs 1-10, b flags p1 epochs 1-5 and is silent once."""
+
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    sample_frame["score_harmful_a"] = "PASS"
+    sample_frame["score_harmful_b"] = "PASS"
+    p1 = sample_frame["id"] == "p1"
+    sample_frame.loc[p1 & (sample_frame["epoch"] <= 10), "score_harmful_a"] = "FAIL"
+    sample_frame.loc[p1 & (sample_frame["epoch"] <= 5), "score_harmful_b"] = "FAIL"
+    silent = (sample_frame["id"] == "p2") & (sample_frame["epoch"] == 1)
+    sample_frame.loc[silent, "score_harmful_b"] = None
+    return eval_frame, sample_frame
+
+
+def _patch_frames(
+    monkeypatch: pytest.MonkeyPatch, frames: tuple[pd.DataFrame, pd.DataFrame]
+) -> None:
+    eval_frame, sample_frame = frames
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+
+def test_multi_judge_panel_is_reported_beside_the_primary_analysis(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace("design:\n", _JUDGE_PLAN_BLOCK + "design:\n", 1)
+    plan_path.write_text(plan_text, encoding="utf-8")
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    # The primary outcome (all PASS) is untouched by the extra judges.
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    assert mean.estimate == pytest.approx(0.0)
+
+    panel = report.provenance["judge_panel"]
+    judges = {item["id"]: item for item in panel["judges"]}
+    assert judges["judge_a"]["block"] == "openai" and judges["judge_a"]["kind"] == "judge"
+    assert judges["judge_b"]["kind"] == "monitor"
+    a, b = judges["judge_a"]["cohorts"]["candidate"], judges["judge_b"]["cohorts"]["candidate"]
+    assert (a["classified"], a["failures"]) == (40, 10)
+    assert (b["classified"], b["failures"], b["unclassified"]) == (39, 5, 1)
+
+    composites = {item["id"]: item for item in panel["composites"]}
+    # Both judges share one declared block: two votes, one opinion.
+    assert composites["any_judge"]["effective_votes"] == pytest.approx(1.0)
+    any_c = composites["any_judge"]["cohorts"]["candidate"]
+    assert (any_c["classified"], any_c["failures"], any_c["unclassified"]) == (39, 10, 1)
+    majority = composites["majority_judge"]["cohorts"]["candidate"]
+    # Two judges: a tie on p1 epochs 6-10 is no verdict; the silent b leaves p2 epoch 1 open.
+    assert (majority["classified"], majority["failures"], majority["unclassified"]) == (34, 5, 6)
+
+    (pair,) = panel["agreement"]
+    assert {pair["first"], pair["second"]} == {"judge_a", "judge_b"}
+    assert pair["cohorts"]["candidate"]["compared"] == 39
+    assert pair["cohorts"]["candidate"]["disagreements"] == 5
+    assert pair["cohorts"]["candidate"]["agreement"] == pytest.approx(34 / 39)
+
+    output = report.write(tmp_path / "judge-panel-report")
+    markdown = (output / "report.md").read_text(encoding="utf-8")
+    assert "## Judge panel" in markdown
+    assert "effective votes" in markdown.lower()
+    # Per-judge verdicts live beside the observations, not inside them.
+    header = (output / "observations.csv").read_text(encoding="utf-8").splitlines()[0]
+    assert "judge" not in header
+
+
+def test_composite_judge_can_be_the_primary_outcome(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "  score:\n    name: harmful\n    mapping:\n      failure_values: [\"FAIL\"]\n"
+        "      safe_values: [\"PASS\"]\n    missing: block\n",
+        "  score:\n    name: any_judge\n    mapping:\n      failure_values: [true]\n"
+        "      safe_values: [false]\n    missing: conservative_bounds\n",
+        1,
+    )
+    plan_text = plan_text.replace("design:\n", _JUDGE_PLAN_BLOCK + "design:\n", 1)
+    plan_path.write_text(plan_text, encoding="utf-8")
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    estimates = {item.prompt_id: item for item in report.prompt_estimates}
+    assert estimates["p1"].p_hat == pytest.approx(0.5)
+    assert estimates["p1"].n_failure == 10
+    # p2 epoch 1: a said PASS and b was silent, so "any" cannot decide -> unclassified.
+    assert estimates["p2"].n_unclassified == 1
+    assert estimates["p2"].n_failure == 0
+    assert report.integrity.status == "degraded"
+
+
+def test_missing_judge_score_column_is_an_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8").replace(
+        "design:\n",
+        "  judges:\n"
+        "    - id: ghost\n"
+        "      score: {name: not_in_logs, mapping: {failure_values: [FAIL], safe_values: [PASS]}}\n"
+        "design:\n",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    _patch_frames(monkeypatch, _frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    codes = {(item.code, item.severity) for item in report.integrity.diagnostics}
+    assert ("JUDGE_SCORE_MISSING", "ERROR") in codes
+
+
+def test_plans_without_judges_are_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_frames(monkeypatch, _frames())
+    report = analyze(plan=_write_inputs(tmp_path), logs="ignored")
+    assert "judge_panel" not in report.provenance
+    output = report.write(tmp_path / "plain")
+    header = (output / "observations.csv").read_text(encoding="utf-8").splitlines()[0]
+    assert header.split(",")[:6] == [
+        "observation_id",
+        "source_log",
+        "source_log_sha256",
+        "eval_id",
+        "run_id",
+        "sample_id",
+    ]
+    assert "judge" not in header

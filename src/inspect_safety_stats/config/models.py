@@ -157,12 +157,63 @@ class JudgeCalibrationSpec(StrictModel):
         return self
 
 
+class JudgeSpec(StrictModel):
+    """One declared binary judge over every rollout.
+
+    ``block`` names the judge's dependence block: judges sharing a block are one
+    opinion, not independent votes. It defaults to the judge's own identifier, so a
+    panel is independent only where the plan says nothing else. ``kind: monitor``
+    marks a chain-of-thought or trajectory monitor, whose relevant error is its miss
+    rate rather than its false-alarm rate.
+    """
+
+    id: str = Field(min_length=1)
+    score: ScoreSpec
+    block: str | None = None
+    kind: Literal["judge", "monitor"] = "judge"
+
+    @model_validator(mode="after")
+    def resolve_block(self) -> JudgeSpec:
+        if self.block is None:
+            return self.model_copy(update={"block": self.id})
+        if not self.block.strip():
+            raise ValueError("judge block must be a non-empty identifier")
+        return self
+
+
+class CompositeJudgeSpec(StrictModel):
+    """A derived verdict combining declared judges; available as a score column."""
+
+    id: str = Field(min_length=1)
+    rule: Literal["any", "all", "majority"]
+    judges: list[str] = Field(min_length=2)
+
+
 class InputsSpec(StrictModel):
     design_manifest: Path
     estimand: Literal["end_to_end_system", "underlying_model"] = "end_to_end_system"
     sample_join: SampleJoinSpec = Field(default_factory=SampleJoinSpec)
     score: ScoreSpec
     judge_calibration: JudgeCalibrationSpec | None = None
+    judges: list[JudgeSpec] = Field(default_factory=list)
+    composites: list[CompositeJudgeSpec] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_judge_panel(self) -> InputsSpec:
+        identifiers = [judge.id for judge in self.judges] + [item.id for item in self.composites]
+        if len(set(identifiers)) != len(identifiers):
+            raise ValueError("judge and composite identifiers must be unique")
+        declared = {judge.id for judge in self.judges}
+        for composite in self.composites:
+            unknown = sorted(set(composite.judges) - declared)
+            if unknown:
+                raise ValueError(
+                    f"composite {composite.id!r} references unknown judge(s): "
+                    + ", ".join(unknown)
+                )
+            if len(set(composite.judges)) != len(composite.judges):
+                raise ValueError(f"composite {composite.id!r} lists a judge more than once")
+        return self
 
 
 class WeightSpec(StrictModel):

@@ -34,6 +34,12 @@ from .hierarchy_region import (
     project_two_arm_difference_hierarchy_confidence_region,
 )
 from .independence import BoundedBlocks
+from .judges import (
+    AgreementSummary,
+    compose_verdicts,
+    effective_votes,
+    pairwise_agreement,
+)
 from .misclassification import (
     CorrectedRisk,
     JudgeCalibration,
@@ -101,6 +107,10 @@ __all__ = [
     "weighted_kl_chernoff_mean_bounds",
     "weighted_mean",
     "zero_failure_sample_size",
+    "AgreementSummary",
+    "compose_verdicts",
+    "effective_votes",
+    "pairwise_agreement",
     "calibrate_independent_frontiers",
     "sidak_local_alpha",
 ]

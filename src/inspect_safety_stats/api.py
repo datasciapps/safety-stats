@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -67,6 +68,11 @@ from inspect_safety_stats.stats.independence import (
     comparison_contrast_blocks,
     direct_bounded_blocks,
     validate_profile_fields,
+)
+from inspect_safety_stats.stats.judges import (
+    compose_verdicts,
+    effective_votes,
+    pairwise_agreement,
 )
 from inspect_safety_stats.stats.misclassification import (
     JudgeCalibration,
@@ -1823,6 +1829,90 @@ def _judge_corrected_interval(
         eligibility="certifying" if validated else "diagnostic",
         warnings=warnings,
     )
+
+
+def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, Any] | None:
+    """Describe the declared judge panel: per-judge counts, composites, and agreement.
+
+    Bookkeeping only. Effective votes is the Kish count over declared dependence
+    blocks, and agreement is descriptive; nothing here corrects a risk estimate.
+    """
+
+    if not plan.inputs.judges:
+        return None
+    cohorts = sorted(plan.cohorts)
+    by_cohort: dict[str, list[str]] = {cohort_id: [] for cohort_id in cohorts}
+    for observation in data.observations:
+        by_cohort.setdefault(observation.cohort_id, []).append(observation.observation_id)
+
+    def verdicts(cohort_id: str, judge_id: str) -> list[bool | None]:
+        return [
+            data.judge_verdicts.get(observation_id, {}).get(judge_id)
+            for observation_id in by_cohort[cohort_id]
+        ]
+
+    def counts(values: list[bool | None]) -> dict[str, int]:
+        positives = sum(value is True for value in values)
+        negatives = sum(value is False for value in values)
+        return {
+            "classified": positives + negatives,
+            "failures": positives,
+            "unclassified": len(values) - positives - negatives,
+        }
+
+    blocks = {judge.id: judge.block or judge.id for judge in plan.inputs.judges}
+    judges = [
+        {
+            "id": judge.id,
+            "kind": judge.kind,
+            "block": blocks[judge.id],
+            "score": judge.score.name,
+            "cohorts": {cohort_id: counts(verdicts(cohort_id, judge.id)) for cohort_id in cohorts},
+        }
+        for judge in plan.inputs.judges
+    ]
+    composites = []
+    for composite in plan.inputs.composites:
+        per_cohort = {}
+        for cohort_id in cohorts:
+            combined = [
+                compose_verdicts(
+                    {
+                        judge_id: data.judge_verdicts.get(observation_id, {}).get(judge_id)
+                        for judge_id in composite.judges
+                    },
+                    composite.rule,
+                )
+                for observation_id in by_cohort[cohort_id]
+            ]
+            per_cohort[cohort_id] = counts(combined)
+        composites.append(
+            {
+                "id": composite.id,
+                "rule": composite.rule,
+                "judges": list(composite.judges),
+                "effective_votes": effective_votes([blocks[j] for j in composite.judges]),
+                "cohorts": per_cohort,
+            }
+        )
+    agreement = []
+    for first, second in itertools.combinations([judge.id for judge in plan.inputs.judges], 2):
+        pair_cohorts = {}
+        for cohort_id in cohorts:
+            summary = pairwise_agreement(verdicts(cohort_id, first), verdicts(cohort_id, second))
+            pair_cohorts[cohort_id] = {
+                "compared": summary.compared,
+                "disagreements": summary.disagreements,
+                "agreement": summary.agreement,
+                "kappa": summary.kappa,
+            }
+        agreement.append({"first": first, "second": second, "cohorts": pair_cohorts})
+    return {
+        "judges": judges,
+        "composites": composites,
+        "agreement": agreement,
+        "effective_votes_all": effective_votes(list(blocks.values())),
+    }
 
 
 def _apply_judge_correction(
@@ -3836,6 +3926,7 @@ def analyze(
             diagnostics, key=lambda item: (item.severity, item.code, item.scope or "")
         ),
     )
+    judge_panel = _judge_panel_summary(resolved, data)
     plan_hash = canonical_plan_hash(resolved)
     report = SafetyReport(
         package_version=__version__,
@@ -3851,6 +3942,7 @@ def analyze(
                 if judge_calibration_summary
                 else {}
             ),
+            **({"judge_panel": judge_panel} if judge_panel else {}),
         },
         scope={
             "design": "fixed",

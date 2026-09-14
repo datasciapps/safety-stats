@@ -345,6 +345,18 @@ estimate_judge_calibration(*, scenario_id, unsafe_stratum, safe_stratum, alpha)
 correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration)
 ```
 
+### Judge panels
+
+```python
+compose_verdicts(verdicts, rule)          # any | all | majority; None when undecidable
+effective_votes(blocks)                   # Kish count over declared dependence blocks
+pairwise_agreement(first, second)         # AgreementSummary(compared, disagreements, agreement, kappa)
+```
+
+Bookkeeping for declared judge panels; see the `inputs.judges` section of the plan reference.
+Composites are undecided when a missing vote could still change them or on a `majority` tie, and
+agreement statistics are descriptive diagnostics only.
+
 Maps a judge-system risk interval onto the true-risk scale via
 `R* = R * rho_1 + (1 - R) * rho_0`. The identity is multilinear, so the returned bounds are
 the exact extrema over the declared box. It applies unchanged to any positively homogeneous,
