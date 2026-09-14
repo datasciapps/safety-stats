@@ -157,6 +157,22 @@ The corrected interval's simultaneous coverage is therefore
 where \(\alpha_{\text{spent}}\) is the share the calibrations it used actually consumed, and
 is reported in the interval's `family_alpha`.
 
+Each *endpoint* of the corrected interval uses the base interval's endpoint plus two of the four
+calibration endpoints, so a one-sided claim spends the base endpoint's alpha plus half the
+calibration budget; the interval records this as its directional coverage. Beside the exact box
+the report shows a `judge_corrected_validated_delta` reference: a delta-method (Wald) interval that
+propagates the calibration variance through \(R^*=R\rho_1+(1-R)\rho_0\) with Agresti--Coull
+stabilised stratum proportions and the rollout-independence binomial variance of the judge-reported
+mean. It is asymptotic, carries no finite-sample guarantee, is labelled `diagnostic`, and never
+decides a claim. Its purpose is to show what the exact guarantee costs -- the "oracle gap" between
+practical finite-sample methods and asymptotic ones. `research/judge_correction_widths.py`
+tabulates width and Monte-Carlo coverage of both across prevalence and calibration size.
+In that simulation (sensitivity 0.90, specificity 0.97, 1,000 rollouts) the reference is 30--45%
+narrower, but its coverage falls to 90--94% at prevalences of 5% and below with up to 300 labels,
+whereas the exact box never falls below its nominal level; at very low prevalence the exact path
+frequently refuses to correct at all because the calibration is uninformative. A narrower
+interval that under-covers where failures are rare is not a better interval for a safety claim.
+
 ### Comparisons
 
 A comparison is corrected by correcting **each arm with its own cohort's calibration** and

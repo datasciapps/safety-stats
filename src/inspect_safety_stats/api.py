@@ -79,7 +79,9 @@ from inspect_safety_stats.stats.judges import (
 )
 from inspect_safety_stats.stats.misclassification import (
     JudgeCalibration,
+    JudgeStratumCounts,
     correct_judge_risk,
+    delta_method_corrected_risk,
     estimate_judge_calibration,
 )
 from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
@@ -1769,6 +1771,14 @@ def _judge_corrected_interval(
         if validated and base_alpha is not None and spent is not None
         else None
     )
+    # Each corrected endpoint uses the base endpoint plus two of the four calibration
+    # endpoints, so a one-sided claim spends half the calibration budget.
+    base_directional = base.directional_family_alpha if base is not None else None
+    one_sided = (
+        1 - (base_directional + spent / 2)
+        if validated and base_directional is not None and spent is not None
+        else None
+    )
     assumptions = [
         "The reported estimand is true failure risk, not judge-reported failure risk.",
         f"P(truly unsafe | judge said unsafe) lies in "
@@ -1823,6 +1833,8 @@ def _judge_corrected_interval(
         family=family_id,
         family_alpha=spent,
         simultaneous_coverage=simultaneous,
+        lower_one_sided_coverage=one_sided,
+        upper_one_sided_coverage=one_sided,
         completion_estimate_lower=corrected.completion_estimate_lower,
         completion_estimate_upper=corrected.completion_estimate_upper,
         raw_lower=result.lower,
@@ -2060,6 +2072,94 @@ def _apply_panel_derived_correction(
     }
 
 
+def _judge_reported_variance(data: NormalizedData, cohort_id: str, group_id: str) -> float | None:
+    """Binomial variance of the design-weighted judge-reported mean under rollout independence."""
+
+    group = next((item for item in data.groups if item.id == group_id), None)
+    if group is None:
+        return None
+    counts: dict[str, list[int]] = {prompt_id: [0, 0] for prompt_id in group.prompt_ids}
+    for observation in data.observations:
+        if observation.cohort_id != cohort_id or observation.failure is None:
+            continue
+        tally = counts.get(observation.prompt_id)
+        if tally is None:
+            continue
+        tally[0] += int(observation.failure)
+        tally[1] += 1
+    variance = 0.0
+    for prompt_id, (failures, classified) in counts.items():
+        if classified == 0:
+            return None
+        rate = failures / classified
+        variance += group.weights[prompt_id] ** 2 * rate * (1 - rate) / classified
+    return variance
+
+
+def _delta_reference_interval(
+    *,
+    result: GroupRiskResult,
+    data: NormalizedData,
+    strata: dict[str, Any],
+    alpha: float,
+    family_id: str | None,
+) -> RiskIntervalResult | None:
+    """Asymptotic delta-method reference beside the exact validated correction."""
+
+    unsafe = strata.get("judge_unsafe")
+    safe = strata.get("judge_safe")
+    if result.estimate is None or result.lower is None or result.upper is None:
+        return None
+    if not unsafe or not safe:
+        return None
+    variance = _judge_reported_variance(data, result.cohort_id, result.group_id)
+    if variance is None:
+        return None
+    try:
+        delta = delta_method_corrected_risk(
+            observed_estimate=result.estimate,
+            observed_variance=variance,
+            unsafe_stratum=JudgeStratumCounts(**unsafe),
+            safe_stratum=JudgeStratumCounts(**safe),
+            alpha=alpha,
+        )
+    except ValueError:
+        return None
+    return RiskIntervalResult(
+        interval_id="judge_corrected_validated_delta",
+        lower=delta.lower,
+        upper=delta.upper,
+        method="delta_method_judge_misclassification_correction",
+        role="sensitivity",
+        coverage_scope=(
+            f"{result.coverage_scope}_judge_corrected_delta"
+            if result.coverage_scope
+            else "judge_corrected_delta"
+        ),
+        family=family_id,
+        family_alpha=alpha,
+        completion_estimate_lower=delta.estimate,
+        completion_estimate_upper=delta.estimate,
+        half_width_lower=delta.estimate - delta.lower,
+        half_width_upper=delta.upper - delta.estimate,
+        raw_lower=result.lower,
+        raw_upper=result.upper,
+        calibration_method="validated_judge_calibration_delta_method",
+        assumptions=[
+            "The reported estimand is true failure risk, not judge-reported failure risk.",
+            "Asymptotic Wald interval from a first-order (delta-method) expansion of "
+            "R* = R rho_1 + (1 - R) rho_0 with a normal quantile; it carries no "
+            "finite-sample coverage guarantee and cannot support a claim.",
+            "Judge-reported variance is the rollout-independence binomial variance "
+            "sum_j w_j^2 p_j (1 - p_j) / n_j of the design-weighted mean.",
+            "Stratum proportions are Agresti-Coull stabilised, (x + 2) / (n + 4).",
+            "Shown as the asymptotic reference for the exact vertex box: the gap between "
+            "them is the price of the finite-sample guarantee.",
+        ],
+        eligibility="diagnostic",
+    )
+
+
 def _apply_judge_correction(
     plan: AnalysisPlan,
     data: NormalizedData,
@@ -2121,6 +2221,16 @@ def _apply_judge_correction(
         )
         if interval is not None:
             result.intervals.append(interval)
+        if isinstance(result, GroupRiskResult) and judge_alpha is not None:
+            reference = _delta_reference_interval(
+                result=result,
+                data=data,
+                strata=summaries.get(result.cohort_id, {}),
+                alpha=judge_alpha / len(plan.cohorts),
+                family_id=spec.family,
+            )
+            if reference is not None:
+                result.intervals.append(reference)
     _apply_judge_correction_to_comparisons(plan, comparisons, by_cohort, diagnostics)
     return {
         "mode": "validated",

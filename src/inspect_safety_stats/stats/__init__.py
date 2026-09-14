@@ -46,8 +46,10 @@ from .judges import (
 )
 from .misclassification import (
     CorrectedRisk,
+    DeltaCorrectedRisk,
     JudgeCalibration,
     correct_judge_risk,
+    delta_method_corrected_risk,
 )
 from .multiplicity import bonferroni_allocate
 from .paired import exact_mcnemar, newcombe_paired_interval
@@ -119,6 +121,8 @@ __all__ = [
     "effective_votes",
     "identified_risk_set",
     "pairwise_agreement",
+    "DeltaCorrectedRisk",
+    "delta_method_corrected_risk",
     "calibrate_independent_frontiers",
     "sidak_local_alpha",
 ]

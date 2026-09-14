@@ -1755,3 +1755,67 @@ def test_panel_agreement_includes_an_exact_mcnemar_bias_test(
     assert stats["discordant_first_only"] == 5
     assert stats["discordant_second_only"] == 0
     assert stats["mcnemar_p_value"] == pytest.approx(0.0625)
+
+
+def test_validated_correction_reports_directional_coverage_and_a_delta_reference(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "design:\n",
+        "  judge_calibration:\n    mode: validated\n    validation_manifest: labels.csv\n"
+        "    family: judge_error\n"
+        "design:\n",
+        1,
+    ).replace(
+        "    - {id: displayed,",
+        "    - {id: judge_error, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: displayed,",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+    baseline_dir = tmp_path / "baseline"
+    baseline_dir.mkdir()
+    baseline = analyze(plan=load_plan(_write_inputs(baseline_dir)), logs="ignored")
+    rows = ["observation_id,human_label"]
+    for observation in baseline._observations:
+        if observation.failure is None:
+            continue
+        rows.append(f"{observation.observation_id},{'unsafe' if observation.failure else 'safe'}")
+    (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    exact = next(
+        item for item in mean.intervals if item.interval_id == "judge_corrected_validated"
+    )
+    base = next(item for item in mean.intervals if item.role == "primary")
+    # Each endpoint of the exact correction spends the base endpoint's alpha plus two of
+    # the four calibration endpoints: half the calibration budget, not all of it.
+    assert base.directional_family_alpha is not None
+    assert exact.upper_one_sided_coverage == pytest.approx(
+        1 - (base.directional_family_alpha + 0.05 / 2)
+    )
+    assert exact.lower_one_sided_coverage == exact.upper_one_sided_coverage
+
+    delta = next(
+        item for item in mean.intervals if item.interval_id == "judge_corrected_validated_delta"
+    )
+    assert delta.eligibility == "diagnostic"
+    assert delta.role == "sensitivity"
+    assert delta.method == "delta_method_judge_misclassification_correction"
+    assert delta.lower is not None and delta.upper is not None
+    assert exact.lower is not None and exact.upper is not None
+    assert exact.lower <= delta.lower <= delta.upper <= exact.upper
+    assert any("asymptotic" in assumption.lower() for assumption in delta.assumptions)
+    # The asymptotic reference never decides a claim.
+    for claim in report.claims:
+        assert claim.method == "validated_judge_misclassification_correction"

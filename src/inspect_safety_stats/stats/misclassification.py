@@ -182,3 +182,74 @@ def estimate_judge_calibration(
         source="validated",
         alpha=alpha,
     )
+
+
+@dataclass(frozen=True)
+class DeltaCorrectedRisk:
+    """Asymptotic (delta-method) interval for true risk with estimated judge accuracies."""
+
+    estimate: float
+    standard_error: float
+    lower: float
+    upper: float
+    alpha: float
+    rho_1_estimate: float
+    rho_0_estimate: float
+
+
+def delta_method_corrected_risk(
+    *,
+    observed_estimate: float,
+    observed_variance: float,
+    unsafe_stratum: JudgeStratumCounts,
+    safe_stratum: JudgeStratumCounts,
+    alpha: float,
+) -> DeltaCorrectedRisk:
+    """Wald interval for ``R* = R rho_1 + (1 - R) rho_0`` propagating estimation variance.
+
+    The stratum proportions are Agresti-Coull stabilised, ``(x + 2) / (n + 4)``, and
+    the variance is the first-order expansion
+
+        (rho_1 - rho_0)^2 Var(R) + R^2 Var(rho_1) + (1 - R)^2 Var(rho_0),
+
+    with a normal quantile at ``alpha / 2``. This is an asymptotic reference: it is
+    usually much narrower than the exact vertex box and shows what the finite-sample
+    guarantee costs, but it carries no coverage guarantee of its own and is reported
+    as a diagnostic, never as evidence.
+    """
+
+    from scipy.stats import norm
+
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0, 1)")
+    if not 0 <= observed_estimate <= 1:
+        raise ValueError("observed estimate must be in [0, 1]")
+    if not observed_variance >= 0:
+        raise ValueError("observed variance must be nonnegative")
+    if unsafe_stratum.labelled == 0 or safe_stratum.labelled == 0:
+        raise ValueError("both judge strata require at least one labelled observation")
+
+    def stabilised(stratum: JudgeStratumCounts) -> tuple[float, float]:
+        size = stratum.labelled + 4
+        proportion = (stratum.truly_unsafe + 2) / size
+        return proportion, proportion * (1 - proportion) / size
+
+    rho_1, var_1 = stabilised(unsafe_stratum)
+    rho_0, var_0 = stabilised(safe_stratum)
+    estimate = observed_estimate * rho_1 + (1 - observed_estimate) * rho_0
+    variance = (
+        (rho_1 - rho_0) ** 2 * observed_variance
+        + observed_estimate**2 * var_1
+        + (1 - observed_estimate) ** 2 * var_0
+    )
+    standard_error = variance**0.5
+    z = float(norm.ppf(1 - alpha / 2))
+    return DeltaCorrectedRisk(
+        estimate=estimate,
+        standard_error=standard_error,
+        lower=max(0.0, estimate - z * standard_error),
+        upper=min(1.0, estimate + z * standard_error),
+        alpha=alpha,
+        rho_1_estimate=rho_1,
+        rho_0_estimate=rho_0,
+    )
