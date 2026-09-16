@@ -1,5 +1,10 @@
+import subprocess
+import sys
+from pathlib import Path
+
 from typer.testing import CliRunner
 
+from inspect_safety_stats import cli as cli_module
 from inspect_safety_stats.cli import app
 
 runner = CliRunner()
@@ -69,3 +74,23 @@ def test_cli_help_lists_visualization_command() -> None:
     assert "visualize" in result.stdout
     assert "analyze" in result.stdout
     assert "plan" in result.stdout
+
+
+def test_direct_script_invocation_registers_all_commands() -> None:
+    """Running cli.py as a script exposes the same commands as the entry point.
+
+    The ``__main__`` guard used to sit above the generative command
+    definitions, so ``python cli.py generative --help`` exited successfully
+    with an empty command group instead of listing the subcommands.
+    """
+    assert cli_module.__file__ is not None
+    cli_path = Path(cli_module.__file__)
+    result = subprocess.run(
+        [sys.executable, str(cli_path), "generative", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    for command in ("compile", "materialize", "analyze", "budget"):
+        assert command in result.stdout
