@@ -37,6 +37,8 @@ It is designed for hand-curated safety evaluations in which prompts, questions, 
 - Metrics-first reports with estimates, uncertainty bounds, hierarchy drill-down, and optional predeclared decision analysis.
 - Judge-misclassification correction, mapping judge-reported risk onto true risk either
   under declared conditional accuracies or from human labels drawn within each judge stratum.
+- Declared judge panels with dependence blocks, `any`/`all`/`majority` composites usable as the
+  primary outcome, Kish effective votes, and pairwise agreement diagnostics.
 - Deterministic JSON, Markdown, CSV, plan, and checksum sidecars.
 
 Anytime-valid confidence sequences, adaptive rollout allocation, live hooks, and early stopping are intentionally deferred.

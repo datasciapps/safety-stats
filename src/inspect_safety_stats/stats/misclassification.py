@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 from dataclasses import dataclass
+from typing import Literal
 
 from inspect_safety_stats.stats.binomial import binomial_bounds
 
@@ -181,4 +182,204 @@ def estimate_judge_calibration(
         rho_0_upper=rho_0.upper,
         source="validated",
         alpha=alpha,
+    )
+
+
+@dataclass(frozen=True)
+class DeltaCorrectedRisk:
+    """Asymptotic (delta-method) interval for true risk with estimated judge accuracies."""
+
+    estimate: float
+    standard_error: float
+    lower: float
+    upper: float
+    alpha: float
+    rho_1_estimate: float
+    rho_0_estimate: float
+
+
+def delta_method_corrected_risk(
+    *,
+    observed_estimate: float,
+    observed_variance: float,
+    unsafe_stratum: JudgeStratumCounts,
+    safe_stratum: JudgeStratumCounts,
+    alpha: float,
+) -> DeltaCorrectedRisk:
+    """Wald interval for ``R* = R rho_1 + (1 - R) rho_0`` propagating estimation variance.
+
+    The stratum proportions are Agresti-Coull stabilised, ``(x + 2) / (n + 4)``, and
+    the variance is the first-order expansion
+
+        (rho_1 - rho_0)^2 Var(R) + R^2 Var(rho_1) + (1 - R)^2 Var(rho_0),
+
+    with a normal quantile at ``alpha / 2``. This is an asymptotic reference: it is
+    usually much narrower than the exact vertex box and shows what the finite-sample
+    guarantee costs, but it carries no coverage guarantee of its own and is reported
+    as a diagnostic, never as evidence.
+    """
+
+    from scipy.stats import norm
+
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0, 1)")
+    if not 0 <= observed_estimate <= 1:
+        raise ValueError("observed estimate must be in [0, 1]")
+    if not observed_variance >= 0:
+        raise ValueError("observed variance must be nonnegative")
+    if unsafe_stratum.labelled == 0 or safe_stratum.labelled == 0:
+        raise ValueError("both judge strata require at least one labelled observation")
+
+    def stabilised(stratum: JudgeStratumCounts) -> tuple[float, float]:
+        size = stratum.labelled + 4
+        proportion = (stratum.truly_unsafe + 2) / size
+        return proportion, proportion * (1 - proportion) / size
+
+    rho_1, var_1 = stabilised(unsafe_stratum)
+    rho_0, var_0 = stabilised(safe_stratum)
+    estimate = observed_estimate * rho_1 + (1 - observed_estimate) * rho_0
+    variance = (
+        (rho_1 - rho_0) ** 2 * observed_variance
+        + observed_estimate**2 * var_1
+        + (1 - observed_estimate) ** 2 * var_0
+    )
+    standard_error = variance**0.5
+    z = float(norm.ppf(1 - alpha / 2))
+    return DeltaCorrectedRisk(
+        estimate=estimate,
+        standard_error=standard_error,
+        lower=max(0.0, estimate - z * standard_error),
+        upper=min(1.0, estimate + z * standard_error),
+        alpha=alpha,
+        rho_1_estimate=rho_1,
+        rho_0_estimate=rho_0,
+    )
+
+
+@dataclass(frozen=True)
+class TruthStratumCounts:
+    """Judge verdicts among human-labelled rollouts of one true class.
+
+    Valid as a binomial sample of the judge's sensitivity (truly unsafe items) or
+    false-positive rate (truly safe items) only when the labelled rollouts are a simple
+    random sample of the design, or were sampled by true class -- not within judge
+    strata, which would over-represent the judge's own positives.
+    """
+
+    labelled: int
+    judge_positive: int
+
+    def __post_init__(self) -> None:
+        for name, value in (("labelled", self.labelled), ("judge_positive", self.judge_positive)):
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(f"{name} must be a nonnegative integer")
+        if self.judge_positive > self.labelled:
+            raise ValueError("judge_positive cannot exceed the labelled count")
+
+
+@dataclass(frozen=True)
+class NoisyValidCertification:
+    """Outcome of the finite-sample noisy-but-valid threshold test."""
+
+    decision: Literal["PASS", "FAIL", "INCONCLUSIVE"]
+    judge_reported_lower: float
+    judge_reported_upper: float
+    sensitivity_lower: float
+    sensitivity_upper: float
+    false_positive_lower: float
+    false_positive_upper: float
+    critical_threshold_pass: float
+    critical_threshold_fail: float
+    true_risk_lower: float
+    true_risk_upper: float
+    identified: bool
+    alpha_pass: float
+    alpha_fail: float
+
+
+def noisy_valid_certification(
+    *,
+    judge_reported_lower: float,
+    judge_reported_upper: float,
+    judge_reported_alpha: float,
+    truly_unsafe: TruthStratumCounts,
+    truly_safe: TruthStratumCounts,
+    calibration_alpha: float,
+    acceptable_upper: float,
+    unacceptable_lower: float,
+) -> NoisyValidCertification:
+    """Certify a true-risk threshold from judge labels plus a random human-labelled sample.
+
+    With sensitivity ``Se``, false-positive rate ``FPR`` and true risk ``pi``, the
+    judge-reported rate is ``q = pi Se + (1 - pi) FPR``, increasing in ``pi`` whenever
+    the judge is informative. Under ``H0: pi >= acceptable`` therefore
+    ``q >= acceptable * Se + (1 - acceptable) * FPR``, and with exact lower confidence
+    bounds on ``Se`` and ``FPR`` the right-hand side is at least the critical threshold
+    ``c_pass = acceptable * Se_L + (1 - acceptable) * FPR_L``. PASS rejects ``H0`` when
+    the judge-reported upper bound falls below ``c_pass``; a union bound over the three
+    exact endpoints gives Type-I error at most ``judge_reported_alpha +
+    calibration_alpha / 2``. FAIL mirrors this with the upper calibration endpoints.
+
+    The same box also yields the identified true-risk set, so the decision and the
+    interval agree by construction. When the calibration cannot establish an
+    informative judge (``Se + Sp <= 1`` admitted by the box) nothing identifies ``pi``
+    and the outcome is INCONCLUSIVE.
+    """
+
+    from inspect_safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
+
+    if not 0 <= judge_reported_lower <= judge_reported_upper <= 1:
+        raise ValueError("judge-reported bounds must satisfy 0 <= lower <= upper <= 1")
+    if not 0 < judge_reported_alpha < 1 or not 0 < calibration_alpha < 1:
+        raise ValueError("alpha levels must be in (0, 1)")
+    if not 0 <= acceptable_upper < unacceptable_lower <= 1:
+        raise ValueError("acceptable_upper must be below unacceptable_lower, both in [0, 1]")
+    if truly_unsafe.labelled == 0 or truly_safe.labelled == 0:
+        raise ValueError("both truth strata require at least one labelled observation")
+
+    endpoint = calibration_alpha / 4
+    sensitivity = binomial_bounds(
+        truly_unsafe.judge_positive,
+        truly_unsafe.labelled,
+        alpha_lower=endpoint,
+        alpha_upper=endpoint,
+    )
+    false_positive = binomial_bounds(
+        truly_safe.judge_positive,
+        truly_safe.labelled,
+        alpha_lower=endpoint,
+        alpha_upper=endpoint,
+    )
+    c_pass = acceptable_upper * sensitivity.lower + (1 - acceptable_upper) * false_positive.lower
+    c_fail = (
+        unacceptable_lower * sensitivity.upper + (1 - unacceptable_lower) * false_positive.upper
+    )
+    box = JudgeAccuracyBox(
+        sensitivity_lower=sensitivity.lower,
+        sensitivity_upper=sensitivity.upper,
+        specificity_lower=1 - false_positive.upper,
+        specificity_upper=1 - false_positive.lower,
+    )
+    identified = identified_risk_set(judge_reported_lower, judge_reported_upper, box)
+    decision: Literal["PASS", "FAIL", "INCONCLUSIVE"] = "INCONCLUSIVE"
+    if identified.identified:
+        if judge_reported_upper < c_pass:
+            decision = "PASS"
+        elif judge_reported_lower > c_fail:
+            decision = "FAIL"
+    return NoisyValidCertification(
+        decision=decision,
+        judge_reported_lower=judge_reported_lower,
+        judge_reported_upper=judge_reported_upper,
+        sensitivity_lower=sensitivity.lower,
+        sensitivity_upper=sensitivity.upper,
+        false_positive_lower=false_positive.lower,
+        false_positive_upper=false_positive.upper,
+        critical_threshold_pass=c_pass,
+        critical_threshold_fail=c_fail,
+        true_risk_lower=identified.lower,
+        true_risk_upper=identified.upper,
+        identified=identified.identified,
+        alpha_pass=judge_reported_alpha + calibration_alpha / 2,
+        alpha_fail=judge_reported_alpha + calibration_alpha / 2,
     )

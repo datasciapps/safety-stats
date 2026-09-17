@@ -1426,3 +1426,497 @@ def test_three_arm_comparison_set_uses_one_coherent_joint_region(
     html = (output / "report.html").read_text(encoding="utf-8")
     assert "Joint risk interval" in html
     assert "Simultaneous rank set" in html
+
+
+_JUDGE_PLAN_BLOCK = (
+    "  judges:\n"
+    "    - id: judge_a\n"
+    "      score: {name: harmful_a, "
+    "mapping: {failure_values: [FAIL], safe_values: [PASS]}}\n"
+    "      block: openai\n"
+    "    - id: judge_b\n"
+    "      score: {name: harmful_b, "
+    "mapping: {failure_values: [FAIL], safe_values: [PASS]}}\n"
+    "      block: openai\n"
+    "      kind: monitor\n"
+    "  composites:\n"
+    "    - {id: any_judge, rule: any, judges: [judge_a, judge_b]}\n"
+    "    - {id: majority_judge, rule: majority, judges: [judge_a, judge_b]}\n"
+)
+
+
+def _judge_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Two extra judges: a flags p1 epochs 1-10, b flags p1 epochs 1-5 and is silent once."""
+
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    sample_frame["score_harmful_a"] = "PASS"
+    sample_frame["score_harmful_b"] = "PASS"
+    p1 = sample_frame["id"] == "p1"
+    sample_frame.loc[p1 & (sample_frame["epoch"] <= 10), "score_harmful_a"] = "FAIL"
+    sample_frame.loc[p1 & (sample_frame["epoch"] <= 5), "score_harmful_b"] = "FAIL"
+    silent = (sample_frame["id"] == "p2") & (sample_frame["epoch"] == 1)
+    sample_frame.loc[silent, "score_harmful_b"] = None
+    return eval_frame, sample_frame
+
+
+def _patch_frames(
+    monkeypatch: pytest.MonkeyPatch, frames: tuple[pd.DataFrame, pd.DataFrame]
+) -> None:
+    eval_frame, sample_frame = frames
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+
+def test_multi_judge_panel_is_reported_beside_the_primary_analysis(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace("design:\n", _JUDGE_PLAN_BLOCK + "design:\n", 1)
+    plan_path.write_text(plan_text, encoding="utf-8")
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    # The primary outcome (all PASS) is untouched by the extra judges.
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    assert mean.estimate == pytest.approx(0.0)
+
+    panel = report.provenance["judge_panel"]
+    judges = {item["id"]: item for item in panel["judges"]}
+    assert judges["judge_a"]["block"] == "openai" and judges["judge_a"]["kind"] == "judge"
+    assert judges["judge_b"]["kind"] == "monitor"
+    a, b = judges["judge_a"]["cohorts"]["candidate"], judges["judge_b"]["cohorts"]["candidate"]
+    assert (a["classified"], a["failures"]) == (40, 10)
+    assert (b["classified"], b["failures"], b["unclassified"]) == (39, 5, 1)
+
+    composites = {item["id"]: item for item in panel["composites"]}
+    # Both judges share one declared block: two votes, one opinion.
+    assert composites["any_judge"]["effective_votes"] == pytest.approx(1.0)
+    any_c = composites["any_judge"]["cohorts"]["candidate"]
+    assert (any_c["classified"], any_c["failures"], any_c["unclassified"]) == (39, 10, 1)
+    majority = composites["majority_judge"]["cohorts"]["candidate"]
+    # Two judges: a tie on p1 epochs 6-10 is no verdict; the silent b leaves p2 epoch 1 open.
+    assert (majority["classified"], majority["failures"], majority["unclassified"]) == (34, 5, 6)
+
+    (pair,) = panel["agreement"]
+    assert {pair["first"], pair["second"]} == {"judge_a", "judge_b"}
+    assert pair["cohorts"]["candidate"]["compared"] == 39
+    assert pair["cohorts"]["candidate"]["disagreements"] == 5
+    assert pair["cohorts"]["candidate"]["agreement"] == pytest.approx(34 / 39)
+
+    output = report.write(tmp_path / "judge-panel-report")
+    markdown = (output / "report.md").read_text(encoding="utf-8")
+    assert "## Judge panel" in markdown
+    assert "effective votes" in markdown.lower()
+    # Per-judge verdicts live beside the observations, not inside them.
+    header = (output / "observations.csv").read_text(encoding="utf-8").splitlines()[0]
+    assert "judge" not in header
+
+
+def test_composite_judge_can_be_the_primary_outcome(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "  score:\n    name: harmful\n    mapping:\n      failure_values: [\"FAIL\"]\n"
+        "      safe_values: [\"PASS\"]\n    missing: block\n",
+        "  score:\n    name: any_judge\n    mapping:\n      failure_values: [true]\n"
+        "      safe_values: [false]\n    missing: conservative_bounds\n",
+        1,
+    )
+    plan_text = plan_text.replace("design:\n", _JUDGE_PLAN_BLOCK + "design:\n", 1)
+    plan_path.write_text(plan_text, encoding="utf-8")
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    estimates = {item.prompt_id: item for item in report.prompt_estimates}
+    assert estimates["p1"].p_hat == pytest.approx(0.5)
+    assert estimates["p1"].n_failure == 10
+    # p2 epoch 1: a said PASS and b was silent, so "any" cannot decide -> unclassified.
+    assert estimates["p2"].n_unclassified == 1
+    assert estimates["p2"].n_failure == 0
+    assert report.integrity.status == "degraded"
+
+
+def test_missing_judge_score_column_is_an_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8").replace(
+        "design:\n",
+        "  judges:\n"
+        "    - id: ghost\n"
+        "      score: {name: not_in_logs, mapping: {failure_values: [FAIL], safe_values: [PASS]}}\n"
+        "design:\n",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    _patch_frames(monkeypatch, _frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    codes = {(item.code, item.severity) for item in report.integrity.diagnostics}
+    assert ("JUDGE_SCORE_MISSING", "ERROR") in codes
+
+
+def test_plans_without_judges_are_unchanged(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_frames(monkeypatch, _frames())
+    report = analyze(plan=_write_inputs(tmp_path), logs="ignored")
+    assert "judge_panel" not in report.provenance
+    output = report.write(tmp_path / "plain")
+    header = (output / "observations.csv").read_text(encoding="utf-8").splitlines()[0]
+    assert header.split(",")[:6] == [
+        "observation_id",
+        "source_log",
+        "source_log_sha256",
+        "eval_id",
+        "run_id",
+        "sample_id",
+    ]
+    assert "judge" not in header
+
+
+_ACCURACY_PLAN_BLOCK = (
+    "  judges:\n"
+    "    - id: judge_a\n"
+    "      score: {name: harmful_a, "
+    "mapping: {failure_values: [FAIL], safe_values: [PASS]}}\n"
+    "      block: openai\n"
+    "      accuracy: {sensitivity: {lower: 0.8, upper: 0.95}, "
+    "specificity: {lower: 0.9, upper: 0.99}}\n"
+    "    - id: judge_b\n"
+    "      score: {name: harmful_b, "
+    "mapping: {failure_values: [FAIL], safe_values: [PASS]}}\n"
+    "      block: openai\n"
+    "      accuracy: {sensitivity: {lower: 0.7, upper: 0.9}, "
+    "specificity: {lower: 0.92, upper: 0.99}}\n"
+    "  composites:\n"
+    "    - {id: any_judge, rule: any, judges: [judge_a, judge_b]}\n"
+)
+
+
+def _composite_primary_plan(tmp_path: Path, block: str) -> Path:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "  score:\n    name: harmful\n    mapping:\n      failure_values: [\"FAIL\"]\n"
+        "      safe_values: [\"PASS\"]\n    missing: block\n",
+        "  score:\n    name: any_judge\n    mapping:\n      failure_values: [true]\n"
+        "      safe_values: [false]\n    missing: conservative_bounds\n",
+        1,
+    )
+    plan_text = plan_text.replace("design:\n", block + "design:\n", 1)
+    plan_path.write_text(plan_text, encoding="utf-8")
+    return plan_path
+
+
+def test_panel_derived_correction_is_reported_as_a_diagnostic(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from inspect_safety_stats.stats.judges import (
+        JudgeAccuracyBox,
+        composite_accuracy_box,
+        identified_risk_set,
+    )
+
+    plan_path = _composite_primary_plan(tmp_path, _ACCURACY_PLAN_BLOCK)
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    derived = next(
+        item for item in mean.intervals if item.interval_id == "judge_corrected_panel_derived"
+    )
+    assert derived.eligibility == "diagnostic"
+    assert derived.role == "sensitivity"
+    assert derived.method == "derived_panel_misclassification_correction"
+    assert any("block" in assumption.lower() for assumption in derived.assumptions)
+    box = composite_accuracy_box(
+        [
+            JudgeAccuracyBox(0.8, 0.95, 0.9, 0.99),
+            JudgeAccuracyBox(0.7, 0.9, 0.92, 0.99),
+        ],
+        ["openai", "openai"],
+        "any",
+    )
+    assert mean.lower is not None and mean.upper is not None
+    expected = identified_risk_set(mean.lower, mean.upper, box)
+    assert derived.lower == pytest.approx(expected.lower)
+    assert derived.upper == pytest.approx(expected.upper)
+    # A declared box never moves a claim: the only correction is diagnostic.
+    for claim in report.claims:
+        assert claim.method != "derived_panel_misclassification_correction"
+
+    markdown = (report.write(tmp_path / "panel-corrected") / "report.md").read_text(
+        encoding="utf-8"
+    )
+    assert "panel_derived" in markdown
+
+
+def test_panel_derived_correction_reports_an_unidentified_set_honestly(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # An `any` panel is at least as sensitive as its most sensitive member, so one
+    # weak judge is not enough: both boxes must admit an uninformative judge.
+    weak = _ACCURACY_PLAN_BLOCK.replace(
+        "accuracy: {sensitivity: {lower: 0.8, upper: 0.95}, "
+        "specificity: {lower: 0.9, upper: 0.99}}",
+        "accuracy: {sensitivity: {lower: 0.4, upper: 0.95}, "
+        "specificity: {lower: 0.5, upper: 0.99}}",
+    ).replace(
+        "accuracy: {sensitivity: {lower: 0.7, upper: 0.9}, "
+        "specificity: {lower: 0.92, upper: 0.99}}",
+        "accuracy: {sensitivity: {lower: 0.4, upper: 0.9}, "
+        "specificity: {lower: 0.5, upper: 0.99}}",
+    )
+    plan_path = _composite_primary_plan(tmp_path, weak)
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    derived = next(
+        item for item in mean.intervals if item.interval_id == "judge_corrected_panel_derived"
+    )
+    assert (derived.lower, derived.upper) == (0.0, 1.0)
+    assert any("unidentified" in warning.lower() for warning in derived.warnings)
+
+
+def test_composite_primary_with_validated_labels_certifies_without_dependence_assumptions(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_frames(monkeypatch, _judge_frames())
+    baseline_dir = tmp_path / "baseline"
+    baseline_dir.mkdir()
+    baseline_plan = _composite_primary_plan(baseline_dir, _JUDGE_PLAN_BLOCK)
+    baseline = analyze(plan=baseline_plan, logs="ignored")
+    rows = ["observation_id,human_label"]
+    for observation in baseline._observations:
+        if observation.failure is None:
+            continue
+        rows.append(f"{observation.observation_id},{'unsafe' if observation.failure else 'safe'}")
+    (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    plan_path = _composite_primary_plan(tmp_path, _JUDGE_PLAN_BLOCK)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "design:\n",
+        "  judge_calibration:\n    mode: validated\n    validation_manifest: labels.csv\n"
+        "    family: judge_error\n"
+        "design:\n",
+        1,
+    ).replace(
+        "    - {id: displayed,",
+        "    - {id: judge_error, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: displayed,",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    corrected = next(
+        item for item in mean.intervals if item.interval_id == "judge_corrected_validated"
+    )
+    # Stratifying labels by the composite's own verdict measures the composite's
+    # accuracy directly; no assumption about dependence among its judges is needed.
+    assert corrected.eligibility == "certifying"
+    assert corrected.method == "validated_judge_misclassification_correction"
+
+
+def test_panel_agreement_includes_an_exact_mcnemar_bias_test(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace("design:\n", _JUDGE_PLAN_BLOCK + "design:\n", 1)
+    plan_path.write_text(plan_text, encoding="utf-8")
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    (pair,) = report.provenance["judge_panel"]["agreement"]
+    stats = pair["cohorts"]["candidate"]
+    # Five discordant pairs, all in one direction: two-sided exact p = 2 * 0.5^5.
+    assert stats["discordant_first_only"] == 5
+    assert stats["discordant_second_only"] == 0
+    assert stats["mcnemar_p_value"] == pytest.approx(0.0625)
+
+
+def test_validated_correction_reports_directional_coverage_and_a_delta_reference(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "design:\n",
+        "  judge_calibration:\n    mode: validated\n    validation_manifest: labels.csv\n"
+        "    family: judge_error\n"
+        "design:\n",
+        1,
+    ).replace(
+        "    - {id: displayed,",
+        "    - {id: judge_error, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: displayed,",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+    baseline_dir = tmp_path / "baseline"
+    baseline_dir.mkdir()
+    baseline = analyze(plan=load_plan(_write_inputs(baseline_dir)), logs="ignored")
+    rows = ["observation_id,human_label"]
+    for observation in baseline._observations:
+        if observation.failure is None:
+            continue
+        rows.append(f"{observation.observation_id},{'unsafe' if observation.failure else 'safe'}")
+    (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    exact = next(
+        item for item in mean.intervals if item.interval_id == "judge_corrected_validated"
+    )
+    base = next(item for item in mean.intervals if item.role == "primary")
+    # Each endpoint of the exact correction spends the base endpoint's alpha plus two of
+    # the four calibration endpoints: half the calibration budget, not all of it.
+    assert base.directional_family_alpha is not None
+    assert exact.upper_one_sided_coverage == pytest.approx(
+        1 - (base.directional_family_alpha + 0.05 / 2)
+    )
+    assert exact.lower_one_sided_coverage == exact.upper_one_sided_coverage
+
+    delta = next(
+        item for item in mean.intervals if item.interval_id == "judge_corrected_validated_delta"
+    )
+    assert delta.eligibility == "diagnostic"
+    assert delta.role == "sensitivity"
+    assert delta.method == "delta_method_judge_misclassification_correction"
+    assert delta.lower is not None and delta.upper is not None
+    assert exact.lower is not None and exact.upper is not None
+    assert exact.lower <= delta.lower <= delta.upper <= exact.upper
+    assert any("asymptotic" in assumption.lower() for assumption in delta.assumptions)
+    # The asymptotic reference never decides a claim.
+    for claim in report.claims:
+        assert claim.method == "validated_judge_misclassification_correction"
+
+
+def _random_sample_validated_plan(tmp_path: Path, *, claim_method: str, sampling: str) -> Path:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "design:\n",
+        "  judge_calibration:\n    mode: validated\n    validation_manifest: labels.csv\n"
+        f"    family: judge_error\n    sampling: {sampling}\n"
+        "design:\n",
+        1,
+    ).replace(
+        "    - {id: displayed,",
+        "    - {id: judge_error, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: displayed,",
+        1,
+    ).replace(
+        "    mandatory: true\n",
+        f"    mandatory: true\n    method: {claim_method}\n",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    return plan_path
+
+
+def _label_everything(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Label every classified rollout: a 100% simple random sample of the design."""
+
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+    baseline_dir = tmp_path / "baseline"
+    baseline_dir.mkdir()
+    baseline = analyze(plan=load_plan(_write_inputs(baseline_dir)), logs="ignored")
+    rows = ["observation_id,human_label"]
+    for observation in baseline._observations:
+        if observation.failure is None:
+            continue
+        rows.append(f"{observation.observation_id},{'unsafe' if observation.failure else 'safe'}")
+    (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+
+def test_noisy_valid_claim_is_decided_from_truth_strata(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from inspect_safety_stats.stats.misclassification import (
+        TruthStratumCounts,
+        noisy_valid_certification,
+    )
+
+    _label_everything(tmp_path, monkeypatch)
+    plan_path = _random_sample_validated_plan(
+        tmp_path, claim_method="noisy_valid_test", sampling="simple_random"
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    strata = report.provenance["judge_calibration"]["truth_strata"]["candidate"]
+    assert strata["truly_unsafe"] == {"labelled": 10, "judge_positive": 10}
+    assert strata["truly_safe"] == {"labelled": 30, "judge_positive": 0}
+
+    (claim,) = report.claims
+    assert claim.method == "noisy_valid_certification_test"
+    assert "test:noisy_valid_certification" in claim.evidence_refs
+    assert any("critical threshold" in reason.lower() for reason in claim.reasons)
+    # Union of the claim family budget and the judge calibration budget.
+    assert claim.alpha == pytest.approx(0.05 + 0.05)
+    assert claim.estimate is None
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    base = next(item for item in mean.intervals if item.role == "primary")
+    assert mean.lower is not None and mean.upper is not None and base.alpha_upper is not None
+    expected = noisy_valid_certification(
+        judge_reported_lower=mean.lower,
+        judge_reported_upper=mean.upper,
+        judge_reported_alpha=base.alpha_upper,
+        truly_unsafe=TruthStratumCounts(10, 10),
+        truly_safe=TruthStratumCounts(30, 0),
+        calibration_alpha=0.05,
+        acceptable_upper=0.30,
+        unacceptable_lower=0.60,
+    )
+    assert claim.status == expected.decision
+    assert claim.lower == pytest.approx(expected.true_risk_lower)
+    assert claim.upper == pytest.approx(expected.true_risk_upper)
+    # Forty rollouts and forty labels cannot settle a 30% threshold either way.
+    assert claim.status == "INCONCLUSIVE"
+
+
+def test_noisy_valid_claim_requires_a_random_sample_calibration(tmp_path: Path) -> None:
+    from inspect_safety_stats.validate.plan import validate_plan_references
+
+    (tmp_path / "labels.csv").write_text("observation_id,human_label\nx,safe\n", encoding="utf-8")
+    plan_path = _random_sample_validated_plan(
+        tmp_path, claim_method="noisy_valid_test", sampling="simple_random_within_judge_stratum"
+    )
+    diagnostics = validate_plan_references(load_plan(plan_path))
+    assert ("PLAN_INVALID_CLAIM", "mean_safe") in {(d.code, d.scope) for d in diagnostics}

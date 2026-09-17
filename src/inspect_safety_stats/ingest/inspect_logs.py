@@ -5,6 +5,7 @@ import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -25,6 +26,7 @@ from inspect_safety_stats.ingest.manifest import (
 from inspect_safety_stats.ingest.outcomes import is_missing, map_outcome
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import Diagnostic
+from inspect_safety_stats.stats.judges import compose_verdicts
 
 LogInput = str | Path | EvalLog | Sequence[str | Path] | Sequence[EvalLog] | None
 
@@ -37,6 +39,7 @@ class NormalizedData:
     diagnostics: list[Diagnostic]
     cohorts: list[dict[str, Any]]
     source_hashes: dict[str, str | None]
+    judge_verdicts: dict[str, dict[str, bool | None]] = dataclass_field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -334,6 +337,56 @@ def ingest_inspect_logs(
             )
 
     selected = samples.loc[samples["eval_id"].astype(str).isin(eval_cohorts)].copy()
+    judge_series: dict[str, dict[Any, bool | None]] = {}
+    for judge in plan.inputs.judges:
+        column = f"score_{judge.score.name}"
+        if column not in selected:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_SCORE_MISSING",
+                    severity="ERROR",
+                    message=(
+                        f"judge {judge.id!r} score column {column!r} is absent from selected logs"
+                    ),
+                    scope=f"inputs.judges.{judge.id}",
+                )
+            )
+            absent: dict[Any, bool | None] = {label: None for label in selected.index}
+            judge_series[judge.id] = absent
+            continue
+        verdicts: list[bool | None] = []
+        for label, raw in selected[column].items():
+            value = _native(raw)
+            if is_missing(value):
+                verdicts.append(None)
+                continue
+            try:
+                verdicts.append(map_outcome(value, judge.score.mapping))
+            except ValueError as exc:
+                diagnostics.append(
+                    Diagnostic(
+                        code="JUDGE_SCORE_UNMAPPED",
+                        severity="ERROR",
+                        message=f"judge {judge.id!r}: {exc}",
+                        scope=f"inputs.judges.{judge.id}:{label}",
+                    )
+                )
+                verdicts.append(None)
+        judge_series[judge.id] = dict(zip(selected.index, verdicts, strict=True))
+    # Composites become ordinary score columns, so a composite may serve as the
+    # primary outcome and every downstream construction runs unchanged.
+    for composite in plan.inputs.composites:
+        selected[f"score_{composite.id}"] = pd.Series(
+            [
+                compose_verdicts(
+                    {judge_id: judge_series[judge_id][label] for judge_id in composite.judges},
+                    composite.rule,
+                )
+                for label in selected.index
+            ],
+            index=selected.index,
+            dtype=object,
+        )
     score_column = f"score_{plan.inputs.score.name}"
     if score_column not in selected:
         diagnostics.append(
@@ -361,10 +414,11 @@ def ingest_inspect_logs(
     selected = selected.sort_values(["eval_id", "id", "epoch"], kind="stable")
     rollout_keys: set[tuple[Any, ...]] = set()
     observations: list[Observation] = []
+    judge_verdicts: dict[str, dict[str, bool | None]] = {}
     source_hashes: dict[str, str | None] = {}
     provided_logs = _provided_eval_logs(logs)
     error_context_cache: dict[str, dict[str, ErrorContext]] = {}
-    for collection_order, (_, row) in enumerate(selected.iterrows(), start=1):
+    for collection_order, (label, row) in enumerate(selected.iterrows(), start=1):
         eval_id = str(row["eval_id"])
         prompt_id = str(row["_prompt_id"])
         if prompt_id not in manifest_by_prompt.index:
@@ -523,9 +577,14 @@ def ingest_inspect_logs(
             "epoch": int(row["epoch"]),
             "score": plan.inputs.score.name,
         }
+        observation_id = sha256_value(identity)
+        if judge_series:
+            judge_verdicts[observation_id] = {
+                judge_id: series[label] for judge_id, series in judge_series.items()
+            }
         observations.append(
             Observation(
-                observation_id=sha256_value(identity),
+                observation_id=observation_id,
                 source_log=log_path,
                 source_log_sha256=source_hashes[log_path],
                 eval_id=eval_id,
@@ -694,6 +753,7 @@ def ingest_inspect_logs(
                 diagnostics=diagnostics,
                 cohorts=cohort_summaries,
                 source_hashes=source_hashes,
+                judge_verdicts=judge_verdicts,
             )
         for cohort_id in plan.cohorts:
             realized = sum(
@@ -740,4 +800,5 @@ def ingest_inspect_logs(
         diagnostics=diagnostics,
         cohorts=cohort_summaries,
         source_hashes=source_hashes,
+        judge_verdicts=judge_verdicts,
     )
