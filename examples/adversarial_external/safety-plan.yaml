@@ -1,0 +1,109 @@
+schema_version: "2.0"
+
+analysis:
+  id: adversarial-external-template
+  title: Frozen adversarial prompt set over JBB-Behaviors anchors
+  description: >-
+    Fixed-design analysis of a published attack artifact. The declared set of prompts is the
+    estimand: results describe this frozen, adversarially constructed set, not the worst case
+    over prompts near each anchor, and not a random sample of any prompt population. Every
+    prompt records the model its attack was optimised against.
+  intent: exploratory
+  plan_frozen_at: 2000-01-01T00:00:00Z
+
+inputs:
+  design_manifest: design.csv
+  estimand: end_to_end_system
+  score:
+    name: jbb_harmful_compliance
+    mapping:
+      failure_values: ["FAIL"]
+      safe_values: ["PASS"]
+    missing: conservative_bounds
+    errors: end_to_end
+
+design:
+  type: fixed
+  hierarchy: [task_id, question_id, prompt_id]
+  rollout_key: [eval_id, id, epoch]
+  require_complete_manifest: true
+  require_expected_rollouts: true
+  weights:
+    strategy: nested_equal
+    hierarchy: [task_id, question_id, prompt_id]
+  independence_profiles:
+    rollout:
+      block_by: [rollout]
+      comparison_coupling: independent
+    prompt:
+      block_by: [prompt_id]
+      comparison_coupling: joint
+    anchor:
+      block_by: [question_id]
+      comparison_coupling: joint
+
+cohorts:
+  candidate:
+    match: {model: replaced-by-runner}
+    require_uniform: [task_version, model_generate_config, solver]
+
+groups:
+  - id: all
+    title: Every prompt, anchor-balanced
+    filter: {}
+  - id: unmodified
+    title: The original behaviours only
+    filter: {perturbation: none}
+  # A group filter is an equality match, so "everything except the anchors" cannot be written
+  # as one filter. Declare one group per attack method present in the manifest instead.
+  - id: pair
+    title: PAIR-attacked prompts only
+    filter: {perturbation: pair}
+
+outputs:
+  prompt_bounds:
+    enabled: true
+    simultaneous: true
+    family: displayed_prompt_bounds
+    coverage_mode: two_sided
+    alpha_allocation: equal_bonferroni
+  direct_mean_intervals:
+    enabled: true
+    method: weighted_kl_chernoff
+    reference_methods: [weighted_empirical_bernstein, weighted_hoeffding]
+    family: displayed_direct_means
+    groups: [all, unmodified]
+    simultaneous: true
+    coverage_mode: two_sided
+    independence:
+      primary: rollout
+      sensitivities: [prompt, anchor]
+    hierarchy_nodes: true
+    hierarchy_calibration: frontier_sidak
+    hierarchy_region: linear_program
+  risk_measures:
+    - {id: mean, type: weighted_mean}
+    - {id: cvar_90, type: cvar, beta: 0.90}
+    - {id: worst, type: maximum}
+
+multiplicity:
+  families:
+    - id: displayed_prompt_bounds
+      purpose: simultaneous_intervals
+      method: bonferroni
+      alpha: 0.05
+    - id: displayed_direct_means
+      purpose: simultaneous_intervals
+      method: bonferroni
+      alpha: 0.05
+
+claims: []
+
+policy:
+  zero_tolerance: {enabled: false}
+
+report:
+  include_decisions: false
+  include_prompt_text: false
+  include_observations: true
+  decimal_places: 6
