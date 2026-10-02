@@ -3453,6 +3453,67 @@ def _resolved_design(data: NormalizedData, hierarchy: list[str]) -> list[dict[st
     return rows
 
 
+_PROPAGATED_MEASURES = frozenset(
+    {"maximum", "cvar", "top_k_mean", "entropic", "threshold_exceedance", "threshold_excess"}
+)
+
+
+def _tail_measure_precision(
+    plan: AnalysisPlan,
+    estimates: list[PromptEstimate],
+    diagnostics: list[Diagnostic],
+) -> None:
+    """Warn when propagated measures cannot be informative at this rollout count.
+
+    Tail and threshold measures are built from simultaneous per-prompt bounds, so their
+    precision is set by the rollouts on each prompt, not the total. A prompt with no
+    failures and ``n`` rollouts has an upper bound of ``1 - alpha**(1/n)`` at its
+    simultaneous level; when that alone exceeds the report's precision target, the
+    measures can only be wide.
+    """
+
+    requested = sorted(
+        measure.id for measure in plan.outputs.risk_measures if measure.type in _PROPAGATED_MEASURES
+    )
+    if not requested:
+        return
+    usable = [
+        item for item in estimates if item.alpha_upper is not None and item.n_valid > 0
+    ]
+    if not usable:
+        return
+    rollouts = sorted(item.n_valid for item in usable)[len(usable) // 2]
+    alpha = min(cast(float, item.alpha_upper) for item in usable)
+    zero_failure_upper = 1.0 - alpha ** (1.0 / rollouts)
+    target = plan.report.precision_target
+    if zero_failure_upper <= target:
+        return
+    needed = 1
+    while 1.0 - alpha ** (1.0 / needed) > target:
+        needed = max(needed + 1, int(needed * 1.2))
+    while needed > 1 and 1.0 - alpha ** (1.0 / (needed - 1)) <= target:
+        needed -= 1
+    diagnostics.append(
+        Diagnostic(
+            code="TAIL_MEASURES_UNINFORMATIVE",
+            severity="WARNING",
+            message=(
+                f"{', '.join(requested)} are built from per-prompt bounds; with about "
+                f"{rollouts} rollouts per prompt a prompt with no failures is still bounded "
+                f"only at {zero_failure_upper:.3f}, above the precision target {target:g}. "
+                f"About {needed} rollouts per prompt would be needed."
+            ),
+            scope="outputs.risk_measures",
+            details={
+                "measures": requested,
+                "median_rollouts_per_prompt": rollouts,
+                "zero_failure_prompt_upper": zero_failure_upper,
+                "rollouts_per_prompt_needed": needed,
+            },
+        )
+    )
+
+
 def analyze(
     *,
     plan: AnalysisPlan | str | Path,
@@ -3465,6 +3526,7 @@ def analyze(
     validate_profile_fields(resolved.design.independence_profiles, data.manifest)
     diagnostics.extend(data.diagnostics)
     estimates = _prompt_estimates(resolved, data, diagnostics)
+    _tail_measure_precision(resolved, estimates, diagnostics)
     hierarchy_nodes = _hierarchy_nodes(resolved, data)
     direct_context = _direct_mean_context(
         resolved,

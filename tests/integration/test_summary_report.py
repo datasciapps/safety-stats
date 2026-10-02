@@ -70,3 +70,27 @@ def test_tail_measures_get_their_own_section(mock_logs: Path, tmp_path: Path) ->
     summary = _summary(plan_path, mock_logs, tmp_path / "report")
     assert "## Tail and threshold measures" in summary
     assert "per-prompt bounds that tight need about" in summary
+
+
+def test_tail_measures_warn_when_rollouts_cannot_support_them(
+    mock_logs: Path, tmp_path: Path
+) -> None:
+    plan_path = _plan(mock_logs, tmp_path / "plan")
+    plan = yaml.safe_load(plan_path.read_text(encoding="utf-8"))
+    plan["outputs"]["risk_measures"].append({"id": "cvar_90", "type": "cvar", "beta": 0.9})
+    plan_path.write_text(yaml.safe_dump(plan, sort_keys=False), encoding="utf-8")
+    report = analyze(plan=plan_path, logs=str(mock_logs))
+    warning = next(
+        item for item in report.integrity.diagnostics if item.code == "TAIL_MEASURES_UNINFORMATIVE"
+    )
+    assert warning.severity == "WARNING"
+    assert warning.details["median_rollouts_per_prompt"] == 4
+    assert warning.details["rollouts_per_prompt_needed"] > 4
+    assert report.integrity.status == "valid"
+
+
+def test_mean_only_plans_do_not_warn_about_tail_measures(
+    mock_logs: Path, tmp_path: Path
+) -> None:
+    report = analyze(plan=_plan(mock_logs, tmp_path / "plan"), logs=str(mock_logs))
+    assert all(item.code != "TAIL_MEASURES_UNINFORMATIVE" for item in report.integrity.diagnostics)
