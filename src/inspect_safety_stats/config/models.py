@@ -557,6 +557,7 @@ class ReportSpec(StrictModel):
     include_observations: bool = True
     include_decisions: bool = False
     decimal_places: int = Field(default=6, ge=0, le=15)
+    precision_target: float = Field(default=0.05, gt=0, lt=0.5)
 
 
 class AnalysisPlan(StrictModel):

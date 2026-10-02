@@ -203,7 +203,12 @@ def test_end_to_end_pass_and_report(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert (output / "report.html").exists()
     assert (output / "observations.csv").exists()
     assert (output / "comparisons.csv").exists()
-    markdown = (output / "report.md").read_text(encoding="utf-8")
+    summary = (output / "report.md").read_text(encoding="utf-8")
+    assert "## Failure risk" in summary
+    assert "report-full.md" in summary
+    assert "fixed evaluation set" in summary
+    assert "## Claims" not in summary
+    markdown = (output / "report-full.md").read_text(encoding="utf-8")
     assert "fixed evaluation set" in markdown
     assert "**Decision:**" not in markdown
     assert "## Mandatory claims" not in markdown
@@ -449,7 +454,11 @@ def test_judge_calibration_emits_assumed_correction_sensitivities(
     entropic = next(row for row in report.group_risks if row.measure_id == "entropic")
     assert not any(i.interval_id.startswith("judge_corrected_") for i in entropic.intervals)
 
-    markdown = (report.write(tmp_path / "judge-report") / "report.md").read_text(encoding="utf-8")
+    written = report.write(tmp_path / "judge-report")
+    summary = (written / "report.md").read_text(encoding="utf-8")
+    assert "True risk (judge-corrected)" in summary
+    assert "(assumed)" in summary
+    markdown = (written / "report-full.md").read_text(encoding="utf-8")
     assert "## Judge misclassification sensitivity" in markdown
     assert "assumes the judge never errs" in markdown
 
@@ -546,7 +555,11 @@ def test_validated_judge_calibration_produces_certifying_corrections(
         assert result.estimate is None
         assert any("validated judge correction" in reason for reason in result.reasons)
 
-    markdown = (report.write(tmp_path / "validated-report") / "report.md").read_text(
+    validated_output = report.write(tmp_path / "validated-report")
+    validated_summary = (validated_output / "report.md").read_text(encoding="utf-8")
+    assert "True risk (judge-corrected)" in validated_summary
+    assert "(assumed)" not in validated_summary
+    markdown = (validated_output / "report-full.md").read_text(
         encoding="utf-8"
     )
     assert "## Judge misclassification correction" in markdown
@@ -815,7 +828,9 @@ def test_decision_presentation_is_opt_in(monkeypatch: pytest.MonkeyPatch, tmp_pa
     report = analyze(plan=plan, logs="ignored")
     assert report.presentation == {"include_decisions": True}
     output = report.write(tmp_path / "report-with-decisions")
-    markdown = (output / "report.md").read_text(encoding="utf-8")
+    summary = (output / "report.md").read_text(encoding="utf-8")
+    assert "Overall decision: **PASS**" in summary
+    markdown = (output / "report-full.md").read_text(encoding="utf-8")
     assert "**Decision:** `PASS`" in markdown
     assert "## Mandatory claims" in markdown
 
@@ -1131,7 +1146,10 @@ def test_first_class_direct_comparisons_expand_hierarchy_and_write_artifacts(
     comparisons_csv = (output / "comparisons.csv").read_text(encoding="utf-8")
     assert "candidate_estimate" in comparisons_csv
     assert "candidate_vs_baseline::question_id" in comparisons_csv
-    markdown = (output / "report.md").read_text(encoding="utf-8")
+    summary = (output / "report.md").read_text(encoding="utf-8")
+    assert "## Comparisons" in summary
+    assert "candidate vs baseline" in summary
+    markdown = (output / "report-full.md").read_text(encoding="utf-8")
     assert "## Model and configuration comparisons" in markdown
     assert "### Comparison hierarchy" in markdown
     html = (output / "report.html").read_text(encoding="utf-8")

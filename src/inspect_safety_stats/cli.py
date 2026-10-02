@@ -145,8 +145,21 @@ def analyze_command(
             if claim.mandatory:
                 typer.echo(f"{claim.status}: {claim.title}")
         typer.echo(f"Decision: {report.decision}")
-    else:
-        typer.echo(f"Risk measures: {len(report.group_risks)}")
+    measures = {
+        str(item.get("id")): str(item.get("type"))
+        for item in report._resolved_plan.get("outputs", {}).get("risk_measures", []) or []
+    }
+    for risk in report.group_risks:
+        if measures.get(risk.measure_id) != "weighted_mean":
+            continue
+        interval = (
+            f"[{100 * risk.lower:.1f}%, {100 * risk.upper:.1f}%]"
+            if risk.lower is not None and risk.upper is not None
+            else "interval unavailable"
+        )
+        estimate = "—" if risk.estimate is None else f"{100 * risk.estimate:.1f}%"
+        typer.echo(f"  {risk.cohort_id} / {risk.group_id}: {estimate} {interval}")
+    typer.echo(f"Summary: {path / 'report.md'}")
     typer.echo(f"Report: {path}")
     if decision_exit_codes:
         raise typer.Exit(code={"PASS": 0, "FAIL": 1, "INCONCLUSIVE": 2}[report.decision])

@@ -9,6 +9,7 @@ from typing import Any
 import yaml
 
 from inspect_safety_stats.config.canonicalize import canonical_value
+from inspect_safety_stats.report.summary import summary_markdown
 from inspect_safety_stats.schema.reports import SafetyReport
 
 
@@ -689,7 +690,8 @@ def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = 
         + "\n",
         encoding="utf-8",
     )
-    (directory / "report.md").write_text(_markdown(report), encoding="utf-8")
+    (directory / "report.md").write_text(summary_markdown(report), encoding="utf-8")
+    (directory / "report-full.md").write_text(_markdown(report), encoding="utf-8")
     (directory / "report.html").write_text(render_visualization(report), encoding="utf-8")
     (directory / "plan.resolved.yaml").write_text(
         yaml.safe_dump(canonical_value(report._resolved_plan), sort_keys=True, allow_unicode=True),
@@ -753,6 +755,7 @@ def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = 
     generated_names = [
         "report.json",
         "report.md",
+        "report-full.md",
         "report.html",
         "plan.resolved.yaml",
         "design.resolved.csv",
