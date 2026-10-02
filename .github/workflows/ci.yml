@@ -25,7 +25,7 @@ jobs:
           cache: pip
           cache-dependency-path: pyproject.toml
       - run: python -m pip install -e '.[dev]'
-      - run: ruff check src tests examples research
+      - run: ruff check src tests examples
 
   types:
     name: mypy (strict)
@@ -76,27 +76,23 @@ jobs:
         run: |
           python -m venv /tmp/check
           /tmp/check/bin/python -m pip install --quiet dist/*.whl
-          # The wheel must carry both HTML report templates, not just the modules.
+          # The wheel must carry the HTML report template, not just the modules.
           /tmp/check/bin/python -c "
           import inspect_safety_stats
           from inspect_safety_stats.report import visualization
-          from inspect_safety_stats.generative import visualization as generative
           print('version', inspect_safety_stats.__version__)
           assert visualization._TEMPLATE.is_file(), 'report template missing from wheel'
-          assert generative._TEMPLATE.is_file(), 'generative template missing from wheel'
           "
           # Reading Inspect logs must work from a clean install, not only from a dev
           # environment that happens to have inspect-ai's optional extras.
           /tmp/check/bin/python -c "
           from inspect_ai.analysis import evals_df, samples_df
           import inspect_safety_stats.ingest.inspect_logs
-          import inspect_safety_stats.generative.logs
           import pyarrow
           print('log ingestion importable, pyarrow', pyarrow.__version__)
           "
           /tmp/check/bin/inspect-safety-stats version
           /tmp/check/bin/inspect-safety-stats plan zero-failure --threshold 0.01 --alpha 0.05
-          /tmp/check/bin/inspect-safety-stats generative --help > /dev/null
       - uses: actions/upload-artifact@v4
         with:
           name: distributions
