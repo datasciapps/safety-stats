@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -9,7 +8,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-import numpy as np
 import pandas as pd
 from inspect_ai.analysis import evals_df, samples_df
 from inspect_ai.log import EvalLog, read_eval_log
@@ -18,7 +16,6 @@ from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.manifest import (
     ResolvedGroup,
-    load_inclusion_probabilities,
     load_manifest,
     resolve_groups,
 )
@@ -556,15 +553,10 @@ def ingest_inspect_logs(
     for observation in observations:
         key = (observation.cohort_id, observation.prompt_id)
         observed_counts[key] = observed_counts.get(key, 0) + 1
-    sampled_design = plan.design.type == "sampled"
     for cohort_id in plan.cohorts:
         for _, item in manifest.iterrows():
             prompt_id = str(item["prompt_id"])
             count = observed_counts.get((cohort_id, prompt_id), 0)
-            # Under a sampled design the manifest is the frame, not the realized sample,
-            # so a frame item with no observations was simply not drawn.
-            if count == 0 and sampled_design:
-                continue
             if plan.design.require_complete_manifest and count == 0:
                 diagnostics.append(
                     Diagnostic(
@@ -611,127 +603,6 @@ def ingest_inspect_logs(
                     )
                 )
                 break
-
-    if sampled_design:
-        column = str(plan.design.inclusion_probability_column)
-        probabilities = load_inclusion_probabilities(manifest, column)
-        prompt_ids = manifest["prompt_id"].astype(str).tolist()
-        expected_size = float(np.sum(probabilities))
-        deviation = math.sqrt(float(np.sum(probabilities * (1 - probabilities))))
-        strata = (
-            manifest[str(plan.design.stratum_column)].astype(str).tolist()
-            if plan.design.stratum_column
-            else ["_all"] * len(prompt_ids)
-        )
-        if plan.design.sampling == "fixed_size":
-            # A fixed-size design must realize exactly its planned draws. Inferring the
-            # plan from pi requires pi to be constant inside a stratum and to imply an
-            # integer draw count.
-            planned: dict[str, int] = {}
-            for stratum in sorted(set(strata)):
-                members = [i for i, value in enumerate(strata) if value == stratum]
-                stratum_probabilities = probabilities[members]
-                if float(np.ptp(stratum_probabilities)) > 1e-12:
-                    diagnostics.append(
-                        Diagnostic(
-                            code="SAMPLE_STRATUM_INCONSISTENT",
-                            severity="ERROR",
-                            message=(
-                                f"stratum {stratum!r} has non-constant inclusion "
-                                "probabilities; a fixed-size design draws a fixed count "
-                                "from each stratum, so pi must equal draws/size within it"
-                            ),
-                            scope=stratum,
-                        )
-                    )
-                    continue
-                exact = float(stratum_probabilities[0]) * len(members)
-                if abs(exact - round(exact)) > 1e-6 * len(members):
-                    diagnostics.append(
-                        Diagnostic(
-                            code="SAMPLE_DRAWS_NOT_INTEGER",
-                            severity="ERROR",
-                            message=(
-                                f"stratum {stratum!r} implies {exact:.6g} draws from "
-                                f"{len(members)} frame items; a fixed-size design needs an "
-                                "integer draw count"
-                            ),
-                            scope=stratum,
-                        )
-                    )
-                    continue
-                planned[stratum] = int(round(exact))
-            for cohort_id in plan.cohorts:
-                for stratum, count in planned.items():
-                    realized_stratum = sum(
-                        1
-                        for index, prompt_id in enumerate(prompt_ids)
-                        if strata[index] == stratum
-                        and observed_counts.get((cohort_id, prompt_id), 0) > 0
-                    )
-                    if realized_stratum != count:
-                        diagnostics.append(
-                            Diagnostic(
-                                code="SAMPLE_DRAWS_MISMATCH",
-                                severity="ERROR",
-                                message=(
-                                    f"cohort {cohort_id!r} stratum {stratum!r} realized "
-                                    f"{realized_stratum} draws against a planned {count}; a "
-                                    "fixed-size design must realize its plan exactly or the "
-                                    "declared probabilities misstate the sample"
-                                ),
-                                scope=f"{cohort_id}:{stratum}",
-                                details={
-                                    "planned_draws": count,
-                                    "realized_draws": realized_stratum,
-                                },
-                            )
-                        )
-            return NormalizedData(
-                observations=observations,
-                manifest=manifest,
-                groups=groups,
-                diagnostics=diagnostics,
-                cohorts=cohort_summaries,
-                source_hashes=source_hashes,
-            )
-        for cohort_id in plan.cohorts:
-            realized = sum(
-                1
-                for prompt_id in prompt_ids
-                if observed_counts.get((cohort_id, prompt_id), 0) > 0
-            )
-            details = {
-                "frame_size": len(prompt_ids),
-                "realized_sample_size": realized,
-                "expected_sample_size": expected_size,
-                "standard_deviation": deviation,
-            }
-            if realized == 0:
-                diagnostics.append(
-                    Diagnostic(
-                        code="SAMPLE_EMPTY",
-                        severity="ERROR",
-                        message=f"cohort {cohort_id!r} has no sampled frame items",
-                        scope=cohort_id,
-                        details=details,
-                    )
-                )
-            elif deviation > 0 and abs(realized - expected_size) > 4 * deviation:
-                diagnostics.append(
-                    Diagnostic(
-                        code="SAMPLE_SIZE_IMPLAUSIBLE",
-                        severity="ERROR",
-                        message=(
-                            f"cohort {cohort_id!r} realized {realized} sampled frame items "
-                            f"against an expected {expected_size:.1f} (sd {deviation:.1f}); the "
-                            "declared inclusion probabilities do not describe this run, "
-                            "which would bias the estimate"
-                        ),
-                        scope=cohort_id,
-                        details=details,
-                    )
-                )
 
     return NormalizedData(
         observations=observations,

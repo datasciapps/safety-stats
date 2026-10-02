@@ -23,8 +23,6 @@ It is designed for hand-curated safety evaluations in which prompts, questions, 
 - Exact fixed-horizon power and detectable-failure-rate planning.
 - Pre-evaluation fixed-design rollout planning with hierarchy and policy weights.
 - Creator-declared task → question → prompt hierarchy.
-- Optional sampled-frame designs, with Horvitz–Thompson frame-mean estimation from
-  declared inclusion probabilities.
 - Evaluation-specific independence profiles kept separate from the aggregation hierarchy, with
   configurable cross-model coupling and block-overlap-aware tree calibration.
 - Equal-prompt, nested-equal, and explicit policy weights.
@@ -32,7 +30,6 @@ It is designed for hand-curated safety evaluations in which prompts, questions, 
 - First-class fixed-design model/configuration comparison sets for three or more arms, with joint
   arm-risk regions, risk differences, risk ratios, relative reductions, simultaneous rank sets,
   hierarchy-frontier calibration, and named dependence sensitivities.
-- Exact McNemar, Newcombe paired score-interval, and fixed-cluster bootstrap diagnostics.
 - Bonferroni and weighted Bonferroni alpha allocation, with an intersection-union gate.
 - Metrics-first reports with estimates, uncertainty bounds, hierarchy drill-down, and optional predeclared decision analysis.
 - Judge-misclassification correction, mapping judge-reported risk onto true risk either
@@ -194,13 +191,11 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Python and command-line API reference](docs/api-reference.md)
 - [Interpreting results](docs/interpretation.md)
 - [Judge misclassification](docs/judge-misclassification.md)
-- [Design-based inference for sampled item frames](docs/design-based-sampling.md)
 - [Version 1 engineering design](docs/archive/v1-design.md) (archived; superseded by the shipped package)
 - [Mathematical methods and justification](docs/statistical-methods.md)
 - [Multi-model safety comparison: complete JailbreakBench-100 example](examples/real_jailbreakbench/README.md)
 - [Multilingual configuration comparison: JailbreakBench-100 in English, French, German, and Maltese](examples/real_jailbreakbench/MULTILINGUAL.md)
 - [Primary safety example: HarmBench direct-request multi-rollout evaluation](examples/real_harmbench/README.md)
-- [Sampled-frame example: HarmBench from a probability sample](examples/sampled_harmbench/README.md)
 - [Secondary calibration example: XSTest over-refusal](examples/real_xstest/README.md)
 
 ## License

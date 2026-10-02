@@ -140,8 +140,7 @@ effect band. This avoids interpreting a favorable relative effect as low absolut
 vertical reference is zero for differences and relative reduction, and one for risk ratios.
 
 A jointly coupled prompt profile allows arbitrary dependence within each prompt across both
-candidate and baseline rollouts. McNemar, the Newcombe paired score interval, and
-cluster-bootstrap outputs remain diagnostics tied to the separately declared rollout-pairing key.
+candidate and baseline rollouts.
 
 ## Multiplicity
 
@@ -157,14 +156,8 @@ family was also declared.
 Diagnostic outputs help characterize sensitivity but do not have the same simultaneous coverage
 guarantee as the primary fixed-design bounds. These include:
 
-- fixed-cluster bootstrap intervals;
 - exploratory multiple-testing results;
 - plug-in estimates without complete simultaneous bounds.
-
-Cluster-bootstrap diagnostics report the number and size range of creator-declared clusters, the
-largest-to-smallest size ratio, and the largest leave-one-cluster-out estimate shift. These are
-sensitivity indicators for imbalance and influence; resampling fixed clusters does not turn them
-into a population sample.
 
 ## External validity
 

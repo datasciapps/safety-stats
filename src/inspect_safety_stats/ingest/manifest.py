@@ -20,22 +20,6 @@ class ResolvedGroup:
     weights: dict[str, float]
 
 
-def load_inclusion_probabilities(manifest: pd.DataFrame, column: str) -> np.ndarray:
-    """Read declared inclusion probabilities for a sampled design frame."""
-
-    if column not in manifest:
-        raise ValueError(f"design manifest has no inclusion probability column {column!r}")
-    values = pd.to_numeric(manifest[column], errors="raise").to_numpy(dtype=float)
-    if not np.all(np.isfinite(values)):
-        raise ValueError(f"inclusion probabilities in {column!r} must be finite")
-    if np.any(values <= 0) or np.any(values > 1):
-        raise ValueError(
-            f"every inclusion probability in {column!r} must lie in (0, 1]; an item that "
-            "can never be drawn leaves its share of the estimand unidentified"
-        )
-    return values
-
-
 def load_manifest(path: str | Path) -> pd.DataFrame:
     manifest = pd.read_csv(path)
     missing = [column for column in REQUIRED_COLUMNS if column not in manifest.columns]

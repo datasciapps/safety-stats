@@ -257,9 +257,6 @@ comparisons:
     hierarchy_nodes: true
     hierarchy_calibration: frontier_sidak
     hierarchy_region: linear_program
-    pair_key: [prompt_id, epoch]
-    diagnostic_methods: [exact_mcnemar, newcombe_paired, fixed_cluster_bootstrap]
-    cluster_key: prompt_id
 
   - id: candidate_vs_baseline_ratio
     candidate: candidate

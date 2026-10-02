@@ -47,5 +47,4 @@ inspect-safety-stats analyze \
 
 The report contains the two arm risks, direct candidate-minus-baseline interval, risk-ratio and
 relative-risk-reduction summaries, hierarchy-node contrasts under every configured independence
-profile, and optional paired diagnostics. The primary interval permits unequal rollout counts in
-the two arms; the diagnostic `pair_key` requires exact matched rollouts and is evaluated separately.
+profile. The primary interval permits unequal rollout counts in the two arms.

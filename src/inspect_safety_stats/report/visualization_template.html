@@ -1099,7 +1099,7 @@
           el("td", "num", `${row.candidate_rollout_count ?? "—"} / ${row.baseline_rollout_count ?? "—"}`), el("td", "", humanize(row.interval_method || row.method)), el("td", "", boundStatus(row.eligibility))
         ); body.append(tr);
         const alternatives = (row.intervals || []).filter(item => item.independence_profile === state.independenceProfile && item !== displayed);
-        if (alternatives.length || Object.keys(row.diagnostic_outputs || {}).length || (row.warnings || []).length) {
+        if (alternatives.length || (row.warnings || []).length) {
           const detail = document.createElement("tr"); const td = document.createElement("td"); td.colSpan = 12;
           const disclosure = document.createElement("details"); disclosure.append(el("summary", "", `${row.comparison_id} sensitivity and diagnostics`));
           const effects = row.effect_summaries || {}; disclosure.append(el("p", "section-note", `Descriptive effects: risk difference ${pct(effects.risk_difference)} · risk ratio ${fmt(effects.risk_ratio)} · relative risk reduction ${pct(effects.relative_risk_reduction)}`));
@@ -1108,7 +1108,6 @@
             alternatives.forEach(interval => { const ar = document.createElement("tr"); const coverage = interval.simultaneous_coverage === null || interval.simultaneous_coverage === undefined ? "pointwise" : `${pct(interval.simultaneous_coverage)} simultaneous`; ar.append(el("td", "", interval.role), el("td", "", humanize(interval.method)), el("td", "", humanize(interval.independence_profile)), el("td", "num", effectFmt(row, interval.lower)), el("td", "num", effectFmt(row, interval.upper)), el("td", "num", coverage)); ab.append(ar); }); at.append(ab); disclosure.append(at);
           }
           if ((row.warnings || []).length) disclosure.append(el("p", "claim-reason", row.warnings.join(" · ")));
-          if (Object.keys(row.diagnostic_outputs || {}).length) { const diagnostics = document.createElement("details"); diagnostics.append(el("summary", "", "Paired diagnostic outputs"), el("pre", "", JSON.stringify({pairs: row.pair_count, discordant_counts: row.discordant_counts, outputs: row.diagnostic_outputs}, null, 2))); disclosure.append(diagnostics); }
           td.append(disclosure); detail.append(td); body.append(detail);
         }
       }); table.append(body); root.append(table);

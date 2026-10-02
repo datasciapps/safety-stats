@@ -114,10 +114,7 @@ every hierarchy node, and to comparisons whose primary interval exposes both arm
 
 | Field | Meaning |
 |---|---|
-| `type` | `fixed` (census of the declared design) or `sampled` (items drawn from a frame) |
-| `inclusion_probability_column` | Required with `type: sampled`; names a manifest column holding each frame item's inclusion probability in (0, 1] |
-| `sampling` | `poisson` (independent inclusion, default) or `fixed_size` (exact draws per stratum, without replacement) |
-| `stratum_column` | Optional with `sampling: fixed_size`; names the manifest column defining sampling strata |
+| `type` | `fixed`, the only supported design: a census of the declared prompts |
 | `hierarchy` | Creator-declared hierarchy ending in `prompt_id` |
 | `rollout_key` | Fields uniquely identifying one terminal rollout |
 | `require_complete_manifest` | Require every fixed prompt in every cohort |
@@ -126,10 +123,6 @@ every hierarchy node, and to comparisons whose primary interval exposes both arm
 | `independence_profiles` | Named independent-block partitions; see [Configuring hierarchy and independence](independence-profiles.md) |
 
 Example:
-
-With `type: sampled` the manifest is the sampling frame rather than a census, and only
-`weighted_mean` measures are available. See
-[Design-based inference for sampled item frames](design-based-sampling.md).
 
 ```yaml
 design:
@@ -331,11 +324,6 @@ comparisons:
     hierarchy_calibration: frontier_sidak
     hierarchy_region: linear_program
     allocation_weight: 1
-    pair_key: [prompt_id, epoch]
-    diagnostic_methods: [exact_mcnemar, newcombe_paired, fixed_cluster_bootstrap]
-    cluster_key: question_id
-    bootstrap_replicates: 2000
-    bootstrap_seed: 1234
 ```
 
 `risk_difference` is candidate minus baseline, so negative values favor the candidate.
@@ -367,9 +355,6 @@ differences use a prompt-contrast vector in `[-1, 1]`; ratios use a two-arm regi
 linear-fractional projection. The displayed intervals therefore respect exact parent/child
 aggregation and cannot be wider than their raw intervals. Set it to `none` to retain raw calibrated
 intervals only. `frontier_sidak` requires `hierarchy_nodes: true`.
-
-Pair and cluster keys for McNemar, Newcombe, and bootstrap diagnostics are supplied by the creator;
-the package never infers them. These diagnostics remain separate from the primary direct interval.
 
 See [Fixed-design model and configuration comparisons](model-comparisons.md) for the complete
 mathematical construction, assumptions, output fields, and visualization guide.

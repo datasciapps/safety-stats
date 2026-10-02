@@ -293,49 +293,6 @@ function because its coverage depends on plan-wide multiplicity calibration.
 For plan configuration and report-field semantics, see
 [Fixed-design model and configuration comparisons](model-comparisons.md).
 
-Paired rollout diagnostics remain available:
-
-```python
-exact_mcnemar(candidate, baseline)
-newcombe_paired_interval(
-    candidate,
-    baseline,
-    *,
-    alpha_lower=0.05,
-    alpha_upper=0.05,
-)
-```
-
-Inputs are equal-length Boolean sequences in which `True` means failure. The orientation is
-candidate minus baseline. `exact_mcnemar` returns the full 2×2 table and three exact conditional
-p-values. `newcombe_paired_interval` implements Newcombe method 10 with separate one-sided error
-levels.
-
-`paired_cluster_bootstrap` is available from
-`inspect_safety_stats.stats.clusters`. It resamples whole creator-declared clusters while
-preserving pairs. It is a fixed-design sensitivity analysis, not a population interval.
-
-### Design-based sampling
-
-```python
-InclusionDesign(design_weights, inclusion_probabilities, sampled)
-horvitz_thompson_mean_bounds(design, completion_lower, completion_upper, *,
-                             alpha_lower, alpha_upper, method="weighted_empirical_bernstein")
-
-FixedSizeDesign(stratum_index, frame_weights, draws, sampled)
-fixed_size_mean_bounds(design, completion_lower, completion_upper, *,
-                       alpha_lower, alpha_upper, method="weighted_empirical_bernstein")
-```
-
-Bounds a frame-wide weighted mean from an item sample with known inclusion probabilities.
-The Horvitz-Thompson estimator is rescaled into an ordinary bounded weighted mean, so the
-existing concentration engines apply unchanged. `horvitz_thompson_mean_bounds` assumes
-independent inclusion; `fixed_size_mean_bounds` covers stratified sampling without
-replacement via Hoeffding's reduction. Both report
-`inflation` and `maximum_weight`, which govern the precision cost. Not yet called by the
-analysis pipeline; see
-[Design-based inference for sampled item frames](design-based-sampling.md).
-
 ### Judge misclassification
 
 ```python

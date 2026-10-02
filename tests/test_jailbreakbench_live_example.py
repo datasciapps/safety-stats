@@ -242,7 +242,6 @@ def test_complete_offline_analysis_and_visualizer(
     )
     assert difference.estimate is not None and difference.estimate < 0
     assert difference.comparison_set_id == "models_vs_reference"
-    assert difference.pair_count is None
     assert {interval.independence_profile for interval in difference.intervals} == {
         "rollout",
         "prompt",

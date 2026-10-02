@@ -1040,81 +1040,6 @@ def test_zero_tolerance_failure_overrides_statistical_result(
     assert report.policy_events[0]["type"] == "zero_tolerance_failure"
 
 
-def test_paired_and_clustered_comparison_outputs(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    plan_path = _write_inputs(tmp_path)
-    plan_text = plan_path.read_text(encoding="utf-8")
-    plan_text = plan_text.replace(
-        "groups:\n",
-        "  baseline:\n"
-        "    match:\n"
-        "      model: model/baseline\n"
-        "    require_uniform: [task_version, model_generate_config]\n"
-        "groups:\n",
-    )
-    plan_text = plan_text.replace(
-        "multiplicity:\n",
-        "comparisons:\n"
-        "  - id: candidate_vs_baseline\n"
-        "    candidate: candidate\n"
-        "    baseline: baseline\n"
-        "    group: cyber\n"
-        "    measure: mean\n"
-        "    method: weighted_empirical_bernstein\n"
-        "    family: direct_means\n"
-        "    independence:\n"
-        "      primary: rollout\n"
-        "    pair_key: [prompt_id, epoch]\n"
-        "    diagnostic_methods: [exact_mcnemar, newcombe_paired, fixed_cluster_bootstrap]\n"
-        "    cluster_key: question_id\n"
-        "    bootstrap_replicates: 100\n"
-        "    bootstrap_seed: 7\n"
-        "multiplicity:\n",
-    )
-    plan_path.write_text(plan_text, encoding="utf-8")
-
-    candidate_eval, candidate_samples = _frames()
-    baseline_eval = candidate_eval.copy()
-    baseline_eval.loc[0, "eval_id"] = "eval-2"
-    baseline_eval.loc[0, "model"] = "model/baseline"
-    baseline_samples = candidate_samples.copy()
-    baseline_samples["eval_id"] = "eval-2"
-    baseline_samples["sample_id"] = "baseline-" + baseline_samples["sample_id"]
-    candidate_samples.loc[
-        (candidate_samples["id"] == "p1") & (candidate_samples["epoch"] == 1),
-        "score_harmful",
-    ] = "FAIL"
-    baseline_samples.loc[
-        (baseline_samples["id"] == "p2") & (baseline_samples["epoch"] == 1),
-        "score_harmful",
-    ] = "FAIL"
-    eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
-    sample_frame = pd.concat([candidate_samples, baseline_samples], ignore_index=True)
-    monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
-    )
-    monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
-        lambda logs, parallel=False: sample_frame,
-    )
-
-    report = analyze(plan=plan_path, logs="ignored")
-    comparison = report.comparisons[0]
-    assert comparison.eligibility == "certifying"
-    assert comparison.pair_count == 40
-    assert comparison.cluster_count == 2
-    assert comparison.discordant_counts == {
-        "candidate_safe_baseline_failure": 1,
-        "candidate_failure_baseline_safe": 1,
-    }
-    assert set(comparison.diagnostic_outputs) == {
-        "exact_mcnemar",
-        "newcombe_paired",
-        "fixed_cluster_bootstrap",
-    }
-
-
 def test_first_class_direct_comparisons_expand_hierarchy_and_write_artifacts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1146,8 +1071,6 @@ def test_first_class_direct_comparisons_expand_hierarchy_and_write_artifacts(
         "    independence:\n"
         "      primary: rollout\n"
         "      sensitivities: [prompt]\n"
-        "    pair_key: [prompt_id, epoch]\n"
-        "    diagnostic_methods: [exact_mcnemar]\n"
         "multiplicity:\n",
     )
     plan_text = plan_text.replace(
@@ -1200,7 +1123,6 @@ def test_first_class_direct_comparisons_expand_hierarchy_and_write_artifacts(
     assert overall.prompt_count == 2
     assert overall.candidate_rollout_count == 40
     assert overall.baseline_rollout_count == 40
-    assert overall.pair_count == 40
     assert {item.level for item in report.comparisons if item.level is not None} == {
         "task_id",
         "question_id",

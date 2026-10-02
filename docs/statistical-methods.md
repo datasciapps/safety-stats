@@ -1466,79 +1466,10 @@ than (k); its worst possible rank is (K) minus the number of arms that (k) is es
 beat. Because every ordering statement comes from the same simultaneous event, all reported rank
 sets inherit its familywise coverage.
 
-### 7.1 Why model comparisons should be paired
+### 7.1 Equality is not non-inferiority
 
-Suppose a baseline model \(A\) and candidate model \(B\) are evaluated on the same cases. Let
-
-\[
-A_i,B_i\in\{0,1\}
-\]
-
-indicate safety failures. The estimand is the paired failure-rate difference
-
-\[
-\Delta
-=\Pr(B_i=1)-\Pr(A_i=1).
-\]
-
-Positive \(\Delta\) means the candidate is less safe.
-
-Using the same cases removes much of the variation caused by case difficulty. An unpaired comparison discards this information and can be substantially less precise.
-
-### 7.2 Matched-pairs table
-
-Define the counts
-
-| Baseline \(A\) | Candidate \(B\) | Count | Meaning |
-|---:|---:|---:|---|
-| 0 | 0 | \(n_{00}\) | neither fails |
-| 0 | 1 | \(n_{01}\) | candidate-only failure; regression |
-| 1 | 0 | \(n_{10}\) | baseline-only failure; improvement |
-| 1 | 1 | \(n_{11}\) | both fail |
-
-Then
-
-\[
-\widehat\Delta
-=\frac{n_{01}-n_{10}}{n}.
-\]
-
-Only discordant pairs determine the difference. This is a feature, not a loss: concordant cases contain no evidence about which model is safer.
-
-### 7.3 Exact McNemar test
-
-Under the null of equal marginal failure probabilities,
-
-\[
-H_0:\Delta=0,
-\]
-
-and conditional on the number of discordant pairs
-
-\[
-D=n_{01}+n_{10},
-\]
-
-the number of candidate-only failures satisfies
-
-\[
-n_{01}\mid D\sim\operatorname{Binomial}(D,1/2).
-\]
-
-For the one-sided alternative that the candidate is worse, the exact p-value is
-
-\[
-p_{\mathrm{McN}}
-=
-\Pr\{Z\ge n_{01}\},
-\qquad Z\sim\operatorname{Binomial}(D,1/2).
-\]
-
-McNemar introduced the correlated-proportions test in 1947 [4]. The exact conditional form is appropriate when discordant counts are small, which is common when two strong models mostly agree.
-
-### 7.4 Equality is not non-inferiority
-
-Safety decisions rarely need merely to detect any nonzero difference. They need to rule out a practically unacceptable regression \(\delta>0\):
+Safety decisions rarely need merely to detect any nonzero difference. They need to rule out a
+practically unacceptable regression \(\delta>0\):
 
 \[
 H_0:\Delta\ge\delta
@@ -1546,199 +1477,38 @@ H_0:\Delta\ge\delta
 H_1:\Delta<\delta.
 \]
 
-Passing non-inferiority requires an upper confidence bound \(U_{\Delta}\) satisfying
+Passing non-inferiority requires an upper confidence bound \(U_{\Delta}<\delta\). In a plan this
+is a comparison claim whose `acceptable_upper` is the margin; it is decided from the primary
+direct contrast above, so no separate paired test is needed.
 
-\[
-U_{\Delta}<\delta.
-\]
+### 7.2 Why rollout pairing is not used
 
-McNemar's equality test is the \(\delta=0\) special case and is not, by itself, a non-inferiority procedure.
+Textbook paired methods -- McNemar's test, Newcombe's paired score interval, Tango's
+non-inferiority interval -- treat matched cases as draws from a population and gain precision by
+cancelling case difficulty. Under the fixed design that cancellation is already exact: the
+estimand conditions on the declared prompts, so prompt difficulty is not a source of
+uncertainty at all. What remains is rollout noise, and the candidate's and baseline's rollouts
+on a prompt are independent given the prompt. Matching them by epoch number pairs observations
+that share nothing.
 
-The proposed primary method for margin-based paired comparisons is the Tango efficient-score interval [5]. Let the four cell probabilities be
-
-\[
-\boldsymbol\pi=(\pi_{00},\pi_{01},\pi_{10},\pi_{11}),
-\qquad
-\sum_{jk}\pi_{jk}=1,
-\]
-
-with
-
-\[
-\Delta=\pi_{01}-\pi_{10}.
-\]
-
-For a candidate value \(\Delta_0\), maximize the multinomial likelihood
-
-\[
-\ell(\boldsymbol\pi)
-=\sum_{j,k}n_{jk}\log\pi_{jk}
-\]
-
-subject to
-
-\[
-\pi_{01}-\pi_{10}=\Delta_0.
-\]
-
-The efficient score for \(\Delta\), with the nuisance parameters estimated under this constraint, yields a standardized statistic \(Z(\Delta_0)\). The confidence interval is obtained by test inversion:
-
-\[
-C_{1-\alpha}
-=\{\Delta_0:|Z(\Delta_0)|<z_{1-\alpha/2}\}.
-\]
-
-For a one-sided safety bound, use the corresponding one-sided critical value. Tango's method was developed specifically for equivalence/non-inferiority of paired proportions and handles sparse off-diagonal cells better than the simple Wald difference [5]. Newcombe's score-based paired intervals provide a computationally simpler cross-check [6].
-
-**Implementation note.** The package ships Newcombe method 10 as an assumption-sensitive paired
-diagnostic. A production Tango score solver remains deferred until it has independent
-numerical-reference and coverage validation. The primary comparison path is the direct
-simultaneous fixed-design contrast above, which does not treat heterogeneous prompts as IID draws.
-
-### 7.5 Pairing requirements
-
-The pairing key must represent the same underlying experimental case and comparable stochastic replicate. A suitable key might be
-
-\[
-(\text{task},\text{dataset item},\text{epoch},\text{scaffold condition}).
-\]
-
-The library must report and normally reject:
-
-- duplicate keys within an arm;
-- candidate-only or baseline-only cases;
-- different prompts or task versions under the same key;
-- mismatched generation settings that invalidate the intended comparison.
-
-### 7.6 AI-evaluation precedent
-
-Paired analysis is increasingly being productized for model evaluation. NVIDIA NeMo Evaluator uses exact McNemar comparisons on the same problems and reports human-readable `PASS`, `WARN`, `BLOCK`, and `INCONCLUSIVE` outcomes [22]. In safety-adjacent clinical LLM evaluation, exact McNemar tests with Holm correction have been used to compare harmful-content and safety outcomes across models [27]. These are useful precedents for both the mathematics and the decision interface.
+Where real cross-arm dependence exists -- a shared cache, a shared tool environment, a seeded
+sampler -- declare it with an independence profile using `comparison_coupling: joint`, which
+permits arbitrary dependence within each block across both arms. Earlier development versions
+shipped McNemar, Newcombe and cluster-bootstrap outputs as diagnostics; they are not part of
+this release because they answer a population question the fixed design does not ask.
 
 ---
 
-## 8. Cluster-aware comparisons
+## 8. Dependence within clusters
 
-### 8.1 Why clustering matters in AI evaluations
-
-AI evaluation observations are frequently nested:
-
-- epochs within benchmark items;
-- prompt variants within a base scenario;
-- turns within a conversation;
-- tasks within a task family;
-- attacks generated from one jailbreak template;
-- model attempts sharing an environment or seed.
-
-Outcomes in the same cluster tend to be correlated. If the intracluster correlation is \(\rho\) and each cluster has size \(m\), the classical design-effect approximation is
-
-\[
-\operatorname{DEFF}=1+(m-1)\rho.
-\]
-
-The effective sample size is approximately
-
-\[
-n_{\mathrm{eff}}\approx\frac{n}{\operatorname{DEFF}}.
-\]
-
-Thus 1,000 attempts grouped into 20 highly correlated scenarios may provide much closer to 20 than 1,000 independent units of evidence.
-
-For the initial fixed-design setting, declaring a hierarchy does not make tasks or questions random samples from a larger population. Cluster-aware analysis is used first to avoid pseudoreplication, preserve pairing, and prevent large groups from dominating through accidental row count. Resampling fixed task or question identifiers is not presented as evidence about unseen tasks unless the analysis declares a genuine cluster-sampling population. Where only rollout randomness is modeled, uncertainty should be propagated from rollouts within the fixed design; cluster bootstrap results should be labeled as sensitivity analyses rather than population confidence guarantees.
-
-### 8.2 Cluster-level paired estimator
-
-Let \(g=1,\ldots,G\) index independent clusters. Define the within-cluster candidate-minus-baseline difference
-
-\[
-d_g=\widehat p_{B,g}-\widehat p_{A,g}.
-\]
-
-For an equal-cluster estimand,
-
-\[
-\widehat\Delta_C=\frac{1}{G}\sum_{g=1}^G d_g.
-\]
-
-An elementary cluster-level variance estimator is
-
-\[
-\widehat{\operatorname{Var}}(\widehat\Delta_C)
-=
-\frac{1}{G(G-1)}
-\sum_{g=1}^G(d_g-\widehat\Delta_C)^2.
-\]
-
-This treats clusters—not individual attempts—as the independent units. With sufficiently many clusters, a \(t_{G-1}\) reference distribution is a basic approximation.
-
-### 8.3 Equal-cluster versus equal-observation estimands
-
-When cluster sizes differ, two legitimate estimands diverge.
-
-The equal-cluster effect is
-
-\[
-\Delta_C=\mathbb E_g[d_g],
-\]
-
-which gives every scenario family equal importance. The equal-observation effect is
-
-\[
-\Delta_O
-=
-\frac{\sum_g n_g d_g}{\sum_g n_g},
-\]
-
-which gives more weight to large clusters.
-
-Neither is universally correct. In safety research, equal-observation weighting can allow a large easy task family to dominate a small catastrophic-risk family. The estimand and weights must therefore be predeclared and shown in the report.
-
-### 8.4 Cluster bootstrap
-
-For a paired cluster bootstrap:
-
-1. Sample \(G\) cluster identifiers with replacement.
-2. Include all baseline and candidate observations from every selected cluster.
-3. Preserve pairing and within-cluster structure.
-4. Recompute \(\widehat\Delta^{*(b)}\).
-5. Repeat for \(b=1,\ldots,B\).
-
-The empirical distribution of \(\widehat\Delta^{*}\) approximates sampling variation induced by drawing clusters. Percentile intervals are simple; studentized bootstrap-\(t\) intervals generally have better higher-order behavior when the standard-error estimate is stable.
-
-Resampling individual attempts would destroy the dependence structure and produce intervals that are too narrow.
-
-### 8.5 Wild cluster bootstrap
-
-Ordinary cluster-robust asymptotics can over-reject when \(G\) is small or clusters are unbalanced. A wild cluster bootstrap works with cluster-level score or residual contributions. In simplified form:
-
-1. Fit the model under the null safety margin.
-2. Compute cluster score contributions \(U_g\).
-3. Draw independent weights \(w_g\) with mean zero and variance one, such as Rademacher \(\{-1,+1\}\) or Webb six-point weights.
-4. Form bootstrap scores \(U_g^*=w_gU_g\).
-5. Recompute a studentized test statistic.
-6. Use its bootstrap distribution for the p-value or inverted interval.
-
-Cameron, Gelbach, and Miller show why bootstrap refinements matter with few clusters [8]; Cameron and Miller review the broader cluster-robust inference problem [7]. No universal cluster count guarantees reliability. The package should report the number, balance, and influence of clusters and become conservative or inconclusive when diagnostics are poor.
-
-### 8.6 Hierarchical and model-based alternatives
-
-Generalized linear mixed models can represent item and model effects, for example
-
-\[
-\operatorname{logit}\Pr(X_{mjk}=1)
-=\beta_0+\beta_m+u_j,
-\qquad
-u_j\sim N(0,\sigma_u^2).
-\]
-
-They can improve precision, but their coverage depends on the random-effects and link-function assumptions. For the initial safety package, model-based intervals should be optional and clearly separated from design-based or resampling-based defaults.
-
-NIST AI 800-3 demonstrates this tradeoff directly: hierarchical models can narrow intervals, but misspecification can reduce coverage, while regression-free methods remain more robust [13].
-
-### 8.7 AI-safety precedent
-
-METR reports a three-level hierarchical bootstrap over task families, tasks, and attempts for autonomous-capability evaluations [14]. This is a strong direct precedent for preserving nested evaluation structure. NIST AI 800-3 formalizes item-induced clustering and warns that incorrectly resampling both item and trial levels can overestimate variation [13]. These examples justify making hierarchy an explicit part of the library's data model rather than an optional afterthought.
-
-These examples do not imply that every hierarchy should be resampled at every level. The appropriate bootstrap follows the estimand and the actual sources of sampling variation. METR's task-family design and NIST's benchmark/item/trial analysis answer different questions; mechanically applying a multilevel bootstrap can double-count uncertainty.
+Prompts sharing a source, template or author can fail together, and repeated rollouts on one
+prompt can be dependent when generation is cached or near-deterministic. The package handles
+this through named independence profiles rather than resampling: a profile partitions
+observations into blocks, allows arbitrary dependence inside each block, and the concentration
+bound treats each block as one bounded observation. A prompt-level profile is the usual
+sensitivity. Coarser profiles (by category or source) are valid but become uninformative
+quickly, because their bound rests on the number of blocks rather than the number of rollouts.
+See [Configuring hierarchy and independence](independence-profiles.md).
 
 ---
 
@@ -2091,8 +1861,8 @@ The original Inspect logs should remain immutable; statistical reports should be
 | Core | Fixed \(n\), repeated rollouts for one fixed prompt | One-sided Clopper–Pearson | Finite-sample false-pass control | IID Bernoulli rollouts | Do not pool heterogeneous prompts as IID |
 | Core | Zero observed failures | Exact zero-event bound and planner | Rule out \(p>\tau\) | Same as binomial bound | Zero failures never means zero risk |
 | Core | Fixed weighted group | Mean, maximum, CVaR/top-tail mean, entropic risk, threshold excess, and optional power/spectral measures | Fixed-design risk summary with propagated simultaneous bounds | Valid prompt bounds; predeclared hierarchy, weights, parameters, and aggregation level | A scalar aggregate cannot override mandatory hazards and does not generalize to unseen prompts |
-| Core | Two models on the same fixed cases | Exact McNemar plus paired score interval | Paired equality or margin inference | Correct pair matching; independent pairs under the stated null | Information comes from discordant pairs |
-| Core | Repeated attempts within declared groups | Design-respecting cluster summaries; bootstrap only with a justified sampling interpretation | Avoid pseudoreplication; optionally cluster-level sampling uncertainty | Declared hierarchy and source of randomness | Fixed groups are not automatically a sampled population |
+| Core | Two models on the same fixed cases | Direct two-arm fixed-design contrast (weighted KL/Chernoff rectangle) | Difference, ratio, or non-inferiority margin on the declared design | Independent rollouts given the prompt, or a declared joint-coupling profile | Says nothing about prompts outside the design |
+| Core | Repeated attempts within declared groups | Independence-profile blocks (prompt or coarser) as sensitivities | Avoid pseudoreplication | Declared block partition | Coarse blocks quickly make bounds uninformative |
 | Core | Multiple safety claims | Intersection-union logic, Holm tests, or Bonferroni simultaneous bounds as appropriate | Protect the declared global or simultaneous claim | Valid component methods and predeclared decision semantics | Correction is claim-dependent, not automatic |
 | Core | Exploratory discovery across many slices | Benjamini–Hochberg | False discovery rate | Standard BH dependence conditions | Must not drive deployment pass |
 | Core | Deployment gate | Two-threshold decision | Controlled false pass/fail | Valid bounds and predeclared thresholds | Inconclusive is a required outcome |
@@ -2165,20 +1935,16 @@ These limitations belong prominently in every report because safety evidence is 
   all-failure endpoint formulas, inversion monotonicity, and reported kernel selection.
 - Confirm that reports always carry the fixed-design external-validity disclaimer.
 
-### 16.3 Paired validation
+### 16.3 Comparison validation
 
-- Enumerate small matched tables and compare exact McNemar p-values with trusted implementations.
-- Reproduce published Tango/Newcombe examples.
-- Simulate coverage over sparse and boundary matched tables.
-- Test duplicate, missing, and mismatched pair handling.
+- Enumerate small two-arm designs to verify two-arm rectangle coverage for differences and ratios.
+- Verify that joint-coupling profiles never produce narrower intervals than the rollout profile.
+- Test unequal rollout counts and unclassified outcomes in each arm.
 
-### 16.4 Cluster validation
+### 16.4 Dependence validation
 
-- Simulate varying intracluster correlation, cluster counts, and cluster-size imbalance.
-- Measure coverage and false-positive rates for cluster bootstrap and wild cluster bootstrap.
-- Demonstrate the undercoverage of naive row-level methods.
-- Compare equal-cluster and equal-observation estimands.
-- Verify that fixed clusters are not described as a sampled population unless that sampling design is explicitly declared.
+- Simulate within-prompt and within-category dependence and confirm that block profiles keep
+  coverage where the rollout profile does not.
 
 ### 16.5 Multiplicity validation
 

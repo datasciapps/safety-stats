@@ -208,36 +208,13 @@ class IndependenceSelectionSpec(StrictModel):
 
 
 class DesignSpec(StrictModel):
-    type: Literal["fixed", "sampled"] = "fixed"
-    sampling: Literal["poisson", "fixed_size"] = "poisson"
-    inclusion_probability_column: str | None = None
-    stratum_column: str | None = None
+    type: Literal["fixed"] = "fixed"
     hierarchy: list[str] = Field(default_factory=lambda: ["task_id", "question_id", "prompt_id"])
     rollout_key: list[str] = Field(default_factory=lambda: ["eval_id", "id", "epoch"])
     require_complete_manifest: bool = True
     require_expected_rollouts: bool = True
     weights: WeightSpec = Field(default_factory=WeightSpec)
     independence_profiles: dict[str, IndependenceProfileSpec] = Field(default_factory=dict)
-
-    @model_validator(mode="after")
-    def validate_sampling(self) -> DesignSpec:
-        if self.type == "sampled":
-            if not self.inclusion_probability_column:
-                raise ValueError(
-                    "a sampled design requires design.inclusion_probability_column"
-                )
-            if self.stratum_column and self.sampling != "fixed_size":
-                raise ValueError("design.stratum_column requires sampling: fixed_size")
-            return self
-        if self.inclusion_probability_column is not None:
-            raise ValueError(
-                "inclusion_probability_column requires design.type: sampled"
-            )
-        if self.stratum_column is not None:
-            raise ValueError("stratum_column requires design.type: sampled")
-        if self.sampling != "poisson":
-            raise ValueError("design.sampling requires design.type: sampled")
-        return self
 
     @model_validator(mode="after")
     def validate_independence_profile_ids(self) -> DesignSpec:
@@ -400,13 +377,6 @@ class ComparisonSpec(StrictModel):
     hierarchy_calibration: Literal["flat_bonferroni", "frontier_sidak"] = "flat_bonferroni"
     hierarchy_region: Literal["none", "linear_program"] = "linear_program"
     allocation_weight: float = Field(default=1.0, gt=0)
-    pair_key: list[str] | None = None
-    diagnostic_methods: list[
-        Literal["exact_mcnemar", "newcombe_paired", "fixed_cluster_bootstrap"]
-    ] = Field(default_factory=list)
-    cluster_key: str | None = None
-    bootstrap_replicates: int = Field(default=2000, ge=100)
-    bootstrap_seed: int = 0
 
     _comparison_set_id: str | None = PrivateAttr(default=None)
     _joint_arm_region: bool = PrivateAttr(default=False)
@@ -425,8 +395,6 @@ class ComparisonSpec(StrictModel):
             raise ValueError("frontier_sidak comparison calibration requires hierarchy_nodes=true")
         if self.estimand == "candidate_minus_baseline":
             object.__setattr__(self, "estimand", "risk_difference")
-        if self.pair_key is not None and not self.pair_key:
-            raise ValueError("pair_key cannot be empty")
         return self
 
 

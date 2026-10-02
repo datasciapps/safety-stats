@@ -11,10 +11,7 @@ from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
 from inspect_safety_stats.config.models import AnalysisPlan, ComparisonSpec, RiskMeasureSpec
 from inspect_safety_stats.decision.engine import decide_claim, roll_up
 from inspect_safety_stats.ingest.inspect_logs import LogInput, NormalizedData, ingest_inspect_logs
-from inspect_safety_stats.ingest.manifest import (
-    load_inclusion_probabilities,
-    resolve_weights,
-)
+from inspect_safety_stats.ingest.manifest import resolve_weights
 from inspect_safety_stats.ingest.validation import (
     judge_stratum_counts,
     load_validation_manifest,
@@ -37,17 +34,9 @@ from inspect_safety_stats.stats.binomial import (
     binomial_bounds,
     missingness_robust_binomial_bounds,
 )
-from inspect_safety_stats.stats.clusters import paired_cluster_bootstrap
 from inspect_safety_stats.stats.comparisons import (
     DirectComparisonBounds,
     RatioComparisonBounds,
-)
-from inspect_safety_stats.stats.design_based import (
-    DesignBasedBounds,
-    FixedSizeDesign,
-    InclusionDesign,
-    fixed_size_mean_bounds,
-    horvitz_thompson_mean_bounds,
 )
 from inspect_safety_stats.stats.direct_mean import (
     DirectMeanBounds,
@@ -74,7 +63,6 @@ from inspect_safety_stats.stats.misclassification import (
     estimate_judge_calibration,
 )
 from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
-from inspect_safety_stats.stats.paired import exact_mcnemar, newcombe_paired_interval
 from inspect_safety_stats.stats.risk import (
     entropic_risk,
     maximum_risk,
@@ -845,145 +833,6 @@ def _direct_interval_result(
     )
 
 
-def _sampled_frame_intervals(
-    *,
-    data: NormalizedData,
-    cohort_id: str,
-    prompt_ids: tuple[str, ...] | list[str],
-    weights: np.ndarray,
-    estimates: dict[tuple[str, str], PromptEstimate],
-    plan: AnalysisPlan,
-    family_id: str | None,
-    family_alpha: float | None,
-    calibration: _EndpointCalibration,
-    one_sided_coverage: float | None,
-    interval_coverage: float | None,
-) -> list[RiskIntervalResult]:
-    """Horvitz-Thompson intervals for a frame mean estimated from an item sample.
-
-    The declared independence profiles do not apply here. Inclusion randomness lives at
-    the frame item, so the frame item is the independent block regardless of how rollouts
-    within it are grouped.
-    """
-
-    spec = plan.outputs.direct_mean_intervals
-    column = str(plan.design.inclusion_probability_column)
-    stratified = plan.design.sampling == "fixed_size"
-    manifest = data.manifest.set_index("prompt_id", drop=False)
-
-    # Poisson inclusion is item-by-item, so only the target's own items matter. A
-    # fixed-size draw happens at stratum level, so the whole frame is needed: an item
-    # outside the target still consumed one of its stratum's draws.
-    scope = list(manifest["prompt_id"].astype(str)) if stratified else list(prompt_ids)
-    frame = manifest.loc[scope]
-    probabilities = load_inclusion_probabilities(frame, column)
-    target_weight = dict(zip(prompt_ids, np.asarray(weights, dtype=float), strict=True))
-
-    sampled = np.zeros(len(scope), dtype=bool)
-    lower_rates = np.zeros(len(scope), dtype=float)
-    upper_rates = np.zeros(len(scope), dtype=float)
-    frame_weights = np.zeros(len(scope), dtype=float)
-    for index, prompt_id in enumerate(scope):
-        frame_weights[index] = target_weight.get(prompt_id, 0.0)
-        item = estimates.get((cohort_id, prompt_id))
-        if item is None or item.n_total <= 0:
-            continue
-        sampled[index] = True
-        lower_rates[index] = item.n_failure / item.n_total
-        upper_rates[index] = (item.n_failure + item.n_unclassified) / item.n_total
-
-    design: FixedSizeDesign | InclusionDesign
-    if stratified:
-        labels = (
-            frame[str(plan.design.stratum_column)].astype(str).tolist()
-            if plan.design.stratum_column
-            else ["_all"] * len(scope)
-        )
-        order = {label: position for position, label in enumerate(sorted(set(labels)))}
-        stratum_index = np.asarray([order[label] for label in labels], dtype=int)
-        draws = np.bincount(stratum_index[sampled], minlength=len(order))
-        design = FixedSizeDesign(stratum_index, frame_weights, draws, sampled)
-        estimator = "stratified_without_replacement"
-    else:
-        design = InclusionDesign(frame_weights, probabilities, sampled)
-        estimator = "horvitz_thompson"
-
-    results: list[RiskIntervalResult] = []
-    for method in [spec.method, *spec.reference_methods]:
-        bounds: DesignBasedBounds
-        if isinstance(design, FixedSizeDesign):
-            bounds = fixed_size_mean_bounds(
-                design,
-                lower_rates,
-                upper_rates,
-                alpha_lower=calibration.endpoint_alpha,
-                alpha_upper=calibration.endpoint_alpha,
-                method=method,
-            )
-        else:
-            bounds = horvitz_thompson_mean_bounds(
-                design,
-                lower_rates,
-                upper_rates,
-                alpha_lower=calibration.endpoint_alpha,
-                alpha_upper=calibration.endpoint_alpha,
-                method=method,
-            )
-        results.append(
-            RiskIntervalResult(
-                interval_id=f"{estimator}_{method}",
-                lower=bounds.lower,
-                upper=bounds.upper,
-                method=method,
-                role="primary" if method == spec.method else "reference",
-                coverage_scope=(
-                    f"{'simultaneous' if spec.simultaneous else 'pointwise'}"
-                    "_sampled_frame_mean_family"
-                ),
-                coverage_mode=spec.coverage_mode,
-                family=family_id,
-                family_alpha=family_alpha,
-                alpha_lower=calibration.endpoint_alpha,
-                alpha_upper=calibration.endpoint_alpha,
-                simultaneous_coverage=interval_coverage,
-                lower_one_sided_coverage=one_sided_coverage,
-                upper_one_sided_coverage=one_sided_coverage,
-                completion_estimate_lower=bounds.completion_estimate_lower,
-                completion_estimate_upper=bounds.completion_estimate_upper,
-                effective_sample_size=bounds.effective_sample_size,
-                maximum_increment=bounds.maximum_weight,
-                calibration_method=calibration.method,
-                calibration_frontier=calibration.frontier_id,
-                calibration_frontier_alpha=calibration.frontier_alpha,
-                calibration_frontier_size=calibration.frontier_size,
-                independence_profile="frame_item",
-                independent_block_count=bounds.sampled_count,
-                missingness_method="all_safe_all_failure_completion",
-                assumptions=[
-                    (
-                        "Each stratum drew exactly its planned number of frame items "
-                        "without replacement; the bound uses Hoeffding's reduction, under "
-                        "which a convex function of a without-replacement sum is dominated "
-                        "by the with-replacement one, so it is conservative."
-                        if stratified
-                        else "Frame items were included independently with the declared "
-                        "probabilities (Poisson sampling)."
-                    ),
-                    "Inclusion was determined before, and independently of, the outcomes.",
-                    "Design weights are declared over the whole frame and are not "
-                    "renormalized to the realized sample.",
-                    f"Inverse-probability weighting widens every endpoint by a factor of "
-                    f"{bounds.inflation:.6g}.",
-                    f"The largest single frame item carries {bounds.maximum_weight:.6g} of "
-                    "the estimator's weight.",
-                    "Every unclassified attempted outcome has a latent binary safety label.",
-                ],
-                eligibility="certifying",
-            )
-        )
-    return results
-
-
 def _direct_intervals(
     *,
     data: NormalizedData,
@@ -997,27 +846,9 @@ def _direct_intervals(
     calibrations: dict[str, _EndpointCalibration],
     one_sided_coverage: float | None,
     interval_coverage: float | None,
-    estimates: dict[tuple[str, str], PromptEstimate] | None = None,
 ) -> list[RiskIntervalResult]:
     spec = plan.outputs.direct_mean_intervals
     assert spec.independence is not None
-    if plan.design.type == "sampled":
-        assert estimates is not None
-        return _sampled_frame_intervals(
-            data=data,
-            cohort_id=cohort_id,
-            prompt_ids=prompt_ids,
-            weights=weights,
-            estimates=estimates,
-            plan=plan,
-            family_id=family_id,
-            family_alpha=family_alpha,
-            calibration=calibrations[
-                _calibration_key(cohort_id, target_id, spec.independence.primary)
-            ],
-            one_sided_coverage=one_sided_coverage,
-            interval_coverage=interval_coverage,
-        )
     methods = [spec.method, *spec.reference_methods]
     results: list[RiskIntervalResult] = []
     profile_ids = [spec.independence.primary, *spec.independence.sensitivities]
@@ -1164,7 +995,7 @@ def _group_risks(
                             "The direct-mean multiplicity family is unavailable."
                         )
                     elif any(
-                        (item.n_total <= 0 and plan.design.type != "sampled")
+                        item.n_total <= 0
                         or _prompt_blocked(diagnostics, cohort_id, item.prompt_id)
                         for item in prompt_results
                     ):
@@ -1185,7 +1016,6 @@ def _group_risks(
                                 calibrations=direct.calibrations,
                                 one_sided_coverage=direct.one_sided_coverage,
                                 interval_coverage=direct.interval_coverage,
-                                estimates=index,
                             )
                         except (TypeError, ValueError) as exc:
                             direct_warnings.append(str(exc))
@@ -1305,7 +1135,6 @@ def _hierarchy_risks(
         return []
     index = {(item.cohort_id, item.prompt_id): item for item in estimates}
     results: list[HierarchyRiskResult] = []
-    unsampled_nodes: list[str] = []
     for cohort_id in sorted(plan.cohorts):
         for node in nodes:
             prompt_results = [index[(cohort_id, prompt_id)] for prompt_id in node.prompt_ids]
@@ -1330,17 +1159,8 @@ def _hierarchy_risks(
             )
             if calibration is None:
                 warnings.append("The direct-mean multiplicity family is unavailable.")
-            elif plan.design.type == "sampled" and not any(
-                item.n_total > 0 for item in prompt_results
-            ):
-                # The node's estimand is simply not identified by this sample.
-                unsampled_nodes.append(target_id)
-                warnings.append(
-                    "No descendant frame item was drawn into the sample, so this node's "
-                    "risk is not identified."
-                )
             elif any(
-                (item.n_total <= 0 and plan.design.type != "sampled")
+                item.n_total <= 0
                 or _prompt_blocked(diagnostics, cohort_id, item.prompt_id)
                 for item in prompt_results
             ):
@@ -1359,7 +1179,6 @@ def _hierarchy_risks(
                         calibrations=direct_context.calibrations,
                         one_sided_coverage=direct_context.one_sided_coverage,
                         interval_coverage=direct_context.interval_coverage,
-                        estimates=index,
                     )
                 except (TypeError, ValueError) as exc:
                     warnings.append(str(exc))
@@ -1401,20 +1220,6 @@ def _hierarchy_risks(
                     warnings=warnings,
                 )
             )
-    if unsampled_nodes:
-        diagnostics.append(
-            Diagnostic(
-                code="HIERARCHY_NODE_UNSAMPLED",
-                severity="WARNING",
-                message=(
-                    f"{len(unsampled_nodes)} hierarchy nodes had no frame item drawn into "
-                    "the sample; their conditional risk is not identified and no interval "
-                    "is reported for them"
-                ),
-                scope="hierarchy",
-                details={"nodes": sorted(unsampled_nodes)[:20], "count": len(unsampled_nodes)},
-            )
-        )
     return results
 
 
@@ -2579,102 +2384,6 @@ def _comparison_interval(
     )
 
 
-def _paired_comparison_diagnostics(
-    spec: ComparisonSpec,
-    data: NormalizedData,
-    prompt_ids: set[str],
-) -> tuple[int | None, dict[str, int], float | None, int | None, dict[str, Any]]:
-    if not spec.pair_key or not spec.diagnostic_methods:
-        return None, {}, None, None, {}
-    arm_rows = {
-        spec.candidate: [
-            row
-            for row in data.observations
-            if row.cohort_id == spec.candidate
-            and row.prompt_id in prompt_ids
-            and row.failure is not None
-        ],
-        spec.baseline: [
-            row
-            for row in data.observations
-            if row.cohort_id == spec.baseline
-            and row.prompt_id in prompt_ids
-            and row.failure is not None
-        ],
-    }
-    maps: dict[str, dict[tuple[Any, ...], Observation]] = {}
-    for arm, rows in arm_rows.items():
-        mapped: dict[tuple[Any, ...], Observation] = {}
-        for row in rows:
-            key = tuple(_observation_attr(row, field) for field in spec.pair_key or [])
-            if key in mapped:
-                raise ValueError(f"duplicate pair key in {arm}: {key!r}")
-            mapped[key] = row
-        maps[arm] = mapped
-    candidate_keys = set(maps[spec.candidate])
-    baseline_keys = set(maps[spec.baseline])
-    if candidate_keys != baseline_keys:
-        raise ValueError(
-            f"broken pairing: {len(candidate_keys - baseline_keys)} candidate-only and "
-            f"{len(baseline_keys - candidate_keys)} baseline-only pairs"
-        )
-    keys = sorted(candidate_keys, key=repr)
-    cand = [bool(maps[spec.candidate][key].failure) for key in keys]
-    base = [bool(maps[spec.baseline][key].failure) for key in keys]
-    mcnemar = exact_mcnemar(cand, base)
-    discordant = {
-        "candidate_safe_baseline_failure": mcnemar.candidate_safe_baseline_failure,
-        "candidate_failure_baseline_safe": mcnemar.candidate_failure_baseline_safe,
-    }
-    outputs: dict[str, Any] = {}
-    p_value = None
-    if "exact_mcnemar" in spec.diagnostic_methods:
-        p_value = mcnemar.p_value_two_sided
-        outputs["exact_mcnemar"] = {
-            "estimate": mcnemar.estimate,
-            "p_value_two_sided": mcnemar.p_value_two_sided,
-            "p_value_candidate_worse": mcnemar.p_value_candidate_worse,
-            "p_value_candidate_better": mcnemar.p_value_candidate_better,
-        }
-    if "newcombe_paired" in spec.diagnostic_methods:
-        paired_interval = newcombe_paired_interval(cand, base)
-        outputs["newcombe_paired"] = {
-            "estimate": paired_interval.estimate,
-            "lower": paired_interval.lower,
-            "upper": paired_interval.upper,
-            "alpha_lower": paired_interval.alpha_lower,
-            "alpha_upper": paired_interval.alpha_upper,
-            "method": paired_interval.method,
-            "label": "diagnostic_requires_independent_pairs",
-        }
-    cluster_count = None
-    if "fixed_cluster_bootstrap" in spec.diagnostic_methods:
-        if not spec.cluster_key:
-            raise ValueError("fixed_cluster_bootstrap requires cluster_key")
-        differences = [float(c) - float(b) for c, b in zip(cand, base, strict=True)]
-        clusters = [_observation_attr(maps[spec.candidate][key], spec.cluster_key) for key in keys]
-        boot = paired_cluster_bootstrap(
-            differences,
-            clusters,
-            replicates=spec.bootstrap_replicates,
-            seed=spec.bootstrap_seed,
-        )
-        cluster_count = boot.cluster_count
-        outputs["fixed_cluster_bootstrap"] = {
-            "estimate": boot.estimate,
-            "lower": boot.lower,
-            "upper": boot.upper,
-            "minimum_cluster_size": boot.minimum_cluster_size,
-            "maximum_cluster_size": boot.maximum_cluster_size,
-            "cluster_size_ratio": boot.cluster_size_ratio,
-            "maximum_leave_one_cluster_out_shift": boot.maximum_leave_one_cluster_out_shift,
-            "replicates": boot.replicates,
-            "seed": boot.seed,
-            "label": "diagnostic_fixed_design_resampling",
-        }
-    return len(keys), discordant, p_value, cluster_count, outputs
-
-
 def _project_comparison_hierarchy_regions(
     plan: AnalysisPlan,
     target_map: dict[str, list[_ComparisonTarget]],
@@ -3396,29 +3105,6 @@ def _comparisons(
                             )
             primary = next((item for item in intervals if item.role == "primary"), None)
             estimate = summaries.get(spec.estimand)
-            pair_count = cluster_count = None
-            discordant: dict[str, int] = {}
-            p_value = None
-            diagnostic_outputs: dict[str, Any] = {}
-            if target.level is None:
-                try:
-                    (
-                        pair_count,
-                        discordant,
-                        p_value,
-                        cluster_count,
-                        diagnostic_outputs,
-                    ) = _paired_comparison_diagnostics(spec, data, set(target.prompt_ids))
-                except ValueError as exc:
-                    diagnostics.append(
-                        Diagnostic(
-                            code="PAIR_BROKEN",
-                            severity="ERROR",
-                            message=str(exc),
-                            scope=spec.id,
-                        )
-                    )
-                    warnings.append(str(exc))
             results.append(
                 ComparisonResult(
                     comparison_id=spec.id,
@@ -3454,11 +3140,6 @@ def _comparisons(
                     baseline_rollout_count=sum(item.n_total for item in baseline_items),
                     resolved_weight=target.design_weight,
                     effect_summaries=summaries,
-                    pair_count=pair_count,
-                    discordant_counts=discordant,
-                    p_value=p_value,
-                    cluster_count=cluster_count,
-                    diagnostic_outputs=diagnostic_outputs,
                     eligibility=(primary.eligibility if primary is not None else "invalid"),
                     warnings=warnings + (primary.warnings if primary is not None else []),
                 )

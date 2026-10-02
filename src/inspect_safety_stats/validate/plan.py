@@ -117,20 +117,6 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                         tuple(comparison.independence.sensitivities),
                     )
                 )
-        paired = {
-            "exact_mcnemar",
-            "newcombe_paired",
-            "fixed_cluster_bootstrap",
-        }.intersection(comparison.diagnostic_methods)
-        if paired and comparison.pair_key is None:
-            diagnostics.append(
-                Diagnostic(
-                    code="PLAN_INVALID_COMPARISON",
-                    severity="ERROR",
-                    message=f"paired diagnostics for {comparison.id!r} require pair_key",
-                    scope=comparison.id,
-                )
-            )
     for family_id, modes in comparison_family_modes.items():
         if len(modes) > 1:
             diagnostics.append(
@@ -266,61 +252,6 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     severity="WARNING",
                     message="direct mean intervals are enabled but no weighted mean is requested",
                     scope="outputs.direct_mean_intervals",
-                )
-            )
-    if plan.design.type == "sampled":
-        nonlinear = sorted(
-            measure.id
-            for measure in plan.outputs.risk_measures
-            if measure.type != "weighted_mean"
-        )
-        if nonlinear:
-            diagnostics.append(
-                Diagnostic(
-                    code="PLAN_SAMPLED_MEASURE_UNSUPPORTED",
-                    severity="ERROR",
-                    message=(
-                        "a sampled design supports only weighted_mean measures; every other "
-                        "measure is a nonlinear functional of the whole frame's risk vector "
-                        "and cannot be evaluated from a sample: " + ", ".join(nonlinear)
-                    ),
-                    scope="outputs.risk_measures",
-                )
-            )
-        if plan.expanded_comparisons():
-            diagnostics.append(
-                Diagnostic(
-                    code="PLAN_SAMPLED_COMPARISON_UNSUPPORTED",
-                    severity="ERROR",
-                    message=(
-                        "comparisons are not yet supported under a sampled design; the arm "
-                        "constructions assume every declared prompt was evaluated"
-                    ),
-                    scope="comparisons",
-                )
-            )
-        if not plan.outputs.direct_mean_intervals.enabled:
-            diagnostics.append(
-                Diagnostic(
-                    code="PLAN_SAMPLED_REQUIRES_DIRECT_MEAN",
-                    severity="ERROR",
-                    message=(
-                        "a sampled design requires outputs.direct_mean_intervals.enabled; the "
-                        "propagated prompt envelope has no bound for unsampled frame items"
-                    ),
-                    scope="outputs.direct_mean_intervals",
-                )
-            )
-        if plan.outputs.prompt_bounds.enabled and plan.outputs.prompt_bounds.simultaneous:
-            diagnostics.append(
-                Diagnostic(
-                    code="PLAN_SAMPLED_PROMPT_BOUNDS",
-                    severity="WARNING",
-                    message=(
-                        "simultaneous prompt bounds under a sampled design cover only the "
-                        "sampled frame items, not the frame"
-                    ),
-                    scope="outputs.prompt_bounds",
                 )
             )
     return diagnostics

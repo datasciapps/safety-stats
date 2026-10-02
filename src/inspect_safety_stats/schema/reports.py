@@ -190,11 +190,6 @@ class ComparisonResult(ResultModel):
     baseline_rollout_count: int = 0
     resolved_weight: float = 1.0
     effect_summaries: dict[str, float | None] = Field(default_factory=dict)
-    pair_count: int | None = None
-    discordant_counts: dict[str, int] = Field(default_factory=dict)
-    p_value: float | None = None
-    cluster_count: int | None = None
-    diagnostic_outputs: dict[str, Any] = Field(default_factory=dict)
     eligibility: Eligibility
     warnings: list[str] = Field(default_factory=list)
 
