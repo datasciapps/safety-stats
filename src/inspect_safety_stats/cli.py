@@ -5,10 +5,12 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+import yaml
 
 from inspect_safety_stats.api import analyze as run_analysis
 from inspect_safety_stats.api import validate as run_validation
-from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
+from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan, read_plan_document
+from inspect_safety_stats.config.migrate import migrate_plan
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.report.visualization import write_visualization
 from inspect_safety_stats.schema.reports import SafetyReport
@@ -223,6 +225,33 @@ def hash_plan_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
 ) -> None:
     typer.echo(canonical_plan_hash(load_plan(plan)))
+
+
+@app.command("migrate-plan")
+def migrate_plan_command(
+    plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
+    output: Annotated[Path, typer.Option("--output", dir_okay=False)],
+    overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
+) -> None:
+    """Upgrade a plan written for an earlier plan schema to the current one.
+
+    The upgraded plan is written to a new file. Review it and re-freeze it
+    (analysis.plan_frozen_at) before using it for a confirmatory analysis.
+    """
+
+    if output.exists() and not overwrite:
+        raise typer.BadParameter(f"{output} exists; pass --overwrite to replace it")
+    try:
+        upgraded, notes = migrate_plan(read_plan_document(plan))
+        AnalysisPlan.model_validate(upgraded)
+    except Exception as exc:
+        typer.echo(f"Migration failed: {exc}", err=True)
+        raise typer.Exit(code=3) from exc
+    output.write_text(yaml.safe_dump(upgraded, sort_keys=False), encoding="utf-8")
+    for note in notes:
+        typer.echo(f"- {note}")
+    typer.echo(f"Upgraded plan: {output}")
+    typer.echo("Review it and update analysis.plan_frozen_at before a confirmatory analysis.")
 
 
 if __name__ == "__main__":

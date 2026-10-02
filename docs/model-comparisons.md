@@ -8,7 +8,7 @@ population.
 
 ## Multi-arm comparison sets
 
-For three or more configurations, use `comparison_sets` rather than manually enumerating pairs:
+For two or more configurations, use `comparison_sets` rather than manually enumerating pairs:
 
 ```yaml
 comparison_sets:

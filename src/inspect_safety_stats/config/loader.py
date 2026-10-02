@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 from .canonicalize import sha256_value
+from .migrate import check_schema_version, declared_schema_version
 from .models import AnalysisPlan
 
 
-def load_plan(path: str | Path) -> AnalysisPlan:
+def read_plan_document(path: str | Path) -> dict[str, Any]:
+    """Read a plan file into a plain mapping without validating it."""
+
     source = Path(path).resolve()
     if source.suffix.lower() in {".yaml", ".yml"}:
         raw = yaml.safe_load(source.read_text(encoding="utf-8"))
@@ -19,6 +23,16 @@ def load_plan(path: str | Path) -> AnalysisPlan:
         raise ValueError("analysis plan must be YAML or JSON")
     if not isinstance(raw, dict):
         raise ValueError("analysis plan root must be an object")
+    if "schema_version" in raw:
+        # An unquoted YAML 2.0 parses as a float; the schema field is a string.
+        raw["schema_version"] = declared_schema_version(raw)
+    return raw
+
+
+def load_plan(path: str | Path) -> AnalysisPlan:
+    source = Path(path).resolve()
+    raw = read_plan_document(source)
+    check_schema_version(raw)
     plan = AnalysisPlan.model_validate(raw)
     plan._source_path = source
     manifest = plan.inputs.design_manifest

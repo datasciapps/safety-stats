@@ -272,7 +272,7 @@ one primary profile and optional prespecified sensitivity profiles. See
 
 ## `comparison_sets`
 
-Use a comparison set for three or more cohorts:
+Use a comparison set for two or more cohorts:
 
 ```yaml
 comparison_sets:
@@ -296,7 +296,7 @@ comparison_sets:
     hierarchy_region: linear_program
 ```
 
-At least three unique cohort identifiers are required. `contrasts.type` is either
+At least two unique cohort identifiers are required. `contrasts.type` is either
 `versus_reference`, which requires a reference member, or `all_pairs`. Generated comparisons are
 calibrated together and projected from common arm-risk regions. `all_pairs` plus
 `risk_difference` also produces simultaneous rank sets. The remaining interval, hierarchy, and
