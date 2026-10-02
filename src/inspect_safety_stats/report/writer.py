@@ -431,7 +431,16 @@ def _markdown(report: SafetyReport) -> str:
             "",
             "The complete normalized table is in `observations.csv`.",
             "",
-            "| Cohort | Prompt | Failures | Valid | Unclassified | Estimate | Lower | Upper |",
+            (
+                "| Cohort | Prompt | "
+                + (
+                    "Rollouts with harm"
+                    if (report._resolved_plan.get("inputs", {}).get("score", {}).get("mapping")
+                        or {}).get("scale")
+                    else "Failures"
+                )
+                + " | Valid | Unclassified | Estimate | Lower | Upper |"
+            ),
             "|---|---|---:|---:|---:|---:|---:|---:|",
         ]
     )

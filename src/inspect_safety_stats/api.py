@@ -201,12 +201,44 @@ def _prompt_blocked(diagnostics: list[Diagnostic], cohort: str, prompt: str) -> 
     return False
 
 
+@dataclass(frozen=True)
+class _GradedPromptBounds:
+    lower: float
+    upper: float
+    method: str = "bernoulli_kl_bounded_mean"
+
+
+def _graded_prompt_bounds(
+    harms: list[float], unclassified: int, alpha: float
+) -> _GradedPromptBounds:
+    """Bounds on one prompt's mean harm from equally weighted rollouts in [0, 1].
+
+    The Bernoulli-KL Chernoff inversion is valid for any independent [0, 1] outcomes,
+    because a Bernoulli variable with the same mean dominates their moment generating
+    function. Unclassified rollouts enter as 0 for the lower and 1 for the upper bound.
+    """
+
+    count = len(harms) + unclassified
+    lower_values = np.asarray([*harms, *([0.0] * unclassified)], dtype=float)
+    upper_values = np.asarray([*harms, *([1.0] * unclassified)], dtype=float)
+    bounds = weighted_bounded_kl_chernoff_mean_bounds(
+        lower_values,
+        upper_values,
+        np.full(count, 1.0 / count),
+        alpha_lower=alpha,
+        alpha_upper=alpha,
+        independence_profile="rollout",
+    )
+    return _GradedPromptBounds(lower=bounds.lower, upper=bounds.upper)
+
+
 def _prompt_estimates(
     plan: AnalysisPlan,
     data: NormalizedData,
     diagnostics: list[Diagnostic],
 ) -> list[PromptEstimate]:
     allocations = _alpha_by_prompt(plan, data, diagnostics)
+    graded = plan.inputs.score.mapping.graded
     manifest = data.manifest.set_index("prompt_id", drop=False)
     by_key: dict[tuple[str, str], list[Observation]] = {}
     for observation in data.observations:
@@ -217,6 +249,7 @@ def _prompt_estimates(
             rows = by_key.get((cohort_id, prompt_id), [])
             valid = [row for row in rows if row.failure is not None]
             failures = sum(bool(row.failure) for row in valid)
+            harm_total = sum(float(cast(float, row.harm)) for row in valid)
             bounded_unknown = [
                 row
                 for row in rows
@@ -234,8 +267,18 @@ def _prompt_estimates(
             lower = upper = None
             eligibility: Eligibility = "invalid"
             warnings: list[str] = []
-            bounds = None
-            if alpha is not None and not blocked and bounded_unknown:
+            bounds: Any = None
+            if graded and alpha is not None and not blocked and (valid or bounded_unknown):
+                bounds = _graded_prompt_bounds(
+                    [float(cast(float, row.harm)) for row in valid],
+                    len(bounded_unknown),
+                    alpha,
+                )
+                if bounded_unknown:
+                    warnings.append(
+                        f"Bounds cover all {len(bounded_unknown)} possible unclassified outcomes."
+                    )
+            elif alpha is not None and not blocked and bounded_unknown:
                 bounds = missingness_robust_binomial_bounds(
                     failures,
                     len(valid),
@@ -280,7 +323,7 @@ def _prompt_estimates(
                     n_policy_blocked_safe=sum(
                         row.outcome_status == "target_policy_blocked_safe" for row in rows
                     ),
-                    p_hat=failures / len(valid) if valid else None,
+                    p_hat=harm_total / len(valid) if valid else None,
                     lower=lower,
                     upper=upper,
                     alpha_lower=alpha,

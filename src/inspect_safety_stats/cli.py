@@ -51,6 +51,17 @@ def init_command(
         float | None,
         typer.Option("--failure-threshold", help="Numeric scores at or above this are failures."),
     ] = None,
+    harm_scale: Annotated[
+        tuple[float, float] | None,
+        typer.Option(
+            "--harm-scale",
+            help="Graded scores: MIN MAX of the scale, mapped onto harm in [0, 1].",
+        ),
+    ] = None,
+    lower_is_harmful: Annotated[
+        bool,
+        typer.Option("--lower-is-harmful", help="With --harm-scale: low scores are harmful."),
+    ] = False,
     score: Annotated[str | None, typer.Option("--score", help="Scorer name to analyze.")] = None,
     group_by: Annotated[
         str | None,
@@ -88,6 +99,8 @@ def init_command(
             failure_values=failure_values,
             safe_values=safe_values,
             failure_threshold=failure_threshold,
+            harm_scale=harm_scale,
+            lower_is_harmful=lower_is_harmful,
             group_by=group_by,
             baseline=baseline,
             alpha=alpha,
@@ -101,6 +114,12 @@ def init_command(
     if result.failure_values is not None:
         typer.echo(f"  failure values: {result.failure_values!r}")
         typer.echo(f"  safe values:    {result.safe_values!r}")
+    elif harm_scale is not None:
+        typer.echo(
+            f"  graded harm on [{harm_scale[0]:g}, {harm_scale[1]:g}], "
+            + ("low" if lower_is_harmful else "high")
+            + " scores harmful"
+        )
     else:
         typer.echo(f"  failure if score >= {failure_threshold}")
     typer.echo(

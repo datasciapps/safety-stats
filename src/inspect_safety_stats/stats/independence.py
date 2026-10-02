@@ -133,11 +133,11 @@ def direct_bounded_blocks(
         key = block_key(row, profile, manifest_by_prompt, comparison=False)
         values = accumulators.setdefault(key, [0.0, 0.0, 0.0])
         values[0] += coefficient
-        if row.failure is True:
-            values[1] += coefficient
+        if row.harm is None:
             values[2] += coefficient
-        elif row.failure is None:
-            values[2] += coefficient
+        else:
+            values[1] += coefficient * row.harm
+            values[2] += coefficient * row.harm
     ordered = sorted(accumulators.items(), key=lambda item: _serialized_key(item[0]))
     masses = np.asarray([values[0] for _, values in ordered], dtype=float)
     lower = np.asarray([values[1] / values[0] for _, values in ordered], dtype=float)
@@ -204,11 +204,11 @@ def comparison_contrast_blocks(
         values = accumulators.setdefault(key, [0.0] * 6)
         offset = 0 if row.cohort_id == candidate else 3
         values[offset] += coefficient
-        if row.failure is True:
-            values[offset + 1] += coefficient
+        if row.harm is None:
             values[offset + 2] += coefficient
-        elif row.failure is None:
-            values[offset + 2] += coefficient
+        else:
+            values[offset + 1] += coefficient * row.harm
+            values[offset + 2] += coefficient * row.harm
     ordered = sorted(accumulators.items(), key=lambda item: _serialized_key(item[0]))
     masses: list[float] = []
     lowers: list[float] = []

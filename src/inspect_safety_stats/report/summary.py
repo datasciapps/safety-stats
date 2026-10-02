@@ -164,6 +164,11 @@ class _Budget:
         return f"needs about {scale:.1f}× the current rollouts{per_prompt}"
 
 
+def _graded(report: SafetyReport) -> bool:
+    mapping = report._resolved_plan.get("inputs", {}).get("score", {}).get("mapping", {})
+    return bool(mapping.get("scale"))
+
+
 def _measure_type(report: SafetyReport, measure_id: str) -> str | None:
     for measure in report._resolved_plan.get("outputs", {}).get("risk_measures", []) or []:
         if measure.get("id") == measure_id:
@@ -188,12 +193,14 @@ def _root_section(
     with_judge = any(
         _judge_interval(risk.intervals, primary_scenario) is not None for risk in risks
     )
-    header = "| Model | Group | Failure rate | Interval | Prompt-level sensitivity |"
+    graded = _graded(report)
+    quantity = "Mean harm" if graded else "Failure rate"
+    header = f"| Model | Group | {quantity} | Interval | Prompt-level sensitivity |"
     rule = "|---|---|---:|---|---|"
     if with_judge:
         header += " True risk (judge-corrected) |"
         rule += "---|"
-    lines = ["## Failure risk", "", header, rule]
+    lines = ["## Mean harm" if graded else "## Failure risk", "", header, rule]
     for risk in risks:
         primary = _primary(risk.intervals)
         sensitivity = _sensitivity(risk.intervals, risk.interval_method)
@@ -234,7 +241,12 @@ def _root_section(
         (risk.simultaneous_coverage for risk in risks if risk.simultaneous_coverage), None
     )
     note = (
-        "Intervals bound the rollout uncertainty on these fixed prompts"
+        (
+            "Harm is the score placed on a 0–100% scale (0 = least harmful, 100% = most). "
+            if graded
+            else ""
+        )
+        + "Intervals bound the rollout uncertainty on these fixed prompts"
         + (f" with {_rate(coverage)} simultaneous coverage" if coverage else "")
         + ". The prompt-level sensitivity allows arbitrary dependence among rollouts of "
         "one prompt."
@@ -275,10 +287,12 @@ def _comparison_section(
         ratio: ComparisonResult | None = estimands.get("risk_ratio")
         reading = "—"
         if difference is not None and difference.lower is not None and difference.upper is not None:
+            worse = "is more harmful" if _graded(report) else "fails more"
+            better = "is less harmful" if _graded(report) else "fails less"
             if difference.upper < 0:
-                reading = f"{candidate} fails less"
+                reading = f"{candidate} {better}"
             elif difference.lower > 0:
-                reading = f"{candidate} fails more"
+                reading = f"{candidate} {worse}"
             else:
                 reading = "no difference resolved"
             if _imprecise(difference.estimate, difference.lower, difference.upper, target):
@@ -327,7 +341,11 @@ def _comparison_section(
         [
             "",
             "Differences are in percentage points, candidate minus baseline; a ratio above "
-            "1 means the candidate fails more often.",
+            + (
+                "1 means the candidate's mean harm is higher."
+                if _graded(report)
+                else "1 means the candidate fails more often."
+            ),
         ]
     )
     return lines

@@ -3,6 +3,10 @@
 Five prompts in two metadata categories; prompt ``p0`` fails on odd epochs and every
 other prompt is safe, so the fixed-design root risk is exactly 0.1 for any epoch count
 that is a multiple of two.
+
+The graded variant scores on a 1-5 rubric where 5 is most harmful: ``p0`` scores 4 on
+odd epochs and 2 on even ones, every other prompt 1. On the unit scale that is 0.75 and
+0.25 for ``p0`` and 0 elsewhere, so the root mean harm is again exactly 0.1.
 """
 
 from __future__ import annotations
@@ -26,7 +30,17 @@ def harmful_compliance():  # type: ignore[no-untyped-def]
     return score
 
 
-def mock_task() -> Task:
+@scorer(metrics=[accuracy()])
+def harm_rubric():  # type: ignore[no-untyped-def]
+    async def score(state: TaskState, target: Target) -> Score:
+        if not state.metadata.get("bad"):
+            return Score(value=1)
+        return Score(value=4 if state.epoch % 2 == 1 else 2)
+
+    return score
+
+
+def mock_task(*, graded: bool = False) -> Task:
     return Task(
         name="mock_safety",
         dataset=[
@@ -38,7 +52,7 @@ def mock_task() -> Task:
             for index in range(5)
         ],
         solver=generate(),
-        scorer=harmful_compliance(),
+        scorer=harm_rubric() if graded else harmful_compliance(),
     )
 
 
@@ -47,10 +61,11 @@ def write_mock_logs(
     models: Sequence[str] = ("mockllm/alpha", "mockllm/beta"),
     *,
     epochs: int = 4,
+    graded: bool = False,
 ) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     logs = inspect_eval(
-        [mock_task()],
+        [mock_task(graded=graded)],
         model=list(models),
         epochs=epochs,
         log_dir=str(directory),

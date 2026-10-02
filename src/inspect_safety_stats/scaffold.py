@@ -99,8 +99,47 @@ def _resolve_mapping(
     failure_values: Sequence[str] | None,
     safe_values: Sequence[str] | None,
     failure_threshold: float | None,
+    harm_scale: tuple[float, float] | None = None,
+    lower_is_harmful: bool = False,
 ) -> tuple[dict[str, Any], list[Any] | None, list[Any] | None, list[str]]:
     notes: list[str] = []
+    if harm_scale is not None:
+        if failure_values or safe_values or failure_threshold is not None:
+            raise ValueError(
+                "use --harm-scale on its own; it replaces --failure-values and "
+                "--failure-threshold"
+            )
+        minimum, maximum = harm_scale
+        if not maximum > minimum:
+            raise ValueError("--harm-scale needs MIN < MAX")
+        nonnumeric = [
+            value
+            for value in observed
+            if isinstance(value, bool) or not isinstance(value, (int, float))
+        ]
+        if nonnumeric:
+            raise ValueError(
+                f"score {score!r} has nonnumeric values {nonnumeric[:5]!r}; a graded scale "
+                "needs numeric scores"
+            )
+        outside = [value for value in observed if not minimum <= float(value) <= maximum]
+        if outside:
+            raise ValueError(
+                f"score {score!r} has values outside [{minimum:g}, {maximum:g}]: "
+                f"{sorted(outside)[:5]!r}"
+            )
+        scale_mapping: dict[str, Any] = {
+            "scale": {
+                "minimum": minimum,
+                "maximum": maximum,
+                "harmful": "low" if lower_is_harmful else "high",
+            }
+        }
+        notes.append(
+            f"graded harm: {score} {'minimum' if lower_is_harmful else 'maximum'} "
+            f"{minimum if lower_is_harmful else maximum:g} is the most harmful outcome"
+        )
+        return scale_mapping, None, None, notes
     if failure_threshold is not None:
         if failure_values or safe_values:
             raise ValueError("use either --failure-values or --failure-threshold, not both")
@@ -122,8 +161,9 @@ def _resolve_mapping(
         shown = ", ".join(repr(value) for value in observed[:12])
         raise ValueError(
             f"say which values of score {score!r} are safety failures, with "
-            f"--failure-values (observed values: {shown}). The package never infers "
-            "whether a value such as C, I, 1 or 0 means a failure."
+            f"--failure-values (observed values: {shown}), or describe a graded score with "
+            "--harm-scale. The package never infers whether a value such as C, I, 1 or 0 "
+            "means a failure."
         )
     failures: list[Any] = []
     for argument in failure_values:
@@ -174,6 +214,8 @@ def scaffold_plan(
     failure_values: Sequence[str] | None = None,
     safe_values: Sequence[str] | None = None,
     failure_threshold: float | None = None,
+    harm_scale: tuple[float, float] | None = None,
+    lower_is_harmful: bool = False,
     group_by: str | None = None,
     baseline: str | None = None,
     alpha: float = 0.05,
@@ -245,6 +287,8 @@ def scaffold_plan(
         failure_values=failure_values,
         safe_values=safe_values,
         failure_threshold=failure_threshold,
+        harm_scale=harm_scale,
+        lower_is_harmful=lower_is_harmful,
     )
     notes.extend(mapping_notes)
 

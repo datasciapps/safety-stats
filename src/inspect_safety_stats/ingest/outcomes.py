@@ -59,3 +59,33 @@ def map_outcome(value: Any, mapping: OutcomeMappingSpec) -> bool | None:
     if tagged in safe:
         return False
     raise ValueError(f"unmapped score value {value!r} ({tagged[0]})")
+
+
+def map_harm(value: Any, mapping: OutcomeMappingSpec) -> float | None:
+    """Map a raw score onto harm in [0, 1].
+
+    Binary mappings give 0.0 or 1.0. A ``scale`` mapping places a numeric score
+    linearly on the declared range; a value outside the range is an error rather than
+    being clipped, because it means the declared scale does not describe the scorer.
+    """
+
+    if mapping.scale is None:
+        failure = map_outcome(value, mapping)
+        return None if failure is None else float(failure)
+    if is_missing(value):
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"graded score mapping received nonnumeric value {value!r}")
+    numeric = float(value)
+    if not math.isfinite(numeric):
+        raise ValueError(f"graded score mapping received nonfinite value {value!r}")
+    scale = mapping.scale
+    tolerance = 1e-9 * (scale.maximum - scale.minimum)
+    if numeric < scale.minimum - tolerance or numeric > scale.maximum + tolerance:
+        raise ValueError(
+            f"score value {value!r} lies outside the declared scale "
+            f"[{scale.minimum:g}, {scale.maximum:g}]"
+        )
+    fraction = (numeric - scale.minimum) / (scale.maximum - scale.minimum)
+    fraction = min(1.0, max(0.0, fraction))
+    return fraction if scale.harmful == "high" else 1.0 - fraction

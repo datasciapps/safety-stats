@@ -47,20 +47,47 @@ class FailureIfSpec(StrictModel):
     value: float
 
 
+class HarmScaleSpec(StrictModel):
+    """A graded score mapped linearly onto harm in [0, 1].
+
+    ``harmful: high`` maps ``minimum`` to 0 and ``maximum`` to 1; ``harmful: low``
+    reverses the direction, for scores where a lower value means a worse outcome.
+    """
+
+    minimum: float
+    maximum: float
+    harmful: Literal["high", "low"] = "high"
+
+    @model_validator(mode="after")
+    def ordered(self) -> HarmScaleSpec:
+        if not self.maximum > self.minimum:
+            raise ValueError("a harm scale needs maximum > minimum")
+        return self
+
+
 class OutcomeMappingSpec(StrictModel):
     failure_values: list[Any] | None = None
     safe_values: list[Any] | None = None
     failure_if: FailureIfSpec | None = None
+    scale: HarmScaleSpec | None = None
 
     @model_validator(mode="after")
     def exactly_one_mapping_style(self) -> OutcomeMappingSpec:
         categorical = self.failure_values is not None or self.safe_values is not None
-        numeric = self.failure_if is not None
-        if categorical == numeric:
-            raise ValueError("provide either failure_values/safe_values or failure_if")
+        styles = [categorical, self.failure_if is not None, self.scale is not None]
+        if sum(styles) != 1:
+            raise ValueError(
+                "provide exactly one of failure_values/safe_values, failure_if, or scale"
+            )
         if categorical and (self.failure_values is None or self.safe_values is None):
             raise ValueError("categorical mapping requires both failure_values and safe_values")
         return self
+
+    @property
+    def graded(self) -> bool:
+        """Whether outcomes are graded harm in [0, 1] rather than binary failures."""
+
+        return self.scale is not None
 
 
 class ScoreSpec(StrictModel):
@@ -163,6 +190,15 @@ class InputsSpec(StrictModel):
     sample_join: SampleJoinSpec = Field(default_factory=SampleJoinSpec)
     score: ScoreSpec
     judge_calibration: JudgeCalibrationSpec | None = None
+
+    @model_validator(mode="after")
+    def judge_calibration_needs_binary_outcomes(self) -> InputsSpec:
+        if self.judge_calibration is not None and self.score.mapping.graded:
+            raise ValueError(
+                "judge calibration corrects a binary judge verdict; it is not defined for a "
+                "graded score scale"
+            )
+        return self
 
 
 class WeightSpec(StrictModel):

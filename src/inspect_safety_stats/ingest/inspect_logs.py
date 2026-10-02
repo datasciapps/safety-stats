@@ -19,7 +19,7 @@ from inspect_safety_stats.ingest.manifest import (
     load_manifest,
     resolve_groups,
 )
-from inspect_safety_stats.ingest.outcomes import is_missing, map_outcome
+from inspect_safety_stats.ingest.outcomes import is_missing, map_harm
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import Diagnostic
 
@@ -394,6 +394,7 @@ def ingest_inspect_logs(
             raw_error = None
         raw_score = _native(row.get(score_column))
         failure: bool | None = None
+        harm: float | None = None
         outcome_status: Literal[
             "classified_failure",
             "classified_safe",
@@ -497,7 +498,8 @@ def ingest_inspect_logs(
                 )
         else:
             try:
-                failure = map_outcome(raw_score, plan.inputs.score.mapping)
+                harm = map_harm(raw_score, plan.inputs.score.mapping)
+                failure = None if harm is None else harm > 0
                 outcome_status = "classified_failure" if failure else "classified_safe"
             except ValueError as exc:
                 diagnostics.append(
@@ -537,6 +539,7 @@ def ingest_inspect_logs(
                 score_name=plan.inputs.score.name,
                 score_raw=raw_score,
                 failure=failure,
+                harm=harm,
                 outcome_status=outcome_status,
                 error=raw_error,
                 error_stage=error_stage,
