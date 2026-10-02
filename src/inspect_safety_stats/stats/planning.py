@@ -372,3 +372,137 @@ def rollout_scale_for_half_width(
         if high / low < 1.001:
             break
     return high
+
+
+def _planned_upper(rate: float, labels: int, alpha: float) -> float:
+    """Clopper-Pearson upper bound at an anticipated rate, with a real-valued count."""
+
+    from scipy.stats import beta as beta_distribution
+
+    if labels <= 0:
+        return 1.0
+    failures = rate * labels
+    if failures >= labels:
+        return 1.0
+    return float(beta_distribution.ppf(1.0 - alpha, failures + 1.0, labels - failures))
+
+
+def _planned_lower(rate: float, labels: int, alpha: float) -> float:
+    from scipy.stats import beta as beta_distribution
+
+    if labels <= 0:
+        return 0.0
+    failures = rate * labels
+    if failures <= 0:
+        return 0.0
+    return float(beta_distribution.ppf(alpha, failures, labels - failures + 1.0))
+
+
+@dataclass(frozen=True)
+class JudgeLabelPlan:
+    """A labelling budget for validated judge correction, and what it buys.
+
+    ``corrected_upper`` is the true-risk upper bound that the planned labels would
+    give at the anticipated judge accuracies, ``rho_0 + U (rho_1 - rho_0)`` with
+    every parameter at its upper endpoint. ``floor`` is the same quantity with
+    unlimited labels, the best the correction can do for this judge.
+    """
+
+    judge_unsafe_labels: int
+    judge_safe_labels: int
+    rho_1_lower: float
+    rho_1_upper: float
+    rho_0_upper: float
+    corrected_upper: float
+    floor: float
+    endpoint_alpha: float
+
+
+def judge_label_plan(
+    *,
+    judge_risk_upper: float,
+    target_upper: float,
+    alpha: float,
+    cohorts: int = 1,
+    anticipated_rho_1: float = 1.0,
+    anticipated_rho_0: float = 0.0,
+    maximum_labels: int = 1_000_000,
+) -> JudgeLabelPlan | None:
+    """Cheapest labels per cohort for a judge-corrected upper bound below ``target_upper``.
+
+    ``judge_risk_upper`` is the uncorrected (judge-reported) upper bound the analysis
+    expects. The judge-family ``alpha`` is divided among ``cohorts`` and then across the
+    four Clopper-Pearson endpoints exactly as validated calibration spends it. Labels in
+    the judge-safe stratum bound ``rho_0`` (missed failures); labels in the judge-unsafe
+    stratum bound ``rho_1`` (how many reported failures are real), which is what lets a
+    correction fall below the judge-reported risk. Returns ``None`` when no budget up to
+    ``maximum_labels`` per stratum reaches the target.
+    """
+
+    for name, value in (
+        ("judge_risk_upper", judge_risk_upper),
+        ("anticipated_rho_1", anticipated_rho_1),
+        ("anticipated_rho_0", anticipated_rho_0),
+    ):
+        if not 0 <= value <= 1:
+            raise ValueError(f"{name} must lie in [0, 1]")
+    if not 0 < target_upper < 1:
+        raise ValueError("target_upper must lie in (0, 1)")
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must lie in (0, 1)")
+    if cohorts < 1:
+        raise ValueError("cohorts must be at least 1")
+    if anticipated_rho_1 <= anticipated_rho_0:
+        raise ValueError("the anticipated judge must be informative: rho_1 must exceed rho_0")
+
+    endpoint = alpha / cohorts / 4
+    floor = anticipated_rho_0 + judge_risk_upper * (anticipated_rho_1 - anticipated_rho_0)
+    if floor >= target_upper:
+        return None
+
+    def corrected(unsafe: int, safe: int) -> float:
+        rho_1 = _planned_upper(anticipated_rho_1, unsafe, endpoint)
+        rho_0 = _planned_upper(anticipated_rho_0, safe, endpoint)
+        return rho_0 + judge_risk_upper * (rho_1 - rho_0)
+
+    def informative(unsafe: int, safe: int) -> bool:
+        return _planned_lower(anticipated_rho_1, unsafe, endpoint) > _planned_upper(
+            anticipated_rho_0, safe, endpoint
+        )
+
+    def safe_labels_for(unsafe: int) -> int | None:
+        if corrected(unsafe, maximum_labels) > target_upper or not informative(
+            unsafe, maximum_labels
+        ):
+            return None
+        low, high = 1, maximum_labels
+        while low < high:
+            middle = (low + high) // 2
+            if corrected(unsafe, middle) <= target_upper and informative(unsafe, middle):
+                high = middle
+            else:
+                low = middle + 1
+        return low
+
+    candidates = sorted({1, 2, 3, 5, 8, *{int(round(10 * 1.25**k)) for k in range(70)}})
+    best: tuple[int, int, int] | None = None
+    for unsafe in (value for value in candidates if value <= maximum_labels):
+        safe = safe_labels_for(unsafe)
+        if safe is None:
+            continue
+        total = unsafe + safe
+        if best is None or total < best[0]:
+            best = (total, unsafe, safe)
+    if best is None:
+        return None
+    _, unsafe, safe = best
+    return JudgeLabelPlan(
+        judge_unsafe_labels=unsafe,
+        judge_safe_labels=safe,
+        rho_1_lower=_planned_lower(anticipated_rho_1, unsafe, endpoint),
+        rho_1_upper=_planned_upper(anticipated_rho_1, unsafe, endpoint),
+        rho_0_upper=_planned_upper(anticipated_rho_0, safe, endpoint),
+        corrected_upper=corrected(unsafe, safe),
+        floor=floor,
+        endpoint_alpha=endpoint,
+    )

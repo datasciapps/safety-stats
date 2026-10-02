@@ -56,3 +56,26 @@ def test_scale_is_anchored_on_the_observed_width() -> None:
     )
     assert narrow is not None and wide is not None
     assert wide > 3 * narrow
+
+
+def test_judge_label_plan_meets_the_target_with_minimal_judge_safe_labels() -> None:
+    from inspect_safety_stats.stats.planning import _planned_upper, judge_label_plan
+
+    plan = judge_label_plan(judge_risk_upper=0.05, target_upper=0.08, alpha=0.05, cohorts=2)
+    assert plan is not None
+    assert plan.endpoint_alpha == pytest.approx(0.05 / 2 / 4)
+    assert plan.corrected_upper <= 0.08
+    assert plan.rho_1_lower > plan.rho_0_upper
+    fewer = _planned_upper(0.0, plan.judge_safe_labels - 1, plan.endpoint_alpha)
+    assert fewer + 0.05 * (plan.rho_1_upper - fewer) > 0.08
+
+
+def test_judge_label_plan_is_none_below_the_floor() -> None:
+    from inspect_safety_stats.stats.planning import judge_label_plan
+
+    assert judge_label_plan(judge_risk_upper=0.10, target_upper=0.08, alpha=0.05) is None
+    imperfect = judge_label_plan(
+        judge_risk_upper=0.10, target_upper=0.08, alpha=0.05, anticipated_rho_1=0.5
+    )
+    assert imperfect is not None
+    assert imperfect.floor == pytest.approx(0.05)

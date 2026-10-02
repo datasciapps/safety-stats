@@ -12,12 +12,14 @@ from inspect_safety_stats.api import validate as run_validation
 from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan, read_plan_document
 from inspect_safety_stats.config.migrate import migrate_plan
 from inspect_safety_stats.config.models import AnalysisPlan
+from inspect_safety_stats.judge_labels import draw_label_sample
 from inspect_safety_stats.report.visualization import write_visualization
 from inspect_safety_stats.scaffold import scaffold_plan
 from inspect_safety_stats.schema.reports import SafetyReport
 from inspect_safety_stats.stats.planning import (
     certification_power,
     certification_sample_size,
+    judge_label_plan,
     maximum_certifiable_failure_rate,
     maximum_certifying_failures,
     minimum_detectable_failure_rate,
@@ -28,8 +30,10 @@ from inspect_safety_stats.version import __version__
 app = typer.Typer(help="Fixed-design statistical risk analysis for Inspect AI evaluations.")
 plan_app = typer.Typer(help="Prospective evaluation planning tools.")
 schema_app = typer.Typer(help="Print machine-readable schemas.")
+judge_app = typer.Typer(help="Human labelling for validated judge-misclassification correction.")
 app.add_typer(plan_app, name="plan")
 app.add_typer(schema_app, name="schema")
+app.add_typer(judge_app, name="judge")
 
 
 @app.command("init")
@@ -302,6 +306,119 @@ def detectable_rate_command(
     if minimum_detectable is not None:
         typer.echo(f"Rejection-side detectable gap: {minimum_detectable - threshold:.8g}")
     typer.echo(f"One-sided alpha: {alpha:g}")
+
+
+@plan_app.command("judge-labels")
+def judge_labels_planning_command(
+    judge_risk_upper: Annotated[
+        float,
+        typer.Option(
+            "--judge-risk-upper",
+            min=0.0,
+            max=1.0,
+            help="Uncorrected (judge-reported) upper bound you expect, e.g. from a pilot.",
+        ),
+    ],
+    target: Annotated[
+        float,
+        typer.Option("--target", min=0.0, max=1.0, help="True-risk upper bound to certify."),
+    ],
+    alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
+    cohorts: Annotated[int, typer.Option("--cohorts", min=1)] = 1,
+    rho_1: Annotated[
+        float,
+        typer.Option(
+            "--rho-1",
+            min=0.0,
+            max=1.0,
+            help="Anticipated P(truly unsafe | judge said unsafe).",
+        ),
+    ] = 1.0,
+    rho_0: Annotated[
+        float,
+        typer.Option(
+            "--rho-0",
+            min=0.0,
+            max=1.0,
+            help="Anticipated P(truly unsafe | judge said safe).",
+        ),
+    ] = 0.0,
+) -> None:
+    """Plan human labels per cohort for a validated judge-corrected bound."""
+
+    try:
+        result = judge_label_plan(
+            judge_risk_upper=judge_risk_upper,
+            target_upper=target,
+            alpha=alpha,
+            cohorts=cohorts,
+            anticipated_rho_1=rho_1,
+            anticipated_rho_0=rho_0,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    floor = rho_0 + judge_risk_upper * (rho_1 - rho_0)
+    if result is None:
+        typer.echo(
+            f"Unreachable: with unlimited labels the corrected bound only falls to {floor:.4g}; "
+            "a better judge, more rollouts, or a looser target is needed."
+        )
+        raise typer.Exit(code=1)
+    typer.echo(f"Per cohort: label {result.judge_unsafe_labels} judge-unsafe and "
+               f"{result.judge_safe_labels} judge-safe observations")
+    typer.echo(f"Planned rho_1 bounds: [{result.rho_1_lower:.4g}, {result.rho_1_upper:.4g}]")
+    typer.echo(f"Planned rho_0 upper bound: {result.rho_0_upper:.4g}")
+    typer.echo(f"Planned corrected upper bound: {result.corrected_upper:.4g} (target {target:g})")
+    typer.echo(f"Floor with unlimited labels: {result.floor:.4g}")
+    typer.echo(f"Endpoint alpha: {result.endpoint_alpha:.4g} "
+               f"(alpha {alpha:g} / {cohorts} cohorts / 4 endpoints)")
+    typer.echo("Assumes the anticipated accuracies hold; the judge-safe labels usually dominate.")
+
+
+@judge_app.command("sample")
+def judge_sample_command(
+    report: Annotated[Path, typer.Option("--report", exists=True, file_okay=False)],
+    judge_unsafe: Annotated[
+        int,
+        typer.Option("--judge-unsafe", min=1, help="Labels per cohort, judge said unsafe."),
+    ],
+    judge_safe: Annotated[
+        int,
+        typer.Option("--judge-safe", min=1, help="Labels per cohort, judge said safe."),
+    ],
+    seed: Annotated[int, typer.Option("--seed", help="Recorded in the audit file.")],
+    output: Annotated[Path, typer.Option("--output", file_okay=False)] = Path("."),
+    overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
+) -> None:
+    """Draw a blinded random labelling sample within each judge stratum of each cohort."""
+
+    try:
+        result = draw_label_sample(
+            report,
+            output,
+            judge_unsafe=judge_unsafe,
+            judge_safe=judge_safe,
+            seed=seed,
+            overwrite=overwrite,
+        )
+    except Exception as exc:
+        typer.echo(f"Sampling failed: {exc}", err=True)
+        raise typer.Exit(code=3) from exc
+    for cohort, strata in result.strata.items():
+        unsafe, safe = strata["judge_unsafe"], strata["judge_safe"]
+        typer.echo(
+            f"{cohort}: {unsafe['drawn']} of {unsafe['stratum_size']} judge-unsafe, "
+            f"{safe['drawn']} of {safe['stratum_size']} judge-safe"
+        )
+    for note in result.notes:
+        typer.echo(f"Note: {note}")
+    typer.echo(f"Labelling sheet ({result.rows} rows): {result.sheet_path}")
+    typer.echo(f"Sampling record: {result.record_path}")
+    typer.echo(
+        "Fill human_label with safe or unsafe for every row, then set "
+        "inputs.judge_calibration to mode: validated with validation_manifest pointing at "
+        "the sheet."
+    )
 
 
 @schema_app.command("plan")
