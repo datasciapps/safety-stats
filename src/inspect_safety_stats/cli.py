@@ -132,6 +132,8 @@ def analyze_command(
         bool, typer.Option("--decision-exit-codes/--no-decision-exit-codes")
     ] = False,
 ) -> None:
+    """Analyze completed Inspect logs against a plan and write the report directory."""
+
     if not logs:
         raise typer.BadParameter("at least one --logs path is required")
     log_input: str | list[str] = str(logs[0]) if len(logs) == 1 else [str(path) for path in logs]
@@ -175,6 +177,8 @@ def validate_command(
     logs: Annotated[list[Path] | None, typer.Option("--logs", exists=True)] = None,
     parallel: Annotated[int, typer.Option("--parallel", min=0)] = 0,
 ) -> None:
+    """Check logs against a plan (manifest, cohorts, rollouts, scores) without analyzing."""
+
     if not logs:
         raise typer.BadParameter("at least one --logs path is required")
     log_input: str | list[str] = str(logs[0]) if len(logs) == 1 else [str(path) for path in logs]
@@ -207,6 +211,8 @@ def zero_failure_command(
     threshold: Annotated[float, typer.Option("--threshold", min=0.0, max=1.0)],
     alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
 ) -> None:
+    """Rollouts needed for zero observed failures to bound the rate below a threshold."""
+
     count = zero_failure_sample_size(threshold=threshold, alpha=alpha)
     typer.echo(f"Required rollouts: {count}")
     typer.echo(
@@ -423,16 +429,19 @@ def judge_sample_command(
 
 @schema_app.command("plan")
 def plan_schema_command() -> None:
+    """Print the JSON schema for analysis plans."""
     typer.echo(json.dumps(AnalysisPlan.model_json_schema(), indent=2, sort_keys=True))
 
 
 @schema_app.command("report")
 def report_schema_command() -> None:
+    """Print the JSON schema for reports."""
     typer.echo(json.dumps(SafetyReport.model_json_schema(), indent=2, sort_keys=True))
 
 
 @app.command("version")
 def version_command() -> None:
+    """Print the package version."""
     typer.echo(__version__)
 
 
@@ -440,6 +449,8 @@ def version_command() -> None:
 def hash_plan_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
 ) -> None:
+    """Print a plan's canonical SHA-256, for registering a frozen plan."""
+
     typer.echo(canonical_plan_hash(load_plan(plan)))
 
 
