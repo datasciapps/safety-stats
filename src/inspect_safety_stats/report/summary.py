@@ -455,7 +455,7 @@ def _other_measures_section(
     risks = [
         risk
         for risk in report.group_risks
-        if _measure_type(report, risk.measure_id) not in {None, "weighted_mean"}
+        if _measure_type(report, risk.measure_id) not in {None, "weighted_mean", "k_attempt_risk"}
     ]
     if not risks:
         return []
@@ -512,6 +512,70 @@ def _other_measures_section(
                 else ""
             )
         )
+    return lines
+
+
+def _attempt_parameter(report: SafetyReport, measure_id: str) -> int | None:
+    for measure in report._resolved_plan.get("outputs", {}).get("risk_measures", []) or []:
+        if measure.get("id") == measure_id and measure.get("k") is not None:
+            return int(measure["k"])
+    return None
+
+
+def _attempt_section(
+    report: SafetyReport, target: float, budget: _Budget, flags: list[str]
+) -> list[str]:
+    risks = [
+        risk
+        for risk in report.group_risks
+        if _measure_type(report, risk.measure_id) == "k_attempt_risk"
+    ]
+    if not risks:
+        return []
+    graded = _graded(report)
+    lines = [
+        "## Risk over repeated attempts",
+        "",
+        "| Model | Group | Attempts | "
+        + ("Expected worst harm" if graded else "P(at least one failure)")
+        + " | Interval |",
+        "|---|---|---:|---:|---|",
+    ]
+    for risk in risks:
+        flagged = _imprecise(risk.estimate, risk.lower, risk.upper, target)
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _escape(risk.cohort_id),
+                    _escape(risk.group_id),
+                    str(_attempt_parameter(report, risk.measure_id) or "—"),
+                    _rate(risk.estimate),
+                    _interval(risk.lower, risk.upper) + (" †" if flagged else ""),
+                ]
+            )
+            + " |"
+        )
+        if flagged:
+            flags.append(
+                f"{risk.cohort_id} · {risk.group_id} · {risk.measure_id}: "
+                f"{_rate(risk.estimate)} {_interval(risk.lower, risk.upper)} — "
+                + budget.advice(
+                    risk.estimate,
+                    _half_width(risk.estimate, risk.lower, risk.upper),
+                    _primary(risk.intervals),
+                    target,
+                )
+            )
+    lines.extend(
+        [
+            "",
+            "The chance that an adversary with this many independent attempts at each prompt "
+            "succeeds at least once"
+            + (" (for graded scores, the expected worst outcome)" if graded else "")
+            + ", averaged over the prompts with the design weights.",
+        ]
+    )
     return lines
 
 
@@ -586,6 +650,7 @@ def summary_markdown(report: SafetyReport) -> str:
         _claims_section(report),
         _root_section(report, target, budget, primary_scenario, flags),
         _comparison_section(report, target, budget, flags),
+        _attempt_section(report, target, budget, flags),
         _breakdown_section(report, target, budget, flags),
         _other_measures_section(report, target, budget, flags),
     ):

@@ -1,3 +1,4 @@
+from .attempts import attempt_risk_estimate, attempt_risk_from_rate
 from .binomial import (
     binomial_bounds,
     binomial_lower_bound,
@@ -53,6 +54,8 @@ from .tree_calibration import (
 )
 
 __all__ = [
+    "attempt_risk_estimate",
+    "attempt_risk_from_rate",
     "binomial_bounds",
     "binomial_lower_bound",
     "binomial_upper_bound",

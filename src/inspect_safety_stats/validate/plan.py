@@ -212,6 +212,50 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope="outputs.prompt_bounds",
                 )
             )
+    attempt_families = {
+        measure.family
+        for measure in plan.outputs.risk_measures
+        if measure.type == "k_attempt_risk" and measure.family
+    }
+    other_families = {
+        plan.outputs.prompt_bounds.family,
+        plan.outputs.direct_mean_intervals.family,
+        *(comparison.family for comparison in expanded_comparisons),
+        *(claim.family for claim in plan.claims),
+        plan.inputs.judge_calibration.family if plan.inputs.judge_calibration else None,
+    }
+    for family_id in sorted(attempt_families):
+        if family_id not in families:
+            diagnostics.append(
+                Diagnostic(
+                    code="PLAN_UNKNOWN_REFERENCE",
+                    severity="ERROR",
+                    message=f"k_attempt_risk measures reference unknown family {family_id!r}",
+                    scope="outputs.risk_measures",
+                )
+            )
+        elif families[family_id].method != "bonferroni":
+            diagnostics.append(
+                Diagnostic(
+                    code="PLAN_INVALID_MULTIPLICITY",
+                    severity="ERROR",
+                    message=f"k_attempt_risk family {family_id!r} must use bonferroni",
+                    scope="outputs.risk_measures",
+                )
+            )
+        if family_id in other_families:
+            diagnostics.append(
+                Diagnostic(
+                    code="PLAN_INVALID_MULTIPLICITY",
+                    severity="ERROR",
+                    message=(
+                        f"family {family_id!r} is used by k_attempt_risk measures and by "
+                        "other outputs; give the attempt measures a family of their own so "
+                        "its error budget is not spent twice"
+                    ),
+                    scope="outputs.risk_measures",
+                )
+            )
     direct = plan.outputs.direct_mean_intervals
     if direct.enabled:
         if direct.family not in families:

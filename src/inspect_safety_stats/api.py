@@ -8,7 +8,12 @@ import numpy as np
 
 from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
-from inspect_safety_stats.config.models import AnalysisPlan, ComparisonSpec, RiskMeasureSpec
+from inspect_safety_stats.config.models import (
+    AnalysisPlan,
+    ComparisonSpec,
+    IndependenceProfileSpec,
+    RiskMeasureSpec,
+)
 from inspect_safety_stats.decision.engine import decide_claim, roll_up
 from inspect_safety_stats.ingest.inspect_logs import LogInput, NormalizedData, ingest_inspect_logs
 from inspect_safety_stats.ingest.manifest import resolve_weights
@@ -29,6 +34,12 @@ from inspect_safety_stats.schema.reports import (
     PromptEstimate,
     RiskIntervalResult,
     SafetyReport,
+)
+from inspect_safety_stats.stats.attempts import (
+    attempt_atoms,
+    attempt_risk_completions,
+    attempt_risk_estimate,
+    attempt_risk_from_rate,
 )
 from inspect_safety_stats.stats.binomial import (
     binomial_bounds,
@@ -382,6 +393,11 @@ def _risk_value(
     if measure.type == "threshold_excess":
         assert threshold is not None
         return threshold_excess(values, weights, threshold=threshold)
+    if measure.type == "k_attempt_risk":
+        assert measure.k is not None
+        return weighted_mean(
+            [attempt_risk_from_rate(value, int(measure.k)) for value in values], weights
+        )
     raise ValueError(f"unsupported risk measure {measure.type!r}")
 
 
@@ -937,6 +953,203 @@ def _direct_intervals(
     return results
 
 
+def _attempt_estimate(
+    data: NormalizedData,
+    cohort_id: str,
+    prompt_ids: list[str],
+    weights: list[float],
+    k: int,
+) -> float | None:
+    """Design-weighted unbiased worst-of-k estimate from classified rollouts."""
+
+    harms: dict[str, list[float]] = {prompt_id: [] for prompt_id in prompt_ids}
+    for row in data.observations:
+        if row.cohort_id == cohort_id and row.prompt_id in harms and row.harm is not None:
+            harms[row.prompt_id].append(float(row.harm))
+    if any(len(values) < k for values in harms.values()):
+        return None
+    return float(
+        sum(
+            weight * attempt_risk_estimate(harms[prompt_id], k)
+            for prompt_id, weight in zip(prompt_ids, weights, strict=True)
+        )
+    )
+
+
+_PROMPT_LEVEL_FIELDS = frozenset({"prompt_id", "question_id", "task_id"})
+
+
+def _attempt_endpoint_alpha(plan: AnalysisPlan, measure: RiskMeasureSpec) -> float | None:
+    """Bonferroni share of a k-attempt family for one cohort, group and measure."""
+
+    family = next(
+        (item for item in plan.multiplicity.families if item.id == measure.family), None
+    )
+    if family is None:
+        return None
+    members = sum(
+        1
+        for item in plan.outputs.risk_measures
+        if item.type == "k_attempt_risk" and item.family == measure.family
+    )
+    targets = len(plan.cohorts) * len(plan.groups) * members
+    return family.alpha / 2 / targets
+
+
+def _attempt_intervals(
+    *,
+    plan: AnalysisPlan,
+    data: NormalizedData,
+    cohort_id: str,
+    prompt_ids: list[str],
+    weights: list[float],
+    measure: RiskMeasureSpec,
+) -> list[RiskIntervalResult]:
+    """Direct intervals for the design-weighted worst-of-k risk.
+
+    Each prompt's unbiased U-statistic is expanded into the independent atoms that
+    dominate it (see :mod:`inspect_safety_stats.stats.attempts`) under the rollout
+    profile, or aggregated into prompt-level blocks under a profile that partitions
+    prompts. Only the KL/Chernoff and Hoeffding engines are used.
+    """
+
+    assert measure.k is not None and measure.family is not None
+    k = int(measure.k)
+    endpoint_alpha = _attempt_endpoint_alpha(plan, measure)
+    if endpoint_alpha is None:
+        raise ValueError(f"k_attempt_risk family {measure.family!r} is not declared")
+    family = next(item for item in plan.multiplicity.families if item.id == measure.family)
+    direct = plan.outputs.direct_mean_intervals
+    method = (
+        direct.method
+        if direct.method in {"weighted_kl_chernoff", "weighted_hoeffding"}
+        else "weighted_kl_chernoff"
+    )
+    selection = direct.independence
+    profile_ids = (
+        [selection.primary, *selection.sensitivities] if selection is not None else ["rollout"]
+    )
+    profiles = {
+        profile_id: plan.design.independence_profiles.get(
+            profile_id, IndependenceProfileSpec(block_by=["rollout"])
+        )
+        for profile_id in profile_ids
+    }
+    rows: dict[str, list[Observation]] = {prompt_id: [] for prompt_id in prompt_ids}
+    for row in data.observations:
+        if row.cohort_id == cohort_id and row.prompt_id in rows:
+            rows[row.prompt_id].append(row)
+    lower_u: list[float] = []
+    upper_u: list[float] = []
+    counts: list[int] = []
+    for prompt_id in prompt_ids:
+        prompt_rows = rows[prompt_id]
+        if len(prompt_rows) < k:
+            raise ValueError(
+                f"prompt {prompt_id!r} has {len(prompt_rows)} rollouts; the worst-of-{k} "
+                f"risk needs at least {k} on every prompt"
+            )
+        harms = [float(row.harm) for row in prompt_rows if row.harm is not None]
+        low, high = attempt_risk_completions(harms, len(prompt_rows) - len(harms), k)
+        lower_u.append(low)
+        upper_u.append(high)
+        counts.append(len(prompt_rows))
+    manifest = data.manifest.set_index("prompt_id", drop=False)
+    results: list[RiskIntervalResult] = []
+    for profile_id, profile in profiles.items():
+        if profile.block_by == ["rollout"]:
+            atoms = attempt_atoms(lower_u, upper_u, weights, counts, k)
+            blocks = BoundedBlocks(
+                lower=atoms.lower,
+                upper=atoms.upper,
+                weights=atoms.weights,
+                block_ids=tuple(str(index) for index in range(len(atoms.weights))),
+            )
+            assumptions = [
+                "Rollouts on a prompt are independent and identically distributed.",
+                f"Each prompt's unbiased worst-of-{k} U-statistic is dominated, in moment "
+                f"generating function, by the mean of floor(n/{k}) independent kernel "
+                "values (Hoeffding's U-statistic decomposition).",
+            ]
+        else:
+            prompt_level = _PROMPT_LEVEL_FIELDS | {
+                str(column) for column in data.manifest.columns
+            }
+            unsupported = sorted(set(profile.block_by) - prompt_level)
+            if unsupported:
+                raise ValueError(
+                    f"independence profile {profile_id!r} blocks by rollout-level fields "
+                    f"({', '.join(unsupported)}); the worst-of-{k} risk is a per-prompt "
+                    "quantity and supports only profiles that partition prompts"
+                )
+            grouped: dict[str, list[float]] = {}
+            for index, prompt_id in enumerate(prompt_ids):
+                key = "\x1f".join(
+                    str(manifest.at[prompt_id, field]) for field in profile.block_by
+                )
+                values = grouped.setdefault(key, [0.0, 0.0, 0.0])
+                values[0] += weights[index]
+                values[1] += weights[index] * lower_u[index]
+                values[2] += weights[index] * upper_u[index]
+            ordered = sorted(grouped.items())
+            masses = np.asarray([values[0] for _, values in ordered], dtype=float)
+            blocks = BoundedBlocks(
+                lower=np.asarray([values[1] / values[0] for _, values in ordered]),
+                upper=np.asarray([values[2] / values[0] for _, values in ordered]),
+                weights=masses / np.sum(masses),
+                block_ids=tuple(key for key, _ in ordered),
+            )
+            assumptions = [
+                f"Blocks defined by {profile.block_by!r} are mutually independent; "
+                "arbitrary dependence is allowed within a block.",
+            ]
+        bounds = _direct_bounds(
+            method, blocks, endpoint_alpha=endpoint_alpha, independence_profile=profile_id
+        )
+        results.append(
+            RiskIntervalResult(
+                interval_id=(
+                    f"attempt_{method}"
+                    if profile_id == profile_ids[0]
+                    else f"attempt_{method}_{profile_id}"
+                ),
+                lower=bounds.lower,
+                upper=bounds.upper,
+                method=method,
+                role="primary" if profile_id == profile_ids[0] else "sensitivity",
+                coverage_scope=f"simultaneous_{profile_id}_k_attempt_family",
+                coverage_mode="two_sided",
+                family=family.id,
+                family_alpha=family.alpha,
+                directional_family_alpha=family.alpha / 2,
+                alpha_lower=endpoint_alpha,
+                alpha_upper=endpoint_alpha,
+                simultaneous_coverage=1 - family.alpha,
+                lower_one_sided_coverage=1 - family.alpha / 2,
+                upper_one_sided_coverage=1 - family.alpha / 2,
+                completion_estimate_lower=bounds.completion_estimate_lower,
+                completion_estimate_upper=bounds.completion_estimate_upper,
+                half_width_lower=bounds.half_width_lower,
+                half_width_upper=bounds.half_width_upper,
+                effective_sample_size=bounds.effective_sample_size,
+                concentration_variance=bounds.concentration_variance,
+                maximum_increment=bounds.maximum_increment,
+                chernoff_kernel=bounds.chernoff_kernel,
+                calibration_method="flat_bonferroni",
+                independence_profile=profile_id,
+                independent_block_count=blocks.count,
+                missingness_method="all_safe_all_failure_completion",
+                assumptions=[
+                    *assumptions,
+                    "Prompt weights and rollout counts are fixed independently of outcomes.",
+                    "Every unclassified attempted outcome has a latent outcome in [0, 1].",
+                ],
+                eligibility="certifying",
+            )
+        )
+    return results
+
+
 def _group_risks(
     plan: AnalysisPlan,
     data: NormalizedData,
@@ -953,6 +1166,7 @@ def _group_risks(
         family_alpha, coverage_mode
     )
     direct = direct_context or _direct_mean_context(plan, data)
+    graded = plan.inputs.score.mapping.graded
     results: list[GroupRiskResult] = []
     for cohort_id in sorted(plan.cohorts):
         for group in sorted(data.groups, key=lambda item: item.id):
@@ -982,7 +1196,16 @@ def _group_risks(
                         if measure.type in {"threshold_exceedance", "threshold_excess"}
                         else None
                     )
-                    if complete_estimate:
+                    if measure.type == "k_attempt_risk":
+                        estimate = _attempt_estimate(
+                            data, cohort_id, prompt_ids, weights, int(cast(int, measure.k))
+                        )
+                        if estimate is None:
+                            warnings.append(
+                                f"Every prompt needs at least k={measure.k} classified "
+                                "rollouts for an unbiased worst-of-k estimate."
+                            )
+                    elif complete_estimate:
                         estimate = _risk_value(
                             [cast(float, item.p_hat) for item in prompt_results],
                             weights,
@@ -992,7 +1215,11 @@ def _group_risks(
                     if complete_bounds:
                         lowers = [cast(float, item.lower) for item in prompt_results]
                         uppers = [cast(float, item.upper) for item in prompt_results]
-                        lower = _risk_value(lowers, weights, measure, threshold=threshold)
+                        lower = (
+                            weighted_mean(lowers, weights)
+                            if measure.type == "k_attempt_risk" and graded
+                            else _risk_value(lowers, weights, measure, threshold=threshold)
+                        )
                         upper = _risk_value(uppers, weights, measure, threshold=threshold)
                         if measure.type == "threshold_exceedance":
                             assert threshold is not None
@@ -1071,6 +1298,35 @@ def _group_risks(
                                 )
                             )
 
+                if measure.type == "k_attempt_risk":
+                    if any(
+                        item.n_total <= 0
+                        or _prompt_blocked(diagnostics, cohort_id, item.prompt_id)
+                        for item in prompt_results
+                    ):
+                        direct_warnings.append(
+                            "A complete valid attempted-rollout ledger is required."
+                        )
+                    else:
+                        try:
+                            computed_direct_intervals = _attempt_intervals(
+                                plan=plan,
+                                data=data,
+                                cohort_id=cohort_id,
+                                prompt_ids=prompt_ids,
+                                weights=weights,
+                                measure=measure,
+                            )
+                        except ValueError as exc:
+                            direct_warnings.append(str(exc))
+                            diagnostics.append(
+                                Diagnostic(
+                                    code="ATTEMPT_RISK_INTERVAL_INVALID",
+                                    severity="ERROR",
+                                    message=str(exc),
+                                    scope=f"{cohort_id}:{group.id}:{measure.id}",
+                                )
+                            )
                 direct_primary = next(
                     (item for item in computed_direct_intervals if item.role == "primary"),
                     None,

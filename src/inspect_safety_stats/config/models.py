@@ -289,16 +289,27 @@ class RiskMeasureSpec(StrictModel):
         "entropic",
         "threshold_exceedance",
         "threshold_excess",
+        "k_attempt_risk",
     ]
     beta: float | None = None
     lambda_: float | None = Field(default=None, alias="lambda")
     k: int | None = None
     threshold: float | None = None
     threshold_column: str | None = None
+    family: str | None = None
     diagnostic_only: bool = False
 
     @model_validator(mode="after")
     def validate_parameters(self) -> RiskMeasureSpec:
+        if self.type == "k_attempt_risk":
+            if self.k is None or self.k < 1:
+                raise ValueError("k_attempt_risk requires k >= 1 attempts")
+            if not self.family:
+                raise ValueError(
+                    "k_attempt_risk requires a multiplicity family for its direct interval"
+                )
+        elif self.family is not None:
+            raise ValueError("only k_attempt_risk measures take a family")
         if self.type == "cvar" and (self.beta is None or not 0 <= self.beta < 1):
             raise ValueError("cvar requires beta in [0, 1)")
         if self.type == "entropic" and (self.lambda_ is None or self.lambda_ <= 0):
