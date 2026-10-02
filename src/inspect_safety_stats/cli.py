@@ -19,6 +19,8 @@ from inspect_safety_stats.schema.reports import SafetyReport
 from inspect_safety_stats.stats.planning import (
     certification_power,
     certification_sample_size,
+    comparison_power,
+    comparison_rollouts,
     judge_label_plan,
     maximum_certifiable_failure_rate,
     maximum_certifying_failures,
@@ -331,6 +333,96 @@ def detectable_rate_command(
     if minimum_detectable is not None:
         typer.echo(f"Rejection-side detectable gap: {minimum_detectable - threshold:.8g}")
     typer.echo(f"One-sided alpha: {alpha:g}")
+
+
+@plan_app.command("comparison")
+def comparison_planning_command(
+    baseline_rate: Annotated[
+        float, typer.Option("--baseline-rate", min=0.0, max=1.0, help="Anticipated baseline rate.")
+    ],
+    candidate_rate: Annotated[
+        float,
+        typer.Option("--candidate-rate", min=0.0, max=1.0, help="Anticipated candidate rate."),
+    ],
+    margin: Annotated[
+        float | None,
+        typer.Option(
+            "--margin",
+            min=-1.0,
+            max=1.0,
+            help="Non-inferiority margin: show candidate - baseline < margin. "
+            "Omit to plan for resolving a difference.",
+        ),
+    ] = None,
+    alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
+    power: Annotated[float, typer.Option("--power", min=0.0, max=1.0)] = 0.8,
+    coverage: Annotated[
+        str, typer.Option("--coverage", help="two_sided (default) or per_direction.")
+    ] = "two_sided",
+    targets: Annotated[
+        int,
+        typer.Option(
+            "--targets",
+            min=1,
+            help="Comparison results sharing the family (overall plus hierarchy nodes).",
+        ),
+    ] = 1,
+    prompts: Annotated[
+        int | None, typer.Option("--prompts", min=1, help="Prompts, to report per-prompt rollouts.")
+    ] = None,
+) -> None:
+    """Rollouts per arm for a model comparison to reach a target power."""
+
+    if coverage not in {"two_sided", "per_direction"}:
+        raise typer.BadParameter("--coverage must be two_sided or per_direction")
+    directional = alpha / 2 if coverage == "two_sided" else alpha
+    endpoint = directional / targets / 2
+    try:
+        plan = comparison_rollouts(
+            candidate_rate=candidate_rate,
+            baseline_rate=baseline_rate,
+            power=power,
+            endpoint_alpha=endpoint,
+            margin=margin,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    goal = (
+        f"candidate - baseline < {margin:g} (non-inferiority)"
+        if margin is not None
+        else "a resolved difference in the anticipated direction"
+    )
+    typer.echo(f"Goal: {goal}")
+    typer.echo(f"Anticipated rates: candidate {candidate_rate:g}, baseline {baseline_rate:g}")
+    typer.echo(
+        f"Arm endpoint alpha: {endpoint:.4g} (alpha {alpha:g}, {coverage}, "
+        f"{targets} target(s), split across the two arms)"
+    )
+    if plan is None:
+        typer.echo("Unreachable within 2,000,000 rollouts per arm.")
+        raise typer.Exit(code=1)
+    typer.echo(
+        f"Rollouts per arm: {plan.rollouts_per_arm} (power {plan.achieved_power:.3f})"
+        + (
+            f", about {-(-plan.rollouts_per_arm // prompts)} per prompt over {prompts} prompts"
+            if prompts
+            else ""
+        )
+    )
+    for factor in (0.5, 2.0):
+        count = max(1, int(plan.rollouts_per_arm * factor))
+        achieved = comparison_power(
+            candidate_rate=candidate_rate,
+            baseline_rate=baseline_rate,
+            rollouts_per_arm=count,
+            endpoint_alpha=endpoint,
+            margin=margin,
+        )
+        typer.echo(f"  at {count} rollouts per arm: power {achieved:.3f}")
+    typer.echo(
+        "Assumes equal prompt weights and rollout counts; heterogeneous prompt rates make "
+        "this conservative."
+    )
 
 
 @plan_app.command("judge-labels")

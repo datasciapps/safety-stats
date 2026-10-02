@@ -506,3 +506,152 @@ def judge_label_plan(
         floor=floor,
         endpoint_alpha=endpoint,
     )
+
+
+def kl_rate_bounds(successes: int, trials: int, alpha: float) -> tuple[float, float]:
+    """Weighted KL/Chernoff bounds for ``trials`` equally weighted binary outcomes.
+
+    This is the analysis's ``weighted_kl_chernoff`` engine in its equal-atomic-weight
+    form, each endpoint at level ``alpha``.
+    """
+
+    from inspect_safety_stats.stats.direct_mean import _bernoulli_kl, _invert_divergence
+
+    if trials <= 0 or not 0 <= successes <= trials:
+        raise ValueError("counts must satisfy 0 <= successes <= trials and trials > 0")
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must lie in (0, 1)")
+    observed = successes / trials
+    target = math.log(1 / alpha) / trials
+    return (
+        _invert_divergence(observed, target, direction="lower", divergence=_bernoulli_kl),
+        _invert_divergence(observed, target, direction="upper", divergence=_bernoulli_kl),
+    )
+
+
+def _support(trials: int, rate: float) -> np.ndarray:
+    spread = 12 * math.sqrt(max(trials * rate * (1 - rate), 1.0))
+    centre = trials * rate
+    low = max(0, int(math.floor(centre - spread)) - 2)
+    high = min(trials, int(math.ceil(centre + spread)) + 2)
+    return np.arange(low, high + 1)
+
+
+def comparison_power(
+    *,
+    candidate_rate: float,
+    baseline_rate: float,
+    rollouts_per_arm: int,
+    endpoint_alpha: float,
+    margin: float | None = None,
+) -> float:
+    """Probability that the two-arm KL rectangle establishes the planned conclusion.
+
+    The rectangle bounds the difference by ``[L_C - U_B, U_C - L_B]``, each arm endpoint
+    at ``endpoint_alpha``. With a ``margin`` the conclusion is non-inferiority,
+    ``U_C - L_B < margin``; without one it is a resolved difference in the true direction
+    (the interval excludes zero). Each arm is ``rollouts_per_arm`` equally weighted
+    rollouts at a common rate. Heterogeneous prompt rates make each arm's count less
+    variable than a binomial (Hoeffding, 1956), so the power computed here is conservative
+    for the declared design. The sum over both arms' counts is exact on a support that
+    excludes less than 1e-20 of the probability.
+    """
+
+    for name, value in (("candidate_rate", candidate_rate), ("baseline_rate", baseline_rate)):
+        if not 0 <= value <= 1:
+            raise ValueError(f"{name} must lie in [0, 1]")
+    if rollouts_per_arm < 1:
+        raise ValueError("rollouts_per_arm must be positive")
+    if not 0 < endpoint_alpha < 1:
+        raise ValueError("endpoint_alpha must lie in (0, 1)")
+    difference = candidate_rate - baseline_rate
+    if margin is None and difference == 0:
+        raise ValueError("equal rates leave no difference to detect; give a margin instead")
+    if margin is not None and difference >= margin:
+        raise ValueError(
+            "non-inferiority at this margin is not true at the anticipated rates "
+            f"(difference {difference:.4g} >= margin {margin:.4g})"
+        )
+
+    n = rollouts_per_arm
+    candidate = _support(n, candidate_rate)
+    baseline = _support(n, baseline_rate)
+    candidate_mass = binom.pmf(candidate, n, candidate_rate)
+    baseline_mass = binom.pmf(baseline, n, baseline_rate)
+    baseline_bounds = np.asarray(
+        [kl_rate_bounds(int(y), n, endpoint_alpha) for y in baseline], dtype=float
+    )
+    baseline_lower, baseline_upper = baseline_bounds[:, 0], baseline_bounds[:, 1]
+    # Tail mass above each index, for "baseline count at or beyond y".
+    above = np.concatenate([np.cumsum(baseline_mass[::-1])[::-1], [0.0]])
+    below = np.concatenate([[0.0], np.cumsum(baseline_mass)])
+    power = 0.0
+    for x, mass in zip(candidate, candidate_mass, strict=True):
+        if mass < 1e-300:
+            continue
+        candidate_lower, candidate_upper = kl_rate_bounds(int(x), n, endpoint_alpha)
+        if margin is not None:
+            # success iff L_B(y) > U_C(x) - margin; L_B is nondecreasing in y.
+            first = int(np.searchsorted(baseline_lower, candidate_upper - margin, side="right"))
+            power += mass * above[first]
+        elif difference > 0:
+            # success iff L_C(x) - U_B(y) > 0, i.e. U_B(y) < L_C(x).
+            last = int(np.searchsorted(baseline_upper, candidate_lower, side="left"))
+            power += mass * below[last]
+        else:
+            # success iff U_C(x) - L_B(y) < 0, i.e. L_B(y) > U_C(x).
+            first = int(np.searchsorted(baseline_lower, candidate_upper, side="right"))
+            power += mass * above[first]
+    return float(min(1.0, max(0.0, power)))
+
+
+@dataclass(frozen=True)
+class ComparisonPlan:
+    rollouts_per_arm: int
+    achieved_power: float
+    endpoint_alpha: float
+
+
+def comparison_rollouts(
+    *,
+    candidate_rate: float,
+    baseline_rate: float,
+    power: float,
+    endpoint_alpha: float,
+    margin: float | None = None,
+    maximum: int = 2_000_000,
+) -> ComparisonPlan | None:
+    """Rollouts per arm for the two-arm rectangle to reach ``power``.
+
+    Power is not exactly monotone in the rollout count because counts are discrete;
+    the search returns the smallest count found by doubling and bisection whose power
+    meets the target, which is the planning figure that matters.
+    """
+
+    if not 0 < power < 1:
+        raise ValueError("power must lie in (0, 1)")
+
+    def achieved(count: int) -> float:
+        return comparison_power(
+            candidate_rate=candidate_rate,
+            baseline_rate=baseline_rate,
+            rollouts_per_arm=count,
+            endpoint_alpha=endpoint_alpha,
+            margin=margin,
+        )
+
+    high = 8
+    while achieved(high) < power:
+        high *= 2
+        if high > maximum:
+            return None
+    low = max(1, high // 2)
+    while low < high:
+        middle = (low + high) // 2
+        if achieved(middle) >= power:
+            high = middle
+        else:
+            low = middle + 1
+    return ComparisonPlan(
+        rollouts_per_arm=high, achieved_power=achieved(high), endpoint_alpha=endpoint_alpha
+    )
