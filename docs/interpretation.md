@@ -1,5 +1,28 @@
 # Interpreting results
 
+## The summary page
+
+`report.md` is a one-page summary. Read it top to bottom:
+
+- **Failure risk** gives each model's weighted-mean failure rate on the declared prompts with
+  its interval. The interval covers rollout randomness only, at the simultaneous coverage
+  stated beneath the table. The *prompt-level sensitivity* is a second interval that allows
+  arbitrary dependence among a prompt's rollouts; when the two disagree badly, the rollouts on a
+  prompt are not behaving like independent draws (cached or near-deterministic generation is the
+  usual cause) and the sensitivity is the safer reading.
+- **Comparisons** give the difference in percentage points (candidate minus baseline) and the
+  ratio. "No difference resolved" means the interval spans zero; it does not mean the models
+  are equally safe.
+- **By ⟨level⟩** repeats the analysis for each node of the first hierarchy level, with the
+  per-node difference when exactly one comparison is declared.
+- **Precision** lists every interval marked †: one whose endpoint lies further than
+  `report.precision_target` from its estimate. Each entry states roughly how many more rollouts
+  would bring it within the target at the observed rate. Treat a marked interval as a budget
+  question, not a finding.
+
+Everything else (alternative constructions, every sensitivity, prompt-level bounds,
+multiplicity families, provenance) is in `report-full.md` and `report.html`.
+
 ## Start with the risk estimates
 
 The default report presents estimates and uncertainty intervals without turning them into a

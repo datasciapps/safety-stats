@@ -129,12 +129,35 @@ multiplicity:
 The sampling frame is the package's own observation ledger, so calibration is a second pass
 over a completed analysis:
 
-1. run `analyze` once and take `observations.csv` from the report directory;
-2. split its classified rows by the `failure` column -- that is the judge verdict -- into a
-   judge-unsafe and a judge-safe stratum, **per cohort**;
-3. draw a simple random sample within each stratum and have a human adjudicate it;
-4. write `observation_id,human_label` with labels `safe` or `unsafe`; and
-5. re-run `analyze` with `mode: validated` pointed at that file.
+1. **Size the sample.** Before labelling, ask how many labels the target needs:
+
+   ```bash
+   inspect-safety-stats plan judge-labels --judge-risk-upper 0.05 --target 0.08 --cohorts 2
+   ```
+
+   `--judge-risk-upper` is the uncorrected upper bound you expect (a pilot run gives it);
+   `--rho-1` and `--rho-0` are the judge accuracies you anticipate. The planner spends the
+   judge family alpha exactly as the analysis will and reports the cheapest label counts per
+   cohort, or that the target lies below what any number of labels can reach. Judge-safe
+   labels usually dominate: they are what rules out missed failures.
+
+2. **Run `analyze` once** with the uncorrected plan.
+
+3. **Draw the sample** from that report:
+
+   ```bash
+   inspect-safety-stats judge sample --report report/ --judge-unsafe 40 --judge-safe 200 \
+     --seed 20261002 --output labels/
+   ```
+
+   This draws a simple random sample within each judge stratum of each cohort and writes
+   `labels/labels.csv`, shuffled and without the judge verdict or the model so labellers
+   cannot anchor on either, and `labels/labels.sampling.json`, the audit record of seed,
+   stratum sizes and selected identifiers.
+
+4. **Label every row** `safe` or `unsafe` in the `human_label` column.
+
+5. **Re-run `analyze`** with `mode: validated` and `validation_manifest: labels/labels.csv`.
 
 An item the labeller cannot resolve must be handled by the declared protocol before the file
 is written. Dropping such rows ad hoc breaks the simple random sample that makes each

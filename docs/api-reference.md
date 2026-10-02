@@ -51,9 +51,9 @@ path is resolved relative to the plan file.
 output = report.write("reports/run-001")
 ```
 
-Writes deterministic JSON, Markdown, a self-contained interactive HTML visualization,
-resolved-plan YAML, resolved-design CSV, optional normalized observations, and a checksum
-manifest. A non-empty destination is rejected unless
+Writes deterministic JSON, a one-page Markdown summary (`report.md`), the full Markdown report
+(`report-full.md`), a self-contained interactive HTML visualization, resolved-plan YAML,
+resolved-design CSV, optional normalized observations, and a checksum manifest. A non-empty destination is rejected unless
 `overwrite=True`.
 
 ### Exact threshold planning
@@ -218,7 +218,7 @@ Weights must be nonnegative and sum to one. Scalar or item-specific thresholds a
 CVaR uses fractional boundary mass. The implementation evaluates entropic risk in a numerically
 stable form. Any measure may be marked `diagnostic_only` in the plan to bar it from backing a claim.
 
-### Paired and clustered comparisons
+### Fixed-design comparisons
 
 The primary fixed-design comparison functions are:
 
@@ -322,25 +322,72 @@ see [Hierarchy-aware simultaneous inference](hierarchy-simultaneous-inference.md
 ## Command-line interface
 
 ```text
+inspect-safety-stats init --logs LOGS --failure-values VALUE [--group-by FIELD] [--baseline MODEL] [--output DIR]
 inspect-safety-stats analyze --plan PLAN --logs LOGS --output DIRECTORY
 inspect-safety-stats validate --plan PLAN --logs LOGS
 inspect-safety-stats visualize --report REPORT_OR_DIRECTORY [--output REPORT.html]
 inspect-safety-stats plan zero-failure --threshold P --alpha A
 inspect-safety-stats plan certification --threshold P --anticipated-rate Q --alpha A --power B
 inspect-safety-stats plan detectable-rate --trials N --threshold P --alpha A --power B
+inspect-safety-stats plan judge-labels --judge-risk-upper U --target T [--cohorts K] [--rho-1 R1] [--rho-0 R0]
+inspect-safety-stats judge sample --report DIRECTORY --judge-unsafe N1 --judge-safe N0 --seed S [--output DIR]
+inspect-safety-stats migrate-plan --plan OLD --output NEW
 inspect-safety-stats hash-plan --plan PLAN
 inspect-safety-stats schema plan
 inspect-safety-stats schema report
 inspect-safety-stats version
 ```
 
+`init` writes `design.csv` and a minimal `safety-plan.yaml` from completed logs. It never infers
+the score mapping: pass `--failure-values` (or `--failure-threshold` for numeric scores), and
+the remaining observed values are taken as safe unless `--safe-values` lists them. The plan is
+`exploratory` because it is written after the logs exist.
+
 Repeat `--logs` to select multiple files or directories. By default, `analyze` exits `0` after a
 completed analysis regardless of any internally computed threshold decision; `validate` exits `3`
 for invalid input. Pass `--decision-exit-codes` to opt into `0` for `PASS`, `1` for `FAIL`, and
-`2` for `INCONCLUSIVE`.
+`2` for `INCONCLUSIVE`; see [Confirmatory mode](confirmatory-mode.md).
+
+## Starter plans and labelling samples
+
+```python
+from inspect_safety_stats.scaffold import scaffold_plan
+from inspect_safety_stats.judge_labels import draw_label_sample
+
+result = scaffold_plan("logs/", "analysis/", failure_values=["FAIL"], group_by="category")
+sample = draw_label_sample("report/", "labels/", judge_unsafe=40, judge_safe=200, seed=7)
+```
+
+`scaffold_plan` is the function behind `init` and returns the paths it wrote, the cohorts and
+the resolved score mapping. `draw_label_sample` is the function behind `judge sample`; it writes
+a blinded, shuffled `labels.csv` and a `labels.sampling.json` audit record.
+
+## Precision and labelling budgets
+
+```python
+from inspect_safety_stats.stats.planning import (
+    rollouts_for_half_width,
+    rollout_scale_for_half_width,
+    judge_label_plan,
+)
+
+rollouts_for_half_width(rate=0.05, half_width=0.02, alpha=0.025)
+rollout_scale_for_half_width(rate=0.1, observed_half_width=0.19, observed_trials=80,
+                             target_half_width=0.05, alpha=0.0025)
+judge_label_plan(judge_risk_upper=0.05, target_upper=0.08, alpha=0.05, cohorts=2)
+```
+
+`rollouts_for_half_width` returns the smallest number of equally weighted rollouts at which both
+exact one-sided bounds lie within `half_width` of an assumed rate; at rate zero it reproduces
+zero-failure planning. `rollout_scale_for_half_width` anchors on an interval actually observed,
+whatever bound produced it, and returns the factor by which rollouts must grow to reach a target
+width. `judge_label_plan` returns the cheapest judge-unsafe and judge-safe label counts per cohort
+for which a validated correction would bound true risk below a target, or `None` when no number
+of labels can.
 
 ## Compatibility and stability
 
-The runtime supports Python 3.10 or newer and Inspect AI `>=0.3.259,<0.4`. Plan and report schema
-version `1.0` are strict. New fields or methods may be added compatibly within the package's
-`0.x` development series, but consumers should validate `schema_version` before automated use.
+The runtime supports Python 3.10 or newer and Inspect AI `>=0.3.259,<0.4`. Plans declare
+`schema_version: "2.0"`; a `1.0` plan is refused with a pointer to `migrate-plan`. Reports are
+strict models. New fields or methods may be added compatibly within the package's `0.x`
+development series, but consumers should validate `schema_version` before automated use.

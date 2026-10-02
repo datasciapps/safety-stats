@@ -400,6 +400,7 @@ claims:
 | `include_prompt_text` | false | Reserved; raw content remains omitted in v1 |
 | `include_observations` | true | Write normalized observation CSV |
 | `decimal_places` | 6 | Markdown display precision; JSON retains full precision |
+| `precision_target` | 0.05 | Half-width above which `report.md` marks an interval as imprecise and states the rollouts needed to resolve it; it also sets when `TAIL_MEASURES_UNINFORMATIVE` is raised |
 
 ## Generate JSON schemas
 

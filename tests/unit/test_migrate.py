@@ -114,3 +114,12 @@ def test_migrate_plan_command_writes_a_loadable_plan(tmp_path: Path) -> None:
         app, ["migrate-plan", "--plan", str(source), "--output", str(target)]
     )
     assert again.exit_code != 0
+
+
+def test_loader_accepts_an_unquoted_current_schema_version(tmp_path: Path) -> None:
+    upgraded, _ = migrate_plan(_legacy_plan())
+    text = yaml.safe_dump(upgraded).replace("schema_version: '2.0'", "schema_version: 2.0")
+    assert "schema_version: 2.0" in text
+    path = tmp_path / "plan.yaml"
+    path.write_text(text, encoding="utf-8")
+    assert load_plan(path).schema_version == "2.0"

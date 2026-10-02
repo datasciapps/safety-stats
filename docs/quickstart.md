@@ -1,77 +1,91 @@
 # Quickstart
 
-This walkthrough runs the example fixed-design safety evaluation and analyzes its completed Inspect logs.
+From a finished Inspect evaluation to a report in three commands. You need completed `.eval`
+logs and the name of the score that marks a safety failure.
 
-## 1. Review the design
-
-The example manifest is [design.csv](../examples/fixed_design/design.csv). It declares prompt, question, task, risk-domain, rollout count, and zero-tolerance metadata. These relationships are never inferred from prompt text.
-
-The example plan is [safety-plan.yaml](../examples/fixed_design/safety-plan.yaml). Before using it, update:
-
-- the cohort model identifier;
-- `analysis.plan_frozen_at`;
-- the optional registration information;
-- thresholds and rollout counts appropriate to the real safety case.
-
-## 2. Run the Inspect task
-
-From the repository root:
+## 1. Write a starter plan from the logs
 
 ```bash
-inspect eval examples/fixed_design/safety_eval.py \
-  --model openai/gpt-4o-mini \
-  --epochs 20 \
-  --no-epochs-reducer \
-  --log-dir logs/fixed-design-example
+inspect-safety-stats init \
+  --logs logs/ \
+  --failure-values FAIL \
+  --group-by category \
+  --baseline openai/gpt-4o \
+  --output analysis/
 ```
 
-This command requires the selected model provider's credentials. The statistical package does not.
+`init` reads the structure of the logs (models, tasks, sample ids, epochs, scorers, metadata)
+and writes two files into `analysis/`:
 
-## 3. Validate first
+- `design.csv`, one row per fixed prompt with its expected rollout count and, with
+  `--group-by`, the sample metadata field used for the breakdown;
+- `safety-plan.yaml`, a minimal plan: one cohort per model, the weighted-mean failure risk
+  with a weighted KL/Chernoff interval and a prompt-level sensitivity, the breakdown, and a
+  comparison between models when there is more than one.
 
-```bash
-inspect-safety-stats validate \
-  --plan examples/fixed_design/safety-plan.yaml \
-  --logs logs/fixed-design-example
-```
+It never guesses which score values are failures. `--failure-values` names them (repeat it for
+several) and every other observed value is taken as safe unless `--safe-values` lists them;
+`--failure-threshold` handles numeric scores. With several scorers in the logs, choose one with
+`--score`. Without `--baseline`, two models are compared against the first alphabetically and
+several models are compared pairwise.
 
-Resolve every `ERROR` before interpreting safety claims. Warnings remain visible in the final report.
+The plan is `exploratory`: it was written after the logs existed. For a confirmatory analysis,
+freeze a plan before running the evaluation; see [Confirmatory mode](confirmatory-mode.md).
 
-## 4. Analyze
+## 2. Analyze
 
 ```bash
 inspect-safety-stats analyze \
-  --plan examples/fixed_design/safety-plan.yaml \
-  --logs logs/fixed-design-example \
-  --output reports/fixed-design-example
+  --plan analysis/safety-plan.yaml \
+  --logs logs/ \
+  --output report/
 ```
 
-Open `reports/fixed-design-example/report.html` for the interactive hierarchy explorer, or
-`report.md` for the compact review document.
+The command prints the headline failure rate for each model and writes the report directory.
 
-## 5. Read the result
+## 3. Read `report/report.md`
 
-The report separates:
+A one-page summary: the failure rate per model with its interval, the comparison, the
+breakdown, and a **Precision** section. An interval marked † has an endpoint more than
+`report.precision_target` (5 percentage points by default) from its estimate, and the
+Precision section says roughly how many more rollouts would resolve it. This is a JailbreakBench
+run of 100 prompts with 8 rollouts each:
 
-- data integrity;
-- prompt-level exact bounds;
-- finite-design aggregate risk;
-- simultaneous conditional mean-risk intervals at every declared hierarchy node;
-- one selected independence profile at a time, with any configured sensitivity profiles;
-- comparisons and diagnostics;
-- provenance and audit information.
+```text
+| Model       | Group | Failure rate | Interval      | Prompt-level sensitivity |
+| gpt-4o      | all   | 4.8%         | [2.7%, 7.5%]  | [0.7%, 14.6%]            |
+| gpt-4o-mini | all   | 6.5%         | [4.1%, 9.6%]  | [1.4%, 17.2%]            |
 
-Human-facing reports are metrics-first by default. If a project wants the package to evaluate
-predeclared thresholds, set `report.include_decisions: true` in the plan.
+| Candidate vs baseline | Difference | Interval             | Ratio | Interval     | Reading                  |
+| gpt-4o-mini vs gpt-4o | +1.8 pts   | [-3.4 pts, +6.9 pts] | 1.37  | [0.54, 3.54] | no difference resolved † |
+```
 
-A zero observed failure count does not imply zero risk. If a prompt has zero failures in (n) independent rollouts, its one-sided upper bound is
+The overall rates are well determined; the difference between the models is not, and the
+per-category rates (10 prompts each) need roughly ten times the rollouts before they say much.
 
-\[
-1-\alpha^{1/n}.
-\]
+Everything else is alongside: `report-full.md` (every interval construction, sensitivity and
+prompt-level bound), `report.html` (an interactive explorer that needs no server), and CSVs.
 
-Risk measures are calculated from prompt-level estimates and simultaneous bounds. They are not calculated by pretending prompts were IID samples.
+## Before the next run: plan the budget
 
-## 6. Use a fresh output directory
+The planners answer "how many rollouts do I need?" before any are spent:
 
-Reports are write-once by default. Choose a new output directory for a new analysis. `--overwrite` is available only for deliberate replacement of files in a known report directory.
+```bash
+inspect-safety-stats plan zero-failure --threshold 0.01 --alpha 0.05
+inspect-safety-stats plan certification --threshold 0.05 --anticipated-rate 0.02 --power 0.9
+inspect-safety-stats plan detectable-rate --trials 800 --threshold 0.05 --power 0.9
+```
+
+## When an LLM judge scores the outcomes
+
+Every interval above bounds how often the **judge reports** a failure. To bound the true rate,
+add judge calibration: declared accuracy ranges as a sensitivity analysis, or human labels for a
+certifying correction. `inspect-safety-stats plan judge-labels` sizes the labelling and
+`inspect-safety-stats judge sample` draws it. See [Judge misclassification](judge-misclassification.md).
+
+## Going further
+
+The generated plan is a starting point. Edit it to add tail measures (CVaR, worst prompt),
+further independence profiles, explicit weights, judge calibration, or threshold claims; the
+[analysis plan reference](plan-reference.md) documents every field, and the
+[fixed-design example](../examples/fixed_design/README.md) shows a hand-written plan.

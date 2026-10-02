@@ -2,201 +2,135 @@
 
 [![CI](https://github.com/aduncan001/safety_stats/actions/workflows/ci.yml/badge.svg)](https://github.com/aduncan001/safety_stats/actions/workflows/ci.yml)
 
-`inspect-safety-stats` provides fixed-design statistical risk analysis for binary safety outcomes produced by [Inspect AI](https://inspect.aisi.org.uk/).
+`inspect-safety-stats` puts honest error bars on safety evaluations run with
+[Inspect AI](https://inspect.aisi.org.uk/). Given the logs of a finished evaluation it reports
+how often each model fails, with finite-sample confidence bounds that hold at any sample size
+(including zero observed failures), whether one model fails more than another, where the
+failures are, and how far an LLM judge's errors could move those numbers.
 
-It is designed for hand-curated safety evaluations in which prompts, questions, tasks, groups, weights, thresholds, and rollout counts are fixed in advance. It quantifies stochastic rollout uncertainty without pretending that benchmark prompts are IID samples from a population.
-
-## Current capabilities
-
-- Exact one-sided Clopper–Pearson failure-rate bounds per fixed prompt.
-- Direct finite-sample weighted KL/Chernoff, variance-adaptive empirical-Bernstein, and
-  weighted-Hoeffding intervals for fixed-design mean risk, with conservative completion of
-  unclassified outcomes.
-- Simultaneous mean-risk intervals at every declared hierarchy node, with hierarchy-aware
-  frontier Šidák calibration, a common linear confidence region, and creator-declared named
-  independence profiles over arbitrary observation or manifest fields.
-- Explicit two-sided versus per-direction family coverage semantics, with 95% simultaneous
-  two-sided coverage as the reporting default.
-- Missingness-robust exact bounds for attempted rollouts with unavailable classifications.
-- End-to-end system safety as the default estimand, with stage-aware provider policy blocks.
-- Exact zero-failure rollout planning.
-- Exact fixed-horizon power and detectable-failure-rate planning.
-- Pre-evaluation fixed-design rollout planning with hierarchy and policy weights.
-- Creator-declared task → question → prompt hierarchy.
-- Evaluation-specific independence profiles kept separate from the aggregation hierarchy, with
-  configurable cross-model coupling and block-overlap-aware tree calibration.
-- Equal-prompt, nested-equal, and explicit policy weights.
-- Weighted mean, worst-item, CVaR, top-k, entropic, threshold-exceedance, and threshold-excess risk.
-- First-class fixed-design model/configuration comparison sets for three or more arms, with joint
-  arm-risk regions, risk differences, risk ratios, relative reductions, simultaneous rank sets,
-  hierarchy-frontier calibration, and named dependence sensitivities.
-- Bonferroni and weighted Bonferroni alpha allocation, with an intersection-union gate.
-- Metrics-first reports with estimates, uncertainty bounds, hierarchy drill-down, and optional predeclared decision analysis.
-- Judge-misclassification correction, mapping judge-reported risk onto true risk either
-  under declared conditional accuracies or from human labels drawn within each judge stratum.
-- Deterministic JSON, Markdown, CSV, plan, and checksum sidecars.
-
-Anytime-valid confidence sequences, adaptive rollout allocation, live hooks, and early stopping are intentionally deferred.
-
-## Install
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-python -m pip install --upgrade pip
-python -m pip install -e .
-```
-
-For development:
-
-```bash
-python -m pip install -e '.[dev]'
-pytest
-```
-
-See [Installation](docs/installation.md) for supported versions and troubleshooting.
-The hierarchy calibration and coverage proof are documented in
-[Hierarchy-aware simultaneous inference](docs/hierarchy-simultaneous-inference.md).
-Configuration and block mathematics are documented in
-[Configuring hierarchy and independence](docs/independence-profiles.md).
-Comparison estimands, common contrast/two-arm regions, and usage are documented in
-[Fixed-design model and configuration comparisons](docs/model-comparisons.md).
+It is built for hand-curated safety evaluations, where the prompts are fixed in advance rather
+than drawn from a population. The randomness it accounts for is the model's: which of its
+possible responses each rollout produced. It never treats a benchmark as a random sample of
+prompts, so its intervals mean what they say about the prompts you ran and make no claim about
+prompts you did not.
 
 ## Quick start
 
-Plan a zero-failure study:
+```bash
+pip install inspect-safety-stats
+
+inspect-safety-stats init --logs logs/ --failure-values FAIL --group-by category --output analysis/
+inspect-safety-stats analyze --plan analysis/safety-plan.yaml --logs logs/ --output report/
+```
+
+`init` writes a starter design manifest and plan from the logs. It never guesses which score
+values are failures; you name them. `analyze` prints the headline rates and writes `report/`,
+whose `report.md` is a one-page summary:
+
+```text
+| Model       | Failure rate | Interval      | Prompt-level sensitivity |
+| gpt-4o      | 4.8%         | [2.7%, 7.5%]  | [0.7%, 14.6%]            |
+| gpt-4o-mini | 6.5%         | [4.1%, 9.6%]  | [1.4%, 17.2%]            |
+
+| Candidate vs baseline | Difference | Interval             | Reading                  |
+| gpt-4o-mini vs gpt-4o | +1.8 pts   | [-3.4 pts, +6.9 pts] | no difference resolved † |
+```
+
+Intervals marked † are too wide to act on, and the summary says roughly how many more rollouts
+would resolve each one. The [quickstart](docs/quickstart.md) walks through the options.
+
+## What it does
+
+- **Failure-rate bounds** for a fixed set of prompts: a weighted KL/Chernoff interval on the
+  mean failure rate (exact Clopper–Pearson at prompt level), with a sensitivity that allows
+  arbitrary dependence among one prompt's rollouts. Unclassified outcomes widen the bounds
+  rather than being dropped.
+- **Model comparisons** on the same prompts: risk differences and ratios with simultaneous
+  coverage across any number of models, and simultaneous rank sets for all-pairs comparisons.
+- **Breakdowns** by a declared hierarchy (task, category, …), calibrated so every node's
+  interval holds simultaneously and parent and child intervals stay consistent.
+- **Judge-error correction.** Every bound on judge-scored outcomes is a bound on how often the
+  *judge reports* a failure. Declared judge-accuracy ranges give a sensitivity analysis; human
+  labels drawn within each judge stratum give a certifying correction onto true risk.
+  `judge sample` draws that labelling sample, blinded, and `plan judge-labels` sizes it.
+- **Planning before you spend.** Zero-failure sizing, certification power, detectable rates,
+  and judge-label budgets, all exact.
+- **Confirmatory mode** for release gates: frozen, hashable plans, two-threshold
+  `PASS`/`FAIL`/`INCONCLUSIVE` claims, non-inferiority margins and CI exit codes. Off by default.
+- **Auditable output**: deterministic JSON, Markdown, a self-contained interactive HTML
+  explorer, CSVs and checksums.
+
+Tail measures (CVaR, worst prompt, entropic and threshold risk) are available for plans that
+declare them. They are built from per-prompt bounds and need many rollouts per prompt to be
+informative; the analysis warns when they cannot be.
+
+## Plan before you run
 
 ```bash
 inspect-safety-stats plan zero-failure --threshold 0.01 --alpha 0.05
+inspect-safety-stats plan certification --threshold 0.05 --anticipated-rate 0.02 --power 0.9
+inspect-safety-stats plan detectable-rate --trials 800 --threshold 0.05 --power 0.9
+inspect-safety-stats plan judge-labels --judge-risk-upper 0.05 --target 0.08 --cohorts 2
 ```
-
-Calculate exact detectable rates at a fixed horizon:
-
-```bash
-inspect-safety-stats plan detectable-rate \
-  --trials 500 --threshold 0.05 --alpha 0.05 --power 0.90
-```
-
-Validate logs against a frozen design:
-
-```bash
-inspect-safety-stats validate \
-  --plan examples/fixed_design/safety-plan.yaml \
-  --logs logs/
-```
-
-Run the analysis:
-
-```bash
-inspect-safety-stats analyze \
-  --plan examples/fixed_design/safety-plan.yaml \
-  --logs logs/ \
-  --output reports/example
-```
-
-The command writes:
-
-```text
-reports/example/
-  report.json
-  report.md
-  report.html
-  plan.resolved.yaml
-  design.resolved.csv
-  hierarchy-risks.csv
-  comparisons.csv
-  comparison-sets.csv
-  observations.csv
-  checksums.json
-```
-
-`report.html` is a self-contained interactive visualization. It needs no server or external
-JavaScript and supports cohort/measure/independence-profile selection, group-risk intervals, joint
-multi-arm risk tables, simultaneous rank sets, pairwise matrices, one collapsible hierarchy
-selector for within-configuration risks and across-configuration effects, prompt search, and audit
-details.
-
-Regenerate or relocate a visualization from any existing report directory:
-
-```bash
-inspect-safety-stats visualize \
-  --report reports/example \
-  --output reports/example-dashboard.html
-```
-
-The CLI exits with code `0` after a completed analysis and `3` when analysis cannot run. Use
-`--decision-exit-codes` to opt into decision-sensitive exit codes (`0` pass, `1` fail, and `2`
-inconclusive).
 
 ## Python API
 
 ```python
-from inspect_safety_stats import analyze, write_visualization
+from inspect_safety_stats import analyze
 
-report = analyze(plan="safety-plan.yaml", logs="logs/")
-report.write("reports/candidate")
-write_visualization(report, "reports/candidate-dashboard.html")
+report = analyze(plan="analysis/safety-plan.yaml", logs="logs/")
+report.write("report/")
 
 for risk in report.group_risks:
-    print(risk.group_id, risk.measure_id, risk.estimate, risk.lower, risk.upper)
+    print(risk.cohort_id, risk.measure_id, risk.estimate, risk.lower, risk.upper)
 ```
 
-Low-level functions are also public:
+The statistical functions are public too:
 
 ```python
-from inspect_safety_stats.stats import (
-    binomial_upper_bound,
-    entropic_risk,
-    weighted_cvar,
-    zero_failure_sample_size,
-)
+from inspect_safety_stats.stats import binomial_upper_bound, zero_failure_sample_size
 
-n = zero_failure_sample_size(threshold=0.01, alpha=0.05)
-upper = binomial_upper_bound(0, n, alpha=0.05)
-cvar = weighted_cvar([0.001, 0.02, 0.20], [0.5, 0.3, 0.2], beta=0.8)
-entropic = entropic_risk([0.001, 0.02, 0.20], [0.5, 0.3, 0.2], lambda_=10)
+n = zero_failure_sample_size(threshold=0.01, alpha=0.05)   # 299
+upper = binomial_upper_bound(0, n, alpha=0.05)              # just under 0.01
 ```
 
-## Required inputs
+## Inputs and estimand
 
-An analysis uses:
+An analysis uses completed Inspect `.eval` logs, a CSV manifest with one row per fixed prompt,
+and a strict YAML plan; `init` writes the last two. The score mapping is always explicit: the
+package never assumes whether `C`, `I`, `PASS`, `FAIL`, `0` or `1` means a safety failure.
 
-1. completed Inspect `.eval` logs;
-2. a CSV manifest with one row per fixed prompt;
-3. a strict YAML or JSON analysis plan.
+The default estimand is end-to-end system safety. A provider policy block during target
+generation, with no content delivered, counts as a safe outcome; grader errors and unparseable
+scores remain unknown and widen the bounds. Set `inputs.estimand: underlying_model` to keep
+provider blocks unknown instead.
 
-The score mapping is always explicit. The package never assumes whether `C`, `I`, `PASS`, `FAIL`, `0`, or `1` means a safety failure.
-
-The default estimand is end-to-end system safety. An explicit provider policy block counts as a
-safe outcome only when it occurs during target generation and no content was delivered. Grader
-errors and unparseable scores remain unknown and widen conservative bounds. Set
-`inputs.estimand: underlying_model` when provider blocks should remain unknown rather than count
-as system-level safe outcomes.
-
-## Safety scope
-
-Every report states:
+Every report states its scope:
 
 > Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions.
 
-The package distinguishes simultaneous uncertainty guarantees from diagnostic outputs. Diagnostic
-resampling and post hoc slices should be interpreted with their stated assumptions. Optional threshold decisions can be enabled with
-`report.include_decisions: true`; they are omitted from human-facing reports by default.
-
 ## Documentation
 
-- [Installation](docs/installation.md)
 - [Quickstart](docs/quickstart.md)
-- [Analysis plan reference](docs/plan-reference.md)
-- [Python and command-line API reference](docs/api-reference.md)
 - [Interpreting results](docs/interpretation.md)
 - [Judge misclassification](docs/judge-misclassification.md)
-- [Version 1 engineering design](docs/archive/v1-design.md) (archived; superseded by the shipped package)
-- [Mathematical methods and justification](docs/statistical-methods.md)
-- [Multi-model safety comparison: complete JailbreakBench-100 example](examples/real_jailbreakbench/README.md)
-- [Multilingual configuration comparison: JailbreakBench-100 in English, French, German, and Maltese](examples/real_jailbreakbench/MULTILINGUAL.md)
-- [Primary safety example: HarmBench direct-request multi-rollout evaluation](examples/real_harmbench/README.md)
-- [Secondary calibration example: XSTest over-refusal](examples/real_xstest/README.md)
+- [Confirmatory mode](docs/confirmatory-mode.md)
+- [Analysis plan reference](docs/plan-reference.md)
+- [Python and command-line API reference](docs/api-reference.md)
+- [Model and configuration comparisons](docs/model-comparisons.md)
+- [Configuring hierarchy and independence](docs/independence-profiles.md)
+- [Hierarchy-aware simultaneous inference](docs/hierarchy-simultaneous-inference.md)
+- [Statistical methods and justification](docs/statistical-methods.md)
+- [Installation](docs/installation.md)
+- [Changelog](CHANGELOG.md)
+
+Worked examples on real evaluations:
+
+- [JailbreakBench-100: comparing models](examples/real_jailbreakbench/README.md)
+- [JailbreakBench-100 in English, French, German and Maltese](examples/real_jailbreakbench/MULTILINGUAL.md)
+- [HarmBench direct requests with repeated rollouts](examples/real_harmbench/README.md)
+- [XSTest over-refusal](examples/real_xstest/README.md)
+- [A hand-written fixed-design plan](examples/fixed_design/README.md)
 
 ## License
 

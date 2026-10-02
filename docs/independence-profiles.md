@@ -73,11 +73,11 @@ comparisons:
 ```
 
 This interface was introduced in analysis schema `2.0` and package version `0.7.0`
-and remains current in `0.15.0`. The removed
-`independence_unit` and `cluster_sensitivity` fields are deliberately not translated. A schema
-`1.0` or legacy-field plan fails strict validation so its assumptions cannot silently change.
-Existing Inspect logs remain reusable: write a schema `2.0` plan and rerun only
-`inspect-safety-stats analyze`; model generations do not need to be repeated.
+and remains current in `0.16.0`. The loader refuses a schema `1.0` plan rather than
+translating its `independence_unit` and `cluster_sensitivity` fields silently, because a frozen
+plan's assumptions must not change behind its hash. `inspect-safety-stats migrate-plan` writes
+the translated plan to a new file, listing every change, for review and re-freezing. Existing
+Inspect logs remain reusable: model generations do not need to be repeated.
 
 ## Statistical construction
 
