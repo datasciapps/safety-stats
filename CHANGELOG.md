@@ -26,7 +26,19 @@ Inspect logs and makes the common path short: `init`, `analyze`, read one page.
 - `TAIL_MEASURES_UNINFORMATIVE` warns when tail or threshold measures are requested with too
   few rollouts per prompt to be informative.
 - Planning functions `rollouts_for_half_width`, `rollout_scale_for_half_width`,
-  `exact_half_width` and `judge_label_plan`.
+  `exact_half_width` and `judge_label_plan`; `attempt_risk_estimate` and
+  `attempt_risk_from_rate` in `inspect_safety_stats.stats`.
+- Graded scores: `score.mapping.scale` maps a rubric grade or probability onto harm in [0, 1];
+  every bound becomes a bound on mean harm, prompt-level bounds use Bernoulli-KL inversion, and
+  `init --harm-scale MIN MAX [--lower-is-harmful]` writes the mapping. Judge calibration is
+  refused for graded scales.
+- `k_attempt_risk`: the probability that at least one of `k` attempts at a prompt fails (the
+  expected worst outcome for graded scores), estimated by an unbiased U-statistic and bounded
+  through Hoeffding's U-statistic decomposition with the KL/Chernoff and Hoeffding engines, in a
+  dedicated Bonferroni family.
+- `inspect-safety-stats plan comparison`: rollouts per arm for the two-arm rectangle to resolve
+  a difference or establish non-inferiority at a margin, from exact power; also
+  `comparison_power`, `comparison_rollouts` and `kl_rate_bounds`.
 - `analyze` prints the headline rate for each model.
 - [Confirmatory mode](docs/confirmatory-mode.md) documents claims, decisions, plan freezing
   and exit codes in one place.

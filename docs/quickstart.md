@@ -74,7 +74,21 @@ The planners answer "how many rollouts do I need?" before any are spent:
 inspect-safety-stats plan zero-failure --threshold 0.01 --alpha 0.05
 inspect-safety-stats plan certification --threshold 0.05 --anticipated-rate 0.02 --power 0.9
 inspect-safety-stats plan detectable-rate --trials 800 --threshold 0.05 --power 0.9
+inspect-safety-stats plan comparison --baseline-rate 0.0475 --candidate-rate 0.065 --prompts 100
 ```
+
+The last line asks what the JailbreakBench run above would have needed to resolve the
+difference between the two models: about 88 rollouts per prompt rather than 8. Add `--margin`
+to plan a non-inferiority claim instead.
+
+## Graded scores and repeated attempts
+
+If the scorer returns a grade or a probability rather than a verdict, describe its scale
+instead of naming failure values: `init --harm-scale 1 5` (add `--lower-is-harmful` when a low
+grade is the worse outcome). Every rate in the report is then a mean harm on a 0–100% scale.
+
+To report the chance that an adversary with several tries at each prompt succeeds, add a
+`k_attempt_risk` measure to the plan; see the [plan reference](plan-reference.md#risk-over-repeated-attempts).
 
 ## When an LLM judge scores the outcomes
 

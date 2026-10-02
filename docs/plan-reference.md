@@ -41,6 +41,24 @@ mapping:
     value: 0.5
 ```
 
+or graded, for scorers that return a rubric grade or a probability rather than a verdict:
+
+```yaml
+mapping:
+  scale:
+    minimum: 1        # least harmful grade
+    maximum: 5        # most harmful grade
+    harmful: high     # or low, when a low score is the worse outcome
+```
+
+A graded mapping places each score linearly on harm in [0, 1], and every risk is then a mean
+harm rather than a failure probability. A score outside the declared range is an error, not
+clipped. Prompt-level bounds use Bernoulli-KL inversion, which holds for any independent
+[0, 1] outcomes; aggregate intervals and comparisons are unchanged, because their engines
+already require only bounded outcomes. A rollout with any harm counts as a failure for
+zero-tolerance policies. Judge calibration is defined on a binary verdict and is refused with
+a graded scale.
+
 Mappings are type-sensitive: `true`, `1`, `1.0`, and `"1"` are distinct.
 
 `missing` accepts `conservative_bounds`, `block`, `count_as_failure`, or `exclude`.
@@ -183,6 +201,37 @@ outputs:
     - {id: entropic, type: entropic, lambda: 10}
     - {id: worst, type: maximum}
 ```
+
+### Risk over repeated attempts
+
+```yaml
+outputs:
+  risk_measures:
+    - {id: worst_of_5, type: k_attempt_risk, k: 5, family: attempts}
+multiplicity:
+  families:
+    - {id: attempts, purpose: simultaneous_intervals, method: bonferroni, alpha: 0.05}
+```
+
+`k_attempt_risk` is the design-weighted probability that at least one of `k` independent
+attempts at a prompt fails: an adversary's success rate when it may retry. With a graded scale
+it is the expected worst outcome of `k` attempts. Every prompt needs at least `k` rollouts.
+
+The estimate is the unbiased U-statistic `1 - C(n-f, k)/C(n, k)` (its order-statistic form for
+graded scores). The plug-in `1 - (1 - f/n)^k` would understate the risk, because the transform
+is concave. The direct interval rests on Hoeffding's decomposition of a U-statistic: each
+prompt's estimate is dominated, in moment generating function, by the mean of `floor(n/k)`
+independent [0, 1] values, so the KL/Chernoff and Hoeffding engines bound the weighted sum
+unchanged. With more rollouts per prompt the interval tightens roughly as `n/k` grows.
+
+The measure takes its own `family`, a Bonferroni family that no other output may use. Its
+budget is divided over cohorts, groups and the attempt measures sharing it, so adding one
+leaves every other interval unchanged. It uses the direct-mean independence selection: the
+rollout profile, plus profiles that partition prompts (by `prompt_id`, `question_id`,
+`task_id` or a manifest column). A profile keyed on rollout-level fields such as `epoch` is
+refused, because the measure is a property of a whole prompt. The propagated prompt envelope
+is reported as a reference. Attempt measures are not available to comparisons or judge
+correction.
 
 `coverage_mode: two_sided` is the default. It interprets the multiplicity-family alpha as the
 total error budget for the displayed lower-to-upper range and divides it equally between tails.

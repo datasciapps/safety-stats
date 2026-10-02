@@ -322,13 +322,14 @@ see [Hierarchy-aware simultaneous inference](hierarchy-simultaneous-inference.md
 ## Command-line interface
 
 ```text
-inspect-safety-stats init --logs LOGS --failure-values VALUE [--group-by FIELD] [--baseline MODEL] [--output DIR]
+inspect-safety-stats init --logs LOGS (--failure-values VALUE | --harm-scale MIN MAX) [--group-by FIELD] [--baseline MODEL] [--output DIR]
 inspect-safety-stats analyze --plan PLAN --logs LOGS --output DIRECTORY
 inspect-safety-stats validate --plan PLAN --logs LOGS
 inspect-safety-stats visualize --report REPORT_OR_DIRECTORY [--output REPORT.html]
 inspect-safety-stats plan zero-failure --threshold P --alpha A
 inspect-safety-stats plan certification --threshold P --anticipated-rate Q --alpha A --power B
 inspect-safety-stats plan detectable-rate --trials N --threshold P --alpha A --power B
+inspect-safety-stats plan comparison --baseline-rate P0 --candidate-rate P1 [--margin D] [--power B] [--targets T] [--prompts N]
 inspect-safety-stats plan judge-labels --judge-risk-upper U --target T [--cohorts K] [--rho-1 R1] [--rho-0 R0]
 inspect-safety-stats judge sample --report DIRECTORY --judge-unsafe N1 --judge-safe N0 --seed S [--output DIR]
 inspect-safety-stats migrate-plan --plan OLD --output NEW
@@ -384,6 +385,35 @@ whatever bound produced it, and returns the factor by which rollouts must grow t
 width. `judge_label_plan` returns the cheapest judge-unsafe and judge-safe label counts per cohort
 for which a validated correction would bound true risk below a target, or `None` when no number
 of labels can.
+
+```python
+from inspect_safety_stats.stats.planning import comparison_power, comparison_rollouts
+
+comparison_rollouts(candidate_rate=0.08, baseline_rate=0.05, power=0.8, endpoint_alpha=0.0125)
+comparison_power(candidate_rate=0.05, baseline_rate=0.05, rollouts_per_arm=4000,
+                 endpoint_alpha=0.0125, margin=0.02)
+```
+
+`comparison_power` is the exact probability that the two-arm KL/Chernoff rectangle
+establishes non-inferiority (`margin`) or a difference in the true direction (no margin), with
+each arm endpoint at `endpoint_alpha`; `comparison_rollouts` searches for the rollouts per arm
+that reach a target power. `plan comparison` derives `endpoint_alpha` from the family alpha,
+coverage mode and number of simultaneous targets the way the analysis does.
+
+## Risk over repeated attempts
+
+```python
+from inspect_safety_stats.stats import attempt_risk_estimate, attempt_risk_from_rate
+
+attempt_risk_estimate([1, 0, 0, 1, 0, 0, 0, 0], k=3)   # unbiased worst-of-3 from 8 rollouts
+attempt_risk_from_rate(0.05, k=3)                     # 1 - 0.95**3
+```
+
+`attempt_risk_estimate` is the unbiased U-statistic for the expected worst of `k` attempts
+(the probability of at least one failure for binary outcomes) from `n >= k` rollouts in
+[0, 1]. `inspect_safety_stats.stats.attempts.attempt_atoms` expands per-prompt estimates into
+the independent atoms that dominate them, for use with the weighted KL/Chernoff and Hoeffding
+bounds.
 
 ## Compatibility and stability
 

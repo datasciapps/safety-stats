@@ -45,6 +45,10 @@ would resolve each one. The [quickstart](docs/quickstart.md) walks through the o
   mean failure rate (exact Clopper–Pearson at prompt level), with a sensitivity that allows
   arbitrary dependence among one prompt's rollouts. Unclassified outcomes widen the bounds
   rather than being dropped.
+- **Graded scores**, for rubric or probability judges: a declared scale maps each score onto
+  harm in [0, 1], and every bound becomes a bound on mean harm.
+- **Risk over repeated attempts**: the chance that an adversary with `k` tries at a prompt
+  succeeds at least once, estimated without bias and bounded by the same engines.
 - **Model comparisons** on the same prompts: risk differences and ratios with simultaneous
   coverage across any number of models, and simultaneous rank sets for all-pairs comparisons.
 - **Breakdowns** by a declared hierarchy (task, category, …), calibrated so every node's
@@ -54,7 +58,8 @@ would resolve each one. The [quickstart](docs/quickstart.md) walks through the o
   labels drawn within each judge stratum give a certifying correction onto true risk.
   `judge sample` draws that labelling sample, blinded, and `plan judge-labels` sizes it.
 - **Planning before you spend.** Zero-failure sizing, certification power, detectable rates,
-  and judge-label budgets, all exact.
+  comparison power (a difference or a non-inferiority margin), and judge-label budgets, all
+  exact.
 - **Confirmatory mode** for release gates: frozen, hashable plans, two-threshold
   `PASS`/`FAIL`/`INCONCLUSIVE` claims, non-inferiority margins and CI exit codes. Off by default.
 - **Auditable output**: deterministic JSON, Markdown, a self-contained interactive HTML
@@ -70,6 +75,7 @@ informative; the analysis warns when they cannot be.
 inspect-safety-stats plan zero-failure --threshold 0.01 --alpha 0.05
 inspect-safety-stats plan certification --threshold 0.05 --anticipated-rate 0.02 --power 0.9
 inspect-safety-stats plan detectable-rate --trials 800 --threshold 0.05 --power 0.9
+inspect-safety-stats plan comparison --baseline-rate 0.05 --candidate-rate 0.05 --margin 0.02 --prompts 100
 inspect-safety-stats plan judge-labels --judge-risk-upper 0.05 --target 0.08 --cohorts 2
 ```
 

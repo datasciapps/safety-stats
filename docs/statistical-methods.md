@@ -749,6 +749,55 @@ No single scalar should be allowed to erase a mandatory safety requirement. The 
 
 A risk aggregate may drive `PASS` only when its weights, hierarchy level, tuning parameter, threshold, and role in the decision were predeclared. Zero-tolerance failures and mandatory group failures override aggregate passes. Post hoc selection of the most favorable aggregator or tuning parameter is a multiplicity and selective-reporting problem.
 
+#### 2.4.12 Graded outcomes
+
+A graded scorer returns a value on a declared scale rather than a verdict. The plan maps it
+linearly onto harm \(Y_{ji}\in[0,1]\), and the per-prompt estimand becomes the mean harm
+\(\mu_j=\mathbb E[Y_{ji}]\). Nothing else in the fixed-design construction changes: the
+weighted KL/Chernoff, empirical-Bernstein and Hoeffding bounds are stated for independent
+\([0,1]\)-valued blocks, and Hoeffding's convexity argument shows a Bernoulli variable with mean
+\(\mu\) dominates the moment generating function of any \([0,1]\) variable with mean \(\mu\), so
+the Bernoulli-KL inversion remains valid. At prompt level the exact Clopper--Pearson bound is
+specific to binary counts and is replaced by that inversion. Unclassified rollouts are completed
+at 0 and at 1, as before. Judge calibration corrects a binary verdict and is not defined here.
+
+#### 2.4.13 Risk over repeated attempts
+
+An adversary allowed \(k\) attempts at prompt \(j\) succeeds with probability
+\(q_j=1-(1-p_j)^k\); for graded harm the analogue is \(q_j=\mathbb E[\max(Y_{j1},\dots,Y_{jk})]\).
+The reported estimand is \(\sum_j w_j q_j\).
+
+**Estimation.** From \(n_j\ge k\) rollouts, the U-statistic with kernel \(\max\),
+
+\[
+U_j=\binom{n_j}{k}^{-1}\sum_{|S|=k}\max_{i\in S}Y_{ji}
+=\sum_{i=k}^{n_j} Y_{j(i)}\binom{i-1}{k-1}\Big/\binom{n_j}{k},
+\]
+
+is unbiased for \(q_j\); for binary outcomes with \(f_j\) failures it equals
+\(1-\binom{n_j-f_j}{k}/\binom{n_j}{k}\). The plug-in \(1-(1-f_j/n_j)^k\) is a concave function
+of an unbiased estimate and so, by Jensen's inequality, understates \(q_j\).
+
+**Bounds.** Hoeffding (1963, §5) writes \(U_j\) as the average over permutations \(\pi\) of
+\(W_j(\pi)=m_j^{-1}\sum_{b=1}^{m_j}h_{jb}(\pi)\), a mean of \(m_j=\lfloor n_j/k\rfloor\)
+independent kernel values with mean \(q_j\). Since \(\exp\) is convex,
+\(\mathbb E e^{\lambda w_jU_j}\le\mathbb E e^{\lambda w_jW_j(\pi)}\), and independence across
+prompts gives
+
+\[
+\mathbb E\exp\Bigl(\lambda\sum_j w_jU_j\Bigr)\le
+\prod_j\prod_{b=1}^{m_j}\mathbb E\exp\bigl(\lambda (w_j/m_j)\,h_{jb}\bigr).
+\]
+
+The weighted sum of U-statistics is therefore dominated, in moment generating function, by a
+weighted sum of independent \([0,1]\) atoms with weights \(w_j/m_j\). Every Chernoff bound that
+depends only on those weights and the observed mean holds for it, which covers the weighted
+KL/Chernoff kernels (equal atomic weights or the Poisson--Chernoff fallback) and Hoeffding. The
+empirical-Bernstein bound would need the unobserved atoms and is not used. Under a profile
+whose blocks are whole prompts, the \(U_j\) are themselves independent bounded observations and
+are aggregated into blocks directly. Each attempt measure is calibrated in its own Bonferroni
+family.
+
 ### 2.5 Failure probability over a population of scenarios — deferred
 
 Benchmark items are treated as a sample from a broader scenario population \(\mathcal P\):
