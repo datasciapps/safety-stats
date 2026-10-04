@@ -151,13 +151,13 @@ def _markdown(report: SafetyReport) -> str:
             "",
             (
                 "Ranges are finite-sample confidence bounds, not standard errors or bootstrap "
-                "intervals. Weighted means may use direct weighted Hoeffding or variance-adaptive "
-                "empirical-Bernstein intervals. Rollout-level intervals assume independent "
-                "attempted rollouts; prompt-cluster sensitivities allow arbitrary dependence "
-                "within a prompt. Other "
-                "measures use propagated simultaneous exact prompt bounds, which do not require "
-                "independence between prompts. Coverage is the conservative floor stated for "
-                "each method. "
+                "intervals. Weighted means use direct weighted KL/Chernoff, empirical-Bernstein "
+                "or Hoeffding intervals, as declared. Rollout-level intervals assume independent "
+                "attempted rollouts; prompt-level sensitivities allow arbitrary dependence "
+                "within a prompt. Worst-of-k attempt measures bound an unbiased U-statistic "
+                "through Hoeffding's decomposition, in their own family. Other measures use "
+                "propagated simultaneous prompt bounds, which do not require independence "
+                "between prompts. Coverage is the conservative floor stated for each method. "
                 "Where outcomes are unclassified, reported missingness-robust bounds cover "
                 "both the all-safe and all-failure completions."
             ),

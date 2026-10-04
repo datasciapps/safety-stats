@@ -352,7 +352,7 @@
           <select id="sort-select">
             <option value="upper-desc">Upper bound, high first</option>
             <option value="estimate-desc">Estimate, high first</option>
-            <option value="failures-desc">Failures, high first</option>
+            <option value="failures-desc">Failures (rollouts with harm), high first</option>
             <option value="id-asc">Prompt identifier</option>
           </select>
         </div>
@@ -384,6 +384,18 @@
     const report = payload.report || {};
     const designRows = Array.isArray(payload.resolved_design) ? payload.resolved_design : [];
     const plan = payload.resolved_plan || {};
+    const graded = Boolean(plan.inputs?.score?.mapping?.scale);
+    const measureSpecs = new Map((plan.outputs?.risk_measures || []).map(spec => [String(spec.id), spec]));
+    function measureLabel(id) {
+      const spec = measureSpecs.get(String(id)) || {};
+      if (spec.type === "weighted_mean") return `${graded ? "Mean harm" : "Failure rate"} (${id})`;
+      if (spec.type === "k_attempt_risk") {
+        return graded
+          ? `Expected worst of ${spec.k} attempts (${id})`
+          : `Failure within ${spec.k} attempts (${id})`;
+      }
+      return humanize(id);
+    }
     const estimates = Array.isArray(report.prompt_estimates) ? report.prompt_estimates : [];
     const risks = Array.isArray(report.group_risks) ? report.group_risks : [];
     const hierarchyRisks = Array.isArray(report.hierarchy_risks) ? report.hierarchy_risks : [];
@@ -463,13 +475,25 @@
       const lower = row.lower_one_sided_coverage;
       const upper = row.upper_one_sided_coverage;
       const directional = lower === null || lower === undefined ? upper : upper === null || upper === undefined ? lower : Math.min(lower, upper);
-      const method = humanize(row.interval_method || "propagated exact prompt bounds");
-      let construction = "Propagated exact prompt envelope; does not require independence between prompts.";
-      if (row.interval_method === "weighted_hoeffding") {
+      const methodName = row.interval_method || row.method || "propagated_exact_prompt_bounds";
+      const method = ({
+        weighted_kl_chernoff: "Weighted KL/Chernoff",
+        weighted_empirical_bernstein: "Weighted empirical Bernstein",
+        weighted_hoeffding: "Weighted Hoeffding",
+        propagated_exact_prompt_bounds: "Propagated prompt bounds"
+      })[methodName] || humanize(methodName);
+      let construction = "Propagated simultaneous prompt envelope; does not require independence between prompts.";
+      if (methodName === "weighted_hoeffding") {
         construction = "Direct weighted Hoeffding bound; assumes independent attempted rollouts across the complete design.";
-      } else if (row.interval_method === "weighted_empirical_bernstein") {
+      } else if (methodName === "weighted_empirical_bernstein") {
         construction = "Direct variance-adaptive empirical-Bernstein bound; assumes independent attempted rollouts across the complete design.";
+      } else if (methodName === "weighted_kl_chernoff") {
+        construction = "Direct weighted KL/Chernoff bound; assumes independent attempted rollouts across the complete design.";
       }
+      if (String(row.coverage_scope || "").includes("k_attempt")) {
+        construction = `Unbiased worst-of-k U-statistic per prompt, bounded through Hoeffding's U-statistic decomposition in its own Bonferroni family. ${construction}`;
+      }
+      if (graded) construction += " Outcomes are graded harm on a 0–100% scale.";
       return `${pct(row.simultaneous_coverage)} simultaneous two-sided coverage floor · ${pct(directional)} coverage in each direction · ${method}. ${construction} Not a standard error.`;
     }
     function setOptions(select, values, selected, labels) {
@@ -521,7 +545,7 @@
       integrity.textContent = `Integrity: ${report.integrity?.status || "—"}`;
       integrity.className = `badge ${report.integrity?.status === "valid" ? "pass" : report.integrity?.status === "degraded" ? "degraded" : "error"}`;
       setOptions(document.getElementById("cohort-select"), cohorts, state.cohort);
-      setOptions(document.getElementById("measure-select"), measures, state.measure);
+      setOptions(document.getElementById("measure-select"), measures, state.measure, measureLabel);
       const independenceSelect = document.getElementById("independence-select");
       independenceSelect.parentElement.hidden = !independenceProfiles.length;
       setOptions(independenceSelect, independenceProfiles, state.independenceProfile);
@@ -533,10 +557,13 @@
       const failures = cohortPrompts.reduce((sum, d) => sum + (Number(d.n_failure) || 0), 0);
       const valid = cohortPrompts.reduce((sum, d) => sum + (Number(d.n_valid) || 0), 0);
       const unclassified = cohortPrompts.reduce((sum, d) => sum + (Number(d.n_unclassified) || 0), 0);
+      const harmTotal = cohortPrompts.reduce((sum, d) => sum + (Number(d.p_hat) || 0) * (Number(d.n_valid) || 0), 0);
       root.append(
         makeMetric("Fixed prompts", String(cohortPrompts.length), `${groups.length} declared groups`),
         makeMetric("Classified rollouts", String(valid), `${unclassified} unclassified`),
-        makeMetric("Observed failures", String(failures), `${pct(valid ? failures / valid : null)} of classified rollouts`),
+        graded
+          ? makeMetric("Rollouts with harm", String(failures), `mean harm ${pct(valid ? harmTotal / valid : null)} of classified rollouts`)
+          : makeMetric("Observed failures", String(failures), `${pct(valid ? failures / valid : null)} of classified rollouts`),
         makeMetric("Unclassified outcomes", String(unclassified), unclassified ? "Included in robust bounds" : "None")
       );
     }
@@ -614,7 +641,7 @@
     }
     function renderRisk() {
       const rows = selectedRiskRows();
-      document.getElementById("risk-note").textContent = `${humanize(state.measure)} · ${humanize(state.cohort)}`;
+      document.getElementById("risk-note").textContent = `${measureLabel(state.measure)} · ${humanize(state.cohort)}`;
       const coverageRow = selectedInterval(rows[0]) || (hasProfileIntervals(rows[0]) ? null : rows[0]);
       document.getElementById("risk-coverage").textContent = coverageSummary(coverageRow);
       const root = document.getElementById("risk-chart"); clear(root);
@@ -1010,12 +1037,12 @@
       const failures = rows.reduce((sum, d) => sum + (Number(d.n_failure) || 0), 0);
       const valid = rows.reduce((sum, d) => sum + (Number(d.n_valid) || 0), 0);
       const unclassified = rows.reduce((sum, d) => sum + (Number(d.n_unclassified) || 0), 0);
-      document.getElementById("explorer-summary").textContent = `${rows.length} prompts · ${failures} failures across ${valid} classified rollouts · ${unclassified} unclassified`;
+      document.getElementById("explorer-summary").textContent = `${rows.length} prompts · ${failures} ${graded ? "rollouts with harm" : "failures"} across ${valid} classified rollouts · ${unclassified} unclassified`;
       if (!rows.length) { root.append(el("p", "empty", "No prompts match the current hierarchy and search filters.")); renderPagination(0); renderSelected(); return; }
       const maxPage = Math.max(0, Math.ceil(rows.length / state.pageSize) - 1); state.page = Math.min(state.page, maxPage);
       const pageRows = rows.slice(state.page * state.pageSize, (state.page + 1) * state.pageSize);
       const table = el("table", "data-table"); const head = document.createElement("thead"); const hr = document.createElement("tr");
-      ["Prompt", "Question", "Failures", "Valid", "Estimate", "Exact bounds", "Bound status"].forEach((v, i) => hr.append(el("th", i >= 2 && i <= 4 ? "num" : "", v))); head.append(hr); table.append(head);
+      ["Prompt", "Question", graded ? "With harm" : "Failures", "Valid", graded ? "Mean harm" : "Estimate", graded ? "Bounds" : "Exact bounds", "Bound status"].forEach((v, i) => hr.append(el("th", i >= 2 && i <= 4 ? "num" : "", v))); head.append(hr); table.append(head);
       const body = document.createElement("tbody"); const map = designForSelection();
       pageRows.forEach(row => {
         const item = map.get(String(row.prompt_id)) || row; const tr = document.createElement("tr"); tr.className = `prompt-row${state.selectedPrompt === String(row.prompt_id) ? " selected" : ""}`;
@@ -1047,8 +1074,8 @@
       const grid = el("div", "detail-grid");
       grid.append(
         makeMetric("Estimate", pct(row.p_hat), `Method: ${row.method || "—"}`),
-        makeMetric("Exact prompt bounds", `${pct(row.lower)}–${pct(row.upper)}`, `One-sided endpoint α: lower ${fmt(row.alpha_lower, 6)} · upper ${fmt(row.alpha_upper, 6)}`),
-        makeMetric("Outcomes", `${row.n_failure} fail / ${row.n_safe} safe`, `${row.n_valid} classified · ${row.n_unclassified || 0} unclassified`),
+        makeMetric(graded ? "Prompt bounds" : "Exact prompt bounds", `${pct(row.lower)}–${pct(row.upper)}`, `One-sided endpoint α: lower ${fmt(row.alpha_lower, 6)} · upper ${fmt(row.alpha_upper, 6)}`),
+        makeMetric("Outcomes", graded ? `${row.n_failure} with harm / ${row.n_safe} harmless` : `${row.n_failure} fail / ${row.n_safe} safe`, `${row.n_valid} classified · ${row.n_unclassified || 0} unclassified`),
         makeMetric("Design weight", item.weight === null || item.weight === undefined ? "—" : pct(Number(item.weight), 2), `Bound status: ${boundStatus(row.eligibility)}`)
       ); card.append(grid);
       const events = showDecisions
