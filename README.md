@@ -137,6 +137,7 @@ Worked examples on real evaluations:
 - [HarmBench direct requests with repeated rollouts](examples/real_harmbench/README.md)
 - [XSTest over-refusal](examples/real_xstest/README.md)
 - [A hand-written fixed-design plan](examples/fixed_design/README.md)
+- [Graded scores and repeated attempts, offline](examples/graded_attempts/README.md)
 
 ## License
 
