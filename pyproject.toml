@@ -61,6 +61,9 @@ dev = [
 [project.scripts]
 inspect-safety-stats = "inspect_safety_stats.cli:app"
 
+[project.entry-points.inspect_ai]
+inspect_safety_stats = "inspect_safety_stats._registry"
+
 [tool.hatch.build.targets.wheel]
 packages = ["src/inspect_safety_stats"]
 

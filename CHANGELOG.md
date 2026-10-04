@@ -43,6 +43,14 @@ Inspect logs and makes the common path short: `init`, `analyze`, read one page.
 - [Confirmatory mode](docs/confirmatory-mode.md) documents claims, decisions, plan freezing
   and exit codes in one place.
 
+- `inspect-safety-stats tradeoff` combines a harmful-compliance report and an over-refusal
+  report: rates per model, declared differences per pair with a plain reading (better on both,
+  worse on both, or the trade-off), union-bound joint coverage, and Markdown, JSON and HTML
+  output.
+- Inspect metrics `failure_rate`, `failure_rate_lower` and `failure_rate_upper`
+  (`inspect_safety_stats.metrics`), registered through an `inspect_ai` entry point: the
+  estimate and two-sided weighted KL/Chernoff interval from every epoch's score, with an
+  explicit score mapping.
 - A tag-triggered release workflow publishes to PyPI with trusted publishing; see
   `RELEASING.md`.
 

@@ -90,6 +90,24 @@ grade is the worse outcome). Every rate in the report is then a mean harm on a 0
 To report the chance that an adversary with several tries at each prompt succeeds, add a
 `k_attempt_risk` measure to the plan; see the [plan reference](plan-reference.md#risk-over-repeated-attempts).
 
+## A quick view inside Inspect
+
+To see the failure rate and its interval in the eval log as you iterate, add the
+[Inspect metrics](inspect-metrics.md) `failure_rate`, `failure_rate_lower` and
+`failure_rate_upper` to the task. They cover one model on one task; use `analyze` for anything
+you will act on.
+
+## Harm and over-refusal together
+
+Analyze a harmful-compliance evaluation and an over-refusal evaluation (refusals of benign
+prompts as the failure) separately, then put them side by side:
+
+```bash
+inspect-safety-stats tradeoff --harm harm/report/ --over-refusal refusal/report/
+```
+
+See [Harm and over-refusal in one report](harm-and-over-refusal.md).
+
 ## When an LLM judge scores the outcomes
 
 Every interval above bounds how often the **judge reports** a failure. To bound the true rate,

@@ -325,6 +325,7 @@ see [Hierarchy-aware simultaneous inference](hierarchy-simultaneous-inference.md
 inspect-safety-stats init --logs LOGS (--failure-values VALUE | --harm-scale MIN MAX) [--group-by FIELD] [--baseline MODEL] [--output DIR]
 inspect-safety-stats analyze --plan PLAN --logs LOGS --output DIRECTORY
 inspect-safety-stats validate --plan PLAN --logs LOGS
+inspect-safety-stats tradeoff --harm REPORT_DIR --over-refusal REPORT_DIR [--output DIR] [--harm-group G] [--refusal-group G] [--measure M]
 inspect-safety-stats visualize --report REPORT_OR_DIRECTORY [--output REPORT.html]
 inspect-safety-stats plan zero-failure --threshold P --alpha A
 inspect-safety-stats plan certification --threshold P --anticipated-rate Q --alpha A --power B
@@ -362,6 +363,35 @@ sample = draw_label_sample("report/", "labels/", judge_unsafe=40, judge_safe=200
 `scaffold_plan` is the function behind `init` and returns the paths it wrote, the cohorts and
 the resolved score mapping. `draw_label_sample` is the function behind `judge sample`; it writes
 a blinded, shuffled `labels.csv` and a `labels.sampling.json` audit record.
+
+## Inspect metrics
+
+```python
+from inspect_safety_stats.metrics import failure_rate, failure_rate_lower, failure_rate_upper, rate_bounds
+
+Task(..., metrics=[failure_rate_upper(failure_values=["I"], alpha=0.05)])
+```
+
+`failure_rate`, `failure_rate_lower` and `failure_rate_upper` are Inspect metrics, registered as
+`inspect_safety_stats/<name>`, that receive unreduced scores and report the estimate and the
+two-sided weighted KL/Chernoff interval. Each takes `failure_values` (with optional
+`safe_values`) or `harm_scale` (with `lower_is_harmful`), and optionally `key` and `alpha`.
+`rate_bounds(scores, ...)` returns all three, with sample, rollout and unclassified counts, from
+a list of `SampleScore`. See [Bounds as Inspect metrics](inspect-metrics.md).
+
+## Harm and over-refusal
+
+```python
+from inspect_safety_stats.tradeoff import combine_tradeoff, write_tradeoff
+
+result = combine_tradeoff("harm/report/", "refusal/report/")
+write_tradeoff(result, "tradeoff/")
+```
+
+`combine_tradeoff` reads two finished reports and returns, for every model in both, its rate and
+interval on each, the declared differences for each pair, a plain reading, and union-bound
+coverage. `write_tradeoff` writes `tradeoff.md`, `tradeoff.json` and `tradeoff.html`. See
+[Harm and over-refusal in one report](harm-and-over-refusal.md).
 
 ## Precision and labelling budgets
 

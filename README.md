@@ -51,6 +51,8 @@ would resolve each one. The [quickstart](docs/quickstart.md) walks through the o
   succeeds at least once, estimated without bias and bounded by the same engines.
 - **Model comparisons** on the same prompts: risk differences and ratios with simultaneous
   coverage across any number of models, and simultaneous rank sets for all-pairs comparisons.
+- **Harm and over-refusal together**: `tradeoff` puts a harmful-compliance report beside an
+  over-refusal report, per model and per comparison, with one joint coverage statement.
 - **Breakdowns** by a declared hierarchy (task, category, …), calibrated so every node's
   interval holds simultaneously and parent and child intervals stay consistent.
 - **Judge-error correction.** Every bound on judge-scored outcomes is a bound on how often the
@@ -62,6 +64,8 @@ would resolve each one. The [quickstart](docs/quickstart.md) walks through the o
   exact.
 - **Confirmatory mode** for release gates: frozen, hashable plans, two-threshold
   `PASS`/`FAIL`/`INCONCLUSIVE` claims, non-inferiority margins and CI exit codes. Off by default.
+- **Inspect metrics**: `failure_rate`, `failure_rate_lower` and `failure_rate_upper` put the
+  same interval in the eval log while you iterate.
 - **Auditable output**: deterministic JSON, Markdown, a self-contained interactive HTML
   explorer, CSVs and checksums.
 
@@ -124,6 +128,8 @@ Every report states its scope:
 - [Analysis plan reference](docs/plan-reference.md)
 - [Python and command-line API reference](docs/api-reference.md)
 - [Model and configuration comparisons](docs/model-comparisons.md)
+- [Harm and over-refusal in one report](docs/harm-and-over-refusal.md)
+- [Bounds as Inspect metrics](docs/inspect-metrics.md)
 - [Configuring hierarchy and independence](docs/independence-profiles.md)
 - [Hierarchy-aware simultaneous inference](docs/hierarchy-simultaneous-inference.md)
 - [Statistical methods and justification](docs/statistical-methods.md)
