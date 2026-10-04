@@ -73,3 +73,38 @@ def write_mock_logs(
     )
     assert all(log.status == "success" for log in logs)
     return directory
+
+
+@scorer(metrics=[accuracy()])
+def profile_scorer(failing: dict[str, frozenset[str]]):  # type: ignore[no-untyped-def]
+    """FAIL on the prompts listed for the model being evaluated, on every epoch."""
+
+    async def score(state: TaskState, target: Target) -> Score:
+        listed = failing.get(str(state.model), frozenset())
+        return Score(value="FAIL" if str(state.sample_id) in listed else "PASS")
+
+    return score
+
+
+def write_profile_logs(
+    directory: Path,
+    failing: dict[str, frozenset[str]],
+    *,
+    prompts: int = 10,
+    epochs: int = 20,
+    name: str = "profile_task",
+) -> Path:
+    """Logs where each model fails exactly the prompts listed for it, on every epoch."""
+
+    directory.mkdir(parents=True, exist_ok=True)
+    task = Task(
+        name=name,
+        dataset=[Sample(input=f"q{index}", id=f"p{index}") for index in range(prompts)],
+        solver=generate(),
+        scorer=profile_scorer(failing),
+    )
+    logs = inspect_eval(
+        [task], model=sorted(failing), epochs=epochs, log_dir=str(directory), display="none"
+    )
+    assert all(log.status == "success" for log in logs)
+    return directory

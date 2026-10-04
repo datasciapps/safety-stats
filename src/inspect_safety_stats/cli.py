@@ -27,6 +27,7 @@ from inspect_safety_stats.stats.planning import (
     minimum_detectable_failure_rate,
     zero_failure_sample_size,
 )
+from inspect_safety_stats.tradeoff import combine_tradeoff, write_tradeoff
 from inspect_safety_stats.version import __version__
 
 app = typer.Typer(help="Fixed-design statistical risk analysis for Inspect AI evaluations.")
@@ -563,6 +564,50 @@ def hash_plan_command(
     """Print a plan's canonical SHA-256, for registering a frozen plan."""
 
     typer.echo(canonical_plan_hash(load_plan(plan)))
+
+
+@app.command("tradeoff")
+def tradeoff_command(
+    harm: Annotated[
+        Path, typer.Option("--harm", exists=True, help="Report directory for harmful compliance.")
+    ],
+    over_refusal: Annotated[
+        Path,
+        typer.Option("--over-refusal", exists=True, help="Report directory for over-refusal."),
+    ],
+    output: Annotated[Path, typer.Option("--output", file_okay=False)] = Path("tradeoff"),
+    harm_group: Annotated[str | None, typer.Option("--harm-group")] = None,
+    refusal_group: Annotated[str | None, typer.Option("--refusal-group")] = None,
+    measure: Annotated[str | None, typer.Option("--measure")] = None,
+    overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
+) -> None:
+    """Report harmful compliance and over-refusal side by side, from two analyses."""
+
+    try:
+        result = combine_tradeoff(
+            harm,
+            over_refusal,
+            harm_group=harm_group,
+            refusal_group=refusal_group,
+            measure=measure,
+        )
+        directory = write_tradeoff(result, output, overwrite=overwrite)
+    except Exception as exc:
+        typer.echo(f"Trade-off failed: {exc}", err=True)
+        raise typer.Exit(code=3) from exc
+    for row in result.models:
+        harm_text = (
+            "—" if row.harm.estimate is None else f"{100 * row.harm.estimate:.1f}%"
+        )
+        refusal_text = (
+            "—" if row.over_refusal.estimate is None else f"{100 * row.over_refusal.estimate:.1f}%"
+        )
+        typer.echo(f"  {row.model}: harm {harm_text}, over-refusal {refusal_text}")
+    for pair in result.pairs:
+        typer.echo(f"  {pair.candidate} vs {pair.baseline}: {pair.reading}")
+    for note in result.notes:
+        typer.echo(f"Note: {note}")
+    typer.echo(f"Trade-off report: {directory / 'tradeoff.md'}")
 
 
 @app.command("migrate-plan")
