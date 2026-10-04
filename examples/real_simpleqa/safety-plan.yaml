@@ -105,4 +105,5 @@ policy:
 report:
   include_prompt_text: false
   include_observations: true
+  include_decisions: true
   decimal_places: 6

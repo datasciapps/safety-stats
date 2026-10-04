@@ -13,7 +13,7 @@ workflow; factual-question accuracy is not itself a deployment-safety claim.
 - `simpleqa-8-real.eval`: derived eight-sample Inspect log;
 - `design.csv`: fixed creator-declared hierarchy and rollout requirements;
 - `safety-plan.yaml`: score mapping, risk measures, multiplicity, and decision thresholds;
-- `report/`: the generated report and audit sidecars;
+- `report/`: written by the command below (not tracked in the repository);
 - `make_subset.py`: reproducible extraction from the original completed log.
 
 ## Run it
@@ -35,24 +35,27 @@ inspect-safety-stats analyze \
 
 ## What happened
 
-The observed plug-in mean is 0.5: four failures among eight equally weighted fixed items. That is
-descriptively concerning, but each item has only one stochastic rollout. The plan allocates the
-0.05 one-sided family error budget over all eight prompt endpoints, giving per-item alpha
-`0.00625`.
+The observed mean is 0.5: four failures among eight equally weighted fixed items. That is
+descriptively concerning, but each item has only one stochastic rollout. The prompt-bound family
+spends its 0.05 budget two-sided over all eight prompts, giving each endpoint alpha `0.003125`.
 
 With one rollout per item:
 
-- a zero-failure item has an exact upper bound of `0.99375`;
-- a one-failure item has an exact lower bound of `0.00625` and upper bound `1`.
+- a zero-failure item has an exact upper bound of `0.996875`;
+- a one-failure item has an exact lower bound of `0.003125` and upper bound `1`.
 
-After monotone propagation through the equal-weight mean, the report gives approximately:
+The report gives (version 0.16.0):
 
-| Quantity | Estimate | Lower | Upper |
-|---|---:|---:|---:|
-| Mean failure risk | 0.500000 | 0.003125 | 0.996875 |
-| CVaR, worst 25% | 1.000000 | 0.006250 | 1.000000 |
-| Entropic risk, lambda 5 | 0.862714 | 0.005005 | 0.996880 |
-| Worst item | 1.000000 | 0.006250 | 1.000000 |
+| Quantity | Estimate | Lower | Upper | Construction |
+|---|---:|---:|---:|---|
+| Mean failure risk | 0.500000 | 0.092069 | 0.907931 | direct weighted KL/Chernoff (primary) |
+| Mean failure risk | 0.500000 | 0.001563 | 0.998437 | propagated prompt envelope (reference) |
+| CVaR, worst 25% | 1.000000 | 0.003125 | 1.000000 | propagated prompt envelope |
+| Entropic risk, lambda 5 | 0.862714 | 0.001569 | 0.998444 | propagated prompt envelope |
+| Worst item | 1.000000 | 0.003125 | 1.000000 | propagated prompt envelope |
+
+The direct interval treats the eight rollouts as independent and is much tighter than the
+envelope, which needs no independence between prompts. Even so, it spans most of [0, 1].
 
 The mandatory mean-risk claim declares:
 
@@ -67,7 +70,7 @@ justify generalization to unseen questions.
 
 ## Read the outputs
 
-Start with `report/report.md` for the human-readable decision. Use `report/report.json` for every
-numeric result and eligibility label. `observations.csv` gives one auditable row per rollout,
+Start with `report/report.md`, the one-page summary with the decision, and `report/report-full.md`
+for every construction. Use `report/report.json` for every numeric result and eligibility label. `observations.csv` gives one auditable row per rollout,
 `design.resolved.csv` records the effective policy weights, and `checksums.json` protects the
 generated artifact set against unnoticed edits.

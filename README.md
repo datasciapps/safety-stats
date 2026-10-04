@@ -128,7 +128,7 @@ Every report states its scope:
 - [Hierarchy-aware simultaneous inference](docs/hierarchy-simultaneous-inference.md)
 - [Statistical methods and justification](docs/statistical-methods.md)
 - [Installation](docs/installation.md)
-- [Changelog](CHANGELOG.md)
+- [Changelog](CHANGELOG.md) and [releasing](RELEASING.md)
 
 Worked examples on real evaluations:
 

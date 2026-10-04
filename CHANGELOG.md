@@ -43,6 +43,9 @@ Inspect logs and makes the common path short: `init`, `analyze`, read one page.
 - [Confirmatory mode](docs/confirmatory-mode.md) documents claims, decisions, plan freezing
   and exit codes in one place.
 
+- A tag-triggered release workflow publishes to PyPI with trusted publishing; see
+  `RELEASING.md`.
+
 ### Changed
 
 - `comparison_sets` accept two cohorts, so a single candidate-versus-baseline comparison no
@@ -52,6 +55,9 @@ Inspect logs and makes the common path short: `init`, `analyze`, read one page.
   relied on the empirical-Bernstein default should name it.
 - A plan declaring `schema_version: "1.0"` is refused with a pointer to `migrate-plan`; an
   unknown version is refused outright. An unquoted `schema_version: 2.0` is accepted.
+- The SimpleQA and XSTest examples no longer track generated reports, which had gone stale;
+  their READMEs quote the current numbers and say how to regenerate the reports, and both plans
+  now show their decisions.
 - Canonical plan hashes change in this release, because plan defaults changed and fields were
   removed. Re-hash and re-register frozen plans.
 

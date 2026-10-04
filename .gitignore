@@ -27,3 +27,8 @@ logs/
 # prompt store, eval logs and reports. None of it belongs in version control.
 run/
 .inspect-trace.log.gz
+
+# Generated example reports (regenerate with the commands in each README)
+examples/real_simpleqa/report/
+examples/real_xstest/report-current/
+examples/real_xstest/report/
