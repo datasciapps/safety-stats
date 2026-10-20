@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -44,6 +45,63 @@ class BoundedBlocks:
         return len(self.block_ids)
 
 
+@dataclass(frozen=True)
+class BlockIndex:
+    """Where each (cohort, prompt) sits among the observations, and manifest values by prompt.
+
+    An analysis forms blocks for every hierarchy node, profile and comparison. Building this
+    once spares each of those calls a scan of every observation and a manifest reindex.
+    """
+
+    observations: Sequence[Observation]
+    manifest: pd.DataFrame
+    positions: Mapping[tuple[str, str], tuple[int, ...]]
+    manifest_values: Mapping[str, Mapping[str, Any]]
+
+    def rows(self, cohorts: set[str], prompts: Mapping[str, Any]) -> list[Observation]:
+        """Observations of the given cohorts and prompts, in their original order.
+
+        ORDER MATTERS: block masses are float sums accumulated in this order, and blocks
+        whose keys serialize alike keep it through a stable sort. Returning the rows in any
+        other order would change the last bits of the bounds.
+        """
+        positions = sorted(
+            position
+            for cohort in cohorts
+            for prompt in prompts
+            for position in self.positions.get((cohort, prompt), ())
+        )
+        return [self.observations[position] for position in positions]
+
+
+def block_index(observations: Sequence[Observation], manifest: pd.DataFrame) -> BlockIndex:
+    positions: dict[tuple[str, str], list[int]] = {}
+    for position, row in enumerate(observations):
+        positions.setdefault((row.cohort_id, row.prompt_id), []).append(position)
+    indexed = manifest.set_index("prompt_id", drop=False)
+    # to_numpy() yields the same scalar types as DataFrame.at, which block keys used before:
+    # numpy scalars for numeric and boolean columns, the stored objects otherwise.
+    columns = {str(column): indexed[column].to_numpy() for column in indexed.columns}
+    manifest_values = {
+        str(prompt_id): {column: values[row] for column, values in columns.items()}
+        for row, prompt_id in enumerate(indexed.index)
+    }
+    return BlockIndex(
+        observations=observations,
+        manifest=manifest,
+        positions={key: tuple(value) for key, value in positions.items()},
+        manifest_values=manifest_values,
+    )
+
+
+def _current_index(
+    index: BlockIndex | None, observations: Sequence[Observation], manifest: pd.DataFrame
+) -> BlockIndex:
+    if index is not None and index.observations is observations and index.manifest is manifest:
+        return index
+    return block_index(observations, manifest)
+
+
 def validate_profile_fields(
     profiles: dict[str, IndependenceProfileSpec], manifest: pd.DataFrame
 ) -> None:
@@ -75,24 +133,24 @@ def validate_profile_fields(
 def _value(
     observation: Observation,
     field: str,
-    manifest_by_prompt: pd.DataFrame,
+    manifest_values: Mapping[str, Mapping[str, Any]],
 ) -> Any:
     if field in _BLOCK_OBSERVATION_FIELDS:
         return getattr(observation, field)
-    return manifest_by_prompt.at[observation.prompt_id, field]
+    return manifest_values[observation.prompt_id][field]
 
 
 def block_key(
     observation: Observation,
     profile: IndependenceProfileSpec,
-    manifest_by_prompt: pd.DataFrame,
+    manifest_values: Mapping[str, Mapping[str, Any]],
     *,
     comparison: bool,
 ) -> tuple[Any, ...]:
     if profile.block_by == ["rollout"]:
         key: tuple[Any, ...] = (observation.observation_id,)
     else:
-        key = tuple(_value(observation, field, manifest_by_prompt) for field in profile.block_by)
+        key = tuple(_value(observation, field, manifest_values) for field in profile.block_by)
     if comparison and profile.comparison_coupling == "independent":
         return (observation.cohort_id, *key)
     return key
@@ -110,8 +168,13 @@ def direct_bounded_blocks(
     cohort_id: str,
     prompt_ids: tuple[str, ...] | list[str],
     prompt_weights: np.ndarray,
+    index: BlockIndex | None = None,
 ) -> BoundedBlocks:
-    """Aggregate rollout contributions according to a declared block partition."""
+    """Aggregate rollout contributions according to a declared block partition.
+
+    Pass an ``index`` built by :func:`block_index` from the same observations and manifest
+    to avoid rebuilding it on every call.
+    """
 
     prompt_list = list(prompt_ids)
     if len(set(prompt_list)) != len(prompt_list):
@@ -126,11 +189,8 @@ def direct_bounded_blocks(
     ):
         raise ValueError("prompt weights must be nonnegative, finite, and sum to one")
     weights_by_prompt = dict(zip(prompt_list, prompt_weight_array, strict=True))
-    selected = [
-        row
-        for row in observations
-        if row.cohort_id == cohort_id and row.prompt_id in weights_by_prompt
-    ]
+    index = _current_index(index, observations, manifest)
+    selected = index.rows({cohort_id}, weights_by_prompt)
     counts: dict[str, int] = {}
     for row in selected:
         counts[row.prompt_id] = counts.get(row.prompt_id, 0) + 1
@@ -139,13 +199,12 @@ def direct_bounded_blocks(
         raise ValueError(
             f"independence blocks cannot be formed; prompts have no rows: {missing[:5]}"
         )
-    manifest_by_prompt = manifest.set_index("prompt_id", drop=False)
     accumulators: dict[tuple[Any, ...], list[float]] = {}
     for row in selected:
         coefficient = weights_by_prompt[row.prompt_id] / counts[row.prompt_id]
         if coefficient == 0:
             continue
-        key = block_key(row, profile, manifest_by_prompt, comparison=False)
+        key = block_key(row, profile, index.manifest_values, comparison=False)
         values = accumulators.setdefault(key, [0.0, 0.0, 0.0])
         values[0] += coefficient
         if row.failure is True:
@@ -175,6 +234,7 @@ def comparison_contrast_blocks(
     baseline: str,
     prompt_ids: tuple[str, ...] | list[str],
     prompt_weights: np.ndarray,
+    index: BlockIndex | None = None,
 ) -> BoundedBlocks:
     """Encode Q=(1+candidate-baseline)/2 using declared cross-arm blocks."""
 
@@ -191,11 +251,8 @@ def comparison_contrast_blocks(
     ):
         raise ValueError("prompt weights must be nonnegative, finite, and sum to one")
     weights_by_prompt = dict(zip(prompt_list, prompt_weight_array, strict=True))
-    selected = [
-        row
-        for row in observations
-        if row.cohort_id in {candidate, baseline} and row.prompt_id in weights_by_prompt
-    ]
+    index = _current_index(index, observations, manifest)
+    selected = index.rows({candidate, baseline}, weights_by_prompt)
     counts: dict[tuple[str, str], int] = {}
     for row in selected:
         key = (row.cohort_id, row.prompt_id)
@@ -208,14 +265,13 @@ def comparison_contrast_blocks(
     ]
     if missing:
         raise ValueError(f"comparison blocks cannot be formed; missing rows: {missing[:5]}")
-    manifest_by_prompt = manifest.set_index("prompt_id", drop=False)
     # Each accumulator is candidate mass/lower/upper followed by baseline mass/lower/upper.
     accumulators: dict[tuple[Any, ...], list[float]] = {}
     for row in selected:
         coefficient = weights_by_prompt[row.prompt_id] / counts[(row.cohort_id, row.prompt_id)]
         if coefficient == 0:
             continue
-        key = block_key(row, profile, manifest_by_prompt, comparison=True)
+        key = block_key(row, profile, index.manifest_values, comparison=True)
         values = accumulators.setdefault(key, [0.0] * 6)
         offset = 0 if row.cohort_id == candidate else 3
         values[offset] += coefficient

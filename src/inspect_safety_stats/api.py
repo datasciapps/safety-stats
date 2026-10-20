@@ -71,7 +71,9 @@ from inspect_safety_stats.stats.hierarchy_region import (
     project_two_arm_difference_hierarchy_confidence_region,
 )
 from inspect_safety_stats.stats.independence import (
+    BlockIndex,
     BoundedBlocks,
+    block_index,
     comparison_contrast_blocks,
     direct_bounded_blocks,
     validate_profile_fields,
@@ -209,6 +211,13 @@ def _alpha_by_prompt(
         }
     endpoint_alpha = bonferroni_allocate(directional_alpha, len(prompts) * cohort_count)[0]
     return {prompt: endpoint_alpha for prompt in prompts}
+
+
+def _block_index(data: NormalizedData) -> BlockIndex:
+    """The block index for this analysis's observations, built on first use."""
+    if data.block_index is None:
+        data.block_index = block_index(data.observations, data.manifest)
+    return data.block_index
 
 
 def _prompt_blocked(diagnostics: list[Diagnostic], cohort: str, prompt: str) -> bool:
@@ -665,6 +674,7 @@ def _direct_mean_context(
                                 cohort_id=cohort_id,
                                 prompt_ids=prompt_ids,
                                 prompt_weights=weights,
+                                index=_block_index(data),
                             ).block_ids
                         )
                     overlaps = any(
@@ -1054,6 +1064,7 @@ def _direct_intervals(
             cohort_id=cohort_id,
             prompt_ids=prompt_ids,
             prompt_weights=weights,
+            index=_block_index(data),
         )
         calibration = calibrations[_calibration_key(cohort_id, target_id, profile_id)]
         for method in methods:
@@ -2380,6 +2391,7 @@ def _comparison_independent_frontiers(
                 baseline=spec.baseline,
                 prompt_ids=target.prompt_ids,
                 prompt_weights=np.asarray(target.weights),
+                index=_block_index(data),
             ).block_ids
         )
 
@@ -3688,6 +3700,7 @@ def _comparisons(
                         baseline=spec.baseline,
                         prompt_ids=target.prompt_ids,
                         prompt_weights=weights,
+                        index=_block_index(data),
                     )
                     candidate_blocks = direct_bounded_blocks(
                         data.observations,
@@ -3696,6 +3709,7 @@ def _comparisons(
                         cohort_id=spec.candidate,
                         prompt_ids=target.prompt_ids,
                         prompt_weights=weights,
+                        index=_block_index(data),
                     )
                     baseline_blocks = direct_bounded_blocks(
                         data.observations,
@@ -3704,6 +3718,7 @@ def _comparisons(
                         cohort_id=spec.baseline,
                         prompt_ids=target.prompt_ids,
                         prompt_weights=weights,
+                        index=_block_index(data),
                     )
                     for method_index, method in enumerate(methods):
                         role: Literal["primary", "reference", "sensitivity"] = (

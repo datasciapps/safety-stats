@@ -26,6 +26,7 @@ from inspect_safety_stats.ingest.manifest import (
 from inspect_safety_stats.ingest.outcomes import is_missing, map_outcome
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import Diagnostic
+from inspect_safety_stats.stats.independence import BlockIndex
 from inspect_safety_stats.stats.judges import compose_verdicts
 
 LogInput = str | Path | EvalLog | Sequence[str | Path] | Sequence[EvalLog] | None
@@ -40,6 +41,10 @@ class NormalizedData:
     cohorts: list[dict[str, Any]]
     source_hashes: dict[str, str | None]
     judge_verdicts: dict[str, dict[str, bool | None]] = dataclass_field(default_factory=dict)
+    # Built by the analysis on first use, from these observations and this manifest.
+    block_index: BlockIndex | None = dataclass_field(
+        default=None, init=False, repr=False, compare=False
+    )
 
 
 @dataclass(frozen=True)

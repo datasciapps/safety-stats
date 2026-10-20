@@ -11,6 +11,8 @@ from inspect_safety_stats.config.models import (
 )
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.stats.independence import (
+    BoundedBlocks,
+    block_index,
     comparison_contrast_blocks,
     direct_bounded_blocks,
     validate_profile_fields,
@@ -157,3 +159,78 @@ def test_legacy_direct_mean_independence_fields_are_rejected() -> None:
                 "cluster_sensitivity": True,
             }
         )
+
+
+def _same(left: BoundedBlocks, right: BoundedBlocks) -> bool:
+    return (
+        left.block_ids == right.block_ids
+        and left.lower.tobytes() == right.lower.tobytes()
+        and left.upper.tobytes() == right.upper.tobytes()
+        and left.weights.tobytes() == right.weights.tobytes()
+    )
+
+
+def test_block_index_values_match_dataframe_at_for_every_dtype() -> None:
+    """Block keys are built and serialized from these values, so even their types must match."""
+    manifest = pd.DataFrame(
+        {
+            "prompt_id": ["p1", "p2"],
+            "question_id": ["q1", "q2"],
+            "task_id": ["t", "t"],
+            "integer": [1, 2],
+            "real": [0.1, 0.25],
+            "flag": [True, False],
+            "text": ["a", "b"],
+            "string": pd.array(["x", "y"], dtype="string"),
+            "mixed": pd.Series([1, "b"], dtype="object"),
+        }
+    )
+    values = block_index([], manifest).manifest_values
+    indexed = manifest.set_index("prompt_id", drop=False)
+    for prompt in ("p1", "p2"):
+        for column in manifest.columns:
+            expected = indexed.at[prompt, column]
+            actual = values[prompt][column]
+            assert type(actual) is type(expected), (prompt, column)
+            assert actual == expected and str(actual) == str(expected), (prompt, column)
+
+
+def test_a_shared_block_index_gives_identical_blocks() -> None:
+    observations, manifest = _data()
+    index = block_index(observations, manifest)
+    weights = np.asarray([0.25, 0.75])
+    for block_by in (["rollout"], ["prompt_id"], ["domain"], ["epoch"]):
+        for coupling in ("independent", "joint"):
+            if block_by == ["rollout"] and coupling == "joint":
+                continue
+            profile = IndependenceProfileSpec(block_by=block_by, comparison_coupling=coupling)
+            inputs = (observations, manifest, profile)
+            for cohort in ("candidate", "baseline"):
+                arguments = dict(cohort_id=cohort, prompt_ids=["p1", "p2"], prompt_weights=weights)
+                assert _same(
+                    direct_bounded_blocks(*inputs, **arguments),
+                    direct_bounded_blocks(*inputs, index=index, **arguments),
+                )
+            arguments = dict(
+                candidate="candidate",
+                baseline="baseline",
+                prompt_ids=["p1", "p2"],
+                prompt_weights=weights,
+            )
+            assert _same(
+                comparison_contrast_blocks(*inputs, **arguments),
+                comparison_contrast_blocks(*inputs, index=index, **arguments),
+            )
+
+
+def test_a_block_index_for_other_observations_is_not_used() -> None:
+    observations, manifest = _data()
+    stale = block_index(observations[:1], manifest)
+    inputs = (observations, manifest, IndependenceProfileSpec(block_by=["prompt_id"]))
+    arguments = dict(
+        cohort_id="candidate", prompt_ids=["p1", "p2"], prompt_weights=np.asarray([0.5, 0.5])
+    )
+    assert _same(
+        direct_bounded_blocks(*inputs, **arguments),
+        direct_bounded_blocks(*inputs, index=stale, **arguments),
+    )
