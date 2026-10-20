@@ -398,10 +398,18 @@ inspect-safety-stats schema report
 inspect-safety-stats version
 ```
 
-Repeat `--logs` to select multiple files or directories. By default, `analyze` exits `0` after a
-completed analysis regardless of any internally computed threshold decision; `validate` exits `3`
-for invalid input. Pass `--decision-exit-codes` to opt into `0` for `PASS`, `1` for `FAIL`, and
-`2` for `INCONCLUSIVE`.
+Repeat `--logs` to select multiple files or directories.
+
+Exit codes of `analyze`:
+
+| Situation | Default | With `--decision-exit-codes` |
+|---|---|---|
+| Integrity `valid` or `degraded` | `0` | `0` PASS, `1` FAIL, `2` INCONCLUSIVE |
+| Integrity `invalid` (the report is still written) | `3` | `3` |
+| Integrity `invalid` with `--allow-invalid` | `0` | `2`, because an invalid analysis is never PASS |
+| The analysis cannot run, for example an unreadable plan or log | `3` | `3` |
+
+`validate` exits `3` for invalid input and `0` otherwise.
 
 ## Compatibility and stability
 

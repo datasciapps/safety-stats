@@ -129,9 +129,11 @@ inspect-safety-stats visualize \
   --output reports/example-dashboard.html
 ```
 
-The CLI exits with code `0` after a completed analysis and `3` when analysis cannot run. Use
-`--decision-exit-codes` to opt into decision-sensitive exit codes (`0` pass, `1` fail, and `2`
-inconclusive).
+`analyze` exits with code `0` after a completed analysis whose integrity is valid or degraded,
+and `3` when the analysis cannot run or its integrity is invalid. An invalid analysis still
+writes its report, so the diagnostics can be audited; `--allow-invalid` makes it exit `0`.
+Use `--decision-exit-codes` to opt into decision-sensitive exit codes for completed analyses
+(`0` pass, `1` fail, and `2` inconclusive).
 
 ## Python API
 

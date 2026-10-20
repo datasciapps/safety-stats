@@ -84,13 +84,15 @@ if a != b:
     sys.exit(1)
 print("  report.json matches the committed example (ignoring provenance)")
 PY
-  # The invalid-integrity path must produce diagnostics (exit code is issue #18).
+  # The invalid-integrity path must produce diagnostics and a non-zero exit code.
   sed 's/name: model_graded_qa/name: nonexistent_scorer/' "$EX/safety-plan.yaml" > "$EX/wrong.yaml"
   rc=0; (cd "$EX" && "$BIN" validate --plan wrong.yaml --logs simpleqa-8-real.eval >/dev/null 2>&1) || rc=$?
   [[ $rc -eq 3 ]] || fail "validate should exit 3 on a missing score, got $rc"
   echo "  validate on wrong scorer exits $rc (expected 3)"
   rc=0; (cd "$EX" && "$BIN" analyze --plan wrong.yaml --logs simpleqa-8-real.eval --output "$OUT-invalid" >/dev/null 2>&1) || rc=$?
-  echo "  analyze on wrong scorer exits $rc (issue #18: should become non-zero)"
+  [[ $rc -eq 3 ]] || fail "analyze should exit 3 on invalid integrity, got $rc"
+  [[ -f "$OUT-invalid/report.json" ]] || fail "analyze must still write the invalid report"
+  echo "  analyze on wrong scorer exits $rc (expected 3) and writes its report"
 done
 
 step "6b. Determinism: identical report.json across Python versions"
