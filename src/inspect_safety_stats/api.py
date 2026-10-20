@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import numpy as np
+import pandas as pd
 
 from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
@@ -447,6 +448,20 @@ def _calibration_key(cohort_id: str, target_id: str, profile_id: str) -> str:
     return f"{profile_id}@@{cohort_id}@@{target_id}"
 
 
+def _path_rows(frame: pd.DataFrame, path_levels: list[str]) -> dict[tuple[str, ...], list[int]]:
+    """Row positions of each distinct hierarchy path in ``frame``.
+
+    ORDER MATTERS: paths come in order of first appearance and rows in frame order, as
+    drop_duplicates() and one boolean mask per path gave them before. Nodes, target ids,
+    frontiers and report rows are all emitted in this order.
+    """
+    rows: dict[tuple[str, ...], list[int]] = {}
+    values = frame[path_levels].astype(str).itertuples(index=False, name=None)
+    for position, path_values in enumerate(values):
+        rows.setdefault(path_values, []).append(position)
+    return rows
+
+
 def _hierarchy_nodes(plan: AnalysisPlan, data: NormalizedData) -> list[_HierarchyNode]:
     spec = plan.outputs.direct_mean_intervals
     if not (spec.enabled and spec.hierarchy_nodes):
@@ -459,15 +474,12 @@ def _hierarchy_nodes(plan: AnalysisPlan, data: NormalizedData) -> list[_Hierarch
         if group.id not in selected_groups:
             continue
         group_frame = manifest.loc[list(group.prompt_ids)]
+        group_prompts = group_frame["prompt_id"].astype(str).tolist()
         for level_index, level in enumerate(levels):
             path_levels = levels[: level_index + 1]
-            paths = group_frame[path_levels].astype(str).drop_duplicates()
-            for path_values in paths.itertuples(index=False, name=None):
-                mask = np.ones(len(group_frame), dtype=bool)
+            for path_values, rows in _path_rows(group_frame, path_levels).items():
                 path = dict(zip(path_levels, path_values, strict=True))
-                for path_level, path_value in path.items():
-                    mask &= group_frame[path_level].astype(str).to_numpy() == path_value
-                prompt_ids = tuple(group_frame.loc[mask, "prompt_id"].astype(str))
+                prompt_ids = tuple(group_prompts[row] for row in rows)
                 raw_weights = np.asarray(
                     [group.weights[prompt_id] for prompt_id in prompt_ids], dtype=float
                 )
@@ -2321,15 +2333,12 @@ def _comparison_targets(
         return targets
     manifest = data.manifest.set_index("prompt_id", drop=False).loc[list(prompts)]
     levels = [level for level in plan.design.hierarchy if level != "prompt_id"]
+    manifest_prompts = manifest["prompt_id"].astype(str).tolist()
     for level_index, level in enumerate(levels):
         path_levels = levels[: level_index + 1]
-        paths = manifest[path_levels].astype(str).drop_duplicates()
-        for values in paths.itertuples(index=False, name=None):
+        for values, rows in _path_rows(manifest, path_levels).items():
             path = dict(zip(path_levels, values, strict=True))
-            mask = np.ones(len(manifest), dtype=bool)
-            for path_level, path_value in path.items():
-                mask &= manifest[path_level].astype(str).to_numpy() == path_value
-            node_prompts = tuple(manifest.loc[mask, "prompt_id"].astype(str))
+            node_prompts = tuple(manifest_prompts[row] for row in rows)
             raw = np.asarray([group.weights[prompt_id] for prompt_id in node_prompts])
             design_weight = float(np.sum(raw))
             if design_weight <= 0:
