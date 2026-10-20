@@ -1,3 +1,4 @@
+import re
 import shutil
 import subprocess
 import sys
@@ -10,6 +11,19 @@ from inspect_safety_stats import cli as cli_module
 from inspect_safety_stats.cli import app
 
 runner = CliRunner()
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_BOX_DRAWING = re.compile("[\u2500-\u257f]")
+
+
+def _plain(output: str) -> str:
+    """CLI output as plain words.
+
+    Typer renders errors through rich, which adds colour, frames the message in a box, and
+    wraps it to the terminal width -- all of which depend on the environment (CI forces
+    colour). Assert on words, not on how a particular terminal laid them out.
+    """
+    return " ".join(_BOX_DRAWING.sub(" ", _ANSI.sub("", output)).split())
 
 SIMPLEQA = Path(__file__).resolve().parents[2] / "examples" / "real_simpleqa"
 
@@ -211,7 +225,7 @@ def test_fixed_design_planning_rejects_an_unused_weight_column(tmp_path: Path) -
     arguments = ["plan", "fixed-design", "--manifest", str(manifest), "--threshold", "0.5"]
     rejected = runner.invoke(app, [*arguments, "--weight-column", "weight"])
     assert rejected.exit_code != 0
-    assert "--weights explicit" in rejected.output
+    assert "--weights explicit" in _plain(rejected.output)
     accepted = runner.invoke(
         app, [*arguments, "--weights", "explicit", "--weight-column", "weight"]
     )
