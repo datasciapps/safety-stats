@@ -55,6 +55,21 @@ def validate_profile_fields(
                 f"independence profile {profile_id!r} references unavailable fields: "
                 + ", ".join(unknown)
             )
+        # A missing manifest value has no block identity: depending on the column's inferred
+        # dtype it either split every affected rollout into its own block or merged all of
+        # them into one. Neither is a declared partition, so require a value everywhere.
+        for field in profile.block_by:
+            if field in _BLOCK_OBSERVATION_FIELDS or field == "rollout":
+                continue
+            missing = manifest[field].isna()
+            if missing.any():
+                prompts = sorted(manifest.loc[missing, "prompt_id"].astype(str))
+                shown = ", ".join(prompts[:5]) + (", ..." if len(prompts) > 5 else "")
+                raise ValueError(
+                    f"independence profile {profile_id!r} blocks by manifest column {field!r}, "
+                    f"which has no value for {len(prompts)} prompt(s): {shown}. Give every "
+                    "prompt a value; a prompt that forms its own block can use its prompt_id."
+                )
 
 
 def _value(
