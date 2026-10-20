@@ -106,6 +106,7 @@ from inspect_safety_stats.stats.risk import (
     top_k_mean,
     weighted_cvar,
     weighted_mean,
+    worst_of_k_risk,
 )
 from inspect_safety_stats.stats.tree_calibration import (
     IndependentFrontier,
@@ -380,6 +381,9 @@ def _risk_value(
     if measure.type == "entropic":
         assert measure.lambda_ is not None
         return entropic_risk(values, weights, lambda_=float(measure.lambda_))
+    if measure.type == "worst_of_k":
+        assert measure.k is not None
+        return worst_of_k_risk(values, weights, k=int(measure.k))
     if measure.type == "threshold_exceedance":
         assert threshold is not None
         return threshold_exceedance(values, weights, threshold=threshold)

@@ -28,7 +28,7 @@ It is designed for hand-curated safety evaluations in which prompts, questions, 
 - Evaluation-specific independence profiles kept separate from the aggregation hierarchy, with
   configurable cross-model coupling and block-overlap-aware tree calibration.
 - Equal-prompt, nested-equal, and explicit policy weights.
-- Weighted mean, worst-item, CVaR, top-k, entropic, threshold-exceedance, and threshold-excess risk.
+- Weighted mean, worst-item, CVaR, top-k, worst-of-k repeated-attempt, entropic, threshold-exceedance, and threshold-excess risk.
 - First-class fixed-design model/configuration comparison sets for three or more arms, with joint
   arm-risk regions, risk differences, risk ratios, relative reductions, simultaneous rank sets,
   hierarchy-frontier calibration, and named dependence sensitivities.

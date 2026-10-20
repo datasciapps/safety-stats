@@ -209,6 +209,7 @@ weighted_mean(values, weights)
 maximum_risk(values, weights=None)
 weighted_cvar(values, weights, *, beta)
 top_k_mean(values, *, k)
+worst_of_k_risk(values, weights, *, k)
 entropic_risk(values, weights, *, lambda_)
 threshold_exceedance(values, weights, *, threshold)
 threshold_excess(values, weights, *, threshold)
@@ -216,7 +217,9 @@ threshold_excess(values, weights, *, threshold)
 
 Weights must be nonnegative and sum to one. Scalar or item-specific thresholds are accepted.
 CVaR uses fractional boundary mass. The implementation evaluates entropic risk in a numerically
-stable form. Any measure may be marked `diagnostic_only` in the plan to bar it from backing a claim.
+stable form. `worst_of_k_risk` requires probability-valued inputs in `[0, 1]` and reports the
+weighted chance that at least one of `k` independent attempts fails. Any measure may be marked
+`diagnostic_only` in the plan to bar it from backing a claim.
 
 ### Paired and clustered comparisons
 

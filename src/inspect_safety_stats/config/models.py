@@ -5,7 +5,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 
 
 class StrictModel(BaseModel):
@@ -332,6 +339,7 @@ class RiskMeasureSpec(StrictModel):
         "maximum",
         "cvar",
         "top_k_mean",
+        "worst_of_k",
         "entropic",
         "threshold_exceedance",
         "threshold_excess",
@@ -339,6 +347,14 @@ class RiskMeasureSpec(StrictModel):
     beta: float | None = None
     lambda_: float | None = Field(default=None, alias="lambda")
     k: int | None = None
+
+    @field_validator("k", mode="before")
+    @classmethod
+    def validate_k_is_not_boolean(cls, value: object) -> object:
+        # Lax integer validation would read `k: true` as 1.
+        if isinstance(value, bool):
+            raise ValueError("k must be an integer, not a boolean")
+        return value
     threshold: float | None = None
     threshold_column: str | None = None
     diagnostic_only: bool = False
@@ -351,6 +367,8 @@ class RiskMeasureSpec(StrictModel):
             raise ValueError("entropic risk requires lambda > 0")
         if self.type == "top_k_mean" and (self.k is None or self.k <= 0):
             raise ValueError("top_k_mean requires k > 0")
+        if self.type == "worst_of_k" and (self.k is None or self.k <= 0):
+            raise ValueError("worst_of_k requires k > 0")
         if self.type in {"threshold_exceedance", "threshold_excess"}:
             if (self.threshold is None) == (self.threshold_column is None):
                 raise ValueError(f"{self.type} requires exactly one threshold source")

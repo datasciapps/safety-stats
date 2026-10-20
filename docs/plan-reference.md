@@ -236,7 +236,15 @@ outputs:
     - {id: tail, type: cvar, beta: 0.90}
     - {id: entropic, type: entropic, lambda: 10}
     - {id: worst, type: maximum}
+    - {id: worst_of_4, type: worst_of_k, k: 4}
 ```
+
+`worst_of_k` reports the weighted probability that at least one of `k` independent attempts at
+each fixed prompt fails, `sum_j w_j (1 - (1 - p_j)^k)`. It is the repeated-attempt analogue of
+the weighted mean (`k: 1` is exactly the mean) and targets deployment or attack settings where an
+item is retried `k` times. `k` is part of the estimand and must be chosen before results are
+inspected. The per-item transform is coordinatewise monotone, so the measure inherits the
+propagated simultaneous prompt envelope. Judge-misclassification correction does not apply to it.
 
 `coverage_mode: two_sided` is the default. It interprets the multiplicity-family alpha as the
 total error budget for the displayed lower-to-upper range and divides it equally between tails.

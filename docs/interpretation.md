@@ -106,6 +106,14 @@ The weighted mean of the worst design tail. `beta: 0.9` averages the worst 10% o
 
 A smooth risk-sensitive measure between the weighted mean and maximum. Larger `lambda` emphasizes high-risk prompts more strongly. Lambda is part of the estimand and must be selected before results are inspected.
 
+### Worst of k
+
+The weighted probability that at least one of `k` independent attempts at each fixed prompt
+fails. At `k: 1` it equals the weighted mean; it grows toward the design's vulnerable mass as
+`k` increases. Use it when deployment allows retries or an attacker gets `k` tries at the same
+item. The `k` attempts are assumed independent given the prompt, which is the same rollout
+independence the exact prompt bounds already assume.
+
 ### Threshold exceedance
 
 The amount of design weight above local safety thresholds. The report divides weight into certified-safe, certified-unsafe, and unresolved portions.

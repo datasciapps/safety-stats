@@ -25,6 +25,7 @@ from inspect_safety_stats.stats import (
     top_k_mean,
     weighted_cvar,
     weighted_mean,
+    worst_of_k_risk,
 )
 
 TOLERANCE = 1e-9
@@ -219,3 +220,22 @@ def test_threshold_measures_stay_within_their_own_range(
     # Nothing exceeds a threshold at or above the worst item.
     assert threshold_exceedance(values, weights, threshold=1.0) == 0.0
     assert threshold_excess(values, weights, threshold=1.0) == 0.0
+
+
+@given(
+    values=st.lists(st.floats(min_value=0, max_value=1, allow_nan=False), min_size=1, max_size=20),
+    shift=st.floats(min_value=0, max_value=1, allow_nan=False),
+    k=st.integers(min_value=1, max_value=16),
+)
+def test_worst_of_k_is_monotone_and_sandwiched(
+    values: list[float], shift: float, k: int
+) -> None:
+    weights = [1 / len(values)] * len(values)
+    upper = [min(1.0, value + shift) for value in values]
+    base = worst_of_k_risk(values, weights, k=k)
+    shifted = worst_of_k_risk(upper, weights, k=k)
+    mean = weighted_mean(values, weights)
+    # Coordinatewise monotone (envelope propagation is valid) and sandwiched
+    # between the single-attempt mean and the k-scaled union bound.
+    assert base <= shifted + 1e-12
+    assert mean - 1e-12 <= base <= min(1.0, k * mean) + 1e-12
