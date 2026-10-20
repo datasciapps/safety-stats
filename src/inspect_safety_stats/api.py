@@ -1,14 +1,21 @@
 from __future__ import annotations
 
+import itertools
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal, cast
 
 import numpy as np
+import pandas as pd
 
 from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
-from inspect_safety_stats.config.models import AnalysisPlan, ComparisonSpec, RiskMeasureSpec
+from inspect_safety_stats.config.models import (
+    AnalysisPlan,
+    ClaimSpec,
+    ComparisonSpec,
+    RiskMeasureSpec,
+)
 from inspect_safety_stats.decision.engine import decide_claim, roll_up
 from inspect_safety_stats.ingest.inspect_logs import LogInput, NormalizedData, ingest_inspect_logs
 from inspect_safety_stats.ingest.manifest import (
@@ -18,12 +25,14 @@ from inspect_safety_stats.ingest.manifest import (
 from inspect_safety_stats.ingest.validation import (
     judge_stratum_counts,
     load_validation_manifest,
+    truth_stratum_counts,
 )
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import (
     ClaimResult,
     ComparisonResult,
     ComparisonSetResult,
+    Decision,
     Diagnostic,
     Eligibility,
     GroupRiskResult,
@@ -63,15 +72,29 @@ from inspect_safety_stats.stats.hierarchy_region import (
     project_two_arm_difference_hierarchy_confidence_region,
 )
 from inspect_safety_stats.stats.independence import (
+    BlockIndex,
     BoundedBlocks,
+    block_index,
     comparison_contrast_blocks,
     direct_bounded_blocks,
     validate_profile_fields,
 )
+from inspect_safety_stats.stats.judges import (
+    JudgeAccuracyBox,
+    compose_verdicts,
+    composite_accuracy_box,
+    effective_votes,
+    identified_risk_set,
+    pairwise_agreement,
+)
 from inspect_safety_stats.stats.misclassification import (
     JudgeCalibration,
+    JudgeStratumCounts,
+    TruthStratumCounts,
     correct_judge_risk,
+    delta_method_corrected_risk,
     estimate_judge_calibration,
+    noisy_valid_certification,
 )
 from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
 from inspect_safety_stats.stats.paired import exact_mcnemar, newcombe_paired_interval
@@ -86,6 +109,7 @@ from inspect_safety_stats.stats.risk import (
 )
 from inspect_safety_stats.stats.tree_calibration import (
     IndependentFrontier,
+    any_overlap,
     calibrate_independent_frontiers,
 )
 from inspect_safety_stats.validate.plan import validate_plan_references
@@ -191,6 +215,13 @@ def _alpha_by_prompt(
     return {prompt: endpoint_alpha for prompt in prompts}
 
 
+def _block_index(data: NormalizedData) -> BlockIndex:
+    """The block index for this analysis's observations, built on first use."""
+    if data.block_index is None:
+        data.block_index = block_index(data.observations, data.manifest)
+    return data.block_index
+
+
 def _prompt_blocked(diagnostics: list[Diagnostic], cohort: str, prompt: str) -> bool:
     global_codes = {
         "PLAN_DUPLICATE_ID",
@@ -206,6 +237,10 @@ def _prompt_blocked(diagnostics: list[Diagnostic], cohort: str, prompt: str) -> 
         if diagnostic.severity != "ERROR":
             continue
         if diagnostic.code in global_codes or diagnostic.scope is None:
+            return True
+        # Rollout-level errors are scoped by eval id, so they name the prompt they block.
+        details = diagnostic.details
+        if details.get("cohort_id") == cohort and details.get("prompt_id") == prompt:
             return True
         scope = diagnostic.scope
         if scope == cohort or scope == prompt or scope.startswith(f"{cohort}:{prompt}"):
@@ -414,6 +449,20 @@ def _calibration_key(cohort_id: str, target_id: str, profile_id: str) -> str:
     return f"{profile_id}@@{cohort_id}@@{target_id}"
 
 
+def _path_rows(frame: pd.DataFrame, path_levels: list[str]) -> dict[tuple[str, ...], list[int]]:
+    """Row positions of each distinct hierarchy path in ``frame``.
+
+    ORDER MATTERS: paths come in order of first appearance and rows in frame order, as
+    drop_duplicates() and one boolean mask per path gave them before. Nodes, target ids,
+    frontiers and report rows are all emitted in this order.
+    """
+    rows: dict[tuple[str, ...], list[int]] = {}
+    values = frame[path_levels].astype(str).itertuples(index=False, name=None)
+    for position, path_values in enumerate(values):
+        rows.setdefault(path_values, []).append(position)
+    return rows
+
+
 def _hierarchy_nodes(plan: AnalysisPlan, data: NormalizedData) -> list[_HierarchyNode]:
     spec = plan.outputs.direct_mean_intervals
     if not (spec.enabled and spec.hierarchy_nodes):
@@ -426,15 +475,12 @@ def _hierarchy_nodes(plan: AnalysisPlan, data: NormalizedData) -> list[_Hierarch
         if group.id not in selected_groups:
             continue
         group_frame = manifest.loc[list(group.prompt_ids)]
+        group_prompts = group_frame["prompt_id"].astype(str).tolist()
         for level_index, level in enumerate(levels):
             path_levels = levels[: level_index + 1]
-            paths = group_frame[path_levels].astype(str).drop_duplicates()
-            for path_values in paths.itertuples(index=False, name=None):
-                mask = np.ones(len(group_frame), dtype=bool)
+            for path_values, rows in _path_rows(group_frame, path_levels).items():
                 path = dict(zip(path_levels, path_values, strict=True))
-                for path_level, path_value in path.items():
-                    mask &= group_frame[path_level].astype(str).to_numpy() == path_value
-                prompt_ids = tuple(group_frame.loc[mask, "prompt_id"].astype(str))
+                prompt_ids = tuple(group_prompts[row] for row in rows)
                 raw_weights = np.asarray(
                     [group.weights[prompt_id] for prompt_id in prompt_ids], dtype=float
                 )
@@ -523,11 +569,7 @@ def _group_independent_frontiers(
             atom_sets = [frozenset(prompt_ids) for _, prompt_ids, _ in entries]
             if set().union(*atom_sets) != set(group.prompt_ids):
                 raise ValueError(f"hierarchy level {group.id}:{level} does not partition the group")
-            if any(
-                left & right
-                for index, left in enumerate(atom_sets)
-                for right in atom_sets[index + 1 :]
-            ):
+            if any_overlap(atom_sets):
                 raise ValueError(f"hierarchy level {group.id}:{level} contains overlapping nodes")
             signature = _frontier_signature(entries)
             if signature in seen:
@@ -641,13 +683,10 @@ def _direct_mean_context(
                                 cohort_id=cohort_id,
                                 prompt_ids=prompt_ids,
                                 prompt_weights=weights,
+                                index=_block_index(data),
                             ).block_ids
                         )
-                    overlaps = any(
-                        left & right
-                        for index, left in enumerate(supports.values())
-                        for right in list(supports.values())[index + 1 :]
-                    )
+                    overlaps = any_overlap(supports.values())
                     if overlaps:
                         for target_id, atoms in supports.items():
                             aliases = frontier.aliases.get(target_id, (target_id,))
@@ -1030,6 +1069,7 @@ def _direct_intervals(
             cohort_id=cohort_id,
             prompt_ids=prompt_ids,
             prompt_weights=weights,
+            index=_block_index(data),
         )
         calibration = calibrations[_calibration_key(cohort_id, target_id, profile_id)]
         for method in methods:
@@ -1634,12 +1674,14 @@ def _validated_judge_calibrations(
     plan: AnalysisPlan,
     data: NormalizedData,
     diagnostics: list[Diagnostic],
-) -> tuple[dict[str, JudgeCalibration], dict[str, dict[str, Any]], float | None]:
+) -> tuple[
+    dict[str, JudgeCalibration], dict[str, dict[str, Any]], float | None, dict[str, Any]
+]:
     """Estimate one calibration per cohort from human labels within judge strata."""
 
     spec = plan.inputs.judge_calibration
     if spec is None or spec.mode != "validated":
-        return {}, {}, None
+        return {}, {}, None, {}
     family = next((item for item in plan.multiplicity.families if item.id == spec.family), None)
     if family is None:
         diagnostics.append(
@@ -1650,7 +1692,7 @@ def _validated_judge_calibrations(
                 scope="inputs.judge_calibration",
             )
         )
-        return {}, {}, None
+        return {}, {}, None, {}
     assert spec.validation_manifest is not None
     try:
         labels = load_validation_manifest(spec.validation_manifest)
@@ -1663,9 +1705,18 @@ def _validated_judge_calibrations(
                 scope="inputs.judge_calibration",
             )
         )
-        return {}, {}, None
+        return {}, {}, None, {}
 
     counts, unmatched = judge_stratum_counts(data.observations, labels)
+    truth_strata: dict[str, Any] = {}
+    if spec.sampling == "simple_random":
+        # A simple random sample of the design also estimates sensitivity and the
+        # false-positive rate by true class, which the noisy-but-valid test needs.
+        for cohort_id, by_class in truth_stratum_counts(data.observations, labels).items():
+            truth_strata[cohort_id] = {
+                name: {"labelled": item.labelled, "judge_positive": item.judge_positive}
+                for name, item in by_class.items()
+            }
     if unmatched:
         diagnostics.append(
             Diagnostic(
@@ -1732,7 +1783,7 @@ def _validated_judge_calibrations(
                 "stratum_size": safe.stratum_size,
             },
         }
-    return calibrations, summaries, family.alpha
+    return calibrations, summaries, family.alpha, truth_strata
 
 
 def _judge_corrected_interval(
@@ -1758,6 +1809,14 @@ def _judge_corrected_interval(
     simultaneous = (
         1 - (base_alpha + spent)
         if validated and base_alpha is not None and spent is not None
+        else None
+    )
+    # Each corrected endpoint uses the base endpoint plus two of the four calibration
+    # endpoints, so a one-sided claim spends half the calibration budget.
+    base_directional = base.directional_family_alpha if base is not None else None
+    one_sided = (
+        1 - (base_directional + spent / 2)
+        if validated and base_directional is not None and spent is not None
         else None
     )
     assumptions = [
@@ -1814,6 +1873,8 @@ def _judge_corrected_interval(
         family=family_id,
         family_alpha=spent,
         simultaneous_coverage=simultaneous,
+        lower_one_sided_coverage=one_sided,
+        upper_one_sided_coverage=one_sided,
         completion_estimate_lower=corrected.completion_estimate_lower,
         completion_estimate_upper=corrected.completion_estimate_upper,
         raw_lower=result.lower,
@@ -1822,6 +1883,320 @@ def _judge_corrected_interval(
         assumptions=assumptions,
         eligibility="certifying" if validated else "diagnostic",
         warnings=warnings,
+    )
+
+
+def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, Any] | None:
+    """Describe the declared judge panel: per-judge counts, composites, and agreement.
+
+    Bookkeeping only. Effective votes is the Kish count over declared dependence
+    blocks, and agreement is descriptive; nothing here corrects a risk estimate.
+    """
+
+    if not plan.inputs.judges:
+        return None
+    cohorts = sorted(plan.cohorts)
+    by_cohort: dict[str, list[str]] = {cohort_id: [] for cohort_id in cohorts}
+    for observation in data.observations:
+        by_cohort.setdefault(observation.cohort_id, []).append(observation.observation_id)
+
+    def verdicts(cohort_id: str, judge_id: str) -> list[bool | None]:
+        return [
+            data.judge_verdicts.get(observation_id, {}).get(judge_id)
+            for observation_id in by_cohort[cohort_id]
+        ]
+
+    def counts(values: list[bool | None]) -> dict[str, int]:
+        positives = sum(value is True for value in values)
+        negatives = sum(value is False for value in values)
+        return {
+            "classified": positives + negatives,
+            "failures": positives,
+            "unclassified": len(values) - positives - negatives,
+        }
+
+    blocks = {judge.id: judge.block or judge.id for judge in plan.inputs.judges}
+    judges = [
+        {
+            "id": judge.id,
+            "kind": judge.kind,
+            "block": blocks[judge.id],
+            "score": judge.score.name,
+            "cohorts": {cohort_id: counts(verdicts(cohort_id, judge.id)) for cohort_id in cohorts},
+        }
+        for judge in plan.inputs.judges
+    ]
+    composites = []
+    for composite in plan.inputs.composites:
+        per_cohort = {}
+        for cohort_id in cohorts:
+            combined = [
+                compose_verdicts(
+                    {
+                        judge_id: data.judge_verdicts.get(observation_id, {}).get(judge_id)
+                        for judge_id in composite.judges
+                    },
+                    composite.rule,
+                )
+                for observation_id in by_cohort[cohort_id]
+            ]
+            per_cohort[cohort_id] = counts(combined)
+        composites.append(
+            {
+                "id": composite.id,
+                "rule": composite.rule,
+                "judges": list(composite.judges),
+                "effective_votes": effective_votes([blocks[j] for j in composite.judges]),
+                "cohorts": per_cohort,
+            }
+        )
+    agreement = []
+    for first, second in itertools.combinations([judge.id for judge in plan.inputs.judges], 2):
+        pair_cohorts = {}
+        for cohort_id in cohorts:
+            first_votes = verdicts(cohort_id, first)
+            second_votes = verdicts(cohort_id, second)
+            summary = pairwise_agreement(first_votes, second_votes)
+            paired = [
+                (bool(a), bool(b))
+                for a, b in zip(first_votes, second_votes, strict=True)
+                if a is not None and b is not None
+            ]
+            first_only = second_only = 0
+            p_value: float | None = None
+            if paired:
+                mcnemar = exact_mcnemar([a for a, _ in paired], [b for _, b in paired])
+                first_only = mcnemar.candidate_failure_baseline_safe
+                second_only = mcnemar.candidate_safe_baseline_failure
+                p_value = mcnemar.p_value_two_sided
+            pair_cohorts[cohort_id] = {
+                "compared": summary.compared,
+                "disagreements": summary.disagreements,
+                "agreement": summary.agreement,
+                "kappa": summary.kappa,
+                "discordant_first_only": first_only,
+                "discordant_second_only": second_only,
+                "mcnemar_p_value": p_value,
+            }
+        agreement.append({"first": first, "second": second, "cohorts": pair_cohorts})
+    return {
+        "judges": judges,
+        "composites": composites,
+        "agreement": agreement,
+        "effective_votes_all": effective_votes(list(blocks.values())),
+    }
+
+
+def _apply_panel_derived_correction(
+    plan: AnalysisPlan,
+    risks: list[GroupRiskResult],
+    hierarchy_risks: list[HierarchyRiskResult],
+    diagnostics: list[Diagnostic],
+) -> dict[str, Any] | None:
+    """Partial identification of true risk when the primary outcome is a composite.
+
+    The composite's accuracy box is derived from its judges' declared boxes under the
+    declared dependence blocks, and the judge-reported interval is inverted over that
+    box. Declared boxes are assumptions, so every interval this adds is a diagnostic
+    sensitivity that can never move a claim.
+    """
+
+    composite = next(
+        (item for item in plan.inputs.composites if item.id == plan.inputs.score.name), None
+    )
+    if composite is None:
+        return None
+    judges = {judge.id: judge for judge in plan.inputs.judges}
+    members = [judges[judge_id] for judge_id in composite.judges]
+    if any(member.accuracy is None for member in members):
+        return None
+    if composite.rule == "majority":
+        diagnostics.append(
+            Diagnostic(
+                code="PANEL_CORRECTION_UNSUPPORTED_RULE",
+                severity="INFO",
+                message=(
+                    "a majority composite has no closed-form accuracy box under partial "
+                    "dependence; validate the composite's own verdict instead"
+                ),
+                scope=f"inputs.composites.{composite.id}",
+            )
+        )
+        return None
+    boxes = []
+    for member in members:
+        assert member.accuracy is not None
+        boxes.append(
+            JudgeAccuracyBox(
+                sensitivity_lower=member.accuracy.sensitivity.lower,
+                sensitivity_upper=member.accuracy.sensitivity.upper,
+                specificity_lower=member.accuracy.specificity.lower,
+                specificity_upper=member.accuracy.specificity.upper,
+            )
+        )
+    box = composite_accuracy_box(
+        boxes, [member.block or member.id for member in members], composite.rule
+    )
+    correctable = {
+        measure.id
+        for measure in plan.outputs.risk_measures
+        if measure.type in _JUDGE_CORRECTABLE_MEASURES
+    }
+    targets: list[GroupRiskResult | HierarchyRiskResult] = [
+        *(row for row in risks if row.measure_id in correctable),
+        *hierarchy_risks,
+    ]
+    for result in targets:
+        if result.lower is None or result.upper is None:
+            continue
+        identified = identified_risk_set(result.lower, result.upper, box)
+        estimate_range = (
+            identified_risk_set(result.estimate, result.estimate, box)
+            if result.estimate is not None
+            else None
+        )
+        result.intervals.append(
+            RiskIntervalResult(
+                interval_id="judge_corrected_panel_derived",
+                lower=identified.lower,
+                upper=identified.upper,
+                method="derived_panel_misclassification_correction",
+                role="sensitivity",
+                coverage_scope=(
+                    f"{result.coverage_scope}_panel_derived"
+                    if result.coverage_scope
+                    else "panel_derived"
+                ),
+                completion_estimate_lower=(
+                    estimate_range.lower if estimate_range is not None else None
+                ),
+                completion_estimate_upper=(
+                    estimate_range.upper if estimate_range is not None else None
+                ),
+                raw_lower=result.lower,
+                raw_upper=result.upper,
+                calibration_method="derived_panel_accuracy_box",
+                assumptions=[
+                    "The reported estimand is true failure risk, not judge-reported failure risk.",
+                    f"The composite {composite.id!r} ({composite.rule}) accuracy box is derived "
+                    "from its judges' declared sensitivity/specificity ranges: Frechet bounds "
+                    "within each declared dependence block, independence across blocks.",
+                    f"Derived sensitivity lies in [{box.sensitivity_lower:.6g}, "
+                    f"{box.sensitivity_upper:.6g}] and specificity in "
+                    f"[{box.specificity_lower:.6g}, {box.specificity_upper:.6g}].",
+                    "Judge accuracies are declared, prevalence-free, and applied unchanged to "
+                    "every prompt and cohort; they carry no coverage guarantee.",
+                    "True risk is the Rogan-Gladen inversion over the box; extrema sit at the box "
+                    "vertices because the inversion is separately monotone in each argument.",
+                ],
+                eligibility="diagnostic",
+                warnings=(
+                    []
+                    if identified.identified
+                    else [
+                        "The declared boxes admit an uninformative panel (sensitivity + "
+                        "specificity <= 1); true risk is unidentified and the reported set is "
+                        "the whole unit interval."
+                    ]
+                ),
+            )
+        )
+    return {
+        "composite": composite.id,
+        "rule": composite.rule,
+        "judges": list(composite.judges),
+        "derived_box": {
+            "sensitivity": [box.sensitivity_lower, box.sensitivity_upper],
+            "specificity": [box.specificity_lower, box.specificity_upper],
+        },
+    }
+
+
+def _judge_reported_variance(data: NormalizedData, cohort_id: str, group_id: str) -> float | None:
+    """Binomial variance of the design-weighted judge-reported mean under rollout independence."""
+
+    group = next((item for item in data.groups if item.id == group_id), None)
+    if group is None:
+        return None
+    counts: dict[str, list[int]] = {prompt_id: [0, 0] for prompt_id in group.prompt_ids}
+    for observation in data.observations:
+        if observation.cohort_id != cohort_id or observation.failure is None:
+            continue
+        tally = counts.get(observation.prompt_id)
+        if tally is None:
+            continue
+        tally[0] += int(observation.failure)
+        tally[1] += 1
+    variance = 0.0
+    for prompt_id, (failures, classified) in counts.items():
+        if classified == 0:
+            return None
+        rate = failures / classified
+        variance += group.weights[prompt_id] ** 2 * rate * (1 - rate) / classified
+    return variance
+
+
+def _delta_reference_interval(
+    *,
+    result: GroupRiskResult,
+    data: NormalizedData,
+    strata: dict[str, Any],
+    alpha: float,
+    family_id: str | None,
+) -> RiskIntervalResult | None:
+    """Asymptotic delta-method reference beside the exact validated correction."""
+
+    unsafe = strata.get("judge_unsafe")
+    safe = strata.get("judge_safe")
+    if result.estimate is None or result.lower is None or result.upper is None:
+        return None
+    if not unsafe or not safe:
+        return None
+    variance = _judge_reported_variance(data, result.cohort_id, result.group_id)
+    if variance is None:
+        return None
+    try:
+        delta = delta_method_corrected_risk(
+            observed_estimate=result.estimate,
+            observed_variance=variance,
+            unsafe_stratum=JudgeStratumCounts(**unsafe),
+            safe_stratum=JudgeStratumCounts(**safe),
+            alpha=alpha,
+        )
+    except ValueError:
+        return None
+    return RiskIntervalResult(
+        interval_id="judge_corrected_validated_delta",
+        lower=delta.lower,
+        upper=delta.upper,
+        method="delta_method_judge_misclassification_correction",
+        role="sensitivity",
+        coverage_scope=(
+            f"{result.coverage_scope}_judge_corrected_delta"
+            if result.coverage_scope
+            else "judge_corrected_delta"
+        ),
+        family=family_id,
+        family_alpha=alpha,
+        completion_estimate_lower=delta.estimate,
+        completion_estimate_upper=delta.estimate,
+        half_width_lower=delta.estimate - delta.lower,
+        half_width_upper=delta.upper - delta.estimate,
+        raw_lower=result.lower,
+        raw_upper=result.upper,
+        calibration_method="validated_judge_calibration_delta_method",
+        assumptions=[
+            "The reported estimand is true failure risk, not judge-reported failure risk.",
+            "Asymptotic Wald interval from a first-order (delta-method) expansion of "
+            "R* = R rho_1 + (1 - R) rho_0 with a normal quantile; it carries no "
+            "finite-sample coverage guarantee and cannot support a claim.",
+            "Judge-reported variance is the rollout-independence binomial variance "
+            "sum_j w_j^2 p_j (1 - p_j) / n_j of the design-weighted mean.",
+            "Stratum proportions are Agresti-Coull stabilised, (x + 2) / (n + 4).",
+            "Shown as the asymptotic reference for the exact vertex box: the gap between "
+            "them is the price of the finite-sample guarantee.",
+        ],
+        eligibility="diagnostic",
     )
 
 
@@ -1872,7 +2247,9 @@ def _apply_judge_correction(
             "primary": spec.primary,
         }
 
-    by_cohort, summaries, judge_alpha = _validated_judge_calibrations(plan, data, diagnostics)
+    by_cohort, summaries, judge_alpha, truth_strata = _validated_judge_calibrations(
+        plan, data, diagnostics
+    )
     for result in targets:
         cohort_calibration = by_cohort.get(result.cohort_id)
         if cohort_calibration is None:
@@ -1886,6 +2263,16 @@ def _apply_judge_correction(
         )
         if interval is not None:
             result.intervals.append(interval)
+        if isinstance(result, GroupRiskResult) and judge_alpha is not None:
+            reference = _delta_reference_interval(
+                result=result,
+                data=data,
+                strata=summaries.get(result.cohort_id, {}),
+                alpha=judge_alpha / len(plan.cohorts),
+                family_id=spec.family,
+            )
+            if reference is not None:
+                result.intervals.append(reference)
     _apply_judge_correction_to_comparisons(plan, comparisons, by_cohort, diagnostics)
     return {
         "mode": "validated",
@@ -1897,6 +2284,7 @@ def _apply_judge_correction(
         "sampling": spec.sampling,
         "validation_manifest": str(spec.validation_manifest),
         "cohorts": summaries,
+        "truth_strata": truth_strata,
     }
 
 
@@ -1938,15 +2326,12 @@ def _comparison_targets(
         return targets
     manifest = data.manifest.set_index("prompt_id", drop=False).loc[list(prompts)]
     levels = [level for level in plan.design.hierarchy if level != "prompt_id"]
+    manifest_prompts = manifest["prompt_id"].astype(str).tolist()
     for level_index, level in enumerate(levels):
         path_levels = levels[: level_index + 1]
-        paths = manifest[path_levels].astype(str).drop_duplicates()
-        for values in paths.itertuples(index=False, name=None):
+        for values, rows in _path_rows(manifest, path_levels).items():
             path = dict(zip(path_levels, values, strict=True))
-            mask = np.ones(len(manifest), dtype=bool)
-            for path_level, path_value in path.items():
-                mask &= manifest[path_level].astype(str).to_numpy() == path_value
-            node_prompts = tuple(manifest.loc[mask, "prompt_id"].astype(str))
+            node_prompts = tuple(manifest_prompts[row] for row in rows)
             raw = np.asarray([group.weights[prompt_id] for prompt_id in node_prompts])
             design_weight = float(np.sum(raw))
             if design_weight <= 0:
@@ -2008,6 +2393,7 @@ def _comparison_independent_frontiers(
                 baseline=spec.baseline,
                 prompt_ids=target.prompt_ids,
                 prompt_weights=np.asarray(target.weights),
+                index=_block_index(data),
             ).block_ids
         )
 
@@ -2040,9 +2426,7 @@ def _comparison_independent_frontiers(
             raise ValueError(
                 f"comparison hierarchy level {spec.id}:{level} does not partition the group"
             )
-        if any(
-            left & right for index, left in enumerate(atom_sets) for right in atom_sets[index + 1 :]
-        ):
+        if any_overlap(atom_sets):
             raise ValueError(
                 f"comparison hierarchy level {spec.id}:{level} contains overlapping nodes"
             )
@@ -2079,11 +2463,7 @@ def _comparison_independent_frontiers(
             for target in level_targets
         }
         targets_by_id = {target_id: support(target_by_id[target_id]) for target_id, *_ in entries}
-        overlapping = any(
-            left & right
-            for index, left in enumerate(targets_by_id.values())
-            for right in list(targets_by_id.values())[index + 1 :]
-        )
+        overlapping = any_overlap(targets_by_id.values())
         if overlapping:
             for target_id, atoms in targets_by_id.items():
                 frontiers.append(
@@ -2927,6 +3307,9 @@ def _project_multi_arm_comparison_regions(
     """
 
     for set_spec in plan.comparison_sets:
+        # The same switch already gates the pairwise projection of the set's comparisons.
+        if set_spec.hierarchy_region != "linear_program":
+            continue
         set_rows = [row for row in results if row.comparison_set_id == set_spec.id]
         if not set_rows:
             continue
@@ -3313,6 +3696,7 @@ def _comparisons(
                         baseline=spec.baseline,
                         prompt_ids=target.prompt_ids,
                         prompt_weights=weights,
+                        index=_block_index(data),
                     )
                     candidate_blocks = direct_bounded_blocks(
                         data.observations,
@@ -3321,6 +3705,7 @@ def _comparisons(
                         cohort_id=spec.candidate,
                         prompt_ids=target.prompt_ids,
                         prompt_weights=weights,
+                        index=_block_index(data),
                     )
                     baseline_blocks = direct_bounded_blocks(
                         data.observations,
@@ -3329,6 +3714,7 @@ def _comparisons(
                         cohort_id=spec.baseline,
                         prompt_ids=target.prompt_ids,
                         prompt_weights=weights,
+                        index=_block_index(data),
                     )
                     for method_index, method in enumerate(methods):
                         role: Literal["primary", "reference", "sensitivity"] = (
@@ -3595,12 +3981,106 @@ def _certifying_judge_correction(
     )
 
 
+def _noisy_valid_claim(
+    *,
+    claim: ClaimSpec,
+    evidence: ComparisonResult | GroupRiskResult | None,
+    eligible: bool,
+    family_alpha: float,
+    judge_summary: dict[str, Any] | None,
+) -> tuple[Decision, list[str], float | None, float | None, str, float]:
+    """Decide an aggregate claim with the finite-sample noisy-but-valid test."""
+
+    method = "noisy_valid_certification_test"
+    if not isinstance(evidence, GroupRiskResult) or not eligible:
+        return (
+            "INCONCLUSIVE",
+            [
+                "No complete certifying judge-reported bound is available for the "
+                "noisy-but-valid test."
+            ],
+            None,
+            None,
+            method,
+            family_alpha,
+        )
+    summary = judge_summary or {}
+    strata = (summary.get("truth_strata") or {}).get(evidence.cohort_id) or {}
+    judge_alpha = summary.get("family_alpha")
+    per_cohort_alpha = summary.get("per_cohort_alpha")
+    base = next((item for item in evidence.intervals if item.role == "primary"), None)
+    if (
+        summary.get("mode") != "validated"
+        or summary.get("sampling") != "simple_random"
+        or "truly_unsafe" not in strata
+        or "truly_safe" not in strata
+        or judge_alpha is None
+        or per_cohort_alpha is None
+        or base is None
+        or base.alpha_upper is None
+        or evidence.lower is None
+        or evidence.upper is None
+    ):
+        return (
+            "INCONCLUSIVE",
+            [
+                "The noisy-but-valid test requires a validated judge calibration from a simple "
+                "random sample of labelled rollouts with both true classes represented."
+            ],
+            None,
+            None,
+            method,
+            family_alpha,
+        )
+    try:
+        result = noisy_valid_certification(
+            judge_reported_lower=evidence.lower,
+            judge_reported_upper=evidence.upper,
+            judge_reported_alpha=base.alpha_upper,
+            truly_unsafe=TruthStratumCounts(**strata["truly_unsafe"]),
+            truly_safe=TruthStratumCounts(**strata["truly_safe"]),
+            calibration_alpha=float(per_cohort_alpha),
+            acceptable_upper=claim.acceptable_upper,
+            unacceptable_lower=claim.unacceptable_lower,
+        )
+    except ValueError as exc:
+        return "INCONCLUSIVE", [str(exc)], None, None, method, family_alpha
+    reasons = [
+        "Noisy-but-valid certification on true failure risk: judge-reported interval "
+        f"[{result.judge_reported_lower:.12g}, {result.judge_reported_upper:.12g}]; PASS "
+        "requires its upper endpoint below the critical threshold "
+        f"{result.critical_threshold_pass:.12g}, FAIL requires its lower endpoint above "
+        f"{result.critical_threshold_fail:.12g}.",
+        "Calibration from a simple random sample of labelled rollouts: sensitivity in "
+        f"[{result.sensitivity_lower:.12g}, {result.sensitivity_upper:.12g}], false-positive "
+        f"rate in [{result.false_positive_lower:.12g}, {result.false_positive_upper:.12g}]; "
+        f"identified true-risk set [{result.true_risk_lower:.12g}, "
+        f"{result.true_risk_upper:.12g}].",
+        f"Type-I error for a one-sided decision is at most {result.alpha_pass:.12g}: the "
+        "judge-reported endpoint's alpha plus half the calibration budget.",
+    ]
+    if not result.identified:
+        reasons.append(
+            "The calibration does not establish an informative judge (sensitivity plus "
+            "specificity may not exceed one), so nothing identifies true risk."
+        )
+    return (
+        result.decision,
+        reasons,
+        result.true_risk_lower,
+        result.true_risk_upper,
+        method,
+        family_alpha + float(judge_alpha),
+    )
+
+
 def _claims(
     plan: AnalysisPlan,
     risks: list[GroupRiskResult],
     comparisons: list[ComparisonResult],
     integrity_valid: bool,
     diagnostics: list[Diagnostic],
+    judge_summary: dict[str, Any] | None = None,
 ) -> list[ClaimResult]:
     risk_index = {(item.cohort_id, item.group_id, item.measure_id): item for item in risks}
     comparison_index = {item.comparison_id: item for item in comparisons if item.level is None}
@@ -3655,13 +4135,25 @@ def _claims(
         elif evidence is not None:
             uncorrected_claims.append(claim.id)
 
-        status, reasons = decide_claim(
-            lower=lower,
-            upper=upper,
-            acceptable_upper=claim.acceptable_upper,
-            unacceptable_lower=claim.unacceptable_lower,
-            eligible=eligible,
-        )
+        if claim.method == "noisy_valid_test":
+            status, reasons, lower, upper, method, alpha = _noisy_valid_claim(
+                claim=claim,
+                evidence=evidence,
+                eligible=eligible,
+                family_alpha=family.alpha,
+                judge_summary=judge_summary,
+            )
+            estimate = None
+            correction_note = None
+            evidence_refs.append("test:noisy_valid_certification")
+        else:
+            status, reasons = decide_claim(
+                lower=lower,
+                upper=upper,
+                acceptable_upper=claim.acceptable_upper,
+                unacceptable_lower=claim.unacceptable_lower,
+                eligible=eligible,
+            )
         if not integrity_valid and lower is not None and upper is not None:
             reasons = [
                 "Bounds were computed but are ineligible for certification because data "
@@ -3819,10 +4311,15 @@ def analyze(
     judge_calibration_summary = _apply_judge_correction(
         resolved, data, risks, hierarchy_risks, comparisons, diagnostics
     )
+    panel_correction = _apply_panel_derived_correction(
+        resolved, risks, hierarchy_risks, diagnostics
+    )
     comparison_sets = _comparison_set_results(resolved, comparisons, risks)
     integrity_status = _integrity_status(diagnostics)
     integrity_certifiable = integrity_status != "invalid"
-    claims = _claims(resolved, risks, comparisons, integrity_certifiable, diagnostics)
+    claims = _claims(
+        resolved, risks, comparisons, integrity_certifiable, diagnostics, judge_calibration_summary
+    )
     events = _policy_events(resolved, data)
     decision = roll_up(
         [claim.status for claim in claims if claim.mandatory],
@@ -3836,6 +4333,9 @@ def analyze(
             diagnostics, key=lambda item: (item.severity, item.code, item.scope or "")
         ),
     )
+    judge_panel = _judge_panel_summary(resolved, data)
+    if judge_panel is not None and panel_correction is not None:
+        judge_panel["derived_correction"] = panel_correction
     plan_hash = canonical_plan_hash(resolved)
     report = SafetyReport(
         package_version=__version__,
@@ -3851,6 +4351,7 @@ def analyze(
                 if judge_calibration_summary
                 else {}
             ),
+            **({"judge_panel": judge_panel} if judge_panel else {}),
         },
         scope={
             "design": "fixed",

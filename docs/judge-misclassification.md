@@ -157,6 +157,22 @@ The corrected interval's simultaneous coverage is therefore
 where \(\alpha_{\text{spent}}\) is the share the calibrations it used actually consumed, and
 is reported in the interval's `family_alpha`.
 
+Each *endpoint* of the corrected interval uses the base interval's endpoint plus two of the four
+calibration endpoints, so a one-sided claim spends the base endpoint's alpha plus half the
+calibration budget; the interval records this as its directional coverage. Beside the exact box
+the report shows a `judge_corrected_validated_delta` reference: a delta-method (Wald) interval that
+propagates the calibration variance through \(R^*=R\rho_1+(1-R)\rho_0\) with Agresti--Coull
+stabilised stratum proportions and the rollout-independence binomial variance of the judge-reported
+mean. It is asymptotic, carries no finite-sample guarantee, is labelled `diagnostic`, and never
+decides a claim. Its purpose is to show what the exact guarantee costs -- the "oracle gap" between
+practical finite-sample methods and asymptotic ones. `research/judge_correction_widths.py`
+tabulates width and Monte-Carlo coverage of both across prevalence and calibration size.
+In that simulation (sensitivity 0.90, specificity 0.97, 1,000 rollouts) the reference is 30--45%
+narrower, but its coverage falls to 90--94% at prevalences of 5% and below with up to 300 labels,
+whereas the exact box never falls below its nominal level; at very low prevalence the exact path
+frequently refuses to correct at all because the calibration is uninformative. A narrower
+interval that under-covers where failures are rare is not a better interval for a safety claim.
+
 ### Comparisons
 
 A comparison is corrected by correcting **each arm with its own cohort's calibration** and
@@ -239,6 +255,57 @@ uncertainty, which makes both `PASS` and `FAIL` harder; but it also removes fals
 which can lower the upper bound enough to establish a `PASS` that the uncorrected interval
 could not. Both movements are evidence-backed, and both are visible in the claim's reasons.
 
+## Certifying a threshold directly: the noisy-but-valid test
+
+A threshold claim may opt into a direct finite-sample test instead of comparing corrected
+interval endpoints:
+
+```yaml
+inputs:
+  judge_calibration:
+    mode: validated
+    validation_manifest: judge-labels.csv
+    family: judge_error
+    sampling: simple_random          # a random sample of rollouts, not within judge strata
+claims:
+  - id: tail_safe
+    ...
+    method: noisy_valid_test
+```
+
+With sensitivity \(Se\), false-positive rate \(FPR\) and true risk \(\pi\), the judge-reported
+rate is \(q=\pi\,Se+(1-\pi)\,FPR\), increasing in \(\pi\) for an informative judge. Under
+\(H_0:\pi\ge\tau\) it follows that \(q\ge\tau\,Se+(1-\tau)\,FPR\), and with exact lower confidence
+bounds on \(Se\) and \(FPR\) from the labelled sample the right-hand side is at least the **critical
+threshold** \(c=\tau\,Se_L+(1-\tau)\,FPR_L\). PASS rejects \(H_0\) when the judge-reported upper
+bound falls below \(c\); by the union bound over the three exact endpoints the Type-I error is at
+most the judge-reported endpoint's alpha plus half the calibration budget. FAIL mirrors the
+construction with the upper calibration endpoints. The same box gives the identified true-risk set,
+so the decision and the interval agree by construction, and when the calibration cannot establish
+an informative judge the outcome is INCONCLUSIVE.
+
+Two things differ from the corrected-interval path. The parameters are prevalence-free, which is
+why they require labels drawn as a **simple random sample of the design** (or by true class):
+labels drawn within judge strata over-represent the judge's own positives and would bias
+sensitivity upward, so the plan validator refuses `noisy_valid_test` under
+`simple_random_within_judge_stratum`. And the test needs both true classes among the labels; with
+very rare failures that may require many labels, in which case the honest outcome is INCONCLUSIVE.
+The construction follows the structure of Feng et al.'s "Noisy but Valid" framework (a calibration
+set for the judge's error rates and a variance-corrected critical threshold on the judge-labelled
+set, with finite-sample validity); it is realised here with the package's exact Clopper--Pearson
+endpoints and a union bound rather than as a reproduction of that paper's threshold.
+
+Power is the trade-off to understand before choosing this path.
+`research/noisy_valid_power.py` simulates both decisions from the *same* random label sample
+(sensitivity 0.90, specificity 0.97, 2,000 rollouts, threshold 10%): at 2% true prevalence with
+300 labels the noisy-but-valid test passes 28% of the time against 93% for the corrected-interval
+decision, and with 100 labels almost never against 22%; both have zero false passes at the
+boundary. The reason is label efficiency: a random sample at low prevalence contains very few
+truly unsafe items from which to bound sensitivity, whereas labels drawn within judge strata are
+enriched for exactly those items. Prefer the corrected interval when labels are scarce; prefer this
+test when the judge's error rates must be prevalence-free and transportable, or when sensitivity
+can be bounded from seeded known-unsafe items rather than from a random sample.
+
 ## On the generative path
 
 The same correction is available for
@@ -247,6 +314,52 @@ hierarchy node and every cross-cutting slice. Two differences: human labels key 
 sample identifier materialization wrote rather than an observation id, and comparisons are
 **not** corrected -- doing so would either discard the paired construction that makes them
 tight or assume a prevalence-free judge.
+
+## Declaring a judge panel
+
+When several judges score every rollout, declare them under `inputs.judges` and, crucially,
+declare which of them are one opinion. Judges built on related models share training data,
+prompts and blind spots; a panel that agrees is not a panel that is right. Each judge carries a
+dependence `block`, and a composite's **effective votes** is the Kish count over blocks: three
+judges in two blocks of sizes two and one carry \(3^2/(2^2+1^2)=1.8\) votes, not three.
+
+Composites (`any`, `all`, `majority`) become score columns and can be the primary outcome. They
+are also just judges: the single-judge correction on this page applies to a composite verbatim,
+and a `validated` calibration stratified by the *composite's* verdict needs no assumption at all
+about dependence among the judges it combines, because it measures the composite's own accuracy
+directly. That is the recommended route to evidence for a panel. The panel section of the report
+adds pairwise agreement and Cohen's kappa as diagnostics; neither carries a coverage guarantee and
+neither identifies the true failure rate on its own.
+
+### Deriving a panel's accuracy box
+
+If the primary outcome is an `any` or `all` composite and every member judge declares
+prevalence-free accuracy ranges,
+
+```yaml
+judges:
+  - id: gpt_judge
+    score: {...}
+    block: openai
+    accuracy: {sensitivity: {lower: 0.80, upper: 0.95}, specificity: {lower: 0.90, upper: 0.99}}
+```
+
+the report adds a `judge_corrected_panel_derived` sensitivity interval. The composite's
+sensitivity and specificity box follows from the members' boxes by interval arithmetic: within a
+declared dependence block the judges' errors may be arbitrarily dependent, so the block's joint
+behaviour is bounded by Fréchet inequalities; across blocks the judges are independent, so block
+probabilities multiply. For `any`, sensitivity is one minus the probability that every judge
+clears an unsafe item and specificity is the probability that every judge clears a safe one; `all`
+is the mirror image. `majority` has no closed form under partial dependence and is refused --
+calibrate the composite's own verdict instead.
+
+True risk is then the Rogan--Gladen inversion \(\pi=(q-(1-Sp))/(Se+Sp-1)\) evaluated over the box;
+it is separately monotone in each argument, so the extremes sit at the vertices. **When the box
+admits \(Se+Sp\le1\), nothing identifies the true rate and the reported set is \([0,1]\).** That is
+the identification result of the partial-identification literature made concrete: agreement among
+dependent judges cannot substitute for calibration. Because declared boxes are assumptions, this
+interval is `diagnostic` and can never move a claim; the certifying route for a panel remains a
+`validated` calibration of the composite's own verdict strata.
 
 ## Getting to evidence
 

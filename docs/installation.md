@@ -3,6 +3,7 @@
 ## Requirements
 
 - Python 3.10 or newer.
+- Linux, macOS, or Windows. CI runs the test suite on all three.
 - Inspect AI 0.3.259 through the latest compatible 0.3 release.
 - Completed Inspect evaluation logs for analysis.
 
@@ -79,6 +80,13 @@ The optional `translation` extra is used only by the JailbreakBench translation 
 imported by the package or required to analyze an already completed multilingual run.
 
 ## Troubleshooting
+
+### `analyze` returns exit code 3
+
+Either the analysis could not run, in which case the error is printed, or it completed but its
+integrity is invalid. In the second case the report is still written, and its diagnostics (which
+`validate` also prints) say what invalidated it. Pass `--allow-invalid` only when a script needs
+the earlier behaviour of exiting `0`.
 
 ### The CLI returns exit code 2
 

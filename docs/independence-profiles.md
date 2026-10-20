@@ -34,7 +34,9 @@ design:
 
 Multiple fields form a composite key. For example, `[question_id, epoch]` groups the same epoch
 across all prompts belonging to one question. `rollout` cannot be combined with another field.
-Unknown fields, duplicate fields, and empty block lists are rejected.
+Unknown fields, duplicate fields, and empty block lists are rejected. So is a manifest column
+used as a block key that has no value for some prompt: a missing value identifies no block. Give
+a prompt that forms its own block a unique value, such as its `prompt_id`.
 If a name exists in both schemas, the normalized observation field takes precedence; use unique
 names for evaluation-specific manifest columns.
 Outcome-dependent observation fields such as `failure`, `score_raw`, `error`, and `retries` are

@@ -1,0 +1,11 @@
+# Store and check out text with LF on every platform, so byte-pinned fixtures, golden
+# outputs and shell scripts are identical on Linux, macOS and Windows (where Git defaults
+# to core.autocrlf=true).
+* text=auto eol=lf
+
+# Data fixtures are compared byte for byte, some by SHA-256, and several are committed
+# with the CRLF line endings that the csv module writes. Never convert them.
+*.csv -text
+
+# Inspect logs are zip archives.
+*.eval binary

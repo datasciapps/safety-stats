@@ -117,12 +117,16 @@ def prompt_sha256(prompt: str) -> str:
 
 def write_selections(records: list[SelectionRecord], path: str | Path) -> None:
     frame = pd.DataFrame([record.model_dump(mode="json") for record in records])
-    frame.reindex(columns=list(SELECTION_COLUMNS)).to_csv(path, index=False)
+    frame.reindex(columns=list(SELECTION_COLUMNS)).to_csv(
+        path, index=False, lineterminator="\n"
+    )
 
 
 def write_rewrites(records: list[RewriteRecord], path: str | Path) -> None:
     frame = pd.DataFrame([record.model_dump(mode="json") for record in records])
-    frame.reindex(columns=list(REWRITE_COLUMNS)).to_csv(path, index=False)
+    frame.reindex(columns=list(REWRITE_COLUMNS)).to_csv(
+        path, index=False, lineterminator="\n"
+    )
 
 
 def read_selections(path: str | Path) -> list[SelectionRecord]:
