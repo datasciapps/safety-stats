@@ -94,6 +94,15 @@ Decision-sensitive exit codes were explicitly enabled, and the optional threshol
 inconclusive. Omit `--decision-exit-codes` to make every successfully completed analysis return
 zero.
 
+### On Windows, logs cannot be found
+
+If `analyze` or `validate` fails with `FileNotFoundError` on a path that has no drive letter,
+for example `\Users\...\logs\....eval`, the logs are on a different drive from the
+directory the command runs in. inspect-ai drops the drive letter when it reads local logs on
+Windows, so it looks for them on the current drive. Run the command from the drive that holds
+the logs, or keep the logs on the same drive. This is tracked in
+[issue #35](https://github.com/aduncan001/safety_stats/issues/35).
+
 ### The selected score is absent
 
 Check the scorer name in the Inspect log. The plan field `inputs.score.name: harmful_behavior` expects a sample dataframe column named `score_harmful_behavior`.

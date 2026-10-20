@@ -29,6 +29,20 @@ MOCK_MODEL = "mockllm/model"
 RISK = {"maltese": 0.5, "english": 0.1}
 
 
+@pytest.fixture(autouse=True)
+def _run_from_the_drive_that_holds_the_logs(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Work from the drive of pytest's temporary root, where these tests write real logs.
+
+    On Windows, inspect-ai drops the drive letter from local log paths, so it only finds a
+    log on the working directory's drive (#35). A checkout on D: with the temporary
+    directory on C: (GitHub's Windows runners, and many workstations) would otherwise fail
+    every test here. Every path below is absolute, so changing directory is safe.
+    """
+    monkeypatch.chdir(tmp_path_factory.getbasetemp())
+
+
 @scorer(metrics=[])
 def path_marker():
     """Deterministic per sample, and varying with the declared structure."""
