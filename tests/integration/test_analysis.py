@@ -1404,9 +1404,9 @@ def test_hierarchy_aware_kl_comparisons_project_difference_and_ratio_regions(
     assert reduction.upper == pytest.approx(1 - ratio.lower)
 
 
-def test_three_arm_comparison_set_uses_one_coherent_joint_region(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
+def _three_arm_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, hierarchy_region: str
+) -> SafetyReport:
     plan_path = _write_inputs(tmp_path)
     plan_text = plan_path.read_text(encoding="utf-8")
     plan_text = plan_text.replace(
@@ -1436,7 +1436,7 @@ def test_three_arm_comparison_set_uses_one_coherent_joint_region(
         "      sensitivities: [prompt]\n"
         "    hierarchy_nodes: true\n"
         "    hierarchy_calibration: frontier_sidak\n"
-        "    hierarchy_region: linear_program\n"
+        f"    hierarchy_region: {hierarchy_region}\n"
         "multiplicity:\n",
     )
     plan_text = plan_text.replace(
@@ -1474,7 +1474,13 @@ def test_three_arm_comparison_set_uses_one_coherent_joint_region(
         lambda logs, parallel=False: sample_frame,
     )
 
-    report = analyze(plan=plan_path, logs="ignored")
+    return analyze(plan=plan_path, logs="ignored")
+
+
+def test_three_arm_comparison_set_uses_one_coherent_joint_region(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = _three_arm_report(monkeypatch, tmp_path, hierarchy_region="linear_program")
     assert len(report.comparison_sets) == 1
     summary = report.comparison_sets[0]
     assert summary.comparison_set_id == "three_models"
@@ -1509,6 +1515,21 @@ def test_three_arm_comparison_set_uses_one_coherent_joint_region(
     html = (output / "report.html").read_text(encoding="utf-8")
     assert "Joint risk interval" in html
     assert "Simultaneous rank set" in html
+
+
+def test_comparison_set_hierarchy_region_none_skips_every_projection(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """hierarchy_region: none must hold for the set's joint region, not only its pairs."""
+    report = _three_arm_report(monkeypatch, tmp_path, hierarchy_region="none")
+    assert len(report.comparisons) == 36
+    projected = [
+        (row.result_id, interval.method, interval.projection_method)
+        for row in report.comparisons
+        for interval in row.intervals
+        if interval.projection_method is not None
+    ]
+    assert projected == []
 
 
 _JUDGE_PLAN_BLOCK = (

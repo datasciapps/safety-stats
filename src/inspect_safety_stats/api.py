@@ -3299,6 +3299,9 @@ def _project_multi_arm_comparison_regions(
     """
 
     for set_spec in plan.comparison_sets:
+        # The same switch already gates the pairwise projection of the set's comparisons.
+        if set_spec.hierarchy_region != "linear_program":
+            continue
         set_rows = [row for row in results if row.comparison_set_id == set_spec.id]
         if not set_rows:
             continue
