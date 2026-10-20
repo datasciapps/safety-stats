@@ -1,7 +1,8 @@
 import math
 
+import numpy as np
 import pytest
-from scipy.stats import binom
+from scipy.stats import beta, binom
 
 from inspect_safety_stats.stats import (
     binomial_lower_bound,
@@ -106,3 +107,22 @@ def test_simultaneous_bounds_cover_fixed_design_risk() -> None:
                 upper_coverage += mass
     assert lower_coverage >= 0.95 - 1e-12
     assert upper_coverage >= 0.95 - 1e-12
+
+
+def test_endpoints_are_bit_identical_to_scipy_stats_beta_ppf() -> None:
+    """The endpoints call betaincinv directly; it must equal beta.ppf on the same inputs."""
+    rng = np.random.default_rng(20261020)
+    cases = [(0, 1), (1, 1), (0, 299), (1, 2), (999, 1000), (5, 10**6)]
+    for scale in (10, 1000, 10**6):
+        trials = rng.integers(1, scale + 1, 300)
+        failures = (rng.random(300) * (trials + 1)).astype(int).clip(0, trials)
+        cases.extend(zip(failures.tolist(), trials.tolist(), strict=True))
+    alphas = [1e-15, 1e-6, 0.025, 0.5 - 1e-12]
+    for failures, trials in cases:
+        for alpha in alphas:
+            upper = binomial_upper_bound(failures, trials, alpha=alpha)
+            lower = binomial_lower_bound(failures, trials, alpha=alpha)
+            if failures < trials:
+                assert upper == float(beta.ppf(1.0 - alpha, failures + 1, trials - failures))
+            if failures > 0:
+                assert lower == float(beta.ppf(alpha, failures, trials - failures + 1))

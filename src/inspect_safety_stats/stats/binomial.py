@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from scipy.stats import beta
+from scipy.special import betaincinv
+
+# The endpoints are inverse regularized incomplete beta functions. scipy.stats.beta.ppf
+# evaluates this same inverse for 0 < q < 1 (and adds nothing for unit scale and zero
+# location), but its per-call argument handling costs about twenty times the inverse
+# itself. tests/unit/test_binomial.py pins the two to be bit-identical.
 
 
 @dataclass(frozen=True)
@@ -31,14 +36,14 @@ def binomial_upper_bound(failures: int, trials: int, *, alpha: float) -> float:
     _validate(failures, trials, alpha)
     if failures == trials:
         return 1.0
-    return float(beta.ppf(1.0 - alpha, failures + 1, trials - failures))
+    return float(betaincinv(failures + 1, trials - failures, 1.0 - alpha))
 
 
 def binomial_lower_bound(failures: int, trials: int, *, alpha: float) -> float:
     _validate(failures, trials, alpha)
     if failures == 0:
         return 0.0
-    return float(beta.ppf(alpha, failures, trials - failures + 1))
+    return float(betaincinv(failures, trials - failures + 1, alpha))
 
 
 def binomial_bounds(
