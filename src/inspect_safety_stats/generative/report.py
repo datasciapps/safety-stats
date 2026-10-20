@@ -126,17 +126,23 @@ class GenerativeReport:
             )
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "report.json").write_text(
-            json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n", encoding="utf-8"
+            json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+            newline="\n",
         )
-        self._nodes_frame().to_csv(directory / "nodes.csv", index=False)
-        self.taxonomy.to_frame().to_csv(directory / "taxonomy.csv", index=False)
+        self._nodes_frame().to_csv(directory / "nodes.csv", index=False, lineterminator="\n")
+        self.taxonomy.to_frame().to_csv(
+            directory / "taxonomy.csv", index=False, lineterminator="\n"
+        )
         pd.DataFrame(
             [item.model_dump(mode="json") for item in self.diagnostics],
             columns=["code", "severity", "message", "scope", "details"],
-        ).to_csv(directory / "diagnostics.csv", index=False)
-        self._comparisons_frame().to_csv(directory / "comparisons.csv", index=False)
+        ).to_csv(directory / "diagnostics.csv", index=False, lineterminator="\n")
+        self._comparisons_frame().to_csv(
+            directory / "comparisons.csv", index=False, lineterminator="\n"
+        )
         pd.DataFrame([asdict(item) for item in self.acceptance]).to_csv(
-            directory / "acceptance.csv", index=False
+            directory / "acceptance.csv", index=False, lineterminator="\n"
         )
         write_generative_report(self, directory / "report.html")
         return directory
