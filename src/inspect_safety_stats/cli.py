@@ -294,6 +294,10 @@ def fixed_design_planning_command(
     from inspect_safety_stats.ingest.manifest import load_manifest, resolve_weights
     from inspect_safety_stats.stats.planning import fixed_design_detectable_failure_rates
 
+    # resolve_weights only reads the column for explicit weights; ignoring it silently would
+    # plan under a weighting the user did not ask for.
+    if weight_column is not None and weights is not WeightStrategyOption.explicit:
+        raise typer.BadParameter("--weight-column applies only with --weights explicit")
     local_alpha = alpha / family_size
     unit: Literal["rollout", "prompt_cluster"] = (
         "rollout" if independence_unit is IndependenceUnitOption.rollout else "prompt_cluster"

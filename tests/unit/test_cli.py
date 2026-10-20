@@ -201,6 +201,23 @@ def test_fixed_design_planning_requires_rollout_source(tmp_path: Path) -> None:
     assert "expected_rollouts" in result.output
 
 
+def test_fixed_design_planning_rejects_an_unused_weight_column(tmp_path: Path) -> None:
+    """--weight-column only applies to explicit weights; ignoring it silently would mislead."""
+    manifest = tmp_path / "design.csv"
+    manifest.write_text(
+        "prompt_id,question_id,task_id,expected_rollouts,weight\np1,q1,t1,20,1\n",
+        encoding="utf-8",
+    )
+    arguments = ["plan", "fixed-design", "--manifest", str(manifest), "--threshold", "0.5"]
+    rejected = runner.invoke(app, [*arguments, "--weight-column", "weight"])
+    assert rejected.exit_code != 0
+    assert "--weights explicit" in rejected.output
+    accepted = runner.invoke(
+        app, [*arguments, "--weights", "explicit", "--weight-column", "weight"]
+    )
+    assert accepted.exit_code == 0, accepted.output
+
+
 def test_direct_script_invocation_registers_all_commands() -> None:
     """Running cli.py as a script exposes the same commands as the entry point.
 
