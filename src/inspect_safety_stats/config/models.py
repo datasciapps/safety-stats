@@ -5,7 +5,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 
 
 class StrictModel(BaseModel):
@@ -340,6 +347,14 @@ class RiskMeasureSpec(StrictModel):
     beta: float | None = None
     lambda_: float | None = Field(default=None, alias="lambda")
     k: int | None = None
+
+    @field_validator("k", mode="before")
+    @classmethod
+    def validate_k_is_not_boolean(cls, value: object) -> object:
+        # Lax integer validation would read `k: true` as 1.
+        if isinstance(value, bool):
+            raise ValueError("k must be an integer, not a boolean")
+        return value
     threshold: float | None = None
     threshold_column: str | None = None
     diagnostic_only: bool = False

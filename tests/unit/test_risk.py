@@ -2,6 +2,7 @@ import math
 
 import numpy as np
 import pytest
+from pydantic import ValidationError
 
 from inspect_safety_stats.config.models import RiskMeasureSpec
 from inspect_safety_stats.stats import (
@@ -112,3 +113,28 @@ def test_worst_of_k_spec_requires_k() -> None:
         RiskMeasureSpec.model_validate({"id": "wk", "type": "worst_of_k"})
     spec = RiskMeasureSpec.model_validate({"id": "wk", "type": "worst_of_k", "k": 4})
     assert spec.k == 4
+
+
+def test_worst_of_k_stays_accurate_for_tiny_probabilities() -> None:
+    """1 - (1 - p)**k loses all precision once 1 - p rounds to one."""
+    # 1 - (1 - p)**k = k p - C(k, 2) p**2 + ..., so k p is accurate to about k p**2 here.
+    # abs=0: pytest.approx otherwise also accepts anything within 1e-12, which is all of these.
+    assert worst_of_k_risk([1e-12], [1.0], k=10) == pytest.approx(1e-11, rel=1e-9, abs=0)
+    assert worst_of_k_risk([1e-17], [1.0], k=3) == pytest.approx(3e-17, rel=1e-9, abs=0)
+    zero = worst_of_k_risk([0.0, 0.0], [0.5, 0.5], k=7)
+    assert zero == 0.0 and math.copysign(1.0, zero) == 1.0
+    assert worst_of_k_risk([1.0, 0.25], [0.5, 0.5], k=3) == pytest.approx(
+        0.5 * 1.0 + 0.5 * (1 - 0.75**3), rel=1e-15
+    )
+
+
+def test_worst_of_k_at_one_attempt_is_exactly_the_weighted_mean() -> None:
+    values, weights = [0.1, 0.37, 0.9], [0.2, 0.3, 0.5]
+    assert worst_of_k_risk(values, weights, k=1) == weighted_mean(values, weights)
+
+
+def test_plans_reject_a_boolean_k() -> None:
+    for measure in ("worst_of_k", "top_k_mean"):
+        with pytest.raises(ValidationError, match="not a boolean"):
+            RiskMeasureSpec.model_validate({"id": "m", "type": measure, "k": True})
+        assert RiskMeasureSpec.model_validate({"id": "m", "type": measure, "k": 2}).k == 2

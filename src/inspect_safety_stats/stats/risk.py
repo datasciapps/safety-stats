@@ -109,6 +109,9 @@ def worst_of_k_risk(values: ArrayLike, weights: ArrayLike, *, k: int) -> float:
     ``[0, 1]``. The per-item transform ``1 - (1 - p) ** k`` is coordinatewise
     monotone, so propagated prompt envelopes remain valid; it reduces to the
     weighted mean at ``k = 1`` and is nondecreasing in ``k``.
+
+    ``1 - (1 - p) ** k`` cancels catastrophically for small ``p``, and returns zero
+    once ``1 - p`` rounds to one, so it is evaluated as ``-expm1(k * log1p(-p))``.
     """
 
     x, w = _arrays(values, weights)
@@ -116,4 +119,11 @@ def worst_of_k_risk(values: ArrayLike, weights: ArrayLike, *, k: int) -> float:
         raise ValueError("k must be an integer of at least one")
     if np.any(x < 0) or np.any(x > 1):
         raise ValueError("values must be probabilities in [0, 1]")
-    return float(np.dot(w, 1.0 - np.power(1.0 - x, k)))
+    if k == 1:
+        # Exactly the weighted mean, not just up to rounding.
+        return float(np.dot(w, x))
+    # log1p(-1) is -inf, which expm1 maps to -1, so p = 1 still gives exactly 1. Subtracting
+    # from 0.0 rather than negating keeps p = 0 at +0.0 instead of -0.0.
+    with np.errstate(divide="ignore"):
+        attempts = 0.0 - np.expm1(k * np.log1p(-x))
+    return float(np.dot(w, attempts))
