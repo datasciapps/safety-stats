@@ -1,4 +1,3 @@
-import re
 import shutil
 import subprocess
 import sys
@@ -9,21 +8,9 @@ from typer.testing import CliRunner
 
 from inspect_safety_stats import cli as cli_module
 from inspect_safety_stats.cli import app
+from tests.cli_output import plain
 
 runner = CliRunner()
-
-_ANSI = re.compile(r"\x1b\[[0-9;]*m")
-_BOX_DRAWING = re.compile("[\u2500-\u257f]")
-
-
-def _plain(output: str) -> str:
-    """CLI output as plain words.
-
-    Typer renders errors through rich, which adds colour, frames the message in a box, and
-    wraps it to the terminal width -- all of which depend on the environment (CI forces
-    colour). Assert on words, not on how a particular terminal laid them out.
-    """
-    return " ".join(_BOX_DRAWING.sub(" ", _ANSI.sub("", output)).split())
 
 SIMPLEQA = Path(__file__).resolve().parents[2] / "examples" / "real_simpleqa"
 
@@ -212,7 +199,7 @@ def test_fixed_design_planning_requires_rollout_source(tmp_path: Path) -> None:
         ["plan", "fixed-design", "--manifest", str(manifest), "--threshold", "0.5"],
     )
     assert result.exit_code != 0
-    assert "expected_rollouts" in result.output
+    assert "expected_rollouts" in plain(result.output)
 
 
 def test_fixed_design_planning_rejects_an_unused_weight_column(tmp_path: Path) -> None:
@@ -225,11 +212,24 @@ def test_fixed_design_planning_rejects_an_unused_weight_column(tmp_path: Path) -
     arguments = ["plan", "fixed-design", "--manifest", str(manifest), "--threshold", "0.5"]
     rejected = runner.invoke(app, [*arguments, "--weight-column", "weight"])
     assert rejected.exit_code != 0
-    assert "--weights explicit" in _plain(rejected.output)
+    assert "--weights explicit" in plain(rejected.output)
     accepted = runner.invoke(
         app, [*arguments, "--weights", "explicit", "--weight-column", "weight"]
     )
     assert accepted.exit_code == 0, accepted.output
+
+
+def test_cli_errors_render_in_tests_as_they_do_on_ci() -> None:
+    """tests/conftest.py forces CI's rendering, so raw-text assertions fail locally as well.
+
+    If this fails, typer no longer honours the variable the fixture sets, or something
+    rendered CLI output before the fixture applied. Local runs would then pass assertions
+    that fail on CI.
+    """
+    result = runner.invoke(app, ["plan", "zero-failure", "--alpha", "0.05"])
+    assert result.exit_code != 0
+    assert "\x1b[" in result.output, "typer rendered without colour; see tests/conftest.py"
+    assert "Missing option '--threshold'" in plain(result.output)
 
 
 def test_direct_script_invocation_registers_all_commands() -> None:
