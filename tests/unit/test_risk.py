@@ -124,7 +124,7 @@ def test_worst_of_k_stays_accurate_for_tiny_probabilities() -> None:
     zero = worst_of_k_risk([0.0, 0.0], [0.5, 0.5], k=7)
     assert zero == 0.0 and math.copysign(1.0, zero) == 1.0
     assert worst_of_k_risk([1.0, 0.25], [0.5, 0.5], k=3) == pytest.approx(
-        0.5 * 1.0 + 0.5 * (1 - 0.75**3), rel=1e-15
+        0.5 * 1.0 + 0.5 * (1 - 0.75**3), rel=1e-15, abs=0
     )
 
 
