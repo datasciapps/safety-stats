@@ -1,8 +1,76 @@
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
 from typer.testing import CliRunner
 
+from inspect_safety_stats import cli as cli_module
 from inspect_safety_stats.cli import app
 
 runner = CliRunner()
+
+SIMPLEQA = Path(__file__).resolve().parents[2] / "examples" / "real_simpleqa"
+
+
+def _simpleqa_plan(tmp_path: Path, *, score_name: str = "model_graded_qa") -> Path:
+    """Copy the bundled offline SimpleQA plan, optionally pointing it at another scorer."""
+    shutil.copy(SIMPLEQA / "design.csv", tmp_path / "design.csv")
+    text = (SIMPLEQA / "safety-plan.yaml").read_text(encoding="utf-8")
+    assert "name: model_graded_qa" in text
+    plan = tmp_path / "plan.yaml"
+    plan.write_text(text.replace("name: model_graded_qa", f"name: {score_name}"), encoding="utf-8")
+    return plan
+
+
+def _analyze(plan: Path, output: Path, *extra: str) -> tuple[int, str]:
+    result = runner.invoke(
+        app,
+        [
+            "analyze",
+            "--plan",
+            str(plan),
+            "--logs",
+            str(SIMPLEQA / "simpleqa-8-real.eval"),
+            "--output",
+            str(output),
+            *extra,
+        ],
+    )
+    return result.exit_code, result.stdout
+
+
+def test_analyze_exits_zero_for_a_valid_analysis(tmp_path: Path) -> None:
+    code, stdout = _analyze(_simpleqa_plan(tmp_path), tmp_path / "report")
+    assert code == 0
+    assert "Integrity: valid" in stdout
+
+
+def test_analyze_exits_three_but_writes_the_report_when_integrity_is_invalid(
+    tmp_path: Path,
+) -> None:
+    plan = _simpleqa_plan(tmp_path, score_name="nonexistent_scorer")
+    code, stdout = _analyze(plan, tmp_path / "report")
+    assert code == 3
+    assert "Integrity: invalid" in stdout
+    assert "SCORE_MISSING" in (tmp_path / "report" / "report.md").read_text(encoding="utf-8")
+
+
+def test_invalid_integrity_wins_over_decision_exit_codes(tmp_path: Path) -> None:
+    plan = _simpleqa_plan(tmp_path, score_name="nonexistent_scorer")
+    code, _ = _analyze(plan, tmp_path / "report", "--decision-exit-codes")
+    assert code == 3
+
+
+@pytest.mark.parametrize(("extra", "expected"), [((), 0), (("--decision-exit-codes",), 2)])
+def test_allow_invalid_restores_the_completed_analysis_exit_code(
+    tmp_path: Path, extra: tuple[str, ...], expected: int
+) -> None:
+    plan = _simpleqa_plan(tmp_path, score_name="nonexistent_scorer")
+    code, _ = _analyze(plan, tmp_path / "report", "--allow-invalid", *extra)
+    # An invalid analysis can never PASS, so decision exit codes report INCONCLUSIVE.
+    assert code == expected
 
 
 def test_zero_failure_cli() -> None:
@@ -69,3 +137,23 @@ def test_cli_help_lists_visualization_command() -> None:
     assert "visualize" in result.stdout
     assert "analyze" in result.stdout
     assert "plan" in result.stdout
+
+
+def test_direct_script_invocation_registers_all_commands() -> None:
+    """Running cli.py as a script exposes the same commands as the entry point.
+
+    The ``__main__`` guard used to sit above the generative command
+    definitions, so ``python cli.py generative --help`` exited successfully
+    with an empty command group instead of listing the subcommands.
+    """
+    assert cli_module.__file__ is not None
+    cli_path = Path(cli_module.__file__)
+    result = subprocess.run(
+        [sys.executable, str(cli_path), "generative", "--help"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0
+    for command in ("compile", "materialize", "analyze", "budget"):
+        assert command in result.stdout

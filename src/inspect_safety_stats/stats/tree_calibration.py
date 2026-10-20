@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable, Set
 from dataclasses import dataclass
 
 
@@ -30,6 +31,19 @@ def sidak_local_alpha(frontier_alpha: float, target_count: int) -> float:
     if target_count <= 0:
         raise ValueError("target_count must be positive")
     return -math.expm1(math.log1p(-frontier_alpha) / target_count)
+
+
+def any_overlap(sets: Iterable[Set[object]]) -> bool:
+    """Whether any two of the sets share an element.
+
+    The same answer as testing every pair, in time linear in the total number of elements.
+    """
+    seen: set[object] = set()
+    for members in sets:
+        if not seen.isdisjoint(members):
+            return True
+        seen.update(members)
+    return False
 
 
 def calibrate_independent_frontiers(
@@ -62,12 +76,15 @@ def calibrate_independent_frontiers(
         if not frontier.targets:
             raise ValueError(f"frontier {frontier.frontier_id!r} has no targets")
         target_items = list(frontier.targets.items())
+        # The pairwise scan only runs to name the offending pair, so that the same error is
+        # raised for the same input as before; disjoint frontiers skip it.
+        overlapping = any_overlap(atoms for _, atoms in target_items)
         for index, (target_id, atoms) in enumerate(target_items):
             if not atoms:
                 raise ValueError(
                     f"target {target_id!r} in frontier {frontier.frontier_id!r} has no atoms"
                 )
-            for other_id, other_atoms in target_items[index + 1 :]:
+            for other_id, other_atoms in target_items[index + 1 :] if overlapping else ():
                 if atoms & other_atoms:
                     raise ValueError(
                         f"frontier {frontier.frontier_id!r} targets {target_id!r} and "

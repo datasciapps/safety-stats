@@ -383,4 +383,4 @@ def write_prompt_store(accepted: tuple[AcceptedRewrite, ...], path: str | Path) 
             for item in accepted
         ],
         columns=["sampling_unit_id", "prompt_id", "prompt", "prompt_sha256"],
-    ).to_csv(path, index=False)
+    ).to_csv(path, index=False, lineterminator="\n")

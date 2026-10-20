@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import itertools
 import math
+import random
 
 import pytest
 
 from inspect_safety_stats.stats.tree_calibration import (
     IndependentFrontier,
+    any_overlap,
     calibrate_independent_frontiers,
     sidak_local_alpha,
 )
@@ -106,3 +108,13 @@ def test_sidak_local_alpha_rejects_invalid_arguments(
 ) -> None:
     with pytest.raises(ValueError):
         sidak_local_alpha(frontier_alpha, target_count)
+
+
+def test_any_overlap_agrees_with_the_pairwise_check() -> None:
+    rng = random.Random(20261020)
+    for _ in range(2000):
+        sets = [
+            frozenset(rng.sample(range(40), rng.randint(0, 6))) for _ in range(rng.randint(0, 9))
+        ]
+        pairwise = any(left & right for left, right in itertools.combinations(sets, 2))
+        assert any_overlap(sets) is pairwise, sets

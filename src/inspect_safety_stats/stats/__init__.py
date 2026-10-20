@@ -34,10 +34,22 @@ from .hierarchy_region import (
     project_two_arm_difference_hierarchy_confidence_region,
 )
 from .independence import BoundedBlocks
+from .judges import (
+    AgreementSummary,
+    IdentifiedRiskSet,
+    JudgeAccuracyBox,
+    compose_verdicts,
+    composite_accuracy_box,
+    effective_votes,
+    identified_risk_set,
+    pairwise_agreement,
+)
 from .misclassification import (
     CorrectedRisk,
+    DeltaCorrectedRisk,
     JudgeCalibration,
     correct_judge_risk,
+    delta_method_corrected_risk,
 )
 from .multiplicity import bonferroni_allocate
 from .paired import exact_mcnemar, newcombe_paired_interval
@@ -103,6 +115,16 @@ __all__ = [
     "weighted_mean",
     "worst_of_k_risk",
     "zero_failure_sample_size",
+    "AgreementSummary",
+    "IdentifiedRiskSet",
+    "JudgeAccuracyBox",
+    "compose_verdicts",
+    "composite_accuracy_box",
+    "effective_votes",
+    "identified_risk_set",
+    "pairwise_agreement",
+    "DeltaCorrectedRisk",
+    "delta_method_corrected_risk",
     "calibrate_independent_frontiers",
     "sidak_local_alpha",
 ]

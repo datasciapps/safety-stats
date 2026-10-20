@@ -6,21 +6,10 @@ from typing import Annotated
 
 import typer
 
-from inspect_safety_stats.api import analyze as run_analysis
-from inspect_safety_stats.api import validate as run_validation
-from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.report.visualization import write_visualization
-from inspect_safety_stats.schema.reports import SafetyReport
-from inspect_safety_stats.stats.planning import (
-    certification_power,
-    certification_sample_size,
-    maximum_certifiable_failure_rate,
-    maximum_certifying_failures,
-    minimum_detectable_failure_rate,
-    zero_failure_sample_size,
-)
 from inspect_safety_stats.version import __version__
+
+# Each command imports what it needs when it runs, so that `version`, `--help`, `plan` and
+# `schema` do not load Inspect AI, pandas and the analysis pipeline.
 
 app = typer.Typer(help="Fixed-design statistical risk analysis for Inspect AI evaluations.")
 plan_app = typer.Typer(help="Prospective evaluation planning tools.")
@@ -46,10 +35,13 @@ def analyze_command(
     decision_exit_codes: Annotated[
         bool, typer.Option("--decision-exit-codes/--no-decision-exit-codes")
     ] = False,
+    allow_invalid: Annotated[bool, typer.Option("--allow-invalid")] = False,
 ) -> None:
     if not logs:
         raise typer.BadParameter("at least one --logs path is required")
     log_input: str | list[str] = str(logs[0]) if len(logs) == 1 else [str(path) for path in logs]
+    from inspect_safety_stats.api import analyze as run_analysis
+
     try:
         report = run_analysis(plan=plan, logs=log_input, parallel=parallel or False)
         path = report.write(output, overwrite=overwrite)
@@ -67,6 +59,15 @@ def analyze_command(
     else:
         typer.echo(f"Risk measures: {len(report.group_risks)}")
     typer.echo(f"Report: {path}")
+    # An invalid analysis supports no statistical claim, so it must not pass a CI gate by
+    # exiting 0. The report is still written above so that its diagnostics can be audited.
+    if report.integrity.status == "invalid" and not allow_invalid:
+        typer.echo(
+            "Integrity is invalid: see the report's diagnostics. "
+            "Pass --allow-invalid to exit 0 anyway.",
+            err=True,
+        )
+        raise typer.Exit(code=3)
     if decision_exit_codes:
         raise typer.Exit(code={"PASS": 0, "FAIL": 1, "INCONCLUSIVE": 2}[report.decision])
 
@@ -80,6 +81,8 @@ def validate_command(
     if not logs:
         raise typer.BadParameter("at least one --logs path is required")
     log_input: str | list[str] = str(logs[0]) if len(logs) == 1 else [str(path) for path in logs]
+    from inspect_safety_stats.api import validate as run_validation
+
     result = run_validation(plan=plan, logs=log_input, parallel=parallel or False)
     for diagnostic in result.diagnostics:
         scope = f" [{diagnostic.scope}]" if diagnostic.scope else ""
@@ -96,6 +99,8 @@ def visualize_command(
 ) -> None:
     """Build a self-contained interactive HTML visualization from a report."""
 
+    from inspect_safety_stats.report.visualization import write_visualization
+
     try:
         path = write_visualization(report, output, overwrite=overwrite)
     except Exception as exc:
@@ -109,6 +114,8 @@ def zero_failure_command(
     threshold: Annotated[float, typer.Option("--threshold", min=0.0, max=1.0)],
     alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
 ) -> None:
+    from inspect_safety_stats.stats.planning import zero_failure_sample_size
+
     count = zero_failure_sample_size(threshold=threshold, alpha=alpha)
     typer.echo(f"Required rollouts: {count}")
     typer.echo(
@@ -125,6 +132,14 @@ def certification_planning_command(
     power: Annotated[float, typer.Option("--power", min=0.0, max=1.0)] = 0.9,
 ) -> None:
     """Plan an exact one-sided binomial certification claim."""
+
+    from inspect_safety_stats.stats.planning import (
+        certification_power,
+        certification_sample_size,
+        maximum_certifiable_failure_rate,
+        maximum_certifying_failures,
+        minimum_detectable_failure_rate,
+    )
 
     try:
         trials = certification_sample_size(
@@ -177,6 +192,11 @@ def detectable_rate_command(
 ) -> None:
     """Invert exact one-sided tests at a fixed rollout horizon."""
 
+    from inspect_safety_stats.stats.planning import (
+        maximum_certifiable_failure_rate,
+        minimum_detectable_failure_rate,
+    )
+
     try:
         maximum_certifiable = maximum_certifiable_failure_rate(
             trials=trials,
@@ -212,11 +232,15 @@ def detectable_rate_command(
 
 @schema_app.command("plan")
 def plan_schema_command() -> None:
+    from inspect_safety_stats.config.models import AnalysisPlan
+
     typer.echo(json.dumps(AnalysisPlan.model_json_schema(), indent=2, sort_keys=True))
 
 
 @schema_app.command("report")
 def report_schema_command() -> None:
+    from inspect_safety_stats.schema.reports import SafetyReport
+
     typer.echo(json.dumps(SafetyReport.model_json_schema(), indent=2, sort_keys=True))
 
 
@@ -229,11 +253,9 @@ def version_command() -> None:
 def hash_plan_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
 ) -> None:
+    from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
+
     typer.echo(canonical_plan_hash(load_plan(plan)))
-
-
-if __name__ == "__main__":
-    app()
 
 
 @generative_app.command("compile")
@@ -534,3 +556,7 @@ def generative_plan_schema_command() -> None:
     from inspect_safety_stats.generative.schema import GenerativePlan
 
     typer.echo(json.dumps(GenerativePlan.model_json_schema(), indent=2))
+
+
+if __name__ == "__main__":
+    app()

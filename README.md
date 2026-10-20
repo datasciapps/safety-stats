@@ -37,6 +37,8 @@ It is designed for hand-curated safety evaluations in which prompts, questions, 
 - Metrics-first reports with estimates, uncertainty bounds, hierarchy drill-down, and optional predeclared decision analysis.
 - Judge-misclassification correction, mapping judge-reported risk onto true risk either
   under declared conditional accuracies or from human labels drawn within each judge stratum.
+- Declared judge panels with dependence blocks, `any`/`all`/`majority` composites usable as the
+  primary outcome, Kish effective votes, and pairwise agreement diagnostics.
 - Deterministic JSON, Markdown, CSV, plan, and checksum sidecars.
 
 Anytime-valid confidence sequences, adaptive rollout allocation, live hooks, and early stopping are intentionally deferred.
@@ -127,9 +129,11 @@ inspect-safety-stats visualize \
   --output reports/example-dashboard.html
 ```
 
-The CLI exits with code `0` after a completed analysis and `3` when analysis cannot run. Use
-`--decision-exit-codes` to opt into decision-sensitive exit codes (`0` pass, `1` fail, and `2`
-inconclusive).
+`analyze` exits with code `0` after a completed analysis whose integrity is valid or degraded,
+and `3` when the analysis cannot run or its integrity is invalid. An invalid analysis still
+writes its report, so the diagnostics can be audited; `--allow-invalid` makes it exit `0`.
+Use `--decision-exit-codes` to opt into decision-sensitive exit codes for completed analyses
+(`0` pass, `1` fail, and `2` inconclusive).
 
 ## Python API
 
@@ -189,6 +193,7 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 ## Documentation
 
 - [Installation](docs/installation.md)
+- [Contributing](CONTRIBUTING.md): development setup, engineering practices, and the interfaces that must not break
 - [Quickstart](docs/quickstart.md)
 - [Analysis plan reference](docs/plan-reference.md)
 - [Python and command-line API reference](docs/api-reference.md)

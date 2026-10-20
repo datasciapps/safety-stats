@@ -346,7 +346,28 @@ JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper
 JudgeStratumCounts(labelled, truly_unsafe, stratum_size)
 estimate_judge_calibration(*, scenario_id, unsafe_stratum, safe_stratum, alpha)
 correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration)
+delta_method_corrected_risk(*, observed_estimate, observed_variance, unsafe_stratum,
+                            safe_stratum, alpha)   # asymptotic reference, diagnostic
+TruthStratumCounts(labelled, judge_positive)
+noisy_valid_certification(*, judge_reported_lower, judge_reported_upper, judge_reported_alpha,
+                          truly_unsafe, truly_safe, calibration_alpha, acceptable_upper,
+                          unacceptable_lower)   # finite-sample threshold test
 ```
+
+### Judge panels
+
+```python
+compose_verdicts(verdicts, rule)          # any | all | majority; None when undecidable
+effective_votes(blocks)                   # Kish count over declared dependence blocks
+pairwise_agreement(first, second)         # AgreementSummary(compared, disagreements, agreement, kappa)
+JudgeAccuracyBox(sensitivity_lower, sensitivity_upper, specificity_lower, specificity_upper)
+composite_accuracy_box(judges, blocks, rule)   # any | all; Frechet within blocks, product across
+identified_risk_set(observed_lower, observed_upper, box)  # IdentifiedRiskSet(lower, upper, identified)
+```
+
+Bookkeeping for declared judge panels; see the `inputs.judges` section of the plan reference.
+Composites are undecided when a missing vote could still change them or on a `majority` tie, and
+agreement statistics are descriptive diagnostics only.
 
 Maps a judge-system risk interval onto the true-risk scale via
 `R* = R * rho_1 + (1 - R) * rho_0`. The identity is multilinear, so the returned bounds are
@@ -380,10 +401,18 @@ inspect-safety-stats schema report
 inspect-safety-stats version
 ```
 
-Repeat `--logs` to select multiple files or directories. By default, `analyze` exits `0` after a
-completed analysis regardless of any internally computed threshold decision; `validate` exits `3`
-for invalid input. Pass `--decision-exit-codes` to opt into `0` for `PASS`, `1` for `FAIL`, and
-`2` for `INCONCLUSIVE`.
+Repeat `--logs` to select multiple files or directories.
+
+Exit codes of `analyze`:
+
+| Situation | Default | With `--decision-exit-codes` |
+|---|---|---|
+| Integrity `valid` or `degraded` | `0` | `0` PASS, `1` FAIL, `2` INCONCLUSIVE |
+| Integrity `invalid` (the report is still written) | `3` | `3` |
+| Integrity `invalid` with `--allow-invalid` | `0` | `2`, because an invalid analysis is never PASS |
+| The analysis cannot run, for example an unreadable plan or log | `3` | `3` |
+
+`validate` exits `3` for invalid input and `0` otherwise.
 
 ## Compatibility and stability
 

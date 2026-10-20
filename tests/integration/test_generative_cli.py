@@ -139,6 +139,25 @@ def test_analyze_produces_a_report(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert set(frame["kind"]) == {"node"}
 
 
+def test_text_artifacts_have_the_same_bytes_on_every_platform(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Platform newline translation would make the dataset and report bytes differ by OS."""
+    plan = write_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts)
+    path = analyze_run(plan, artifacts, "logs", cohort="candidate").write(tmp_path / "report")
+    written = [
+        artifacts / "selections.csv",
+        *sorted((artifacts / "datasets").glob("*.jsonl")),
+        *sorted(path.iterdir()),
+    ]
+    assert len(written) > 3
+    for item in written:
+        assert b"\r" not in item.read_bytes(), item.name
+
+
 def test_analyze_command_end_to_end(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     plan = write_plan(tmp_path)
     artifacts = tmp_path / "run"

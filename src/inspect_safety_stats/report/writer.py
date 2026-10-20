@@ -22,7 +22,7 @@ def _sha256(path: Path) -> str:
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
-        path.write_text("", encoding="utf-8")
+        path.write_text("", encoding="utf-8", newline="\n")
         return
     fields: list[str] = []
     for row in rows:
@@ -240,6 +240,64 @@ def _markdown(report: SafetyReport) -> str:
                 )
                 + " |"
             )
+    panel = report.provenance.get("judge_panel")
+    if panel:
+        lines.extend(
+            [
+                "",
+                "## Judge panel",
+                "",
+                "Several judges were declared for every rollout. Judges sharing a declared block "
+                "are one opinion, not independent votes, and **effective votes** is the Kish count "
+                "over blocks. Agreement figures are descriptive diagnostics: judges that share a "
+                "blind spot agree perfectly and are still both wrong.",
+                "",
+                "| Judge | Kind | Block | Score | Cohort | Classified | Failures | Unclassified |",
+                "|---|---|---|---|---|---:|---:|---:|",
+            ]
+        )
+        for judge in panel["judges"]:
+            for cohort_id, stats in sorted(judge["cohorts"].items()):
+                lines.append(
+                    f"| {_escape(judge['id'])} | {judge['kind']} | {_escape(judge['block'])} | "
+                    f"{_escape(judge['score'])} | {_escape(cohort_id)} | {stats['classified']} | "
+                    f"{stats['failures']} | {stats['unclassified']} |"
+                )
+        if panel["composites"]:
+            lines.extend(
+                [
+                    "",
+                    "| Composite | Rule | Judges | Effective votes | Cohort | Classified | "
+                    "Failures | Unclassified |",
+                    "|---|---|---|---:|---|---:|---:|---:|",
+                ]
+            )
+            for composite in panel["composites"]:
+                for cohort_id, stats in sorted(composite["cohorts"].items()):
+                    lines.append(
+                        f"| {_escape(composite['id'])} | {composite['rule']} | "
+                        f"{_escape(', '.join(composite['judges']))} | "
+                        f"{composite['effective_votes']:.3g} | {_escape(cohort_id)} | "
+                        f"{stats['classified']} | {stats['failures']} | {stats['unclassified']} |"
+                    )
+        if panel["agreement"]:
+            lines.extend(
+                [
+                    "",
+                    "| Judges | Cohort | Compared | Disagreements | Agreement | Cohen's kappa |",
+                    "|---|---|---:|---:|---:|---:|",
+                ]
+            )
+            for pair in panel["agreement"]:
+                for cohort_id, stats in sorted(pair["cohorts"].items()):
+                    agreement = stats["agreement"]
+                    kappa = stats["kappa"]
+                    lines.append(
+                        f"| {_escape(pair['first'])} / {_escape(pair['second'])} | "
+                        f"{_escape(cohort_id)} | {stats['compared']} | {stats['disagreements']} | "
+                        f"{'—' if agreement is None else f'{agreement:.4f}'} | "
+                        f"{'—' if kappa is None else f'{kappa:.4f}'} |"
+                    )
     judge_rows = [
         (risk, interval)
         for risk in report.group_risks
@@ -688,12 +746,18 @@ def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = 
         )
         + "\n",
         encoding="utf-8",
+        newline="\n",
     )
-    (directory / "report.md").write_text(_markdown(report), encoding="utf-8")
-    (directory / "report.html").write_text(render_visualization(report), encoding="utf-8")
+    (directory / "report.md").write_text(
+        _markdown(report), encoding="utf-8", newline="\n"
+    )
+    (directory / "report.html").write_text(
+        render_visualization(report), encoding="utf-8", newline="\n"
+    )
     (directory / "plan.resolved.yaml").write_text(
         yaml.safe_dump(canonical_value(report._resolved_plan), sort_keys=True, allow_unicode=True),
         encoding="utf-8",
+        newline="\n",
     )
     _write_csv(directory / "design.resolved.csv", report._resolved_design)
     _write_csv(
@@ -764,6 +828,8 @@ def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = 
         generated_names.append("observations.csv")
     checksums = {name: _sha256(directory / name) for name in sorted(generated_names)}
     (directory / "checksums.json").write_text(
-        json.dumps(checksums, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(checksums, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
     )
     return directory

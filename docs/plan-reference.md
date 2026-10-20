@@ -99,7 +99,10 @@ inputs:
 ```
 
 The manifest holds `observation_id,human_label` with labels `safe` or `unsafe`; identifiers
-come from the `observations.csv` of a prior run. Threshold claims whose evidence carries a
+come from the `observations.csv` of a prior run. `sampling` is
+`simple_random_within_judge_stratum` (the default) or `simple_random`; only the latter also
+estimates sensitivity and the false-positive rate by true class, which a claim with
+`method: noisy_valid_test` requires (the validator emits `PLAN_INVALID_CLAIM` otherwise). Threshold claims whose evidence carries a
 validated correction are decided from the corrected bounds; an `assumed` correction never
 affects a claim. One calibration is estimated per cohort by
 exact Clopper-Pearson bounds within each judge stratum, and the corrected interval's coverage
@@ -109,6 +112,50 @@ exclusive.
 Corrections are applied to `weighted_mean`, `maximum`, `cvar`, and `top_k_mean` measures, to
 every hierarchy node, and to comparisons whose primary interval exposes both arm bounds
 (`weighted_kl_chernoff` and any `comparison_sets` entry). See [Judge misclassification](judge-misclassification.md).
+
+### Judge panels
+
+`inputs.judges` declares additional binary judges scored on every rollout, each with its own
+Inspect score column and outcome mapping. `block` names the judge's dependence block: judges
+sharing a block are one opinion, not independent votes (two judges built on related models
+belong in one block). It defaults to the judge's own id, so a panel is independent only where the
+plan says so. `kind: monitor` marks a chain-of-thought or trajectory monitor.
+
+```yaml
+inputs:
+  score:
+    name: any_judge                       # a composite may serve as the primary outcome
+    mapping: {failure_values: [true], safe_values: [false]}
+  judges:
+    - id: gpt_judge
+      score: {name: harmful_gpt, mapping: {failure_values: [FAIL], safe_values: [PASS]}}
+      block: openai
+    - id: claude_judge
+      score: {name: harmful_claude, mapping: {failure_values: [FAIL], safe_values: [PASS]}}
+    - id: cot_monitor
+      score: {name: cot_flag, mapping: {failure_values: [FLAG], safe_values: [CLEAR]}}
+      block: openai
+      kind: monitor
+  composites:
+    - {id: any_judge, rule: any, judges: [gpt_judge, claude_judge, cot_monitor]}
+    - {id: majority, rule: majority, judges: [gpt_judge, claude_judge, cot_monitor]}
+```
+
+`composites` derive a verdict from declared judges under `any`, `all`, or `majority` and are
+materialised as score columns (`score_<id>`, boolean), so any downstream construction can use
+them. A composite is undecided -- and flows through the ordinary unclassified-outcome handling --
+when a missing vote could still change it or when `majority` ties. The report gains a **Judge
+panel** section with per-judge counts, each composite's Kish **effective votes** over the declared
+blocks, and pairwise agreement with Cohen's kappa. Agreement is a diagnostic, not evidence: judges
+that share a blind spot agree and are both wrong. Missing judge columns and unmappable judge
+values are errors (`JUDGE_SCORE_MISSING`, `JUDGE_SCORE_UNMAPPED`).
+
+A judge may declare prevalence-free accuracy ranges, `accuracy: {sensitivity: {lower, upper},
+specificity: {lower, upper}}`. When the primary outcome is an `any` or `all` composite whose judges
+all declare them, the report adds a diagnostic `judge_corrected_panel_derived` interval: the
+composite's box is derived by Fréchet bounds within blocks and products across blocks, and true
+risk is partially identified by inverting Rogan–Gladen over it (the whole unit interval when the
+box admits an uninformative panel). See [Judge misclassification](judge-misclassification.md).
 
 ## `design`
 

@@ -36,5 +36,7 @@ def render_generative_report(report: GenerativeReport) -> str:
 def write_generative_report(report: GenerativeReport, path: str | Path) -> Path:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(render_generative_report(report), encoding="utf-8")
+    destination.write_text(
+        render_generative_report(report), encoding="utf-8", newline="\n"
+    )
     return destination

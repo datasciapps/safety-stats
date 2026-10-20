@@ -36,6 +36,28 @@ def _tracked(pattern: str) -> list[Path]:
     return [ROOT / name for name in listing]
 
 
+# Everything else belongs in a subdirectory. Scratch scripts once sat at the root unnoticed.
+_ROOT_FILES = {
+    ".gitattributes",
+    ".gitignore",
+    "LICENSE",
+    "README.md",
+    "pyproject.toml",
+    # Community files a public project carries at its root.
+    "CHANGELOG.md",
+    "CITATION.cff",
+    "CODE_OF_CONDUCT.md",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+}
+
+
+def test_only_expected_files_are_tracked_at_the_repository_root() -> None:
+    tracked = {path.name for path in _tracked("*") if path.parent == ROOT}
+    unexpected = sorted(tracked - _ROOT_FILES)
+    assert not unexpected, "unexpected files at the repository root: " + ", ".join(unexpected)
+
+
 def test_every_tracked_example_plan_validates() -> None:
     """A plan shipped as an example must still load under the current schema."""
     checked = 0
