@@ -463,12 +463,17 @@
       const lower = row.lower_one_sided_coverage;
       const upper = row.upper_one_sided_coverage;
       const directional = lower === null || lower === undefined ? upper : upper === null || upper === undefined ? lower : Math.min(lower, upper);
-      const method = humanize(row.interval_method || "propagated exact prompt bounds");
-      let construction = "Propagated exact prompt envelope; does not require independence between prompts.";
-      if (row.interval_method === "weighted_hoeffding") {
-        construction = "Direct weighted Hoeffding bound; assumes independent attempted rollouts across the complete design.";
-      } else if (row.interval_method === "weighted_empirical_bernstein") {
-        construction = "Direct variance-adaptive empirical-Bernstein bound; assumes independent attempted rollouts across the complete design.";
+      // Group rows name their method in interval_method, interval rows in method. An interval
+      // carries the assumptions the analysis stated for its method and independence profile,
+      // so describe it from those rather than from a per-method guess.
+      const methodId = row.interval_method || row.method || "propagated_exact_prompt_bounds";
+      const method = humanize(methodId);
+      const assumptions = Array.isArray(row.assumptions) ? row.assumptions.filter(Boolean) : [];
+      let construction = "See this interval's assumptions in report.json.";
+      if (assumptions.length) {
+        construction = assumptions.join(" ");
+      } else if (methodId === "propagated_exact_prompt_bounds") {
+        construction = "Propagated exact prompt envelope; does not require independence between prompts.";
       }
       return `${pct(row.simultaneous_coverage)} simultaneous two-sided coverage floor · ${pct(directional)} coverage in each direction · ${method}. ${construction} Not a standard error.`;
     }
