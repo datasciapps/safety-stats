@@ -32,13 +32,28 @@ def load_plan(path: str | Path) -> AnalysisPlan:
     return plan
 
 
+def _plan_relative(path: Path, source: Path) -> str | None:
+    """The plan-relative POSIX form of a path that load_plan made absolute, if it has one."""
+    if not path.is_absolute():
+        return None
+    try:
+        return path.relative_to(source.parent).as_posix()
+    except ValueError:
+        return None
+
+
 def canonical_plan_hash(plan: AnalysisPlan) -> str:
+    # load_plan resolves the plan's input paths against its own directory. Hash them in the
+    # plan-relative form the author wrote, so the same plan hashes the same wherever it lives.
     value = plan.model_dump(mode="json", by_alias=True)
     source = plan.source_path()
-    manifest = plan.inputs.design_manifest
-    if source is not None and manifest.is_absolute():
-        try:
-            value["inputs"]["design_manifest"] = manifest.relative_to(source.parent).as_posix()
-        except ValueError:
-            pass
+    if source is not None:
+        manifest = _plan_relative(plan.inputs.design_manifest, source)
+        if manifest is not None:
+            value["inputs"]["design_manifest"] = manifest
+        calibration = plan.inputs.judge_calibration
+        if calibration is not None and calibration.validation_manifest is not None:
+            validation = _plan_relative(calibration.validation_manifest, source)
+            if validation is not None:
+                value["inputs"]["judge_calibration"]["validation_manifest"] = validation
     return sha256_value(value)
