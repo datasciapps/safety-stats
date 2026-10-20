@@ -1069,6 +1069,34 @@ def test_plan_hash_does_not_depend_on_checkout_path(tmp_path: Path) -> None:
     assert canonical_plan_hash(load_plan(first)) == canonical_plan_hash(load_plan(second))
 
 
+def test_validated_judge_plan_hash_does_not_depend_on_checkout_path(tmp_path: Path) -> None:
+    hashes = []
+    for name in ("first", "second", "third/nested"):
+        directory = tmp_path / name
+        directory.mkdir(parents=True)
+        plan_path = _write_inputs(directory)
+        plan_text = plan_path.read_text(encoding="utf-8")
+        plan_text = plan_text.replace(
+            "design:\n",
+            "  judge_calibration:\n"
+            "    mode: validated\n"
+            "    validation_manifest: labels.csv\n"
+            "    family: judge_error\n"
+            "design:\n",
+            1,
+        )
+        plan_text = plan_text.replace(
+            "    - {id: displayed,",
+            "    - {id: judge_error, purpose: simultaneous_intervals, "
+            "method: bonferroni, alpha: 0.05}\n"
+            "    - {id: displayed,",
+            1,
+        )
+        plan_path.write_text(plan_text, encoding="utf-8")
+        hashes.append(canonical_plan_hash(load_plan(plan_path)))
+    assert len(set(hashes)) == 1
+
+
 def test_zero_tolerance_failure_overrides_statistical_result(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
