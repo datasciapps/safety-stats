@@ -392,14 +392,27 @@ see [Hierarchy-aware simultaneous inference](hierarchy-simultaneous-inference.md
 inspect-safety-stats analyze --plan PLAN --logs LOGS --output DIRECTORY
 inspect-safety-stats validate --plan PLAN --logs LOGS
 inspect-safety-stats visualize --report REPORT_OR_DIRECTORY [--output REPORT.html]
-inspect-safety-stats plan zero-failure --threshold P --alpha A
-inspect-safety-stats plan certification --threshold P --anticipated-rate Q --alpha A --power B
-inspect-safety-stats plan detectable-rate --trials N --threshold P --alpha A --power B
+inspect-safety-stats plan zero-failure --threshold P --alpha A [--family-size M]
+inspect-safety-stats plan certification --threshold P --anticipated-rate Q --alpha A --power B [--family-size M]
+inspect-safety-stats plan detectable-rate --trials N --threshold P --alpha A --power B [--family-size M]
+inspect-safety-stats plan fixed-design --manifest DESIGN.csv --threshold P [--alpha A] [--power B]
+    [--rollouts N] [--weights STRATEGY] [--hierarchy LEVELS] [--weight-column COLUMN]
+    [--independence-unit UNIT] [--family-size M]
 inspect-safety-stats hash-plan --plan PLAN
 inspect-safety-stats schema plan
 inspect-safety-stats schema report
 inspect-safety-stats version
 ```
+
+Every `plan` subcommand accepts `--family-size M`, which plans at the Bonferroni share
+`alpha / M`. Use it to match the `equal_bonferroni` allocation that `analyze` applies to a
+family of `M` simultaneous claims, so a planned rollout count is sufficient at analysis time
+rather than only in isolation. `plan fixed-design` reads the design manifest itself: weights
+follow the declared strategy (`nested_equal` by default, `equal_prompt`, or `explicit` with
+`--weight-column`, which is rejected for any other strategy), and rollout counts come from the `expected_rollouts` column unless
+`--rollouts` supplies a uniform override. Its guarantees are the independent-rollout weighted
+Hoeffding construction of `fixed_design_detectable_failure_rates`; pass
+`--independence-unit prompt_cluster` to plan under prompt-level independence instead.
 
 Repeat `--logs` to select multiple files or directories.
 

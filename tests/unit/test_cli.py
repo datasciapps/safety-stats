@@ -1,3 +1,4 @@
+import re
 import shutil
 import subprocess
 import sys
@@ -10,6 +11,19 @@ from inspect_safety_stats import cli as cli_module
 from inspect_safety_stats.cli import app
 
 runner = CliRunner()
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+_BOX_DRAWING = re.compile("[\u2500-\u257f]")
+
+
+def _plain(output: str) -> str:
+    """CLI output as plain words.
+
+    Typer renders errors through rich, which adds colour, frames the message in a box, and
+    wraps it to the terminal width -- all of which depend on the environment (CI forces
+    colour). Assert on words, not on how a particular terminal laid them out.
+    """
+    return " ".join(_BOX_DRAWING.sub(" ", _ANSI.sub("", output)).split())
 
 SIMPLEQA = Path(__file__).resolve().parents[2] / "examples" / "real_simpleqa"
 
@@ -137,6 +151,85 @@ def test_cli_help_lists_visualization_command() -> None:
     assert "visualize" in result.stdout
     assert "analyze" in result.stdout
     assert "plan" in result.stdout
+
+
+def test_zero_failure_family_size_cli() -> None:
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "zero-failure",
+            "--threshold",
+            "0.1",
+            "--alpha",
+            "0.05",
+            "--family-size",
+            "8",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Required rollouts: 49" in result.stdout
+    assert "Local alpha: 0.00625" in result.stdout
+
+
+def test_fixed_design_planning_cli(tmp_path: Path) -> None:
+    manifest = tmp_path / "design.csv"
+    manifest.write_text(
+        "prompt_id,question_id,task_id,expected_rollouts\n"
+        "p1,q1,t1,20\n"
+        "p2,q1,t1,20\n"
+        "p3,q2,t1,20\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "fixed-design",
+            "--manifest",
+            str(manifest),
+            "--threshold",
+            "0.5",
+            "--weights",
+            "equal_prompt",
+        ],
+    )
+    assert result.exit_code == 0
+    assert "Prompts: 3" in result.stdout
+    assert "Total rollouts: 60" in result.stdout
+    assert "Effective sample size: 60" in result.stdout
+    assert "Maximum certifiable failure rate at target power:" in result.stdout
+
+
+def test_fixed_design_planning_requires_rollout_source(tmp_path: Path) -> None:
+    manifest = tmp_path / "design.csv"
+    manifest.write_text(
+        "prompt_id,question_id,task_id\np1,q1,t1\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app,
+        ["plan", "fixed-design", "--manifest", str(manifest), "--threshold", "0.5"],
+    )
+    assert result.exit_code != 0
+    assert "expected_rollouts" in result.output
+
+
+def test_fixed_design_planning_rejects_an_unused_weight_column(tmp_path: Path) -> None:
+    """--weight-column only applies to explicit weights; ignoring it silently would mislead."""
+    manifest = tmp_path / "design.csv"
+    manifest.write_text(
+        "prompt_id,question_id,task_id,expected_rollouts,weight\np1,q1,t1,20,1\n",
+        encoding="utf-8",
+    )
+    arguments = ["plan", "fixed-design", "--manifest", str(manifest), "--threshold", "0.5"]
+    rejected = runner.invoke(app, [*arguments, "--weight-column", "weight"])
+    assert rejected.exit_code != 0
+    assert "--weights explicit" in _plain(rejected.output)
+    accepted = runner.invoke(
+        app, [*arguments, "--weights", "explicit", "--weight-column", "weight"]
+    )
+    assert accepted.exit_code == 0, accepted.output
 
 
 def test_direct_script_invocation_registers_all_commands() -> None:
