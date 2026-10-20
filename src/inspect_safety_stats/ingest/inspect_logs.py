@@ -160,6 +160,15 @@ def _native(value: Any) -> Any:
     return value
 
 
+def _blocked_prompt(cohort_id: str, prompt_id: str) -> dict[str, Any]:
+    """Name the cohort and prompt whose bounds a rollout-level ERROR must withhold.
+
+    Rollout-level diagnostics are scoped by eval id, which is not a cohort, so the analysis
+    cannot recover the blocked prompt from the scope string alone.
+    """
+    return {"cohort_id": cohort_id, "prompt_id": prompt_id}
+
+
 def _hash_file(path: str) -> str | None:
     source = Path(path)
     if not source.is_file():
@@ -482,6 +491,7 @@ def ingest_inspect_logs(
                         severity="ERROR",
                         message="terminal sample error blocks certification",
                         scope=f"{eval_id}:{prompt_id}:{row.get('epoch')}",
+                        details=_blocked_prompt(cohort_id, prompt_id),
                     )
                 )
             elif (
@@ -537,6 +547,7 @@ def ingest_inspect_logs(
                         severity="ERROR",
                         message="selected score is missing",
                         scope=f"{eval_id}:{prompt_id}:{row.get('epoch')}",
+                        details=_blocked_prompt(cohort_id, prompt_id),
                     )
                 )
             elif plan.inputs.score.missing == "conservative_bounds":
@@ -563,6 +574,7 @@ def ingest_inspect_logs(
                         severity="ERROR",
                         message=str(exc),
                         scope=f"{eval_id}:{prompt_id}:{row.get('epoch')}",
+                        details=_blocked_prompt(cohort_id, prompt_id),
                     )
                 )
         log_path = str(row.get("log", eval_row.get("log", "")))

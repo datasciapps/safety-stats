@@ -886,6 +886,30 @@ def test_missing_score_forces_inconclusive(monkeypatch: pytest.MonkeyPatch, tmp_
     assert any(item.code == "SCORE_MISSING" for item in report.integrity.diagnostics)
 
 
+def test_a_blocked_rollout_withholds_its_prompts_bounds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Rollout-level ERRORs are scoped by eval id, yet must still block their own prompt."""
+    plan_path = _write_inputs(tmp_path)
+    eval_frame, sample_frame = _frames(missing_score=True)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+    missing = [item for item in report.integrity.diagnostics if item.code == "SCORE_MISSING"]
+    assert [item.details for item in missing] == [{"cohort_id": "candidate", "prompt_id": "p1"}]
+    estimates = {item.prompt_id: item for item in report.prompt_estimates}
+    # Bounds computed from the other 19 rollouts must not be presented as certifying.
+    assert estimates["p1"].eligibility == "invalid"
+    assert estimates["p1"].upper is None
+    assert estimates["p2"].eligibility == "certifying"
+    assert estimates["p2"].upper is not None
+
+
 def test_missing_score_can_use_conservative_bounds(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
