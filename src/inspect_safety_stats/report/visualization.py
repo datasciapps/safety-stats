@@ -108,5 +108,6 @@ def write_visualization(
     destination.write_text(
         template.replace(_DATA_MARKER, _safe_json(payload)),
         encoding="utf-8",
+        newline="\n",
     )
     return destination

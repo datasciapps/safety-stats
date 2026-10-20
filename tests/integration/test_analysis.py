@@ -230,6 +230,37 @@ def test_end_to_end_pass_and_report(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert "observations.csv" not in (output / "checksums.json").read_text(encoding="utf-8")
 
 
+def test_text_artifacts_have_the_same_bytes_on_every_platform(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Platform newline translation would make report bytes, and so checksums, differ by OS."""
+    plan_path = _write_inputs(tmp_path)
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    output = analyze(plan=plan_path, logs="ignored").write(tmp_path / "report")
+    standalone = write_visualization(output, tmp_path / "standalone.html")
+    for path in (
+        output / "report.json",
+        output / "report.md",
+        output / "report.html",
+        output / "plan.resolved.yaml",
+        output / "checksums.json",
+        standalone,
+    ):
+        assert b"\r" not in path.read_bytes(), path.name
+    # CSV sidecars keep the csv module's CRLF row terminator, which is the same everywhere.
+    for path in sorted(output.glob("*.csv")):
+        data = path.read_bytes()
+        if data:
+            assert data.split(b"\n", 1)[0].endswith(b"\r"), path.name
+
+
 def test_empirical_hierarchy_intervals_and_independence_sensitivity(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

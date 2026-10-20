@@ -22,7 +22,7 @@ def _sha256(path: Path) -> str:
 
 def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
-        path.write_text("", encoding="utf-8")
+        path.write_text("", encoding="utf-8", newline="\n")
         return
     fields: list[str] = []
     for row in rows:
@@ -746,12 +746,18 @@ def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = 
         )
         + "\n",
         encoding="utf-8",
+        newline="\n",
     )
-    (directory / "report.md").write_text(_markdown(report), encoding="utf-8")
-    (directory / "report.html").write_text(render_visualization(report), encoding="utf-8")
+    (directory / "report.md").write_text(
+        _markdown(report), encoding="utf-8", newline="\n"
+    )
+    (directory / "report.html").write_text(
+        render_visualization(report), encoding="utf-8", newline="\n"
+    )
     (directory / "plan.resolved.yaml").write_text(
         yaml.safe_dump(canonical_value(report._resolved_plan), sort_keys=True, allow_unicode=True),
         encoding="utf-8",
+        newline="\n",
     )
     _write_csv(directory / "design.resolved.csv", report._resolved_design)
     _write_csv(
@@ -822,6 +828,8 @@ def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = 
         generated_names.append("observations.csv")
     checksums = {name: _sha256(directory / name) for name in sorted(generated_names)}
     (directory / "checksums.json").write_text(
-        json.dumps(checksums, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(checksums, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+        newline="\n",
     )
     return directory

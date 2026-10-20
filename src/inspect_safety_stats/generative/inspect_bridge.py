@@ -51,7 +51,7 @@ def materialize_dataset(
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     written = 0
-    with destination.open("w", encoding="utf-8") as handle:
+    with destination.open("w", encoding="utf-8", newline="\n") as handle:
         for entry in result.accepted:
             selection = by_unit.get(entry.sampling_unit_id)
             if selection is None:
