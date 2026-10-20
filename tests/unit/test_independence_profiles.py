@@ -127,6 +127,19 @@ def test_profile_fields_are_checked_against_observations_and_manifest() -> None:
         )
 
 
+@pytest.mark.parametrize("value", [1.0, "a"])
+def test_missing_manifest_block_values_are_rejected(value: object) -> None:
+    """A missing block value split or merged rollouts depending on the column's dtype."""
+    _, manifest = _data()
+    manifest["cluster"] = [value, None]
+    manifest = manifest.astype({"cluster": "float64" if isinstance(value, float) else "object"})
+    profiles = {"cluster": IndependenceProfileSpec(block_by=["cluster"])}
+    with pytest.raises(ValueError, match=r"column 'cluster'.*1 prompt\(s\): p2"):
+        validate_profile_fields(profiles, manifest)
+    # Observation fields come from the logs, not the manifest, and are never missing.
+    validate_profile_fields({"prompt": IndependenceProfileSpec(block_by=["prompt_id"])}, manifest)
+
+
 def test_legacy_direct_mean_independence_fields_are_rejected() -> None:
     with pytest.raises(ValidationError, match="independence_unit"):
         DirectMeanIntervalsSpec.model_validate(
