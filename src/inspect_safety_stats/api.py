@@ -109,6 +109,7 @@ from inspect_safety_stats.stats.risk import (
 )
 from inspect_safety_stats.stats.tree_calibration import (
     IndependentFrontier,
+    any_overlap,
     calibrate_independent_frontiers,
 )
 from inspect_safety_stats.validate.plan import validate_plan_references
@@ -568,11 +569,7 @@ def _group_independent_frontiers(
             atom_sets = [frozenset(prompt_ids) for _, prompt_ids, _ in entries]
             if set().union(*atom_sets) != set(group.prompt_ids):
                 raise ValueError(f"hierarchy level {group.id}:{level} does not partition the group")
-            if any(
-                left & right
-                for index, left in enumerate(atom_sets)
-                for right in atom_sets[index + 1 :]
-            ):
+            if any_overlap(atom_sets):
                 raise ValueError(f"hierarchy level {group.id}:{level} contains overlapping nodes")
             signature = _frontier_signature(entries)
             if signature in seen:
@@ -689,11 +686,7 @@ def _direct_mean_context(
                                 index=_block_index(data),
                             ).block_ids
                         )
-                    overlaps = any(
-                        left & right
-                        for index, left in enumerate(supports.values())
-                        for right in list(supports.values())[index + 1 :]
-                    )
+                    overlaps = any_overlap(supports.values())
                     if overlaps:
                         for target_id, atoms in supports.items():
                             aliases = frontier.aliases.get(target_id, (target_id,))
@@ -2433,9 +2426,7 @@ def _comparison_independent_frontiers(
             raise ValueError(
                 f"comparison hierarchy level {spec.id}:{level} does not partition the group"
             )
-        if any(
-            left & right for index, left in enumerate(atom_sets) for right in atom_sets[index + 1 :]
-        ):
+        if any_overlap(atom_sets):
             raise ValueError(
                 f"comparison hierarchy level {spec.id}:{level} contains overlapping nodes"
             )
@@ -2472,11 +2463,7 @@ def _comparison_independent_frontiers(
             for target in level_targets
         }
         targets_by_id = {target_id: support(target_by_id[target_id]) for target_id, *_ in entries}
-        overlapping = any(
-            left & right
-            for index, left in enumerate(targets_by_id.values())
-            for right in list(targets_by_id.values())[index + 1 :]
-        )
+        overlapping = any_overlap(targets_by_id.values())
         if overlapping:
             for target_id, atoms in targets_by_id.items():
                 frontiers.append(
