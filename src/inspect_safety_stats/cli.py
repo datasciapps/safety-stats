@@ -46,6 +46,7 @@ def analyze_command(
     decision_exit_codes: Annotated[
         bool, typer.Option("--decision-exit-codes/--no-decision-exit-codes")
     ] = False,
+    allow_invalid: Annotated[bool, typer.Option("--allow-invalid")] = False,
 ) -> None:
     if not logs:
         raise typer.BadParameter("at least one --logs path is required")
@@ -67,6 +68,15 @@ def analyze_command(
     else:
         typer.echo(f"Risk measures: {len(report.group_risks)}")
     typer.echo(f"Report: {path}")
+    # An invalid analysis supports no statistical claim, so it must not pass a CI gate by
+    # exiting 0. The report is still written above so that its diagnostics can be audited.
+    if report.integrity.status == "invalid" and not allow_invalid:
+        typer.echo(
+            "Integrity is invalid: see the report's diagnostics. "
+            "Pass --allow-invalid to exit 0 anyway.",
+            err=True,
+        )
+        raise typer.Exit(code=3)
     if decision_exit_codes:
         raise typer.Exit(code={"PASS": 0, "FAIL": 1, "INCONCLUSIVE": 2}[report.decision])
 

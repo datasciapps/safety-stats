@@ -80,6 +80,13 @@ imported by the package or required to analyze an already completed multilingual
 
 ## Troubleshooting
 
+### `analyze` returns exit code 3
+
+Either the analysis could not run, in which case the error is printed, or it completed but its
+integrity is invalid. In the second case the report is still written, and its diagnostics (which
+`validate` also prints) say what invalidated it. Pass `--allow-invalid` only when a script needs
+the earlier behaviour of exiting `0`.
+
 ### The CLI returns exit code 2
 
 Decision-sensitive exit codes were explicitly enabled, and the optional threshold analysis was
