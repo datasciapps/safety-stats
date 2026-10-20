@@ -193,6 +193,7 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 ## Documentation
 
 - [Installation](docs/installation.md)
+- [Contributing](CONTRIBUTING.md): development setup, engineering practices, and the interfaces that must not break
 - [Quickstart](docs/quickstart.md)
 - [Analysis plan reference](docs/plan-reference.md)
 - [Python and command-line API reference](docs/api-reference.md)
