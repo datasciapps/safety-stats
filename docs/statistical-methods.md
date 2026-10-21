@@ -695,9 +695,17 @@ h_{\mathrm{EB}}=
 For an endpoint budget (alpha_d), the implementation uses
 (delta_t=\alpha_d/2) for the Bernstein tail and
 (delta_v=\alpha_d/4) for each of the two variance proxies. A union bound therefore limits the
-endpoint failure probability to (alpha_d). Unknown outcomes are again completed as all-safe for
-the lower endpoint and all-failure for the upper endpoint before constructing its separate
-variance bound.
+endpoint failure probability to (alpha_d).
+
+Unknown outcomes are completed as all-safe for the lower endpoint's estimate and as all-failure
+for the upper endpoint's. The variance bound does not follow that completion. For both
+endpoints, (Q_+) comes from the all-failure completion and (Q_-) from the all-safe one. Each is
+then at least its value under any completion, so (\overline V) holds for the true labels
+whatever they are, and the interval contains the interval of every completion.
+
+Taking both proxies from each endpoint's own completion is not monotone. Completing an unknown
+as a failure lowers (Q_-), and with skewed weights the width can then shrink by more than the
+estimate rises.
 
 This is a finite-sample, heterogeneous-Bernoulli empirical-Bernstein construction, not a normal
 approximation and not a plug-in standard error. It can be materially narrower than Hoeffding, but

@@ -124,6 +124,36 @@ def test_empirical_bernstein_unclassified_completion_is_monotone() -> None:
     assert result.upper >= result.completion_estimate_upper
 
 
+@pytest.mark.parametrize(
+    ("failures", "unclassified", "true_labels"),
+    [
+        # Mostly failing mass; the unknown is truly safe, so all-failure is the adverse case.
+        ([0, 550, 0], [1, 0, 0], [0, 550, 0]),
+        # The mirror: mostly safe mass; the unknown truly failed, so all-safe is adverse.
+        ([0, 0, 16_500], [1, 0, 0], [1, 0, 16_500]),
+    ],
+)
+def test_empirical_bernstein_bounds_contain_the_bounds_of_the_true_labels(
+    failures: list[int], unclassified: list[int], true_labels: list[int]
+) -> None:
+    """One heavy unknown among light rollouts, at a Bonferroni-sized endpoint alpha.
+
+    Completing the unknown adversely also lowered the variance bound, by more than it moved
+    the estimate. The robust upper endpoint fell 8.6e-4 below that of the true labels, and in
+    the mirror case the robust lower endpoint rose 8.6e-4 above it.
+    """
+    design = {"trials": [1, 550, 16_500], "weights": [0.01, 0.825, 0.165]}
+    alphas = {"alpha_lower": 1e-3, "alpha_upper": 1e-3}
+    reported = weighted_empirical_bernstein_mean_bounds(
+        failures=failures, unclassified=unclassified, **design, **alphas
+    )
+    truth = weighted_empirical_bernstein_mean_bounds(
+        failures=true_labels, unclassified=[0, 0, 0], **design, **alphas
+    )
+    assert reported.upper >= truth.upper
+    assert reported.lower <= truth.lower
+
+
 def test_equal_atomic_weight_kl_zero_failure_upper_bound() -> None:
     alpha = 0.0011363636363636363
     result = weighted_kl_chernoff_mean_bounds(
