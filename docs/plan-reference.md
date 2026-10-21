@@ -253,6 +253,11 @@ coverage in each direction. `coverage_mode: per_direction` instead spends the fu
 on each direction; at alpha `0.05`, each direction has 95% coverage but the combined range has
 only a 90% floor.
 
+`hierarchy_region: linear_program` keeps the simultaneous floor but not the per-direction level.
+A projected endpoint depends on the other direction's raw endpoints too, so projected intervals
+report the simultaneous floor in each direction (see
+[hierarchy-simultaneous-inference.md](hierarchy-simultaneous-inference.md)).
+
 For `explicit` allocation, provide one prospective total alpha budget per manifest prompt:
 
 ```yaml

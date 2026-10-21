@@ -129,6 +129,18 @@ These are linear programs. On the raw simultaneous-coverage event, the true $\th
 $\mathcal C$, so every projected interval covers simultaneously. Projection never widens a raw
 interval and enforces exact parent/child coherence through the shared primitive vector.
 
+That guarantee is joint, and projection does not keep a separate one for each direction. A
+projected upper endpoint optimises over a region that the raw lower endpoints also shape, so a
+raw lower endpoint that misses can pull it below the truth.
+
+For example, take a parent mean $(\theta_1+\theta_2)/2\in[0.2,0.5]$ with children
+$\theta_1\in[0.05,0.8]$ and $\theta_2\in[0.9,1]$, and the truth $(0.5,0.1)$:
+- every raw upper endpoint covers, and only $\theta_2$'s lower endpoint misses;
+- yet the projected upper endpoint for $\theta_1$ is $0.1$, below the true $0.5$.
+
+Projected intervals therefore report the simultaneous floor as their coverage in each
+direction: 95% at family alpha 0.05 in `two_sided` mode, not 97.5%.
+
 Projection is run separately for weighted KL/Chernoff, empirical Bernstein, and Hoeffding, and
 separately for every named independence profile. The package does not intersect
 different methods and then claim their original coverage. Each reference construction retains its

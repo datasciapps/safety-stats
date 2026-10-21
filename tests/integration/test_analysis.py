@@ -365,6 +365,53 @@ def test_weighted_kl_intervals_are_reported_at_root_and_hierarchy_nodes(
         assert node_primary.projection_method == "hierarchy_linear_program"
 
 
+def test_projected_intervals_report_the_simultaneous_floor_in_each_direction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A projected endpoint covers only on the joint event.
+
+    Its optimum depends on the raw endpoints of both directions, so a raw lower endpoint that
+    misses can pull a projected upper endpoint below the truth. In each direction only the
+    95% simultaneous floor holds, not the 97.5% of a raw endpoint.
+    """
+    plan = load_plan(_write_inputs(tmp_path))
+    spec = plan.outputs.direct_mean_intervals
+    spec.method = "weighted_kl_chernoff"
+    spec.reference_methods = ["weighted_empirical_bernstein"]
+    spec.hierarchy_nodes = True
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan, logs="ignored")
+
+    rows = [*report.group_risks, *report.hierarchy_risks]
+    intervals = [interval for row in rows for interval in row.intervals]
+    projected = [interval for interval in intervals if interval.projection_method is not None]
+    assert projected
+    for interval in projected:
+        assert interval.simultaneous_coverage == pytest.approx(0.95)
+        assert interval.lower_one_sided_coverage == interval.simultaneous_coverage
+        assert interval.upper_one_sided_coverage == interval.simultaneous_coverage
+    for row in rows:
+        if row.projection_method is not None:
+            assert row.lower_one_sided_coverage == row.simultaneous_coverage
+            assert row.upper_one_sided_coverage == row.simultaneous_coverage
+    # Endpoints that were not projected keep their one-sided level.
+    raw = [
+        interval
+        for interval in intervals
+        if interval.projection_method is None and interval.upper_one_sided_coverage is not None
+    ]
+    assert raw
+    assert all(interval.upper_one_sided_coverage == pytest.approx(0.975) for interval in raw)
+
+
 def test_frontier_sidak_calibrates_disjoint_hierarchy_nodes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1927,9 +1974,15 @@ def test_validated_correction_reports_directional_coverage_and_a_delta_reference
         assert claim.method == "validated_judge_misclassification_correction"
 
 
-def _random_sample_validated_plan(tmp_path: Path, *, claim_method: str, sampling: str) -> Path:
+def _random_sample_validated_plan(
+    tmp_path: Path, *, claim_method: str, sampling: str, hierarchy_nodes: bool = False
+) -> Path:
     plan_path = _write_inputs(tmp_path)
     plan_text = plan_path.read_text(encoding="utf-8")
+    if hierarchy_nodes:
+        plan_text = plan_text.replace(
+            "  direct_mean_intervals:\n", "  direct_mean_intervals:\n    hierarchy_nodes: true\n", 1
+        )
     plan_text = plan_text.replace(
         "design:\n",
         "  judge_calibration:\n    mode: validated\n    validation_manifest: labels.csv\n"
@@ -2064,6 +2117,77 @@ def test_worst_of_k_measure_propagates_prompt_envelope(
     assert len(uppers) == 1
     (u,) = uppers
     assert envelope.upper == pytest.approx(1 - (1 - u) ** 2)
+
+
+def test_a_judge_correction_of_a_projected_base_keeps_its_simultaneous_floor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A projected base endpoint covers only at the simultaneous floor, not one-sided.
+
+    The corrected endpoint inherits that error plus half the calibration budget.
+    """
+    _label_everything(tmp_path, monkeypatch)
+    plan_path = _random_sample_validated_plan(
+        tmp_path, claim_method="corrected_interval", sampling="simple_random", hierarchy_nodes=True
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    base = next(item for item in mean.intervals if item.role == "primary")
+    assert base.projection_method == "hierarchy_linear_program"
+    assert base.simultaneous_coverage is not None
+    corrected = next(
+        item for item in mean.intervals if item.interval_id == "judge_corrected_validated"
+    )
+    assert corrected.upper_one_sided_coverage == pytest.approx(
+        1 - ((1 - base.simultaneous_coverage) + 0.05 / 2)
+    )
+    assert corrected.lower_one_sided_coverage == corrected.upper_one_sided_coverage
+
+
+def test_a_noisy_valid_claim_on_a_projected_base_spends_the_simultaneous_budget(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A projected upper endpoint misses whenever the joint event fails.
+
+    So the noisy-but-valid test charges the simultaneous budget, not the alpha the raw
+    endpoint was allocated.
+    """
+    from inspect_safety_stats.stats.misclassification import (
+        TruthStratumCounts,
+        noisy_valid_certification,
+    )
+
+    _label_everything(tmp_path, monkeypatch)
+    plan_path = _random_sample_validated_plan(
+        tmp_path, claim_method="noisy_valid_test", sampling="simple_random", hierarchy_nodes=True
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    (claim,) = report.claims
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    base = next(item for item in mean.intervals if item.role == "primary")
+    assert base.projection_method == "hierarchy_linear_program"
+    assert base.simultaneous_coverage is not None and base.alpha_upper is not None
+    assert 1 - base.simultaneous_coverage > base.alpha_upper
+    assert mean.lower is not None and mean.upper is not None
+    expected = noisy_valid_certification(
+        judge_reported_lower=mean.lower,
+        judge_reported_upper=mean.upper,
+        judge_reported_alpha=1 - base.simultaneous_coverage,
+        truly_unsafe=TruthStratumCounts(10, 10),
+        truly_safe=TruthStratumCounts(30, 0),
+        calibration_alpha=0.05,
+        acceptable_upper=0.30,
+        unacceptable_lower=0.60,
+    )
+    assert claim.status == expected.decision
+    assert claim.lower == pytest.approx(expected.true_risk_lower)
+    assert claim.upper == pytest.approx(expected.true_risk_upper)
+    # The stated Type-I bound charges the simultaneous budget.
+    assert any(f"at most {expected.alpha_pass:.12g}" in reason for reason in claim.reasons)
 
 
 def test_worst_of_k_is_not_judge_correctable() -> None:
