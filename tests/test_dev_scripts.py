@@ -1,0 +1,95 @@
+"""The developer scripts in scripts/ do what they claim, on every supported platform."""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+
+pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="the scripts need git")
+
+_BUGGY = "def double(value):\n    return value + value + 1\n"
+_FIXED = "def double(value):\n    return 2 * value\n"
+
+
+def _toy_test(assertion: str) -> str:
+    return f"from toy_prove_red import double\n\n\ndef test_double():\n    assert {assertion}\n"
+
+
+_CATCHES_THE_BUG = _toy_test("double(2) == 4")
+_MISSES_THE_BUG = _toy_test("double(2) > 0")
+
+
+def _git(repository: Path, *arguments: str) -> str:
+    return subprocess.run(
+        [
+            "git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "-c", "commit.gpgsign=false", *arguments,
+        ],
+        cwd=repository,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout
+
+
+@pytest.fixture
+def toy(tmp_path: Path) -> Path:
+    """A repository whose committed package is buggy and whose working tree fixes it."""
+    package = tmp_path / "src" / "toy_prove_red"
+    package.mkdir(parents=True)
+    (package / "__init__.py").write_text(_BUGGY, encoding="utf-8")
+    # Anchors pytest's rootdir here rather than in whatever directory holds tmp_path.
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (tmp_path / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
+    _git(tmp_path, "init", "-q")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-q", "-m", "Add a buggy package")
+    (package / "__init__.py").write_text(_FIXED, encoding="utf-8")
+    (tmp_path / "tests").mkdir()
+    return tmp_path
+
+
+def _prove_red(toy: Path, test: str, *arguments: str) -> subprocess.CompletedProcess[str]:
+    (toy / "tests" / "test_toy.py").write_text(test, encoding="utf-8")
+    return subprocess.run(
+        [sys.executable, str(SCRIPTS / "prove_red.py"), *arguments, "tests/test_toy.py", "-q"],
+        cwd=toy,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_prove_red_accepts_a_test_that_fails_without_the_change(toy: Path) -> None:
+    (toy / "tests" / "test_toy.py").write_text(_CATCHES_THE_BUG, encoding="utf-8")
+    status = _git(toy, "status", "--porcelain", "--untracked-files=all")
+    result = _prove_red(toy, _CATCHES_THE_BUG)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PROVEN: the tests fail against src/ at HEAD" in result.stdout
+    # The old source is imported from a temporary export; the working tree is never touched.
+    assert (toy / "src" / "toy_prove_red" / "__init__.py").read_text(encoding="utf-8") == _FIXED
+    assert _git(toy, "status", "--porcelain", "--untracked-files=all") == status
+
+
+def test_prove_red_rejects_a_test_that_passes_without_the_change(toy: Path) -> None:
+    result = _prove_red(toy, _MISSES_THE_BUG)
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "NOT PROVEN: the tests pass against src/ at HEAD" in result.stdout
+
+
+def test_prove_red_compares_with_an_earlier_commit_once_the_change_is_committed(
+    toy: Path,
+) -> None:
+    _git(toy, "commit", "-q", "-am", "Fix the package")
+    nothing_to_prove = _prove_red(toy, _CATCHES_THE_BUG)
+    assert nothing_to_prove.returncode == 2, nothing_to_prove.stdout + nothing_to_prove.stderr
+    assert "pass --base" in nothing_to_prove.stderr
+    proven = _prove_red(toy, _CATCHES_THE_BUG, "--base", "HEAD~1")
+    assert proven.returncode == 0, proven.stdout + proven.stderr
+    assert "PROVEN: the tests fail against src/ at HEAD~1" in proven.stdout
