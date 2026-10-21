@@ -7,6 +7,7 @@ version bumped in two of the three places that carry it.
 
 from __future__ import annotations
 
+import ast
 import re
 import subprocess
 from pathlib import Path
@@ -56,6 +57,48 @@ def test_only_expected_files_are_tracked_at_the_repository_root() -> None:
     tracked = {path.name for path in _tracked("*") if path.parent == ROOT}
     unexpected = sorted(tracked - _ROOT_FILES)
     assert not unexpected, "unexpected files at the repository root: " + ", ".join(unexpected)
+
+
+def _literal_magnitude(node: ast.expr) -> float | None:
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.USub):
+        node = node.operand
+    if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+        if not isinstance(node.value, bool):
+            return abs(float(node.value))
+    return None
+
+
+def test_approx_tolerances_cannot_make_small_comparisons_vacuous() -> None:
+    """pytest.approx always adds an absolute tolerance of 1e-12 unless abs= is given.
+
+    So ``approx(3e-17, rel=1e-9)`` accepts 0.0, and a test written to catch a precision bug
+    passes against the very bug. That happened while adding the worst_of_k accuracy test.
+    Passing ``rel=`` without ``abs=``, or comparing with a tiny literal without ``abs=``, is
+    therefore flagged: state the absolute tolerance explicitly (``abs=0`` for a purely
+    relative check).
+    """
+    flagged: list[str] = []
+    # git's tests/*.py pathspec already matches files in subdirectories.
+    for path in sorted(set(_tracked("tests/*.py"))):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            name = node.func.attr if isinstance(node.func, ast.Attribute) else None
+            if isinstance(node.func, ast.Name):
+                name = node.func.id
+            if name != "approx":
+                continue
+            keywords = {keyword.arg for keyword in node.keywords}
+            if "abs" in keywords:
+                continue
+            magnitude = _literal_magnitude(node.args[0]) if node.args else None
+            if "rel" in keywords or (magnitude is not None and 0 < magnitude < 1e-6):
+                flagged.append(f"{path.relative_to(ROOT).as_posix()}:{node.lineno}")
+    assert not flagged, (
+        "pytest.approx without an explicit abs= tolerance, where the default abs=1e-12 can "
+        "make the comparison vacuous: " + ", ".join(sorted(set(flagged)))
+    )
 
 
 def test_every_tracked_example_plan_validates() -> None:
