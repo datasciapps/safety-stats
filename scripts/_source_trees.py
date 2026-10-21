@@ -84,20 +84,37 @@ def export_source(repository: Path, commit: str, src: str, destination: Path) ->
 
 
 def run_module(
-    source: Path, module: str, arguments: list[str], *, hidden: Path | None = None
+    source: Path,
+    module: str,
+    arguments: list[str],
+    *,
+    hidden: Path | None = None,
+    capture: bool = False,
+    cwd: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
     """Run ``python -m module arguments`` with the packages under ``source`` importable first.
 
     ``hidden`` is removed from sys.path, so packages that exist only there cannot leak in.
+    ``capture`` collects the output as UTF-8 instead of passing it through.
     """
     packages = sorted(path.name for path in source.iterdir() if (path / "__init__.py").is_file())
     environment = dict(os.environ)
     environment["PYTHONPATH"] = os.pathsep.join(
         entry for entry in (str(source), environment.get("PYTHONPATH")) if entry
     )
+    if capture:
+        environment["PYTHONIOENCODING"] = "utf-8"
     command = [
         sys.executable, "-c", _CHILD, str(source), str(hidden or ""), ",".join(packages), module,
         *arguments,
     ]
     sys.stdout.flush()
-    return subprocess.run(command, env=environment, text=True, check=False)
+    return subprocess.run(
+        command,
+        env=environment,
+        cwd=cwd,
+        capture_output=capture,
+        text=True,
+        encoding="utf-8" if capture else None,
+        check=False,
+    )
