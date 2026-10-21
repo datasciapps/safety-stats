@@ -34,7 +34,7 @@ python -m pip install -e ".[dev]"
 The gate that CI runs, and that every pull request must pass:
 
 ```bash
-ruff check src tests examples research
+ruff check src tests examples research scripts
 mypy src/inspect_safety_stats        # strict
 pytest
 ```
@@ -293,10 +293,13 @@ All three are first-class platforms.
 | Integration | `tests/integration/` | `analyze` and `validate` end to end on synthetic logs |
 | Examples | `tests/test_*_example.py` | The bundled examples still run offline |
 | Repository | `tests/test_repository_consistency.py` | Example plans validate, documentation links resolve, the version agrees in all three places, CI tests every advertised Python version, and only expected files sit at the repository root |
+| Scripts | `tests/test_dev_scripts.py` | The developer scripts in `scripts/` do what they claim, on every platform |
 | Golden **[proposed]** | `tests/golden/` | Byte-for-byte expected outputs for representative plans (#27) |
 
-- **Bug fixes.** Every bug fix comes with a test that fails without it. Say in the pull request
-  that you checked this.
+- **Bug fixes.** Every bug fix comes with a test that fails without it. Check it with
+  `python scripts/prove_red.py <tests>`, which runs the tests against the committed source and
+  then against your working tree, and paste its verdict in the pull request. Pass
+  `--base <commit>` once the fix is committed. It never modifies the working tree.
 - **Bounds.** A new bound or estimator needs a seeded Monte Carlo coverage test showing empirical
   coverage at or above nominal, with the simulation error stated. It also needs exact-value
   tests against an independent computation.

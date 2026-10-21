@@ -46,7 +46,7 @@ step that may download the selected checkpoint; the statistical analyzer remains
 Run static checks when the optional tools are installed:
 
 ```bash
-ruff check src tests examples
+ruff check src tests examples research scripts
 mypy src/inspect_safety_stats
 pytest --cov=inspect_safety_stats
 ```
