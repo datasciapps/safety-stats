@@ -143,6 +143,16 @@ def differing_files(base: Path, new: Path) -> list[str]:
     )
 
 
+# Artifacts such as hierarchy-risks.csv hold whole JSON documents on each row.
+_EXCERPT_WIDTH = 160
+
+
+def _shorten(line: str) -> str:
+    if len(line) <= _EXCERPT_WIDTH:
+        return line
+    return f"{line[:_EXCERPT_WIDTH]} ... [{len(line) - _EXCERPT_WIDTH} more characters]"
+
+
 def _excerpt(base: Path, new: Path, limit: int = 30) -> str:
     """The start of a unified diff between two text files."""
     try:
@@ -151,7 +161,7 @@ def _excerpt(base: Path, new: Path, limit: int = 30) -> str:
     except UnicodeDecodeError:
         return "    (binary content differs)"
     lines = list(difflib.unified_diff(before, after, "base", "new", lineterm="", n=1))
-    shown = [f"    {line}" for line in lines[:limit]]
+    shown = [f"    {_shorten(line)}" for line in lines[:limit]]
     if len(lines) > limit:
         shown.append(f"    ... and {len(lines) - limit} more diff lines")
     return "\n".join(shown)

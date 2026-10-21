@@ -145,3 +145,16 @@ def test_compare_artifacts_bundled_cases_exist(compare_artifacts: ModuleType) ->
     for case in compare_artifacts.bundled_cases(ROOT).values():
         assert case.plan.is_file(), case.plan
         assert case.logs.exists(), case.logs
+
+
+def test_compare_artifacts_shortens_long_lines_in_its_excerpt(
+    compare_artifacts: ModuleType, tmp_path: Path
+) -> None:
+    """CSV artifacts hold whole JSON documents per row; the excerpt must stay readable."""
+    base, new = tmp_path / "base.csv", tmp_path / "new.csv"
+    base.write_text("node," + "x" * 5000 + "\n", encoding="utf-8")
+    new.write_text("node," + "y" * 5000 + "\n", encoding="utf-8")
+    excerpt = compare_artifacts._excerpt(base, new)
+    assert excerpt.splitlines()
+    assert all(len(line) <= 220 for line in excerpt.splitlines())
+    assert "more characters]" in excerpt
