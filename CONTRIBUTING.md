@@ -297,6 +297,7 @@ All three are first-class platforms.
 | Examples | `tests/test_*_example.py` | The bundled examples still run offline |
 | Repository | `tests/test_repository_consistency.py` | Example plans validate, documentation links resolve, the version agrees in all three places, CI tests every advertised Python version, and only expected files sit at the repository root |
 | Scripts | `tests/test_dev_scripts.py` | The developer scripts in `scripts/` do what they claim, on every platform |
+| Formal | `formal/` | Optional Lean proofs that every risk measure is monotone, each tied to a property test (see [formal/README.md](formal/README.md)). Python work never needs Lean. |
 | Golden **[proposed]** | `tests/golden/` | Byte-for-byte expected outputs for representative plans (#27) |
 
 - **Bug fixes.** Every bug fix comes with a test that fails without it. Check it with
