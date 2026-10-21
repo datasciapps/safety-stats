@@ -62,7 +62,7 @@ Every pull request declares one of these.
 
 | Class | What it means | What it requires |
 |---|---|---|
-| **A. Behaviour-neutral** | Refactor, performance, typing, internal docs | Every report artifact byte-identical before and after. Show the A/B in the pull request. |
+| **A. Behaviour-neutral** | Refactor, performance, typing, internal docs | Every report artifact byte-identical before and after. Show it in the pull request with the output of `python scripts/compare_artifacts.py`. |
 | **B. Behaviour change** | Anything a user can observe: a number, label, default, diagnostic, exit code, file name, file content, or schema field | An issue agreed by a maintainer *before* merge; a changelog entry; regenerated golden outputs in a **separate commit** that explains every difference; a schema-version decision (4.2, 4.3) |
 | **C. New capability** | A new interval method, risk measure, judge mode, report artifact, or CLI command | Everything in B, plus section 8 |
 
@@ -216,6 +216,9 @@ from any directory (#42).
 
 - **Measure first.** Profile before optimising. A performance pull request is class A: attach the
   timings and an A/B showing byte-identical artifacts on realistic and stress-sized designs.
+  `python scripts/compare_artifacts.py --prompts 2000` runs the bundled examples and a synthetic
+  design of that size against the committed code. Its timings are single runs, so measure
+  performance separately.
 - **Prefer algorithmic fixes in Python and NumPy:**
   - index once;
   - memoise pure functions;

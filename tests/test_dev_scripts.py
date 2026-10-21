@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+import importlib
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "scripts"
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="the scripts need git")
 
@@ -93,3 +96,52 @@ def test_prove_red_compares_with_an_earlier_commit_once_the_change_is_committed(
     proven = _prove_red(toy, _CATCHES_THE_BUG, "--base", "HEAD~1")
     assert proven.returncode == 0, proven.stdout + proven.stderr
     assert "PROVEN: the tests fail against src/ at HEAD~1" in proven.stdout
+
+
+@pytest.fixture
+def compare_artifacts(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    return importlib.import_module("compare_artifacts")
+
+
+def test_compare_artifacts_finds_one_commit_identical_to_itself() -> None:
+    """End to end: export, synthetic inputs, both analyses and the byte comparison.
+
+    On Windows CI the checkout and the temporary directory sit on different drives, which is
+    where Inspect loses the drive letter of the synthetic logs unless each run starts on theirs.
+    """
+    result = subprocess.run(
+        [
+            sys.executable, str(SCRIPTS / "compare_artifacts.py"), "--base", "HEAD",
+            "--new", "HEAD", "--case", "synthetic", "--prompts", "4",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "synthetic: identical" in result.stdout
+    assert "exit status 0" in result.stdout
+
+
+def test_compare_artifacts_names_files_that_differ_or_exist_on_one_side(
+    compare_artifacts: ModuleType, tmp_path: Path
+) -> None:
+    base, new = tmp_path / "base", tmp_path / "new"
+    for side in (base, new):
+        (side / "nested").mkdir(parents=True)
+        (side / "same.json").write_bytes(b"{}\n")
+        (side / "nested" / "table.csv").write_bytes(b"a,b\n1,2\n")
+    assert compare_artifacts.differing_files(base, new) == []
+    (new / "nested" / "table.csv").write_bytes(b"a,b\r\n1,2\r\n")
+    (base / "only-base.md").write_bytes(b"x")
+    assert compare_artifacts.differing_files(base, new) == ["nested/table.csv", "only-base.md"]
+
+
+def test_compare_artifacts_bundled_cases_exist(compare_artifacts: ModuleType) -> None:
+    for case in compare_artifacts.bundled_cases(ROOT).values():
+        assert case.plan.is_file(), case.plan
+        assert case.logs.exists(), case.logs

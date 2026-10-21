@@ -21,55 +21,18 @@ package, see the working tree in both runs.
 from __future__ import annotations
 
 import argparse
-import io
-import os
-import subprocess
 import sys
-import tarfile
 import tempfile
 from pathlib import Path
-from typing import Any
 
-# The exit status _CHILD uses when a package imports from outside the tree under test.
-_WRONG_SOURCE = 97
-
-# Runs in the child interpreter. It hides the working tree's source directory from sys.path
-# (an editable install puts it there), checks that every package imports from the tree under
-# test, and then runs pytest in the same interpreter, so the check and the tests see the same
-# sys.path.
-_CHILD = """
-import importlib, os, sys
-
-source, hidden, packages, arguments = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
-
-
-def key(path):
-    return os.path.normcase(os.path.realpath(path or os.curdir))
-
-
-if hidden:
-    sys.path[:] = [entry for entry in sys.path if key(entry) != key(hidden)]
-for name in filter(None, packages.split(",")):
-    try:
-        origin = importlib.import_module(name).__file__
-    except Exception as error:  # the tests report it; it does not invalidate the comparison
-        print(f"prove_red: importing {name} failed: {error!r}", file=sys.stderr)
-        continue
-    if not key(origin).startswith(key(source) + os.sep):
-        print(f"prove_red: {name} imports from {origin}, not from {source}", file=sys.stderr)
-        sys.exit(97)
-
-import pytest
-
-sys.exit(int(pytest.main(arguments)))
-"""
-
-# Python 3.12, and the 3.10 and 3.11 security releases, can refuse unsafe archive members.
-_EXTRACT: dict[str, Any] = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
-
-
-def _git(repository: Path, *arguments: str) -> subprocess.CompletedProcess[bytes]:
-    return subprocess.run(["git", *arguments], cwd=repository, capture_output=True, check=False)
+from _source_trees import (
+    WRONG_SOURCE,
+    export_source,
+    repository_root,
+    resolve_commit,
+    run_module,
+    source_changed,
+)
 
 
 def _fail(message: str) -> int:
@@ -79,17 +42,8 @@ def _fail(message: str) -> int:
 
 def _run(source: Path, hidden: Path | None, pytest_arguments: list[str]) -> int:
     """Run pytest in a child interpreter that imports the packages under ``source``."""
-    packages = sorted(path.name for path in source.iterdir() if (path / "__init__.py").is_file())
-    environment = dict(os.environ)
-    environment["PYTHONPATH"] = os.pathsep.join(
-        entry for entry in (str(source), environment.get("PYTHONPATH")) if entry
-    )
-    command = [
-        sys.executable, "-c", _CHILD, str(source), str(hidden or ""), ",".join(packages),
-        "-p", "no:cacheprovider", *pytest_arguments,
-    ]
-    sys.stdout.flush()
-    return subprocess.run(command, env=environment, check=False).returncode
+    arguments = ["-p", "no:cacheprovider", *pytest_arguments]
+    return run_module(source, "pytest", arguments, hidden=hidden).returncode
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -111,36 +65,29 @@ def main(argv: list[str] | None = None) -> int:
     if not pytest_arguments:
         parser.error("name the tests to run, for example tests/unit/test_risk.py::test_name")
 
-    toplevel = _git(Path.cwd(), "rev-parse", "--show-toplevel")
-    if toplevel.returncode:
+    repository = repository_root()
+    if repository is None:
         return _fail("run this inside a git checkout")
-    repository = Path(toplevel.stdout.decode().strip())
-    commit = _git(repository, "rev-parse", "--verify", "--quiet", f"{options.base}^{{commit}}")
-    if commit.returncode:
+    base = resolve_commit(repository, options.base)
+    if base is None:
         return _fail(f"{options.base!r} is not a commit")
-    base = commit.stdout.decode().strip()
     label = f"{options.base} ({base[:10]})"
     source = repository / options.src
     if not source.is_dir():
         return _fail(f"there is no {options.src}/ directory in {repository}")
-
-    changed = _git(repository, "diff", "--quiet", base, "--", options.src).returncode == 1
-    untracked = _git(repository, "ls-files", "--others", "--exclude-standard", "--", options.src)
-    if not changed and not untracked.stdout.strip():
+    if not source_changed(repository, base, options.src):
         return _fail(
             f"{options.src}/ is the same at {label} and in the working tree, so there is no "
             "change to prove. If the change is committed, pass --base with the commit before it."
         )
 
     with tempfile.TemporaryDirectory(prefix="prove_red-", ignore_cleanup_errors=True) as scratch:
-        archive = _git(repository, "archive", "--format=tar", base, "--", options.src)
-        if archive.returncode:
+        old_source = export_source(repository, base, options.src, Path(scratch))
+        if old_source is None:
             return _fail(f"{options.src}/ does not exist at {label}")
-        with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
-            tar.extractall(scratch, **_EXTRACT)
         print(f"prove_red: testing {options.src}/ at {label}; the tests should fail", flush=True)
-        red = _run(Path(scratch) / options.src, source, pytest_arguments)
-    if red == _WRONG_SOURCE:
+        red = _run(old_source, source, pytest_arguments)
+    if red == WRONG_SOURCE:
         return _fail("could not import the old source in place of the installed package")
     if red == 0:
         print(
@@ -153,7 +100,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"prove_red: testing {options.src}/ in the working tree; the tests should pass")
     green = _run(source, None, pytest_arguments)
-    if green == _WRONG_SOURCE:
+    if green == WRONG_SOURCE:
         return _fail("the package does not import from the working tree")
     if green != 0:
         print("NOT PROVEN: the tests fail with the change as well.")
