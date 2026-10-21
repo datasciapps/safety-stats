@@ -355,6 +355,8 @@ All three are first-class platforms.
   permissions. Do not push directly to `main`.
 - **AI-assisted contributions** are welcome under the same bar. The human author is accountable
   for every line, can explain it in review, and keeps the pull request small enough to review.
+  Point coding agents at [AGENTS.md](AGENTS.md). It lists the checks to run and the mistakes this
+  repository has already made.
 - **[proposed]** Sign off your commits (`git commit -s`, Developer Certificate of Origin) with the
   identity you contribute under.
 

@@ -50,6 +50,9 @@ _ROOT_FILES = {
     "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md",
     "SECURITY.md",
+    # Notes for coding agents. CLAUDE.md only imports AGENTS.md.
+    "AGENTS.md",
+    "CLAUDE.md",
 }
 
 
@@ -99,6 +102,24 @@ def test_approx_tolerances_cannot_make_small_comparisons_vacuous() -> None:
         "pytest.approx without an explicit abs= tolerance, where the default abs=1e-12 can "
         "make the comparison vacuous: " + ", ".join(sorted(set(flagged)))
     )
+
+
+def test_agent_notes_cite_tests_and_files_that_exist() -> None:
+    """AGENTS.md ties each past mistake to the test that now catches it.
+
+    Renaming such a test, or moving a file the notes point at, would otherwise leave the notes
+    pointing at nothing, and nobody would notice.
+    """
+    notes = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    definitions = "\n".join(path.read_text(encoding="utf-8") for path in _tracked("tests/*.py"))
+    missing = [
+        name
+        for name in sorted(set(re.findall(r"`(test_\w+)`", notes)))
+        if f"def {name}(" not in definitions
+    ]
+    paths = set(re.findall(r"\b((?:scripts|src|tests)/[\w./-]+\.(?:py|md|yaml))", notes))
+    missing += sorted(path for path in paths if not (ROOT / path).is_file())
+    assert not missing, "AGENTS.md cites what no longer exists: " + ", ".join(missing)
 
 
 def test_every_tracked_example_plan_validates() -> None:
