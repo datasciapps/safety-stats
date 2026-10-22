@@ -2153,6 +2153,12 @@ def _apply_panel_derived_correction(
                     []
                     if identified.identified
                     else [
+                        "The judge-reported rate is outside what any accuracy in the declared "
+                        "boxes can produce, so the data contradict the boxes; true risk is "
+                        "unidentified and the reported set is the whole unit interval."
+                    ]
+                    if identified.unidentified_reason == "contradicted"
+                    else [
                         "The declared boxes admit an uninformative panel (sensitivity + "
                         "specificity <= 1); true risk is unidentified and the reported set is "
                         "the whole unit interval."
@@ -4136,7 +4142,13 @@ def _noisy_valid_claim(
         f"Type-I error for a one-sided decision is at most {result.alpha_pass:.12g}: the "
         "judge-reported endpoint's alpha plus half the calibration budget.",
     ]
-    if not result.identified:
+    if result.unidentified_reason == "contradicted":
+        reasons.append(
+            "The judge-reported rate is outside what the calibrated sensitivity and "
+            "false-positive rate can produce, so the calibration and the data disagree and "
+            "nothing identifies true risk."
+        )
+    elif not result.identified:
         reasons.append(
             "The calibration does not establish an informative judge (sensitivity plus "
             "specificity may not exceed one), so nothing identifies true risk."
