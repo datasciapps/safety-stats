@@ -337,6 +337,7 @@ into the assumption the whole estimand rests on.
 - a plan whose weights do not normalize at any frontier, or whose constraints prune a
   positive-weight node's last child;
 - a semantic seed appearing under two fixed parent paths;
+- `true` or `false` in an integer field, such as `total_rewrites`;
 - constraints that condition on a level at or below what they prune;
 - an identifier containing `|` or `=`, which canonical node ids are built from;
 - a rewrite ledger and prompt store that disagree about which units were accepted;
