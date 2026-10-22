@@ -2,11 +2,44 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import yaml
 
 from .canonicalize import sha256_value
 from .models import AnalysisPlan
+
+SCHEMA_VERSIONS = ("2.0", "3.0")
+
+
+def _check_schema_version(raw: dict[str, Any]) -> None:
+    """Accept an unquoted 2.0 or 3.0, and refuse any other version with an explanation.
+
+    YAML and JSON read an unquoted 2.0 as a number, and the schema field is a string, so
+    validation used to reject a supported version. An older version failed with a list of
+    unknown fields that did not say what had changed.
+    """
+    if "schema_version" not in raw:
+        return
+    declared = raw["schema_version"]
+    if isinstance(declared, float):
+        declared = raw["schema_version"] = str(declared)
+    if declared in SCHEMA_VERSIONS:
+        return
+    supported = " and ".join(repr(version) for version in SCHEMA_VERSIONS)
+    if declared == "1.0":
+        raise ValueError(
+            f"this plan declares schema_version '1.0', and this release reads {supported}. "
+            "Schema 2.0 replaced independence_unit and cluster_sensitivity with named "
+            "design.independence_profiles, and does not translate them, so a plan's "
+            "independence assumptions cannot change silently (docs/independence-profiles.md). "
+            "Write a 2.0 or 3.0 plan (docs/plan-reference.md#schema-versions), freeze it "
+            "again, and rerun analyze: the Inspect logs can be reused"
+        )
+    raise ValueError(
+        f"unsupported plan schema_version {declared!r}; this release reads {supported} "
+        f'plans, declared as, for example, schema_version: "{SCHEMA_VERSIONS[-1]}"'
+    )
 
 
 def load_plan(path: str | Path) -> AnalysisPlan:
@@ -19,6 +52,7 @@ def load_plan(path: str | Path) -> AnalysisPlan:
         raise ValueError("analysis plan must be YAML or JSON")
     if not isinstance(raw, dict):
         raise ValueError("analysis plan root must be an object")
+    _check_schema_version(raw)
     plan = AnalysisPlan.model_validate(raw)
     plan._source_path = source
     manifest = plan.inputs.design_manifest
