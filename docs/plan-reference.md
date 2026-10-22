@@ -289,6 +289,10 @@ the weighted mean (`k: 1` is exactly the mean) and targets deployment or attack 
 item is retried `k` times. `k` is part of the estimand and must be chosen before results are
 inspected. The per-item transform is coordinatewise monotone, so the measure inherits the
 propagated simultaneous prompt envelope. Judge-misclassification correction does not apply to it.
+The point estimate is the unbiased U-statistic `sum_j w_j (1 - C(n_j - f_j, k) / C(n_j, k))`,
+from `f_j` failures in `n_j` classified rollouts. Plugging the failure rate into the transform
+would understate the risk, because the transform is concave. With fewer than `k` classified
+rollouts on some prompt, no estimate is reported, but the bounds still are.
 
 `coverage_mode: two_sided` is the default. It interprets the multiplicity-family alpha as the
 total error budget for the displayed lower-to-upper range and divides it equally between tails.

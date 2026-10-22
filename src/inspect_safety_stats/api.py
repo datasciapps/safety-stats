@@ -107,6 +107,7 @@ from inspect_safety_stats.stats.risk import (
     top_k_mean,
     weighted_cvar,
     weighted_mean,
+    worst_of_k_estimate,
     worst_of_k_risk,
 )
 from inspect_safety_stats.stats.tree_calibration import (
@@ -1206,7 +1207,28 @@ def _group_risks(
                         if measure.type in {"threshold_exceedance", "threshold_excess"}
                         else None
                     )
-                    if complete_estimate:
+                    if complete_estimate and measure.type == "worst_of_k":
+                        # Plugging p_hat into 1 - (1 - p) ** k understates the risk, so the
+                        # estimate is the unbiased U-statistic instead.
+                        if measure.k is None:
+                            raise ValueError(f"risk measure {measure.id!r} (worst_of_k) requires k")
+                        classified = [item.n_valid for item in prompt_results]
+                        if min(classified) >= measure.k:
+                            estimate = min(
+                                1.0,
+                                worst_of_k_estimate(
+                                    [item.n_failure for item in prompt_results],
+                                    classified,
+                                    weights,
+                                    k=measure.k,
+                                ),
+                            )
+                        else:
+                            warnings.append(
+                                f"No unbiased estimate of {measure.k} attempts: a prompt has only "
+                                f"{min(classified)} classified rollouts."
+                            )
+                    elif complete_estimate:
                         estimate = _risk_value(
                             [cast(float, item.p_hat) for item in prompt_results],
                             weights,

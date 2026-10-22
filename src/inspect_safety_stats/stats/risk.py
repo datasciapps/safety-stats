@@ -127,3 +127,45 @@ def worst_of_k_risk(values: ArrayLike, weights: ArrayLike, *, k: int) -> float:
     with np.errstate(divide="ignore"):
         attempts = 0.0 - np.expm1(k * np.log1p(-x))
     return float(np.dot(w, attempts))
+
+
+def worst_of_k_estimate(
+    failures: ArrayLike, rollouts: ArrayLike, weights: ArrayLike, *, k: int
+) -> float:
+    """Unbiased estimate of the weighted chance that one of ``k`` attempts fails.
+
+    For a prompt with ``f`` failures in ``n >= k`` rollouts, the U-statistic with kernel
+    ``max`` is the share of the ``C(n, k)`` subsets of its rollouts that contain a failure,
+    ``1 - C(n - f, k) / C(n, k)``. It is unbiased for ``1 - (1 - p) ** k``. The plug-in
+    ``1 - (1 - f / n) ** k`` is not: the transform is concave, so by Jensen's inequality the
+    plug-in understates the risk. Every prompt needs at least ``k`` rollouts.
+
+    The ratio is the product of ``1 - f / (n - i)`` over ``i < k``, summed in logarithms with
+    ``log1p`` and completed with ``expm1``, so tiny failure rates keep their precision.
+    """
+
+    if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+        raise ValueError("k must be an integer of at least one")
+    f = np.asarray(failures)
+    n = np.asarray(rollouts)
+    _, w = _arrays(np.zeros(len(n)), weights)
+    if f.shape != n.shape or not all(
+        np.issubdtype(array.dtype, np.integer) for array in (f, n)
+    ):
+        raise ValueError("failures and rollouts must be integer arrays of the same length")
+    if np.any(f < 0) or np.any(f > n):
+        raise ValueError("failures must lie between zero and the number of rollouts")
+    if np.any(n < k):
+        raise ValueError(f"every prompt needs at least {k} rollouts to estimate {k} attempts")
+    risks = np.empty(len(n))
+    for index, (fails, total) in enumerate(zip(f.tolist(), n.tolist(), strict=True)):
+        if k == 1 or fails == 0:
+            # Exactly f / n, and exactly zero without failures.
+            risks[index] = fails / total
+        elif total - fails < k:
+            # Every k-subset contains a failure.
+            risks[index] = 1.0
+        else:
+            log_ratio = math.fsum(math.log1p(-fails / (total - i)) for i in range(k))
+            risks[index] = 0.0 - math.expm1(log_ratio)
+    return float(np.dot(w, risks))
