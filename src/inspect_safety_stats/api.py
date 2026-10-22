@@ -239,12 +239,15 @@ def _prompt_blocked(diagnostics: list[Diagnostic], cohort: str, prompt: str) -> 
             continue
         if diagnostic.code in global_codes or diagnostic.scope is None:
             return True
-        # Rollout-level errors are scoped by eval id, so they name the prompt they block.
+        # An error about one prompt names it in its details, with its cohort when it concerns
+        # only one. Scope strings are for people. Matching their prefixes let an error about
+        # p10 block p1, and an error about group g1 block a prompt named g1.
         details = diagnostic.details
-        if details.get("cohort_id") == cohort and details.get("prompt_id") == prompt:
-            return True
-        scope = diagnostic.scope
-        if scope == cohort or scope == prompt or scope.startswith(f"{cohort}:{prompt}"):
+        if details.get("prompt_id") is not None:
+            if details["prompt_id"] == prompt and details.get("cohort_id") in (None, cohort):
+                return True
+            continue
+        if diagnostic.scope == cohort:
             return True
     return False
 
