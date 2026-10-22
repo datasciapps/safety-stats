@@ -3097,6 +3097,10 @@ def _project_comparison_hierarchy_regions(
         ):
             continue
         rows = [row for row in results if row.comparison_id == comparison_id]
+        if not rows:
+            # No results, for example because the comparison's family is undeclared, which
+            # plan validation already reports. There is nothing to project.
+            continue
         result_by_id = {cast(str, row.result_id): row for row in rows}
         prompt_ids = sorted({prompt for target in targets for prompt in target.prompt_ids})
         prompt_index = {prompt_id: index for index, prompt_id in enumerate(prompt_ids)}
@@ -3952,10 +3956,14 @@ def _comparison_set_results(
                 "Simultaneous rank intervals require risk_difference in the all-pairs set."
             )
 
-        _, _, simultaneous_coverage = _coverage_floors(
-            next(family.alpha for family in plan.multiplicity.families if family.id == spec.family),
-            spec.coverage_mode,
+        family = next(
+            (family for family in plan.multiplicity.families if family.id == spec.family), None
         )
+        if family is None:
+            # Plan validation reports the undeclared family. Without its budget the set has no
+            # joint coverage to report.
+            continue
+        _, _, simultaneous_coverage = _coverage_floors(family.alpha, spec.coverage_mode)
         assert simultaneous_coverage is not None
         results.append(
             ComparisonSetResult(
@@ -4143,7 +4151,35 @@ def _claims(
         estimate = evidence.estimate if evidence else None
         method = evidence.method if evidence else "unavailable"
         evidence_refs = [ref]
-        family = families[claim.family]
+        family = families.get(claim.family)
+        if family is None:
+            # Plan validation reports the undeclared family. Without its error budget the claim
+            # cannot be decided, so it stays INCONCLUSIVE and the report is still written.
+            results.append(
+                ClaimResult(
+                    claim_id=claim.id,
+                    title=claim.title,
+                    status="INCONCLUSIVE",
+                    statistical_status="INCONCLUSIVE",
+                    policy_status="INCONCLUSIVE",
+                    estimate=estimate,
+                    lower=lower,
+                    upper=upper,
+                    acceptable_upper=claim.acceptable_upper,
+                    unacceptable_lower=claim.unacceptable_lower,
+                    alpha=None,
+                    multiplicity_family=claim.family,
+                    method=method,
+                    mandatory=claim.mandatory,
+                    evidence_refs=evidence_refs,
+                    reasons=[
+                        f"The claim's multiplicity family {claim.family!r} is not declared, so "
+                        "it has no error budget."
+                    ],
+                    warnings=list(evidence.warnings) if evidence else [],
+                )
+            )
+            continue
         alpha = family.alpha
         correction_note: str | None = None
 

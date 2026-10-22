@@ -227,7 +227,8 @@ class ClaimResult(ResultModel):
     upper: float | None = None
     acceptable_upper: float
     unacceptable_lower: float
-    alpha: float
+    # None when the claim's family is undeclared: such a claim has no error budget.
+    alpha: float | None
     multiplicity_family: str
     method: str
     mandatory: bool

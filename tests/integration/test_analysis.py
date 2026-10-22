@@ -1454,7 +1454,11 @@ def test_hierarchy_aware_kl_comparisons_project_difference_and_ratio_regions(
 
 
 def _three_arm_report(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, hierarchy_region: str
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    hierarchy_region: str,
+    set_family: str = "model_comparisons",
 ) -> SafetyReport:
     plan_path = _write_inputs(tmp_path)
     plan_text = plan_path.read_text(encoding="utf-8")
@@ -1479,7 +1483,7 @@ def _three_arm_report(
         "    measure: mean\n"
         "    method: weighted_kl_chernoff\n"
         "    reference_methods: [weighted_hoeffding]\n"
-        "    family: model_comparisons\n"
+        f"    family: {set_family}\n"
         "    independence:\n"
         "      primary: rollout\n"
         "      sensitivities: [prompt]\n"
@@ -1524,6 +1528,42 @@ def _three_arm_report(
     )
 
     return analyze(plan=plan_path, logs="ignored")
+
+
+def test_a_claim_with_an_undeclared_family_is_reported_not_crashed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """analyze raised KeyError here, so no report was written for an invalid plan."""
+    plan_path = _write_inputs(tmp_path)
+    text = plan_path.read_text(encoding="utf-8")
+    assert text.count("    family: gate\n") == 1
+    plan_path.write_text(
+        text.replace("    family: gate\n", "    family: undeclared\n"), encoding="utf-8"
+    )
+    _patch_frames(monkeypatch, _frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert report.integrity.status == "invalid"
+    assert "PLAN_UNKNOWN_REFERENCE" in {item.code for item in report.integrity.diagnostics}
+    (claim,) = report.claims
+    assert claim.status == "INCONCLUSIVE"
+    assert claim.alpha is None
+    assert claim.multiplicity_family == "undeclared"
+    assert any("not declared" in reason for reason in claim.reasons)
+
+
+def test_a_comparison_set_with_an_undeclared_family_is_reported_not_crashed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """analyze raised a bare StopIteration here, and the CLI printed an empty message."""
+    report = _three_arm_report(
+        monkeypatch, tmp_path, hierarchy_region="linear_program", set_family="undeclared"
+    )
+
+    assert report.integrity.status == "invalid"
+    assert "PLAN_UNKNOWN_REFERENCE" in {item.code for item in report.integrity.diagnostics}
+    assert report.comparison_sets == []
 
 
 def test_three_arm_comparison_set_uses_one_coherent_joint_region(
