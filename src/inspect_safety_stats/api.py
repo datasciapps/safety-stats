@@ -4174,6 +4174,10 @@ def _claims(
     risk_index = {(item.cohort_id, item.group_id, item.measure_id): item for item in risks}
     comparison_index = {item.comparison_id: item for item in comparisons if item.level is None}
     families = {family.id: family for family in plan.multiplicity.families}
+    validated_judge = (
+        plan.inputs.judge_calibration is not None
+        and plan.inputs.judge_calibration.mode == "validated"
+    )
     results: list[ClaimResult] = []
     corrected_claims: list[str] = []
     uncorrected_claims: list[str] = []
@@ -4248,8 +4252,9 @@ def _claims(
             evidence_refs.append(f"interval:{correction.interval_id}")
             if correction.family_alpha is not None:
                 alpha = family.alpha + correction.family_alpha
-            corrected_claims.append(claim.id)
-        elif evidence is not None:
+            if claim.method != "noisy_valid_test":
+                corrected_claims.append(claim.id)
+        elif evidence is not None and claim.method != "noisy_valid_test":
             uncorrected_claims.append(claim.id)
 
         if claim.method == "noisy_valid_test":
@@ -4263,6 +4268,16 @@ def _claims(
             estimate = None
             correction_note = None
             evidence_refs.append("test:noisy_valid_certification")
+        elif validated_judge and correction is None:
+            # A validated calibration makes every claim a claim about true risk. Without a
+            # certifying correction only judge-reported risk remains, and the labels may show
+            # the judge missing failures: a refused calibration used to pass claims that way.
+            status = "INCONCLUSIVE"
+            reasons = [
+                "The plan declares a validated judge calibration, but this claim's evidence has "
+                "no certifying correction, so it is not decided on judge-reported risk. The "
+                "judge diagnostics say why."
+            ]
         else:
             status, reasons = decide_claim(
                 lower=lower,
@@ -4325,20 +4340,20 @@ def _claims(
                 details={"claim_ids": sorted(corrected_claims)},
             )
         )
-        if uncorrected_claims:
-            diagnostics.append(
-                Diagnostic(
-                    code="JUDGE_CORRECTION_MIXED_ESTIMANDS",
-                    severity="WARNING",
-                    message=(
-                        "some claims were decided on true failure risk and others on "
-                        "judge-reported risk, because no judge correction is available for "
-                        "their evidence; comparison claims are never corrected"
-                    ),
-                    scope="claims",
-                    details={"uncorrected_claim_ids": sorted(uncorrected_claims)},
-                )
+    if validated_judge and uncorrected_claims:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_CORRECTION_UNAVAILABLE",
+                severity="WARNING",
+                message=(
+                    "the plan declares a validated judge calibration, but these claims have no "
+                    "certifying correction for their evidence, so they are INCONCLUSIVE rather "
+                    "than decided on judge-reported risk"
+                ),
+                scope="claims",
+                details={"claim_ids": sorted(uncorrected_claims)},
             )
+        )
     return results
 
 
