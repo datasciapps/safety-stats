@@ -16,6 +16,7 @@ from inspect_ai.analysis import evals_df, samples_df
 from inspect_ai.log import EvalLog, read_eval_log
 
 from inspect_safety_stats.config.canonicalize import sha256_value
+from inspect_safety_stats.config.loader import report_path
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.manifest import (
     ResolvedGroup,
@@ -431,6 +432,8 @@ def ingest_inspect_logs(
     observations: list[Observation] = []
     judge_verdicts: dict[str, dict[str, bool | None]] = {}
     source_hashes: dict[str, str | None] = {}
+    # How each log is named in reports. The real path still reads and hashes the file.
+    source_names: dict[str, str] = {}
     provided_logs = _provided_eval_logs(logs)
     error_context_cache: dict[str, dict[str, ErrorContext]] = {}
     for collection_order, (label, row) in enumerate(selected.iterrows(), start=1):
@@ -587,6 +590,7 @@ def ingest_inspect_logs(
         log_path = str(row.get("log", eval_row.get("log", "")))
         if log_path not in source_hashes:
             source_hashes[log_path] = _hash_file(log_path)
+            source_names[log_path] = report_path(log_path, plan)
         config = _configuration(eval_row, plan.cohorts[cohort_id].require_uniform)
         design_row = manifest_by_prompt.loc[prompt_id]
         identity = {
@@ -604,7 +608,7 @@ def ingest_inspect_logs(
         observations.append(
             Observation(
                 observation_id=observation_id,
-                source_log=log_path,
+                source_log=source_names[log_path],
                 source_log_sha256=source_hashes[log_path],
                 eval_id=eval_id,
                 run_id=_native(eval_row.get("run_id")),
