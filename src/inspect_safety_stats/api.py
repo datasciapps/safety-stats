@@ -1790,6 +1790,41 @@ def _pooled_calibration_gap(
     return None
 
 
+def _unclassified_share(
+    population: dict[str, _PromptRollouts], weights: dict[str, float], measure_type: str
+) -> float:
+    """The weight a row's bounds put on rollouts they complete as unknown outcomes.
+
+    A tail measure can rest on a single prompt, so for one this is the largest share in
+    any prompt it weights. Each prompt takes the larger of its two counts' shares: they
+    differ only under ``exclude``, which direct-mean intervals complete and prompt bounds
+    drop, and the larger share is conservative for either.
+    """
+
+    shares: list[tuple[float, float]] = []
+    for prompt_id, weight in weights.items():
+        item = population.get(prompt_id)
+        if weight <= 0 or item is None or item.attempted == 0:
+            continue
+        share = (item.attempted - item.classified) / item.attempted
+        if item.bounded:
+            share = max(share, (item.bounded - item.classified) / item.bounded)
+        shares.append((weight, share))
+    if not shares:
+        return 0.0
+    if measure_type == "weighted_mean":
+        return min(1.0, sum(weight * share for weight, share in shares))
+    return max(share for _, share in shares)
+
+
+def _unclassified_assumption(share: float) -> str:
+    return (
+        f"{share:.6g} of the row's weight rests on unclassified rollouts. They keep their "
+        "completion on the true-risk scale, truly safe at the lower bound and truly unsafe at "
+        "the upper, and only the classified mass is mapped through rho."
+    )
+
+
 def _uncertified_correction_warning(gap: str) -> str:
     return (
         f"Sensitivity analysis, not a certified bound: {gap}. The human labels weight every "
@@ -1940,6 +1975,7 @@ def _judge_corrected_interval(
     family_id: str | None,
     judge_alpha: float | None,
     gap: str | None = None,
+    unclassified_share: float = 0.0,
 ) -> RiskIntervalResult | None:
     if result.lower is None or result.upper is None:
         return None
@@ -1948,6 +1984,7 @@ def _judge_corrected_interval(
         observed_upper=result.upper,
         observed_estimate=result.estimate,
         calibration=calibration,
+        unclassified_share=unclassified_share,
     )
     validated = calibration.source == "validated"
     # Measured accuracies certify only a row they were measured for; elsewhere the
@@ -2009,6 +2046,8 @@ def _judge_corrected_interval(
                 "to every cohort.",
             ]
         )
+    if unclassified_share > 0:
+        assumptions.append(_unclassified_assumption(unclassified_share))
     assumptions.append("The underlying judge-system interval retains its own stated guarantee.")
     warnings: list[str] = []
     if validated and gap is not None:
@@ -2313,6 +2352,7 @@ def _delta_reference_interval(
     alpha: float,
     family_id: str | None,
     gap: str | None = None,
+    unclassified_share: float = 0.0,
 ) -> RiskIntervalResult | None:
     """Asymptotic delta-method reference beside the exact validated correction."""
 
@@ -2335,6 +2375,13 @@ def _delta_reference_interval(
         )
     except ValueError:
         return None
+    warnings = [_uncertified_correction_warning(gap)] if gap is not None else []
+    if unclassified_share > 0:
+        warnings.append(
+            f"It covers the classified rollouts only: {unclassified_share:.6g} of the row's "
+            "weight rests on unclassified rollouts, which the exact box keeps at their worst "
+            "case."
+        )
     return RiskIntervalResult(
         interval_id="judge_corrected_validated_delta",
         lower=delta.lower,
@@ -2367,7 +2414,7 @@ def _delta_reference_interval(
             "them is the price of the finite-sample guarantee.",
         ],
         eligibility="diagnostic",
-        warnings=[_uncertified_correction_warning(gap)] if gap is not None else [],
+        warnings=warnings,
     )
 
 
@@ -2399,10 +2446,31 @@ def _apply_judge_correction(
         *(row for row in risks if row.measure_id in correctable),
         *hierarchy_risks,
     ]
+    population = _labelled_population(plan, data)
+    group_weights = {group.id: group.weights for group in data.groups}
+    measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
+    node_weights = {
+        (node.group_id, node.level, tuple(node.path.items())): dict(
+            zip(node.prompt_ids, node.weights, strict=True)
+        )
+        for node in hierarchy_nodes
+    }
+
+    def weighting(result: GroupRiskResult | HierarchyRiskResult) -> tuple[dict[str, float], str]:
+        """The prompt weights behind a row, and its measure type."""
+        if isinstance(result, GroupRiskResult):
+            return group_weights[result.group_id], measure_types[result.measure_id]
+        # Hierarchy nodes are weighted means over their own prompts.
+        key = (result.group_id, result.level, tuple(result.path.items()))
+        return node_weights[key], "weighted_mean"
 
     if spec.mode == "assumed":
         calibrations = _assumed_judge_calibrations(plan)
         for result in targets:
+            weights, measure_type = weighting(result)
+            share = _unclassified_share(
+                population.get(result.cohort_id, {}), weights, measure_type
+            )
             for calibration in calibrations:
                 interval = _judge_corrected_interval(
                     result=result,
@@ -2410,6 +2478,7 @@ def _apply_judge_correction(
                     primary_scenario=spec.primary,
                     family_id=None,
                     judge_alpha=None,
+                    unclassified_share=share,
                 )
                 if interval is not None:
                     result.intervals.append(interval)
@@ -2422,32 +2491,19 @@ def _apply_judge_correction(
     by_cohort, summaries, judge_alpha, truth_strata = _validated_judge_calibrations(
         plan, data, diagnostics
     )
-    population = _labelled_population(plan, data)
-    group_weights = {group.id: group.weights for group in data.groups}
-    measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
-    node_weights = {
-        (node.group_id, node.level, tuple(node.path.items())): dict(
-            zip(node.prompt_ids, node.weights, strict=True)
-        )
-        for node in hierarchy_nodes
-    }
     for result in targets:
         cohort_calibration = by_cohort.get(result.cohort_id)
         if cohort_calibration is None:
             continue
-        if isinstance(result, GroupRiskResult):
-            weights = group_weights[result.group_id]
-            measure_type = measure_types[result.measure_id]
-        else:
-            # Hierarchy nodes are weighted means over their own prompts.
-            weights = node_weights[(result.group_id, result.level, tuple(result.path.items()))]
-            measure_type = "weighted_mean"
+        weights, measure_type = weighting(result)
+        cohort_population = population.get(result.cohort_id, {})
         gap = _pooled_calibration_gap(
-            population.get(result.cohort_id, {}),
+            cohort_population,
             design_type=plan.design.type,
             measure_type=measure_type,
             weights=weights,
         )
+        share = _unclassified_share(cohort_population, weights, measure_type)
         interval = _judge_corrected_interval(
             result=result,
             calibration=cohort_calibration,
@@ -2455,6 +2511,7 @@ def _apply_judge_correction(
             family_id=spec.family,
             judge_alpha=judge_alpha,
             gap=gap,
+            unclassified_share=share,
         )
         if interval is not None:
             result.intervals.append(interval)
@@ -2466,6 +2523,7 @@ def _apply_judge_correction(
                 alpha=judge_alpha / len(plan.cohorts),
                 family_id=spec.family,
                 gap=gap,
+                unclassified_share=share,
             )
             if reference is not None:
                 result.intervals.append(reference)
@@ -3672,6 +3730,8 @@ def _judge_corrected_comparison_interval(
     baseline_calibration: JudgeCalibration,
     family_id: str | None,
     gap: str | None = None,
+    candidate_share: float = 0.0,
+    baseline_share: float = 0.0,
 ) -> RiskIntervalResult | None:
     """Correct a comparison by correcting each arm, then recombining.
 
@@ -3699,12 +3759,14 @@ def _judge_corrected_comparison_interval(
         observed_upper=cast(float, primary.candidate_upper),
         observed_estimate=result.candidate_estimate,
         calibration=candidate_calibration,
+        unclassified_share=candidate_share,
     )
     baseline = correct_judge_risk(
         observed_lower=cast(float, primary.baseline_lower),
         observed_upper=cast(float, primary.baseline_upper),
         observed_estimate=result.baseline_estimate,
         calibration=baseline_calibration,
+        unclassified_share=baseline_share,
     )
     lower, upper = _multi_arm_effect_interval(
         result.estimand,
@@ -3767,6 +3829,11 @@ def _judge_corrected_comparison_interval(
                 if certified
                 else []
             ),
+            *(
+                f"{arm.capitalize()} arm: {_unclassified_assumption(share)}"
+                for arm, share in (("candidate", candidate_share), ("baseline", baseline_share))
+                if share > 0
+            ),
         ],
         eligibility="certifying" if certified else "diagnostic",
         warnings=[_uncertified_correction_warning(gap)] if gap is not None else [],
@@ -3820,12 +3887,19 @@ def _apply_judge_correction_to_comparisons(
             )
             if gap is not None:
                 gaps.append(f"{arm} cohort {cohort_id!r}: {gap}")
+        measure_type = measure_types[result.measure_id]
         interval = _judge_corrected_comparison_interval(
             result=result,
             candidate_calibration=candidate,
             baseline_calibration=baseline,
             family_id=spec.family,
             gap="; ".join(gaps) or None,
+            candidate_share=_unclassified_share(
+                population.get(result.candidate_cohort, {}), weights, measure_type
+            ),
+            baseline_share=_unclassified_share(
+                population.get(result.baseline_cohort, {}), weights, measure_type
+            ),
         )
         if interval is None:
             skipped.append(result.result_id or result.comparison_id)

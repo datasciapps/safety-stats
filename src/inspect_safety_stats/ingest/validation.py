@@ -50,9 +50,9 @@ def judge_stratum_counts(
 ) -> tuple[dict[str, dict[str, JudgeStratumCounts]], list[str]]:
     """Cross human labels against judge verdicts, per cohort and judge stratum.
 
-    Unclassified observations belong to neither judge stratum. They are already
-    covered by the conservative missing-outcome completion in the underlying
-    interval and are excluded here.
+    Unclassified observations belong to neither judge stratum, so they are excluded here.
+    The underlying interval completes them conservatively, and the correction keeps that
+    completion instead of mapping it through rho (see ``correct_judge_risk``).
     """
 
     sizes: dict[tuple[str, bool], int] = defaultdict(int)
