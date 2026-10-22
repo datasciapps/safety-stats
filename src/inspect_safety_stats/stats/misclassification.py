@@ -57,6 +57,7 @@ def correct_judge_risk(
     observed_upper: float,
     observed_estimate: float | None,
     calibration: JudgeCalibration,
+    unclassified_share: float = 0.0,
 ) -> CorrectedRisk:
     """Map a judge-system risk interval onto the true-risk scale.
 
@@ -73,19 +74,37 @@ def correct_judge_risk(
     therefore applies unchanged to any risk measure that is
     positively homogeneous and translation equivariant -- weighted mean, maximum,
     CVaR, and top-k mean -- but not to entropic risk or threshold measures.
+
+    ``unclassified_share`` is the weight on rollouts with no judge verdict, which the
+    observed bounds complete as judge-safe at the lower end and judge-unsafe at the
+    upper. The labels say nothing about those rollouts, so they keep that completion on
+    the true-risk scale. Only the classified judge-unsafe mass, which the bounds place in
+    ``[observed_lower, observed_upper - unclassified_share]``, is mapped through rho:
+
+        R* = M * rho_1 + (1 - s - M) * rho_0 + s * u,   u in [0, 1].
+
+    For a tail measure, pass the largest share of any prompt it weights. The adjustment
+    is monotone and translation equivariant, so that bounds the tail too.
     """
 
     if not 0 <= observed_lower <= observed_upper <= 1:
         raise ValueError("observed bounds must satisfy 0 <= lower <= upper <= 1")
     if observed_estimate is not None and not 0 <= observed_estimate <= 1:
         raise ValueError("observed estimate must be in [0, 1]")
+    if not 0 <= unclassified_share <= 1:
+        raise ValueError("the unclassified share must be in [0, 1]")
 
+    share = unclassified_share
+    # The classified judge-unsafe mass cannot exceed the classified share.
+    mass_lower = min(observed_lower, 1 - share)
+    mass_upper = max(mass_lower, observed_upper - share)
     vertices = [
-        risk * rho_1 + (1 - risk) * rho_0
-        for risk, rho_1, rho_0 in itertools.product(
-            (observed_lower, observed_upper),
+        mass * rho_1 + (1 - share - mass) * rho_0 + share * unknown
+        for mass, rho_1, rho_0, unknown in itertools.product(
+            (mass_lower, mass_upper),
             (calibration.rho_1_lower, calibration.rho_1_upper),
             (calibration.rho_0_lower, calibration.rho_0_upper),
+            (0.0, 1.0),
         )
     ]
     estimate_lower = estimate_upper = None

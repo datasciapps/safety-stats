@@ -175,6 +175,27 @@ whereas the exact box never falls below its nominal level; at very low prevalenc
 frequently refuses to correct at all because the calibration is uninformative. A narrower
 interval that under-covers where failures are rare is not a better interval for a safety claim.
 
+### Unclassified rollouts
+
+A rollout the judge never classified, such as one with a missing score under
+`conservative_bounds`, belongs to neither judge stratum, so no label can say anything about
+it. The base bounds complete it as judge-safe at the lower end and judge-unsafe at the upper.
+The correction keeps that completion on the true-risk scale, truly safe at the lower bound and
+truly unsafe at the upper. Only the classified mass is mapped through \(\rho\):
+
+\[
+R^*=M\rho_1+(1-s-M)\rho_0+s\,u,\qquad u\in[0,1],
+\]
+
+where \(s\) is the row's weight on unclassified rollouts and \(M\in[L,\,U-s]\) its classified
+judge-unsafe mass. For a tail measure, \(s\) is the largest unclassified share of any prompt
+it weights. The corrected interval's assumptions state \(s\) whenever it is positive.
+
+Mapping the whole completion through \(\rho_1\) would treat unclassified rollouts as if the
+labels described them. With 1,000 of 3,200 rollouts unclassified, that once gave a corrected
+upper bound of 0.064 where the unclassified rollouts alone allow 0.319
+([issue #97](https://github.com/aduncan001/safety_stats/issues/97)).
+
 ### Comparisons
 
 A comparison is corrected by correcting **each arm with its own cohort's calibration** and
