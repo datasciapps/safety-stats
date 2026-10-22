@@ -242,9 +242,14 @@ Three consequences are recorded on every affected `ClaimResult`:
   corrected and uncorrected bounds.
 
 The analysis emits `JUDGE_CORRECTED_CLAIMS` listing which claims were retargeted. Comparison
-claims are corrected too, provided their comparison exposes both arm bounds. If some claims
-are corrected and others are not, it also emits `JUDGE_CORRECTION_MIXED_ESTIMANDS`, because a
-report whose claims sit on two different estimands is easy to misread.
+claims are corrected too, provided their comparison exposes both arm bounds.
+
+A validated calibration makes every claim a claim about true risk. A claim whose evidence has
+no certifying correction is therefore INCONCLUSIVE, not decided on judge-reported risk. That
+happens when the calibration is refused, when a measure cannot be corrected, or when a ratio
+has no corrected baseline. The analysis lists such claims in `JUDGE_CORRECTION_UNAVAILABLE`.
+A refused calibration can mean that the labels show the judge missing failures, which is
+exactly when judge-reported risk understates true risk.
 
 **An `assumed` correction never moves a claim.** The selection requires
 `eligibility: certifying`, which only a validated calibration produces, so a declared

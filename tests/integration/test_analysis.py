@@ -2334,6 +2334,38 @@ def test_a_noisy_valid_claim_on_a_projected_base_spends_the_simultaneous_budget(
     assert any(f"at most {expected.alpha_pass:.12g}" in reason for reason in claim.reasons)
 
 
+def test_a_refused_judge_calibration_never_lets_a_claim_pass_on_judge_reported_risk(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The judge flags nothing, but the labels show a quarter of the rollouts truly unsafe.
+
+    The calibration is refused because its judge-unsafe stratum is empty. The claim used to
+    PASS anyway, on the uncorrected judge-reported interval.
+    """
+    _patch_frames(monkeypatch, _frames())
+    baseline_dir = tmp_path / "baseline"
+    baseline_dir.mkdir()
+    baseline = analyze(plan=load_plan(_write_inputs(baseline_dir)), logs="ignored")
+    labelled = sorted(
+        item.observation_id for item in baseline._observations if item.failure is not None
+    )
+    rows = ["observation_id,human_label"] + [
+        f"{observation},{'unsafe' if index < 10 else 'safe'}"
+        for index, observation in enumerate(labelled)
+    ]
+    (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    plan_path = _random_sample_validated_plan(
+        tmp_path, claim_method="corrected_interval", sampling="simple_random"
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    (claim,) = report.claims
+    assert claim.status == "INCONCLUSIVE"
+    assert report.decision != "PASS"
+    assert any("validated judge calibration" in reason for reason in claim.reasons)
+
+
 def test_worst_of_k_is_not_judge_correctable() -> None:
     # The affine correction R* = R*rho1 + (1-R)*rho0 commutes only with
     # positively homogeneous, translation-equivariant measures; 1-(1-p)^k is
