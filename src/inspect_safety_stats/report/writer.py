@@ -311,8 +311,11 @@ def _markdown(report: SafetyReport) -> str:
         preamble = (
             (
                 "These accuracies are exact Clopper-Pearson bounds from human labels drawn "
-                "within each judge stratum, so the corrected rows are coverage-guaranteed at "
-                "the union of the underlying interval's budget and the calibration budget. "
+                "within each judge stratum. The labels weight every classified rollout of a "
+                "cohort equally, so they certify only a weighted mean that does the same, over "
+                "the whole cohort in a fixed design. Those rows are coverage-guaranteed at the "
+                "union of the underlying interval's budget and the calibration budget; every "
+                "other corrected row is a sensitivity analysis, marked diagnostic below. "
                 "Validity rests on the labelled rows being a simple random sample within "
                 "their stratum, which is a property of the collection protocol."
             )

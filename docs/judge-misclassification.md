@@ -106,7 +106,9 @@ not a defect.
 ## Validated mode: measured accuracies
 
 `mode: validated` estimates the same two parameters from human labels instead of declaring
-them. Its corrected intervals are **certifying**.
+them. Its corrected intervals are **certifying** for the estimand the labels measure: a
+weighted mean over a whole cohort that weights every rollout equally (see
+[What it certifies](#what-it-certifies)).
 
 ```yaml
 inputs:
@@ -186,7 +188,8 @@ prevalence-dependent the two arms carry different boxes, and
 \]
 
 is not a function of \(\Delta\) alone. Risk ratios and relative reductions are derived from
-the same two corrected arm intervals.
+the same two corrected arm intervals. Each arm must be a row its own cohort's labels
+certify, as [below](#what-it-certifies); otherwise the corrected comparison is a sensitivity.
 
 This requires a primary interval that exposes both arm bounds -- the two-arm rectangle used
 by `weighted_kl_chernoff` and by every `comparison_sets` entry. A direct contrast
@@ -209,9 +212,38 @@ reports the share it actually spent in `family_alpha`.
   property of the collection protocol, not of the data, and nothing in the package can check
   it. It is recorded in the interval's assumption list.
 - **Human adjudication is ground truth.** Labeller error is not modelled.
-- One calibration is estimated **per cohort** and shared by every group within it. Since
-  \(\rho\) is prevalence-dependent, a cohort is the right granularity; sharing across
-  groups inside a cohort is an approximation the report states explicitly.
+
+### What it certifies
+
+One calibration is estimated per cohort. Its labels are drawn within judge strata over every
+classified rollout of the cohort, so they measure \(\rho_1\) and \(\rho_0\) with each of those
+rollouts weighted equally. The identity needs them weighted the way the row weights its
+rollouts. The two agree exactly only for a row that
+
+- uses the `weighted_mean` measure;
+- covers the whole cohort, not a group or hierarchy node inside it;
+- gives every classified rollout the same weight, meaning a prompt's weight divided by the
+  number of rollouts its rate is computed over is the same for every prompt; and
+- belongs to a fixed design. A sampled design estimates a frame mean, and labels on the drawn
+  items do not bound the judge's accuracy over the frame.
+
+Equal prompt weights with equal rollout counts satisfy the weighting condition. `nested_equal`
+weights over an unbalanced hierarchy usually do not.
+
+Every other corrected row is still reported, as a **sensitivity analysis**:
+`eligibility: diagnostic`, no coverage, and a warning that names the reason. A claim that
+rests on it is INCONCLUSIVE. The same holds for each arm of a comparison, and for the
+[noisy-but-valid test](#certifying-a-threshold-directly-the-noisy-but-valid-test).
+
+The restriction matters because pooled labels dilute a prompt that is both heavily weighted and
+badly judged. In the example from
+[issue #95](https://github.com/aduncan001/safety_stats/issues/95), one hard prompt carries half the weight and the judge
+misses 40% of its failures, while nine easy prompts' false positives dominate the labels. The
+pooled \(\rho_1\) is 0.48 against a design-weighted 0.84, and a claim at 0.12 used to pass
+although true risk was 0.15. Tail measures (`maximum`, `cvar`, `top_k_mean`) fare worse:
+\(\rho\) rises with prevalence, so the riskiest prompts sit above the pooled value.
+
+Weighting the labels by the design, which would certify more rows, is future work.
 
 ### When it refuses
 
@@ -246,8 +278,9 @@ claims are corrected too, provided their comparison exposes both arm bounds.
 
 A validated calibration makes every claim a claim about true risk. A claim whose evidence has
 no certifying correction is therefore INCONCLUSIVE, not decided on judge-reported risk. That
-happens when the calibration is refused, when a measure cannot be corrected, or when a ratio
-has no corrected baseline. The analysis lists such claims in `JUDGE_CORRECTION_UNAVAILABLE`.
+happens when the calibration is refused, when a measure cannot be corrected, when the labels
+do not certify the row ([What it certifies](#what-it-certifies)), or when a ratio has no
+corrected baseline. The analysis lists such claims in `JUDGE_CORRECTION_UNAVAILABLE`.
 A refused calibration can mean that the labels show the judge missing failures, which is
 exactly when judge-reported risk understates true risk.
 
@@ -295,6 +328,9 @@ labels drawn within judge strata over-represent the judge's own positives and wo
 sensitivity upward, so the plan validator refuses `noisy_valid_test` under
 `simple_random_within_judge_stratum`. And the test needs both true classes among the labels; with
 very rare failures that may require many labels, in which case the honest outcome is INCONCLUSIVE.
+The sensitivity and false-positive rate are pooled over the cohort's rollouts with equal weight, so
+the test certifies only the rows the corrected interval does ([What it certifies](#what-it-certifies)).
+Elsewhere the claim is INCONCLUSIVE, with the reason.
 The construction follows the structure of Feng et al.'s "Noisy but Valid" framework (a calibration
 set for the judge's error rates and a variance-corrected critical threshold on the judge-labelled
 set, with finite-sample validity); it is realised here with the package's exact Clopper--Pearson
