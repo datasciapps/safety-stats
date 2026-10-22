@@ -3,16 +3,28 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     PrivateAttr,
-    field_validator,
     model_validator,
 )
+
+
+def _reject_boolean(value: object) -> object:
+    # Lax validation would read `true` as 1. A plan is a pre-registered document, so a typo in
+    # an integer field must fail rather than run with a guessed value.
+    if isinstance(value, bool):
+        raise ValueError("must be an integer, not a boolean")
+    return value
+
+
+# Every integer field in a plan, analysis or generative, uses this type.
+PlanInt = Annotated[int, BeforeValidator(_reject_boolean)]
 
 
 class StrictModel(BaseModel):
@@ -346,15 +358,7 @@ class RiskMeasureSpec(StrictModel):
     ]
     beta: float | None = None
     lambda_: float | None = Field(default=None, alias="lambda")
-    k: int | None = None
-
-    @field_validator("k", mode="before")
-    @classmethod
-    def validate_k_is_not_boolean(cls, value: object) -> object:
-        # Lax integer validation would read `k: true` as 1.
-        if isinstance(value, bool):
-            raise ValueError("k must be an integer, not a boolean")
-        return value
+    k: PlanInt | None = None
     threshold: float | None = None
     threshold_column: str | None = None
     diagnostic_only: bool = False
@@ -482,8 +486,8 @@ class ComparisonSpec(StrictModel):
         Literal["exact_mcnemar", "newcombe_paired", "fixed_cluster_bootstrap"]
     ] = Field(default_factory=list)
     cluster_key: str | None = None
-    bootstrap_replicates: int = Field(default=2000, ge=100)
-    bootstrap_seed: int = 0
+    bootstrap_replicates: PlanInt = Field(default=2000, ge=100)
+    bootstrap_seed: PlanInt = 0
 
     _comparison_set_id: str | None = PrivateAttr(default=None)
     _joint_arm_region: bool = PrivateAttr(default=False)
@@ -668,7 +672,7 @@ class ReportSpec(StrictModel):
     include_prompt_text: bool = False
     include_observations: bool = True
     include_decisions: bool = False
-    decimal_places: int = Field(default=6, ge=0, le=15)
+    decimal_places: PlanInt = Field(default=6, ge=0, le=15)
 
 
 class AnalysisPlan(StrictModel):

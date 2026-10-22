@@ -16,7 +16,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from inspect_safety_stats.config.models import JudgeCalibrationScenarioSpec
+from inspect_safety_stats.config.models import JudgeCalibrationScenarioSpec, PlanInt
 
 RESERVED_CHARACTERS = ("|", "=")
 
@@ -45,7 +45,7 @@ class GenerativeMetadata(StrictModel):
     description: str | None = None
     intent: Literal["confirmatory", "exploratory"] = "confirmatory"
     plan_frozen_at: datetime | None = None
-    selection_seed: int = Field(ge=0)
+    selection_seed: PlanInt = Field(ge=0)
 
     @model_validator(mode="after")
     def confirmatory_has_freeze_time(self) -> GenerativeMetadata:
@@ -143,7 +143,7 @@ class TaxonomySpec(StrictModel):
     arms: dict[str, ArmSpec] = Field(default_factory=dict)
     constraints: list[ConstraintSpec] = Field(default_factory=list)
     renormalization: Literal["renormalize_valid_children", "explicit_context_weights"] | None = None
-    maximum_paths: int = Field(default=500_000, gt=0)
+    maximum_paths: PlanInt = Field(default=500_000, gt=0)
 
     @model_validator(mode="after")
     def hierarchy_is_well_formed(self) -> TaxonomySpec:
@@ -229,7 +229,7 @@ class RewriteValidationSpec(StrictModel):
     validator_id: str = Field(min_length=1)
     mode: Literal["deterministic"] = "deterministic"
     on_invalid: Literal["retry", "fail"] = "retry"
-    maximum_attempts: int = Field(default=5, ge=1)
+    maximum_attempts: PlanInt = Field(default=5, ge=1)
 
 
 class RewriteDeduplicationSpec(StrictModel):
@@ -245,7 +245,7 @@ class RewriteSpec(StrictModel):
     model: str = Field(min_length=1)
     prompt_template: str = Field(min_length=1)
     temperature: float = Field(ge=0.0)
-    max_tokens: int = Field(gt=0)
+    max_tokens: PlanInt = Field(gt=0)
     seed_replayable: bool = False
     validation: RewriteValidationSpec
     deduplication: RewriteDeduplicationSpec = Field(default_factory=RewriteDeduplicationSpec)
@@ -323,7 +323,7 @@ class CohortSpec(StrictModel):
 class TargetSpec(StrictModel):
     cohorts: dict[str, CohortSpec] = Field(min_length=1)
     shared_rewrites: bool = True
-    rollouts_per_rewrite: int = Field(default=1, ge=1)
+    rollouts_per_rewrite: PlanInt = Field(default=1, ge=1)
     score: ScoreSpec
     estimand: Literal["end_to_end_system", "underlying_model"] = "end_to_end_system"
 
@@ -343,8 +343,8 @@ class SamplingSpec(StrictModel):
     """
 
     method: Literal["direct", "proportional_stratified"] = "direct"
-    total_rewrites: int = Field(gt=0)
-    minimum_rewrites_per_stratum: int = Field(default=0, ge=0)
+    total_rewrites: PlanInt = Field(gt=0)
+    minimum_rewrites_per_stratum: PlanInt = Field(default=0, ge=0)
 
     @model_validator(mode="after")
     def minimum_requires_stratification(self) -> SamplingSpec:

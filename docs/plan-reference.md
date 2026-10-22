@@ -1,6 +1,6 @@
 # Analysis plan reference
 
-Plans are strict YAML or JSON documents. Unknown fields are errors. Relative manifest paths resolve against the plan file.
+Plans are strict YAML or JSON documents. Unknown fields are errors, and integer fields reject `true` and `false` rather than reading them as 1 and 0. Relative manifest paths resolve against the plan file.
 
 ## `analysis`
 
