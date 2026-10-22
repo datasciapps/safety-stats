@@ -162,7 +162,9 @@ is reported in the interval's `family_alpha`.
 Each *endpoint* of the corrected interval uses the base interval's endpoint plus two of the four
 calibration endpoints, so a one-sided claim spends the base endpoint's alpha plus half the
 calibration budget; the interval records this as its directional coverage. Beside the exact box
-the report shows a `judge_corrected_validated_delta` reference: a delta-method (Wald) interval that
+of a weighted-mean row, the report shows a `judge_corrected_validated_delta` reference. Tail
+measures have none, since the reference propagates the weighted mean's variance. It is a
+delta-method (Wald) interval that
 propagates the calibration variance through \(R^*=R\rho_1+(1-R)\rho_0\) with Agresti--Coull
 stabilised stratum proportions and the rollout-independence binomial variance of the judge-reported
 mean. It is asymptotic, carries no finite-sample guarantee, is labelled `diagnostic`, and never
