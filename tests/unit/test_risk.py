@@ -13,6 +13,7 @@ from inspect_safety_stats.stats import (
     top_k_mean,
     weighted_cvar,
     weighted_mean,
+    worst_of_k_estimate,
     worst_of_k_risk,
 )
 
@@ -131,6 +132,54 @@ def test_worst_of_k_stays_accurate_for_tiny_probabilities() -> None:
 def test_worst_of_k_at_one_attempt_is_exactly_the_weighted_mean() -> None:
     values, weights = [0.1, 0.37, 0.9], [0.2, 0.3, 0.5]
     assert worst_of_k_risk(values, weights, k=1) == weighted_mean(values, weights)
+
+
+@pytest.mark.parametrize("n", [3, 10, 40])
+@pytest.mark.parametrize("k", [2, 3])
+@pytest.mark.parametrize("p", [0.01, 0.3, 0.8])
+def test_the_worst_of_k_estimate_is_unbiased_where_the_plug_in_understates(
+    n: int, k: int, p: float
+) -> None:
+    truth = 1 - (1 - p) ** k
+    pmf = [math.comb(n, f) * p**f * (1 - p) ** (n - f) for f in range(n + 1)]
+    unbiased = sum(
+        mass * worst_of_k_estimate([f], [n], [1.0], k=k) for f, mass in enumerate(pmf)
+    )
+    plug_in = sum(mass * worst_of_k_risk([f / n], [1.0], k=k) for f, mass in enumerate(pmf))
+    assert unbiased == pytest.approx(truth, rel=1e-12, abs=0)
+    # 1 - (1 - p) ** k is concave in p, so by Jensen's inequality the plug-in is too low.
+    assert plug_in < truth
+
+
+def test_the_worst_of_k_estimate_counts_subsets_with_a_failure() -> None:
+    # One prompt with 10 failures in 20 rollouts, one with none: C(10, 2) / C(20, 2) of the
+    # pairs on the first are failure-free.
+    estimate = worst_of_k_estimate([10, 0], [20, 20], [0.5, 0.5], k=2)
+    assert estimate == pytest.approx(0.5 * (1 - 45 / 190), rel=1e-15, abs=0)
+    assert estimate > worst_of_k_risk([0.5, 0.0], [0.5, 0.5], k=2)
+    # Fewer safe rollouts than attempts: every k-subset holds a failure.
+    assert worst_of_k_estimate([4], [5], [1.0], k=2) == 1.0
+    zero = worst_of_k_estimate([0, 0], [7, 9], [0.5, 0.5], k=3)
+    assert zero == 0.0 and math.copysign(1.0, zero) == 1.0
+    # At one attempt it is exactly the weighted failure rate.
+    assert worst_of_k_estimate([3, 1], [10, 4], [0.5, 0.5], k=1) == 0.5 * 0.3 + 0.5 * 0.25
+
+
+def test_the_worst_of_k_estimate_stays_accurate_for_tiny_failure_rates() -> None:
+    # One failure in a million rollouts, two attempts: exactly 2 / n.
+    n = 1_000_000
+    assert worst_of_k_estimate([1], [n], [1.0], k=2) == pytest.approx(2 / n, rel=1e-12, abs=0)
+
+
+def test_the_worst_of_k_estimate_refuses_what_it_cannot_estimate() -> None:
+    with pytest.raises(ValueError, match="at least 3 rollouts"):
+        worst_of_k_estimate([0], [2], [1.0], k=3)
+    with pytest.raises(ValueError, match="between zero and the number of rollouts"):
+        worst_of_k_estimate([5], [4], [1.0], k=2)
+    with pytest.raises(ValueError, match="integer arrays"):
+        worst_of_k_estimate([0.5], [4], [1.0], k=2)
+    with pytest.raises(ValueError, match="integer of at least one"):
+        worst_of_k_estimate([0], [4], [1.0], k=True)
 
 
 def test_plans_reject_a_boolean_k() -> None:
