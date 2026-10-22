@@ -421,6 +421,7 @@ def ingest_inspect_logs(
                 severity="ERROR",
                 message=f"observed prompt {prompt_id!r} is absent from the design manifest",
                 scope=prompt_id,
+                details={"prompt_id": prompt_id},
             )
         )
 
@@ -457,6 +458,7 @@ def ingest_inspect_logs(
                     severity="ERROR",
                     message=f"duplicate rollout key {rollout_key!r}",
                     scope=prompt_id,
+                    details={"prompt_id": prompt_id},
                 )
             )
         rollout_keys.add(rollout_key)
@@ -648,6 +650,7 @@ def ingest_inspect_logs(
                         severity="ERROR",
                         message=f"prompt {prompt_id!r} has no observations in cohort {cohort_id!r}",
                         scope=f"{cohort_id}:{prompt_id}",
+                        details={"cohort_id": cohort_id, "prompt_id": prompt_id},
                     )
                 )
             if plan.design.require_expected_rollouts and "expected_rollouts" in manifest:
@@ -663,6 +666,7 @@ def ingest_inspect_logs(
                                 f"expected {expected}"
                             ),
                             scope=f"{cohort_id}:{prompt_id}",
+                            details={"cohort_id": cohort_id, "prompt_id": prompt_id},
                         )
                     )
                 elif count > expected:
@@ -676,6 +680,7 @@ def ingest_inspect_logs(
                                 f"expected {expected}"
                             ),
                             scope=f"{cohort_id}:{prompt_id}",
+                            details={"cohort_id": cohort_id, "prompt_id": prompt_id},
                         )
                     )
             elif plan.design.require_expected_rollouts:

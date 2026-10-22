@@ -6,12 +6,12 @@ import pandas as pd
 import pytest
 
 from inspect_safety_stats import analyze, load_plan, render_visualization, write_visualization
-from inspect_safety_stats.api import _alpha_by_prompt
+from inspect_safety_stats.api import _alpha_by_prompt, _prompt_blocked
 from inspect_safety_stats.config.loader import canonical_plan_hash
 from inspect_safety_stats.config.models import CohortSpec, PromptBoundsSpec
 from inspect_safety_stats.ingest.inspect_logs import ErrorContext, NormalizedData
 from inspect_safety_stats.ingest.manifest import load_manifest
-from inspect_safety_stats.schema.reports import SafetyReport
+from inspect_safety_stats.schema.reports import Diagnostic, SafetyReport
 
 
 def _write_inputs(tmp_path: Path) -> Path:
@@ -1611,6 +1611,53 @@ def _judge_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     silent = (sample_frame["id"] == "p2") & (sample_frame["epoch"] == 1)
     sample_frame.loc[silent, "score_harmful_b"] = None
     return eval_frame, sample_frame
+
+
+def test_an_error_about_one_prompt_does_not_block_a_prompt_whose_id_prefixes_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A rollout shortfall in p10 blocked p1 too, because "candidate:p10" starts with
+    "candidate:p1"."""
+    plan_path = _write_inputs(tmp_path)
+    design = tmp_path / "design.csv"
+    design.write_text(
+        design.read_text(encoding="utf-8").replace("p2,q2", "p10,q2"), encoding="utf-8"
+    )
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.assign(id=sample_frame["id"].replace({"p2": "p10"}))
+    short = (sample_frame["id"] == "p10") & (sample_frame["epoch"] == 20)
+    _patch_frames(monkeypatch, (eval_frame, sample_frame[~short]))
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    errors = {(item.code, item.scope) for item in report.integrity.diagnostics}
+    assert ("ROLLOUT_SHORTFALL", "candidate:p10") in errors
+    estimates = {item.prompt_id: item for item in report.prompt_estimates}
+    assert estimates["p10"].lower is None and estimates["p10"].upper is None
+    assert estimates["p1"].lower is not None and estimates["p1"].upper is not None
+
+
+@pytest.mark.parametrize(
+    ("diagnostic", "blocked"),
+    [
+        # A group-level error does not block a prompt that shares the group's id.
+        (Diagnostic(code="RISK_MEASURE_INVALID", severity="ERROR", message="", scope="candidate:g1:mean"), False),  # noqa: E501
+        (Diagnostic(code="DIRECT_MEAN_INTERVAL_INVALID", severity="ERROR", message="", scope="candidate:g1:mean"), False),  # noqa: E501
+        # Prompt-level errors block the prompt they name, in their cohort or in all cohorts.
+        (Diagnostic(code="ROLLOUT_SHORTFALL", severity="ERROR", message="", scope="candidate:g1", details={"cohort_id": "candidate", "prompt_id": "g1"}), True),  # noqa: E501
+        (Diagnostic(code="ROLLOUT_SHORTFALL", severity="ERROR", message="", scope="baseline:g1", details={"cohort_id": "baseline", "prompt_id": "g1"}), False),  # noqa: E501
+        (Diagnostic(code="ROLLOUT_DUPLICATE", severity="ERROR", message="", scope="g1", details={"prompt_id": "g1"}), True),  # noqa: E501
+        (Diagnostic(code="ROLLOUT_DUPLICATE", severity="ERROR", message="", scope="g10", details={"prompt_id": "g10"}), False),  # noqa: E501
+        # Cohort-level and unscoped errors block every prompt; warnings block nothing.
+        (Diagnostic(code="GENERATIVE_SAMPLE_UNMATCHED", severity="ERROR", message="", scope="candidate"), True),  # noqa: E501
+        (Diagnostic(code="COHORT_EMPTY", severity="ERROR", message=""), True),
+        (Diagnostic(code="ROLLOUT_SHORTFALL", severity="WARNING", message="", scope="candidate"), False),  # noqa: E501
+    ],
+)
+def test_prompt_blocking_follows_the_prompt_an_error_names(
+    diagnostic: Diagnostic, blocked: bool
+) -> None:
+    assert _prompt_blocked([diagnostic], "candidate", "g1") is blocked
 
 
 def _patch_frames(
