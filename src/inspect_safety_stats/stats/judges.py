@@ -223,6 +223,9 @@ class IdentifiedRiskSet:
     lower: float
     upper: float
     identified: bool
+    # Why nothing is identified. "uninformative": the box admits a judge no better than chance.
+    # "contradicted": no true risk in [0, 1] yields the observed rate under any accuracy in it.
+    unidentified_reason: Literal["uninformative", "contradicted"] | None = None
 
 
 def identified_risk_set(
@@ -241,13 +244,21 @@ def identified_risk_set(
     if not 0 <= observed_lower <= observed_upper <= 1:
         raise ValueError("observed bounds must satisfy 0 <= lower <= upper <= 1")
     if box.sensitivity_lower + box.specificity_lower <= 1:
-        return IdentifiedRiskSet(lower=0.0, upper=1.0, identified=False)
+        return IdentifiedRiskSet(
+            lower=0.0, upper=1.0, identified=False, unidentified_reason="uninformative"
+        )
     vertices = [
         (q - (1 - sp)) / (se + sp - 1)
         for q in (observed_lower, observed_upper)
         for se in (box.sensitivity_lower, box.sensitivity_upper)
         for sp in (box.specificity_lower, box.specificity_upper)
     ]
-    return IdentifiedRiskSet(
-        lower=max(0.0, min(vertices)), upper=min(1.0, max(vertices)), identified=True
-    )
+    lower, upper = min(vertices), max(vertices)
+    if upper < 0 or lower > 1:
+        # The observed rate lies below the box's false-positive floor or above its sensitivity
+        # ceiling, so the data contradict the box. Clipping each end separately used to return
+        # an inverted interval marked as identified.
+        return IdentifiedRiskSet(
+            lower=0.0, upper=1.0, identified=False, unidentified_reason="contradicted"
+        )
+    return IdentifiedRiskSet(lower=max(0.0, lower), upper=min(1.0, upper), identified=True)

@@ -295,6 +295,7 @@ class NoisyValidCertification:
     identified: bool
     alpha_pass: float
     alpha_fail: float
+    unidentified_reason: Literal["uninformative", "contradicted"] | None = None
 
 
 def noisy_valid_certification(
@@ -382,4 +383,5 @@ def noisy_valid_certification(
         identified=identified.identified,
         alpha_pass=judge_reported_alpha + calibration_alpha / 2,
         alpha_fail=judge_reported_alpha + calibration_alpha / 2,
+        unidentified_reason=identified.unidentified_reason,
     )
