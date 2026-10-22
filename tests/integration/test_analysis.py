@@ -465,6 +465,63 @@ def test_frontier_sidak_calibrates_disjoint_hierarchy_nodes(
     assert "Frontier Šidák" in html
 
 
+def test_an_all_failure_group_bound_stays_a_probability_under_judge_correction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Nine weights of 1/9 sum to 1.0000000000000002, and the judge correction raised on it."""
+    plan_path = _write_inputs(tmp_path)
+    prompts = [f"p{index}" for index in range(1, 10)]
+    (tmp_path / "design.csv").write_text(
+        "prompt_id,question_id,task_id,risk_domain,expected_rollouts,zero_tolerance\n"
+        + "".join(f"{prompt},q{prompt},t1,cyber,20,false\n" for prompt in prompts),
+        encoding="utf-8",
+    )
+    plan_text = plan_path.read_text(encoding="utf-8").replace(
+        "design:\n",
+        "  judge_calibration:\n"
+        "    mode: assumed\n"
+        "    primary: declared\n"
+        "    scenarios:\n"
+        "      - id: declared\n"
+        "        rho_1: {lower: 0.9, upper: 1.0}\n"
+        "        rho_0: {lower: 0.0, upper: 0.01}\n"
+        "design:\n",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    plan = load_plan(plan_path)
+    # The propagated envelope is then the mean's primary interval, and it was not clipped.
+    plan.outputs.direct_mean_intervals.enabled = False
+    eval_frame, sample_frame = _frames()
+    template = sample_frame[sample_frame["id"] == "p1"]
+    sample_frame = pd.concat(
+        [
+            template.assign(id=prompt, sample_id=template["sample_id"].str.replace("p1", prompt))
+            for prompt in prompts
+        ],
+        ignore_index=True,
+    ).assign(score_harmful="FAIL")
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+
+    report = analyze(plan=plan, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    assert mean.upper == 1.0
+    assert any(item.interval_id == "judge_corrected_declared" for item in mean.intervals)
+
+
+def test_every_measure_is_classified_for_clipping_to_the_unit_interval() -> None:
+    """A new measure must say whether it is a probability, and so whether it is clipped."""
+    from typing import get_args
+
+    from inspect_safety_stats.api import _PROBABILITY_MEASURES
+    from inspect_safety_stats.config.models import RiskMeasureSpec
+
+    types = set(get_args(RiskMeasureSpec.model_fields["type"].annotation))
+    assert types - _PROBABILITY_MEASURES == {"threshold_excess"}
+    assert _PROBABILITY_MEASURES <= types
+
+
 def test_judge_calibration_emits_assumed_correction_sensitivities(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
