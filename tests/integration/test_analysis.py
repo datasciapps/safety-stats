@@ -662,6 +662,21 @@ def test_validated_judge_calibration_produces_certifying_corrections(
     assert corrected.simultaneous_coverage == pytest.approx(1 - base.family_alpha - 0.05)
     assert corrected.raw_lower == pytest.approx(mean.lower)
 
+    # A node spanning the whole cohort is the same estimand, so it stays certified. A node
+    # inside it weights rollouts differently from the labels, so it is only a sensitivity.
+    nodes = {
+        tuple(row.path.values()): row
+        for row in report.hierarchy_risks
+        if row.cohort_id == "candidate"
+    }
+    for path, eligibility in [(("t1",), "certifying"), (("t1", "q1"), "diagnostic")]:
+        node_correction = next(
+            item
+            for item in nodes[path].intervals
+            if item.interval_id == "judge_corrected_validated"
+        )
+        assert node_correction.eligibility == eligibility
+
     # Provenance records the labels behind each cohort's calibration.
     summary = report.provenance["judge_calibration"]
     assert summary["mode"] == "validated"

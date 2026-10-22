@@ -111,7 +111,10 @@ exclusive.
 
 Corrections are applied to `weighted_mean`, `maximum`, `cvar`, and `top_k_mean` measures, to
 every hierarchy node, and to comparisons whose primary interval exposes both arm bounds
-(`weighted_kl_chernoff` and any `comparison_sets` entry). See [Judge misclassification](judge-misclassification.md).
+(`weighted_kl_chernoff` and any `comparison_sets` entry). A validated correction certifies
+only a `weighted_mean` over a whole cohort, in a fixed design, that weights every classified
+rollout equally. Every other corrected row is a sensitivity, and a claim on it is
+INCONCLUSIVE. See [Judge misclassification](judge-misclassification.md).
 
 ### Judge panels
 

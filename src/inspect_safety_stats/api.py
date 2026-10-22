@@ -252,6 +252,18 @@ def _prompt_blocked(diagnostics: list[Diagnostic], cohort: str, prompt: str) -> 
     return False
 
 
+def _bounds_carry_unknown_outcome(plan: AnalysisPlan, row: Observation) -> bool:
+    """Whether an unclassified rollout stays in its prompt's bounds as an unknown outcome.
+
+    Under the other policies it is blocked or excluded, and leaves the prompt's denominator.
+    """
+    if row.failure is not None:
+        return False
+    if row.error is not None:
+        return plan.inputs.score.errors in {"end_to_end", "conservative_bounds"}
+    return plan.inputs.score.missing == "conservative_bounds"
+
+
 def _prompt_estimates(
     plan: AnalysisPlan,
     data: NormalizedData,
@@ -268,18 +280,7 @@ def _prompt_estimates(
             rows = by_key.get((cohort_id, prompt_id), [])
             valid = [row for row in rows if row.failure is not None]
             failures = sum(bool(row.failure) for row in valid)
-            bounded_unknown = [
-                row
-                for row in rows
-                if row.failure is None
-                and (
-                    (
-                        row.error is not None
-                        and plan.inputs.score.errors in {"end_to_end", "conservative_bounds"}
-                    )
-                    or (row.error is None and plan.inputs.score.missing == "conservative_bounds")
-                )
-            ]
+            bounded_unknown = [row for row in rows if _bounds_carry_unknown_outcome(plan, row)]
             blocked = _prompt_blocked(diagnostics, cohort_id, prompt_id)
             alpha = allocations.get(prompt_id)
             lower = upper = None
@@ -1701,9 +1702,87 @@ def _keep_only_joint_coverage(interval: RiskIntervalResult) -> None:
 
 # Risk measures whose value is positively homogeneous and translation equivariant,
 # so the affine judge correction R* = R * rho_1 + (1 - R) * rho_0 applies unchanged.
+# A validated calibration certifies only the weighted mean: see _pooled_calibration_gap.
 _JUDGE_CORRECTABLE_MEASURES = frozenset(
     {"weighted_mean", "maximum", "cvar", "top_k_mean"}
 )
+
+
+def _labelled_population(
+    plan: AnalysisPlan, data: NormalizedData
+) -> dict[str, dict[str, tuple[int, int]]]:
+    """Per cohort and prompt: classified rollouts, and the rollouts its bounds divide by.
+
+    A cohort's classified rollouts are the population its judge labels are drawn from.
+    """
+
+    counts: dict[str, dict[str, list[int]]] = {}
+    for row in data.observations:
+        tally = counts.setdefault(row.cohort_id, {}).setdefault(row.prompt_id, [0, 0])
+        if row.failure is not None:
+            tally[0] += 1
+            tally[1] += 1
+        elif _bounds_carry_unknown_outcome(plan, row):
+            tally[1] += 1
+    return {
+        cohort_id: {prompt_id: (tally[0], tally[1]) for prompt_id, tally in prompts.items()}
+        for cohort_id, prompts in counts.items()
+    }
+
+
+def _pooled_calibration_gap(
+    plan: AnalysisPlan,
+    population: dict[str, tuple[int, int]],
+    *,
+    measure_type: str,
+    weights: dict[str, float],
+) -> str | None:
+    """Why a cohort's pooled labels do not measure the judge accuracies a row needs.
+
+    The labels are drawn uniformly within judge strata over the cohort's classified
+    rollouts, so they estimate P(truly unsafe | verdict) with each of those rollouts
+    weighted equally. R* = R rho_1 + (1 - R) rho_0 needs the accuracies weighted the way the
+    row weights its rollouts. That holds exactly only for a weighted mean, in a fixed
+    design, that gives every classified rollout of the cohort the same weight. Returns
+    None when the row is such a mean.
+    """
+
+    if plan.design.type != "fixed":
+        return (
+            "a sampled design estimates a frame mean, and labels on the drawn items do not "
+            "bound the judge's accuracy over the frame"
+        )
+    if measure_type != "weighted_mean":
+        return (
+            f"a {measure_type} measure concentrates on the riskiest prompts, where the "
+            "judge's accuracy can differ from the pooled labels' average"
+        )
+    # A rollout weighs its prompt's weight over the rollouts the prompt's rate divides by.
+    # Unclassified rollouts are outside the labelled population, so they do not enter here.
+    per_rollout = [
+        weights.get(prompt_id, 0.0) / denominator
+        for prompt_id, (classified, denominator) in population.items()
+        if classified
+    ]
+    if not per_rollout:
+        return "the cohort has no classified rollouts"
+    lightest, heaviest = min(per_rollout), max(per_rollout)
+    if lightest <= 0.0:
+        return "the row covers only part of the cohort's labelled rollouts"
+    if heaviest > lightest * (1 + 1e-9):
+        return (
+            f"the row gives some of the cohort's rollouts {heaviest / lightest:.3g} times the "
+            "weight of others"
+        )
+    return None
+
+
+def _uncertified_correction_warning(gap: str) -> str:
+    return (
+        f"Sensitivity analysis, not a certified bound: {gap}. The human labels weight every "
+        "classified rollout of the cohort equally, so they measure the judge's accuracy only "
+        "for a weighted mean that does the same, over the whole cohort in a fixed design."
+    )
 
 
 def _assumed_judge_calibrations(plan: AnalysisPlan) -> list[JudgeCalibration]:
@@ -1847,6 +1926,7 @@ def _judge_corrected_interval(
     primary_scenario: str | None,
     family_id: str | None,
     judge_alpha: float | None,
+    gap: str | None = None,
 ) -> RiskIntervalResult | None:
     if result.lower is None or result.upper is None:
         return None
@@ -1857,12 +1937,15 @@ def _judge_corrected_interval(
         calibration=calibration,
     )
     validated = calibration.source == "validated"
+    # Measured accuracies certify only a row they were measured for; elsewhere the
+    # corrected interval is a sensitivity, as an assumed one always is.
+    certified = validated and gap is None
     base = next((item for item in result.intervals if item.role == "primary"), None)
     base_alpha = base.family_alpha if base is not None else None
     spent = calibration.alpha if calibration.alpha is not None else judge_alpha
     simultaneous = (
         1 - (base_alpha + spent)
-        if validated and base_alpha is not None and spent is not None
+        if certified and base_alpha is not None and spent is not None
         else None
     )
     # Each corrected endpoint uses the base endpoint plus two of the four calibration
@@ -1875,7 +1958,7 @@ def _judge_corrected_interval(
         )
     one_sided = (
         1 - (base_directional + spent / 2)
-        if validated and base_directional is not None and spent is not None
+        if certified and base_directional is not None and spent is not None
         else None
     )
     assumptions = [
@@ -1893,11 +1976,17 @@ def _judge_corrected_interval(
                 "The labelled rows are a simple random sample within their judge stratum; "
                 "this is a property of the declared collection protocol, not of the data.",
                 "Human adjudication is treated as ground truth.",
-                "One calibration is estimated per cohort and shared by every group in it.",
-                "Coverage is the union bound over the underlying interval and the four "
-                "calibration endpoints.",
             ]
         )
+        if certified:
+            assumptions.extend(
+                [
+                    "The labels weight every classified rollout of the cohort equally, and so "
+                    "does this row, so they measure the judge's accuracy for its estimand.",
+                    "Coverage is the union bound over the underlying interval and the four "
+                    "calibration endpoints.",
+                ]
+            )
     else:
         assumptions.extend(
             [
@@ -1909,6 +1998,8 @@ def _judge_corrected_interval(
         )
     assumptions.append("The underlying judge-system interval retains its own stated guarantee.")
     warnings: list[str] = []
+    if validated and gap is not None:
+        warnings.append(_uncertified_correction_warning(gap))
     if not validated and primary_scenario is not None:
         if calibration.scenario_id != primary_scenario:
             warnings.append(
@@ -1923,7 +2014,7 @@ def _judge_corrected_interval(
             if validated
             else "assumed_judge_misclassification_correction"
         ),
-        role="reference" if validated else "sensitivity",
+        role="reference" if certified else "sensitivity",
         coverage_scope=(
             f"{result.coverage_scope}_judge_corrected"
             if result.coverage_scope
@@ -1940,7 +2031,7 @@ def _judge_corrected_interval(
         raw_upper=result.upper,
         calibration_method=f"{calibration.source}_judge_calibration",
         assumptions=assumptions,
-        eligibility="certifying" if validated else "diagnostic",
+        eligibility="certifying" if certified else "diagnostic",
         warnings=warnings,
     )
 
@@ -2208,6 +2299,7 @@ def _delta_reference_interval(
     strata: dict[str, Any],
     alpha: float,
     family_id: str | None,
+    gap: str | None = None,
 ) -> RiskIntervalResult | None:
     """Asymptotic delta-method reference beside the exact validated correction."""
 
@@ -2262,12 +2354,14 @@ def _delta_reference_interval(
             "them is the price of the finite-sample guarantee.",
         ],
         eligibility="diagnostic",
+        warnings=[_uncertified_correction_warning(gap)] if gap is not None else [],
     )
 
 
 def _apply_judge_correction(
     plan: AnalysisPlan,
     data: NormalizedData,
+    hierarchy_nodes: list[_HierarchyNode],
     risks: list[GroupRiskResult],
     hierarchy_risks: list[HierarchyRiskResult],
     comparisons: list[ComparisonResult],
@@ -2315,16 +2409,39 @@ def _apply_judge_correction(
     by_cohort, summaries, judge_alpha, truth_strata = _validated_judge_calibrations(
         plan, data, diagnostics
     )
+    population = _labelled_population(plan, data)
+    group_weights = {group.id: group.weights for group in data.groups}
+    measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
+    node_weights = {
+        (node.group_id, node.level, tuple(node.path.items())): dict(
+            zip(node.prompt_ids, node.weights, strict=True)
+        )
+        for node in hierarchy_nodes
+    }
     for result in targets:
         cohort_calibration = by_cohort.get(result.cohort_id)
         if cohort_calibration is None:
             continue
+        if isinstance(result, GroupRiskResult):
+            weights = group_weights[result.group_id]
+            measure_type = measure_types[result.measure_id]
+        else:
+            # Hierarchy nodes are weighted means over their own prompts.
+            weights = node_weights[(result.group_id, result.level, tuple(result.path.items()))]
+            measure_type = "weighted_mean"
+        gap = _pooled_calibration_gap(
+            plan,
+            population.get(result.cohort_id, {}),
+            measure_type=measure_type,
+            weights=weights,
+        )
         interval = _judge_corrected_interval(
             result=result,
             calibration=cohort_calibration,
             primary_scenario=None,
             family_id=spec.family,
             judge_alpha=judge_alpha,
+            gap=gap,
         )
         if interval is not None:
             result.intervals.append(interval)
@@ -2335,10 +2452,13 @@ def _apply_judge_correction(
                 strata=summaries.get(result.cohort_id, {}),
                 alpha=judge_alpha / len(plan.cohorts),
                 family_id=spec.family,
+                gap=gap,
             )
             if reference is not None:
                 result.intervals.append(reference)
-    _apply_judge_correction_to_comparisons(plan, comparisons, by_cohort, diagnostics)
+    _apply_judge_correction_to_comparisons(
+        plan, data, population, comparisons, by_cohort, diagnostics
+    )
     return {
         "mode": "validated",
         "family": spec.family,
@@ -3538,6 +3658,7 @@ def _judge_corrected_comparison_interval(
     candidate_calibration: JudgeCalibration,
     baseline_calibration: JudgeCalibration,
     family_id: str | None,
+    gap: str | None = None,
 ) -> RiskIntervalResult | None:
     """Correct a comparison by correcting each arm, then recombining.
 
@@ -3581,12 +3702,13 @@ def _judge_corrected_comparison_interval(
         item.alpha or 0.0 for item in (candidate_calibration, baseline_calibration)
     )
     base_alpha = primary.family_alpha
+    certified = gap is None
     return RiskIntervalResult(
         interval_id="judge_corrected_validated",
         lower=lower,
         upper=upper,
         method="validated_judge_misclassification_correction",
-        role="reference",
+        role="reference" if certified else "sensitivity",
         coverage_scope=(
             f"{primary.coverage_scope}_judge_corrected"
             if primary.coverage_scope
@@ -3595,7 +3717,7 @@ def _judge_corrected_comparison_interval(
         family=family_id,
         family_alpha=spent,
         simultaneous_coverage=(
-            1 - (base_alpha + spent) if base_alpha is not None else None
+            1 - (base_alpha + spent) if certified and base_alpha is not None else None
         ),
         raw_lower=primary.lower,
         raw_upper=primary.upper,
@@ -3623,14 +3745,25 @@ def _judge_corrected_comparison_interval(
             "The effect is recombined from the two corrected arm intervals, so it makes "
             "no independence assumption between arms beyond the one the underlying "
             "two-arm region already makes.",
-            "Coverage is the union bound over that region and both arm calibrations.",
+            *(
+                [
+                    "Each cohort's labels weight its classified rollouts equally, and so does "
+                    "the comparison, so they measure the judge's accuracy for both arms.",
+                    "Coverage is the union bound over that region and both arm calibrations.",
+                ]
+                if certified
+                else []
+            ),
         ],
-        eligibility="certifying",
+        eligibility="certifying" if certified else "diagnostic",
+        warnings=[_uncertified_correction_warning(gap)] if gap is not None else [],
     )
 
 
 def _apply_judge_correction_to_comparisons(
     plan: AnalysisPlan,
+    data: NormalizedData,
+    population: dict[str, dict[str, tuple[int, int]]],
     comparisons: list[ComparisonResult],
     by_cohort: dict[str, JudgeCalibration],
     diagnostics: list[Diagnostic],
@@ -3641,6 +3774,17 @@ def _apply_judge_correction_to_comparisons(
         return
     spec = plan.inputs.judge_calibration
     assert spec is not None
+    target_weights: dict[tuple[str, str], dict[str, float]] = {}
+    for comparison in plan.expanded_comparisons():
+        try:
+            targets = _comparison_targets(plan, data, comparison)
+        except StopIteration:
+            continue
+        for target in targets:
+            target_weights[(comparison.id, target.result_id)] = dict(
+                zip(target.prompt_ids, target.weights, strict=True)
+            )
+    measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
     skipped: list[str] = []
     for result in comparisons:
         candidate = by_cohort.get(result.candidate_cohort)
@@ -3648,11 +3792,27 @@ def _apply_judge_correction_to_comparisons(
         if candidate is None or baseline is None:
             skipped.append(result.result_id or result.comparison_id)
             continue
+        weights = target_weights[(result.comparison_id, result.result_id or result.comparison_id)]
+        # Each arm is corrected with its own cohort's labels, so each must be identified.
+        gaps: list[str] = []
+        for arm, cohort_id in (
+            ("candidate", result.candidate_cohort),
+            ("baseline", result.baseline_cohort),
+        ):
+            gap = _pooled_calibration_gap(
+                plan,
+                population.get(cohort_id, {}),
+                measure_type=measure_types[result.measure_id],
+                weights=weights,
+            )
+            if gap is not None:
+                gaps.append(f"{arm} cohort {cohort_id!r}: {gap}")
         interval = _judge_corrected_comparison_interval(
             result=result,
             candidate_calibration=candidate,
             baseline_calibration=baseline,
             family_id=spec.family,
+            gap="; ".join(gaps) or None,
         )
         if interval is None:
             skipped.append(result.result_id or result.comparison_id)
@@ -4064,6 +4224,7 @@ def _noisy_valid_claim(
     eligible: bool,
     family_alpha: float,
     judge_summary: dict[str, Any] | None,
+    gap: str | None,
 ) -> tuple[Decision, list[str], float | None, float | None, str, float]:
     """Decide an aggregate claim with the finite-sample noisy-but-valid test."""
 
@@ -4074,6 +4235,21 @@ def _noisy_valid_claim(
             [
                 "No complete certifying judge-reported bound is available for the "
                 "noisy-but-valid test."
+            ],
+            None,
+            None,
+            method,
+            family_alpha,
+        )
+    if gap is not None:
+        # The truth strata pool the cohort's labels exactly as the judge strata do.
+        return (
+            "INCONCLUSIVE",
+            [
+                f"The noisy-but-valid test cannot certify this row: {gap}. Its labels are a "
+                "simple random sample of the cohort's classified rollouts, so they measure "
+                "the judge's sensitivity and false-positive rate only for a weighted mean "
+                "that weights those rollouts equally, over the whole cohort in a fixed design."
             ],
             None,
             None,
@@ -4165,6 +4341,7 @@ def _noisy_valid_claim(
 
 def _claims(
     plan: AnalysisPlan,
+    data: NormalizedData,
     risks: list[GroupRiskResult],
     comparisons: list[ComparisonResult],
     integrity_valid: bool,
@@ -4178,6 +4355,13 @@ def _claims(
         plan.inputs.judge_calibration is not None
         and plan.inputs.judge_calibration.mode == "validated"
     )
+    population = (
+        _labelled_population(plan, data)
+        if any(claim.method == "noisy_valid_test" for claim in plan.claims)
+        else {}
+    )
+    group_weights = {group.id: group.weights for group in data.groups}
+    measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
     results: list[ClaimResult] = []
     corrected_claims: list[str] = []
     uncorrected_claims: list[str] = []
@@ -4258,12 +4442,23 @@ def _claims(
             uncorrected_claims.append(claim.id)
 
         if claim.method == "noisy_valid_test":
+            gap = (
+                _pooled_calibration_gap(
+                    plan,
+                    population.get(evidence.cohort_id, {}),
+                    measure_type=measure_types[evidence.measure_id],
+                    weights=group_weights[evidence.group_id],
+                )
+                if isinstance(evidence, GroupRiskResult)
+                else None
+            )
             status, reasons, lower, upper, method, alpha = _noisy_valid_claim(
                 claim=claim,
                 evidence=evidence,
                 eligible=eligible,
                 family_alpha=family.alpha,
                 judge_summary=judge_summary,
+                gap=gap,
             )
             estimate = None
             correction_note = None
@@ -4273,10 +4468,18 @@ def _claims(
             # certifying correction only judge-reported risk remains, and the labels may show
             # the judge missing failures: a refused calibration used to pass claims that way.
             status = "INCONCLUSIVE"
+            # A correction the labels cannot certify for this estimand says why itself.
+            why = [
+                warning
+                for interval in (evidence.intervals if evidence is not None else [])
+                if interval.interval_id == "judge_corrected_validated"
+                for warning in interval.warnings
+            ]
             reasons = [
                 "The plan declares a validated judge calibration, but this claim's evidence has "
-                "no certifying correction, so it is not decided on judge-reported risk. The "
-                "judge diagnostics say why."
+                "no certifying correction, so it is not decided on judge-reported risk."
+                + ("" if why else " The judge diagnostics say why."),
+                *why,
             ]
         else:
             status, reasons = decide_claim(
@@ -4441,7 +4644,7 @@ def analyze(
     # Applied last so it corrects the bounds that are actually displayed, after both
     # the hierarchy and comparison region projections have settled.
     judge_calibration_summary = _apply_judge_correction(
-        resolved, data, risks, hierarchy_risks, comparisons, diagnostics
+        resolved, data, hierarchy_nodes, risks, hierarchy_risks, comparisons, diagnostics
     )
     panel_correction = _apply_panel_derived_correction(
         resolved, risks, hierarchy_risks, diagnostics
@@ -4450,7 +4653,13 @@ def analyze(
     integrity_status = _integrity_status(diagnostics)
     integrity_certifiable = integrity_status != "invalid"
     claims = _claims(
-        resolved, risks, comparisons, integrity_certifiable, diagnostics, judge_calibration_summary
+        resolved,
+        data,
+        risks,
+        comparisons,
+        integrity_certifiable,
+        diagnostics,
+        judge_calibration_summary,
     )
     events = _policy_events(resolved, data)
     decision = roll_up(
