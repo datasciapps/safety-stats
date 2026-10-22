@@ -644,7 +644,12 @@ def normalize(
                     Diagnostic(
                         code="PLAN_EXPECTED_ROLLOUTS_MISSING",
                         severity="ERROR",
-                        message="manifest has no expected_rollouts column",
+                        message=(
+                            "design.require_expected_rollouts is on, but the design manifest "
+                            "has no expected_rollouts column. Add it, with the number of "
+                            "rollouts the evaluation ran for each prompt, or set "
+                            "design.require_expected_rollouts: false"
+                        ),
                     )
                 )
                 break
