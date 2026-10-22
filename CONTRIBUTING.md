@@ -124,7 +124,7 @@ from any directory (#42).
   byte-identical artifacts on every supported Python version and operating system.
   - Text artifacts are written with LF line endings (#31).
   - Never let a `set` or emission order decide an output order; sort with an explicit, total key.
-  - **[gap]** Reports still record absolute input paths (#63).
+  - Input paths are recorded relative to the plan's directory, in POSIX form (#63).
 
 ### 4.4 Numerical behaviour
 
@@ -271,8 +271,8 @@ All three are first-class platforms.
   may need `git checkout -- '*.csv'`.
 - **Paths.**
   - Use `pathlib`; never build paths with string concatenation or a hard-coded separator.
-  - Paths written into outputs are relative to a documented base, in POSIX form.
-    **[gap]** #63.
+  - Paths written into outputs are relative to a documented base, in POSIX form. Reports name
+    their inputs relative to the plan's directory (`report_path` in `config/loader.py`).
 - **Case-insensitive filesystems.** macOS and Windows filesystems are case-insensitive, so no two
   generated file names may differ only in case.
 - **Path length.** Keep generated directory trees shallow: Windows' default path limit is 260

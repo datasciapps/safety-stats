@@ -17,6 +17,7 @@ import numpy as np
 import pandas as pd
 
 from inspect_safety_stats.config.canonicalize import sha256_value
+from inspect_safety_stats.config.loader import report_path
 from inspect_safety_stats.config.models import ATTRIBUTE_PREFIX, AnalysisPlan
 from inspect_safety_stats.ingest.manifest import (
     ResolvedGroup,
@@ -401,6 +402,8 @@ def normalize(
     observations: list[Observation] = []
     judge_verdicts: dict[str, dict[str, bool | None]] = {}
     source_hashes: dict[str, str | None] = {}
+    # How each source is named in reports. The real path still reads and hashes the file.
+    source_names: dict[str, str] = {}
     for collection_order, (_, rollout) in enumerate(selected, start=1):
         run_key = rollout.run_key
         prompt_id = rollout.item_id
@@ -545,6 +548,7 @@ def normalize(
         log_path = rollout.source
         if log_path not in source_hashes:
             source_hashes[log_path] = source.source_sha256(log_path)
+            source_names[log_path] = report_path(log_path, plan)
         config = _configuration(
             plan,
             run,
@@ -560,7 +564,7 @@ def normalize(
         observations.append(
             Observation(
                 observation_id=observation_id,
-                source=log_path,
+                source=source_names[log_path],
                 source_sha256=source_hashes[log_path],
                 run_key=run_key,
                 run_id=_native(run.run_id),
