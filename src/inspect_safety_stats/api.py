@@ -1708,32 +1708,45 @@ _JUDGE_CORRECTABLE_MEASURES = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class _PromptRollouts:
+    """One prompt's rollouts in one cohort, counted the ways its rates divide by them."""
+
+    classified: int
+    # Prompt bounds divide by the classified rollouts plus the unknown outcomes the missing
+    # and error policies keep. Direct-mean intervals divide by every rollout, and complete
+    # each unclassified one, so the two counts differ only where a policy excludes some.
+    bounded: int
+    attempted: int
+
+
 def _labelled_population(
     plan: AnalysisPlan, data: NormalizedData
-) -> dict[str, dict[str, tuple[int, int]]]:
-    """Per cohort and prompt: classified rollouts, and the rollouts its bounds divide by.
+) -> dict[str, dict[str, _PromptRollouts]]:
+    """Per cohort and prompt, the rollouts behind its rates.
 
     A cohort's classified rollouts are the population its judge labels are drawn from.
     """
 
     counts: dict[str, dict[str, list[int]]] = {}
     for row in data.observations:
-        tally = counts.setdefault(row.cohort_id, {}).setdefault(row.prompt_id, [0, 0])
+        tally = counts.setdefault(row.cohort_id, {}).setdefault(row.prompt_id, [0, 0, 0])
+        tally[2] += 1
         if row.failure is not None:
             tally[0] += 1
             tally[1] += 1
         elif _bounds_carry_unknown_outcome(plan, row):
             tally[1] += 1
     return {
-        cohort_id: {prompt_id: (tally[0], tally[1]) for prompt_id, tally in prompts.items()}
+        cohort_id: {prompt_id: _PromptRollouts(*tally) for prompt_id, tally in prompts.items()}
         for cohort_id, prompts in counts.items()
     }
 
 
 def _pooled_calibration_gap(
-    plan: AnalysisPlan,
-    population: dict[str, tuple[int, int]],
+    population: dict[str, _PromptRollouts],
     *,
+    design_type: str,
     measure_type: str,
     weights: dict[str, float],
 ) -> str | None:
@@ -1747,7 +1760,7 @@ def _pooled_calibration_gap(
     None when the row is such a mean.
     """
 
-    if plan.design.type != "fixed":
+    if design_type != "fixed":
         return (
             "a sampled design estimates a frame mean, and labels on the drawn items do not "
             "bound the judge's accuracy over the frame"
@@ -1757,23 +1770,23 @@ def _pooled_calibration_gap(
             f"a {measure_type} measure concentrates on the riskiest prompts, where the "
             "judge's accuracy can differ from the pooled labels' average"
         )
-    # A rollout weighs its prompt's weight over the rollouts the prompt's rate divides by.
-    # Unclassified rollouts are outside the labelled population, so they do not enter here.
-    per_rollout = [
-        weights.get(prompt_id, 0.0) / denominator
-        for prompt_id, (classified, denominator) in population.items()
-        if classified
-    ]
-    if not per_rollout:
+    labelled = [(prompt_id, item) for prompt_id, item in population.items() if item.classified]
+    if not labelled:
         return "the cohort has no classified rollouts"
-    lightest, heaviest = min(per_rollout), max(per_rollout)
-    if lightest <= 0.0:
+    if any(weights.get(prompt_id, 0.0) <= 0.0 for prompt_id, _ in labelled):
         return "the row covers only part of the cohort's labelled rollouts"
-    if heaviest > lightest * (1 + 1e-9):
-        return (
-            f"the row gives some of the cohort's rollouts {heaviest / lightest:.3g} times the "
-            "weight of others"
-        )
+    # A rollout weighs its prompt's weight over the rollouts the prompt's rate divides by.
+    # Either kind of interval can be the row's primary, so both counts must agree.
+    for per_rollout in (
+        [weights[prompt_id] / item.bounded for prompt_id, item in labelled],
+        [weights[prompt_id] / item.attempted for prompt_id, item in labelled],
+    ):
+        lightest, heaviest = min(per_rollout), max(per_rollout)
+        if heaviest > lightest * (1 + 1e-9):
+            return (
+                f"the row gives some of the cohort's rollouts {heaviest / lightest:.3g} times "
+                "the weight of others"
+            )
     return None
 
 
@@ -2430,8 +2443,8 @@ def _apply_judge_correction(
             weights = node_weights[(result.group_id, result.level, tuple(result.path.items()))]
             measure_type = "weighted_mean"
         gap = _pooled_calibration_gap(
-            plan,
             population.get(result.cohort_id, {}),
+            design_type=plan.design.type,
             measure_type=measure_type,
             weights=weights,
         )
@@ -3763,7 +3776,7 @@ def _judge_corrected_comparison_interval(
 def _apply_judge_correction_to_comparisons(
     plan: AnalysisPlan,
     data: NormalizedData,
-    population: dict[str, dict[str, tuple[int, int]]],
+    population: dict[str, dict[str, _PromptRollouts]],
     comparisons: list[ComparisonResult],
     by_cohort: dict[str, JudgeCalibration],
     diagnostics: list[Diagnostic],
@@ -3800,8 +3813,8 @@ def _apply_judge_correction_to_comparisons(
             ("baseline", result.baseline_cohort),
         ):
             gap = _pooled_calibration_gap(
-                plan,
                 population.get(cohort_id, {}),
+                design_type=plan.design.type,
                 measure_type=measure_types[result.measure_id],
                 weights=weights,
             )
@@ -4444,8 +4457,8 @@ def _claims(
         if claim.method == "noisy_valid_test":
             gap = (
                 _pooled_calibration_gap(
-                    plan,
                     population.get(evidence.cohort_id, {}),
+                    design_type=plan.design.type,
                     measure_type=measure_types[evidence.measure_id],
                     weights=group_weights[evidence.group_id],
                 )
