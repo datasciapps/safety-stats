@@ -56,7 +56,9 @@ applies to people too.
   another.
 - **Network.** Tests never call a model provider or the network.
 - **Platforms.** Linux, macOS and Windows are all first-class (CONTRIBUTING section 6). Pull
-  requests run on Linux and Windows. macOS runs on `main`, weekly, and on demand.
+  requests run on Linux and Windows. macOS runs weekly and on demand.
+- **CI minutes.** Runner minutes on this private repository are billed to its owner. Run the
+  gate locally, and push a branch when it is ready for review, not after every commit.
 
 ## Commits and pull requests
 
