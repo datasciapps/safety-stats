@@ -2131,6 +2131,12 @@ def test_validated_correction_reports_directional_coverage_and_a_delta_reference
     # The asymptotic reference never decides a claim.
     for claim in report.claims:
         assert claim.method == "validated_judge_misclassification_correction"
+    # Its variance is the weighted mean's, so the corrected cvar and maximum rows have none.
+    for row in report.group_risks:
+        has_delta = any(
+            item.interval_id == "judge_corrected_validated_delta" for item in row.intervals
+        )
+        assert has_delta == (row.measure_id == "mean"), row.measure_id
 
 
 def _random_sample_validated_plan(

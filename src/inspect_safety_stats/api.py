@@ -2515,7 +2515,13 @@ def _apply_judge_correction(
         )
         if interval is not None:
             result.intervals.append(interval)
-        if isinstance(result, GroupRiskResult) and judge_alpha is not None:
+        # The reference propagates the weighted mean's variance, so only a weighted-mean
+        # row has one: on a tail row it would describe a different estimand.
+        if (
+            isinstance(result, GroupRiskResult)
+            and measure_type == "weighted_mean"
+            and judge_alpha is not None
+        ):
             reference = _delta_reference_interval(
                 result=result,
                 data=data,
