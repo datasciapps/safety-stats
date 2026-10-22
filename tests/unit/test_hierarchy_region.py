@@ -120,6 +120,28 @@ def test_projection_preserves_simultaneous_coverage_under_heterogeneity() -> Non
     assert coverage >= 0.95 - 1e-12
 
 
+def test_a_projected_upper_endpoint_can_miss_when_only_a_raw_lower_endpoint_misses() -> None:
+    """Projection keeps simultaneous coverage, not one-sided coverage in each direction.
+
+    That is why the analysis reports projected intervals at their simultaneous floor in each
+    direction.
+    """
+    constraints = [
+        LinearIntervalConstraint("parent", np.array([0.5, 0.5]), 0.20, 0.50),
+        LinearIntervalConstraint("child_a", np.array([1.0, 0.0]), 0.05, 0.80),
+        LinearIntervalConstraint("child_b", np.array([0.0, 1.0]), 0.90, 1.00),
+    ]
+    truth = np.array([0.5, 0.1])
+    assert all(float(c.coefficients @ truth) <= c.upper for c in constraints)
+    assert float(constraints[2].coefficients @ truth) < constraints[2].lower
+    projection = project_hierarchy_confidence_region(
+        constraints, {"child_a": [1.0, 0.0]}, variable_count=2
+    )
+    _, projected_upper = projection.intervals["child_a"]
+    assert projected_upper == pytest.approx(0.1, abs=1e-9)
+    assert projected_upper < truth[0]
+
+
 def test_contrast_region_propagates_child_constraints_to_root() -> None:
     constraints = [
         LinearIntervalConstraint("root", np.array([0.5, 0.5]), -1.0, 1.0),

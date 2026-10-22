@@ -1621,6 +1621,7 @@ def _project_hierarchy_regions(
                     "Reported endpoints are projections of the common fixed-design "
                     "hierarchy confidence region."
                 )
+                _keep_only_joint_coverage(interval)
 
         for target_id, result in target_results.items():
             primary = next(
@@ -1639,6 +1640,8 @@ def _project_hierarchy_regions(
             result.raw_lower = primary.raw_lower
             result.raw_upper = primary.raw_upper
             result.projection_method = primary.projection_method
+            result.lower_one_sided_coverage = primary.lower_one_sided_coverage
+            result.upper_one_sided_coverage = primary.upper_one_sided_coverage
             for root_result in root_rows.get(result.group_id, []):
                 if isinstance(result, GroupRiskResult):
                     root_result.lower = primary.lower
@@ -1647,6 +1650,20 @@ def _project_hierarchy_regions(
                     root_result.raw_lower = primary.raw_lower
                     root_result.raw_upper = primary.raw_upper
                     root_result.projection_method = primary.projection_method
+                    root_result.lower_one_sided_coverage = primary.lower_one_sided_coverage
+                    root_result.upper_one_sided_coverage = primary.upper_one_sided_coverage
+
+
+def _keep_only_joint_coverage(interval: RiskIntervalResult) -> None:
+    """Restate a projected interval's one-sided coverage as its simultaneous floor.
+
+    A projected endpoint optimises over a region that every raw endpoint shapes, lower and
+    upper alike. It therefore covers on the joint event only: a raw lower endpoint that misses
+    can pull a projected upper endpoint below the truth. Each direction keeps the
+    simultaneous floor, not the one-sided level of a raw endpoint.
+    """
+    interval.lower_one_sided_coverage = interval.simultaneous_coverage
+    interval.upper_one_sided_coverage = interval.simultaneous_coverage
 
 
 # Risk measures whose value is positively homogeneous and translation equivariant,
@@ -1818,6 +1835,11 @@ def _judge_corrected_interval(
     # Each corrected endpoint uses the base endpoint plus two of the four calibration
     # endpoints, so a one-sided claim spends half the calibration budget.
     base_directional = base.directional_family_alpha if base is not None else None
+    if base is not None and base.projection_method is not None:
+        # A projected base endpoint covers only at the simultaneous floor.
+        base_directional = (
+            1 - base.simultaneous_coverage if base.simultaneous_coverage is not None else None
+        )
     one_sided = (
         1 - (base_directional + spent / 2)
         if validated and base_directional is not None and spent is not None
@@ -3252,6 +3274,7 @@ def _project_comparison_hierarchy_regions(
                     "Reported comparison endpoints are projections of one common "
                     "fixed-design hierarchy confidence region."
                 )
+                _keep_only_joint_coverage(interval)
 
         for result in rows:
             primary = next(
@@ -3266,6 +3289,8 @@ def _project_comparison_hierarchy_regions(
             result.raw_upper = primary.raw_upper
             result.projection_method = primary.projection_method
             result.coverage_scope = primary.coverage_scope
+            result.lower_one_sided_coverage = primary.lower_one_sided_coverage
+            result.upper_one_sided_coverage = primary.upper_one_sided_coverage
 
 
 def _multi_arm_node_key(level: str | None, path: dict[str, str]) -> str:
@@ -4037,10 +4062,17 @@ def _noisy_valid_claim(
             family_alpha,
         )
     try:
+        # A projected upper endpoint misses whenever the joint event fails, so its error is the
+        # simultaneous budget, not the alpha its raw endpoint was allocated.
+        reported_alpha = (
+            1 - base.simultaneous_coverage
+            if base.projection_method is not None and base.simultaneous_coverage is not None
+            else base.alpha_upper
+        )
         result = noisy_valid_certification(
             judge_reported_lower=evidence.lower,
             judge_reported_upper=evidence.upper,
-            judge_reported_alpha=base.alpha_upper,
+            judge_reported_alpha=reported_alpha,
             truly_unsafe=TruthStratumCounts(**strata["truly_unsafe"]),
             truly_safe=TruthStratumCounts(**strata["truly_safe"]),
             calibration_alpha=float(per_cohort_alpha),
