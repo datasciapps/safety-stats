@@ -34,6 +34,16 @@ class RatioHierarchyRegionProjection:
     message: str | None = None
 
 
+def _objective(result: OptimizeResult) -> float:
+    """The optimal value of a linear program that reported success.
+
+    Unlike an assert, this check survives python -O.
+    """
+    if result.fun is None:
+        raise RuntimeError(f"the linear program reported success without a value: {result.message}")
+    return float(result.fun)
+
+
 def _region_solver(
     matrix: np.ndarray, limits: np.ndarray, bounds: list[tuple[float, float]]
 ) -> Callable[[np.ndarray], OptimizeResult]:
@@ -130,10 +140,8 @@ def project_hierarchy_confidence_region(
                 constraint_count=len(constraints),
                 message=message,
             )
-        assert minimum.fun is not None
-        assert maximum.fun is not None
-        lower = min(1.0, max(0.0, float(minimum.fun)))
-        upper = min(1.0, max(0.0, float(-maximum.fun)))
+        lower = min(1.0, max(0.0, _objective(minimum)))
+        upper = min(1.0, max(0.0, -_objective(maximum)))
         if lower > upper:
             if lower - upper > 1e-9:
                 return HierarchyRegionProjection(
@@ -201,9 +209,8 @@ def project_contrast_hierarchy_confidence_region(
                 constraint_count=len(constraints),
                 message=message,
             )
-        assert minimum.fun is not None and maximum.fun is not None
-        lower = max(-1.0, min(1.0, float(minimum.fun)))
-        upper = max(-1.0, min(1.0, float(-maximum.fun)))
+        lower = max(-1.0, min(1.0, _objective(minimum)))
+        upper = max(-1.0, min(1.0, -_objective(maximum)))
         intervals[target_id] = (lower, upper)
     return HierarchyRegionProjection(
         feasible=True,
@@ -267,9 +274,8 @@ def project_two_arm_difference_hierarchy_confidence_region(
                 constraint_count=constraint_count,
                 message=message,
             )
-        assert minimum.fun is not None and maximum.fun is not None
-        lower = max(-1.0, min(1.0, float(minimum.fun)))
-        upper = max(-1.0, min(1.0, float(-maximum.fun)))
+        lower = max(-1.0, min(1.0, _objective(minimum)))
+        upper = max(-1.0, min(1.0, -_objective(maximum)))
         intervals[target_id] = (lower, upper)
 
     return HierarchyRegionProjection(
