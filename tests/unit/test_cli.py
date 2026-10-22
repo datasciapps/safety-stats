@@ -2,6 +2,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import pytest
 from typer.testing import CliRunner
@@ -250,3 +251,24 @@ def test_direct_script_invocation_registers_all_commands() -> None:
     assert result.returncode == 0
     for command in ("compile", "materialize", "analyze", "budget"):
         assert command in result.stdout
+
+
+def test_every_command_explains_itself_in_help() -> None:
+    """A command without a docstring shows an empty line in --help."""
+    import typer.main
+
+    def leaves(command: Any, path: tuple[str, ...]) -> list[tuple[str, str]]:
+        # Typer's groups need not subclass the click package's Group, so look for children.
+        children = getattr(command, "commands", None)
+        if isinstance(children, dict):
+            return [
+                leaf
+                for name, child in sorted(children.items())
+                for leaf in leaves(child, (*path, name))
+            ]
+        return [(" ".join(path), (command.help or "").strip())]
+
+    commands = leaves(typer.main.get_command(app), ())
+    # Guards the walk itself: one that stopped at the root would pass without looking.
+    assert len(commands) > 10
+    assert [name for name, text in commands if not text] == []
