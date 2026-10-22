@@ -119,11 +119,16 @@ def weighted_bounded_empirical_bernstein_mean_bounds(
     c2 = float(np.sum(np.square(w)))
     c4 = float(np.sum(np.power(w, 4)))
     maximum_increment = float(np.max(w))
+    # A block's true value can lie anywhere between its two completions, and the variance
+    # bound must hold for every such value. Q+ grows and Q- shrinks as values rise, so each
+    # comes from the completion that maximises it, for both endpoints. Taking both from the
+    # endpoint's own completion let the all-failure upper endpoint fall below the upper
+    # endpoint of the true values.
+    positive_second = float(np.dot(np.square(w), np.square(upper_values)))
+    negative_second = float(np.dot(np.square(w), np.square(1 - lower_values)))
 
     def endpoint(values: np.ndarray, alpha: float) -> tuple[float, float, float]:
         estimate = float(np.dot(w, values))
-        positive_second = float(np.dot(np.square(w), np.square(values)))
-        negative_second = float(np.dot(np.square(w), np.square(1 - values)))
         tail_alpha = alpha / 2
         variance_padding = math.sqrt(0.5 * c4 * math.log(4 / alpha))
         variance_upper = min(
@@ -514,11 +519,16 @@ def weighted_empirical_bernstein_mean_bounds(
     concentration_variance, fourth_power_sum, maximum_increment = _concentration_geometry(
         n, w, independence_unit
     )
+    # Unclassified outcomes can complete to any count from x to x + u, and the variance bound
+    # must hold for every completion. Q+ grows and Q- shrinks with the count, so each comes
+    # from the completion that maximises it, for both endpoints. Taking both from the
+    # endpoint's own completion let the all-failure upper endpoint fall below the upper
+    # endpoint of the true labels.
+    _, positive_second, _ = _completed_observations(x + u, n, w, independence_unit)
+    _, _, negative_second = _completed_observations(x, n, w, independence_unit)
 
     def endpoint(counts: np.ndarray, alpha: float) -> tuple[float, float, float]:
-        estimate, positive_second, negative_second = _completed_observations(
-            counts, n, w, independence_unit
-        )
+        estimate, _, _ = _completed_observations(counts, n, w, independence_unit)
         tail_alpha = alpha / 2
         variance_component_alpha = alpha / 4
         variance_padding = math.sqrt(
