@@ -1,6 +1,6 @@
 # Analysis plan reference
 
-Plans are strict YAML or JSON documents. Unknown fields are errors, and integer fields reject `true` and `false` rather than reading them as 1 and 0. Relative manifest paths resolve against the plan file.
+Plans are strict YAML or JSON documents. Unknown fields are errors, and integer fields reject `true` and `false` rather than reading them as 1 and 0. Relative manifest paths resolve against the plan file. `schema_version` is `"2.0"`, and an unquoted `2.0` reads the same. A plan that declares `1.0` is refused with what changed in 2.0 (see [Configuring hierarchy and independence](independence-profiles.md)).
 
 ## `analysis`
 
