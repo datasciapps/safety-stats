@@ -52,6 +52,10 @@ inspect-safety-stats analyze \
 Open `reports/fixed-design-example/report.html` for the interactive hierarchy explorer, or
 `report.md` for the compact review document.
 
+Steps 3 and 4 look like this on the offline demo, whose report has the same layout:
+
+![Validate and analyze, run on the offline demo](media/demo/3-analyze.gif)
+
 ## 5. Read the result
 
 The report separates:
