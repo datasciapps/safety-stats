@@ -6,6 +6,20 @@
 
 It is designed for hand-curated safety evaluations in which prompts, questions, tasks, groups, weights, thresholds, and rollout counts are fixed in advance. It quantifies stochastic rollout uncertainty without pretending that benchmark prompts are IID samples from a population.
 
+## Start here
+
+New users should begin with [Getting started](docs/getting-started.md), which goes from
+installation to the analysis of your own evaluation. Its demo needs no API key and finishes in
+about half a minute:
+
+```bash
+python examples/demo/run_demo.py
+```
+
+![Headline results of the demo](docs/media/demo/4-results.gif)
+
+The other guides and the examples are listed under [Documentation](#documentation).
+
 ## Current capabilities
 
 - Exact one-sided Clopper–Pearson failure-rate bounds per fixed prompt.
@@ -69,6 +83,14 @@ Comparison estimands, common contrast/two-arm regions, and usage are documented 
 
 ## Quick start
 
+To see the workflow end to end without provider credentials, run the
+[offline demo](examples/demo/README.md). It evaluates two simulated configurations in Inspect,
+then analyzes and compares their logs:
+
+```bash
+python examples/demo/run_demo.py
+```
+
 Plan a zero-failure study:
 
 ```bash
@@ -81,6 +103,8 @@ Calculate exact detectable rates at a fixed horizon:
 inspect-safety-stats plan detectable-rate \
   --trials 500 --threshold 0.05 --alpha 0.05 --power 0.90
 ```
+
+![Both planning commands and their output](docs/media/demo/1-plan.gif)
 
 Validate logs against a frozen design:
 
@@ -192,6 +216,7 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 
 ## Documentation
 
+- [Getting started](docs/getting-started.md)
 - [Installation](docs/installation.md)
 - [Contributing](CONTRIBUTING.md): development setup, engineering practices, and the interfaces that must not break
 - [Quickstart](docs/quickstart.md)

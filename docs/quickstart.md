@@ -2,6 +2,9 @@
 
 This walkthrough runs the example fixed-design safety evaluation and analyzes its completed Inspect logs.
 
+To see the workflow without provider credentials first, run the
+[offline demo](../examples/demo/README.md): `python examples/demo/run_demo.py`.
+
 ## 1. Review the design
 
 The example manifest is [design.csv](../examples/fixed_design/design.csv). It declares prompt, question, task, risk-domain, rollout count, and zero-tolerance metadata. These relationships are never inferred from prompt text.
@@ -48,6 +51,10 @@ inspect-safety-stats analyze \
 
 Open `reports/fixed-design-example/report.html` for the interactive hierarchy explorer, or
 `report.md` for the compact review document.
+
+Steps 3 and 4 look like this on the offline demo, whose report has the same layout:
+
+![Validate and analyze, run on the offline demo](media/demo/3-analyze.gif)
 
 ## 5. Read the result
 
