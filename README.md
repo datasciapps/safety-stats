@@ -16,7 +16,7 @@ about half a minute:
 python examples/demo/run_demo.py
 ```
 
-![Headline results of the demo](docs/media/demo/4-results.gif)
+![Headline results of the demo](docs/media/demo/dark/4-results.gif)
 
 The other guides and the examples are listed under [Documentation](#documentation).
 
@@ -104,7 +104,7 @@ inspect-safety-stats plan detectable-rate \
   --trials 500 --threshold 0.05 --alpha 0.05 --power 0.90
 ```
 
-![Both planning commands and their output](docs/media/demo/1-plan.gif)
+![Both planning commands and their output](docs/media/demo/dark/1-plan.gif)
 
 Validate logs against a frozen design:
 

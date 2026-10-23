@@ -34,21 +34,21 @@ The recordings show the same steps one command at a time. Planning comes first: 
 failure-free rollouts it takes to show that a failure rate is below 1%, and which rates 500
 rollouts can tell apart from a 5% threshold.
 
-![Planning a study](media/demo/1-plan.gif)
+![Planning a study](media/demo/dark/1-plan.gif)
 
 The evaluation itself is a plain `inspect eval` run, with 20 rollouts of each prompt for each
 configuration.
 
-![Running the evaluation in Inspect](media/demo/2-eval.gif)
+![Running the evaluation in Inspect](media/demo/dark/2-eval.gif)
 
 `validate` checks the logs against the plan and the design manifest. `analyze` then writes the
 report.
 
-![Validating and analyzing the logs](media/demo/3-analyze.gif)
+![Validating and analyzing the logs](media/demo/dark/3-analyze.gif)
 
 `show_results.py` prints the headline numbers from `report.json`.
 
-![The headline results](media/demo/4-results.gif)
+![The headline results](media/demo/dark/4-results.gif)
 
 The full report is `reports/demo/report.html`, a single file that opens in any browser. It adds
 the bounds for every prompt and every level of the hierarchy, and the audit details.

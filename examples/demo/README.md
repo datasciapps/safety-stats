@@ -22,7 +22,7 @@ of an earlier demo run. It then prints the mean failure rate of each configurati
 per risk domain, and the candidate-minus-baseline difference. Open `reports/demo/report.html` for
 the interactive report.
 
-![The numbers the demo prints at the end](../../docs/media/demo/4-results.gif)
+![The numbers the demo prints at the end](../../docs/media/demo/dark/4-results.gif)
 
 ## The same steps, one at a time
 
@@ -38,7 +38,7 @@ inspect-safety-stats analyze --plan examples/demo/plan.yaml \
 python examples/demo/show_results.py reports/demo
 ```
 
-![Validating and analyzing the demo logs](../../docs/media/demo/3-analyze.gif)
+![Validating and analyzing the demo logs](../../docs/media/demo/dark/3-analyze.gif)
 
 The name after `mockllm/` selects the simulated configuration. Start from an empty `logs/demo`,
 since logs left there by an earlier run would be analyzed too. `analyze` refuses to write into a
