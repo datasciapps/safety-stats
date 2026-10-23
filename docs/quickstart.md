@@ -2,6 +2,9 @@
 
 This walkthrough runs the example fixed-design safety evaluation and analyzes its completed Inspect logs.
 
+To see the workflow without provider credentials first, run the
+[offline demo](../examples/demo/README.md): `python examples/demo/run_demo.py`.
+
 ## 1. Review the design
 
 The example manifest is [design.csv](../examples/fixed_design/design.csv). It declares prompt, question, task, risk-domain, rollout count, and zero-tolerance metadata. These relationships are never inferred from prompt text.

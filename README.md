@@ -69,6 +69,14 @@ Comparison estimands, common contrast/two-arm regions, and usage are documented 
 
 ## Quick start
 
+See the whole workflow first. The [offline demo](examples/demo/README.md) runs an Inspect
+evaluation of two simulated configurations, analyzes the logs and compares the two, in about
+half a minute and with no API key:
+
+```bash
+python examples/demo/run_demo.py
+```
+
 Plan a zero-failure study:
 
 ```bash
