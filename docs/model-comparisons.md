@@ -118,6 +118,11 @@ Candidate failures and baseline safe outcomes are therefore bounded independent 
 one weighted mean. The selected concentration engine bounds \(Q\), and the result is transformed
 back by \(\Delta=2Q-1\). This supports unequal candidate and baseline rollout counts.
 
+Empirical Bernstein estimates the variance of \(Q\) about a center fixed by arm (candidate
+rollouts about 0, baseline rollouts about 1; prompt clusters about 1/2), so two sparse arms give
+a small variance and a correspondingly narrow interval. See
+[Statistical methods](statistical-methods.md) for the derivation.
+
 Weighted KL/Chernoff deliberately uses a different sparse-risk construction. Applying a generic
 Bernoulli-KL inversion to \(Q\), whose mean is ordinarily near one half, discards the low-variance
 structure of two near-zero harmful-compliance rates. The KL method instead constructs a joint

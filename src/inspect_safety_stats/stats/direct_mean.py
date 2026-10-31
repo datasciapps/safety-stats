@@ -289,6 +289,33 @@ def _completed_observations(
     return estimate, positive_second, negative_second
 
 
+def _centered_second_moment(
+    failures: np.ndarray,
+    unclassified: np.ndarray,
+    trials: np.ndarray,
+    weights: np.ndarray,
+    centers: np.ndarray,
+    independence_unit: IndependenceUnit,
+) -> float:
+    """Observed second moment about fixed centers, at its largest over unknown completions.
+
+    For any fixed ``c``, ``Var(Y) <= E[(Y - c)^2]``, so this sum estimates an upper bound on
+    the variance of the weighted mean. An unknown outcome contributes whichever completion lies
+    farther from its center.
+    """
+
+    n = trials.astype(float)
+    x = failures.astype(float)
+    u = unclassified.astype(float)
+    if independence_unit == "rollout":
+        far = np.maximum(np.square(centers), np.square(1 - centers))
+        per_prompt = x * np.square(1 - centers) + (n - x - u) * np.square(centers) + u * far
+        return float(np.sum(np.square(weights) * per_prompt / np.square(n)))
+    low = np.square(x / n - centers)
+    high = np.square((x + u) / n - centers)
+    return float(np.dot(np.square(weights), np.maximum(low, high)))
+
+
 def _bernoulli_kl(observed: float, mean: float) -> float:
     """Binary relative entropy ``kl(observed || mean)`` with stable endpoints."""
 
@@ -499,6 +526,7 @@ def weighted_empirical_bernstein_mean_bounds(
     alpha_lower: float,
     alpha_upper: float,
     independence_unit: IndependenceUnit = "rollout",
+    variance_centers: ArrayLike | None = None,
 ) -> DirectMeanBounds:
     """Variance-adaptive finite-sample bounds for a fixed weighted Bernoulli mean.
 
@@ -506,6 +534,13 @@ def weighted_empirical_bernstein_mean_bounds(
     squared outcomes and squared complements. The remaining endpoint error budget
     is used in Bernstein's inequality. This remains valid for heterogeneous prompt
     probabilities under the declared independence unit.
+
+    ``variance_centers`` gives each prompt a center in [0, 1] fixed by the design, never by
+    the data, and the proxy becomes the second moment about those centers. Callers whose
+    observations sit near different ends of [0, 1] by construction, such as the two arms of a
+    risk difference, use it: about 0 or 1 alone, their second moment is large even when every
+    observation is nearly constant. The proxy's error budget then goes to one bound instead
+    of two.
     """
 
     x, u, n, w = _validate_inputs(
@@ -526,19 +561,33 @@ def weighted_empirical_bernstein_mean_bounds(
     # endpoint of the true labels.
     _, positive_second, _ = _completed_observations(x + u, n, w, independence_unit)
     _, _, negative_second = _completed_observations(x, n, w, independence_unit)
+    centered_second: float | None = None
+    if variance_centers is not None:
+        centers = np.asarray(variance_centers, dtype=float)
+        if centers.shape != w.shape:
+            raise ValueError("variance_centers must have one center per prompt")
+        if not np.all(np.isfinite(centers)) or np.any(centers < 0) or np.any(centers > 1):
+            raise ValueError("variance_centers must lie in [0, 1]")
+        centered_second = _centered_second_moment(x, u, n, w, centers, independence_unit)
 
     def endpoint(counts: np.ndarray, alpha: float) -> tuple[float, float, float]:
         estimate, _, _ = _completed_observations(counts, n, w, independence_unit)
         tail_alpha = alpha / 2
-        variance_component_alpha = alpha / 4
-        variance_padding = math.sqrt(
-            0.5 * fourth_power_sum * math.log(1 / variance_component_alpha)
-        )
-        variance_upper = min(
-            0.25 * concentration_variance,
-            positive_second + variance_padding,
-            negative_second + variance_padding,
-        )
+        if centered_second is not None:
+            variance_padding = math.sqrt(0.5 * fourth_power_sum * math.log(2 / alpha))
+            variance_upper = min(
+                0.25 * concentration_variance, centered_second + variance_padding
+            )
+        else:
+            variance_component_alpha = alpha / 4
+            variance_padding = math.sqrt(
+                0.5 * fourth_power_sum * math.log(1 / variance_component_alpha)
+            )
+            variance_upper = min(
+                0.25 * concentration_variance,
+                positive_second + variance_padding,
+                negative_second + variance_padding,
+            )
         tail_log = math.log(1 / tail_alpha)
         linear_term = maximum_increment * tail_log / 3
         width = linear_term + math.sqrt(2 * variance_upper * tail_log + linear_term**2)

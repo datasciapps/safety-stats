@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import itertools
 import math
 
+import numpy as np
 import pytest
+from scipy.stats import binom
 
 from inspect_safety_stats.stats.comparisons import (
     direct_ratio_bounds,
@@ -224,3 +227,152 @@ def test_ratio_reports_unbounded_upper_endpoint_when_baseline_can_be_zero() -> N
     assert result.estimate is None
     assert result.upper is None
     assert result.warning is not None
+
+
+def _sparse_arms(prompts: int = 300, rollouts: int = 20) -> dict[str, object]:
+    """Two sparse arms shaped like the open-weight demo's harm group: about 4% and 0.5%."""
+
+    candidate = np.zeros(prompts, dtype=int)
+    candidate[:120] = 2
+    baseline = np.zeros(prompts, dtype=int)
+    baseline[:30] = 1
+    zeros = np.zeros(prompts, dtype=int)
+    trials = np.full(prompts, rollouts)
+    return dict(
+        candidate_failures=candidate,
+        candidate_unclassified=zeros,
+        candidate_trials=trials,
+        baseline_failures=baseline,
+        baseline_unclassified=zeros,
+        baseline_trials=trials,
+        weights=np.full(prompts, 1 / prompts),
+        alpha_lower=0.00125,
+        alpha_upper=0.00125,
+    )
+
+
+@pytest.mark.parametrize(
+    ("independence_unit", "ratio"), [("rollout", 0.6), ("prompt_cluster", 0.9)]
+)
+def test_empirical_bernstein_difference_adapts_to_sparse_arms(
+    independence_unit: str, ratio: float
+) -> None:
+    # Q = (1 + delta) / 2 mixes candidate failures near 0 with baseline safe outcomes near 1.
+    # A variance proxy about 0 or 1 alone saw a large second moment and fell back to the
+    # Hoeffding cap, so empirical Bernstein came out wider than Hoeffding.
+    arms = _sparse_arms()
+    bernstein = direct_risk_difference_bounds(
+        **arms, method="weighted_empirical_bernstein", independence_unit=independence_unit
+    )
+    hoeffding = direct_risk_difference_bounds(
+        **arms, method="weighted_hoeffding", independence_unit=independence_unit
+    )
+    assert bernstein.upper - bernstein.lower < ratio * (hoeffding.upper - hoeffding.lower)
+
+
+def test_empirical_bernstein_difference_matches_an_independent_computation() -> None:
+    cf, cn = np.array([1, 0]), np.array([4, 5])
+    bf, bn = np.array([0, 2]), np.array([4, 5])
+    w = np.array([0.4, 0.6])
+    alpha = 0.05
+    result = direct_risk_difference_bounds(
+        candidate_failures=cf,
+        candidate_unclassified=[0, 0],
+        candidate_trials=cn,
+        baseline_failures=bf,
+        baseline_unclassified=[0, 0],
+        baseline_trials=bn,
+        weights=w,
+        alpha_lower=alpha,
+        alpha_upper=alpha,
+        method="weighted_empirical_bernstein",
+    )
+    # Q's rollouts: candidate failures (center 0) and baseline safe outcomes (center 1),
+    # each rollout weighted w / (2 n).
+    a = np.concatenate([w / 2 / cn, w / 2 / bn])
+    n = np.concatenate([cn, bn])
+    estimate = float(np.sum(a * np.concatenate([cf, bn - bf])))
+    centered = float(np.sum(a**2 * np.concatenate([cf, bf])))
+    c2, c4, largest = float(np.sum(a**2 * n)), float(np.sum(a**4 * n)), float(np.max(a))
+    variance = min(c2 / 4, centered + math.sqrt(0.5 * c4 * math.log(2 / alpha)))
+    tail = math.log(2 / alpha)
+    linear = largest * tail / 3
+    width = linear + math.sqrt(2 * variance * tail + linear**2)
+    assert result.lower == pytest.approx(max(-1.0, 2 * (estimate - width) - 1), abs=1e-12)
+    assert result.upper == pytest.approx(min(1.0, 2 * (estimate + width) - 1), abs=1e-12)
+
+
+@pytest.mark.parametrize("independence_unit", ["rollout", "prompt_cluster"])
+@pytest.mark.parametrize(
+    ("candidate", "baseline"),
+    [
+        ((0.0, 0.0), (0.0, 0.0)),
+        ((0.05, 0.3), (0.0, 0.1)),
+        ((0.5, 0.2), (0.4, 0.6)),
+        ((1.0, 0.0), (0.0, 1.0)),
+    ],
+)
+def test_empirical_bernstein_difference_has_finite_sample_coverage(
+    independence_unit: str, candidate: tuple[float, float], baseline: tuple[float, float]
+) -> None:
+    trials = (3, 4)
+    weights = np.array([0.4, 0.6])
+    truth = float(np.dot(weights, candidate) - np.dot(weights, baseline))
+    coverage = 0.0
+    counts = [range(n + 1) for n in trials]
+    for c1, c2, b1, b2 in itertools.product(*counts, *counts):
+        mass = float(
+            binom.pmf(c1, trials[0], candidate[0])
+            * binom.pmf(c2, trials[1], candidate[1])
+            * binom.pmf(b1, trials[0], baseline[0])
+            * binom.pmf(b2, trials[1], baseline[1])
+        )
+        bounds = direct_risk_difference_bounds(
+            candidate_failures=[c1, c2],
+            candidate_unclassified=[0, 0],
+            candidate_trials=trials,
+            baseline_failures=[b1, b2],
+            baseline_unclassified=[0, 0],
+            baseline_trials=trials,
+            weights=weights,
+            alpha_lower=0.025,
+            alpha_upper=0.025,
+            method="weighted_empirical_bernstein",
+            independence_unit=independence_unit,
+        )
+        if bounds.lower <= truth <= bounds.upper:
+            coverage += mass
+    assert coverage >= 0.95 - 1e-12
+
+
+@pytest.mark.parametrize("independence_unit", ["rollout", "prompt_cluster"])
+def test_empirical_bernstein_difference_covers_in_the_sparse_regime(
+    independence_unit: str,
+) -> None:
+    # Too many prompts to enumerate, so a seeded simulation: 4,000 replicates give a
+    # miss-rate standard error of about 0.0034 at the nominal 0.05.
+    rng = np.random.default_rng(20261031)
+    prompts, rollouts, replicates = 60, 10, 4000
+    candidate_p = np.array([0.0] * 40 + [0.05] * 15 + [0.3] * 5)
+    baseline_p = np.array([0.0] * 50 + [0.02] * 10)
+    weights = np.full(prompts, 1 / prompts)
+    truth = float(np.dot(weights, candidate_p - baseline_p))
+    trials = np.full(prompts, rollouts)
+    zeros = np.zeros(prompts, dtype=int)
+    misses = 0
+    for _ in range(replicates):
+        bounds = direct_risk_difference_bounds(
+            candidate_failures=rng.binomial(rollouts, candidate_p),
+            candidate_unclassified=zeros,
+            candidate_trials=trials,
+            baseline_failures=rng.binomial(rollouts, baseline_p),
+            baseline_unclassified=zeros,
+            baseline_trials=trials,
+            weights=weights,
+            alpha_lower=0.025,
+            alpha_upper=0.025,
+            method="weighted_empirical_bernstein",
+            independence_unit=independence_unit,
+        )
+        misses += not bounds.lower <= truth <= bounds.upper
+    assert misses / replicates <= 0.05 + 3 * math.sqrt(0.05 * 0.95 / replicates)

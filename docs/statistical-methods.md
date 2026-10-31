@@ -707,6 +707,20 @@ Taking both proxies from each endpoint's own completion is not monotone. Complet
 as a failure lowers (Q_-), and with skewed weights the width can then shrink by more than the
 estimate rises.
 
+**Fixed variance centers.** For any constant (c), (\operatorname{Var}(Y)\le\mathbb E(Y-c)^2).
+A caller may therefore fix one center (c_i\in[0,1]) per contribution in advance, from the design
+and never from the data, and use the single proxy
+
+\[
+Q_c=\sum_i a_i^2(Y_i-c_i)^2,\qquad
+\overline V=\min\left\{\frac{C_2}{4},\;Q_c+\sqrt{\frac{C_4}{2}\log\frac1{\delta_v}}\right\},
+\]
+
+with (delta_v=\alpha_d/2), since there is one variance proxy instead of two. Each term of (Q_c)
+lies in ([0,a_i^2]), so the same (C_4) Hoeffding padding applies. An unknown outcome contributes
+(\max\{c_i^2,(1-c_i)^2\}), its larger completion. (Q_+) and (Q_-) are the special cases
+(c_i\equiv0) and (c_i\equiv1).
+
 This is a finite-sample, heterogeneous-Bernoulli empirical-Bernstein construction, not a normal
 approximation and not a plug-in standard error. It can be materially narrower than Hoeffding, but
 it can remain loose near zero failures because it spends part of the error budget estimating
@@ -1361,6 +1375,13 @@ Bernoulli-KL bound on \(Q\) is inefficient for sparse safety risk because \(Q\) 
 The weighted KL/Chernoff primary instead builds a jointly calibrated rectangle for the two sparse
 arm means and reports \([L_C-U_B,U_C-L_B]\). Empirical Bernstein and Hoeffding remain direct
 contrast references.
+
+For empirical Bernstein, the variance proxy of \(Q\) is centered by arm: candidate rollouts at
+\(0\) and baseline rollouts at \(1\), so it counts candidate failures and baseline failures.
+The uncentered proxies \(Q_+\) and \(Q_-\) are each about \(C_2/2\) here, because half the
+terms of \(Q\) sit near 0 and half near 1, so both lost to the cap \(C_2/4\) and the interval was
+wider than Hoeffding whenever both arms were sparse. In the prompt-cluster encoding, each
+\(q_j=(1+p_{C,j}-p_{B,j})/2\) is centered at \(1/2\).
 
 If candidate and baseline have unclassified attempted outcomes, the lower endpoint completes
 candidate unknowns as safe and baseline unknowns as failures. The upper endpoint does the reverse.

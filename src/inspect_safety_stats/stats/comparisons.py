@@ -113,6 +113,12 @@ def _direct_function(method: ComparisonMethod) -> Callable[..., DirectMeanBounds
     }[method]
 
 
+def _variance_centers(method: ComparisonMethod, centers: np.ndarray) -> dict[str, np.ndarray]:
+    """Variance centers for the engines that estimate a variance proxy."""
+
+    return {"variance_centers": centers} if method == "weighted_empirical_bernstein" else {}
+
+
 def _transform_rollout_bounds(bounds: DirectMeanBounds) -> DirectComparisonBounds:
     return DirectComparisonBounds(
         lower=max(-1.0, 2 * bounds.lower - 1),
@@ -244,6 +250,8 @@ def direct_risk_difference_bounds(
         q_unclassified = np.concatenate([cu, bu])
         q_trials = np.concatenate([cn, bn])
         q_weights = np.concatenate([w / 2, w / 2])
+        # Candidate q-observations are failures and sit near 0; baseline ones are safe
+        # outcomes and sit near 1. The variance proxy is centered by arm accordingly.
         bounds = _direct_function(method)(
             q_failures,
             q_unclassified,
@@ -252,6 +260,7 @@ def direct_risk_difference_bounds(
             alpha_lower=alpha_lower,
             alpha_upper=alpha_upper,
             independence_unit="rollout",
+            **_variance_centers(method, np.concatenate([np.zeros_like(w), np.ones_like(w)])),
         )
         return _transform_rollout_bounds(bounds)
 
@@ -261,6 +270,7 @@ def direct_risk_difference_bounds(
     q_trials = 2 * cn * bn
     q_failures = cn * bn + cf * bn - (bf + bu) * cn
     q_unclassified = cu * bn + bu * cn
+    # Each q_j is 1/2 plus half the arms' rate difference, so the proxy is centered at 1/2.
     bounds = _direct_function(method)(
         q_failures,
         q_unclassified,
@@ -269,6 +279,7 @@ def direct_risk_difference_bounds(
         alpha_lower=alpha_lower,
         alpha_upper=alpha_upper,
         independence_unit="prompt_cluster",
+        **_variance_centers(method, np.full_like(w, 0.5)),
     )
     return _transform_rollout_bounds(bounds)
 

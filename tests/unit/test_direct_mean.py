@@ -354,3 +354,75 @@ def test_direct_mean_rejects_invalid_inputs() -> None:
             alpha_lower=0.025,
             alpha_upper=0.025,
         )
+
+
+@pytest.mark.parametrize(
+    ("centers", "message"),
+    [
+        ([0.5], "one center per prompt"),
+        ([0.5, 1.5], r"\[0, 1\]"),
+        ([0.5, float("nan")], r"\[0, 1\]"),
+    ],
+)
+def test_empirical_bernstein_rejects_invalid_variance_centers(
+    centers: list[float], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        weighted_empirical_bernstein_mean_bounds(
+            failures=[1, 2],
+            unclassified=[0, 0],
+            trials=[4, 5],
+            weights=[0.3, 0.7],
+            alpha_lower=0.025,
+            alpha_upper=0.025,
+            variance_centers=centers,
+        )
+
+
+@pytest.mark.parametrize("independence_unit", ["rollout", "prompt_cluster"])
+@pytest.mark.parametrize("probabilities", [(0.0, 0.0), (0.05, 0.4), (0.6, 0.6), (1.0, 1.0)])
+def test_centered_empirical_bernstein_has_finite_sample_coverage(
+    independence_unit: str, probabilities: tuple[float, float]
+) -> None:
+    # Any center fixed in advance keeps the guarantee, including one far from the data.
+    trials = np.array([4, 5])
+    weights = np.array([0.3, 0.7])
+    true_mean = float(np.dot(weights, probabilities))
+    for centers in ([0.0, 1.0], [0.5, 0.5], [1.0, 0.0]):
+        coverage = 0.0
+        for first in range(trials[0] + 1):
+            for second in range(trials[1] + 1):
+                mass = float(
+                    binom.pmf(first, trials[0], probabilities[0])
+                    * binom.pmf(second, trials[1], probabilities[1])
+                )
+                result = weighted_empirical_bernstein_mean_bounds(
+                    failures=[first, second],
+                    unclassified=[0, 0],
+                    trials=trials,
+                    weights=weights,
+                    alpha_lower=0.025,
+                    alpha_upper=0.025,
+                    independence_unit=independence_unit,
+                    variance_centers=centers,
+                )
+                if result.lower <= true_mean <= result.upper:
+                    coverage += mass
+        assert coverage >= 0.95 - 1e-12, centers
+
+
+def test_centered_empirical_bernstein_contains_every_completion_of_unknowns() -> None:
+    common = dict(trials=[6, 8], weights=[0.5, 0.5], alpha_lower=0.05, alpha_upper=0.05)
+    unknown = weighted_empirical_bernstein_mean_bounds(
+        failures=[1, 0], unclassified=[2, 3], variance_centers=[0.5, 0.0], **common
+    )
+    for extra_first in range(3):
+        for extra_second in range(4):
+            known = weighted_empirical_bernstein_mean_bounds(
+                failures=[1 + extra_first, extra_second],
+                unclassified=[0, 0],
+                variance_centers=[0.5, 0.0],
+                **common,
+            )
+            assert unknown.lower <= known.lower + 1e-12
+            assert known.upper <= unknown.upper + 1e-12
