@@ -1,13 +1,17 @@
 """Show that a behaviour-neutral change leaves every report artifact byte-identical.
 
 A class A change, such as a refactor or a performance change, must not change a single output
-byte. This runs ``inspect-safety-stats analyze`` on the bundled examples and on a synthetic
-stress design twice: with the package source as committed at --base (default HEAD, so the
-change under test is the uncommitted one), and with the working tree or the commit --new names.
-Every artifact, the command's output and its exit status must match exactly.
+byte. This runs ``inspect-safety-stats analyze`` on the bundled examples, on a synthetic stress
+design, and on offline cases built for the paths the examples do not reach (two cohorts and
+comparisons, every error stage, judge panels and calibration, sampled designs, an incomplete run,
+and ``generative analyze``; see ``_artifact_cases.py``), twice: with the package source as
+committed at --base (default HEAD, so the change under test is the uncommitted one), and with the
+working tree or the commit --new names. Every artifact, the command's output and its exit status
+must match exactly.
 
     python scripts/compare_artifacts.py
     python scripts/compare_artifacts.py --base main --case synthetic --prompts 1000
+    python scripts/compare_artifacts.py --case errors --case generative
 
 The working tree is never modified: committed source is exported to a temporary directory and
 imported from there. Both runs read the same inputs and write to the same output path. When
@@ -26,6 +30,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
+from _artifact_cases import BUILDERS, Builder
 from _source_trees import (
     WRONG_SOURCE,
     export_source,
@@ -35,7 +40,7 @@ from _source_trees import (
     source_changed,
 )
 
-CASES = ("simpleqa", "xstest", "synthetic")
+CASES = ("simpleqa", "xstest", "synthetic", *BUILDERS)
 
 
 @dataclass(frozen=True)
@@ -43,6 +48,8 @@ class Case:
     name: str
     plan: Path
     logs: Path
+    command: tuple[str, ...] = ("analyze",)
+    extra: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -173,7 +180,7 @@ def _fail(message: str) -> int:
 
 
 def _analyze(source: Path, hidden: Path | None, case: Case, output: Path) -> Run:
-    arguments = ["analyze", "--plan", str(case.plan), "--logs", str(case.logs)]
+    arguments = [*case.command, "--plan", str(case.plan), "--logs", str(case.logs), *case.extra]
     started = time.perf_counter()
     completed = run_module(
         source,
@@ -276,6 +283,15 @@ def main(argv: list[str] | None = None) -> int:
         cases = bundled_cases(repository)
         if "synthetic" in names:
             cases["synthetic"] = synthetic_case(repository, scratch / "inputs", options.prompts)
+        # Built with the base source where the package takes part, so inputs are the same for
+        # both sides whatever the change under test does.
+        builder = Builder(repository, scratch / "inputs", base_source, working_source)
+        for name in names:
+            if name in BUILDERS:
+                try:
+                    cases[name] = Case(name, *BUILDERS[name](builder))
+                except Exception as error:  # an input that cannot be built: nothing to compare
+                    return _fail(f"could not build the {name} case: {error}")
 
         different: list[str] = []
         for name in names:

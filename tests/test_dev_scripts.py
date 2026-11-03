@@ -158,3 +158,82 @@ def test_compare_artifacts_shortens_long_lines_in_its_excerpt(
     assert excerpt.splitlines()
     assert all(len(line) <= 220 for line in excerpt.splitlines())
     assert "more characters]" in excerpt
+
+
+def _report(directory: Path) -> dict[str, object]:
+    import json
+
+    loaded: dict[str, object] = json.loads((directory / "report.json").read_text("utf-8"))
+    return loaded
+
+
+def _rows(path: Path) -> list[dict[str, str]]:
+    import csv
+
+    with path.open(encoding="utf-8", newline="") as stream:
+        return list(csv.DictReader(stream))
+
+
+def _interval_ids(report: dict[str, object]) -> set[str]:
+    groups = report["group_risks"]
+    assert isinstance(groups, list)
+    return {interval["interval_id"] for group in groups for interval in group["intervals"]}
+
+
+def test_compare_artifacts_cases_reach_the_paths_they_exist_for(
+    compare_artifacts: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A case that stops reaching its path still compares as identical and protects nothing.
+
+    Builds every offline case with the working tree as the base source and analyses it once.
+    """
+    from _artifact_cases import BUILDERS, Builder
+
+    from inspect_safety_stats import analyze
+
+    # Inspect drops the drive letter of logs on another Windows drive than the working
+    # directory (#35); the cases sit under tmp_path.
+    monkeypatch.chdir(tmp_path)
+    builder = Builder(ROOT, tmp_path / "inputs", ROOT / "src", None)
+    assert set(BUILDERS) <= set(compare_artifacts.CASES)
+    out: dict[str, Path] = {}
+    for name, build in BUILDERS.items():
+        inputs = build(builder)
+        out[name] = tmp_path / "out" / name
+        if inputs.command == ("analyze",):
+            analyze(plan=inputs.plan, logs=inputs.logs).write(out[name])
+            continue
+        result = subprocess.run(
+            [sys.executable, "-m", "inspect_safety_stats.cli", *inputs.command,
+             "--plan", str(inputs.plan), "--logs", str(inputs.logs), *inputs.extra,
+             "--output", str(out[name])],
+            capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+
+    demo = _report(out["demo"])
+    assert any(row["diagnostic_outputs"] not in ("", "[]", "{}")
+               for row in _rows(out["demo"] / "comparisons.csv"))
+    assert demo["comparisons"]
+
+    errors = _report(out["errors"])
+    stages = {row["error_stage"] for row in _rows(out["errors"] / "observations.csv")}
+    assert {"target_generation", "post_generation", "unknown"} <= stages
+    assert errors["policy_events"] and errors["comparison_sets"]
+    assert "judge_corrected_declared" in _interval_ids(errors)
+
+    assert "judge_corrected_panel_derived" in _interval_ids(_report(out["judge-panel"]))
+    assert "judge_corrected_validated" in _interval_ids(_report(out["judge-validated"]))
+
+    incomplete = _report(out["incomplete"])["integrity"]
+    assert isinstance(incomplete, dict)
+    assert "LOG_INCOMPLETE" in {item["code"] for item in incomplete["diagnostics"]}
+
+    assert any(name.startswith("horvitz_thompson_")
+               for name in _interval_ids(_report(out["sampled-poisson"])))
+    assert any(name.startswith("stratified_without_replacement_")
+               for name in _interval_ids(_report(out["sampled-stratified"])))
+
+    for name, method in (("generative", "paired_binomial_cells"),
+                         ("generative-weighted", "paired_weighted_kl_chernoff")):
+        assert {row["method"] for row in _rows(out[name] / "comparisons.csv")} == {method}
