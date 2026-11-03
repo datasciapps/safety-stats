@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import itertools
 import shutil
 import sys
 from collections.abc import Callable
@@ -89,13 +90,18 @@ def demo_logs(builder: Builder) -> Path:
 
 
 def _edit_logs(source: Path, target: Path, edit: Callable[[Any, int], None]) -> Path:
-    """Copies of every log under ``source``, each passed through ``edit`` with its index."""
+    """Copies of every demo log under ``source``, each passed through ``edit`` with its
+    configuration's place in DEMO_MODELS.
+
+    Not the file's place in the folder: Inspect names logs by time and a random id, so the
+    order of two logs written in the same second changes from one build to the next.
+    """
     from inspect_ai.log import read_eval_log, write_eval_log
 
     target.mkdir(parents=True)
-    for index, path in enumerate(sorted(source.glob("*.eval"))):
+    for path in sorted(source.glob("*.eval")):
         log = read_eval_log(str(path))
-        edit(log, index)
+        edit(log, DEMO_MODELS.index(str(log.eval.model)))
         write_eval_log(log, str(target / path.name))
     return target
 
@@ -316,10 +322,16 @@ def _labels(builder: Builder, directory: Path, plan: dict[str, Any], logs: Path)
     with observations.open(encoding="utf-8", newline="") as stream:
         rows = [row for row in csv.DictReader(stream)
                 if row["outcome_status"] in ("classified_failure", "classified_safe")]
-    rows.sort(key=lambda row: row["observation_id"])
+    # Observation ids hash Inspect's random eval id, so the draw orders rows by prompt and
+    # epoch instead, within each cohort and judge stratum, to label the same rollouts on
+    # every build.
+    rows.sort(key=lambda row: (row["prompt_id"], int(row["epoch"])))
     labels = ["observation_id,human_label"]
-    for status in ("classified_failure", "classified_safe"):
-        chosen = [row for row in rows if row["outcome_status"] == status][::5][:40]
+    for cohort, status in itertools.product(
+        sorted({row["cohort_id"] for row in rows}), ("classified_failure", "classified_safe")
+    ):
+        chosen = [row for row in rows
+                  if row["cohort_id"] == cohort and row["outcome_status"] == status][::5][:40]
         for position, row in enumerate(chosen):
             unsafe = status == "classified_failure"
             if position % 9 == 4:
