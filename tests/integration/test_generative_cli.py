@@ -74,9 +74,9 @@ def stub_logs(
                 }
             )
     samples = pd.DataFrame(rows)
-    monkeypatch.setattr("inspect_safety_stats.generative.logs.evals_df", lambda logs: evals)
+    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: evals)
     monkeypatch.setattr(
-        "inspect_safety_stats.generative.logs.samples_df",
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
 

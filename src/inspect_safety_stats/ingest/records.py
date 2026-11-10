@@ -73,9 +73,11 @@ class RolloutRecord:
     item_id: str
     # The raw repeat number (an epoch, a seed index), as the source wrote it.
     repeat: Any
-    sample_id: str
-    # The identity whose hash, with the score name, is the observation id.
-    identity: Mapping[str, Any]
+    # None when the source has no sample id; normalize then refuses the rollout.
+    sample_id: str | None
+    # The identity whose hash, with the score name, is the observation id; None with the
+    # sample id.
+    identity: Mapping[str, Any] | None
     # Every field the source has for the rollout, verbatim, for ``rollout_key``.
     attributes: Mapping[str, Any]
     # Raw score values by score name; a name absent here is missing for this rollout.

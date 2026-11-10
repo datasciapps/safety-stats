@@ -34,9 +34,12 @@ from inspect_safety_stats.ingest.records import (
 __all__ = [
     "ErrorContext",
     "InspectLogs",
+    "InspectRollouts",
     "LogInput",
     "NormalizedData",
     "ingest_inspect_logs",
+    "read_inspect_rollouts",
+    "read_inspect_runs",
     "read_inspect_source",
 ]
 
@@ -160,33 +163,32 @@ def _parse_time(value: Any) -> datetime | None:
     return result if isinstance(result, datetime) else None
 
 
-def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> SourceData:
-    """Read Inspect evaluation logs into the runs and rollouts :func:`normalize` takes."""
-
-    evaluations = evals_df(logs)
-    samples = samples_df(logs, parallel=parallel)
-    if evaluations.empty:
-        raise ValueError("no Inspect evaluation logs were found")
-    if samples.empty:
-        raise ValueError("selected Inspect logs contain no sample records")
-
-    runs: list[RunRecord] = []
-    eval_logs: dict[str, Any] = {}
-    for _, row in evaluations.iterrows():
-        eval_id = str(row["eval_id"])
-        eval_logs[eval_id] = row.get("log", "")
-        runs.append(
-            RunRecord(
-                run_key=eval_id,
-                attributes={str(key): value for key, value in row.items()},
-                status=row.get("status", "success"),
-                started_at=_parse_time(row.get("created")),
-                model=str(row["model"]) if "model" in row else None,
-                run_id=row.get("run_id"),
-                source=str(row.get("log", "")),
-            )
+def _runs(evaluations: pd.DataFrame) -> list[RunRecord]:
+    return [
+        RunRecord(
+            run_key=str(row["eval_id"]),
+            attributes={str(key): value for key, value in row.items()},
+            status=row.get("status", "success"),
+            started_at=_parse_time(row.get("created")),
+            model=str(row["model"]) if "model" in row else None,
+            run_id=row.get("run_id"),
+            source=str(row.get("log", "")),
         )
+        for _, row in evaluations.iterrows()
+    ]
 
+
+@dataclass(frozen=True)
+class InspectRollouts:
+    """The rollouts of Inspect logs, with what :class:`SourceData` needs to know about them."""
+
+    rollouts: list[RolloutRecord]
+    collection_rank: list[int]
+    score_names: frozenset[str]
+
+
+def _rollouts(samples: pd.DataFrame, runs: list[RunRecord]) -> InspectRollouts:
+    run_sources = {run.run_key: run.source for run in runs}
     # Rollouts are collected in Inspect's order: by evaluation, sample id and epoch.
     collected = (
         samples.reset_index(drop=True)
@@ -200,16 +202,19 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
     rollouts: list[RolloutRecord] = []
     for label, row in samples.iterrows():
         eval_id = str(row["eval_id"])
+        sample_id = str(row["sample_id"]) if "sample_id" in row else None
         rollouts.append(
             RolloutRecord(
                 run_key=eval_id,
                 record_id=label,
                 item_id=str(row["id"]),
                 repeat=row["epoch"],
-                sample_id=str(row["sample_id"]),
-                identity={
+                sample_id=sample_id,
+                identity=None
+                if sample_id is None
+                else {
                     "eval_id": eval_id,
-                    "sample_id": str(row["sample_id"]),
+                    "sample_id": sample_id,
                     "inspect_id": str(row["id"]),
                     "epoch": int(row["epoch"]),
                 },
@@ -217,9 +222,49 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
                 scores={column.removeprefix("score_"): row[column] for column in score_columns},
                 error=row.get("error"),
                 retries=row.get("retries"),
-                source=str(row.get("log", eval_logs.get(eval_id, ""))),
+                source=str(row.get("log", run_sources.get(eval_id, ""))),
             )
         )
+    return InspectRollouts(
+        rollouts=rollouts,
+        collection_rank=collection_rank,
+        score_names=frozenset(column.removeprefix("score_") for column in score_columns),
+    )
+
+
+def read_inspect_runs(logs: LogInput) -> list[RunRecord]:
+    """Read the runs of Inspect logs, one per evaluation."""
+
+    evaluations = evals_df(logs)
+    if evaluations.empty:
+        raise ValueError("no Inspect evaluation logs were found")
+    return _runs(evaluations)
+
+
+def read_inspect_rollouts(
+    logs: LogInput, runs: list[RunRecord], *, parallel: bool | int = False
+) -> InspectRollouts:
+    """Read the rollouts of Inspect logs, one per sample and epoch."""
+
+    samples = samples_df(logs, parallel=parallel)
+    if samples.empty:
+        raise ValueError("selected Inspect logs contain no sample records")
+    return _rollouts(samples, runs)
+
+
+def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> SourceData:
+    """Read Inspect evaluation logs into the runs and rollouts :func:`normalize` takes."""
+
+    # ORDER MATTERS: both frames are read before either is checked, so that a run without
+    # samples reports the same error it always did.
+    evaluations = evals_df(logs)
+    samples = samples_df(logs, parallel=parallel)
+    if evaluations.empty:
+        raise ValueError("no Inspect evaluation logs were found")
+    if samples.empty:
+        raise ValueError("selected Inspect logs contain no sample records")
+    runs = _runs(evaluations)
+    collected = _rollouts(samples, runs)
     provided = _provided_eval_logs(logs)
     cache: dict[str, dict[str, ErrorContext]] = {}
 
@@ -227,16 +272,16 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
         return _error_context(
             log_path=rollout.source,
             eval_id=rollout.run_key,
-            sample_id=rollout.sample_id,
+            sample_id=str(rollout.sample_id),
             provided=provided,
             cache=cache,
         )
 
     return SourceData(
         runs=runs,
-        rollouts=rollouts,
-        collection_rank=collection_rank,
-        score_names=frozenset(column.removeprefix("score_") for column in score_columns),
+        rollouts=collected.rollouts,
+        collection_rank=collected.collection_rank,
+        score_names=collected.score_names,
         configuration_fields=_CONFIGURATION_FIELDS,
         error_context=error_context,
         source_sha256=_hash_file,

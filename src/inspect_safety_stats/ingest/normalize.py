@@ -310,6 +310,10 @@ def normalize(
         prompt_id = rollout.item_id
         if prompt_id not in manifest_by_prompt.index:
             continue
+        if rollout.sample_id is None or rollout.identity is None:
+            # The same error the reader raised when it looked the sample id up.
+            raise KeyError("sample_id")
+        sample_id, identity = rollout.sample_id, rollout.identity
         run = run_records[run_key]
         cohort_id = run_cohorts[run_key]
         key_values: list[Any] = []
@@ -459,7 +463,7 @@ def normalize(
             plan.cohorts[cohort_id].require_uniform,
         )
         design_row = manifest_by_prompt.loc[prompt_id]
-        observation_id = sha256_value({**rollout.identity, "score": score_name})
+        observation_id = sha256_value({**identity, "score": score_name})
         if judge_series:
             judge_verdicts[observation_id] = {
                 judge_id: series[id(rollout)] for judge_id, series in judge_series.items()
@@ -471,7 +475,7 @@ def normalize(
                 source_log_sha256=source_hashes[log_path],
                 eval_id=run_key,
                 run_id=_native(run.run_id),
-                sample_id=rollout.sample_id,
+                sample_id=sample_id,
                 inspect_id=rollout.item_id,
                 epoch=int(rollout.repeat),
                 prompt_id=prompt_id,

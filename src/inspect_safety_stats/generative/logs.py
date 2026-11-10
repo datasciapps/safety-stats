@@ -1,4 +1,4 @@
-"""Read Inspect logs for a generative run.
+"""Read Inspect logs for a generative run, through the Inspect reader's records.
 
 The fixed-design ingestion joins samples against a prompt manifest and resolves groups
 and independence profiles from an ``AnalysisPlan``. A generative run has none of those:
@@ -11,12 +11,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from inspect_ai.analysis import evals_df, samples_df
-
 from inspect_safety_stats.config.models import OutcomeMappingSpec
 from inspect_safety_stats.generative.join import EvaluatedSample
 from inspect_safety_stats.generative.schema import GenerativePlan
+from inspect_safety_stats.ingest.inspect_logs import (
+    read_inspect_rollouts,
+    read_inspect_runs,
+)
 from inspect_safety_stats.ingest.outcomes import is_missing, map_outcome
+from inspect_safety_stats.ingest.records import RunRecord
 from inspect_safety_stats.schema.reports import Diagnostic
 
 LogInput = str | Path | list[str] | list[Path]
@@ -34,19 +37,16 @@ def _native(value: Any) -> Any:
 
 
 def _cohorts_by_eval(
-    plan: GenerativePlan, logs: LogInput, diagnostics: list[Diagnostic]
+    plan: GenerativePlan, runs: list[RunRecord], diagnostics: list[Diagnostic]
 ) -> dict[str, str]:
-    evaluations = evals_df(logs)
-    if evaluations.empty:
-        raise ValueError("no Inspect evaluation logs were found")
     by_model: dict[str, list[str]] = {}
     for cohort_id, cohort in plan.target.cohorts.items():
         by_model.setdefault(cohort.model, []).append(cohort_id)
 
     resolved: dict[str, str] = {}
-    for _, row in evaluations.iterrows():
-        eval_id = str(row["eval_id"])
-        model = str(row.get("model", ""))
+    for run in runs:
+        eval_id = run.run_key
+        model = run.model if run.model is not None else ""
         matches = by_model.get(model, [])
         if not matches:
             diagnostics.append(
@@ -71,12 +71,12 @@ def _cohorts_by_eval(
                 )
             )
             continue
-        if str(row.get("status", "success")) != "success":
+        if str(run.status) != "success":
             diagnostics.append(
                 Diagnostic(
                     code="GENERATIVE_LOG_INCOMPLETE",
                     severity="ERROR",
-                    message=f"evaluation {eval_id!r} has status {row.get('status')!r}",
+                    message=f"evaluation {eval_id!r} has status {run.status!r}",
                     scope=eval_id,
                 )
             )
@@ -94,15 +94,17 @@ def read_evaluated_samples(
     """
 
     diagnostics: list[Diagnostic] = []
-    cohorts = _cohorts_by_eval(plan, logs, diagnostics)
+    # ORDER MATTERS: the samples are read only once some evaluation matched a cohort, so
+    # logs of other models alone give a warning and no samples, never an error.
+    runs = read_inspect_runs(logs)
+    cohorts = _cohorts_by_eval(plan, runs, diagnostics)
     if not cohorts:
         return [], diagnostics
 
-    frame = samples_df(logs, parallel=parallel)
-    if frame.empty:
-        raise ValueError("selected Inspect logs contain no sample records")
-    column = f"score_{plan.target.score.name}"
-    if column not in frame.columns:
+    collected = read_inspect_rollouts(logs, runs, parallel=parallel)
+    score_name = plan.target.score.name
+    if score_name not in collected.score_names:
+        column = f"score_{score_name}"
         diagnostics.append(
             Diagnostic(
                 code="GENERATIVE_SCORE_ABSENT",
@@ -110,17 +112,15 @@ def read_evaluated_samples(
                 message=f"score column {column!r} is absent from the selected logs",
             )
         )
-        frame[column] = None
 
     mapping = _mapping(plan)
     unmapped = 0
     samples: list[EvaluatedSample] = []
-    for _, row in frame.iterrows():
-        eval_id = str(row.get("eval_id", ""))
-        cohort_id = cohorts.get(eval_id)
+    for rollout in collected.rollouts:
+        cohort_id = cohorts.get(rollout.run_key)
         if cohort_id is None:
             continue
-        raw = _native(row.get(column))
+        raw = _native(rollout.scores.get(score_name))
         failure: bool | None = None
         if not is_missing(raw):
             try:
@@ -129,9 +129,9 @@ def read_evaluated_samples(
                 unmapped += 1
         samples.append(
             EvaluatedSample(
-                sample_id=str(row.get("id", "")),
+                sample_id=rollout.item_id,
                 cohort_id=cohort_id,
-                epoch=int(row.get("epoch", 1) or 1),
+                epoch=int(rollout.repeat or 1),
                 failure=failure,
             )
         )
