@@ -8,26 +8,40 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .inspect_logs import ingest_inspect_logs
     from .manifest import ResolvedGroup, load_manifest, resolve_groups
-    from .records import NormalizedData
+    from .records import EvaluationSource, NormalizedData
+    from .rollout_files import RolloutFiles
 
 __all__ = [
+    "EvaluationSource",
     "NormalizedData",
     "ResolvedGroup",
     "ingest_inspect_logs",
     "load_manifest",
     "resolve_groups",
+    "RolloutFiles",
 ]
 
 _EXPORTS = {
+    "EvaluationSource": "inspect_safety_stats.ingest.records",
     "NormalizedData": "inspect_safety_stats.ingest.records",
     "ResolvedGroup": "inspect_safety_stats.ingest.manifest",
     "ingest_inspect_logs": "inspect_safety_stats.ingest.inspect_logs",
     "load_manifest": "inspect_safety_stats.ingest.manifest",
     "resolve_groups": "inspect_safety_stats.ingest.manifest",
+    "RolloutFiles": "inspect_safety_stats.ingest.rollout_files",
 }
 
 # Submodules stay reachable as attributes, as they were when this module imported them.
-_SUBMODULES = {"inspect_logs", "manifest", "normalize", "outcomes", "records", "validation"}
+_SUBMODULES = {
+    "files",
+    "inspect_logs",
+    "manifest",
+    "normalize",
+    "outcomes",
+    "records",
+    "rollout_files",
+    "validation",
+}
 
 
 def __getattr__(name: str) -> Any:

@@ -133,9 +133,15 @@ def _integrity_status(diagnostics: list[Diagnostic]) -> Literal["valid", "degrad
     return "valid"
 
 
-def _inspect_source(logs: LogInput, parallel: bool | int) -> EvaluationSource:
-    """The Inspect logs named by ``analyze`` and ``validate``, read only when asked."""
+def _source(
+    logs: LogInput, parallel: bool | int, source: EvaluationSource | None
+) -> EvaluationSource:
+    """The source ``analyze`` and ``validate`` read: ``source``, or else the Inspect logs."""
 
+    if source is not None:
+        if logs is not None:
+            raise ValueError("pass either logs or source, not both")
+        return source
     # Imported here, so that importing this module does not load Inspect AI.
     from inspect_safety_stats.ingest.inspect_logs import InspectLogs
 
@@ -147,11 +153,12 @@ def validate(
     plan: AnalysisPlan | str | Path,
     logs: LogInput = None,
     parallel: bool | int = False,
+    source: EvaluationSource | None = None,
 ) -> IntegritySummary:
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
     try:
-        normalized = ingest(resolved, _inspect_source(logs, parallel))
+        normalized = ingest(resolved, _source(logs, parallel, source))
         validate_profile_fields(resolved.design.independence_profiles, normalized.manifest)
         diagnostics.extend(normalized.diagnostics)
     except Exception as exc:
@@ -4710,10 +4717,11 @@ def analyze(
     plan: AnalysisPlan | str | Path,
     logs: LogInput = None,
     parallel: bool | int = False,
+    source: EvaluationSource | None = None,
 ) -> SafetyReport:
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
-    data = ingest(resolved, _inspect_source(logs, parallel))
+    data = ingest(resolved, _source(logs, parallel, source))
     validate_profile_fields(resolved.design.independence_profiles, data.manifest)
     diagnostics.extend(data.diagnostics)
     estimates = _prompt_estimates(resolved, data, diagnostics)

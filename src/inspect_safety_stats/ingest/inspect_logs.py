@@ -8,7 +8,6 @@ read from the transcript. The rules of the plan are applied by
 
 from __future__ import annotations
 
-import hashlib
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -21,6 +20,7 @@ from inspect_ai.analysis import evals_df, samples_df
 from inspect_ai.log import EvalLog, read_eval_log
 
 from inspect_safety_stats.config.models import AnalysisPlan
+from inspect_safety_stats.ingest.files import file_sha256
 from inspect_safety_stats.ingest.normalize import POLICY_BLOCK_CODES, ingest
 from inspect_safety_stats.ingest.outcomes import is_missing
 from inspect_safety_stats.ingest.records import (
@@ -126,17 +126,6 @@ def _error_context(
         sample_id,
         ErrorContext(stage="unknown", content_delivered=None, provider_error_code=None),
     )
-
-
-def _hash_file(path: str) -> str | None:
-    source = Path(path)
-    if not source.is_file():
-        return None
-    digest = hashlib.sha256()
-    with source.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 _CONFIGURATION_FIELDS = (
@@ -284,7 +273,7 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
         score_names=collected.score_names,
         configuration_fields=_CONFIGURATION_FIELDS,
         error_context=error_context,
-        source_sha256=_hash_file,
+        source_sha256=file_sha256,
     )
 
 

@@ -26,6 +26,7 @@ ADAPTERS = {
         "inspect_safety_stats.generative.logs",
         "inspect_safety_stats.generative.inspect_bridge",
     },
+    "rollout_files": {"inspect_safety_stats.ingest.rollout_files"},
 }
 # Third-party packages that belong to one tool, and may be imported only by its adapter.
 TOOL_PACKAGES = {"inspect": {"inspect_ai"}}
