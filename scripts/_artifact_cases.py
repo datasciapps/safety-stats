@@ -543,10 +543,15 @@ def _generative_task(dataset: Path) -> Any:
 
 
 def _cohort_dataset(datasets: list[Path], cohort: str) -> Path:
-    """The dataset materialize wrote for one cohort; there is no other to fall back on."""
-    for path in datasets:
-        if path.stem == cohort:
-            return path
+    """The dataset materialize wrote for one cohort.
+
+    Under shared rewrites that is the one ``dataset.jsonl`` every cohort receives. Any
+    other cohort's file would run this cohort's model on the other's rewrites.
+    """
+    for stem in (cohort, "dataset"):
+        for path in datasets:
+            if path.stem == stem:
+                return path
     raise RuntimeError(
         f"materialize wrote no dataset for the {cohort} cohort, only {[p.name for p in datasets]}"
     )

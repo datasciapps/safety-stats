@@ -361,11 +361,18 @@ def test_compare_artifacts_cases_build_from_their_scratch_directory(
 def test_compare_artifacts_generative_cases_need_a_dataset_per_cohort(
     artifact_cases: ModuleType, tmp_path: Path
 ) -> None:
-    """Another cohort's dataset would run one cohort's model on the other's rewrites."""
+    """Another cohort's dataset would run one cohort's model on the other's rewrites.
+
+    Under shared rewrites materialize writes one ``dataset.jsonl`` for every cohort, and
+    that file is the right one for each of them.
+    """
     datasets = [tmp_path / "baseline.jsonl"]
     assert artifact_cases._cohort_dataset(datasets, "baseline") == datasets[0]
     with pytest.raises(RuntimeError, match="no dataset for the candidate cohort"):
         artifact_cases._cohort_dataset(datasets, "candidate")
+    shared = [tmp_path / "dataset.jsonl"]
+    assert artifact_cases._cohort_dataset(shared, "baseline") == shared[0]
+    assert artifact_cases._cohort_dataset(shared, "candidate") == shared[0]
 
 
 def test_the_slow_end_to_end_test_of_the_cases_is_marked(request: pytest.FixtureRequest) -> None:
