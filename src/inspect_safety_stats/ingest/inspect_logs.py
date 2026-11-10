@@ -4,8 +4,6 @@ import hashlib
 import math
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
-from dataclasses import field as dataclass_field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -18,40 +16,19 @@ from inspect_ai.log import EvalLog, read_eval_log
 from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.manifest import (
-    ResolvedGroup,
     load_inclusion_probabilities,
     load_manifest,
     resolve_groups,
 )
 from inspect_safety_stats.ingest.outcomes import is_missing, map_outcome
+from inspect_safety_stats.ingest.records import ErrorContext, NormalizedData
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.stats.independence import BlockIndex
 from inspect_safety_stats.stats.judges import compose_verdicts
 
+__all__ = ["ErrorContext", "LogInput", "NormalizedData", "ingest_inspect_logs"]
+
 LogInput = str | Path | EvalLog | Sequence[str | Path] | Sequence[EvalLog] | None
-
-
-@dataclass
-class NormalizedData:
-    observations: list[Observation]
-    manifest: pd.DataFrame
-    groups: list[ResolvedGroup]
-    diagnostics: list[Diagnostic]
-    cohorts: list[dict[str, Any]]
-    source_hashes: dict[str, str | None]
-    judge_verdicts: dict[str, dict[str, bool | None]] = dataclass_field(default_factory=dict)
-    # Built by the analysis on first use, from these observations and this manifest.
-    block_index: BlockIndex | None = dataclass_field(
-        default=None, init=False, repr=False, compare=False
-    )
-
-
-@dataclass(frozen=True)
-class ErrorContext:
-    stage: Literal["target_generation", "post_generation", "unknown"]
-    content_delivered: bool | None
-    provider_error_code: str | None
 
 
 _POLICY_BLOCK_CODES = {
