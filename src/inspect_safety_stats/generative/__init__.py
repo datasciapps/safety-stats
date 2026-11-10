@@ -63,11 +63,13 @@ if TYPE_CHECKING:
         estimate_tree,
     )
     from inspect_safety_stats.generative.inspect_bridge import (
+        materialize_dataset,
+        materialize_for_cohorts,
+    )
+    from inspect_safety_stats.generative.join import (
         EvaluatedSample,
         JoinResult,
         join_outcomes,
-        materialize_dataset,
-        materialize_for_cohorts,
         samples_from_observations,
     )
     from inspect_safety_stats.generative.judge import CorrectedEstimate
@@ -182,11 +184,11 @@ _EXPORTS = {
     "CompiledTaxonomy": "inspect_safety_stats.generative.taxonomy",
     "CorrectedEstimate": "inspect_safety_stats.generative.judge",
     "DeterministicFakeKernel": "inspect_safety_stats.generative.kernels",
-    "EvaluatedSample": "inspect_safety_stats.generative.inspect_bridge",
+    "EvaluatedSample": "inspect_safety_stats.generative.join",
     "ExecutionResult": "inspect_safety_stats.generative.execution",
     "GenerativePlan": "inspect_safety_stats.generative.schema",
     "GenerativeReport": "inspect_safety_stats.generative.report",
-    "JoinResult": "inspect_safety_stats.generative.inspect_bridge",
+    "JoinResult": "inspect_safety_stats.generative.join",
     "KernelFingerprint": "inspect_safety_stats.generative.kernels",
     "LevelForecast": "inspect_safety_stats.generative.planning",
     "MaterializedRun": "inspect_safety_stats.generative.runner",
@@ -211,7 +213,7 @@ _EXPORTS = {
     "estimate_tree": "inspect_safety_stats.generative.inference",
     "execute_rewrites": "inspect_safety_stats.generative.execution",
     "forecast": "inspect_safety_stats.generative.planning",
-    "join_outcomes": "inspect_safety_stats.generative.inspect_bridge",
+    "join_outcomes": "inspect_safety_stats.generative.join",
     "load_seed_texts": "inspect_safety_stats.generative.execution",
     "load_generative_plan": "inspect_safety_stats.generative.schema",
     "materialize_dataset": "inspect_safety_stats.generative.inspect_bridge",
@@ -224,7 +226,7 @@ _EXPORTS = {
     "render_generative_report": "inspect_safety_stats.generative.visualization",
     "resolve_kernel_fingerprint": "inspect_safety_stats.generative.kernels",
     "rewrites_for_bound": "inspect_safety_stats.generative.planning",
-    "samples_from_observations": "inspect_safety_stats.generative.inspect_bridge",
+    "samples_from_observations": "inspect_safety_stats.generative.join",
 }
 
 
@@ -234,6 +236,7 @@ _SUBMODULES = {
     "execution",
     "inference",
     "inspect_bridge",
+    "join",
     "judge",
     "kernels",
     "ledger",

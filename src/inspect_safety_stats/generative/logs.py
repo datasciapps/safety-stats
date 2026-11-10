@@ -14,7 +14,7 @@ from typing import Any
 from inspect_ai.analysis import evals_df, samples_df
 
 from inspect_safety_stats.config.models import OutcomeMappingSpec
-from inspect_safety_stats.generative.inspect_bridge import EvaluatedSample
+from inspect_safety_stats.generative.join import EvaluatedSample
 from inspect_safety_stats.generative.schema import GenerativePlan
 from inspect_safety_stats.ingest.outcomes import is_missing, map_outcome
 from inspect_safety_stats.schema.reports import Diagnostic

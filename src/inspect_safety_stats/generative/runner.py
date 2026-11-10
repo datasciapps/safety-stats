@@ -34,10 +34,8 @@ from inspect_safety_stats.generative.inference import (
     estimate_slice,
     estimate_tree,
 )
-from inspect_safety_stats.generative.inspect_bridge import (
-    join_outcomes,
-    materialize_for_cohorts,
-)
+from inspect_safety_stats.generative.inspect_bridge import materialize_for_cohorts
+from inspect_safety_stats.generative.join import join_outcomes
 from inspect_safety_stats.generative.judge import (
     CorrectedEstimate,
     comparison_refusal,
