@@ -64,7 +64,7 @@ Install the optional provider dependency and set your API key:
 
 ```bash
 cd /path/to/safety_stats
-python -m pip install -e '.[openai]'
+python -m pip install -e '.[inspect,openai]'
 export OPENAI_API_KEY="your-api-key"
 ```
 

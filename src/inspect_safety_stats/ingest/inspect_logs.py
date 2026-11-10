@@ -16,8 +16,16 @@ from pathlib import Path
 from typing import Any, Literal
 
 import pandas as pd
-from inspect_ai.analysis import evals_df, samples_df
-from inspect_ai.log import EvalLog, read_eval_log
+
+try:
+    from inspect_ai.analysis import evals_df, samples_df
+    from inspect_ai.log import EvalLog, read_eval_log
+except ImportError as error:  # pragma: no cover - exercised in a fresh interpreter
+    raise ImportError(
+        "Reading Inspect AI logs needs the inspect extra: "
+        "pip install 'inspect-safety-stats[inspect]'. "
+        "Rollout files (--runs and --rollouts) need no extra."
+    ) from error
 
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.files import file_sha256
