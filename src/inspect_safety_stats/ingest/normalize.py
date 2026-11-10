@@ -10,7 +10,6 @@ missing-score policies, duplicates, completeness and sampled-design checks.
 from __future__ import annotations
 
 import math
-from collections.abc import Mapping
 from datetime import timezone
 from typing import Any, Literal
 
@@ -18,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 from inspect_safety_stats.config.canonicalize import sha256_value
-from inspect_safety_stats.config.models import AnalysisPlan
+from inspect_safety_stats.config.models import ATTRIBUTE_PREFIX, AnalysisPlan
 from inspect_safety_stats.ingest.manifest import (
     ResolvedGroup,
     load_inclusion_probabilities,
@@ -29,6 +28,7 @@ from inspect_safety_stats.ingest.outcomes import is_missing, map_outcome
 from inspect_safety_stats.ingest.records import (
     EvaluationSource,
     NormalizedData,
+    RolloutRecord,
     RunRecord,
     SourceData,
 )
@@ -76,11 +76,56 @@ def _blocked_prompt(cohort_id: str, prompt_id: str) -> dict[str, Any]:
     return {"cohort_id": cohort_id, "prompt_id": prompt_id}
 
 
-def _match_cohorts(attributes: Mapping[str, Any], plan: AnalysisPlan) -> list[str]:
+_ABSENT = object()
+
+
+def _run_field(plan: AnalysisPlan, run: RunRecord, name: str) -> Any:
+    """The value of the run field a plan names, or ``_ABSENT`` when the run has none.
+
+    Schema 2.0 names the source's fields verbatim. Schema 3.0 names a field every source
+    has, or a source field as ``attributes.<name>``.
+    """
+    if plan.schema_version != "3.0":
+        return run.attributes.get(name, _ABSENT)
+    if name.startswith(ATTRIBUTE_PREFIX):
+        return run.attributes.get(name.removeprefix(ATTRIBUTE_PREFIX), _ABSENT)
+    neutral = {
+        "run_key": run.run_key,
+        "model": run.model,
+        "status": run.status,
+        "run_id": run.run_id,
+    }
+    return neutral.get(name, _ABSENT)
+
+
+def _rollout_field(
+    plan: AnalysisPlan, rollout: RolloutRecord, run: RunRecord, name: str
+) -> Any:
+    """The value of a ``rollout_key`` field: the rollout's, else its run's, else None."""
+    if plan.schema_version == "3.0" and not name.startswith(ATTRIBUTE_PREFIX):
+        neutral = {
+            "run_key": rollout.run_key,
+            "item_id": rollout.item_id,
+            "repeat": rollout.repeat,
+            "rollout_id": rollout.sample_id,
+        }
+        return _native(neutral[name])
+    if plan.schema_version == "3.0":
+        name = name.removeprefix(ATTRIBUTE_PREFIX)
+    elif name == "id":
+        return rollout.item_id
+    if name in rollout.attributes:
+        return _native(rollout.attributes[name])
+    if name in run.attributes:
+        return _native(run.attributes[name])
+    return None
+
+
+def _match_cohorts(run: RunRecord, plan: AnalysisPlan) -> list[str]:
     matched: list[str] = []
     for cohort_id, cohort in plan.cohorts.items():
         if all(
-            field in attributes and _equal(attributes[field], expected)
+            (value := _run_field(plan, run, field)) is not _ABSENT and _equal(value, expected)
             for field, expected in cohort.match.items()
         ):
             matched.append(cohort_id)
@@ -88,12 +133,18 @@ def _match_cohorts(attributes: Mapping[str, Any], plan: AnalysisPlan) -> list[st
 
 
 def _configuration(
-    attributes: Mapping[str, Any], standard: tuple[str, ...], required: list[str]
+    plan: AnalysisPlan, run: RunRecord, standard: tuple[str, ...], required: list[str]
 ) -> dict[str, Any]:
+    # The adapter's own configuration fields are named as the source names them.
+    values = {field: run.attributes[field] for field in standard if field in run.attributes}
+    for field in required:
+        value = _run_field(plan, run, field)
+        if value is not _ABSENT:
+            values.setdefault(field, value)
     return {
-        field: _native(attributes[field])
+        field: _native(values[field])
         for field in dict.fromkeys([*standard, *required])
-        if field in attributes
+        if field in values
     }
 
 
@@ -111,7 +162,7 @@ def normalize(
     cohort_summaries: list[dict[str, Any]] = []
     for run in source.runs:
         run_key = run.run_key
-        matches = _match_cohorts(run.attributes, plan)
+        matches = _match_cohorts(run, plan)
         if len(matches) > 1:
             diagnostics.append(
                 Diagnostic(
@@ -171,7 +222,7 @@ def normalize(
         missing_fields = [
             field
             for field in cohort.require_uniform
-            if not all(field in run.attributes for run in runs)
+            if not all(_run_field(plan, run, field) is not _ABSENT for run in runs)
         ]
         for field in missing_fields:
             diagnostics.append(
@@ -183,7 +234,7 @@ def normalize(
                 )
             )
         configs = [
-            _configuration(run.attributes, source.configuration_fields, cohort.require_uniform)
+            _configuration(plan, run, source.configuration_fields, cohort.require_uniform)
             for run in runs
         ]
         unconfigured = sorted(
@@ -361,17 +412,9 @@ def normalize(
         sample_id, identity = rollout.sample_id, rollout.identity
         run = run_records[run_key]
         cohort_id = run_cohorts[run_key]
-        key_values: list[Any] = []
-        for field in plan.design.rollout_key:
-            if field == "id":
-                key_values.append(rollout.item_id)
-            elif field in rollout.attributes:
-                key_values.append(_native(rollout.attributes[field]))
-            elif field in run.attributes:
-                key_values.append(_native(run.attributes[field]))
-            else:
-                key_values.append(None)
-        rollout_key = tuple(key_values)
+        rollout_key = tuple(
+            _rollout_field(plan, rollout, run, field) for field in plan.design.rollout_key
+        )
         if rollout_key in rollout_keys:
             diagnostics.append(
                 Diagnostic(
@@ -503,7 +546,8 @@ def normalize(
         if log_path not in source_hashes:
             source_hashes[log_path] = source.source_sha256(log_path)
         config = _configuration(
-            run.attributes,
+            plan,
+            run,
             source.configuration_fields,
             plan.cohorts[cohort_id].require_uniform,
         )

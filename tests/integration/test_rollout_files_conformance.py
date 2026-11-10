@@ -17,7 +17,7 @@ from inspect_safety_stats.ingest.rollout_files import RolloutFiles
 from tests.cli_output import plain
 
 PLAN = """
-schema_version: "2.0"
+schema_version: "3.0"
 analysis:
   id: conformance
   title: Neutral and Inspect sources agree
@@ -34,7 +34,6 @@ inputs:
 design:
   type: fixed
   hierarchy: [task_id, question_id, prompt_id]
-  rollout_key: ROLLOUT_KEY
   require_complete_manifest: true
   require_expected_rollouts: true
   independence_profiles:
@@ -44,10 +43,10 @@ design:
 cohorts:
   baseline:
     match: {model: model/baseline}
-    require_uniform: [task_version]
+    require_uniform: [attributes.task_version]
   candidate:
     match: {model: model/candidate}
-    require_uniform: [task_version]
+    require_uniform: [attributes.task_version]
 groups:
   - id: all
 outputs:
@@ -168,21 +167,15 @@ def _write_neutral(tmp_path: Path, evals: pd.DataFrame, samples: pd.DataFrame) -
     return RolloutFiles(runs=runs, rollouts=rollouts)
 
 
-def _inputs(tmp_path: Path) -> tuple[Path, Path, RolloutFiles]:
+def _inputs(tmp_path: Path) -> tuple[Path, RolloutFiles]:
     (tmp_path / "design.csv").write_text(
         "prompt_id,question_id,task_id,expected_rollouts\n"
         + "".join(f"p{i},q{i},t1,{EPOCHS}\n" for i in (1, 2, 3)),
         encoding="utf-8",
     )
-    inspect_plan = tmp_path / "inspect.yaml"
-    inspect_plan.write_text(
-        PLAN.replace("ROLLOUT_KEY", "[eval_id, id, epoch]"), encoding="utf-8"
-    )
-    neutral_plan = tmp_path / "neutral.yaml"
-    neutral_plan.write_text(
-        PLAN.replace("ROLLOUT_KEY", "[run_key, item_id, repeat]"), encoding="utf-8"
-    )
-    return inspect_plan, neutral_plan, _write_neutral(tmp_path, *_frames())
+    plan = tmp_path / "plan.yaml"
+    plan.write_text(PLAN, encoding="utf-8")
+    return plan, _write_neutral(tmp_path, *_frames())
 
 
 def _assert_same(left: Any, right: Any, where: str = "report") -> None:
@@ -205,20 +198,20 @@ def _assert_same(left: Any, right: Any, where: str = "report") -> None:
 def test_neutral_files_and_inspect_logs_give_the_same_report(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    inspect_plan, neutral_plan, neutral = _inputs(tmp_path)
+    plan, neutral = _inputs(tmp_path)
     evals, samples = _frames()
     monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: evals)
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
-    from_inspect = analyze(plan=inspect_plan, logs="ignored").model_dump(mode="json")
-    from_files = analyze(plan=neutral_plan, source=neutral).model_dump(mode="json")
+    # One schema 3.0 plan serves both sources.
+    from_inspect = analyze(plan=plan, logs="ignored").model_dump(mode="json")
+    from_files = analyze(plan=plan, source=neutral).model_dump(mode="json")
 
-    # What legitimately differs: the plan (its rollout_key), the files read, and the run
-    # fields each adapter counts as configuration.
+    # What legitimately differs: the files read, and the run fields each adapter counts as
+    # configuration.
     for report in (from_inspect, from_files):
-        del report["analysis"]["plan_sha256"]
         del report["provenance"]["source_logs"]
         for cohort in report["cohorts"]:
             del cohort["configuration_fingerprints"]
@@ -230,19 +223,19 @@ def test_neutral_files_and_inspect_logs_give_the_same_report(
 
 
 def test_validate_reads_a_neutral_source(tmp_path: Path) -> None:
-    _, neutral_plan, neutral = _inputs(tmp_path)
+    neutral_plan, neutral = _inputs(tmp_path)
     summary = validate(plan=neutral_plan, source=neutral)
     assert summary.status == "degraded"
 
 
 def test_logs_and_a_source_together_are_refused(tmp_path: Path) -> None:
-    _, neutral_plan, neutral = _inputs(tmp_path)
+    neutral_plan, neutral = _inputs(tmp_path)
     with pytest.raises(ValueError, match="either logs or source"):
         analyze(plan=neutral_plan, logs="x.eval", source=neutral)
 
 
 def test_the_cli_analyses_rollout_files(tmp_path: Path) -> None:
-    _, neutral_plan, neutral = _inputs(tmp_path)
+    neutral_plan, neutral = _inputs(tmp_path)
     result = CliRunner().invoke(
         app,
         [
@@ -269,7 +262,7 @@ def test_the_cli_analyses_rollout_files(tmp_path: Path) -> None:
 def test_the_cli_refuses_an_incomplete_or_doubled_source(
     tmp_path: Path, arguments: list[str]
 ) -> None:
-    _, neutral_plan, neutral = _inputs(tmp_path)
+    neutral_plan, neutral = _inputs(tmp_path)
     paths = {"RUNS": str(neutral.runs), "ROLLOUTS": str(neutral.rollouts)}
     for command in ("analyze", "validate"):
         result = CliRunner().invoke(

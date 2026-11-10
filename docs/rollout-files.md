@@ -54,7 +54,8 @@ One record per evaluation run: one model, under one configuration, over some ite
 | `run_id` | no | A label grouping runs, reported with each observation. |
 
 Every other field is an attribute of the run. Cohort `match` and `require_uniform` may name any
-field of the run, including `model` and `status`. A run's configuration fingerprint covers
+field of the run: under plan schema 3.0, `run_key`, `model`, `status` and `run_id` by name and
+any other field as `attributes.<name>`. A run's configuration fingerprint covers
 `model` and the fields its cohort lists in `require_uniform`, so list there every field that
 must not drift between the runs of a cohort.
 
@@ -76,13 +77,11 @@ One record per rollout: one response of one run to one item.
 | `provider_error_code` | no | The provider's error code, such as `content_filter`. |
 | `retries` | no | How many times the rollout was retried. Defaults to `0`. |
 
-Every other field is an attribute of the rollout, which `design.rollout_key` may name. Name the
-neutral fields there:
-
-```yaml
-design:
-  rollout_key: [run_key, item_id, repeat]
-```
+Every other field is an attribute of the rollout, which `design.rollout_key` may name as
+`attributes.<name>`. Write plans for rollout files in schema 3.0, whose default `rollout_key`,
+`[run_key, item_id, repeat]`, identifies a rollout. A schema 2.0 plan names the fields verbatim
+and must set `rollout_key: [run_key, item_id, repeat]` itself, since its default names Inspect
+fields. See [Schema versions](plan-reference.md#schema-versions).
 
 The plan's `inputs.score.name` and each judge's `score.name` select a score by name, and the
 score mapping applies to its value as written.
