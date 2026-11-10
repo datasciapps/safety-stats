@@ -27,7 +27,7 @@ _EXPORTS = {
 }
 
 # Submodules stay reachable as attributes, as they were when this module imported them.
-_SUBMODULES = {"inspect_logs", "manifest", "outcomes", "records", "validation"}
+_SUBMODULES = {"inspect_logs", "manifest", "normalize", "outcomes", "records", "validation"}
 
 
 def __getattr__(name: str) -> Any:

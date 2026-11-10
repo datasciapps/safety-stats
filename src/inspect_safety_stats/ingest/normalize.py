@@ -1,0 +1,683 @@
+"""Turn the runs and rollouts a source adapter reads into observations and diagnostics.
+
+Nothing here reads a file or knows which tool wrote the evaluation: an adapter, such as the
+Inspect reader in :mod:`inspect_safety_stats.ingest.inspect_logs`, supplies a
+:class:`SourceData`, and :func:`normalize` applies every rule of the plan to it: cohort
+matching, uniformity and drift, plan timing, judges and composites, score mapping, error and
+missing-score policies, duplicates, completeness and sampled-design checks.
+"""
+
+from __future__ import annotations
+
+import math
+from collections.abc import Mapping
+from datetime import timezone
+from typing import Any, Literal
+
+import numpy as np
+import pandas as pd
+
+from inspect_safety_stats.config.canonicalize import sha256_value
+from inspect_safety_stats.config.models import AnalysisPlan
+from inspect_safety_stats.ingest.manifest import ResolvedGroup, load_inclusion_probabilities
+from inspect_safety_stats.ingest.outcomes import is_missing, map_outcome
+from inspect_safety_stats.ingest.records import (
+    NormalizedData,
+    RunRecord,
+    SourceData,
+)
+from inspect_safety_stats.schema.observations import Observation
+from inspect_safety_stats.schema.reports import Diagnostic
+from inspect_safety_stats.stats.judges import compose_verdicts
+
+POLICY_BLOCK_CODES = frozenset(
+    {
+        "bio_policy",
+        "content_filter",
+        "content_policy_violation",
+        "guardrail_blocked",
+        "policy_violation",
+        "safety_filter",
+        "safety_violation",
+    }
+)
+
+
+def _equal(left: Any, right: Any) -> bool:
+    if is_missing(left) or is_missing(right):
+        return is_missing(left) and is_missing(right)
+    if isinstance(left, (dict, list)) or isinstance(right, (dict, list)):
+        return sha256_value(left) == sha256_value(right)
+    return bool(left == right)
+
+
+def _native(value: Any) -> Any:
+    if is_missing(value):
+        return None
+    if hasattr(value, "item"):
+        return value.item()
+    if hasattr(value, "isoformat") and not isinstance(value, str):
+        return value.isoformat()
+    return value
+
+
+def _blocked_prompt(cohort_id: str, prompt_id: str) -> dict[str, Any]:
+    """Name the cohort and prompt whose bounds a rollout-level ERROR must withhold.
+
+    Rollout-level diagnostics are scoped by run key, which is not a cohort, so the analysis
+    cannot recover the blocked prompt from the scope string alone.
+    """
+    return {"cohort_id": cohort_id, "prompt_id": prompt_id}
+
+
+def _match_cohorts(attributes: Mapping[str, Any], plan: AnalysisPlan) -> list[str]:
+    matched: list[str] = []
+    for cohort_id, cohort in plan.cohorts.items():
+        if all(
+            field in attributes and _equal(attributes[field], expected)
+            for field, expected in cohort.match.items()
+        ):
+            matched.append(cohort_id)
+    return matched
+
+
+def _configuration(
+    attributes: Mapping[str, Any], standard: tuple[str, ...], required: list[str]
+) -> dict[str, Any]:
+    return {
+        field: _native(attributes[field])
+        for field in dict.fromkeys([*standard, *required])
+        if field in attributes
+    }
+
+
+def normalize(
+    plan: AnalysisPlan,
+    manifest: pd.DataFrame,
+    groups: list[ResolvedGroup],
+    source: SourceData,
+) -> NormalizedData:
+    """Apply the plan's ingestion rules to the runs and rollouts of one source."""
+
+    diagnostics: list[Diagnostic] = []
+    run_cohorts: dict[str, str] = {}
+    run_records: dict[str, RunRecord] = {}
+    cohort_summaries: list[dict[str, Any]] = []
+    for run in source.runs:
+        run_key = run.run_key
+        matches = _match_cohorts(run.attributes, plan)
+        if len(matches) > 1:
+            diagnostics.append(
+                Diagnostic(
+                    code="COHORT_OVERLAP",
+                    severity="ERROR",
+                    message=f"evaluation {run_key!r} matches multiple cohorts: {matches}",
+                    scope=run_key,
+                )
+            )
+        elif len(matches) == 1:
+            run_cohorts[run_key] = matches[0]
+            run_records[run_key] = run
+            if str(run.status) != "success":
+                diagnostics.append(
+                    Diagnostic(
+                        code="LOG_INCOMPLETE",
+                        severity="ERROR",
+                        message=f"evaluation {run_key!r} has status {run.status!r}",
+                        scope=run_key,
+                    )
+                )
+
+    if not run_cohorts:
+        diagnostics.append(
+            Diagnostic(
+                code="COHORT_EMPTY",
+                severity="ERROR",
+                message="no selected evaluation matched any declared cohort",
+            )
+        )
+
+    for cohort_id, cohort in plan.cohorts.items():
+        runs = [run_records[key] for key, cid in run_cohorts.items() if cid == cohort_id]
+        if not runs:
+            diagnostics.append(
+                Diagnostic(
+                    code="COHORT_EMPTY",
+                    severity="ERROR",
+                    message=f"cohort {cohort_id!r} contains no evaluations",
+                    scope=cohort_id,
+                )
+            )
+            continue
+        missing_fields = [
+            field
+            for field in cohort.require_uniform
+            if not all(field in run.attributes for run in runs)
+        ]
+        for field in missing_fields:
+            diagnostics.append(
+                Diagnostic(
+                    code="PROVENANCE_UNOBSERVED",
+                    severity="WARNING",
+                    message=f"cohort {cohort_id!r} cannot verify uniform field {field!r}",
+                    scope=cohort_id,
+                )
+            )
+        configs = [
+            _configuration(run.attributes, source.configuration_fields, cohort.require_uniform)
+            for run in runs
+        ]
+        fingerprints = {sha256_value(config) for config in configs}
+        if len(fingerprints) > 1:
+            diagnostics.append(
+                Diagnostic(
+                    code="CONFIG_DRIFT",
+                    severity="ERROR",
+                    message=f"cohort {cohort_id!r} contains incompatible evaluation configurations",
+                    scope=cohort_id,
+                )
+            )
+        cohort_summaries.append(
+            {
+                "cohort_id": cohort_id,
+                "eval_ids": sorted(run.run_key for run in runs),
+                "evaluation_count": len(runs),
+                "configuration_fingerprints": sorted(fingerprints),
+                "models": sorted({str(run.model) for run in runs}),
+            }
+        )
+
+    if plan.analysis.intent == "confirmatory" and plan.analysis.plan_frozen_at is not None:
+        observed = [
+            run.started_at for run in run_records.values() if run.started_at is not None
+        ]
+        frozen = plan.analysis.plan_frozen_at
+        if frozen.tzinfo is None:
+            frozen = frozen.replace(tzinfo=timezone.utc)
+        if observed and frozen > min(observed):
+            diagnostics.append(
+                Diagnostic(
+                    code="PLAN_POSTHOC",
+                    severity="ERROR",
+                    message=(
+                        "analysis plan freeze time is later than the earliest selected evaluation"
+                    ),
+                )
+            )
+        elif plan.analysis.registration is None:
+            diagnostics.append(
+                Diagnostic(
+                    code="PLAN_SELF_DECLARED",
+                    severity="WARNING",
+                    message=(
+                        "confirmatory timing is self-declared; no external plan "
+                        "registration was supplied"
+                    ),
+                )
+            )
+
+    # ORDER MATTERS: rollouts stay in the source's order until judges and composites are
+    # read, because JUDGE_SCORE_UNMAPPED diagnostics follow that order; they are put in
+    # collection order only after that.
+    selected = [
+        (rank, rollout)
+        for rank, rollout in zip(source.collection_rank, source.rollouts, strict=True)
+        if rollout.run_key in run_cohorts
+    ]
+    scores: dict[int, dict[str, Any]] = {
+        id(rollout): dict(rollout.scores) for _, rollout in selected
+    }
+    score_names = set(source.score_names)
+    judge_series: dict[str, dict[int, bool | None]] = {}
+    for judge in plan.inputs.judges:
+        if judge.score.name not in score_names:
+            column = f"score_{judge.score.name}"
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_SCORE_MISSING",
+                    severity="ERROR",
+                    message=(
+                        f"judge {judge.id!r} score column {column!r} is absent from selected logs"
+                    ),
+                    scope=f"inputs.judges.{judge.id}",
+                )
+            )
+            judge_series[judge.id] = {id(rollout): None for _, rollout in selected}
+            continue
+        verdicts: dict[int, bool | None] = {}
+        for _, rollout in selected:
+            value = _native(scores[id(rollout)].get(judge.score.name))
+            if is_missing(value):
+                verdicts[id(rollout)] = None
+                continue
+            try:
+                verdicts[id(rollout)] = map_outcome(value, judge.score.mapping)
+            except ValueError as exc:
+                diagnostics.append(
+                    Diagnostic(
+                        code="JUDGE_SCORE_UNMAPPED",
+                        severity="ERROR",
+                        message=f"judge {judge.id!r}: {exc}",
+                        scope=f"inputs.judges.{judge.id}:{rollout.record_id}",
+                    )
+                )
+                verdicts[id(rollout)] = None
+        judge_series[judge.id] = verdicts
+    # Composites become ordinary scores, so a composite may serve as the primary outcome
+    # and every downstream construction runs unchanged.
+    for composite in plan.inputs.composites:
+        for _, rollout in selected:
+            scores[id(rollout)][composite.id] = compose_verdicts(
+                {judge_id: judge_series[judge_id][id(rollout)] for judge_id in composite.judges},
+                composite.rule,
+            )
+        score_names.add(composite.id)
+    score_name = plan.inputs.score.name
+    if score_name not in score_names:
+        diagnostics.append(
+            Diagnostic(
+                code="SCORE_MISSING",
+                severity="ERROR",
+                message=f"score column {f'score_{score_name}'!r} is absent from selected logs",
+            )
+        )
+    manifest_by_prompt = manifest.set_index("prompt_id", drop=False)
+    unexpected = sorted({rollout.item_id for _, rollout in selected} - set(manifest["prompt_id"]))
+    for prompt_id in unexpected[:100]:
+        diagnostics.append(
+            Diagnostic(
+                code="PROMPT_UNEXPECTED",
+                severity="ERROR",
+                message=f"observed prompt {prompt_id!r} is absent from the design manifest",
+                scope=prompt_id,
+                details={"prompt_id": prompt_id},
+            )
+        )
+
+    selected.sort(key=lambda ranked: ranked[0])
+    rollout_keys: set[tuple[Any, ...]] = set()
+    observations: list[Observation] = []
+    judge_verdicts: dict[str, dict[str, bool | None]] = {}
+    source_hashes: dict[str, str | None] = {}
+    for collection_order, (_, rollout) in enumerate(selected, start=1):
+        run_key = rollout.run_key
+        prompt_id = rollout.item_id
+        if prompt_id not in manifest_by_prompt.index:
+            continue
+        run = run_records[run_key]
+        cohort_id = run_cohorts[run_key]
+        key_values: list[Any] = []
+        for field in plan.design.rollout_key:
+            if field == "id":
+                key_values.append(rollout.item_id)
+            elif field in rollout.attributes:
+                key_values.append(_native(rollout.attributes[field]))
+            elif field in run.attributes:
+                key_values.append(_native(run.attributes[field]))
+            else:
+                key_values.append(None)
+        rollout_key = tuple(key_values)
+        if rollout_key in rollout_keys:
+            diagnostics.append(
+                Diagnostic(
+                    code="ROLLOUT_DUPLICATE",
+                    severity="ERROR",
+                    message=f"duplicate rollout key {rollout_key!r}",
+                    scope=prompt_id,
+                    details={"prompt_id": prompt_id},
+                )
+            )
+        rollout_keys.add(rollout_key)
+        scope = f"{run_key}:{prompt_id}:{rollout.repeat}"
+        raw_error = _native(rollout.error)
+        if isinstance(raw_error, str) and not raw_error.strip():
+            raw_error = None
+        raw_score = _native(scores[id(rollout)].get(score_name))
+        failure: bool | None = None
+        outcome_status: Literal[
+            "classified_failure",
+            "classified_safe",
+            "target_policy_blocked_safe",
+            "unclassified",
+        ] = "unclassified"
+        error_stage: Literal["target_generation", "post_generation", "unknown"] | None = None
+        content_delivered: bool | None = None
+        provider_error_code: str | None = None
+        if raw_error is not None:
+            context = source.error_context(rollout)
+            error_stage = context.stage
+            content_delivered = context.content_delivered
+            provider_error_code = context.provider_error_code
+            if plan.inputs.score.errors == "count_as_failure":
+                failure = True
+                outcome_status = "classified_failure"
+            elif plan.inputs.score.errors == "block":
+                diagnostics.append(
+                    Diagnostic(
+                        code="SAMPLE_ERROR",
+                        severity="ERROR",
+                        message="terminal sample error blocks certification",
+                        scope=scope,
+                        details=_blocked_prompt(cohort_id, prompt_id),
+                    )
+                )
+            elif (
+                plan.inputs.score.errors == "end_to_end"
+                and plan.inputs.estimand == "end_to_end_system"
+                and context.stage == "target_generation"
+                and context.content_delivered is False
+                and context.provider_error_code in POLICY_BLOCK_CODES
+            ):
+                failure = False
+                outcome_status = "target_policy_blocked_safe"
+                diagnostics.append(
+                    Diagnostic(
+                        code="TARGET_POLICY_BLOCKED_SAFE",
+                        severity="INFO",
+                        message=(
+                            "explicit target-side policy block delivered no content and "
+                            "counts as safe for the end-to-end system estimand"
+                        ),
+                        scope=scope,
+                        details={
+                            "error_stage": context.stage,
+                            "provider_error_code": context.provider_error_code,
+                        },
+                    )
+                )
+            elif plan.inputs.score.errors in {"end_to_end", "conservative_bounds"}:
+                diagnostics.append(
+                    Diagnostic(
+                        code="SAMPLE_ERROR_UNCLASSIFIED",
+                        severity="WARNING",
+                        message=(
+                            "sample error is unclassified and is covered by conservative "
+                            "missing-outcome bounds"
+                        ),
+                        scope=scope,
+                        details={
+                            "integrity_degraded": True,
+                            "error_stage": context.stage,
+                            "content_delivered": context.content_delivered,
+                            "provider_error_code": context.provider_error_code,
+                        },
+                    )
+                )
+        elif is_missing(raw_score):
+            if plan.inputs.score.missing == "count_as_failure":
+                failure = True
+                outcome_status = "classified_failure"
+            elif plan.inputs.score.missing == "block":
+                diagnostics.append(
+                    Diagnostic(
+                        code="SCORE_MISSING",
+                        severity="ERROR",
+                        message="selected score is missing",
+                        scope=scope,
+                        details=_blocked_prompt(cohort_id, prompt_id),
+                    )
+                )
+            elif plan.inputs.score.missing == "conservative_bounds":
+                diagnostics.append(
+                    Diagnostic(
+                        code="SCORE_MISSING_BOUNDED",
+                        severity="WARNING",
+                        message=(
+                            "selected score is missing and is covered by conservative "
+                            "missing-outcome bounds"
+                        ),
+                        scope=scope,
+                        details={"integrity_degraded": True},
+                    )
+                )
+        else:
+            try:
+                failure = map_outcome(raw_score, plan.inputs.score.mapping)
+                outcome_status = "classified_failure" if failure else "classified_safe"
+            except ValueError as exc:
+                diagnostics.append(
+                    Diagnostic(
+                        code="SCORE_UNMAPPED",
+                        severity="ERROR",
+                        message=str(exc),
+                        scope=scope,
+                        details=_blocked_prompt(cohort_id, prompt_id),
+                    )
+                )
+        log_path = rollout.source
+        if log_path not in source_hashes:
+            source_hashes[log_path] = source.source_sha256(log_path)
+        config = _configuration(
+            run.attributes,
+            source.configuration_fields,
+            plan.cohorts[cohort_id].require_uniform,
+        )
+        design_row = manifest_by_prompt.loc[prompt_id]
+        observation_id = sha256_value({**rollout.identity, "score": score_name})
+        if judge_series:
+            judge_verdicts[observation_id] = {
+                judge_id: series[id(rollout)] for judge_id, series in judge_series.items()
+            }
+        observations.append(
+            Observation(
+                observation_id=observation_id,
+                source_log=log_path,
+                source_log_sha256=source_hashes[log_path],
+                eval_id=run_key,
+                run_id=_native(run.run_id),
+                sample_id=rollout.sample_id,
+                inspect_id=rollout.item_id,
+                epoch=int(rollout.repeat),
+                prompt_id=prompt_id,
+                question_id=str(design_row["question_id"]),
+                task_id=str(design_row["task_id"]),
+                cohort_id=cohort_id,
+                score_name=score_name,
+                score_raw=raw_score,
+                failure=failure,
+                outcome_status=outcome_status,
+                error=raw_error,
+                error_stage=error_stage,
+                content_delivered=content_delivered,
+                provider_error_code=provider_error_code,
+                retries=int(_native(rollout.retries) or 0),
+                model=run.model if run.model is not None else "unknown",
+                configuration_fingerprint=sha256_value(config),
+                collection_order=collection_order,
+            )
+        )
+
+    observed_counts: dict[tuple[str, str], int] = {}
+    for observation in observations:
+        key = (observation.cohort_id, observation.prompt_id)
+        observed_counts[key] = observed_counts.get(key, 0) + 1
+    sampled_design = plan.design.type == "sampled"
+    for cohort_id in plan.cohorts:
+        for _, item in manifest.iterrows():
+            prompt_id = str(item["prompt_id"])
+            count = observed_counts.get((cohort_id, prompt_id), 0)
+            # Under a sampled design the manifest is the frame, not the realized sample,
+            # so a frame item with no observations was simply not drawn.
+            if count == 0 and sampled_design:
+                continue
+            if plan.design.require_complete_manifest and count == 0:
+                diagnostics.append(
+                    Diagnostic(
+                        code="PROMPT_MISSING",
+                        severity="ERROR",
+                        message=f"prompt {prompt_id!r} has no observations in cohort {cohort_id!r}",
+                        scope=f"{cohort_id}:{prompt_id}",
+                        details={"cohort_id": cohort_id, "prompt_id": prompt_id},
+                    )
+                )
+            if plan.design.require_expected_rollouts and "expected_rollouts" in manifest:
+                expected = int(item["expected_rollouts"])
+                if count < expected:
+                    diagnostics.append(
+                        Diagnostic(
+                            code="ROLLOUT_SHORTFALL",
+                            severity="ERROR",
+                            message=(
+                                f"prompt {prompt_id!r} in cohort {cohort_id!r} has "
+                                f"{count} rollouts; "
+                                f"expected {expected}"
+                            ),
+                            scope=f"{cohort_id}:{prompt_id}",
+                            details={"cohort_id": cohort_id, "prompt_id": prompt_id},
+                        )
+                    )
+                elif count > expected:
+                    diagnostics.append(
+                        Diagnostic(
+                            code="ROLLOUT_EXCESS",
+                            severity="ERROR",
+                            message=(
+                                f"prompt {prompt_id!r} in cohort {cohort_id!r} has "
+                                f"{count} rollouts; "
+                                f"expected {expected}"
+                            ),
+                            scope=f"{cohort_id}:{prompt_id}",
+                            details={"cohort_id": cohort_id, "prompt_id": prompt_id},
+                        )
+                    )
+            elif plan.design.require_expected_rollouts:
+                diagnostics.append(
+                    Diagnostic(
+                        code="PLAN_EXPECTED_ROLLOUTS_MISSING",
+                        severity="ERROR",
+                        message="manifest has no expected_rollouts column",
+                    )
+                )
+                break
+
+    if sampled_design:
+        column = str(plan.design.inclusion_probability_column)
+        probabilities = load_inclusion_probabilities(manifest, column)
+        prompt_ids = manifest["prompt_id"].astype(str).tolist()
+        expected_size = float(np.sum(probabilities))
+        deviation = math.sqrt(float(np.sum(probabilities * (1 - probabilities))))
+        strata = (
+            manifest[str(plan.design.stratum_column)].astype(str).tolist()
+            if plan.design.stratum_column
+            else ["_all"] * len(prompt_ids)
+        )
+        if plan.design.sampling == "fixed_size":
+            # A fixed-size design must realize exactly its planned draws. Inferring the
+            # plan from pi requires pi to be constant inside a stratum and to imply an
+            # integer draw count.
+            planned: dict[str, int] = {}
+            for stratum in sorted(set(strata)):
+                members = [i for i, value in enumerate(strata) if value == stratum]
+                stratum_probabilities = probabilities[members]
+                if float(np.ptp(stratum_probabilities)) > 1e-12:
+                    diagnostics.append(
+                        Diagnostic(
+                            code="SAMPLE_STRATUM_INCONSISTENT",
+                            severity="ERROR",
+                            message=(
+                                f"stratum {stratum!r} has non-constant inclusion "
+                                "probabilities; a fixed-size design draws a fixed count "
+                                "from each stratum, so pi must equal draws/size within it"
+                            ),
+                            scope=stratum,
+                        )
+                    )
+                    continue
+                exact = float(stratum_probabilities[0]) * len(members)
+                if abs(exact - round(exact)) > 1e-6 * len(members):
+                    diagnostics.append(
+                        Diagnostic(
+                            code="SAMPLE_DRAWS_NOT_INTEGER",
+                            severity="ERROR",
+                            message=(
+                                f"stratum {stratum!r} implies {exact:.6g} draws from "
+                                f"{len(members)} frame items; a fixed-size design needs an "
+                                "integer draw count"
+                            ),
+                            scope=stratum,
+                        )
+                    )
+                    continue
+                planned[stratum] = int(round(exact))
+            for cohort_id in plan.cohorts:
+                for stratum, count in planned.items():
+                    realized_stratum = sum(
+                        1
+                        for index, prompt_id in enumerate(prompt_ids)
+                        if strata[index] == stratum
+                        and observed_counts.get((cohort_id, prompt_id), 0) > 0
+                    )
+                    if realized_stratum != count:
+                        diagnostics.append(
+                            Diagnostic(
+                                code="SAMPLE_DRAWS_MISMATCH",
+                                severity="ERROR",
+                                message=(
+                                    f"cohort {cohort_id!r} stratum {stratum!r} realized "
+                                    f"{realized_stratum} draws against a planned {count}; a "
+                                    "fixed-size design must realize its plan exactly or the "
+                                    "declared probabilities misstate the sample"
+                                ),
+                                scope=f"{cohort_id}:{stratum}",
+                                details={
+                                    "planned_draws": count,
+                                    "realized_draws": realized_stratum,
+                                },
+                            )
+                        )
+            return NormalizedData(
+                observations=observations,
+                manifest=manifest,
+                groups=groups,
+                diagnostics=diagnostics,
+                cohorts=cohort_summaries,
+                source_hashes=source_hashes,
+                judge_verdicts=judge_verdicts,
+            )
+        for cohort_id in plan.cohorts:
+            realized = sum(
+                1
+                for prompt_id in prompt_ids
+                if observed_counts.get((cohort_id, prompt_id), 0) > 0
+            )
+            details = {
+                "frame_size": len(prompt_ids),
+                "realized_sample_size": realized,
+                "expected_sample_size": expected_size,
+                "standard_deviation": deviation,
+            }
+            if realized == 0:
+                diagnostics.append(
+                    Diagnostic(
+                        code="SAMPLE_EMPTY",
+                        severity="ERROR",
+                        message=f"cohort {cohort_id!r} has no sampled frame items",
+                        scope=cohort_id,
+                        details=details,
+                    )
+                )
+            elif deviation > 0 and abs(realized - expected_size) > 4 * deviation:
+                diagnostics.append(
+                    Diagnostic(
+                        code="SAMPLE_SIZE_IMPLAUSIBLE",
+                        severity="ERROR",
+                        message=(
+                            f"cohort {cohort_id!r} realized {realized} sampled frame items "
+                            f"against an expected {expected_size:.1f} (sd {deviation:.1f}); the "
+                            "declared inclusion probabilities do not describe this run, "
+                            "which would bias the estimate"
+                        ),
+                        scope=cohort_id,
+                        details=details,
+                    )
+                )
+
+    return NormalizedData(
+        observations=observations,
+        manifest=manifest,
+        groups=groups,
+        diagnostics=diagnostics,
+        cohorts=cohort_summaries,
+        source_hashes=source_hashes,
+        judge_verdicts=judge_verdicts,
+    )
