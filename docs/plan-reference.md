@@ -2,6 +2,32 @@
 
 Plans are strict YAML or JSON documents. Unknown fields are errors, and integer fields reject `true` and `false` rather than reading them as 1 and 0. Relative manifest paths resolve against the plan file.
 
+## Schema versions
+
+`schema_version` is `"2.0"` (the default when it is left out) or `"3.0"`. The two differ only in
+how a plan names the fields of runs and rollouts, in `design.rollout_key`, `cohorts.*.match` and
+`cohorts.*.require_uniform`:
+
+| | Schema 2.0 | Schema 3.0 |
+|---|---|---|
+| Field names | The source's own: for Inspect logs, the columns of `evals_df` and `samples_df` | A field every source has, or a source field written `attributes.<name>` |
+| Run fields | `model`, `task_version`, `task_arg_*`, ... | `run_key`, `model`, `status`, `run_id`, `attributes.<name>` |
+| Rollout fields | `eval_id`, `id`, `epoch`, ... | `run_key`, `item_id`, `repeat`, `rollout_id`, `attributes.<name>` |
+| `design.rollout_key` default | `[eval_id, id, epoch]` | `[run_key, item_id, repeat]` |
+| `inputs.sample_join` | Allowed, with its only values | Removed |
+
+Schema 3.0 works the same with every source, Inspect logs or [rollout files](rollout-files.md),
+and is the version to use for new plans. A field name that is neither neutral nor written
+`attributes.<name>` is an error. `attributes.<name>` names the source's field verbatim: for an
+Inspect run, `attributes.task_version` is the `task_version` column. For an Inspect log, a run's
+`run_key` is its `eval_id`, and a rollout's `item_id`, `repeat` and `rollout_id` are its sample
+`id`, `epoch` and `sample_id`.
+
+To move a 2.0 plan to 3.0, set `schema_version: "3.0"`, delete `inputs.sample_join`, and rename
+fields: `eval_id` to `run_key`, `id` to `item_id`, `epoch` to `repeat`, `sample_id` to
+`rollout_id`, and any other source field `f` to `attributes.f` (`model` keeps its name). The
+plan's hash changes with its text. A 2.0 plan keeps its meaning and its hash.
+
 ## `analysis`
 
 | Field | Required | Meaning |
@@ -17,7 +43,10 @@ Exploratory analyses cannot produce `PASS`.
 
 ## `inputs`
 
-`design_manifest` points to the fixed-design CSV. `sample_join` maps Inspect `id` to manifest `prompt_id` in v1.
+`design_manifest` points to the fixed-design CSV. Each rollout joins the manifest's `prompt_id`
+by its item: the Inspect sample `id`, or the `item_id` of rollout files. Schema 2.0 plans may
+state this as `sample_join: {inspect_field: id, manifest_field: prompt_id}`, its only values;
+schema 3.0 removes the field.
 
 `estimand` is `end_to_end_system` by default. In this mode, an explicit provider policy block is
 safe only if it occurred during target generation and no content was delivered. Set
@@ -169,7 +198,7 @@ box admits an uninformative panel). See [Judge misclassification](judge-misclass
 | `sampling` | `poisson` (independent inclusion, default) or `fixed_size` (exact draws per stratum, without replacement) |
 | `stratum_column` | Optional with `sampling: fixed_size`; names the manifest column defining sampling strata |
 | `hierarchy` | Creator-declared hierarchy ending in `prompt_id` |
-| `rollout_key` | Fields uniquely identifying one terminal rollout |
+| `rollout_key` | Fields uniquely identifying one terminal rollout; see [Schema versions](#schema-versions) for the names and default |
 | `require_complete_manifest` | Require every fixed prompt in every cohort |
 | `require_expected_rollouts` | Require prospective rollout counts |
 | `weights` | Default group weight strategy |
@@ -201,6 +230,18 @@ cohorts:
     require_uniform:
       - task_version
       - model_generate_config
+```
+
+In schema 3.0 the same cohort reads:
+
+```yaml
+cohorts:
+  candidate:
+    match:
+      model: openai/example-candidate
+    require_uniform:
+      - attributes.task_version
+      - attributes.model_generate_config
 ```
 
 Every selected evaluation must match at most one cohort.
@@ -394,7 +435,7 @@ comparisons:
     hierarchy_calibration: frontier_sidak
     hierarchy_region: linear_program
     allocation_weight: 1
-    pair_key: [prompt_id, epoch]
+    pair_key: [prompt_id, repeat]
     diagnostic_methods: [exact_mcnemar, newcombe_paired, fixed_cluster_bootstrap]
     cluster_key: question_id
     bootstrap_replicates: 2000

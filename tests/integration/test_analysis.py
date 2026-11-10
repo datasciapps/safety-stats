@@ -1890,11 +1890,11 @@ def test_plans_without_judges_are_unchanged(
     header = (output / "observations.csv").read_text(encoding="utf-8").splitlines()[0]
     assert header.split(",")[:6] == [
         "observation_id",
-        "source_log",
-        "source_log_sha256",
-        "eval_id",
+        "source",
+        "source_sha256",
+        "run_key",
         "run_id",
-        "sample_id",
+        "rollout_id",
     ]
     assert "judge" not in header
 

@@ -277,11 +277,11 @@ def test_observations_adapt_to_the_join(tmp_path: Path) -> None:
 
     observation = Observation(
         observation_id="o1",
-        source_log="log.eval",
-        eval_id="e1",
-        sample_id="p-u-000000",
-        inspect_id="p-u-000000",
-        epoch=1,
+        source="log.eval",
+        run_key="e1",
+        rollout_id="p-u-000000",
+        item_id="p-u-000000",
+        repeat=1,
         prompt_id="",
         question_id="",
         task_id="",

@@ -27,13 +27,16 @@ design:
 `block_by` accepts:
 
 - `[rollout]`, a reserved key meaning one independent block per normalized attempted rollout;
-- normalized observation fields such as `prompt_id`, `question_id`, `task_id`, `epoch`,
-  `eval_id`, or `configuration_fingerprint`; and
+- normalized observation fields such as `prompt_id`, `question_id`, `task_id`, `repeat`,
+  `run_key`, or `configuration_fingerprint`. The names observations had before report schema
+  3.0 still work: `epoch` for `repeat`, `eval_id` for `run_key`, `sample_id` for `rollout_id`,
+  `inspect_id` for `item_id`, `source_log` for `source` and `source_log_sha256` for
+  `source_sha256`; and
 - any column in the design manifest, including evaluation-specific columns such as
   `risk_domain`, `category_id`, or `attack_family`.
 
-Multiple fields form a composite key. For example, `[question_id, epoch]` groups the same epoch
-across all prompts belonging to one question. `rollout` cannot be combined with another field.
+Multiple fields form a composite key. For example, `[question_id, repeat]` groups the same
+repeat across all prompts belonging to one question. `rollout` cannot be combined with another field.
 Unknown fields, duplicate fields, and empty block lists are rejected. So is a manifest column
 used as a block key that has no value for some prompt: a missing value identifies no block. Give
 a prompt that forms its own block a unique value, such as its `prompt_id`.

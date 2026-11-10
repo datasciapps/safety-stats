@@ -238,7 +238,7 @@ class ClaimResult(ResultModel):
 
 
 class SafetyReport(ResultModel):
-    schema_version: Literal["2.0"] = "2.0"
+    schema_version: Literal["3.0"] = "3.0"
     package_version: str
     analysis: dict[str, Any]
     provenance: dict[str, Any]

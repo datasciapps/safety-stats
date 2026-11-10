@@ -176,7 +176,7 @@ key into source code, the plan, or report artifacts.
 Install the OpenAI provider dependency:
 
 ```bash
-python -m pip install -e '.[openai]'
+python -m pip install -e '.[inspect,openai]'
 ```
 
 Set the key in your shell:

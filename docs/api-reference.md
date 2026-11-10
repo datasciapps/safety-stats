@@ -22,6 +22,24 @@ report = analyze(
 paths, or loaded `EvalLog` object accepted by Inspect's dataframe readers. The function returns a
 validated `SafetyReport`. It does not write files until `report.write(...)` is called.
 
+Results from another evaluation system are passed as `source` instead of `logs`
+(experimental). `RolloutFiles` reads a runs file and a rollouts file in the neutral format of
+[Rollout files](rollout-files.md):
+
+```python
+from inspect_safety_stats import analyze
+from inspect_safety_stats.ingest import RolloutFiles
+
+report = analyze(
+    plan="safety-plan.yaml",
+    source=RolloutFiles(runs="runs.jsonl", rollouts="rollouts.jsonl"),
+)
+```
+
+Any object with a `read()` method that returns the package's `SourceData` records can serve as a
+source; `inspect_safety_stats.ingest.EvaluationSource` is the protocol. Passing both `logs` and
+`source` is an error. `validate` takes the same `source` keyword.
+
 ### `validate`
 
 ```python
@@ -391,6 +409,8 @@ see [Hierarchy-aware simultaneous inference](hierarchy-simultaneous-inference.md
 ```text
 inspect-safety-stats analyze --plan PLAN --logs LOGS --output DIRECTORY
 inspect-safety-stats validate --plan PLAN --logs LOGS
+inspect-safety-stats analyze --plan PLAN --runs RUNS --rollouts ROLLOUTS --output DIRECTORY
+inspect-safety-stats validate --plan PLAN --runs RUNS --rollouts ROLLOUTS
 inspect-safety-stats visualize --report REPORT_OR_DIRECTORY [--output REPORT.html]
 inspect-safety-stats plan zero-failure --threshold P --alpha A [--family-size M]
 inspect-safety-stats plan certification --threshold P --anticipated-rate Q --alpha A --power B [--family-size M]
@@ -414,7 +434,9 @@ follow the declared strategy (`nested_equal` by default, `equal_prompt`, or `exp
 Hoeffding construction of `fixed_design_detectable_failure_rates`; pass
 `--independence-unit prompt_cluster` to plan under prompt-level independence instead.
 
-Repeat `--logs` to select multiple files or directories.
+Repeat `--logs` to select multiple files or directories. `--runs` and `--rollouts` name the two
+files of a neutral rollout source instead of Inspect logs, and are given together
+(experimental; see [Rollout files](rollout-files.md)).
 
 Exit codes of `analyze`:
 
@@ -429,7 +451,8 @@ Exit codes of `analyze`:
 
 ## Compatibility and stability
 
-The runtime supports Python 3.10 or newer and Inspect AI `>=0.3.259,<0.4`. Plan and report schema
+The runtime supports Python 3.10 or newer. Reading Inspect logs needs Inspect AI
+`>=0.3.259,<0.4`, which the `inspect` extra installs. Plan and report schema
 version `1.0` are strict. New fields or methods may be added compatibly within the package's
 `0.x` development series, but consumers should validate `schema_version` before automated use.
 

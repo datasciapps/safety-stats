@@ -15,7 +15,15 @@ def _run(code: str) -> str:
     return completed.stdout.strip()
 
 
-@pytest.mark.parametrize("module", ["inspect_safety_stats", "inspect_safety_stats.cli"])
+@pytest.mark.parametrize(
+    "module",
+    [
+        "inspect_safety_stats",
+        "inspect_safety_stats.cli",
+        "inspect_safety_stats.ingest",
+        "inspect_safety_stats.generative",
+    ],
+)
 def test_importing_the_package_or_cli_loads_no_heavy_dependency(module: str) -> None:
     loaded = _run(
         f"import sys, {module}\n"
@@ -63,3 +71,35 @@ def test_lazy_exports_are_the_objects_of_their_source_modules() -> None:
         "      sorted(set(package.__all__) - set(expected)))"
     )
     assert result == "True ['__version__']"
+
+
+@pytest.mark.parametrize(
+    "package", ["inspect_safety_stats.ingest", "inspect_safety_stats.generative"]
+)
+def test_subpackage_lazy_exports_cover_all_and_keep_submodules_reachable(package: str) -> None:
+    """Each public name has a source module, and submodules stay attributes of the package."""
+    result = _run(
+        f"import importlib, {package} as package\n"
+        "exports = package._EXPORTS\n"
+        "same = all(getattr(package, name) is getattr(importlib.import_module(module), name)\n"
+        "           for name, module in exports.items())\n"
+        "submodules = all(getattr(package, name).__name__ == f'{package.__name__}.{name}'\n"
+        "                 for name in package._SUBMODULES)\n"
+        "print(sorted(exports) == sorted(package.__all__), same, submodules)"
+    )
+    assert result == "True True True"
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "inspect_safety_stats.api",
+        "inspect_safety_stats.ingest.normalize",
+        "inspect_safety_stats.ingest.records",
+        "inspect_safety_stats.ingest.rollout_files",
+    ],
+)
+def test_the_analysis_and_the_ingestion_core_load_inspect_only_when_reading_its_logs(
+    module: str,
+) -> None:
+    assert _run(f"import sys, {module}\nprint('inspect_ai' in sys.modules)") == "False"

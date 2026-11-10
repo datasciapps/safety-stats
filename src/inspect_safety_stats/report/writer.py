@@ -722,7 +722,7 @@ def _markdown(report: SafetyReport) -> str:
             "",
         ]
     )
-    for source in report.provenance.get("source_logs", []):
+    for source in report.provenance.get("sources", []):
         lines.append(
             f"- `{_escape(source.get('path'))}` — SHA-256 `{_escape(source.get('sha256'))}`"
         )

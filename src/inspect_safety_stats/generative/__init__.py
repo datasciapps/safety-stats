@@ -36,73 +36,83 @@ two-phase runner does not fit.
 Names not listed in ``__all__`` are internal and may change without notice.
 """
 
-from inspect_safety_stats.generative.comparisons import ComparisonResult, compare_cohorts
-from inspect_safety_stats.generative.execution import (
-    AcceptanceRow,
-    AcceptedRewrite,
-    ExecutionResult,
-    acceptance_by_level,
-    execute_rewrites,
-    load_seed_texts,
-)
-from inspect_safety_stats.generative.inference import (
-    NodeEstimate,
-    ReweightedEstimate,
-    TreeEstimate,
-    UnitOutcome,
-    estimate_reweighted,
-    estimate_slice,
-    estimate_tree,
-)
-from inspect_safety_stats.generative.inspect_bridge import (
-    EvaluatedSample,
-    JoinResult,
-    join_outcomes,
-    materialize_dataset,
-    materialize_for_cohorts,
-    samples_from_observations,
-)
-from inspect_safety_stats.generative.judge import CorrectedEstimate
-from inspect_safety_stats.generative.kernels import (
-    DeterministicFakeKernel,
-    KernelFingerprint,
-    RewriteKernel,
-    RewriteOutcome,
-    RewriteRequest,
-    resolve_kernel_fingerprint,
-)
-from inspect_safety_stats.generative.ledger import (
-    RewriteRecord,
-    SelectionRecord,
-    read_rewrites,
-    read_selections,
-)
-from inspect_safety_stats.generative.logs import read_evaluated_samples
-from inspect_safety_stats.generative.planning import (
-    BudgetForecast,
-    LevelForecast,
-    forecast,
-    rewrites_for_bound,
-)
-from inspect_safety_stats.generative.report import GenerativeReport
-from inspect_safety_stats.generative.runner import (
-    MaterializedRun,
-    analyze_run,
-    materialize_run,
-)
-from inspect_safety_stats.generative.sampling import (
-    SamplingDesign,
-    StratumAllocation,
-    draw_selections,
-    plan_design,
-)
-from inspect_safety_stats.generative.schema import GenerativePlan, load_generative_plan
-from inspect_safety_stats.generative.taxonomy import (
-    CompiledNode,
-    CompiledTaxonomy,
-    compile_taxonomy,
-)
-from inspect_safety_stats.generative.visualization import render_generative_report
+from __future__ import annotations
+
+import importlib
+from typing import TYPE_CHECKING, Any
+
+# The public names are imported on first use, so that importing this package does not load
+# Inspect AI, pandas and SciPy before a name that needs them is used.
+if TYPE_CHECKING:
+    from inspect_safety_stats.generative.comparisons import ComparisonResult, compare_cohorts
+    from inspect_safety_stats.generative.execution import (
+        AcceptanceRow,
+        AcceptedRewrite,
+        ExecutionResult,
+        acceptance_by_level,
+        execute_rewrites,
+        load_seed_texts,
+    )
+    from inspect_safety_stats.generative.inference import (
+        NodeEstimate,
+        ReweightedEstimate,
+        TreeEstimate,
+        UnitOutcome,
+        estimate_reweighted,
+        estimate_slice,
+        estimate_tree,
+    )
+    from inspect_safety_stats.generative.inspect_bridge import (
+        materialize_dataset,
+        materialize_for_cohorts,
+    )
+    from inspect_safety_stats.generative.join import (
+        EvaluatedSample,
+        JoinResult,
+        join_outcomes,
+        samples_from_observations,
+    )
+    from inspect_safety_stats.generative.judge import CorrectedEstimate
+    from inspect_safety_stats.generative.kernels import (
+        DeterministicFakeKernel,
+        KernelFingerprint,
+        RewriteKernel,
+        RewriteOutcome,
+        RewriteRequest,
+        resolve_kernel_fingerprint,
+    )
+    from inspect_safety_stats.generative.ledger import (
+        RewriteRecord,
+        SelectionRecord,
+        read_rewrites,
+        read_selections,
+    )
+    from inspect_safety_stats.generative.logs import read_evaluated_samples
+    from inspect_safety_stats.generative.planning import (
+        BudgetForecast,
+        LevelForecast,
+        forecast,
+        rewrites_for_bound,
+    )
+    from inspect_safety_stats.generative.report import GenerativeReport
+    from inspect_safety_stats.generative.runner import (
+        MaterializedRun,
+        analyze_run,
+        materialize_run,
+    )
+    from inspect_safety_stats.generative.sampling import (
+        SamplingDesign,
+        StratumAllocation,
+        draw_selections,
+        plan_design,
+    )
+    from inspect_safety_stats.generative.schema import GenerativePlan, load_generative_plan
+    from inspect_safety_stats.generative.taxonomy import (
+        CompiledNode,
+        CompiledTaxonomy,
+        compile_taxonomy,
+    )
+    from inspect_safety_stats.generative.visualization import render_generative_report
 
 __all__ = [
     # The plan and the tree it compiles to.
@@ -164,3 +174,93 @@ __all__ = [
     "read_selections",
     "read_rewrites",
 ]
+
+_EXPORTS = {
+    "AcceptanceRow": "inspect_safety_stats.generative.execution",
+    "AcceptedRewrite": "inspect_safety_stats.generative.execution",
+    "BudgetForecast": "inspect_safety_stats.generative.planning",
+    "ComparisonResult": "inspect_safety_stats.generative.comparisons",
+    "CompiledNode": "inspect_safety_stats.generative.taxonomy",
+    "CompiledTaxonomy": "inspect_safety_stats.generative.taxonomy",
+    "CorrectedEstimate": "inspect_safety_stats.generative.judge",
+    "DeterministicFakeKernel": "inspect_safety_stats.generative.kernels",
+    "EvaluatedSample": "inspect_safety_stats.generative.join",
+    "ExecutionResult": "inspect_safety_stats.generative.execution",
+    "GenerativePlan": "inspect_safety_stats.generative.schema",
+    "GenerativeReport": "inspect_safety_stats.generative.report",
+    "JoinResult": "inspect_safety_stats.generative.join",
+    "KernelFingerprint": "inspect_safety_stats.generative.kernels",
+    "LevelForecast": "inspect_safety_stats.generative.planning",
+    "MaterializedRun": "inspect_safety_stats.generative.runner",
+    "NodeEstimate": "inspect_safety_stats.generative.inference",
+    "ReweightedEstimate": "inspect_safety_stats.generative.inference",
+    "RewriteKernel": "inspect_safety_stats.generative.kernels",
+    "RewriteOutcome": "inspect_safety_stats.generative.kernels",
+    "RewriteRecord": "inspect_safety_stats.generative.ledger",
+    "RewriteRequest": "inspect_safety_stats.generative.kernels",
+    "SamplingDesign": "inspect_safety_stats.generative.sampling",
+    "SelectionRecord": "inspect_safety_stats.generative.ledger",
+    "StratumAllocation": "inspect_safety_stats.generative.sampling",
+    "TreeEstimate": "inspect_safety_stats.generative.inference",
+    "UnitOutcome": "inspect_safety_stats.generative.inference",
+    "acceptance_by_level": "inspect_safety_stats.generative.execution",
+    "analyze_run": "inspect_safety_stats.generative.runner",
+    "compare_cohorts": "inspect_safety_stats.generative.comparisons",
+    "compile_taxonomy": "inspect_safety_stats.generative.taxonomy",
+    "draw_selections": "inspect_safety_stats.generative.sampling",
+    "estimate_reweighted": "inspect_safety_stats.generative.inference",
+    "estimate_slice": "inspect_safety_stats.generative.inference",
+    "estimate_tree": "inspect_safety_stats.generative.inference",
+    "execute_rewrites": "inspect_safety_stats.generative.execution",
+    "forecast": "inspect_safety_stats.generative.planning",
+    "join_outcomes": "inspect_safety_stats.generative.join",
+    "load_seed_texts": "inspect_safety_stats.generative.execution",
+    "load_generative_plan": "inspect_safety_stats.generative.schema",
+    "materialize_dataset": "inspect_safety_stats.generative.inspect_bridge",
+    "materialize_for_cohorts": "inspect_safety_stats.generative.inspect_bridge",
+    "materialize_run": "inspect_safety_stats.generative.runner",
+    "plan_design": "inspect_safety_stats.generative.sampling",
+    "read_evaluated_samples": "inspect_safety_stats.generative.logs",
+    "read_rewrites": "inspect_safety_stats.generative.ledger",
+    "read_selections": "inspect_safety_stats.generative.ledger",
+    "render_generative_report": "inspect_safety_stats.generative.visualization",
+    "resolve_kernel_fingerprint": "inspect_safety_stats.generative.kernels",
+    "rewrites_for_bound": "inspect_safety_stats.generative.planning",
+    "samples_from_observations": "inspect_safety_stats.generative.join",
+}
+
+
+# Submodules stay reachable as attributes, as they were when this module imported them.
+_SUBMODULES = {
+    "comparisons",
+    "execution",
+    "inference",
+    "inspect_bridge",
+    "join",
+    "judge",
+    "kernels",
+    "ledger",
+    "logs",
+    "planning",
+    "report",
+    "runner",
+    "sampling",
+    "schema",
+    "taxonomy",
+    "visualization",
+}
+
+
+def __getattr__(name: str) -> Any:
+    if name in _EXPORTS:
+        value = getattr(importlib.import_module(_EXPORTS[name]), name)
+    elif name in _SUBMODULES:
+        value = importlib.import_module(f"{__name__}.{name}")
+    else:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))

@@ -11,7 +11,7 @@ machine. They show how the analysis works and say nothing about any real model.
 
 ## Run it
 
-From the repository root, after `python -m pip install -e .`:
+From the repository root, after `python -m pip install -e '.[inspect]'`:
 
 ```bash
 python examples/demo/run_demo.py

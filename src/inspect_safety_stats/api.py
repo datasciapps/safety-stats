@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -17,17 +17,18 @@ from inspect_safety_stats.config.models import (
     RiskMeasureSpec,
 )
 from inspect_safety_stats.decision.engine import decide_claim, roll_up
-from inspect_safety_stats.ingest.inspect_logs import LogInput, NormalizedData, ingest_inspect_logs
 from inspect_safety_stats.ingest.manifest import (
     load_inclusion_probabilities,
     resolve_weights,
 )
+from inspect_safety_stats.ingest.normalize import ingest
+from inspect_safety_stats.ingest.records import EvaluationSource, NormalizedData
 from inspect_safety_stats.ingest.validation import (
     judge_stratum_counts,
     load_validation_manifest,
     truth_stratum_counts,
 )
-from inspect_safety_stats.schema.observations import Observation
+from inspect_safety_stats.schema.observations import Observation, observation_field
 from inspect_safety_stats.schema.reports import (
     ClaimResult,
     ComparisonResult,
@@ -116,6 +117,9 @@ from inspect_safety_stats.stats.tree_calibration import (
 from inspect_safety_stats.validate.plan import validate_plan_references
 from inspect_safety_stats.version import __version__
 
+if TYPE_CHECKING:
+    from inspect_safety_stats.ingest.inspect_logs import LogInput
+
 
 def _coerce_plan(plan: AnalysisPlan | str | Path) -> AnalysisPlan:
     return plan if isinstance(plan, AnalysisPlan) else load_plan(plan)
@@ -129,16 +133,32 @@ def _integrity_status(diagnostics: list[Diagnostic]) -> Literal["valid", "degrad
     return "valid"
 
 
+def _source(
+    logs: LogInput, parallel: bool | int, source: EvaluationSource | None
+) -> EvaluationSource:
+    """The source ``analyze`` and ``validate`` read: ``source``, or else the Inspect logs."""
+
+    if source is not None:
+        if logs is not None:
+            raise ValueError("pass either logs or source, not both")
+        return source
+    # Imported here, so that importing this module does not load Inspect AI.
+    from inspect_safety_stats.ingest.inspect_logs import InspectLogs
+
+    return InspectLogs(logs, parallel=parallel)
+
+
 def validate(
     *,
     plan: AnalysisPlan | str | Path,
     logs: LogInput = None,
     parallel: bool | int = False,
+    source: EvaluationSource | None = None,
 ) -> IntegritySummary:
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
     try:
-        normalized = ingest_inspect_logs(resolved, logs, parallel=parallel)
+        normalized = ingest(resolved, _source(logs, parallel, source))
         validate_profile_fields(resolved.design.independence_profiles, normalized.manifest)
         diagnostics.extend(normalized.diagnostics)
     except Exception as exc:
@@ -2551,9 +2571,9 @@ def _apply_judge_correction(
 
 
 def _observation_attr(observation: Observation, name: str) -> Any:
-    if not hasattr(observation, name):
+    if not hasattr(observation, observation_field(name)):
         raise ValueError(f"pair or cluster key {name!r} is unavailable")
-    return getattr(observation, name)
+    return getattr(observation, observation_field(name))
 
 
 @dataclass(frozen=True)
@@ -4669,8 +4689,8 @@ def _policy_events(plan: AnalysisPlan, data: NormalizedData) -> list[dict[str, A
             "cohort_id": row.cohort_id,
             "prompt_id": row.prompt_id,
             "observation_id": row.observation_id,
-            "source_log": row.source_log,
-            "sample_id": row.sample_id,
+            "source": row.source,
+            "rollout_id": row.rollout_id,
         }
         for row in data.observations
         if row.prompt_id in zero_prompts and row.failure is True
@@ -4697,10 +4717,11 @@ def analyze(
     plan: AnalysisPlan | str | Path,
     logs: LogInput = None,
     parallel: bool | int = False,
+    source: EvaluationSource | None = None,
 ) -> SafetyReport:
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
-    data = ingest_inspect_logs(resolved, logs, parallel=parallel)
+    data = ingest(resolved, _source(logs, parallel, source))
     validate_profile_fields(resolved.design.independence_profiles, data.manifest)
     diagnostics.extend(data.diagnostics)
     estimates = _prompt_estimates(resolved, data, diagnostics)
@@ -4775,11 +4796,11 @@ def analyze(
         package_version=__version__,
         analysis={**resolved.analysis.model_dump(mode="json"), "plan_sha256": plan_hash},
         provenance={
-            "source_logs": [
+            "source_format": data.source_format,
+            "sources": [
                 {"path": path, "sha256": digest}
                 for path, digest in sorted(data.source_hashes.items())
             ],
-            "inspect_version_constraint": ">=0.3.259,<0.4",
             **(
                 {"judge_calibration": judge_calibration_summary}
                 if judge_calibration_summary

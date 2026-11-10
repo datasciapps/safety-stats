@@ -28,6 +28,18 @@ risk rather than judge-reported risk, and the claim records both intervals. See
 covered by conservative bounds. Degraded evidence may certify a claim only when the claim passes
 under the adverse completion of all unknown outcomes.
 
+Integrity is also `degraded` when the source gives no data for a safeguard, so that it cannot be
+checked. Each case is a warning that names the evaluations concerned:
+
+| Code | The source gives no | So this is not checked |
+|---|---|---|
+| `RUN_STATUS_UNOBSERVED` | run status | that the evaluation completed; it is assumed complete |
+| `START_TIME_UNOBSERVED` | start time, under a confirmatory plan | that the plan was frozen before the evaluation started |
+| `CONFIG_UNOBSERVED` | configuration field, nor any field the cohort requires uniform | that the evaluation's configuration matches the rest of its cohort |
+
+Inspect logs always carry a status, a start time and a model, so these arise from other sources,
+such as [rollout files](rollout-files.md) that leave the fields out.
+
 `invalid` means a structural or strict-policy error prevents certification. Examples include an
 incomplete design, an unmapped score, configuration drift, a post hoc confirmatory plan, or a
 missing/error policy explicitly set to `block`.
