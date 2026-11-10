@@ -71,7 +71,8 @@ def _cohorts_by_eval(
                 )
             )
             continue
-        if str(run.status) != "success":
+        # A run without a status counts as complete here, as it always has.
+        if run.status is not None and str(run.status) != "success":
             diagnostics.append(
                 Diagnostic(
                     code="GENERATIVE_LOG_INCOMPLETE",

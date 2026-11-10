@@ -54,7 +54,8 @@ class RunRecord:
 
     run_key: str
     attributes: Mapping[str, Any]
-    # The raw status; the run counts as complete only when it equals "success".
+    # The raw status; the run counts as complete only when it equals "success". None when
+    # the source reports no status, which normalize assumes complete and reports.
     status: Any
     started_at: datetime | None
     # None when the source has no model field at all.

@@ -158,8 +158,7 @@ def read_rollout_files(runs: str | Path, rollouts: str | Path) -> SourceData:
             RunRecord(
                 run_key=run_key,
                 attributes=dict(record),
-                # A run without a status counts as complete, as an Inspect log without one does.
-                status="success" if record.get("status") is None else record["status"],
+                status=record.get("status"),
                 started_at=_started_at(record.get("started_at"), where),
                 model=None if model is None else str(model),
                 run_id=record.get("run_id"),

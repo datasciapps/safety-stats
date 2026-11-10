@@ -94,8 +94,8 @@ def test_csv_cells_are_typed_explicitly(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     data = read_rollout_files(runs, rollouts)
-    # An empty status cell is missing, and a run without a status counts as complete.
-    assert data.runs[0].status == "success"
+    # An empty status cell is missing.
+    assert data.runs[0].status is None
     first, second = data.rollouts
     assert dict(first.scores) == {"harmful": 1, "label": "PASS"}
     assert dict(second.scores) == {"harmful": 0.25, "label": None}

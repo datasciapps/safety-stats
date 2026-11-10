@@ -124,7 +124,20 @@ def normalize(
         elif len(matches) == 1:
             run_cohorts[run_key] = matches[0]
             run_records[run_key] = run
-            if str(run.status) != "success":
+            if run.status is None:
+                diagnostics.append(
+                    Diagnostic(
+                        code="RUN_STATUS_UNOBSERVED",
+                        severity="WARNING",
+                        message=(
+                            f"evaluation {run_key!r} reports no status, so it cannot be "
+                            "checked for completion and is assumed complete"
+                        ),
+                        scope=run_key,
+                        details={"integrity_degraded": True},
+                    )
+                )
+            elif str(run.status) != "success":
                 diagnostics.append(
                     Diagnostic(
                         code="LOG_INCOMPLETE",
@@ -173,6 +186,25 @@ def normalize(
             _configuration(run.attributes, source.configuration_fields, cohort.require_uniform)
             for run in runs
         ]
+        unconfigured = sorted(
+            run.run_key
+            for run, config in zip(runs, configs, strict=True)
+            if all(is_missing(value) for value in config.values())
+        )
+        if unconfigured:
+            diagnostics.append(
+                Diagnostic(
+                    code="CONFIG_UNOBSERVED",
+                    severity="WARNING",
+                    message=(
+                        f"cohort {cohort_id!r} has {len(unconfigured)} evaluation(s) that "
+                        "report no configuration, so configuration drift cannot be checked "
+                        "for them"
+                    ),
+                    scope=cohort_id,
+                    details={"integrity_degraded": True, "evaluations": unconfigured},
+                )
+            )
         fingerprints = {sha256_value(config) for config in configs}
         if len(fingerprints) > 1:
             diagnostics.append(
@@ -197,6 +229,19 @@ def normalize(
         observed = [
             run.started_at for run in run_records.values() if run.started_at is not None
         ]
+        unstarted = sorted(key for key, run in run_records.items() if run.started_at is None)
+        if unstarted:
+            diagnostics.append(
+                Diagnostic(
+                    code="START_TIME_UNOBSERVED",
+                    severity="WARNING",
+                    message=(
+                        f"{len(unstarted)} selected evaluation(s) report no start time, so "
+                        "the plan cannot be checked to predate them"
+                    ),
+                    details={"integrity_degraded": True, "evaluations": unstarted},
+                )
+            )
         frozen = plan.analysis.plan_frozen_at
         if frozen.tzinfo is None:
             frozen = frozen.replace(tzinfo=timezone.utc)

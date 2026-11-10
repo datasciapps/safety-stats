@@ -157,7 +157,7 @@ def _runs(evaluations: pd.DataFrame) -> list[RunRecord]:
         RunRecord(
             run_key=str(row["eval_id"]),
             attributes={str(key): value for key, value in row.items()},
-            status=row.get("status", "success"),
+            status=None if is_missing(row.get("status")) else row["status"],
             started_at=_parse_time(row.get("created")),
             model=str(row["model"]) if "model" in row else None,
             run_id=row.get("run_id"),
