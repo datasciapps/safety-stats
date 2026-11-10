@@ -280,3 +280,26 @@ def test_compare_artifacts_cases_require_one_log_per_demo_model(
     source.mkdir()
     with pytest.raises(RuntimeError, match="one log per configuration"):
         artifact_cases._edit_logs(source, tmp_path / "edited", lambda log, index: None)
+
+
+def _fake_analyze(compare_artifacts: ModuleType, status: int, writes: bool) -> object:
+    def analyze(source: Path, hidden: Path | None, case: object, output: Path) -> object:
+        if writes:
+            output.mkdir(parents=True)
+            (output / "report.json").write_text("{}\n", encoding="utf-8")
+        return compare_artifacts.Run(status, "", "Traceback (most recent call last):\n", 0.0)
+
+    return analyze
+
+
+def test_compare_artifacts_cannot_run_when_the_base_side_writes_nothing(
+    compare_artifacts: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two runs that crash alike match in every byte, and that proves nothing."""
+    monkeypatch.chdir(ROOT)
+    arguments = ["--base", "HEAD", "--new", "HEAD", "--case", "simpleqa"]
+    monkeypatch.setattr(compare_artifacts, "_analyze", _fake_analyze(compare_artifacts, 1, False))
+    assert compare_artifacts.main(arguments) == 2
+    # A run that reports, then exits non-zero on purpose (an incomplete log), still compares.
+    monkeypatch.setattr(compare_artifacts, "_analyze", _fake_analyze(compare_artifacts, 3, True))
+    assert compare_artifacts.main(arguments) == 0
