@@ -187,27 +187,30 @@ def test_compare_artifacts_cases_reach_the_paths_they_exist_for(
 
     Builds every offline case with the working tree as the base source and analyses it once.
     """
-    from _artifact_cases import BUILDERS, Builder
+    from _artifact_cases import BUILDERS, Builder, build_case
 
     from inspect_safety_stats import analyze
 
-    # Inspect drops the drive letter of logs on another Windows drive than the working
-    # directory (#35); the cases sit under tmp_path.
-    monkeypatch.chdir(tmp_path)
     builder = Builder(ROOT, tmp_path / "inputs", ROOT / "src", None)
     assert set(BUILDERS) <= set(compare_artifacts.CASES)
     out: dict[str, Path] = {}
-    for name, build in BUILDERS.items():
-        inputs = build(builder)
+    for name in BUILDERS:
+        # Built from the checkout's directory, as compare_artifacts builds them, so on Windows
+        # CI the build itself must move to tmp_path's drive (#35).
+        inputs = build_case(name, builder)
         out[name] = tmp_path / "out" / name
         if inputs.command == ("analyze",):
-            analyze(plan=inputs.plan, logs=inputs.logs).write(out[name])
+            # The analysis reads the logs as compare_artifacts does, from their own drive.
+            with monkeypatch.context() as scoped:
+                scoped.chdir(tmp_path)
+                analyze(plan=inputs.plan, logs=inputs.logs).write(out[name])
             continue
         result = subprocess.run(
             [sys.executable, "-m", "inspect_safety_stats.cli", *inputs.command,
              "--plan", str(inputs.plan), "--logs", str(inputs.logs), *inputs.extra,
              "--output", str(out[name])],
             capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,
+            cwd=tmp_path,
         )
         assert result.returncode == 0, result.stdout + result.stderr
 
@@ -328,3 +331,23 @@ def test_compare_artifacts_sampled_cases_give_items_unequal_weights(
     # A fixed-size draw gives every item of a stratum the same probability, n_h / N_h.
     assert all(len(values) == 1 for values in fractions.values())
     assert len({next(iter(values)) for values in fractions.values()}) == len(fractions)
+
+
+def test_compare_artifacts_cases_build_from_their_scratch_directory(
+    artifact_cases: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Inspect drops the drive letter of logs on another Windows drive than the working
+    directory (#35), and the cases build their logs in a temporary directory."""
+    seen: list[Path] = []
+
+    def probe(builder: object) -> object:
+        seen.append(Path.cwd())
+        raise ValueError("stop")
+
+    monkeypatch.setitem(artifact_cases.BUILDERS, "probe", probe)
+    builder = artifact_cases.Builder(ROOT, tmp_path / "inputs", ROOT / "src", None)
+    before = Path.cwd()
+    with pytest.raises(ValueError, match="stop"):
+        artifact_cases.build_case("probe", builder)
+    assert seen == [(tmp_path / "inputs").resolve()]
+    assert Path.cwd() == before

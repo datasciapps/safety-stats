@@ -30,7 +30,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from _artifact_cases import BUILDERS, Builder
+from _artifact_cases import BUILDERS, Builder, build_case
 from _source_trees import (
     WRONG_SOURCE,
     export_source,
@@ -289,7 +289,7 @@ def main(argv: list[str] | None = None) -> int:
         for name in names:
             if name in BUILDERS:
                 try:
-                    cases[name] = Case(name, *BUILDERS[name](builder))
+                    cases[name] = Case(name, *build_case(name, builder))
                 except Exception as error:  # an input that cannot be built: nothing to compare
                     return _fail(f"could not build the {name} case: {error}")
 

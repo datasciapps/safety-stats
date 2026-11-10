@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import itertools
+import os
 import shutil
 import sys
 from collections.abc import Callable
@@ -614,3 +615,20 @@ BUILDERS: dict[str, Callable[[Builder], Inputs]] = {
     "generative": generative_case,
     "generative-weighted": generative_weighted_case,
 }
+
+
+def build_case(name: str, builder: Builder) -> Inputs:
+    """Build one case's inputs, working from the directory they are built in.
+
+    Inspect drops the drive letter of logs on another Windows drive than the working directory
+    (#35), and the inputs sit in a temporary directory, which on Windows can be on another drive
+    than the checkout. Every path a builder takes is absolute, so the directory changes nothing
+    else.
+    """
+    builder.directory.mkdir(parents=True, exist_ok=True)
+    previous = os.getcwd()
+    os.chdir(builder.directory)
+    try:
+        return BUILDERS[name](builder)
+    finally:
+        os.chdir(previous)
