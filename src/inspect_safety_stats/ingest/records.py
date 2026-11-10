@@ -31,6 +31,8 @@ class NormalizedData:
     cohorts: list[dict[str, Any]]
     source_hashes: dict[str, str | None]
     judge_verdicts: dict[str, dict[str, bool | None]] = dataclass_field(default_factory=dict)
+    # What kind of source was read, as its adapter describes it, for the report's provenance.
+    source_format: dict[str, Any] = dataclass_field(default_factory=dict)
     # Built by the analysis on first use, from these observations and this manifest.
     block_index: BlockIndex | None = dataclass_field(
         default=None, init=False, repr=False, compare=False
@@ -106,6 +108,8 @@ class SourceData:
     configuration_fields: tuple[str, ...]
     error_context: Callable[[RolloutRecord], ErrorContext]
     source_sha256: Callable[[str], str | None]
+    # What kind of source this is, recorded in the report's provenance: at least its format.
+    source_format: Mapping[str, Any]
 
 
 class EvaluationSource(Protocol):

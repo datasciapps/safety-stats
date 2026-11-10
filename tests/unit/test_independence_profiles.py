@@ -22,11 +22,11 @@ from inspect_safety_stats.stats.independence import (
 def _observation(cohort: str, prompt: str, epoch: int, failure: bool) -> Observation:
     return Observation(
         observation_id=f"{cohort}-{prompt}-{epoch}",
-        source_log="test.eval",
-        eval_id=f"eval-{cohort}",
-        sample_id=f"{cohort}-{prompt}-{epoch}",
-        inspect_id=prompt,
-        epoch=epoch,
+        source="test.eval",
+        run_key=f"eval-{cohort}",
+        rollout_id=f"{cohort}-{prompt}-{epoch}",
+        item_id=prompt,
+        repeat=epoch,
         prompt_id=prompt,
         question_id=prompt,
         task_id="task",
@@ -234,3 +234,23 @@ def test_a_block_index_for_other_observations_is_not_used() -> None:
         direct_bounded_blocks(*inputs, **arguments),
         direct_bounded_blocks(*inputs, index=stale, **arguments),
     )
+
+
+@pytest.mark.parametrize(
+    ("legacy", "neutral"),
+    [("epoch", "repeat"), ("eval_id", "run_key"), ("sample_id", "rollout_id")],
+)
+def test_a_legacy_observation_field_blocks_like_its_neutral_name(
+    legacy: str, neutral: str
+) -> None:
+    observations, manifest = _data()
+    arguments = dict(
+        cohort_id="candidate", prompt_ids=["p1", "p2"], prompt_weights=np.asarray([0.5, 0.5])
+    )
+    blocks = {
+        name: direct_bounded_blocks(
+            observations, manifest, IndependenceProfileSpec(block_by=[name]), **arguments
+        )
+        for name in (legacy, neutral)
+    }
+    assert _same(blocks[legacy], blocks[neutral])

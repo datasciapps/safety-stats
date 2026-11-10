@@ -269,8 +269,8 @@ def normalize(
         cohort_summaries.append(
             {
                 "cohort_id": cohort_id,
-                "eval_ids": sorted(run.run_key for run in runs),
-                "evaluation_count": len(runs),
+                "run_keys": sorted(run.run_key for run in runs),
+                "run_count": len(runs),
                 "configuration_fingerprints": sorted(fingerprints),
                 "models": sorted({str(run.model) for run in runs}),
             }
@@ -560,13 +560,13 @@ def normalize(
         observations.append(
             Observation(
                 observation_id=observation_id,
-                source_log=log_path,
-                source_log_sha256=source_hashes[log_path],
-                eval_id=run_key,
+                source=log_path,
+                source_sha256=source_hashes[log_path],
+                run_key=run_key,
                 run_id=_native(run.run_id),
-                sample_id=sample_id,
-                inspect_id=rollout.item_id,
-                epoch=int(rollout.repeat),
+                rollout_id=sample_id,
+                item_id=rollout.item_id,
+                repeat=int(rollout.repeat),
                 prompt_id=prompt_id,
                 question_id=str(design_row["question_id"]),
                 task_id=str(design_row["task_id"]),
@@ -732,6 +732,7 @@ def normalize(
                 cohorts=cohort_summaries,
                 source_hashes=source_hashes,
                 judge_verdicts=judge_verdicts,
+                source_format=dict(source.source_format),
             )
         for cohort_id in plan.cohorts:
             realized = sum(
@@ -779,6 +780,7 @@ def normalize(
         cohorts=cohort_summaries,
         source_hashes=source_hashes,
         judge_verdicts=judge_verdicts,
+        source_format=dict(source.source_format),
     )
 
 

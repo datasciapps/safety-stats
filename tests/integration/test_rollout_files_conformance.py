@@ -209,10 +209,16 @@ def test_neutral_files_and_inspect_logs_give_the_same_report(
     from_inspect = analyze(plan=plan, logs="ignored").model_dump(mode="json")
     from_files = analyze(plan=plan, source=neutral).model_dump(mode="json")
 
-    # What legitimately differs: the files read, and the run fields each adapter counts as
-    # configuration.
+    # What legitimately differs: the files read and their format, and the run fields each
+    # adapter counts as configuration.
+    assert from_inspect["provenance"]["source_format"] == {
+        "format": "inspect_logs",
+        "inspect_version_constraint": ">=0.3.259,<0.4",
+    }
+    assert from_files["provenance"]["source_format"] == {"format": "rollout_files"}
     for report in (from_inspect, from_files):
-        del report["provenance"]["source_logs"]
+        del report["provenance"]["sources"]
+        del report["provenance"]["source_format"]
         for cohort in report["cohorts"]:
             del cohort["configuration_fingerprints"]
     assert {item["code"] for item in from_files["integrity"]["diagnostics"]} >= {

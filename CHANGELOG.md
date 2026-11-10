@@ -21,6 +21,16 @@ described in their pull requests.
 
 ### Changed
 
+- **Report schema 3.0: neutral observation and provenance fields (breaking).** Reports name
+  observation fields after no evaluation tool: `source_log`, `source_log_sha256`, `eval_id`,
+  `sample_id`, `inspect_id` and `epoch` in `observations.csv` and `report.json` are now `source`,
+  `source_sha256`, `run_key`, `rollout_id`, `item_id` and `repeat`. The cohort fields `eval_ids`
+  and `evaluation_count` are now `run_keys` and `run_count`. Provenance replaces `source_logs` and
+  `inspect_version_constraint` with `sources` and `source_format`, which names the format read
+  and, for Inspect logs, the supported Inspect versions. Observation ids, and so every estimate,
+  are unchanged. Plans may still name the old observation fields in `block_by`, `pair_key` and
+  `cluster_key`. Update any script that reads these columns or keys.
+
 - **Unchecked safeguards are reported.** A run without a status was silently counted as
   complete, and a confirmatory plan whose runs had no start time skipped the post hoc check
   without a word. Each now gives a warning that degrades integrity: `RUN_STATUS_UNOBSERVED`,

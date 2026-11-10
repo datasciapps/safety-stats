@@ -28,7 +28,7 @@ from inspect_safety_stats.ingest.validation import (
     load_validation_manifest,
     truth_stratum_counts,
 )
-from inspect_safety_stats.schema.observations import Observation
+from inspect_safety_stats.schema.observations import Observation, observation_field
 from inspect_safety_stats.schema.reports import (
     ClaimResult,
     ComparisonResult,
@@ -2571,9 +2571,9 @@ def _apply_judge_correction(
 
 
 def _observation_attr(observation: Observation, name: str) -> Any:
-    if not hasattr(observation, name):
+    if not hasattr(observation, observation_field(name)):
         raise ValueError(f"pair or cluster key {name!r} is unavailable")
-    return getattr(observation, name)
+    return getattr(observation, observation_field(name))
 
 
 @dataclass(frozen=True)
@@ -4689,8 +4689,8 @@ def _policy_events(plan: AnalysisPlan, data: NormalizedData) -> list[dict[str, A
             "cohort_id": row.cohort_id,
             "prompt_id": row.prompt_id,
             "observation_id": row.observation_id,
-            "source_log": row.source_log,
-            "sample_id": row.sample_id,
+            "source": row.source,
+            "rollout_id": row.rollout_id,
         }
         for row in data.observations
         if row.prompt_id in zero_prompts and row.failure is True
@@ -4796,11 +4796,11 @@ def analyze(
         package_version=__version__,
         analysis={**resolved.analysis.model_dump(mode="json"), "plan_sha256": plan_hash},
         provenance={
-            "source_logs": [
+            "source_format": data.source_format,
+            "sources": [
                 {"path": path, "sha256": digest}
                 for path, digest in sorted(data.source_hashes.items())
             ],
-            "inspect_version_constraint": ">=0.3.259,<0.4",
             **(
                 {"judge_calibration": judge_calibration_summary}
                 if judge_calibration_summary

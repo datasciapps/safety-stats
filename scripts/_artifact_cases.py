@@ -324,8 +324,8 @@ def _labels(builder: Builder, directory: Path, plan: dict[str, Any], logs: Path)
                 if row["outcome_status"] in ("classified_failure", "classified_safe")]
     # Observation ids hash Inspect's random eval id, so the draw orders rows by prompt and
     # epoch instead, within each cohort and judge stratum, to label the same rollouts on
-    # every build.
-    rows.sort(key=lambda row: (row["prompt_id"], int(row["epoch"])))
+    # every build. Report schema 3.0 renamed epoch to repeat; the base source may write either.
+    rows.sort(key=lambda row: (row["prompt_id"], int(row.get("repeat") or row["epoch"])))
     labels = ["observation_id,human_label"]
     for cohort, status in itertools.product(
         sorted({row["cohort_id"] for row in rows}), ("classified_failure", "classified_safe")

@@ -228,6 +228,7 @@ def read_rollout_files(runs: str | Path, rollouts: str | Path) -> SourceData:
         configuration_fields=CONFIGURATION_FIELDS,
         error_context=error_context,
         source_sha256=file_sha256,
+        source_format={"format": "rollout_files"},
     )
 
 

@@ -128,6 +128,9 @@ def _error_context(
     )
 
 
+# The Inspect versions whose log format this adapter reads; keep in step with pyproject.toml.
+SOURCE_FORMAT = {"format": "inspect_logs", "inspect_version_constraint": ">=0.3.259,<0.4"}
+
 _CONFIGURATION_FIELDS = (
     "task_name",
     "task_version",
@@ -274,6 +277,7 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
         configuration_fields=_CONFIGURATION_FIELDS,
         error_context=error_context,
         source_sha256=file_sha256,
+        source_format=SOURCE_FORMAT,
     )
 
 

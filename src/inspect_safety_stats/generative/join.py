@@ -44,9 +44,9 @@ def samples_from_observations(observations: list[Observation]) -> list[Evaluated
 
     return [
         EvaluatedSample(
-            sample_id=observation.sample_id,
+            sample_id=observation.rollout_id,
             cohort_id=observation.cohort_id,
-            epoch=observation.epoch,
+            epoch=observation.repeat,
             failure=observation.failure,
         )
         for observation in observations

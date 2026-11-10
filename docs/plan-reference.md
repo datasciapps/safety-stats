@@ -435,7 +435,7 @@ comparisons:
     hierarchy_calibration: frontier_sidak
     hierarchy_region: linear_program
     allocation_weight: 1
-    pair_key: [prompt_id, epoch]
+    pair_key: [prompt_id, repeat]
     diagnostic_methods: [exact_mcnemar, newcombe_paired, fixed_cluster_bootstrap]
     cluster_key: question_id
     bootstrap_replicates: 2000

@@ -94,10 +94,11 @@ logs. Any other error follows the plan's error policy.
 
 ## What is reported
 
-Observations carry the run key in `eval_id`, the rollout id in `sample_id`, the item in
-`inspect_id` and the repeat in `epoch`. The report's provenance lists the rollouts file with
-its SHA-256. Each observation's id is a hash of the run key, rollout id, item and repeat, with
-the score name, so it stays the same when the files are read again.
+Observations carry the run key, rollout id, item and repeat in `run_key`, `rollout_id`,
+`item_id` and `repeat`. The report's provenance records the source format, `rollout_files`, and
+lists the rollouts file with its SHA-256. Each observation's id is a hash of the run key,
+rollout id, item and repeat, with the score name, so it stays the same when the files are read
+again.
 
 Rollouts are collected in the order of run key, item and repeat, whatever their order in the
 file, so the order of the file does not change any estimate. A diagnostic about one rollout's
