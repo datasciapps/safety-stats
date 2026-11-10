@@ -420,18 +420,30 @@ def incomplete_case(builder: Builder) -> Inputs:
     return Inputs(_write_plan(plan, directory / "plan.yaml"), logs)
 
 
+# Domains of unequal size, three in six items, two and one, with the share of each stratum a
+# fixed-size draw takes. Unequal strata give the domain-balanced weights unequal values per
+# item, and unequal probabilities make the design weights differ, so a change that mixes up
+# either one changes the estimate.
+_DOMAINS = ("alpha", "alpha", "alpha", "beta", "beta", "gamma")
+_STRATUM_FRACTIONS = {"alpha": "0.3", "beta": "0.5", "gamma": "0.8"}
+_POISSON_CENTRES = {"alpha": 0.3, "beta": 0.5, "gamma": 0.7}
+
+
 def _frame(directory: Path, items: int) -> list[dict[str, str]]:
     """A frame of items in three domains, with Poisson and stratified inclusion probabilities."""
     rows = []
     for index in range(items):
+        item = f"item-{index:03d}"
+        domain = _DOMAINS[index % len(_DOMAINS)]
+        poisson = _POISSON_CENTRES[domain] + 0.2 * _fraction("probability", item) - 0.1
         rows.append({
-            "prompt_id": f"item-{index:03d}",
-            "question_id": f"item-{index:03d}",
+            "prompt_id": item,
+            "question_id": item,
             "task_id": "frame",
-            "risk_domain": ("alpha", "beta", "gamma")[index % 3],
+            "risk_domain": domain,
             "expected_rollouts": "3",
-            "inclusion_probability": "0.5",
-            "stratified_inclusion_probability": "0.5",
+            "inclusion_probability": f"{poisson:.2f}",
+            "stratified_inclusion_probability": _STRATUM_FRACTIONS[domain],
         })
     with (directory / "frame.csv").open("w", encoding="utf-8", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]), lineterminator="\n")

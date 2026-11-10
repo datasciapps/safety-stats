@@ -303,3 +303,28 @@ def test_compare_artifacts_cannot_run_when_the_base_side_writes_nothing(
     # A run that reports, then exits non-zero on purpose (an incomplete log), still compares.
     monkeypatch.setattr(compare_artifacts, "_analyze", _fake_analyze(compare_artifacts, 3, True))
     assert compare_artifacts.main(arguments) == 0
+
+
+def test_compare_artifacts_sampled_cases_give_items_unequal_weights(
+    artifact_cases: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Equal probabilities and equal strata make every design weight the same, so a change
+    that mixes up the weights still leaves the estimate unchanged."""
+    monkeypatch.chdir(tmp_path)
+    builder = artifact_cases.Builder(ROOT, tmp_path, ROOT / "src", None)
+    artifact_cases.sampled_poisson_case(builder)
+    artifact_cases.sampled_stratified_case(builder)
+    poisson = _rows(tmp_path / "sampled-poisson" / "frame.csv")
+    assert len({row["inclusion_probability"] for row in poisson}) > 3
+    stratified = _rows(tmp_path / "sampled-stratified" / "frame.csv")
+    sizes: dict[str, int] = {}
+    fractions: dict[str, set[str]] = {}
+    for row in stratified:
+        sizes[row["risk_domain"]] = sizes.get(row["risk_domain"], 0) + 1
+        fractions.setdefault(row["risk_domain"], set()).add(
+            row["stratified_inclusion_probability"]
+        )
+    assert len(set(sizes.values())) == len(sizes) > 1
+    # A fixed-size draw gives every item of a stratum the same probability, n_h / N_h.
+    assert all(len(values) == 1 for values in fractions.values())
+    assert len({next(iter(values)) for values in fractions.values()}) == len(fractions)
