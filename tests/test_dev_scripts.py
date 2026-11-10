@@ -237,3 +237,46 @@ def test_compare_artifacts_cases_reach_the_paths_they_exist_for(
     for name, method in (("generative", "paired_binomial_cells"),
                          ("generative-weighted", "paired_weighted_kl_chernoff")):
         assert {row["method"] for row in _rows(out[name] / "comparisons.csv")} == {method}
+
+
+@pytest.fixture
+def artifact_cases(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    return importlib.import_module("_artifact_cases")
+
+
+def _fake_log(model: str, status: str = "success") -> object:
+    from types import SimpleNamespace
+
+    error = None if status == "success" else SimpleNamespace(message="the provider failed")
+    return SimpleNamespace(status=status, error=error, eval=SimpleNamespace(model=model))
+
+
+def test_compare_artifacts_cases_reject_a_demo_run_that_did_not_succeed(
+    artifact_cases: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed build gives both sides the same empty inputs, which compare as identical."""
+    import inspect_ai
+
+    calls: list[dict[str, object]] = []
+
+    def failing_eval(*args: object, **kwargs: object) -> list[object]:
+        calls.append(kwargs)
+        return [_fake_log(model, "error") for model in artifact_cases.DEMO_MODELS]
+
+    monkeypatch.setattr(inspect_ai, "eval", failing_eval)
+    builder = artifact_cases.Builder(ROOT, tmp_path, ROOT / "src", None)
+    with pytest.raises(RuntimeError, match="did not succeed"):
+        artifact_cases.demo_logs(builder)
+    # The case reads .eval files, whatever format Inspect would choose by default.
+    assert calls and calls[0]["log_format"] == "eval"
+
+
+def test_compare_artifacts_cases_require_one_log_per_demo_model(
+    artifact_cases: ModuleType, tmp_path: Path
+) -> None:
+    """Editing logs that are not there writes none, and every case reading them is empty."""
+    source = tmp_path / "logs"
+    source.mkdir()
+    with pytest.raises(RuntimeError, match="one log per configuration"):
+        artifact_cases._edit_logs(source, tmp_path / "edited", lambda log, index: None)

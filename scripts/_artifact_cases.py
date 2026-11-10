@@ -73,6 +73,18 @@ def _demo_inputs(builder: Builder, name: str) -> Path:
     return directory
 
 
+def _require_success(logs: list[Any], what: str) -> None:
+    """Fail loudly when an Inspect run did not succeed.
+
+    A failed build gives both sides the same broken inputs, and two equal failures compare as
+    identical, so a case that cannot build its inputs must stop the comparison instead.
+    """
+    failed = [f"{log.eval.model}: {log.status}{f' ({log.error.message})' if log.error else ''}"
+              for log in logs if log.status != "success"]
+    if failed:
+        raise RuntimeError(f"{what} did not succeed: {'; '.join(failed)}")
+
+
 def demo_logs(builder: Builder) -> Path:
     """The offline demo's two simulated configurations, as real Inspect logs (built once)."""
     logs = builder.directory / "demo-logs"
@@ -85,7 +97,9 @@ def demo_logs(builder: Builder) -> Path:
         from demo_eval import refusal_demo
     finally:
         sys.path.pop(0)
-    inspect_eval(refusal_demo(), model=list(DEMO_MODELS), log_dir=str(logs), display="none")
+    results = inspect_eval(refusal_demo(), model=list(DEMO_MODELS), log_dir=str(logs),
+                           log_format="eval", display="none")
+    _require_success(results, "the demo run")
     return logs
 
 
@@ -98,8 +112,15 @@ def _edit_logs(source: Path, target: Path, edit: Callable[[Any, int], None]) -> 
     """
     from inspect_ai.log import read_eval_log, write_eval_log
 
+    paths = sorted(source.glob("*.eval"))
+    models = sorted(str(read_eval_log(str(path), header_only=True).eval.model) for path in paths)
+    if models != sorted(DEMO_MODELS):
+        raise RuntimeError(
+            f"expected one log per configuration {list(DEMO_MODELS)} under {source}, "
+            f"found {models}"
+        )
     target.mkdir(parents=True)
-    for path in sorted(source.glob("*.eval")):
+    for path in paths:
         log = read_eval_log(str(path))
         edit(log, DEMO_MODELS.index(str(log.eval.model)))
         write_eval_log(log, str(target / path.name))
@@ -546,10 +567,11 @@ def _generative(builder: Builder, name: str, *, rollouts: int, coverage: str) ->
     for model in DEMO_MODELS:
         cohort = model.split("/", 1)[1]
         dataset = next((path for path in datasets if path.stem == cohort), datasets[0])
-        inspect_eval(
+        results = inspect_eval(
             _generative_task(dataset), model=model, log_dir=str(logs), epochs=rollouts,
-            display="none",
+            log_format="eval", display="none",
         )
+        _require_success(results, f"the generative run of {model}")
     return Inputs(
         plan_path,
         logs,
