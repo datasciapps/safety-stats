@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -17,11 +17,12 @@ from inspect_safety_stats.config.models import (
     RiskMeasureSpec,
 )
 from inspect_safety_stats.decision.engine import decide_claim, roll_up
-from inspect_safety_stats.ingest.inspect_logs import LogInput, NormalizedData, ingest_inspect_logs
 from inspect_safety_stats.ingest.manifest import (
     load_inclusion_probabilities,
     resolve_weights,
 )
+from inspect_safety_stats.ingest.normalize import ingest
+from inspect_safety_stats.ingest.records import EvaluationSource, NormalizedData
 from inspect_safety_stats.ingest.validation import (
     judge_stratum_counts,
     load_validation_manifest,
@@ -116,6 +117,9 @@ from inspect_safety_stats.stats.tree_calibration import (
 from inspect_safety_stats.validate.plan import validate_plan_references
 from inspect_safety_stats.version import __version__
 
+if TYPE_CHECKING:
+    from inspect_safety_stats.ingest.inspect_logs import LogInput
+
 
 def _coerce_plan(plan: AnalysisPlan | str | Path) -> AnalysisPlan:
     return plan if isinstance(plan, AnalysisPlan) else load_plan(plan)
@@ -129,6 +133,15 @@ def _integrity_status(diagnostics: list[Diagnostic]) -> Literal["valid", "degrad
     return "valid"
 
 
+def _inspect_source(logs: LogInput, parallel: bool | int) -> EvaluationSource:
+    """The Inspect logs named by ``analyze`` and ``validate``, read only when asked."""
+
+    # Imported here, so that importing this module does not load Inspect AI.
+    from inspect_safety_stats.ingest.inspect_logs import InspectLogs
+
+    return InspectLogs(logs, parallel=parallel)
+
+
 def validate(
     *,
     plan: AnalysisPlan | str | Path,
@@ -138,7 +151,7 @@ def validate(
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
     try:
-        normalized = ingest_inspect_logs(resolved, logs, parallel=parallel)
+        normalized = ingest(resolved, _inspect_source(logs, parallel))
         validate_profile_fields(resolved.design.independence_profiles, normalized.manifest)
         diagnostics.extend(normalized.diagnostics)
     except Exception as exc:
@@ -4700,7 +4713,7 @@ def analyze(
 ) -> SafetyReport:
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
-    data = ingest_inspect_logs(resolved, logs, parallel=parallel)
+    data = ingest(resolved, _inspect_source(logs, parallel))
     validate_profile_fields(resolved.design.independence_profiles, data.manifest)
     diagnostics.extend(data.diagnostics)
     estimates = _prompt_estimates(resolved, data, diagnostics)

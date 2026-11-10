@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -20,8 +21,7 @@ from inspect_ai.analysis import evals_df, samples_df
 from inspect_ai.log import EvalLog, read_eval_log
 
 from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.ingest.manifest import load_manifest, resolve_groups
-from inspect_safety_stats.ingest.normalize import POLICY_BLOCK_CODES, normalize
+from inspect_safety_stats.ingest.normalize import POLICY_BLOCK_CODES, ingest
 from inspect_safety_stats.ingest.outcomes import is_missing
 from inspect_safety_stats.ingest.records import (
     ErrorContext,
@@ -33,6 +33,7 @@ from inspect_safety_stats.ingest.records import (
 
 __all__ = [
     "ErrorContext",
+    "InspectLogs",
     "LogInput",
     "NormalizedData",
     "ingest_inspect_logs",
@@ -242,12 +243,21 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
     )
 
 
+@dataclass(frozen=True)
+class InspectLogs:
+    """Inspect AI evaluation logs, as an evaluation source."""
+
+    logs: LogInput
+    parallel: bool | int = False
+
+    def read(self) -> SourceData:
+        return read_inspect_source(self.logs, parallel=self.parallel)
+
+
 def ingest_inspect_logs(
     plan: AnalysisPlan,
     logs: LogInput,
     *,
     parallel: bool | int = False,
 ) -> NormalizedData:
-    manifest = load_manifest(plan.inputs.design_manifest)
-    groups = resolve_groups(plan, manifest)
-    return normalize(plan, manifest, groups, read_inspect_source(logs, parallel=parallel))
+    return ingest(plan, InspectLogs(logs, parallel=parallel))

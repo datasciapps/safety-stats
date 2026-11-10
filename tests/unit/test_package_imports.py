@@ -88,3 +88,17 @@ def test_subpackage_lazy_exports_cover_all_and_keep_submodules_reachable(package
         "print(sorted(exports) == sorted(package.__all__), same, submodules)"
     )
     assert result == "True True True"
+
+
+@pytest.mark.parametrize(
+    "module",
+    [
+        "inspect_safety_stats.api",
+        "inspect_safety_stats.ingest.normalize",
+        "inspect_safety_stats.ingest.records",
+    ],
+)
+def test_the_analysis_and_the_ingestion_core_load_inspect_only_when_reading_its_logs(
+    module: str,
+) -> None:
+    assert _run(f"import sys, {module}\nprint('inspect_ai' in sys.modules)") == "False"

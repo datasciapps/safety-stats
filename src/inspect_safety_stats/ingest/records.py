@@ -11,7 +11,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -103,3 +103,11 @@ class SourceData:
     configuration_fields: tuple[str, ...]
     error_context: Callable[[RolloutRecord], ErrorContext]
     source_sha256: Callable[[str], str | None]
+
+
+class EvaluationSource(Protocol):
+    """Where the runs and rollouts of an analysis come from: one tool's logs, read once."""
+
+    def read(self) -> SourceData:
+        """Read the runs and rollouts. Raise ``ValueError`` when there are none."""
+        ...
