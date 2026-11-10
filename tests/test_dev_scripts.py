@@ -10,6 +10,7 @@ from pathlib import Path
 from types import ModuleType
 
 import pytest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"
@@ -180,6 +181,7 @@ def _interval_ids(report: dict[str, object]) -> set[str]:
     return {interval["interval_id"] for group in groups for interval in group["intervals"]}
 
 
+@pytest.mark.slow
 def test_compare_artifacts_cases_reach_the_paths_they_exist_for(
     compare_artifacts: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -192,12 +194,13 @@ def test_compare_artifacts_cases_reach_the_paths_they_exist_for(
     from inspect_safety_stats import analyze
 
     builder = Builder(ROOT, tmp_path / "inputs", ROOT / "src", None)
-    assert set(BUILDERS) <= set(compare_artifacts.CASES)
     out: dict[str, Path] = {}
+    plans: dict[str, Path] = {}
     for name in BUILDERS:
         # Built from the checkout's directory, as compare_artifacts builds them, so on Windows
         # CI the build itself must move to tmp_path's drive (#35).
         inputs = build_case(name, builder)
+        plans[name] = inputs.plan
         out[name] = tmp_path / "out" / name
         if inputs.command == ("analyze",):
             # The analysis reads the logs as compare_artifacts does, from their own drive.
@@ -240,6 +243,8 @@ def test_compare_artifacts_cases_reach_the_paths_they_exist_for(
     for name, method in (("generative", "paired_binomial_cells"),
                          ("generative-weighted", "paired_weighted_kl_chernoff")):
         assert {row["method"] for row in _rows(out[name] / "comparisons.csv")} == {method}
+        plan = yaml.safe_load(plans[name].read_text(encoding="utf-8"))
+        assert plan["evaluation"]["id"] == name
 
 
 @pytest.fixture
@@ -351,3 +356,20 @@ def test_compare_artifacts_cases_build_from_their_scratch_directory(
         artifact_cases.build_case("probe", builder)
     assert seen == [(tmp_path / "inputs").resolve()]
     assert Path.cwd() == before
+
+
+def test_compare_artifacts_generative_cases_need_a_dataset_per_cohort(
+    artifact_cases: ModuleType, tmp_path: Path
+) -> None:
+    """Another cohort's dataset would run one cohort's model on the other's rewrites."""
+    datasets = [tmp_path / "baseline.jsonl"]
+    assert artifact_cases._cohort_dataset(datasets, "baseline") == datasets[0]
+    with pytest.raises(RuntimeError, match="no dataset for the candidate cohort"):
+        artifact_cases._cohort_dataset(datasets, "candidate")
+
+
+def test_the_slow_end_to_end_test_of_the_cases_is_marked(request: pytest.FixtureRequest) -> None:
+    """It takes a minute or more; ``pytest -m "not slow"`` leaves it out of a quick run."""
+    assert any(line.startswith("slow:") for line in request.config.getini("markers"))
+    marks = getattr(test_compare_artifacts_cases_reach_the_paths_they_exist_for, "pytestmark", [])
+    assert "slow" in {mark.name for mark in marks}

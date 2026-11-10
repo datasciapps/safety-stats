@@ -542,6 +542,16 @@ def _generative_task(dataset: Path) -> Any:
                 scorer=harmful_compliance())
 
 
+def _cohort_dataset(datasets: list[Path], cohort: str) -> Path:
+    """The dataset materialize wrote for one cohort; there is no other to fall back on."""
+    for path in datasets:
+        if path.stem == cohort:
+            return path
+    raise RuntimeError(
+        f"materialize wrote no dataset for the {cohort} cohort, only {[p.name for p in datasets]}"
+    )
+
+
 def _generative(builder: Builder, name: str, *, rollouts: int, coverage: str) -> Inputs:
     """The generative design: two cohorts on shared rewrites, a slice and a comparison."""
     from inspect_ai import eval as inspect_eval
@@ -549,8 +559,8 @@ def _generative(builder: Builder, name: str, *, rollouts: int, coverage: str) ->
     directory = builder.directory / name
     directory.mkdir(parents=True)
     example = builder.repository / "examples" / "generative_multilingual"
-    for name in ("semantic-seeds.csv", "wrapper-arms.csv", "rewrite-template.txt"):
-        shutil.copyfile(example / name, directory / name)
+    for file in ("semantic-seeds.csv", "wrapper-arms.csv", "rewrite-template.txt"):
+        shutil.copyfile(example / file, directory / file)
     plan: dict[str, Any] = yaml.safe_load(
         (example / "plan-direct.yaml").read_text(encoding="utf-8")
     )
@@ -579,7 +589,7 @@ def _generative(builder: Builder, name: str, *, rollouts: int, coverage: str) ->
     logs = directory / "logs"
     for model in DEMO_MODELS:
         cohort = model.split("/", 1)[1]
-        dataset = next((path for path in datasets if path.stem == cohort), datasets[0])
+        dataset = _cohort_dataset(datasets, cohort)
         results = inspect_eval(
             _generative_task(dataset), model=model, log_dir=str(logs), epochs=rollouts,
             log_format="eval", display="none",
