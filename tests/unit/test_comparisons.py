@@ -252,14 +252,15 @@ def _sparse_arms(prompts: int = 300, rollouts: int = 20) -> dict[str, object]:
 
 
 @pytest.mark.parametrize(
-    ("independence_unit", "ratio"), [("rollout", 0.6), ("prompt_cluster", 0.9)]
+    ("independence_unit", "ratio"), [("rollout", 0.6), ("prompt_cluster", 0.6)]
 )
 def test_empirical_bernstein_difference_adapts_to_sparse_arms(
     independence_unit: str, ratio: float
 ) -> None:
     # Q = (1 + delta) / 2 mixes candidate failures near 0 with baseline safe outcomes near 1.
     # A variance proxy about 0 or 1 alone saw a large second moment and fell back to the
-    # Hoeffding cap, so empirical Bernstein came out wider than Hoeffding.
+    # Hoeffding cap, so empirical Bernstein came out wider than Hoeffding. In prompt clusters
+    # the proxy about 1/2 also needs padding for its true range, [0, 1/4], to get here.
     arms = _sparse_arms()
     bernstein = direct_risk_difference_bounds(
         **arms, method="weighted_empirical_bernstein", independence_unit=independence_unit
@@ -270,36 +271,113 @@ def test_empirical_bernstein_difference_adapts_to_sparse_arms(
     assert bernstein.upper - bernstein.lower < ratio * (hoeffding.upper - hoeffding.lower)
 
 
+@pytest.mark.parametrize("independence_unit", ["rollout", "prompt_cluster"])
+def test_empirical_bernstein_difference_adapts_when_one_arm_fails_often(
+    independence_unit: str,
+) -> None:
+    # 5% against 80%. Centering both arms at their failure-free end alone counts the
+    # baseline's many failures; the proxies about 0 and 1 must stay available for this case.
+    prompts, rollouts = 300, 20
+    zeros = np.zeros(prompts, dtype=int)
+    trials = np.full(prompts, rollouts)
+    arms = dict(
+        candidate_failures=np.ones(prompts, dtype=int),
+        candidate_unclassified=zeros,
+        candidate_trials=trials,
+        baseline_failures=np.full(prompts, 16),
+        baseline_unclassified=zeros,
+        baseline_trials=trials,
+        weights=np.full(prompts, 1 / prompts),
+        alpha_lower=0.00125,
+        alpha_upper=0.00125,
+    )
+    bernstein = direct_risk_difference_bounds(
+        **arms, method="weighted_empirical_bernstein", independence_unit=independence_unit
+    )
+    hoeffding = direct_risk_difference_bounds(
+        **arms, method="weighted_hoeffding", independence_unit=independence_unit
+    )
+    assert bernstein.upper - bernstein.lower < 0.9 * (hoeffding.upper - hoeffding.lower)
+
+
+def _bernstein_half_width(variance: float, largest: float, alpha: float) -> float:
+    tail = math.log(2 / alpha)
+    linear = largest * tail / 3
+    return linear + math.sqrt(2 * variance * tail + linear**2)
+
+
 def test_empirical_bernstein_difference_matches_an_independent_computation() -> None:
-    cf, cn = np.array([1, 0]), np.array([4, 5])
-    bf, bn = np.array([0, 2]), np.array([4, 5])
-    w = np.array([0.4, 0.6])
+    cf, cn = np.array([1, 0, 2]), np.array([40, 50, 60])
+    bf, bn = np.array([0, 1, 0]), np.array([40, 50, 60])
+    w = np.array([0.3, 0.3, 0.4])
     alpha = 0.05
     result = direct_risk_difference_bounds(
         candidate_failures=cf,
-        candidate_unclassified=[0, 0],
+        candidate_unclassified=[0, 0, 0],
         candidate_trials=cn,
         baseline_failures=bf,
-        baseline_unclassified=[0, 0],
+        baseline_unclassified=[0, 0, 0],
         baseline_trials=bn,
         weights=w,
         alpha_lower=alpha,
         alpha_upper=alpha,
         method="weighted_empirical_bernstein",
     )
-    # Q's rollouts: candidate failures (center 0) and baseline safe outcomes (center 1),
-    # each rollout weighted w / (2 n).
+    # Q's rollouts are candidate failures and baseline safe outcomes, each weighted
+    # w / (2 n). Centered at 0 or 1 by arm, every squared deviation is a failure or a safe
+    # outcome of that arm, and its range is the whole of [0, a^2].
     a = np.concatenate([w / 2 / cn, w / 2 / bn])
     n = np.concatenate([cn, bn])
     estimate = float(np.sum(a * np.concatenate([cf, bn - bf])))
-    centered = float(np.sum(a**2 * np.concatenate([cf, bf])))
     c2, c4, largest = float(np.sum(a**2 * n)), float(np.sum(a**4 * n)), float(np.max(a))
-    variance = min(c2 / 4, centered + math.sqrt(0.5 * c4 * math.log(2 / alpha)))
-    tail = math.log(2 / alpha)
-    linear = largest * tail / 3
-    width = linear + math.sqrt(2 * variance * tail + linear**2)
-    assert result.lower == pytest.approx(max(-1.0, 2 * (estimate - width) - 1), abs=1e-12)
-    assert result.upper == pytest.approx(min(1.0, 2 * (estimate + width) - 1), abs=1e-12)
+    squared = a[:3] ** 2, a[3:] ** 2
+    candidate = {0: float(np.sum(squared[0] * cf)), 1: float(np.sum(squared[0] * (cn - cf)))}
+    baseline = {0: float(np.sum(squared[1] * (bn - bf))), 1: float(np.sum(squared[1] * bf))}
+    padding = math.sqrt(0.5 * c4 * math.log(8 / alpha))
+    proxy = min(candidate[c] + baseline[b] for c in (0, 1) for b in (0, 1)) + padding
+    assert proxy < c2 / 4  # the proxy, not the cap, decides the width
+    width = _bernstein_half_width(min(c2 / 4, proxy), largest, alpha)
+    assert result.lower == pytest.approx(2 * (estimate - width) - 1, abs=1e-12)
+    assert result.upper == pytest.approx(2 * (estimate + width) - 1, abs=1e-12)
+
+
+def test_prompt_cluster_empirical_bernstein_difference_matches_an_independent_computation() -> (
+    None
+):
+    prompts = 400
+    cf = np.zeros(prompts, dtype=int)
+    cf[:40] = 1
+    bf = np.zeros(prompts, dtype=int)
+    bf[200:210] = 1
+    trials = np.full(prompts, 10)
+    w = np.full(prompts, 1 / prompts)
+    alpha = 0.05
+    result = direct_risk_difference_bounds(
+        candidate_failures=cf,
+        candidate_unclassified=np.zeros(prompts, dtype=int),
+        candidate_trials=trials,
+        baseline_failures=bf,
+        baseline_unclassified=np.zeros(prompts, dtype=int),
+        baseline_trials=trials,
+        weights=w,
+        alpha_lower=alpha,
+        alpha_upper=alpha,
+        method="weighted_empirical_bernstein",
+        independence_unit="prompt_cluster",
+    )
+    q = (1 + cf / trials - bf / trials) / 2
+    estimate = float(np.dot(w, q))
+    c2, c4, largest = float(np.sum(w**2)), float(np.sum(w**4)), float(np.max(w))
+    # Three proxies share half the budget. About 1/2, each squared deviation lies in
+    # [0, 1/4], so its Hoeffding padding uses a sixteenth of the fourth-power sum.
+    log_term = math.log(6 / alpha)
+    half = float(np.dot(w**2, (q - 0.5) ** 2)) + math.sqrt(0.5 * c4 / 16 * log_term)
+    low = float(np.dot(w**2, q**2)) + math.sqrt(0.5 * c4 * log_term)
+    high = float(np.dot(w**2, (1 - q) ** 2)) + math.sqrt(0.5 * c4 * log_term)
+    assert half < min(c2 / 4, low, high)  # the centered, range-aware proxy decides the width
+    width = _bernstein_half_width(half, largest, alpha)
+    assert result.lower == pytest.approx(2 * (estimate - width) - 1, abs=1e-12)
+    assert result.upper == pytest.approx(2 * (estimate + width) - 1, abs=1e-12)
 
 
 @pytest.mark.parametrize("independence_unit", ["rollout", "prompt_cluster"])

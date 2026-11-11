@@ -360,12 +360,14 @@ def test_direct_mean_rejects_invalid_inputs() -> None:
     ("centers", "message"),
     [
         ([0.5], "one center per prompt"),
+        ([[0.5, 0.5], [0.5]], "one center per prompt"),
+        ([[[0.5, 0.5]]], "one center per prompt"),
         ([0.5, 1.5], r"\[0, 1\]"),
-        ([0.5, float("nan")], r"\[0, 1\]"),
+        ([[0.5, 0.5], [0.5, float("nan")]], r"\[0, 1\]"),
     ],
 )
 def test_empirical_bernstein_rejects_invalid_variance_centers(
-    centers: list[float], message: str
+    centers: object, message: str
 ) -> None:
     with pytest.raises(ValueError, match=message):
         weighted_empirical_bernstein_mean_bounds(
@@ -426,3 +428,76 @@ def test_centered_empirical_bernstein_contains_every_completion_of_unknowns() ->
             )
             assert unknown.lower <= known.lower + 1e-12
             assert known.upper <= unknown.upper + 1e-12
+
+
+@pytest.mark.parametrize("independence_unit", ["rollout", "prompt_cluster"])
+def test_default_variance_centers_are_the_uncentered_proxies(independence_unit: str) -> None:
+    # Without centers the engine keeps its two proxies, the second moments of the outcomes
+    # and of their complements, each with a quarter of the endpoint budget.
+    failures, unknown = np.array([1, 0, 3]), np.array([1, 2, 0])
+    trials, weights = np.array([30, 40, 50]), np.array([0.2, 0.3, 0.5])
+    common = dict(
+        failures=failures,
+        unclassified=unknown,
+        trials=trials,
+        weights=weights,
+        alpha_lower=0.05,
+        alpha_upper=0.025,
+        independence_unit=independence_unit,
+    )
+    default = weighted_empirical_bernstein_mean_bounds(**common)
+    explicit = weighted_empirical_bernstein_mean_bounds(
+        **common, variance_centers=[np.zeros(3), np.ones(3)]
+    )
+    assert default == explicit
+    if independence_unit == "rollout":
+        a2, n = weights**2 / trials, trials
+        positive = float(np.sum(a2 * (failures + unknown) / n))
+        negative = float(np.sum(a2 * (n - failures) / n))
+        c2, c4, largest = float(np.sum(a2)), float(np.sum(weights**4 / n**3)), max(weights / n)
+    else:
+        positive = float(np.sum(weights**2 * ((failures + unknown) / trials) ** 2))
+        negative = float(np.sum(weights**2 * (1 - failures / trials) ** 2))
+        c2, c4, largest = float(np.sum(weights**2)), float(np.sum(weights**4)), max(weights)
+    endpoints = ((0.05, default.variance_upper_lower), (0.025, default.variance_upper_upper))
+    for alpha, variance in endpoints:
+        padding = math.sqrt(0.5 * c4 * math.log(4 / alpha))
+        expected = min(c2 / 4, positive + padding, negative + padding)
+        assert variance == pytest.approx(expected, rel=1e-12, abs=0)
+    assert default.maximum_increment == pytest.approx(largest, abs=0)
+
+
+def test_variance_padding_uses_the_range_of_each_centered_term() -> None:
+    # About 1/2, a squared deviation of an observation in [0, 1] lies in [0, 1/4].
+    weights = np.full(50, 1 / 50)
+    result = weighted_empirical_bernstein_mean_bounds(
+        failures=np.full(50, 5),
+        unclassified=np.zeros(50, dtype=int),
+        trials=np.full(50, 10),
+        weights=weights,
+        alpha_lower=0.05,
+        alpha_upper=0.05,
+        independence_unit="prompt_cluster",
+        variance_centers=np.full(50, 0.5),
+    )
+    padding = math.sqrt(0.5 * float(np.sum(weights**4)) / 16 * math.log(2 / 0.05))
+    assert result.variance_upper_lower == pytest.approx(padding, rel=1e-12, abs=0)
+
+
+def test_more_variance_centerings_share_the_same_budget() -> None:
+    # The centerings split one budget. A second centering that is not the smallest proxy
+    # only enlarges the padding of the one that is.
+    common = dict(
+        failures=[0, 1],
+        unclassified=[0, 0],
+        trials=[200, 200],
+        weights=[0.5, 0.5],
+        alpha_lower=0.05,
+        alpha_upper=0.05,
+    )
+    one = weighted_empirical_bernstein_mean_bounds(**common, variance_centers=[0.0, 0.0])
+    two = weighted_empirical_bernstein_mean_bounds(
+        **common, variance_centers=[[0.0, 0.0], [1.0, 1.0]]
+    )
+    assert one.variance_upper_lower is not None and two.variance_upper_lower is not None
+    assert one.variance_upper_lower < two.variance_upper_lower

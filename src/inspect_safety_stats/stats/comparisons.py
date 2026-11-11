@@ -250,8 +250,19 @@ def direct_risk_difference_bounds(
         q_unclassified = np.concatenate([cu, bu])
         q_trials = np.concatenate([cn, bn])
         q_weights = np.concatenate([w / 2, w / 2])
-        # Candidate q-observations are failures and sit near 0; baseline ones are safe
-        # outcomes and sit near 1. The variance proxy is centered by arm accordingly.
+        # Candidate q-observations are failures and baseline ones are safe outcomes, so a
+        # common center sits at the wrong end for one arm. The variance proxy is centered by
+        # arm instead, with all four arm-wise choices of 0 and 1: candidate 0 and baseline 1
+        # counts both arms' failures and serves two sparse arms, and the others serve arms
+        # that fail often. Centers 0/0 and 1/1 are the uncentered proxies.
+        zeros, ones = np.zeros_like(w), np.ones_like(w)
+        arm_centerings = np.stack(
+            [
+                np.concatenate([candidate, baseline])
+                for candidate in (zeros, ones)
+                for baseline in (zeros, ones)
+            ]
+        )
         bounds = _direct_function(method)(
             q_failures,
             q_unclassified,
@@ -260,7 +271,7 @@ def direct_risk_difference_bounds(
             alpha_lower=alpha_lower,
             alpha_upper=alpha_upper,
             independence_unit="rollout",
-            **_variance_centers(method, np.concatenate([np.zeros_like(w), np.ones_like(w)])),
+            **_variance_centers(method, arm_centerings),
         )
         return _transform_rollout_bounds(bounds)
 
@@ -271,6 +282,7 @@ def direct_risk_difference_bounds(
     q_failures = cn * bn + cf * bn - (bf + bu) * cn
     q_unclassified = cu * bn + bu * cn
     # Each q_j is 1/2 plus half the arms' rate difference, so the proxy is centered at 1/2.
+    # The uncentered proxies 0 and 1 are kept for arms far apart, where q_j nears 0 or 1.
     bounds = _direct_function(method)(
         q_failures,
         q_unclassified,
@@ -279,7 +291,9 @@ def direct_risk_difference_bounds(
         alpha_lower=alpha_lower,
         alpha_upper=alpha_upper,
         independence_unit="prompt_cluster",
-        **_variance_centers(method, np.full_like(w, 0.5)),
+        **_variance_centers(
+            method, np.stack([np.full_like(w, 0.5), np.zeros_like(w), np.ones_like(w)])
+        ),
     )
     return _transform_rollout_bounds(bounds)
 
