@@ -8,7 +8,7 @@ larger population.
 
 ## Install
 
-You need Python 3.10 or newer. The demo below needs no API key.
+You need Python 3.11 or newer. The demo below needs no API key.
 
 ```bash
 git clone https://github.com/aduncan001/safety_stats.git
