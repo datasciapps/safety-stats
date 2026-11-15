@@ -560,10 +560,10 @@ class ComparisonContrastsSpec(StrictModel):
 
 
 class ComparisonSetSpec(StrictModel):
-    """A jointly calibrated comparison family over three or more cohorts."""
+    """A jointly calibrated comparison family over two or more cohorts."""
 
     id: str = Field(min_length=1)
-    cohorts: list[str] = Field(min_length=3)
+    cohorts: list[str] = Field(min_length=2)
     contrasts: ComparisonContrastsSpec
     estimands: list[Literal["risk_difference", "risk_ratio", "relative_risk_reduction"]] = [
         "risk_difference"
