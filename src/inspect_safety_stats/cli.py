@@ -87,6 +87,8 @@ def analyze_command(
     ] = False,
     allow_invalid: Annotated[bool, typer.Option("--allow-invalid")] = False,
 ) -> None:
+    """Analyze completed Inspect logs or rollout files against a plan and write the report."""
+
     log_input, source = _source_arguments(logs, runs, rollouts)
     from inspect_safety_stats.api import analyze as run_analysis
 
@@ -130,6 +132,8 @@ def validate_command(
     rollouts: RolloutsOption = None,
     parallel: Annotated[int, typer.Option("--parallel", min=0)] = 0,
 ) -> None:
+    """Check logs or rollout files against a plan (manifest, cohorts, rollouts, scores)."""
+
     log_input, source = _source_arguments(logs, runs, rollouts)
     from inspect_safety_stats.api import validate as run_validation
 
@@ -165,6 +169,8 @@ def zero_failure_command(
     alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
     family_size: Annotated[int, typer.Option("--family-size", min=1)] = 1,
 ) -> None:
+    """Rollouts needed for zero observed failures to bound the rate below a threshold."""
+
     from inspect_safety_stats.stats.planning import zero_failure_sample_size
 
     local_alpha = alpha / family_size
@@ -413,6 +419,8 @@ def fixed_design_planning_command(
 
 @schema_app.command("plan")
 def plan_schema_command() -> None:
+    """Print the JSON schema for analysis plans."""
+
     from inspect_safety_stats.config.models import AnalysisPlan
 
     typer.echo(json.dumps(AnalysisPlan.model_json_schema(), indent=2, sort_keys=True))
@@ -420,6 +428,8 @@ def plan_schema_command() -> None:
 
 @schema_app.command("report")
 def report_schema_command() -> None:
+    """Print the JSON schema for reports."""
+
     from inspect_safety_stats.schema.reports import SafetyReport
 
     typer.echo(json.dumps(SafetyReport.model_json_schema(), indent=2, sort_keys=True))
@@ -427,6 +437,8 @@ def report_schema_command() -> None:
 
 @app.command("version")
 def version_command() -> None:
+    """Print the package version."""
+
     typer.echo(__version__)
 
 
@@ -434,6 +446,8 @@ def version_command() -> None:
 def hash_plan_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
 ) -> None:
+    """Print a plan's canonical SHA-256, for registering a frozen plan."""
+
     from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
 
     typer.echo(canonical_plan_hash(load_plan(plan)))
