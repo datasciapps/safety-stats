@@ -19,7 +19,41 @@ described in their pull requests.
   removed. Schema 2.0 plans keep their meaning and their hash. See
   [Schema versions](docs/plan-reference.md#schema-versions) for the migration.
 
+- **Two-arm comparison sets.** `comparison_sets` accept two cohorts, where they needed at least
+  three. A two-arm set gives the same estimates and bounds as the plain comparison written
+  with the set's settings.
+
+- **Help text for every command.** `analyze`, `validate`, `version`, `hash-plan`,
+  `plan zero-failure`, `schema plan` and `schema report` showed an empty line in `--help`; each
+  now has a one-line description.
+
 ### Changed
+
+- **Unbiased `worst_of_k` estimates (changes results).** The row estimate plugged each prompt's
+  failure rate into `1 - (1 - p)^k`, which understates the risk. It is now the unbiased
+  U-statistic, `1 - C(n - f, k) / C(n, k)` per prompt, weighted over prompts, so estimates
+  rise. When a prompt has fewer than `k` classified rollouts the row reports no estimate, with
+  a warning. The bounds are unchanged. `worst_of_k_estimate` is exported from `stats`.
+
+- **Reports name inputs relative to the plan's directory (changes report bytes).** The design
+  manifest, the judge validation manifest, the provenance `sources` and each observation's
+  `source` were recorded as absolute local paths, so the same analysis wrote different bytes
+  in different checkouts and revealed the local directory layout (#63). They are now relative
+  to the plan's directory, in POSIX form. URIs, and paths with no relative form, keep their
+  form apart from using forward slashes. Observation ids and validation manifests are
+  unchanged.
+
+- **A minimal plan is told what it is missing (#57).** Plan validation requires
+  `outputs.prompt_bounds.family` whenever prompt bounds are enabled, pointwise ones included,
+  where pointwise bounds without a family were silently absent; with prompt bounds disabled a
+  family is no longer needed. The messages for a missing family and for a missing
+  `expected_rollouts` column say what to add or which switch turns the requirement off, and a
+  plan without risk measures gets a `PLAN_NO_RISK_MEASURES` warning.
+
+- **Unquoted schema versions.** `schema_version: 2.0` and `3.0` written without quotes are
+  accepted, and hash the same as their quoted forms. A schema 1.0 plan is refused with what
+  schema 2.0 changed, and any other version with the supported ones.
+
 
 - **Inspect AI is an optional extra (breaking for installation).** `inspect-ai` and `pyarrow`
   are no longer installed by default. Install `inspect-safety-stats[inspect]` to read Inspect
