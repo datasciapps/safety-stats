@@ -4,7 +4,9 @@ Plans are strict YAML or JSON documents. Unknown fields are errors, and integer 
 
 ## Schema versions
 
-`schema_version` is `"2.0"` (the default when it is left out) or `"3.0"`. The two differ only in
+`schema_version` is `"2.0"` (the default when it is left out) or `"3.0"`, and an unquoted `2.0`
+or `3.0` reads the same. A plan that declares `1.0` is refused with what changed in 2.0 (see
+[Configuring hierarchy and independence](independence-profiles.md)). The two differ only in
 how a plan names the fields of runs and rollouts, in `design.rollout_key`, `cohorts.*.match` and
 `cohorts.*.require_uniform`:
 
