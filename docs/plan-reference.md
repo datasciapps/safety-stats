@@ -200,7 +200,7 @@ box admits an uninformative panel). See [Judge misclassification](judge-misclass
 | `hierarchy` | Creator-declared hierarchy ending in `prompt_id` |
 | `rollout_key` | Fields uniquely identifying one terminal rollout; see [Schema versions](#schema-versions) for the names and default |
 | `require_complete_manifest` | Require every fixed prompt in every cohort |
-| `require_expected_rollouts` | Require prospective rollout counts |
+| `require_expected_rollouts` | Require prospective rollout counts, from the manifest's `expected_rollouts` column (on by default) |
 | `weights` | Default group weight strategy |
 | `independence_profiles` | Named independent-block partitions; see [Configuring hierarchy and independence](independence-profiles.md) |
 
@@ -265,7 +265,7 @@ groups:
 
 ## `outputs`
 
-`prompt_bounds` declares the simultaneous-bound family and alpha allocation. `risk_measures` contains named measures.
+`prompt_bounds` declares the simultaneous-bound family and alpha allocation. Prompt bounds are on by default and take their alpha from `family`, simultaneous or not, and `family` has no default: name a declared multiplicity family, or set `enabled: false`. `risk_measures` contains named measures. A plan without one reports no group risk, and the analysis warns (`PLAN_NO_RISK_MEASURES`).
 
 ```yaml
 outputs:
