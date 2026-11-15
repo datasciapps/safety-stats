@@ -187,13 +187,11 @@ from any directory (#42).
 - **User input errors are diagnostics, never crashes.**
   - An unknown reference in a plan yields `Diagnostic(severity="ERROR", code=…)`, the report is
     written, and `analyze` exits 3.
-  - **[gap]** Two crash paths remain (#59).
 - **Blocking must target the right prompt.** A diagnostic that should withhold a prompt's bounds
   names the cohort and prompt in `details`, as rollout-level ERRORs do (#40). Do not rely on
   prefix-matching free-form `scope` strings.
-  - **[gap]** Some still are (#65).
 - **No `assert` for runtime validation.** Python strips asserts under `-O`; raise a specific
-  exception instead.
+  exception instead. `test_the_package_has_no_runtime_asserts` checks the whole package.
 - **Actionable messages.** Error messages name the plan path or manifest column at fault, and say
   how to fix it. For example, a missing `block_by` value names the column and the prompts (#38).
 - **`validate` and `analyze` agree.** `validate` should accept exactly what `analyze` accepts. If

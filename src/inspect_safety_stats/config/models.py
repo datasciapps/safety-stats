@@ -612,12 +612,10 @@ class ComparisonSetSpec(StrictModel):
 
     def pairs(self) -> list[tuple[str, str]]:
         if self.contrasts.type == "versus_reference":
-            assert self.contrasts.reference is not None
-            return [
-                (cohort, self.contrasts.reference)
-                for cohort in self.cohorts
-                if cohort != self.contrasts.reference
-            ]
+            reference = self.contrasts.reference
+            if reference is None:
+                raise ValueError("versus_reference contrasts require reference")
+            return [(cohort, reference) for cohort in self.cohorts if cohort != reference]
         return [
             (candidate, baseline)
             for candidate_index, candidate in enumerate(self.cohorts)
