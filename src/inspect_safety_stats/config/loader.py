@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -40,6 +42,39 @@ def _plan_relative(path: Path, source: Path) -> str | None:
         return path.relative_to(source.parent).as_posix()
     except ValueError:
         return None
+
+
+def report_path(path: str | Path, plan: AnalysisPlan) -> str:
+    """A path as a report records it: relative to the plan's directory, in POSIX form.
+
+    The same analysis then writes the same bytes in any checkout, and a report shared with
+    another institution does not reveal the local directory layout. A URI keeps its form, and
+    so does a path with no relative form, such as one on another Windows drive, apart from
+    using forward slashes.
+    """
+    text = str(path)
+    if "://" in text:
+        return text
+    source = plan.source_path()
+    if source is None:
+        return Path(text).as_posix()
+    absolute = Path(text).resolve()
+    try:
+        return Path(os.path.relpath(absolute, source.parent)).as_posix()
+    except ValueError:
+        return absolute.as_posix()
+
+
+def report_plan(plan: AnalysisPlan) -> dict[str, Any]:
+    """The resolved plan as a report records it, with input paths in their report form."""
+    value = plan.model_dump(mode="json", by_alias=True)
+    value["inputs"]["design_manifest"] = report_path(plan.inputs.design_manifest, plan)
+    calibration = plan.inputs.judge_calibration
+    if calibration is not None and calibration.validation_manifest is not None:
+        value["inputs"]["judge_calibration"]["validation_manifest"] = report_path(
+            calibration.validation_manifest, plan
+        )
+    return value
 
 
 def canonical_plan_hash(plan: AnalysisPlan) -> str:
