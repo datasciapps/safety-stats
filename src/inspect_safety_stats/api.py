@@ -5219,6 +5219,85 @@ def _unread_input_report(plan: AnalysisPlan, diagnostics: list[Diagnostic]) -> S
     return report
 
 
+@dataclass
+class _AnalysisCore:
+    """What one plan decides over one normalized source, before the report is assembled."""
+
+    estimates: list[PromptEstimate]
+    risks: list[GroupRiskResult]
+    hierarchy_risks: list[HierarchyRiskResult]
+    comparisons: list[ComparisonResult]
+    judge_calibration_summary: dict[str, Any] | None
+    panel_correction: dict[str, Any] | None
+    comparison_sets: list[ComparisonSetResult]
+    integrity_status: Literal["valid", "degraded", "invalid"]
+    claims: list[ClaimResult]
+
+
+def _analysis_core(
+    plan: AnalysisPlan, data: NormalizedData, diagnostics: list[Diagnostic]
+) -> _AnalysisCore:
+    estimates = _prompt_estimates(plan, data, diagnostics)
+    hierarchy_nodes = _hierarchy_nodes(plan, data)
+    direct_context = _direct_mean_context(
+        plan,
+        data,
+        nodes=hierarchy_nodes,
+    )
+    risks = _group_risks(
+        plan,
+        data,
+        estimates,
+        diagnostics,
+        direct_context=direct_context,
+    )
+    hierarchy_risks = _hierarchy_risks(
+        plan,
+        data,
+        hierarchy_nodes,
+        estimates,
+        diagnostics,
+        direct_context,
+    )
+    _project_hierarchy_regions(
+        plan,
+        data,
+        hierarchy_nodes,
+        risks,
+        hierarchy_risks,
+        diagnostics,
+    )
+    comparisons = _comparisons(plan, data, estimates, diagnostics)
+    # Applied last so it corrects the bounds that are actually displayed, after both
+    # the hierarchy and comparison region projections have settled.
+    judge_calibration_summary = _apply_judge_correction(
+        plan, data, hierarchy_nodes, risks, hierarchy_risks, comparisons, diagnostics
+    )
+    panel_correction = _apply_panel_derived_correction(plan, risks, hierarchy_risks, diagnostics)
+    comparison_sets = _comparison_set_results(plan, comparisons, risks)
+    integrity_status = _integrity_status(diagnostics)
+    claims = _claims(
+        plan,
+        data,
+        risks,
+        comparisons,
+        integrity_status != "invalid",
+        diagnostics,
+        judge_calibration_summary,
+    )
+    return _AnalysisCore(
+        estimates=estimates,
+        risks=risks,
+        hierarchy_risks=hierarchy_risks,
+        comparisons=comparisons,
+        judge_calibration_summary=judge_calibration_summary,
+        panel_correction=panel_correction,
+        comparison_sets=comparison_sets,
+        integrity_status=integrity_status,
+        claims=claims,
+    )
+
+
 def analyze(
     *,
     plan: AnalysisPlan | str | Path,
@@ -5243,57 +5322,15 @@ def analyze(
     data = _read_input(resolved, logs, parallel, source, diagnostics)
     if data is None:
         return _unread_input_report(resolved, diagnostics)
-    estimates = _prompt_estimates(resolved, data, diagnostics)
-    hierarchy_nodes = _hierarchy_nodes(resolved, data)
-    direct_context = _direct_mean_context(
-        resolved,
-        data,
-        nodes=hierarchy_nodes,
-    )
-    risks = _group_risks(
-        resolved,
-        data,
-        estimates,
-        diagnostics,
-        direct_context=direct_context,
-    )
-    hierarchy_risks = _hierarchy_risks(
-        resolved,
-        data,
-        hierarchy_nodes,
-        estimates,
-        diagnostics,
-        direct_context,
-    )
-    _project_hierarchy_regions(
-        resolved,
-        data,
-        hierarchy_nodes,
-        risks,
-        hierarchy_risks,
-        diagnostics,
-    )
-    comparisons = _comparisons(resolved, data, estimates, diagnostics)
-    # Applied last so it corrects the bounds that are actually displayed, after both
-    # the hierarchy and comparison region projections have settled.
-    judge_calibration_summary = _apply_judge_correction(
-        resolved, data, hierarchy_nodes, risks, hierarchy_risks, comparisons, diagnostics
-    )
-    panel_correction = _apply_panel_derived_correction(
-        resolved, risks, hierarchy_risks, diagnostics
-    )
-    comparison_sets = _comparison_set_results(resolved, comparisons, risks)
-    integrity_status = _integrity_status(diagnostics)
-    integrity_certifiable = integrity_status != "invalid"
-    claims = _claims(
-        resolved,
-        data,
-        risks,
-        comparisons,
-        integrity_certifiable,
-        diagnostics,
-        judge_calibration_summary,
-    )
+    core = _analysis_core(resolved, data, diagnostics)
+    estimates = core.estimates
+    risks = core.risks
+    hierarchy_risks = core.hierarchy_risks
+    comparisons = core.comparisons
+    judge_calibration_summary = core.judge_calibration_summary
+    comparison_sets = core.comparison_sets
+    integrity_certifiable = core.integrity_status != "invalid"
+    claims = core.claims
     events = _policy_events(resolved, data)
     decision = roll_up(
         [claim.status for claim in claims if claim.mandatory],
@@ -5303,8 +5340,8 @@ def analyze(
     )
     integrity = _sorted_integrity(diagnostics)
     judge_panel = _judge_panel_summary(resolved, data)
-    if judge_panel is not None and panel_correction is not None:
-        judge_panel["derived_correction"] = panel_correction
+    if judge_panel is not None and core.panel_correction is not None:
+        judge_panel["derived_correction"] = core.panel_correction
     report = SafetyReport(
         **_report_frame(resolved),
         provenance={

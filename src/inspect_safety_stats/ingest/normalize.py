@@ -813,11 +813,22 @@ def normalize(
     )
 
 
-def ingest(plan: AnalysisPlan, source: EvaluationSource) -> NormalizedData:
-    """Load the plan's design manifest, read the source and normalize it."""
+def read_inputs(
+    plan: AnalysisPlan, source: EvaluationSource
+) -> tuple[pd.DataFrame, list[ResolvedGroup], SourceData]:
+    """Load the plan's design manifest and groups, and read the source, without normalizing.
+
+    Split from ``ingest`` so a caller can normalize what was read more than once.
+    """
 
     # ORDER MATTERS: the manifest is loaded before the source is read, so a broken manifest
     # is reported before any log is opened, as it always was.
     manifest = load_manifest(plan.inputs.design_manifest)
     groups = resolve_groups(plan, manifest)
-    return normalize(plan, manifest, groups, source.read())
+    return manifest, groups, source.read()
+
+
+def ingest(plan: AnalysisPlan, source: EvaluationSource) -> NormalizedData:
+    """Load the plan's design manifest, read the source and normalize it."""
+
+    return normalize(plan, *read_inputs(plan, source))
