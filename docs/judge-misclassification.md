@@ -188,6 +188,60 @@ whereas the exact box never falls below its nominal level; at very low prevalenc
 frequently refuses to correct at all because the calibration is uninformative. A narrower
 interval that under-covers where failures are rare is not a better interval for a safety claim.
 
+### Lang--Reiczigel limits
+
+With `sampling: simple_random` the labels also estimate the judge's sensitivity \(Se\) and
+specificity \(Sp\) by true class, and a whole-cohort `weighted_mean` row gains a third interval,
+`judge_corrected_validated_lang_reiczigel`. It holds the confidence limits of Lang and Reiczigel
+(2014) for prevalence adjusted for estimated sensitivity and specificity. With \(z\) the normal
+quantile at \(1-\alpha/2\), the judge-reported rate \(q\) over \(n\) rollouts and the two
+truth-class counts are adjusted in the manner of Agresti and Coull,
+
+\[
+q'=\frac{nq+z^2/2}{n+z^2},\qquad Se'=\frac{x_{Se}+1}{n_{Se}+2},\qquad
+Sp'=\frac{x_{Sp}+1}{n_{Sp}+2}.
+\]
+
+The Rogan--Gladen estimate \(P'=(q'+Sp'-1)/(Se'+Sp'-1)\) is then shifted by a bias term
+\(2z^2\bigl(P'\,v_{Se}-(1-P')\,v_{Sp}\bigr)\), with \(v_{Se}=Se'(1-Se')/(n_{Se}+2)\) and
+\(v_{Sp}\) alike. The limits are that centre plus or minus \(z\) delta-method standard errors,
+clipped to \([0,1]\). The implementation reproduces the five worked examples of the paper. The
+judge-reported rate is the row's design-weighted mean, and \(n\) is its effective size
+\((\sum_j w_j)^2/\sum_j(w_j^2/n_j)\) under rollout independence. That is the classified count
+when every rollout weighs the same. The interval spends the cohort's share of the judge family
+alpha, as the delta reference does.
+
+The interval is `diagnostic`. Like the delta reference, it never decides a claim.
+`research/judge_correction_lang_reiczigel.py` compares it with the exact box at nominal 95% over
+2,000 rollouts, prevalences from 0.5% to 20% and label budgets from 30 to 1,000, for two judges
+(sensitivity 0.90 with specificity 0.97, and 0.80 with 0.90). With 2,000 replications per cell:
+
+| | exact box | Lang--Reiczigel |
+|---|---|---|
+| coverage, prevalence \(\ge\) 5% | 1.000 | 0.950--0.999 |
+| coverage, prevalence \(\le\) 2% and \(\le\) 300 labels | 1.000 | 0.914--0.990, below 0.95 in 11 of 18 cells |
+| coverage, 1,000 labels | 1.000 | 0.986--1.000 |
+| true risk above the upper limit (nominal 2.5%) | 0 | up to 2.9% |
+| median width, judge 0.90/0.97 | reference | 7--68% narrower, but 11--16% wider at prevalence \(\le\) 1% with 1,000 labels |
+| median width, judge 0.80/0.90 | reference | wider in most cells with \(\ge\) 300 labels (up to 2.2 times) |
+
+The widths compare the box from judge-stratum labels with the limits from a simple random sample
+of the same size. Where the box often refuses, its widths come only from the samples it
+accepted. The limits are not uniformly narrower. Where failures are rare and labels few, the regime most safety claims sit in, the
+limits miss their level, and the miss falls partly on the upper side, where it would let an
+unsafe model pass. They also refuse less often, since they need one
+truly unsafe label where the box needs both judge strata labelled and an informative
+calibration. When the judge reports far fewer failures than its estimated false-positive rate
+implies, the whole interval falls below zero and is clipped to the single point 0. The interval
+then warns that the data contradict the estimated accuracies.
+
+Labels drawn within judge strata (`simple_random_within_judge_stratum`) estimate \(\rho_1\) and
+\(\rho_0\), not \(Se\) and \(Sp\), and get no such interval. In that parameterisation the identity
+\(R^*=R\rho_1+(1-R)\rho_0\) is affine, so the Lang--Reiczigel bias term vanishes. What remains
+is an Agresti--Coull-adjusted Wald interval, which is what the delta reference already is. Where
+the limits cannot be computed, for example when no labelled rollout is truly unsafe, the analysis
+emits `JUDGE_LANG_REICZIGEL_UNAVAILABLE` with the reason.
+
 ### Unclassified rollouts
 
 A rollout the judge never classified, such as one with a missing score under

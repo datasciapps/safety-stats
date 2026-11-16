@@ -380,7 +380,7 @@ def lang_reiczigel_corrected_risk(
     to ``[0, 1]``.
 
     The interval is approximate: its coverage is a simulation result, not a guarantee
-    (``research/judge_correction_widths.py``). Sensitivity and specificity are
+    (``research/judge_correction_lang_reiczigel.py``). Sensitivity and specificity are
     prevalence-free, so the labels must be a simple random sample of the rollouts or
     sampled by true class, never within judge strata. A judge the adjusted estimates do
     not show to be informative (``Se' + Sp' <= 1``) is refused, as is one whose raw
