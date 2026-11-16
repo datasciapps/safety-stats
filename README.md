@@ -228,15 +228,15 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Design-based inference for sampled item frames](docs/design-based-sampling.md)
 - [Version 1 engineering design](docs/archive/v1-design.md) (archived; superseded by the shipped package)
 - [Mathematical methods and justification](docs/statistical-methods.md)
-- [Generative evaluation](docs/generative-evaluation.md)
-- [Generative evaluation: design decisions](docs/generative-design-decisions.md)
+- [Generative evaluation](docs/generative-evaluation.md). The generative pipeline is experimental: its public surface, `inspect_safety_stats.generative.__all__`, may change in any minor release.
+- [Generative evaluation: design decisions](docs/generative-design-decisions.md) (experimental)
 - [Generative hierarchy evaluation planner](docs/archive/generative-hierarchy-evaluation-plan.md) (archived; the original proposal, superseded by the two above)
 - [Multi-model safety comparison: complete JailbreakBench-100 example](examples/real_jailbreakbench/README.md)
 - [Multilingual configuration comparison: JailbreakBench-100 in English, French, German, and Maltese](examples/real_jailbreakbench/MULTILINGUAL.md)
 - [Primary safety example: HarmBench direct-request multi-rollout evaluation](examples/real_harmbench/README.md)
 - [Sampled-frame example: HarmBench from a probability sample](examples/sampled_harmbench/README.md)
-- [Generative example: multilingual jailbreak rewrites](examples/generative_multilingual/README.md)
-- [Live generative example: real providers end to end](examples/generative_live/README.md)
+- [Generative example: multilingual jailbreak rewrites](examples/generative_multilingual/README.md) (experimental)
+- [Live generative example: real providers end to end](examples/generative_live/README.md) (experimental)
 - [Secondary calibration example: XSTest over-refusal](examples/real_xstest/README.md)
 
 ## License

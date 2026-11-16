@@ -461,7 +461,12 @@ The runtime supports Python 3.10 or newer. Reading Inspect logs needs Inspect AI
 version `1.0` are strict. New fields or methods may be added compatibly within the package's
 `0.x` development series, but consumers should validate `schema_version` before automated use.
 
+The generative pipeline is experimental: its public surface,
+`inspect_safety_stats.generative.__all__`, may change in any minor release.
+
 ## Generative evaluation
+
+**Experimental.** See [Compatibility and stability](#compatibility-and-stability).
 
 `inspect_safety_stats.generative` carries its own public surface, listed in its `__all__`
 and guarded by a snapshot test. Names outside that list are internal and may change.
