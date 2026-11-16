@@ -14,8 +14,8 @@ The analyzer is offline. It does not call model providers or make network reques
 ## Install from a checkout
 
 ```bash
-git clone <repository-url>
-cd inspect-safety-stats
+git clone https://github.com/aduncan001/safety_stats.git
+cd safety_stats
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip

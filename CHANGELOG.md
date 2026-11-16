@@ -14,6 +14,18 @@ described in their pull requests.
   the default, which keeps the previous behaviour. Inspect logs only. See
   [the plan reference](docs/plan-reference.md#inputs).
 
+- **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory
+  analysis makes every claim `INCONCLUSIVE`, so a reader had to compare its bounds with the
+  thresholds by hand. Each claim in `report.json` now has `descriptive_status`: in an
+  exploratory analysis with valid integrity and certifying bounds, the status a confirmatory
+  analysis of the same bounds would give, with a reason that says so and that it certifies
+  nothing; otherwise `null`. The claim's `status` and the report's `decision` are unchanged.
+  When decisions are shown, `report.md` shows it beside the status, as
+  `` `INCONCLUSIVE` (descriptive: `PASS`) ``, with a note under the claims table, and
+  `report.html` as a dashed badge. A `noisy_valid_test` claim
+  in an exploratory analysis now reports the test's bounds and reasons, where it reported
+  none.
+
 - **Rollout files (experimental).** Results from any evaluation system can be analysed from a
   runs file and a rollouts file in JSON Lines or CSV: `analyze` and `validate` take
   `--runs` and `--rollouts` in place of `--logs`, and `source=RolloutFiles(...)` in place of
@@ -35,6 +47,20 @@ described in their pull requests.
   now has a one-line description.
 
 ### Changed
+
+- **An unlabelled judge stratum is completed, not refused (changes results).** A validated
+  judge calibration needed a human label in both judge strata. A stratum without one is now
+  completed conservatively: its error rate is bounded by [0, 1], the correction is still
+  reported, and a `JUDGE_STRATUM_UNLABELLED_COMPLETED` warning names the stratum. With both
+  strata unlabelled the calibration is still refused. `JudgeCalibration` gains
+  `completed_strata`. See
+  [Judge misclassification](docs/judge-misclassification.md#estimation-and-error-budget).
+
+- **One grader across the JailbreakBench comparison arms (example).** The plan that
+  `examples/real_jailbreakbench/run_jailbreakbench.py` writes now matches every cohort on
+  `task_arg_grader_model` as well as the model, and log selection picks logs by model and
+  grader. Before, a log of an arm graded by another model could enter the comparison. See
+  [One judge for every arm](docs/model-comparisons.md#one-judge-for-every-arm).
 
 - **Unbiased `worst_of_k` estimates (changes results).** The row estimate plugged each prompt's
   failure rate into `1 - (1 - p)^k`, which understates the risk. It is now the unbiased

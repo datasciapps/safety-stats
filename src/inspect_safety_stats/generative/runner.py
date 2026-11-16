@@ -363,6 +363,8 @@ def _judge_correction(
                 "alpha_spent": measured.alpha,
             }
         }
+        if measured.completed_strata:
+            meta["judge_calibration"]["completed_strata"] = list(measured.completed_strata)
 
     for comparison in comparisons:
         diagnostics.append(
