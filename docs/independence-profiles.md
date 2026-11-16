@@ -60,6 +60,11 @@ outputs:
       sensitivities: [prompt, question]
 ```
 
+Each interval under a sensitivity profile has `role: sensitivity` and
+`varied_assumption: independence` in `report.json`, and `report.md` and `report.html` label it
+`sensitivity (independence)`. A judge-misclassification sensitivity has
+`varied_assumption: judge_error` instead, so the two cannot be mistaken for each other.
+
 Comparisons use the same selector:
 
 ```yaml
