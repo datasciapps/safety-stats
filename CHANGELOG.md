@@ -7,6 +7,14 @@ described in their pull requests.
 
 ### Added
 
+- **Sensitivity intervals say what they vary (changes report bytes).** The interval role
+  `sensitivity` covered both intervals under another independence profile and judge-error
+  corrections, so an independence sensitivity could be read as a judge sensitivity. Each
+  interval in `report.json` now has `varied_assumption`: `independence` or `judge_error` on a
+  sensitivity interval, `null` on a primary or reference one. `report.md` and `report.html`
+  show the role as `sensitivity (independence)` or `sensitivity (judge error)`. The role values
+  are unchanged, and reports written before the field still load.
+
 - **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory
   analysis makes every claim `INCONCLUSIVE`, so a reader had to compare its bounds with the
   thresholds by hand. Each claim in `report.json` now has `descriptive_status`: in an
