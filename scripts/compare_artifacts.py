@@ -16,7 +16,7 @@ must match exactly.
 The working tree is never modified: committed source is exported to a temporary directory and
 imported from there. Both runs read the same inputs and write to the same output path. When
 anything differs, the outputs are kept for inspection. Exit status: 0 identical, 1 different,
-2 could not run.
+2 could not run, which includes a case whose base run wrote no artifacts.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from _artifact_cases import BUILDERS, Builder
+from _artifact_cases import BUILDERS, Builder, build_case
 from _source_trees import (
     WRONG_SOURCE,
     export_source,
@@ -289,7 +289,7 @@ def main(argv: list[str] | None = None) -> int:
         for name in names:
             if name in BUILDERS:
                 try:
-                    cases[name] = Case(name, *BUILDERS[name](builder))
+                    cases[name] = Case(name, *build_case(name, builder))
                 except Exception as error:  # an input that cannot be built: nothing to compare
                     return _fail(f"could not build the {name} case: {error}")
 
@@ -303,6 +303,15 @@ def main(argv: list[str] | None = None) -> int:
                 if runs[side].exit_status == WRONG_SOURCE:
                     print(runs[side].stderr, file=sys.stderr)
                     return _fail("the package did not import from the tree under test")
+                # A base run that writes nothing failed before reporting. The new side failing
+                # the same way would match it in every byte and prove nothing.
+                if side == "base" and not _files(output):
+                    tail = "\n    ".join(runs[side].stderr.strip().splitlines()[-10:])
+                    return _fail(
+                        f"the {name} case wrote no artifacts at base (exit status "
+                        f"{runs[side].exit_status}), so there is nothing to compare."
+                        + (f"\n  stderr at base:\n    {tail}" if tail else "")
+                    )
                 (scratch / side).mkdir(exist_ok=True)
                 if output.exists():
                     output.rename(scratch / side / name)

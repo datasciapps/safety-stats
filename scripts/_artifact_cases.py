@@ -18,6 +18,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import itertools
+import os
 import shutil
 import sys
 from collections.abc import Callable
@@ -73,6 +74,18 @@ def _demo_inputs(builder: Builder, name: str) -> Path:
     return directory
 
 
+def _require_success(logs: list[Any], what: str) -> None:
+    """Fail loudly when an Inspect run did not succeed.
+
+    A failed build gives both sides the same broken inputs, and two equal failures compare as
+    identical, so a case that cannot build its inputs must stop the comparison instead.
+    """
+    failed = [f"{log.eval.model}: {log.status}{f' ({log.error.message})' if log.error else ''}"
+              for log in logs if log.status != "success"]
+    if failed:
+        raise RuntimeError(f"{what} did not succeed: {'; '.join(failed)}")
+
+
 def demo_logs(builder: Builder) -> Path:
     """The offline demo's two simulated configurations, as real Inspect logs (built once)."""
     logs = builder.directory / "demo-logs"
@@ -85,7 +98,9 @@ def demo_logs(builder: Builder) -> Path:
         from demo_eval import refusal_demo
     finally:
         sys.path.pop(0)
-    inspect_eval(refusal_demo(), model=list(DEMO_MODELS), log_dir=str(logs), display="none")
+    results = inspect_eval(refusal_demo(), model=list(DEMO_MODELS), log_dir=str(logs),
+                           log_format="eval", display="none")
+    _require_success(results, "the demo run")
     return logs
 
 
@@ -98,8 +113,15 @@ def _edit_logs(source: Path, target: Path, edit: Callable[[Any, int], None]) -> 
     """
     from inspect_ai.log import read_eval_log, write_eval_log
 
+    paths = sorted(source.glob("*.eval"))
+    models = sorted(str(read_eval_log(str(path), header_only=True).eval.model) for path in paths)
+    if models != sorted(DEMO_MODELS):
+        raise RuntimeError(
+            f"expected one log per configuration {list(DEMO_MODELS)} under {source}, "
+            f"found {models}"
+        )
     target.mkdir(parents=True)
-    for path in sorted(source.glob("*.eval")):
+    for path in paths:
         log = read_eval_log(str(path))
         edit(log, DEMO_MODELS.index(str(log.eval.model)))
         write_eval_log(log, str(target / path.name))
@@ -399,18 +421,30 @@ def incomplete_case(builder: Builder) -> Inputs:
     return Inputs(_write_plan(plan, directory / "plan.yaml"), logs)
 
 
+# Domains of unequal size, three in six items, two and one, with the share of each stratum a
+# fixed-size draw takes. Unequal strata give the domain-balanced weights unequal values per
+# item, and unequal probabilities make the design weights differ, so a change that mixes up
+# either one changes the estimate.
+_DOMAINS = ("alpha", "alpha", "alpha", "beta", "beta", "gamma")
+_STRATUM_FRACTIONS = {"alpha": "0.3", "beta": "0.5", "gamma": "0.8"}
+_POISSON_CENTRES = {"alpha": 0.3, "beta": 0.5, "gamma": 0.7}
+
+
 def _frame(directory: Path, items: int) -> list[dict[str, str]]:
     """A frame of items in three domains, with Poisson and stratified inclusion probabilities."""
     rows = []
     for index in range(items):
+        item = f"item-{index:03d}"
+        domain = _DOMAINS[index % len(_DOMAINS)]
+        poisson = _POISSON_CENTRES[domain] + 0.2 * _fraction("probability", item) - 0.1
         rows.append({
-            "prompt_id": f"item-{index:03d}",
-            "question_id": f"item-{index:03d}",
+            "prompt_id": item,
+            "question_id": item,
             "task_id": "frame",
-            "risk_domain": ("alpha", "beta", "gamma")[index % 3],
+            "risk_domain": domain,
             "expected_rollouts": "3",
-            "inclusion_probability": "0.5",
-            "stratified_inclusion_probability": "0.5",
+            "inclusion_probability": f"{poisson:.2f}",
+            "stratified_inclusion_probability": _STRATUM_FRACTIONS[domain],
         })
     with (directory / "frame.csv").open("w", encoding="utf-8", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=list(rows[0]), lineterminator="\n")
@@ -508,6 +542,21 @@ def _generative_task(dataset: Path) -> Any:
                 scorer=harmful_compliance())
 
 
+def _cohort_dataset(datasets: list[Path], cohort: str) -> Path:
+    """The dataset materialize wrote for one cohort.
+
+    Under shared rewrites that is the one ``dataset.jsonl`` every cohort receives. Any
+    other cohort's file would run this cohort's model on the other's rewrites.
+    """
+    for stem in (cohort, "dataset"):
+        for path in datasets:
+            if path.stem == stem:
+                return path
+    raise RuntimeError(
+        f"materialize wrote no dataset for the {cohort} cohort, only {[p.name for p in datasets]}"
+    )
+
+
 def _generative(builder: Builder, name: str, *, rollouts: int, coverage: str) -> Inputs:
     """The generative design: two cohorts on shared rewrites, a slice and a comparison."""
     from inspect_ai import eval as inspect_eval
@@ -515,8 +564,8 @@ def _generative(builder: Builder, name: str, *, rollouts: int, coverage: str) ->
     directory = builder.directory / name
     directory.mkdir(parents=True)
     example = builder.repository / "examples" / "generative_multilingual"
-    for name in ("semantic-seeds.csv", "wrapper-arms.csv", "rewrite-template.txt"):
-        shutil.copyfile(example / name, directory / name)
+    for file in ("semantic-seeds.csv", "wrapper-arms.csv", "rewrite-template.txt"):
+        shutil.copyfile(example / file, directory / file)
     plan: dict[str, Any] = yaml.safe_load(
         (example / "plan-direct.yaml").read_text(encoding="utf-8")
     )
@@ -545,11 +594,12 @@ def _generative(builder: Builder, name: str, *, rollouts: int, coverage: str) ->
     logs = directory / "logs"
     for model in DEMO_MODELS:
         cohort = model.split("/", 1)[1]
-        dataset = next((path for path in datasets if path.stem == cohort), datasets[0])
-        inspect_eval(
+        dataset = _cohort_dataset(datasets, cohort)
+        results = inspect_eval(
             _generative_task(dataset), model=model, log_dir=str(logs), epochs=rollouts,
-            display="none",
+            log_format="eval", display="none",
         )
+        _require_success(results, f"the generative run of {model}")
     return Inputs(
         plan_path,
         logs,
@@ -580,3 +630,20 @@ BUILDERS: dict[str, Callable[[Builder], Inputs]] = {
     "generative": generative_case,
     "generative-weighted": generative_weighted_case,
 }
+
+
+def build_case(name: str, builder: Builder) -> Inputs:
+    """Build one case's inputs, working from the directory they are built in.
+
+    Inspect drops the drive letter of logs on another Windows drive than the working directory
+    (#35), and the inputs sit in a temporary directory, which on Windows can be on another drive
+    than the checkout. Every path a builder takes is absolute, so the directory changes nothing
+    else.
+    """
+    builder.directory.mkdir(parents=True, exist_ok=True)
+    previous = os.getcwd()
+    os.chdir(builder.directory)
+    try:
+        return BUILDERS[name](builder)
+    finally:
+        os.chdir(previous)

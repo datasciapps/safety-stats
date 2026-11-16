@@ -71,6 +71,9 @@ packages = ["src/inspect_safety_stats"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+  "slow: takes a minute or more; deselect with -m \"not slow\" for a quick run",
+]
 
 [tool.ruff]
 line-length = 100
