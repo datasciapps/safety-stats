@@ -1973,6 +1973,13 @@ def _unclassified_assumption(share: float) -> str:
     )
 
 
+def _uncertified_base_warning(eligibility: str) -> str:
+    return (
+        f"Sensitivity analysis, not a certified bound: the judge-system interval it corrects "
+        f"is {eligibility}, and a correction cannot support more than its base."
+    )
+
+
 def _uncertified_correction_warning(gap: str) -> str:
     return (
         f"Sensitivity analysis, not a certified bound: {gap}. The human labels weight every "
@@ -2122,9 +2129,10 @@ def _judge_corrected_interval(
         unclassified_share=unclassified_share,
     )
     validated = calibration.source == "validated"
-    # Measured accuracies certify only a row they were measured for; elsewhere the
-    # corrected interval is a sensitivity, as an assumed one always is.
-    certified = validated and gap is None
+    # Measured accuracies certify only a row they were measured for, and never more than
+    # the row's own bounds support. Elsewhere the corrected interval is a sensitivity, as an
+    # assumed one always is.
+    certified = validated and gap is None and result.eligibility == "certifying"
     base = next((item for item in result.intervals if item.role == "primary"), None)
     base_alpha = base.family_alpha if base is not None else None
     spent = calibration.alpha if calibration.alpha is not None else judge_alpha
@@ -2198,6 +2206,8 @@ def _judge_corrected_interval(
     warnings: list[str] = []
     if validated and gap is not None:
         warnings.append(_uncertified_correction_warning(gap))
+    elif validated and not certified:
+        warnings.append(_uncertified_base_warning(result.eligibility))
     if not validated and primary_scenario is not None:
         if calibration.scenario_id != primary_scenario:
             warnings.append(
@@ -3925,7 +3935,12 @@ def _judge_corrected_comparison_interval(
         item.alpha or 0.0 for item in (candidate_calibration, baseline_calibration)
     )
     base_alpha = primary.family_alpha
-    certified = gap is None
+    certified = gap is None and result.eligibility == "certifying"
+    warnings: list[str] = []
+    if gap is not None:
+        warnings.append(_uncertified_correction_warning(gap))
+    elif not certified:
+        warnings.append(_uncertified_base_warning(result.eligibility))
     return RiskIntervalResult(
         interval_id="judge_corrected_validated",
         lower=lower,
@@ -3985,7 +4000,7 @@ def _judge_corrected_comparison_interval(
             ),
         ],
         eligibility="certifying" if certified else "diagnostic",
-        warnings=[_uncertified_correction_warning(gap)] if gap is not None else [],
+        warnings=warnings,
     )
 
 
