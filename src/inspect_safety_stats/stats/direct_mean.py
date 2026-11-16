@@ -7,7 +7,6 @@ from typing import Literal
 
 import numpy as np
 from numpy.typing import ArrayLike
-from scipy.special import logsumexp
 
 from .risk import worst_of_k_shares
 
@@ -740,7 +739,28 @@ def _betting_log_capital(
     ratios = values / mean if direction == "lower" else (1.0 - values) / (1.0 - mean)
     factors = 1.0 - fractions[:, None] + fractions[:, None] * ratios[None, :]
     log_growth = np.sum(exponents[None, :] * np.log(factors), axis=1)
-    return float(logsumexp(log_prior + log_growth))
+    # logsumexp by hand: scipy.special.logsumexp costs far more than the sum on 16 terms,
+    # and the capital is evaluated about 160 times per interval.
+    log_terms = log_prior + log_growth
+    peak = float(np.max(log_terms))
+    return peak + math.log(float(np.sum(np.exp(log_terms - peak))))
+
+
+def _merge_betting_blocks(
+    values: np.ndarray, exponents: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Blocks with equal value and exponent merged into one, its exponent summed.
+
+    The log capital is ``sum_g exponent_g * log factor(value_g)``, so ``k`` equal
+    blocks contribute ``k * exponent * log factor(value)`` and merging them
+    changes no term. The count form expands a prompt into one block per
+    rollout, which this collapses to at most two blocks per prompt, and the
+    capital is evaluated about 160 times per interval.
+    """
+
+    pairs, inverse = np.unique(np.column_stack([values, exponents]), axis=0, return_inverse=True)
+    merged_exponents = np.bincount(inverse.reshape(-1), weights=exponents, minlength=len(pairs))
+    return pairs[:, 0], merged_exponents
 
 
 def _invert_betting(
@@ -758,6 +778,7 @@ def _invert_betting(
     so the endpoints always straddle it.
     """
 
+    values, exponents = _merge_betting_blocks(values, exponents)
     threshold = math.log(1.0 / alpha)
     edge = 1e-12
 
