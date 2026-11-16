@@ -140,7 +140,62 @@ over a completed analysis:
 
 An item the labeller cannot resolve must be handled by the declared protocol before the file
 is written. Dropping such rows ad hoc breaks the simple random sample that makes each
-stratum's proportion binomial, and the package cannot detect it.
+stratum's proportion binomial. Without a labelling protocol in the plan, the package cannot
+detect it.
+
+### Labelling protocol (experimental)
+
+The calibration is valid only if each stratum's labels are a simple random sample of it, of a
+size that did not depend on the labels. Labelling until the result looks good, skipping hard
+rows, or labelling disagreements first breaks that. A plan can declare how the labels were
+collected, and the analysis then checks what the data can show:
+
+```yaml
+inputs:
+  judge_calibration:
+    mode: validated
+    validation_manifest: judge-labels.csv
+    family: judge_error
+    protocol:
+      queue: label-queue.csv     # observation_id in labelling order, relative to the plan
+      tier: calibration          # optional: only queue rows whose tier column says so
+      seed: 20261104             # optional: the seed that ordered the queue, for an audit
+      stopping: label_independent
+```
+
+The queue lists rollouts in the order people label them. Ordering each judge stratum by a
+seeded random permutation, and interleaving the strata on a pattern fixed in advance, makes
+every prefix of the queue a simple random sample within each stratum. `tier` is for a queue
+that also holds rows the calibration does not use, such as rows oversampled to study where
+the judge goes wrong; the manifest then holds the calibration tier's labels only.
+
+The analysis checks that the manifest labels exactly the first rows of the queue (or of its
+tier). A skipped row, or a label for a rollout outside the queue, is an error,
+`JUDGE_LABELLING_PROTOCOL_VIOLATED`, and no correction is reported. `stopping` says why
+labelling stopped where it did:
+
+| `stopping` | Meaning | What the analysis does |
+|---|---|---|
+| `fixed_size` | at `size` labels, fixed in advance | checks that exactly `size` rows are labelled; Clopper-Pearson bounds |
+| `label_independent` | at a point chosen without looking at the labels, such as when time ran out | Clopper-Pearson bounds; the independence is declared, not checked |
+| `data_dependent` | possibly because of the labels, such as once the corrected bound cleared a threshold | anytime-valid confidence sequences instead of Clopper-Pearson |
+
+A confidence sequence holds at every number of labels at once, so it stays valid whenever
+labelling stops. When a small share of a stratum is labelled it is wider than
+Clopper-Pearson at the same number of labels (60 labels with one unsafe in a stratum of
+2,000 give an upper bound of 0.165 against 0.102 at the same budget). It counts a stratum's
+size, though, so when most of a stratum is labelled it can be narrower, and a stratum
+labelled in full is known exactly. The derivation is in
+[Statistical methods, section 6.9](statistical-methods.md#69-implemented-human-labels-for-a-judge-calibration-experimental).
+It spends the same budget per endpoint, so the coverage the corrected interval states is
+unchanged. `data_dependent` requires `sampling: simple_random_within_judge_stratum`, because
+the noisy-but-valid test has no anytime-valid form yet.
+
+The report's `provenance.judge_calibration.protocol` records the queue's SHA-256, its number
+of rows, the labelled prefix, the seed, the stopping rule and the bound used. The package
+cannot recompute the queue from the seed: that the queue's order is random is declared, and
+the hash lets an auditor check the queue against the one the labelling used. The protocol is
+available in fixed-design plans; a generative plan does not accept it yet.
 
 ### Estimation and error budget
 

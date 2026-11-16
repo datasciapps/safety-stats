@@ -7,6 +7,17 @@ described in their pull requests.
 
 ### Added
 
+- **Labelling protocol for a validated judge calibration (experimental).** A plan can
+  declare how its human labels were collected, under `inputs.judge_calibration.protocol`:
+  the labelling queue, the seed that ordered it, and why labelling stopped. The analysis
+  checks that the labels are exactly the queue's first rows, and the declared size under
+  `stopping: fixed_size`; a violation is the error `JUDGE_LABELLING_PROTOCOL_VIOLATED`.
+  `stopping: data_dependent` bounds each judge stratum with an anytime-valid confidence
+  sequence, so labelling may stop once the result is clear. The report records the queue's
+  hash and the labelled prefix in `provenance.judge_calibration.protocol`. Plans without a
+  protocol produce the same bytes and hash as before. See
+  [Labelling protocol](docs/judge-misclassification.md#labelling-protocol-experimental).
+
 - **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory
   analysis makes every claim `INCONCLUSIVE`, so a reader had to compare its bounds with the
   thresholds by hand. Each claim in `report.json` now has `descriptive_status`: in an

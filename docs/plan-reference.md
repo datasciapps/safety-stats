@@ -142,6 +142,16 @@ exact Clopper-Pearson bounds within each judge stratum, and the corrected interv
 is the union of its own family budget and the judge family budget. The two modes are mutually
 exclusive.
 
+`protocol` (experimental, `mode: validated` only) declares how the labels were collected:
+`queue`, a CSV of `observation_id` in labelling order, relative to the plan; `tier`, to keep
+only queue rows whose `tier` column has that value; `seed`, recorded for an audit; and
+`stopping`, one of `fixed_size` (with `size`), `label_independent` or `data_dependent`. The
+analysis checks that the manifest labels exactly the queue's first rows, and that `size` rows
+are labelled under `fixed_size`. `data_dependent` bounds each stratum with an anytime-valid
+confidence sequence instead of Clopper-Pearson, and requires
+`sampling: simple_random_within_judge_stratum`. See
+[Labelling protocol](judge-misclassification.md#labelling-protocol-experimental).
+
 Corrections are applied to `weighted_mean`, `maximum`, `cvar`, and `top_k_mean` measures, to
 every hierarchy node, and to comparisons whose primary interval exposes both arm bounds
 (`weighted_kl_chernoff` and any `comparison_sets` entry). A validated correction certifies

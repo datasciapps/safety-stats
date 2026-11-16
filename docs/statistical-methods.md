@@ -1309,6 +1309,32 @@ Updating a Bernoulli confidence sequence after every correlated epoch is invalid
 
 Sequential inference is emerging explicitly in AI evaluation. *Efficient Sequential Evaluation of Large Language Models* constructs confidence sequences by inverting test supermartingales and studies adaptive question selection [20]. Optstop implements Bayesian adaptive stopping for Inspect AI, but its posterior-width criterion is not the same as an anytime-valid frequentist confidence sequence [21]. This remains a useful future integration point if users later require a frequentist false-pass guarantee after adaptive stopping; it does not justify adding sequential complexity to the fixed-horizon core.
 
+### 6.9 Implemented: human labels for a judge calibration (experimental)
+
+One confidence sequence is implemented: for the human labels of a validated judge calibration (see [Judge misclassification](judge-misclassification.md#labelling-protocol-experimental)), when the plan's labelling protocol declares `stopping: data_dependent`. The labelling of evaluation outputs, not the evaluation itself, is then allowed to stop on results.
+
+**Model.** A judge stratum holds \(N\) rollouts, of which an unknown \(K\) are truly unsafe; the calibration parameter is \(\rho=K/N\). The labelling queue orders the stratum by a uniformly random permutation, and the labeller labels it from the front. After \(n\) labels with \(S_n\) unsafe, the labelled rows are a sample without replacement, and the probability of the observed sequence under \(K\) is proportional to the hypergeometric probability \(h_n(K)=\binom{K}{S_n}\binom{N-K}{n-S_n}/\binom{N}{n}\).
+
+**Construction.** Put a uniform prior \(\pi_0(K)=1/(N+1)\) on \(\{0,\dots,N\}\). The posterior is \(\pi_n(K)\propto h_n(K)\), and since \(\sum_{K}\binom{K}{S}\binom{N-K}{n-S}=\binom{N+1}{n+1}\), the prior marginal likelihood of \(S_n\) is \(1/(n+1)\). So
+
+\[
+\frac{\pi_n(K)}{\pi_0(K)}=(n+1)\,h_n(K).
+\]
+
+At the true \(K^\ast\), the prior-posterior ratio \(\pi_0(K^\ast)/\pi_n(K^\ast)\) is a nonnegative martingale with initial value one (Waudby-Smith and Ramdas [33], Proposition 1). Ville's inequality gives \(\Pr(\exists n:\pi_0(K^\ast)/\pi_n(K^\ast)\ge 1/a)\le a\), so
+
+\[
+C_n=\{K:(n+1)\,h_n(K)>a\}
+\]
+
+contains \(K^\ast\) at every \(n\) simultaneously with probability at least \(1-a\). Because the guarantee is time-uniform, it holds at any stopping time, including one chosen because of the labels seen so far. \(h_n(K)\) is log-concave in \(K\), so \(C_n\) is an interval; it is reported as \([\min C_n/N,\ \max C_n/N]\). It never empties, since the average of \((n+1)h_n(K)\) over the prior is one. With no labels it is \([0,1]\), and a census pins \(\rho\) exactly, which a binomial bound cannot.
+
+**Budget.** The calibration spends \(a=\alpha/4\) on each parameter, where \(\alpha\) is the cohort's calibration budget. A two-sided miss at \(a\) bounds each one-sided miss by \(a\) as well, so the accounting of the Clopper-Pearson calibration (\(\alpha/4\) per endpoint) and the corrected interval's stated coverage carry over unchanged. It is conservative by the unused half of each parameter's share.
+
+**Assumptions.** The queue's order within each stratum is a uniformly random permutation fixed before labelling, and which stratum the next queue row comes from does not depend on labels not yet seen. Rows are labelled in queue order without skipping, which the analysis checks as a prefix of the declared queue. Human labels are ground truth. Several strata interleaved in one queue keep each stratum's martingale, because each stratum's order is drawn independently of the others' labels.
+
+**Validation.** `tests/unit/test_confidence_sequence.py` checks the set against an exact rational computation and runs a seeded Monte Carlo of 600 labelling paths, each stopped the first time the range excludes the truth: the sequence misses at most \(\alpha\) up to simulation error, and fixed-sample Clopper-Pearson under the same rule misses about three times as often.
+
 ---
 
 ## 7. Paired comparisons
@@ -2296,6 +2322,7 @@ That is the role this Inspect extension should fill.
 30. H. Föllmer and T. Knispel, “Entropic Risk Measures: Coherence vs. Convexity, Model Ambiguity, and Robust Large Deviations,” *Stochastics and Dynamics* 11(2–3), 333–351, 2011. [doi:10.1142/S0219493711003334](https://doi.org/10.1142/S0219493711003334)
 31. C. Acerbi, “Spectral Measures of Risk: A Coherent Representation of Subjective Risk Aversion,” *Journal of Banking & Finance* 26(7), 1505–1518, 2002. [doi:10.1016/S0378-4266(02)00281-9](https://doi.org/10.1016/S0378-4266(02)00281-9)
 32. W. Hoeffding, “Probability Inequalities for Sums of Bounded Random Variables,” *Journal of the American Statistical Association* 58(301), 13–30, 1963. [doi:10.1080/01621459.1963.10500830](https://doi.org/10.1080/01621459.1963.10500830)
+33. I. Waudby-Smith and A. Ramdas, “Confidence sequences for sampling without replacement,” *Advances in Neural Information Processing Systems* 33, 2020. [arXiv:2006.04347](https://arxiv.org/abs/2006.04347)
 
 ---
 
