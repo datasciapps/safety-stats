@@ -91,6 +91,9 @@ then analyzes and compares their logs:
 python examples/demo/run_demo.py
 ```
 
+The [quickstart](docs/quickstart.md) analyzes a bundled log of a real evaluation, also offline,
+and shows what a failing validation looks like.
+
 Plan a zero-failure study:
 
 ```bash
@@ -155,7 +158,8 @@ inspect-safety-stats visualize \
 
 `analyze` exits with code `0` after a completed analysis whose integrity is valid or degraded,
 and `3` when the analysis cannot run or its integrity is invalid. An invalid analysis still
-writes its report, so the diagnostics can be audited; `--allow-invalid` makes it exit `0`.
+writes its report, so the diagnostics can be audited, and so does an analysis whose manifest,
+logs or rollout files cannot be read; `--allow-invalid` makes it exit `0`.
 Use `--decision-exit-codes` to opt into decision-sensitive exit codes for completed analyses
 (`0` pass, `1` fail, and `2` inconclusive).
 
@@ -206,9 +210,17 @@ as system-level safe outcomes.
 
 ## Safety scope
 
-Every report states:
+Every report of a fixed design states:
 
 > Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions.
+
+A [sampled design](docs/design-based-sampling.md) states instead that results apply to the
+declared item frame, from which the evaluated items were drawn with the recorded inclusion
+probabilities, and not to prompts outside the frame.
+
+Every bound also assumes that the evaluated model is not sandbagging, that is, not
+strategically underperforming on the evaluation. The statistics here cannot detect that, and harms rarer than the rollout budget can reach remain unmeasured. See
+[Mathematical methods](docs/statistical-methods.md), sections 15.2 and 15.7.
 
 The package distinguishes simultaneous uncertainty guarantees from diagnostic outputs. Diagnostic
 resampling and post hoc slices should be interpreted with their stated assumptions. Optional threshold decisions can be enabled with
@@ -218,7 +230,9 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 
 - [Getting started](docs/getting-started.md)
 - [Installation](docs/installation.md)
+- [Changelog](CHANGELOG.md): the changes a user can observe, newest first
 - [Contributing](CONTRIBUTING.md): development setup, engineering practices, and the interfaces that must not break
+- [Security](SECURITY.md): how to report a vulnerability, and what the package does with network access, plans, and prompt text
 - [Quickstart](docs/quickstart.md)
 - [Analysis plan reference](docs/plan-reference.md)
 - [Python and command-line API reference](docs/api-reference.md)
@@ -228,16 +242,20 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Design-based inference for sampled item frames](docs/design-based-sampling.md)
 - [Version 1 engineering design](docs/archive/v1-design.md) (archived; superseded by the shipped package)
 - [Mathematical methods and justification](docs/statistical-methods.md)
-- [Generative evaluation](docs/generative-evaluation.md)
-- [Generative evaluation: design decisions](docs/generative-design-decisions.md)
+- [Generative evaluation](docs/generative-evaluation.md). The generative pipeline is experimental: its public surface, `inspect_safety_stats.generative.__all__`, may change in any minor release.
+- [Generative evaluation: design decisions](docs/generative-design-decisions.md) (experimental)
 - [Generative hierarchy evaluation planner](docs/archive/generative-hierarchy-evaluation-plan.md) (archived; the original proposal, superseded by the two above)
 - [Multi-model safety comparison: complete JailbreakBench-100 example](examples/real_jailbreakbench/README.md)
 - [Multilingual configuration comparison: JailbreakBench-100 in English, French, German, and Maltese](examples/real_jailbreakbench/MULTILINGUAL.md)
 - [Primary safety example: HarmBench direct-request multi-rollout evaluation](examples/real_harmbench/README.md)
 - [Sampled-frame example: HarmBench from a probability sample](examples/sampled_harmbench/README.md)
-- [Generative example: multilingual jailbreak rewrites](examples/generative_multilingual/README.md)
-- [Live generative example: real providers end to end](examples/generative_live/README.md)
+- [Generative example: multilingual jailbreak rewrites](examples/generative_multilingual/README.md) (experimental)
+- [Live generative example: real providers end to end](examples/generative_live/README.md) (experimental)
 - [Secondary calibration example: XSTest over-refusal](examples/real_xstest/README.md)
+
+## Citing
+
+To cite the package, use the metadata in [CITATION.cff](CITATION.cff).
 
 ## License
 

@@ -44,6 +44,10 @@ class ErrorContext:
     stage: Literal["target_generation", "post_generation", "unknown"]
     content_delivered: bool | None
     provider_error_code: str | None
+    # Why the transcript that would give the stage could not be read, when it could not, as
+    # the name of the error; the stage is then "unknown" and normalize reports it as
+    # TRANSCRIPT_UNREAD.
+    unread_reason: str | None = None
 
 
 @dataclass(frozen=True)

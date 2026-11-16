@@ -12,6 +12,13 @@ from scipy.sparse import csr_array
 
 @dataclass(frozen=True)
 class LinearIntervalConstraint:
+    """A confidence statement ``lower <= coefficients @ theta <= upper`` on a hierarchy node.
+
+    ``theta`` is the vector of primitive failure probabilities, each in ``[0, 1]``, and
+    ``0 <= lower <= upper <= 1``. Derived in docs/statistical-methods.md, section 2.4.10,
+    "Simultaneous hierarchy-constrained confidence region".
+    """
+
     target_id: str
     coefficients: np.ndarray
     lower: float
@@ -20,6 +27,13 @@ class LinearIntervalConstraint:
 
 @dataclass(frozen=True)
 class HierarchyRegionProjection:
+    """Intervals for each requested target, projected from a simultaneous linear region.
+
+    ``intervals`` maps each target to its ``(lower, upper)`` projection. When the constraints
+    admit no common point, ``feasible`` is false, ``intervals`` is empty and ``message`` says
+    why. ``constraint_count`` is the number of constraints the region was built from.
+    """
+
     feasible: bool
     intervals: dict[str, tuple[float, float]]
     constraint_count: int
@@ -28,6 +42,13 @@ class HierarchyRegionProjection:
 
 @dataclass(frozen=True)
 class RatioHierarchyRegionProjection:
+    """Ratio intervals for each requested target, projected from a two-arm linear region.
+
+    Like ``HierarchyRegionProjection``, but an endpoint is ``None`` when its linear program
+    has no solution. A missing upper endpoint means the region lets the baseline denominator
+    approach zero while the candidate risk stays positive.
+    """
+
     feasible: bool
     intervals: dict[str, tuple[float | None, float | None]]
     constraint_count: int

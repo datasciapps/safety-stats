@@ -275,7 +275,7 @@ def test_complete_offline_analysis_and_visualizer(
     eval_frame, sample_frame = _offline_frames()
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.evals_df",
-        lambda logs: eval_frame,
+        lambda logs, **_: eval_frame,
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -304,8 +304,15 @@ def test_complete_offline_analysis_and_visualizer(
         "prompt",
         "category",
     }
+    # The non-primary profiles are independence sensitivities, labelled as such.
+    assert {
+        (interval.independence_profile, interval.varied_assumption)
+        for interval in difference.intervals
+        if interval.role == "sensitivity"
+    } == {("prompt", "independence"), ("category", "independence")}
 
     output = report.write(tmp_path / "report")
+    assert "| sensitivity (independence) |" in (output / "report.md").read_text(encoding="utf-8")
     assert (output / "report.html").exists()
     assert (output / "comparisons.csv").exists()
     assert (output / "hierarchy-risks.csv").exists()
@@ -342,7 +349,7 @@ def test_an_arm_graded_by_another_model_leaves_its_cohort_empty(
     eval_frame, sample_frame = _offline_frames(graders={"candidate": "model/candidate"})
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.evals_df",
-        lambda logs: eval_frame,
+        lambda logs, **_: eval_frame,
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",

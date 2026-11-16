@@ -34,6 +34,36 @@ A descriptive status is for reading the bounds. It is not a certification: an ex
 need not precede the evaluation it analyses, so a descriptive `PASS` is not the predeclared
 decision a confirmatory `PASS` is. To certify, freeze a confirmatory plan and evaluate again.
 
+### Verdicts at other thresholds
+
+Each claim also records `verdict_range`: the thresholds at which the same bounds would give
+`PASS` or `FAIL`. The claim is `PASS` for every `acceptable_upper` at or above
+`pass_acceptable_upper`, and `FAIL` for every `unacceptable_lower` at or below
+`fail_unacceptable_lower`. When `pass_strict` or `fail_strict` is true, the boundary itself is
+excluded. Every other pair of thresholds gives `INCONCLUSIVE`. A `null` boundary means that no
+threshold the plan allows gives that verdict. For an interval claim the boundaries are the upper
+and lower bounds. For the noisy-but-valid test they are the thresholds at which its critical
+values meet the judge-reported bounds. The report's claims table states the same range, with
+each boundary rounded so that the statement still holds.
+
+In an exploratory analysis the claim is `INCONCLUSIVE` at every threshold. Its range, like its
+descriptive status, is what a confirmatory analysis of the same bounds would give, and it
+certifies nothing.
+
+The range shows how far the verdict is from changing. It does not license choosing thresholds
+after seeing it: the verdict and its error rate hold only at the thresholds the plan declared
+in advance.
+
+### Verdicts under sensitivity profiles
+
+A claim's status is decided under its evidence's primary independence profile. When the plan
+declares sensitivity profiles, `profile_verdicts` in `report.json`, a table in `report.md` and
+the HTML claim card also give the verdict each sensitivity profile's interval would reach at
+the same thresholds. These verdicts never change the claim's status or the decision. A
+`PASS` that is `INCONCLUSIVE` under a coarser profile, such as `prompt`, rests on the primary
+profile's independence assumption. See
+[Verdicts by profile](independence-profiles.md#verdicts-by-profile).
+
 ## Integrity states
 
 `valid` means every required outcome was classified and no structural integrity error occurred.
@@ -186,6 +216,21 @@ every component must pass, but no additional Bonferroni correction is required s
 conjunction. Component intervals are not automatically simultaneous unless a simultaneous interval
 family was also declared.
 
+## Small evaluations and stderr-based intervals
+
+Many evaluation tools report a mean with a standard error and an interval built from the
+central limit theorem. On benchmarks below a few hundred items these intervals are usually much
+too narrow, so they cover the true value far less often than their nominal level
+([Bowyer, Aitchison and Ivanova, 2025](https://arxiv.org/abs/2503.01747)). Safety
+evaluations are often that small and their failure rates close to zero, where the approximation
+is worst. This is why the primary intervals here are exact binomial or finite-sample
+concentration bounds, which hold at any sample size (see
+[Mathematical methods](statistical-methods.md), sections 4.4 and 2.4.10).
+
+Do not compare these intervals with stderr-based intervals from other tools as if both had the
+same coverage. On a small evaluation the stderr interval will usually be narrower; that reflects
+under-coverage, not greater precision.
+
 ## Diagnostic results
 
 Diagnostic outputs help characterize sensitivity but do not have the same simultaneous coverage
@@ -203,3 +248,8 @@ into a population sample.
 ## External validity
 
 No result in version 1 generalizes automatically beyond the fixed design. Statistical precision cannot repair scorer error, under-elicitation, sandbagging, omitted hazards, or deployment shift.
+
+Every bound assumes the evaluated model is not strategically underperforming. Rare harms below
+the rate the rollout budget can reach remain unmeasured residual risk, as validation of automated
+driving found for crashes. See [Mathematical methods](statistical-methods.md), sections 15.2 and
+15.7.

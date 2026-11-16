@@ -211,7 +211,7 @@ def _pyproject() -> str:
 
 
 def test_version_is_consistent_everywhere_it_is_written() -> None:
-    """The version lives in three files and has to be bumped in all of them."""
+    """The version lives in four files and has to be bumped in all of them."""
     declared = re.search(r'^version = "([^"]+)"', _pyproject(), flags=re.MULTILINE)
     assert declared is not None, "pyproject.toml no longer declares a version"
     assert declared.group(1) == __version__
@@ -220,6 +220,9 @@ def test_version_is_consistent_everywhere_it_is_written() -> None:
     current = re.search(r"remains current in `([0-9]+\.[0-9]+\.[0-9]+)`", profiles)
     assert current is not None, "independence-profiles.md no longer states a current version"
     assert current.group(1) == __version__
+
+    citation = yaml.safe_load((ROOT / "CITATION.cff").read_text(encoding="utf-8"))
+    assert str(citation["version"]) == __version__, "CITATION.cff states another version"
 
 
 def test_declared_python_versions_match_the_requirement() -> None:
@@ -238,6 +241,23 @@ def test_declared_python_versions_match_the_requirement() -> None:
         "CI must test exactly the Python versions the package advertises: "
         f"declared {sorted(classifiers)}, tested {sorted(tested)}"
     )
+
+
+# Split so that this file does not match its own pattern. Reports write Windows paths with
+# forward slashes, so this also matches a Windows home directory written that way. Backslash
+# forms are not matched: the HarmBench behaviours dataset quotes Windows shell sessions run in
+# a guest account's home directory.
+_HOME_DIRECTORY = re.compile(rb"/" rb"Users/[A-Za-z]")
+
+
+def test_no_tracked_file_names_a_local_home_directory() -> None:
+    """Example READMEs and committed reports once carried a maintainer's checkout path (#27)."""
+    offenders = [
+        path.relative_to(ROOT).as_posix()
+        for path in _tracked("*")
+        if path.is_file() and _HOME_DIRECTORY.search(path.read_bytes())
+    ]
+    assert offenders == []
 
 
 def test_the_package_has_no_runtime_asserts() -> None:
@@ -289,3 +309,25 @@ def test_documented_schema_versions_match_the_code() -> None:
         if match is None or _versions(match.group(0)) != expected
     ]
     assert not wrong, "documented schema versions differ from the code: " + "; ".join(wrong)
+
+
+# CONTRIBUTING section 4.1 declares the generative surface experimental. Every user-facing
+# entry point to it carries the same caveat, so none of them presents it as stable (#24).
+_GENERATIVE_CAVEAT = (
+    "The generative pipeline is experimental: its public surface, "
+    "`inspect_safety_stats.generative.__all__`, may change in any minor release."
+)
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "README.md",
+        "docs/generative-evaluation.md",
+        "docs/api-reference.md",
+        "src/inspect_safety_stats/generative/__init__.py",
+    ],
+)
+def test_generative_entry_points_carry_the_experimental_caveat(relative: str) -> None:
+    text = (ROOT / relative).read_text(encoding="utf-8").replace("``", "`")
+    assert _GENERATIVE_CAVEAT in " ".join(text.split())

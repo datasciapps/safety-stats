@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import copy
 import itertools
+import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
@@ -21,22 +24,34 @@ from inspect_safety_stats.config.models import (
     ComparisonSpec,
     DirectMeanIntervalsSpec,
     IndependenceSelectionSpec,
+    JudgeAccuracySpec,
+    JudgeSpec,
+    PublishedValidationSetSpec,
     RiskMeasureSpec,
 )
-from inspect_safety_stats.decision.engine import decide_claim, roll_up
+from inspect_safety_stats.decision.engine import (
+    claim_verdict_range,
+    decide_claim,
+    noisy_valid_verdict_range,
+    roll_up,
+)
 from inspect_safety_stats.ingest.manifest import (
+    ResolvedGroup,
     load_inclusion_probabilities,
     resolve_weights,
 )
-from inspect_safety_stats.ingest.normalize import ingest
-from inspect_safety_stats.ingest.records import EvaluationSource, NormalizedData
+from inspect_safety_stats.ingest.normalize import normalize, read_inputs
+from inspect_safety_stats.ingest.records import EvaluationSource, NormalizedData, SourceData
 from inspect_safety_stats.ingest.validation import (
+    fine_stratum_counts,
     judge_stratum_counts,
     load_validation_manifest,
+    load_validation_strata,
     truth_stratum_counts,
 )
 from inspect_safety_stats.schema.observations import Observation, observation_field
 from inspect_safety_stats.schema.reports import (
+    ClaimProfileVerdict,
     ClaimResult,
     ComparisonResult,
     ComparisonSetResult,
@@ -46,9 +61,11 @@ from inspect_safety_stats.schema.reports import (
     GroupRiskResult,
     HierarchyRiskResult,
     IntegritySummary,
+    JudgeErrorStressResult,
     PromptEstimate,
     RiskIntervalResult,
     SafetyReport,
+    VerdictRange,
 )
 from inspect_safety_stats.stats.binomial import (
     binomial_bounds,
@@ -87,6 +104,17 @@ from inspect_safety_stats.stats.independence import (
     direct_bounded_blocks,
     validate_profile_fields,
 )
+from inspect_safety_stats.stats.judge_calibration import (
+    NO_STRATA,
+    FineStrata,
+    JudgeStrata,
+    calibrate_cohort,
+    cohort_alpha_share,
+    completion_diagnostic,
+    fine_strata_summary,
+    unlabelled_fine_strata_diagnostic,
+)
+from inspect_safety_stats.stats.judge_stress import stress_verdict
 from inspect_safety_stats.stats.judges import (
     JudgeAccuracyBox,
     compose_verdicts,
@@ -99,11 +127,11 @@ from inspect_safety_stats.stats.misclassification import (
     JudgeCalibration,
     JudgeStratumCounts,
     TruthStratumCounts,
-    completion_warning,
     correct_judge_risk,
     delta_method_corrected_risk,
-    estimate_judge_calibration,
     noisy_valid_certification,
+    transport_judge_risk,
+    transported_sensitivity_lower,
 )
 from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
 from inspect_safety_stats.stats.paired import exact_mcnemar, newcombe_paired_interval
@@ -117,6 +145,10 @@ from inspect_safety_stats.stats.risk import (
     weighted_mean,
     worst_of_k_estimate,
     worst_of_k_risk,
+)
+from inspect_safety_stats.stats.single_valued import (
+    SINGLE_VALUED_BOUND_GUARANTEE,
+    single_valued_bound,
 )
 from inspect_safety_stats.stats.tree_calibration import (
     IndependentFrontier,
@@ -148,13 +180,68 @@ def _source(
     """The source ``analyze`` and ``validate`` read: ``source``, or else the Inspect logs."""
 
     if source is not None:
-        if logs is not None:
-            raise ValueError("pass either logs or source, not both")
         return source
     # Imported here, so that importing this module does not load Inspect AI.
     from inspect_safety_stats.ingest.inspect_logs import InspectLogs
 
     return InspectLogs(logs, parallel=parallel)
+
+
+@dataclass
+class _JudgeInputs:
+    """The manifest, groups and source as read, before the primary run normalized them.
+
+    Each declared judge's run normalizes them again, so the logs are read once.
+    """
+
+    manifest: pd.DataFrame
+    groups: list[ResolvedGroup]
+    source: SourceData
+
+
+def _read_input(
+    plan: AnalysisPlan,
+    logs: LogInput,
+    parallel: bool | int,
+    source: EvaluationSource | None,
+    diagnostics: list[Diagnostic],
+) -> tuple[NormalizedData, _JudgeInputs | None] | None:
+    """Read and normalize the analysis input, or record why it cannot be read.
+
+    ``validate`` and ``analyze`` both read their input here, so that bad input gives both the
+    same ``INGEST_FAILED`` error. None when the input cannot be read. Passing both ``logs``
+    and ``source`` is a mistake in the call, not in the input, and raises ``ValueError``.
+    Beside the normalized data comes what the per-judge runs need, when the plan asks for
+    them with ``outputs.judge_claims``.
+    """
+
+    if source is not None and logs is not None:
+        raise ValueError("pass either logs or source, not both")
+    try:
+        manifest, groups, source_data = read_inputs(plan, _source(logs, parallel, source))
+        # ORDER MATTERS: the per-judge runs take copies made before the primary run
+        # normalizes the manifest and groups, so nothing that run does can reach them.
+        judge_inputs = (
+            _JudgeInputs(manifest.copy(), copy.deepcopy(groups), source_data)
+            if plan.outputs.judge_claims
+            else None
+        )
+        data = normalize(plan, manifest, groups, source_data)
+        validate_profile_fields(plan.design.independence_profiles, data.manifest)
+    except Exception as exc:
+        diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=str(exc)))
+        return None
+    diagnostics.extend(data.diagnostics)
+    return data, judge_inputs
+
+
+def _sorted_integrity(diagnostics: list[Diagnostic]) -> IntegritySummary:
+    return IntegritySummary(
+        status=_integrity_status(diagnostics),
+        diagnostics=sorted(
+            diagnostics, key=lambda item: (item.severity, item.code, item.scope or "")
+        ),
+    )
 
 
 def validate(
@@ -164,20 +251,20 @@ def validate(
     parallel: bool | int = False,
     source: EvaluationSource | None = None,
 ) -> IntegritySummary:
+    """Check a plan and its evaluation data without computing any bound or decision.
+
+    ``plan`` is an ``AnalysisPlan`` or the path of a plan file, read with ``load_plan``. The
+    data comes from ``source`` when given, or else from the Inspect logs in ``logs``, read with
+    ``parallel`` passed to Inspect's log reader. Passing both ``logs`` and ``source`` is an
+    error. Unlike ``analyze``, a failure to read the data does not raise: it is reported as an
+    ``INGEST_FAILED`` diagnostic. Returns the integrity status (``valid``, ``degraded`` or
+    ``invalid``) and the sorted diagnostics.
+    """
+
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
-    try:
-        normalized = ingest(resolved, _source(logs, parallel, source))
-        validate_profile_fields(resolved.design.independence_profiles, normalized.manifest)
-        diagnostics.extend(normalized.diagnostics)
-    except Exception as exc:
-        diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=str(exc)))
-    return IntegritySummary(
-        status=_integrity_status(diagnostics),
-        diagnostics=sorted(
-            diagnostics, key=lambda item: (item.severity, item.code, item.scope or "")
-        ),
-    )
+    _read_input(resolved, logs, parallel, source, diagnostics)
+    return _sorted_integrity(diagnostics)
 
 
 def _alpha_by_prompt(
@@ -958,6 +1045,7 @@ def _direct_interval_result(
         upper=bounds.upper,
         method=method,
         role=role,
+        varied_assumption="independence" if role == "sensitivity" else None,
         coverage_scope=(
             f"{scope_prefix}{calibration_scope}_{independence_profile}_fixed_design_mean_family"
         ),
@@ -1209,7 +1297,33 @@ def _direct_intervals(
                     interval_coverage=interval_coverage,
                 )
             )
+            if spec.single_valued_bound:
+                _add_single_valued_bound(results[-1], method, blocks, profile_id)
     return results
+
+
+def _add_single_valued_bound(
+    interval: RiskIntervalResult,
+    method: str,
+    blocks: BoundedBlocks,
+    independence_profile: str,
+) -> None:
+    """Attach M = inf_delta [U_delta + delta] for this node's own engine (#127).
+
+    U_delta is the engine's upper endpoint at endpoint alpha delta for this node alone, not
+    the family-calibrated endpoint, so M carries no multiplicity adjustment and no alpha.
+    """
+    bound = single_valued_bound(
+        lambda delta: _direct_bounds(
+            method,
+            blocks,
+            endpoint_alpha=delta,
+            independence_profile=independence_profile,
+        ).upper
+    )
+    interval.single_valued_bound = bound.value
+    interval.single_valued_bound_delta = bound.delta
+    interval.single_valued_bound_guarantee = SINGLE_VALUED_BOUND_GUARANTEE
 
 
 def _group_risks(
@@ -1810,6 +1924,62 @@ class _PromptRollouts:
     attempted: int
 
 
+# A judge calibration's key: its cohort, and its group when the calibration is scoped to groups.
+_JudgeScope = tuple[str, str | None]
+
+
+def _judge_scope(plan: AnalysisPlan, cohort_id: str, group_id: str) -> _JudgeScope | None:
+    """The calibration a row of this cohort and group is corrected with, or None if none is."""
+
+    spec = plan.inputs.judge_calibration
+    if spec is None or spec.groups is None:
+        return (cohort_id, None)
+    return None if _judge_scope_excludes(plan, group_id) else (cohort_id, group_id)
+
+
+def _judge_scope_excludes(plan: AnalysisPlan, group_id: str) -> bool:
+    """Whether the judge calibration is scoped to groups that leave this one out."""
+
+    spec = plan.inputs.judge_calibration
+    return spec is not None and spec.groups is not None and group_id not in spec.groups
+
+
+def _judge_scopes(plan: AnalysisPlan) -> list[_JudgeScope]:
+    spec = plan.inputs.judge_calibration
+    groups: list[str | None] = [None] if spec is None or spec.groups is None else list(spec.groups)
+    return [(cohort_id, group_id) for cohort_id in sorted(plan.cohorts) for group_id in groups]
+
+
+def _scope_population(
+    population: dict[str, dict[str, _PromptRollouts]],
+    data: NormalizedData,
+    scope: _JudgeScope,
+) -> dict[str, _PromptRollouts]:
+    """The labelled population of one calibration: its cohort's, cut to its group's prompts."""
+
+    cohort_id, group_id = scope
+    rollouts = population.get(cohort_id, {})
+    if group_id is None:
+        return rollouts
+    prompts = set(next(group for group in data.groups if group.id == group_id).prompt_ids)
+    return {prompt_id: item for prompt_id, item in rollouts.items() if prompt_id in prompts}
+
+
+def _out_of_scope_reason(group_id: str) -> str:
+    return (
+        "The judge calibration is scoped to groups that do not include this row's group "
+        f"{group_id!r}, so no labels calibrate it."
+    )
+
+
+def _scope_rollouts(group_id: str | None, noun: str = "rollouts") -> str:
+    """Name the rollouts a calibration's labels are drawn from, as the wording of a sentence."""
+
+    if group_id is None:
+        return f"the cohort's {noun}"
+    return f"the {noun} of group {group_id!r} in the cohort"
+
+
 def _labelled_population(
     plan: AnalysisPlan, data: NormalizedData
 ) -> dict[str, dict[str, _PromptRollouts]]:
@@ -1839,8 +2009,11 @@ def _pooled_calibration_gap(
     design_type: str,
     measure_type: str,
     weights: dict[str, float],
+    group_id: str | None = None,
 ) -> str | None:
     """Why a cohort's pooled labels do not measure the judge accuracies a row needs.
+
+    With ``group_id`` the labels, and ``population``, are those of one group in the cohort.
 
     The labels are drawn uniformly within judge strata over the cohort's classified
     rollouts, so they estimate P(truly unsafe | verdict) with each of those rollouts
@@ -1862,9 +2035,11 @@ def _pooled_calibration_gap(
         )
     labelled = [(prompt_id, item) for prompt_id, item in population.items() if item.classified]
     if not labelled:
+        if group_id is not None:
+            return f"group {group_id!r} has no classified rollouts in the cohort"
         return "the cohort has no classified rollouts"
     if any(weights.get(prompt_id, 0.0) <= 0.0 for prompt_id, _ in labelled):
-        return "the row covers only part of the cohort's labelled rollouts"
+        return "the row covers only part of " + _scope_rollouts(group_id, "labelled rollouts")
     # A rollout weighs its prompt's weight over the rollouts the prompt's rate divides by.
     # Either kind of interval can be the row's primary, so both counts must agree.
     for per_rollout in (
@@ -1874,8 +2049,8 @@ def _pooled_calibration_gap(
         lightest, heaviest = min(per_rollout), max(per_rollout)
         if heaviest > lightest * (1 + 1e-9):
             return (
-                f"the row gives some of the cohort's rollouts {heaviest / lightest:.3g} times "
-                "the weight of others"
+                f"the row gives some of {_scope_rollouts(group_id)} "
+                f"{heaviest / lightest:.3g} times the weight of others"
             )
     return None
 
@@ -1915,7 +2090,21 @@ def _unclassified_assumption(share: float) -> str:
     )
 
 
-def _uncertified_correction_warning(gap: str) -> str:
+def _uncertified_base_warning(eligibility: str) -> str:
+    return (
+        f"Sensitivity analysis, not a certified bound: the judge-system interval it corrects "
+        f"is {eligibility}, and a correction cannot support more than its base."
+    )
+
+
+def _uncertified_correction_warning(gap: str, group_id: str | None = None) -> str:
+    if group_id is not None:
+        return (
+            f"Sensitivity analysis, not a certified bound: {gap}. The human labels weight every "
+            f"classified rollout of group {group_id!r} in the cohort equally, so they measure "
+            "the judge's accuracy only for a weighted mean that does the same, over the whole "
+            "group in a fixed design."
+        )
     return (
         f"Sensitivity analysis, not a certified bound: {gap}. The human labels weight every "
         "classified rollout of the cohort equally, so they measure the judge's accuracy only "
@@ -1946,9 +2135,15 @@ def _validated_judge_calibrations(
     data: NormalizedData,
     diagnostics: list[Diagnostic],
 ) -> tuple[
-    dict[str, JudgeCalibration], dict[str, dict[str, Any]], float | None, dict[str, Any]
+    dict[_JudgeScope, JudgeCalibration],
+    dict[_JudgeScope, dict[str, Any]],
+    float | None,
+    dict[_JudgeScope, Any],
 ]:
-    """Estimate one calibration per cohort from human labels within judge strata."""
+    """Estimate one calibration per cohort, or per cohort and scoped group, from human labels.
+
+    A scoped calibration counts only the labels, and the stratum sizes, of its group's rollouts.
+    """
 
     spec = plan.inputs.judge_calibration
     if spec is None or spec.mode != "validated":
@@ -1979,16 +2174,96 @@ def _validated_judge_calibrations(
         )
         return {}, {}, None, {}
 
-    counts, unmatched = judge_stratum_counts(data.observations, labels)
-    truth_strata: dict[str, Any] = {}
-    if spec.sampling == "simple_random":
-        # A simple random sample of the design also estimates sensitivity and the
-        # false-positive rate by true class, which the noisy-but-valid test needs.
-        for cohort_id, by_class in truth_stratum_counts(data.observations, labels).items():
-            truth_strata[cohort_id] = {
-                name: {"labelled": item.labelled, "judge_positive": item.judge_positive}
-                for name, item in by_class.items()
-            }
+    declared: dict[str, str] | None = None
+    if spec.sampling == "stratified_without_replacement":
+        if spec.validation_strata is None:
+            raise ValueError("stratified judge-calibration sampling requires validation_strata")
+        try:
+            declared = load_validation_strata(spec.validation_strata)
+        except (OSError, ValueError) as exc:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_VALIDATION_INVALID",
+                    severity="ERROR",
+                    message=str(exc),
+                    scope="inputs.judge_calibration",
+                )
+            )
+            return {}, {}, None, {}
+        design = fine_stratum_counts(data.observations, labels, declared)
+        # The strata file is the design: a classified row it does not place, or a key that
+        # names no classified row, means the sizes it implies are not the design's.
+        for code, keys, what in (
+            (
+                "JUDGE_VALIDATION_STRATA_INCOMPLETE",
+                design.unstratified,
+                "classified observations have no declared stratum",
+            ),
+            (
+                "JUDGE_VALIDATION_STRATA_UNMATCHED",
+                design.unknown_strata,
+                "validation strata rows reference observations absent from the analysed "
+                "logs or with unclassified outcomes",
+            ),
+        ):
+            if keys:
+                diagnostics.append(
+                    Diagnostic(
+                        code=code,
+                        severity="ERROR",
+                        message=f"{len(keys)} {what}; no judge correction is reported",
+                        scope="inputs.judge_calibration",
+                        details={"observation_ids": keys[:20]},
+                    )
+                )
+        if design.unstratified or design.unknown_strata:
+            return {}, {}, None, {}
+
+    _, unmatched = judge_stratum_counts(data.observations, labels)
+    scopes = _judge_scopes(plan)
+    counts: dict[_JudgeScope, JudgeStrata] = {}
+    fine: dict[_JudgeScope, FineStrata] = {}
+    truth_strata: dict[_JudgeScope, Any] = {}
+    in_scope: set[str] = set()
+    for scope in scopes:
+        cohort_id, group_id = scope
+        observations = data.observations
+        if group_id is not None:
+            prompts = set(next(item for item in data.groups if item.id == group_id).prompt_ids)
+            observations = [row for row in observations if row.prompt_id in prompts]
+            in_scope.update(row.observation_id for row in observations)
+        if declared is not None:
+            # A scoped calibration's fine strata are the declared strata within its group.
+            scoped_fine = fine_stratum_counts(observations, labels, declared)
+            if cohort_id in scoped_fine.by_cohort:
+                counts[scope] = scoped_fine.judge_strata(cohort_id)
+                fine[scope] = scoped_fine.by_cohort[cohort_id]
+        elif cohort_id in (scoped := judge_stratum_counts(observations, labels)[0]):
+            counts[scope] = scoped[cohort_id]
+        if spec.sampling == "simple_random":
+            # A simple random sample of the design also estimates sensitivity and the
+            # false-positive rate by true class, which the noisy-but-valid test needs.
+            by_class = truth_stratum_counts(observations, labels).get(cohort_id)
+            if by_class is not None:
+                truth_strata[scope] = {
+                    name: {"labelled": item.labelled, "judge_positive": item.judge_positive}
+                    for name, item in by_class.items()
+                }
+    if spec.groups is not None:
+        outside = sorted(set(labels) - set(unmatched) - in_scope)
+        if outside:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_VALIDATION_OUT_OF_SCOPE",
+                    severity="WARNING",
+                    message=(
+                        f"{len(outside)} validation rows label rollouts outside the groups the "
+                        "calibration is scoped to; they calibrate nothing"
+                    ),
+                    scope="inputs.judge_calibration",
+                    details={"observation_ids": outside[:20]},
+                )
+            )
     if unmatched:
         diagnostics.append(
             Diagnostic(
@@ -2003,17 +2278,23 @@ def _validated_judge_calibrations(
             )
         )
 
-    # Every declared cohort gets an equal share of the judge family budget. A single
-    # risk row consumes one share; a comparison consumes the two cohorts it spans. A
-    # union over all of them therefore never exceeds the declared family alpha.
-    per_cohort_alpha = family.alpha / len(plan.cohorts)
-    calibrations: dict[str, JudgeCalibration] = {}
-    summaries: dict[str, dict[str, Any]] = {}
-    for cohort_id in sorted(plan.cohorts):
-        strata = counts.get(cohort_id, {})
-        unsafe = strata.get("judge_unsafe")
-        safe = strata.get("judge_safe")
-        if unsafe is None or safe is None:
+    # Every calibration (one per declared cohort, or per cohort and scoped group) gets an
+    # equal share of the judge family budget. A single risk row consumes one share; a
+    # comparison consumes the two it spans. A union over all of them therefore never
+    # exceeds the declared family alpha.
+    per_calibration_alpha = cohort_alpha_share(family.alpha, len(scopes))
+    calibrations: dict[_JudgeScope, JudgeCalibration] = {}
+    summaries: dict[_JudgeScope, dict[str, Any]] = {}
+    for scope in scopes:
+        cohort_id, group_id = scope
+        where = cohort_id if group_id is None else f"{cohort_id}/{group_id}"
+        outcome = calibrate_cohort(
+            counts.get(scope, NO_STRATA),
+            scenario_id="validated",
+            alpha=per_calibration_alpha,
+            fine=None if declared is None else fine.get(scope, {}),
+        )
+        if outcome.empty_strata:
             diagnostics.append(
                 Diagnostic(
                     code="JUDGE_VALIDATION_STRATUM_EMPTY",
@@ -2021,51 +2302,49 @@ def _validated_judge_calibrations(
                     message=(
                         f"cohort {cohort_id!r} has no observations in one judge stratum; "
                         "no judge correction is reported for it"
+                        if group_id is None
+                        else f"group {group_id!r} of cohort {cohort_id!r} has no observations "
+                        "in one judge stratum; no judge correction is reported for it"
                     ),
                     scope=cohort_id,
                 )
             )
             continue
-        try:
-            calibrations[cohort_id] = estimate_judge_calibration(
-                scenario_id="validated",
-                unsafe_stratum=unsafe,
-                safe_stratum=safe,
-                alpha=per_cohort_alpha,
-            )
-        except ValueError as exc:
+        if outcome.calibration is None:
             diagnostics.append(
                 Diagnostic(
                     code="JUDGE_CALIBRATION_UNINFORMATIVE",
                     severity="WARNING",
-                    message=str(exc),
+                    message=str(outcome.refusal),
                     scope=cohort_id,
                 )
             )
             continue
-        warning = completion_warning(calibrations[cohort_id])
-        if warning is not None:
-            diagnostics.append(
-                Diagnostic(
-                    code="JUDGE_STRATUM_UNLABELLED_COMPLETED",
-                    severity="WARNING",
-                    message=warning,
-                    scope=cohort_id,
-                    details={"completed_strata": list(calibrations[cohort_id].completed_strata)},
-                )
+        calibrations[scope] = outcome.calibration
+        completed = completion_diagnostic(outcome.calibration, where)
+        if completed is not None:
+            diagnostics.append(completed)
+        summary: dict[str, Any] = dict(outcome.strata.summary())
+        if declared is not None:
+            partial = unlabelled_fine_strata_diagnostic(outcome.fine_strata, where)
+            if partial is not None:
+                diagnostics.append(partial)
+            summary["fine_strata"] = fine_strata_summary(outcome.fine_strata)
+        summaries[scope] = summary
+    if declared is not None and calibrations:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_CALIBRATION_STRATIFIED",
+                severity="INFO",
+                message=(
+                    "Experimental: the judge calibration reads its labels as a stratified "
+                    "sample without replacement within declared fine strata, with exact "
+                    "hypergeometric bounds; the asymptotic delta-method reference, which "
+                    "assumes simple random samples within the judge strata, is not reported"
+                ),
+                scope="inputs.judge_calibration",
             )
-        summaries[cohort_id] = {
-            "judge_unsafe": {
-                "labelled": unsafe.labelled,
-                "truly_unsafe": unsafe.truly_unsafe,
-                "stratum_size": unsafe.stratum_size,
-            },
-            "judge_safe": {
-                "labelled": safe.labelled,
-                "truly_unsafe": safe.truly_unsafe,
-                "stratum_size": safe.stratum_size,
-            },
-        }
+        )
     return calibrations, summaries, family.alpha, truth_strata
 
 
@@ -2078,7 +2357,13 @@ def _judge_corrected_interval(
     judge_alpha: float | None,
     gap: str | None = None,
     unclassified_share: float = 0.0,
+    scoped_group: str | None = None,
+    scoped_groups: list[str] | None = None,
+    stratified: bool = False,
 ) -> RiskIntervalResult | None:
+    """Correct one row; ``scoped_group`` names a validated calibration's group, and
+    ``scoped_groups`` the groups an assumed calibration is scoped to."""
+
     if result.lower is None or result.upper is None:
         return None
     corrected = correct_judge_risk(
@@ -2089,9 +2374,10 @@ def _judge_corrected_interval(
         unclassified_share=unclassified_share,
     )
     validated = calibration.source == "validated"
-    # Measured accuracies certify only a row they were measured for; elsewhere the
-    # corrected interval is a sensitivity, as an assumed one always is.
-    certified = validated and gap is None
+    # Measured accuracies certify only a row they were measured for, and never more than
+    # the row's own bounds support. Elsewhere the corrected interval is a sensitivity, as an
+    # assumed one always is.
+    certified = validated and gap is None and result.eligibility == "certifying"
     base = next((item for item in result.intervals if item.role == "primary"), None)
     base_alpha = base.family_alpha if base is not None else None
     spent = calibration.alpha if calibration.alpha is not None else judge_alpha
@@ -2120,7 +2406,48 @@ def _judge_corrected_interval(
         f"P(truly unsafe | judge said safe) lies in "
         f"[{calibration.rho_0_lower:.6g}, {calibration.rho_0_upper:.6g}].",
     ]
-    if validated:
+    if validated and stratified:
+        if calibration.completed_strata:
+            assumptions.append(
+                "The "
+                + " and ".join(calibration.completed_strata)
+                + " judge stratum has no human label, so its range is [0, 1], which holds "
+                "with certainty."
+            )
+        assumptions.extend(
+            [
+                "Experimental: each range sums exact hypergeometric bounds on the truly unsafe "
+                "count of every declared fine stratum within its judge stratum, weighted by "
+                "the fine stratum's size; a census is exact and a fine stratum without labels "
+                "is completed from none to all of its rollouts.",
+                "Each endpoint's budget is split equally over the fine strata that were "
+                "sampled but not censused.",
+                "The labelled rows of each fine stratum are a simple random sample without "
+                "replacement of it, of a size fixed independently of the labels; this is a "
+                "property of the declared collection protocol, not of the data.",
+                "The declared validation strata place every classified rollout of the cohort.",
+                "Human adjudication is treated as ground truth.",
+            ]
+        )
+        if scoped_group is not None:
+            assumptions.append(
+                f"The calibration is scoped to group {scoped_group!r}: its fine strata are the "
+                "declared strata of the group's rollouts in the cohort."
+            )
+        if certified:
+            population = (
+                "the cohort" if scoped_group is None else f"group {scoped_group!r} in the cohort"
+            )
+            assumptions.extend(
+                [
+                    f"The fine strata weight back to every classified rollout of {population} "
+                    "equally, and so does this row, so they measure the judge's accuracy for "
+                    "its estimand.",
+                    "Coverage is the union bound over the underlying interval and every "
+                    "calibration count bound.",
+                ]
+            )
+    elif validated:
         if calibration.completed_strata:
             assumptions.append(
                 "The "
@@ -2141,10 +2468,21 @@ def _judge_corrected_interval(
                 "Human adjudication is treated as ground truth.",
             ]
         )
+        if scoped_group is not None:
+            assumptions.append(
+                f"The calibration is scoped to group {scoped_group!r}: its labels and judge "
+                "strata are those of the group's rollouts in the cohort."
+            )
         if certified:
+            labels = (
+                "The labels weight every classified rollout of the cohort equally"
+                if scoped_group is None
+                else f"The labels weight every classified rollout of group {scoped_group!r} "
+                "in the cohort equally"
+            )
             assumptions.extend(
                 [
-                    "The labels weight every classified rollout of the cohort equally, and so "
+                    f"{labels}, and so "
                     "does this row, so they measure the judge's accuracy for its estimand.",
                     "Coverage is the union bound over the underlying interval and the four "
                     "calibration endpoints.",
@@ -2156,7 +2494,12 @@ def _judge_corrected_interval(
                 "These conditional accuracies are declared assumptions, not measurements; "
                 "the interval inherits no coverage guarantee from them.",
                 "The declared accuracies are prevalence-dependent and are applied unchanged "
-                "to every cohort.",
+                "to every cohort."
+                if scoped_groups is None
+                else "The declared accuracies are prevalence-dependent and are applied "
+                "unchanged to every cohort, on the rows of groups "
+                + ", ".join(repr(item) for item in scoped_groups)
+                + " only.",
             ]
         )
     if unclassified_share > 0:
@@ -2164,7 +2507,9 @@ def _judge_corrected_interval(
     assumptions.append("The underlying judge-system interval retains its own stated guarantee.")
     warnings: list[str] = []
     if validated and gap is not None:
-        warnings.append(_uncertified_correction_warning(gap))
+        warnings.append(_uncertified_correction_warning(gap, scoped_group))
+    elif validated and not certified:
+        warnings.append(_uncertified_base_warning(result.eligibility))
     if not validated and primary_scenario is not None:
         if calibration.scenario_id != primary_scenario:
             warnings.append(
@@ -2180,6 +2525,7 @@ def _judge_corrected_interval(
             else "assumed_judge_misclassification_correction"
         ),
         role="reference" if certified else "sensitivity",
+        varied_assumption=None if certified else "judge_error",
         coverage_scope=(
             f"{result.coverage_scope}_judge_corrected"
             if result.coverage_scope
@@ -2201,25 +2547,83 @@ def _judge_corrected_interval(
     )
 
 
+def _transported_judge_interval(
+    *,
+    result: GroupRiskResult | HierarchyRiskResult,
+    published: PublishedValidationSetSpec,
+    sensitivity_lower: float,
+) -> RiskIntervalResult | None:
+    """A true-risk sensitivity from a judge sensitivity measured on a published set.
+
+    Experimental. Only the sensitivity is transported; the false-positive rate is bounded
+    by the run's own judged rate, so the interval's lower end is zero.
+    """
+
+    if result.upper is None:
+        return None
+    corrected = transport_judge_risk(
+        observed_upper=result.upper,
+        observed_estimate=result.estimate,
+        sensitivity_lower=sensitivity_lower,
+    )
+    return RiskIntervalResult(
+        interval_id="judge_corrected_transported",
+        lower=corrected.lower,
+        upper=corrected.upper,
+        method="transported_judge_sensitivity_correction",
+        role="sensitivity",
+        varied_assumption="judge_error",
+        coverage_scope=(
+            f"{result.coverage_scope}_judge_corrected"
+            if result.coverage_scope
+            else "judge_corrected"
+        ),
+        completion_estimate_lower=corrected.completion_estimate_lower,
+        completion_estimate_upper=corrected.completion_estimate_upper,
+        raw_lower=result.lower,
+        raw_upper=result.upper,
+        calibration_method="transported_judge_calibration",
+        assumptions=[
+            "The reported estimand is true failure risk, not judge-reported failure risk.",
+            f"The judge's sensitivity is at least {sensitivity_lower:.6g}: the one-sided "
+            f"Clopper-Pearson lower bound at alpha {published.sensitivity_alpha:.6g} from "
+            f"{published.judge_flagged_unsafe} of {published.human_unsafe} human-unsafe items "
+            f"flagged on the published set {published.name!r} ({published.source}).",
+            f"Transport assumption: the same judge ({published.judge}) and rubric "
+            f"({published.rubric}), applied to this run's outputs, is at least as sensitive "
+            "on every prompt as on the published set, whose outputs came from other "
+            "generators. Nothing in this run checks it.",
+            "The published set's false-positive rate is not transported. This run's false "
+            "positives are bounded only by its own judged failures, so every judged failure "
+            "may be a false positive and the lower bound is zero.",
+            "The upper bound is the judge-system upper bound divided by the sensitivity "
+            "bound; unclassified rollouts stay completed as failures.",
+            "Human adjudication on the published set is treated as ground truth.",
+        ],
+        eligibility="diagnostic",
+        warnings=[
+            "Experimental transported judge calibration: a sensitivity analysis with no "
+            "coverage guarantee, which never decides a claim."
+        ],
+    )
+
+
 def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, Any] | None:
     """Describe the declared judge panel: per-judge counts, composites, and agreement.
 
     Bookkeeping only. Effective votes is the Kish count over declared dependence
     blocks, and agreement is descriptive; nothing here corrects a risk estimate.
+
+    With ``inputs.panel_groups`` every judge, composite and pair also carries ``groups``:
+    the same counts and agreement for each listed group's rollouts, per cohort, so a
+    cohort that holds several benchmarks does not mix them into one figure.
     """
 
     if not plan.inputs.judges:
         return None
     cohorts = sorted(plan.cohorts)
-    by_cohort: dict[str, list[str]] = {cohort_id: [] for cohort_id in cohorts}
-    for observation in data.observations:
-        by_cohort.setdefault(observation.cohort_id, []).append(observation.observation_id)
-
-    def verdicts(cohort_id: str, judge_id: str) -> list[bool | None]:
-        return [
-            data.judge_verdicts.get(observation_id, {}).get(judge_id)
-            for observation_id in by_cohort[cohort_id]
-        ]
+    blocks = {judge.id: judge.block or judge.id for judge in plan.inputs.judges}
+    pairs = list(itertools.combinations([judge.id for judge in plan.inputs.judges], 2))
 
     def counts(values: list[bool | None]) -> dict[str, int]:
         positives = sum(value is True for value in values)
@@ -2230,76 +2634,198 @@ def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, 
             "unclassified": len(values) - positives - negatives,
         }
 
-    blocks = {judge.id: judge.block or judge.id for judge in plan.inputs.judges}
-    judges = [
+    def agreement_stats(
+        first_votes: list[bool | None], second_votes: list[bool | None]
+    ) -> dict[str, Any]:
+        summary = pairwise_agreement(first_votes, second_votes)
+        paired = [
+            (bool(a), bool(b))
+            for a, b in zip(first_votes, second_votes, strict=True)
+            if a is not None and b is not None
+        ]
+        first_only = second_only = 0
+        p_value: float | None = None
+        if paired:
+            mcnemar = exact_mcnemar([a for a, _ in paired], [b for _, b in paired])
+            first_only = mcnemar.candidate_failure_baseline_safe
+            second_only = mcnemar.candidate_safe_baseline_failure
+            p_value = mcnemar.p_value_two_sided
+        return {
+            "compared": summary.compared,
+            "disagreements": summary.disagreements,
+            "agreement": summary.agreement,
+            "kappa": summary.kappa,
+            "discordant_first_only": first_only,
+            "discordant_second_only": second_only,
+            "mcnemar_p_value": p_value,
+        }
+
+    def section(prompts: set[str] | None) -> tuple[
+        dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[dict[str, Any]]
+    ]:
+        """Per-cohort figures for each judge, composite and pair, over these prompts' rollouts.
+
+        ``prompts`` None means every rollout.
+        """
+
+        by_cohort: dict[str, list[str]] = {cohort_id: [] for cohort_id in cohorts}
+        for observation in data.observations:
+            if prompts is None or observation.prompt_id in prompts:
+                by_cohort.setdefault(observation.cohort_id, []).append(
+                    observation.observation_id
+                )
+
+        def verdicts(cohort_id: str, judge_id: str) -> list[bool | None]:
+            return [
+                data.judge_verdicts.get(observation_id, {}).get(judge_id)
+                for observation_id in by_cohort[cohort_id]
+            ]
+
+        judge_figures = {
+            judge.id: {cohort_id: counts(verdicts(cohort_id, judge.id)) for cohort_id in cohorts}
+            for judge in plan.inputs.judges
+        }
+        composite_figures = {
+            composite.id: {
+                cohort_id: counts(
+                    [
+                        compose_verdicts(
+                            {
+                                judge_id: data.judge_verdicts.get(observation_id, {}).get(judge_id)
+                                for judge_id in composite.judges
+                            },
+                            composite.rule,
+                        )
+                        for observation_id in by_cohort[cohort_id]
+                    ]
+                )
+                for cohort_id in cohorts
+            }
+            for composite in plan.inputs.composites
+        }
+        pair_figures = [
+            {
+                cohort_id: agreement_stats(verdicts(cohort_id, first), verdicts(cohort_id, second))
+                for cohort_id in cohorts
+            }
+            for first, second in pairs
+        ]
+        return judge_figures, composite_figures, pair_figures
+
+    judge_figures, composite_figures, pair_figures = section(None)
+    judges: list[dict[str, Any]] = [
         {
             "id": judge.id,
             "kind": judge.kind,
             "block": blocks[judge.id],
             "score": judge.score.name,
-            "cohorts": {cohort_id: counts(verdicts(cohort_id, judge.id)) for cohort_id in cohorts},
+            "cohorts": judge_figures[judge.id],
         }
         for judge in plan.inputs.judges
     ]
-    composites = []
-    for composite in plan.inputs.composites:
-        per_cohort = {}
-        for cohort_id in cohorts:
-            combined = [
-                compose_verdicts(
-                    {
-                        judge_id: data.judge_verdicts.get(observation_id, {}).get(judge_id)
-                        for judge_id in composite.judges
-                    },
-                    composite.rule,
-                )
-                for observation_id in by_cohort[cohort_id]
-            ]
-            per_cohort[cohort_id] = counts(combined)
-        composites.append(
-            {
-                "id": composite.id,
-                "rule": composite.rule,
-                "judges": list(composite.judges),
-                "effective_votes": effective_votes([blocks[j] for j in composite.judges]),
-                "cohorts": per_cohort,
-            }
-        )
-    agreement = []
-    for first, second in itertools.combinations([judge.id for judge in plan.inputs.judges], 2):
-        pair_cohorts = {}
-        for cohort_id in cohorts:
-            first_votes = verdicts(cohort_id, first)
-            second_votes = verdicts(cohort_id, second)
-            summary = pairwise_agreement(first_votes, second_votes)
-            paired = [
-                (bool(a), bool(b))
-                for a, b in zip(first_votes, second_votes, strict=True)
-                if a is not None and b is not None
-            ]
-            first_only = second_only = 0
-            p_value: float | None = None
-            if paired:
-                mcnemar = exact_mcnemar([a for a, _ in paired], [b for _, b in paired])
-                first_only = mcnemar.candidate_failure_baseline_safe
-                second_only = mcnemar.candidate_safe_baseline_failure
-                p_value = mcnemar.p_value_two_sided
-            pair_cohorts[cohort_id] = {
-                "compared": summary.compared,
-                "disagreements": summary.disagreements,
-                "agreement": summary.agreement,
-                "kappa": summary.kappa,
-                "discordant_first_only": first_only,
-                "discordant_second_only": second_only,
-                "mcnemar_p_value": p_value,
-            }
-        agreement.append({"first": first, "second": second, "cohorts": pair_cohorts})
-    return {
+    composites: list[dict[str, Any]] = [
+        {
+            "id": composite.id,
+            "rule": composite.rule,
+            "judges": list(composite.judges),
+            "effective_votes": effective_votes([blocks[j] for j in composite.judges]),
+            "cohorts": composite_figures[composite.id],
+        }
+        for composite in plan.inputs.composites
+    ]
+    agreement: list[dict[str, Any]] = [
+        {"first": first, "second": second, "cohorts": figures}
+        for (first, second), figures in zip(pairs, pair_figures, strict=True)
+    ]
+    panel: dict[str, Any] = {
         "judges": judges,
         "composites": composites,
         "agreement": agreement,
         "effective_votes_all": effective_votes(list(blocks.values())),
     }
+    if plan.inputs.panel_groups is not None:
+        prompts_by_group = {group.id: set(group.prompt_ids) for group in data.groups}
+        panel["groups"] = list(plan.inputs.panel_groups)
+        for group_id in plan.inputs.panel_groups:
+            by_judge, by_composite, by_pair = section(prompts_by_group[group_id])
+            for entry in judges:
+                entry.setdefault("groups", {})[group_id] = by_judge[entry["id"]]
+            for entry in composites:
+                entry.setdefault("groups", {})[group_id] = by_composite[entry["id"]]
+            for entry, figures in zip(agreement, by_pair, strict=True):
+                entry.setdefault("groups", {})[group_id] = figures
+    return panel
+
+
+def _declared_box(accuracy: JudgeAccuracySpec) -> JudgeAccuracyBox:
+    return JudgeAccuracyBox(
+        sensitivity_lower=accuracy.sensitivity.lower,
+        sensitivity_upper=accuracy.sensitivity.upper,
+        specificity_lower=accuracy.specificity.lower,
+        specificity_upper=accuracy.specificity.upper,
+    )
+
+
+def _composite_box(
+    members: list[JudgeSpec], accuracies: list[JudgeAccuracySpec], rule: str
+) -> JudgeAccuracyBox:
+    """An ``any`` or ``all`` composite's box from its members' declared boxes and blocks."""
+    return composite_accuracy_box(
+        [_declared_box(accuracy) for accuracy in accuracies],
+        [member.block or member.id for member in members],
+        rule,
+    )
+
+
+def _declared_scope(plan: AnalysisPlan, accuracies: list[JudgeAccuracySpec]) -> list[str] | None:
+    """The groups, in plan order, that every one of these declarations covers.
+
+    None when no declaration is scoped to groups, so they all hold on every rollout. A
+    declaration scoped to groups holds on those groups' rows only, so a box built from
+    several declarations holds only where all of them do; the list can then be empty.
+    """
+
+    if all(accuracy.groups is None for accuracy in accuracies):
+        return None
+    return [
+        group.id
+        for group in plan.groups
+        if all(accuracy.groups is None or group.id in accuracy.groups for accuracy in accuracies)
+    ]
+
+
+# A declared accuracy box, the verdict it is declared for, and the groups it holds on (None: all).
+_DeclaredBox = tuple[JudgeAccuracyBox, str, list[str] | None]
+
+
+def _primary_accuracy_box(plan: AnalysisPlan) -> _DeclaredBox | None:
+    """The declared accuracy box of the verdict that is the primary outcome, if it has one.
+
+    That is a declared judge whose score is the primary score, or an ``any`` or ``all``
+    composite whose judges all declare accuracy ranges. A ``majority`` composite has none.
+    """
+
+    name = plan.inputs.score.name
+    composite = next((item for item in plan.inputs.composites if item.id == name), None)
+    judges = {judge.id: judge for judge in plan.inputs.judges}
+    if composite is not None:
+        members = [judges[judge_id] for judge_id in composite.judges]
+        accuracies = [member.accuracy for member in members if member.accuracy is not None]
+        if composite.rule == "majority" or len(accuracies) != len(members):
+            return None
+        return (
+            _composite_box(members, accuracies, composite.rule),
+            f"composite:{composite.id}",
+            _declared_scope(plan, accuracies),
+        )
+    judge = next((item for item in plan.inputs.judges if item.score.name == name), None)
+    if judge is None or judge.accuracy is None:
+        return None
+    return (
+        _declared_box(judge.accuracy),
+        f"judge:{judge.id}",
+        _declared_scope(plan, [judge.accuracy]),
+    )
 
 
 def _apply_panel_derived_correction(
@@ -2314,6 +2840,10 @@ def _apply_panel_derived_correction(
     declared dependence blocks, and the judge-reported interval is inverted over that
     box. Declared boxes are assumptions, so every interval this adds is a diagnostic
     sensitivity that can never move a claim.
+
+    A judge whose accuracy declaration is scoped to groups vouches only for those groups'
+    rows, so the box holds, and a row is corrected, only in the groups every member's
+    declaration covers.
     """
 
     composite = next(
@@ -2339,18 +2869,21 @@ def _apply_panel_derived_correction(
             )
         )
         return None
-    boxes = [
-        JudgeAccuracyBox(
-            sensitivity_lower=accuracy.sensitivity.lower,
-            sensitivity_upper=accuracy.sensitivity.upper,
-            specificity_lower=accuracy.specificity.lower,
-            specificity_upper=accuracy.specificity.upper,
+    scoped = _declared_scope(plan, accuracies)
+    if scoped is not None and not scoped:
+        diagnostics.append(
+            Diagnostic(
+                code="PANEL_CORRECTION_NO_COMMON_GROUP",
+                severity="WARNING",
+                message=(
+                    f"the judges of composite {composite.id!r} declare their accuracies for "
+                    "no group in common, so no panel-derived correction is reported"
+                ),
+                scope=f"inputs.composites.{composite.id}",
+            )
         )
-        for accuracy in accuracies
-    ]
-    box = composite_accuracy_box(
-        boxes, [member.block or member.id for member in members], composite.rule
-    )
+        return None
+    box = _composite_box(members, accuracies, composite.rule)
     correctable = {
         measure.id
         for measure in plan.outputs.risk_measures
@@ -2360,8 +2893,17 @@ def _apply_panel_derived_correction(
         *(row for row in risks if row.measure_id in correctable),
         *hierarchy_risks,
     ]
+    where = (
+        "every prompt and cohort"
+        if scoped is None
+        else "every cohort, on the rows of groups "
+        + ", ".join(repr(item) for item in scoped)
+        + " only, the groups every judge's declaration covers"
+    )
     for result in targets:
         if result.lower is None or result.upper is None:
+            continue
+        if scoped is not None and result.group_id not in scoped:
             continue
         identified = identified_risk_set(result.lower, result.upper, box)
         estimate_range = (
@@ -2376,6 +2918,7 @@ def _apply_panel_derived_correction(
                 upper=identified.upper,
                 method="derived_panel_misclassification_correction",
                 role="sensitivity",
+                varied_assumption="judge_error",
                 coverage_scope=(
                     f"{result.coverage_scope}_panel_derived"
                     if result.coverage_scope
@@ -2399,7 +2942,7 @@ def _apply_panel_derived_correction(
                     f"{box.sensitivity_upper:.6g}] and specificity in "
                     f"[{box.specificity_lower:.6g}, {box.specificity_upper:.6g}].",
                     "Judge accuracies are declared, prevalence-free, and applied unchanged to "
-                    "every prompt and cohort; they carry no coverage guarantee.",
+                    f"{where}; they carry no coverage guarantee.",
                     "True risk is the Rogan-Gladen inversion over the box; extrema sit at the box "
                     "vertices because the inversion is separately monotone in each argument.",
                 ],
@@ -2429,6 +2972,7 @@ def _apply_panel_derived_correction(
             "sensitivity": [box.sensitivity_lower, box.sensitivity_upper],
             "specificity": [box.specificity_lower, box.specificity_upper],
         },
+        **({"groups": scoped} if scoped is not None else {}),
     }
 
 
@@ -2465,6 +3009,7 @@ def _delta_reference_interval(
     family_id: str | None,
     gap: str | None = None,
     unclassified_share: float = 0.0,
+    scoped_group: str | None = None,
 ) -> RiskIntervalResult | None:
     """Asymptotic delta-method reference beside the exact validated correction."""
 
@@ -2487,7 +3032,7 @@ def _delta_reference_interval(
         )
     except ValueError:
         return None
-    warnings = [_uncertified_correction_warning(gap)] if gap is not None else []
+    warnings = [_uncertified_correction_warning(gap, scoped_group)] if gap is not None else []
     if unclassified_share > 0:
         warnings.append(
             f"It covers the classified rollouts only: {unclassified_share:.6g} of the row's "
@@ -2500,6 +3045,7 @@ def _delta_reference_interval(
         upper=delta.upper,
         method="delta_method_judge_misclassification_correction",
         role="sensitivity",
+        varied_assumption="judge_error",
         coverage_scope=(
             f"{result.coverage_scope}_judge_corrected_delta"
             if result.coverage_scope
@@ -2543,7 +3089,9 @@ def _apply_judge_correction(
 
     Returns a summary of the calibration actually used, for the report provenance
     block. In ``assumed`` mode every scenario is applied to every cohort. In
-    ``validated`` mode one calibration is estimated per cohort from human labels.
+    ``validated`` mode one calibration is estimated per cohort from human labels. A
+    calibration scoped to groups corrects only the rows of those groups, and validated mode
+    then estimates one calibration per cohort and group.
     """
 
     spec = plan.inputs.judge_calibration
@@ -2576,9 +3124,52 @@ def _apply_judge_correction(
         key = (result.group_id, result.level, tuple(result.path.items()))
         return node_weights[key], "weighted_mean"
 
+    if spec.mode == "transported":
+        published = spec.published_set
+        if published is None:
+            raise ValueError("a transported inputs.judge_calibration requires a published_set")
+        sensitivity_lower = transported_sensitivity_lower(
+            judge_flagged_unsafe=published.judge_flagged_unsafe,
+            human_unsafe=published.human_unsafe,
+            alpha=published.sensitivity_alpha,
+        )
+        for result in targets:
+            interval = _transported_judge_interval(
+                result=result, published=published, sensitivity_lower=sensitivity_lower
+            )
+            if interval is not None:
+                result.intervals.append(interval)
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_CALIBRATION_TRANSPORTED",
+                severity="INFO",
+                message=(
+                    "Experimental: judge-corrected rows use a sensitivity transported from "
+                    f"{published.name!r}; they are sensitivity analyses and decide no claim"
+                ),
+                scope="inputs.judge_calibration",
+            )
+        )
+        return {
+            "mode": "transported",
+            "experimental": True,
+            "published_set": {
+                "name": published.name,
+                "source": published.source,
+                "judge": published.judge,
+                "rubric": published.rubric,
+                "human_unsafe": published.human_unsafe,
+                "judge_flagged_unsafe": published.judge_flagged_unsafe,
+                "sensitivity_alpha": published.sensitivity_alpha,
+            },
+            "sensitivity_lower": sensitivity_lower,
+        }
+
     if spec.mode == "assumed":
         calibrations = _assumed_judge_calibrations(plan)
         for result in targets:
+            if _judge_scope(plan, result.cohort_id, result.group_id) is None:
+                continue
             weights, measure_type = weighting(result)
             share = _unclassified_share(
                 population.get(result.cohort_id, {}), weights, measure_type
@@ -2591,6 +3182,7 @@ def _apply_judge_correction(
                     family_id=None,
                     judge_alpha=None,
                     unclassified_share=share,
+                    scoped_groups=spec.groups,
                 )
                 if interval is not None:
                     result.intervals.append(interval)
@@ -2598,68 +3190,105 @@ def _apply_judge_correction(
             "mode": "assumed",
             "scenarios": [item.scenario_id for item in calibrations],
             "primary": spec.primary,
+            **({"groups": list(spec.groups)} if spec.groups is not None else {}),
         }
 
-    by_cohort, summaries, judge_alpha, truth_strata = _validated_judge_calibrations(
+    by_scope, summaries, judge_alpha, truth_strata = _validated_judge_calibrations(
         plan, data, diagnostics
     )
+    scope_count = len(_judge_scopes(plan))
+    stratified = spec.sampling == "stratified_without_replacement"
     for result in targets:
-        cohort_calibration = by_cohort.get(result.cohort_id)
-        if cohort_calibration is None:
+        scope = _judge_scope(plan, result.cohort_id, result.group_id)
+        measured = by_scope.get(scope) if scope is not None else None
+        if scope is None or measured is None:
             continue
         weights, measure_type = weighting(result)
-        cohort_population = population.get(result.cohort_id, {})
+        scope_population = _scope_population(population, data, scope)
         gap = _pooled_calibration_gap(
-            cohort_population,
+            scope_population,
             design_type=plan.design.type,
             measure_type=measure_type,
             weights=weights,
+            group_id=scope[1],
         )
-        share = _unclassified_share(cohort_population, weights, measure_type)
+        share = _unclassified_share(scope_population, weights, measure_type)
         interval = _judge_corrected_interval(
             result=result,
-            calibration=cohort_calibration,
+            calibration=measured,
             primary_scenario=None,
             family_id=spec.family,
             judge_alpha=judge_alpha,
             gap=gap,
             unclassified_share=share,
+            scoped_group=scope[1],
+            stratified=stratified,
         )
         if interval is not None:
             result.intervals.append(interval)
         # The reference propagates the weighted mean's variance, so only a weighted-mean
-        # row has one: on a tail row it would describe a different estimand.
+        # row has one: on a tail row it would describe a different estimand. Its stratum
+        # proportions assume simple random samples within the judge strata, so a stratified
+        # design has none.
         if (
             isinstance(result, GroupRiskResult)
             and measure_type == "weighted_mean"
             and judge_alpha is not None
+            and not stratified
         ):
             reference = _delta_reference_interval(
                 result=result,
                 data=data,
-                strata=summaries.get(result.cohort_id, {}),
-                alpha=judge_alpha / len(plan.cohorts),
+                strata=summaries.get(scope, {}),
+                alpha=judge_alpha / scope_count,
                 family_id=spec.family,
                 gap=gap,
                 unclassified_share=share,
+                scoped_group=scope[1],
             )
             if reference is not None:
                 result.intervals.append(reference)
     _apply_judge_correction_to_comparisons(
-        plan, data, population, comparisons, by_cohort, spec.family, diagnostics
+        plan, data, population, comparisons, by_scope, spec.family, diagnostics
     )
-    return {
-        "mode": "validated",
-        "family": spec.family,
-        "family_alpha": judge_alpha,
-        "per_cohort_alpha": (
-            judge_alpha / len(plan.cohorts) if judge_alpha is not None else None
-        ),
-        "sampling": spec.sampling,
-        "validation_manifest": str(spec.validation_manifest),
-        "cohorts": summaries,
-        "truth_strata": truth_strata,
-    }
+    per_calibration_alpha = judge_alpha / scope_count if judge_alpha is not None else None
+    summary: dict[str, Any]
+    if spec.groups is None:
+        summary = {
+            "mode": "validated",
+            "family": spec.family,
+            "family_alpha": judge_alpha,
+            "per_cohort_alpha": per_calibration_alpha,
+            "sampling": spec.sampling,
+            "validation_manifest": str(spec.validation_manifest),
+            "cohorts": {cohort_id: item for (cohort_id, _), item in summaries.items()},
+            "truth_strata": {cohort_id: item for (cohort_id, _), item in truth_strata.items()},
+        }
+    else:
+
+        def nested(by_scope: dict[_JudgeScope, Any]) -> dict[str, dict[str, Any]]:
+            out: dict[str, dict[str, Any]] = {}
+            for (cohort_id, group_id), item in by_scope.items():
+                out.setdefault(cohort_id, {})[str(group_id)] = item
+            return out
+
+        summary = {
+            "mode": "validated",
+            "family": spec.family,
+            "family_alpha": judge_alpha,
+            "groups": list(spec.groups),
+            "per_calibration_alpha": per_calibration_alpha,
+            "sampling": spec.sampling,
+            "validation_manifest": str(spec.validation_manifest),
+            "cohorts": nested(summaries),
+            "truth_strata": nested(truth_strata),
+        }
+    if stratified:
+        # Only a stratified design records it, so other reports keep their bytes.
+        summary["experimental"] = True
+        if spec.validation_strata is not None:
+            summary["validation_strata"] = report_path(spec.validation_strata, plan)
+    return summary
 
 
 def _observation_attr(observation: Observation, name: str) -> Any:
@@ -3290,6 +3919,7 @@ def _comparison_interval(
         upper=upper,
         method=method,
         role=role,
+        varied_assumption="independence" if role == "sensitivity" else None,
         coverage_scope=(scope_prefix + f"_{independence_profile}_fixed_design_comparison_family"),
         coverage_mode=spec.coverage_mode,
         family=spec.family,
@@ -3843,6 +4473,7 @@ def _judge_corrected_comparison_interval(
     gap: str | None = None,
     candidate_share: float = 0.0,
     baseline_share: float = 0.0,
+    scoped_group: str | None = None,
 ) -> RiskIntervalResult | None:
     """Correct a comparison by correcting each arm, then recombining.
 
@@ -3888,13 +4519,19 @@ def _judge_corrected_comparison_interval(
         item.alpha or 0.0 for item in (candidate_calibration, baseline_calibration)
     )
     base_alpha = primary.family_alpha
-    certified = gap is None
+    certified = gap is None and result.eligibility == "certifying"
+    warnings: list[str] = []
+    if gap is not None:
+        warnings.append(_uncertified_correction_warning(gap, scoped_group))
+    elif not certified:
+        warnings.append(_uncertified_base_warning(result.eligibility))
     return RiskIntervalResult(
         interval_id="judge_corrected_validated",
         lower=lower,
         upper=upper,
         method="validated_judge_misclassification_correction",
         role="reference" if certified else "sensitivity",
+        varied_assumption=None if certified else "judge_error",
         coverage_scope=(
             f"{primary.coverage_scope}_judge_corrected"
             if primary.coverage_scope
@@ -3916,8 +4553,14 @@ def _judge_corrected_comparison_interval(
         assumptions=[
             "The reported effect is a contrast of true failure risks, not of "
             "judge-reported risks.",
-            "Each arm is corrected with its own cohort's calibration, because the "
-            "conditional judge accuracies are prevalence-dependent.",
+            (
+                "Each arm is corrected with its own cohort's calibration, because the "
+                "conditional judge accuracies are prevalence-dependent."
+                if scoped_group is None
+                else f"Each arm is corrected with its own cohort's calibration for group "
+                f"{scoped_group!r}, from the labels on that group's rollouts, because the "
+                "conditional judge accuracies are prevalence-dependent."
+            ),
             f"Candidate P(truly unsafe | judge said unsafe) lies in "
             f"[{candidate_calibration.rho_1_lower:.6g}, "
             f"{candidate_calibration.rho_1_upper:.6g}]; P(truly unsafe | judge said safe) "
@@ -3933,7 +4576,13 @@ def _judge_corrected_comparison_interval(
             "two-arm region already makes.",
             *(
                 [
-                    "Each cohort's labels weight its classified rollouts equally, and so does "
+                    (
+                        "Each cohort's labels weight its classified rollouts equally"
+                        if scoped_group is None
+                        else f"Each cohort's labels weight the classified rollouts of group "
+                        f"{scoped_group!r} equally"
+                    )
+                    + ", and so does "
                     "the comparison, so they measure the judge's accuracy for both arms.",
                     "Coverage is the union bound over that region and both arm calibrations.",
                 ]
@@ -3947,7 +4596,7 @@ def _judge_corrected_comparison_interval(
             ),
         ],
         eligibility="certifying" if certified else "diagnostic",
-        warnings=[_uncertified_correction_warning(gap)] if gap is not None else [],
+        warnings=warnings,
     )
 
 
@@ -3956,13 +4605,17 @@ def _apply_judge_correction_to_comparisons(
     data: NormalizedData,
     population: dict[str, dict[str, _PromptRollouts]],
     comparisons: list[ComparisonResult],
-    by_cohort: dict[str, JudgeCalibration],
+    by_scope: dict[_JudgeScope, JudgeCalibration],
     family_id: str | None,
     diagnostics: list[Diagnostic],
 ) -> None:
-    """Append validated corrections to comparisons that expose both arm bounds."""
+    """Append validated corrections to comparisons that expose both arm bounds.
 
-    if not by_cohort:
+    A comparison of a group the calibration is not scoped to stays uncorrected, silently:
+    the plan scoped the calibration away from it.
+    """
+
+    if not by_scope:
         return
     target_weights: dict[tuple[str, str], dict[str, float]] = {}
     for comparison in plan.expanded_comparisons():
@@ -3977,26 +4630,28 @@ def _apply_judge_correction_to_comparisons(
     measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
     skipped: list[str] = []
     for result in comparisons:
-        candidate = by_cohort.get(result.candidate_cohort)
-        baseline = by_cohort.get(result.baseline_cohort)
+        candidate_scope = _judge_scope(plan, result.candidate_cohort, result.group_id)
+        baseline_scope = _judge_scope(plan, result.baseline_cohort, result.group_id)
+        if candidate_scope is None or baseline_scope is None:
+            continue
+        candidate = by_scope.get(candidate_scope)
+        baseline = by_scope.get(baseline_scope)
         if candidate is None or baseline is None:
             skipped.append(result.result_id or result.comparison_id)
             continue
         weights = target_weights[(result.comparison_id, result.result_id or result.comparison_id)]
         # Each arm is corrected with its own cohort's labels, so each must be identified.
         gaps: list[str] = []
-        for arm, cohort_id in (
-            ("candidate", result.candidate_cohort),
-            ("baseline", result.baseline_cohort),
-        ):
+        for arm, scope in (("candidate", candidate_scope), ("baseline", baseline_scope)):
             gap = _pooled_calibration_gap(
-                population.get(cohort_id, {}),
+                _scope_population(population, data, scope),
                 design_type=plan.design.type,
                 measure_type=measure_types[result.measure_id],
                 weights=weights,
+                group_id=scope[1],
             )
             if gap is not None:
-                gaps.append(f"{arm} cohort {cohort_id!r}: {gap}")
+                gaps.append(f"{arm} cohort {scope[0]!r}: {gap}")
         measure_type = measure_types[result.measure_id]
         interval = _judge_corrected_comparison_interval(
             result=result,
@@ -4005,11 +4660,12 @@ def _apply_judge_correction_to_comparisons(
             family_id=family_id,
             gap="; ".join(gaps) or None,
             candidate_share=_unclassified_share(
-                population.get(result.candidate_cohort, {}), weights, measure_type
+                _scope_population(population, data, candidate_scope), weights, measure_type
             ),
             baseline_share=_unclassified_share(
-                population.get(result.baseline_cohort, {}), weights, measure_type
+                _scope_population(population, data, baseline_scope), weights, measure_type
             ),
+            scoped_group=candidate_scope[1],
         )
         if interval is None:
             skipped.append(result.result_id or result.comparison_id)
@@ -4420,8 +5076,16 @@ def _noisy_valid_claim(
     family_alpha: float,
     judge_summary: dict[str, Any] | None,
     gap: str | None,
-) -> tuple[Decision, list[str], float | None, float | None, str, float]:
-    """Decide an aggregate claim with the finite-sample noisy-but-valid test."""
+    scope: _JudgeScope | None = None,
+) -> tuple[Decision, list[str], float | None, float | None, str, float, VerdictRange | None]:
+    """Decide an aggregate claim with the finite-sample noisy-but-valid test.
+
+    ``scope`` is the calibration the claim's row is corrected with; None when the
+    calibration is scoped to groups that leave the row out.
+
+    The verdict range is None when the test could not run at the plan's thresholds, which
+    leaves the thresholds at which it would decide unknown.
+    """
 
     method = "noisy_valid_certification_test"
     if not isinstance(evidence, GroupRiskResult) or not eligible:
@@ -4435,6 +5099,17 @@ def _noisy_valid_claim(
             None,
             method,
             family_alpha,
+            VerdictRange(),
+        )
+    if scope is None:
+        return (
+            "INCONCLUSIVE",
+            [_out_of_scope_reason(evidence.group_id)],
+            None,
+            None,
+            method,
+            family_alpha,
+            VerdictRange(),
         )
     if gap is not None:
         # The truth strata pool the cohort's labels exactly as the judge strata do.
@@ -4442,19 +5117,27 @@ def _noisy_valid_claim(
             "INCONCLUSIVE",
             [
                 f"The noisy-but-valid test cannot certify this row: {gap}. Its labels are a "
-                "simple random sample of the cohort's classified rollouts, so they measure "
+                f"simple random sample of {_scope_rollouts(scope[1], 'classified rollouts')}, "
+                "so they measure "
                 "the judge's sensitivity and false-positive rate only for a weighted mean "
-                "that weights those rollouts equally, over the whole cohort in a fixed design."
+                "that weights those rollouts equally, over the whole "
+                + ("cohort" if scope[1] is None else "group")
+                + " in a fixed design."
             ],
             None,
             None,
             method,
             family_alpha,
+            VerdictRange(),
         )
     summary = judge_summary or {}
     strata = (summary.get("truth_strata") or {}).get(evidence.cohort_id) or {}
+    if scope[1] is not None:
+        strata = strata.get(scope[1]) or {}
     judge_alpha = summary.get("family_alpha")
-    per_cohort_alpha = summary.get("per_cohort_alpha")
+    per_cohort_alpha = summary.get(
+        "per_cohort_alpha" if scope[1] is None else "per_calibration_alpha"
+    )
     base = next((item for item in evidence.intervals if item.role == "primary"), None)
     if (
         summary.get("mode") != "validated"
@@ -4478,6 +5161,7 @@ def _noisy_valid_claim(
             None,
             method,
             family_alpha,
+            VerdictRange(),
         )
     try:
         # A projected upper endpoint misses whenever the joint event fails, so its error is the
@@ -4498,7 +5182,7 @@ def _noisy_valid_claim(
             unacceptable_lower=claim.unacceptable_lower,
         )
     except ValueError as exc:
-        return "INCONCLUSIVE", [str(exc)], None, None, method, family_alpha
+        return "INCONCLUSIVE", [str(exc)], None, None, method, family_alpha, None
     reasons = [
         "Noisy-but-valid certification on true failure risk: judge-reported interval "
         f"[{result.judge_reported_lower:.12g}, {result.judge_reported_upper:.12g}]; PASS "
@@ -4531,6 +5215,176 @@ def _noisy_valid_claim(
         result.true_risk_upper,
         method,
         family_alpha + float(judge_alpha),
+        noisy_valid_verdict_range(result),
+    )
+
+
+def _profile_verdicts(
+    claim: Any,
+    evidence: ComparisonResult | GroupRiskResult | None,
+    *,
+    status: Decision,
+    lower: float | None,
+    upper: float | None,
+    confirmatory_and_valid: bool,
+) -> list[ClaimProfileVerdict]:
+    """Return the claim's verdict under its primary and each sensitivity profile.
+
+    The primary row repeats the claim's decision. Each sensitivity row decides the same
+    thresholds on that profile's interval computed with the primary interval's method.
+    Evidence whose primary interval assumes no independence profile, such as the propagated
+    prompt envelope, has no rows.
+    """
+    if evidence is None:
+        return []
+    primary = next(
+        (item for item in evidence.intervals if item.interval_id == evidence.primary_interval_id),
+        None,
+    )
+    if primary is None or primary.independence_profile is None:
+        return []
+    rows = [
+        ClaimProfileVerdict(
+            independence_profile=primary.independence_profile,
+            role="primary",
+            status=status,
+            interval_id=primary.interval_id,
+            lower=lower,
+            upper=upper,
+            independent_block_count=primary.independent_block_count,
+            effective_sample_size=primary.effective_sample_size,
+        )
+    ]
+    for interval in evidence.intervals:
+        if (
+            interval.role != "sensitivity"
+            or interval.method != primary.method
+            or interval.independence_profile is None
+            or interval.independence_profile == primary.independence_profile
+        ):
+            continue
+        sensitivity_status, _ = decide_claim(
+            lower=interval.lower,
+            upper=interval.upper,
+            acceptable_upper=claim.acceptable_upper,
+            unacceptable_lower=claim.unacceptable_lower,
+            eligible=confirmatory_and_valid and interval.eligibility == "certifying",
+        )
+        rows.append(
+            ClaimProfileVerdict(
+                independence_profile=interval.independence_profile,
+                role="sensitivity",
+                status=sensitivity_status,
+                interval_id=interval.interval_id,
+                lower=interval.lower,
+                upper=interval.upper,
+                independent_block_count=interval.independent_block_count,
+                effective_sample_size=interval.effective_sample_size,
+            )
+        )
+    return rows
+
+
+def _has_sensitivity_profiles(evidence: ComparisonResult | GroupRiskResult | None) -> bool:
+    """Whether the evidence has intervals under a profile other than its primary one."""
+    if evidence is None:
+        return False
+    primary_profile = next(
+        (
+            item.independence_profile
+            for item in evidence.intervals
+            if item.interval_id == evidence.primary_interval_id
+        ),
+        None,
+    )
+    return any(
+        item.role == "sensitivity"
+        and item.independence_profile is not None
+        and item.independence_profile != primary_profile
+        for item in evidence.intervals
+    )
+
+
+def _claim_judge_error_stress(
+    *,
+    claim: ClaimSpec,
+    evidence: ComparisonResult | GroupRiskResult | None,
+    status: Decision,
+    why_not: str | None,
+    measure_types: Mapping[str, str],
+    population: dict[str, dict[str, _PromptRollouts]],
+    group_weights: dict[str, dict[str, float]],
+    accuracy: _DeclaredBox | None,
+) -> JudgeErrorStressResult:
+    """Where a claim decided on judge-reported bounds tips, and whether a declared box holds it.
+
+    Diagnostic only: the result is reported beside the claim and never changes its status. A
+    box declared for groups that leave the claim's group out is not applied to it.
+    """
+
+    def skipped(reason: str) -> JudgeErrorStressResult:
+        return JudgeErrorStressResult(applicable=False, reason=reason)
+
+    if claim.comparison:
+        return skipped(
+            "comparison claims are not stressed: the judge's accuracy may differ between arms"
+        )
+    if (
+        not isinstance(evidence, GroupRiskResult)
+        or evidence.lower is None
+        or evidence.upper is None
+    ):
+        return skipped("the claim has no complete bounds")
+    if why_not is not None:
+        return skipped(why_not)
+    measure_type = measure_types[evidence.measure_id]
+    if measure_type not in _JUDGE_CORRECTABLE_MEASURES:
+        return skipped(
+            f"a {measure_type} measure does not carry the judge's per-prompt error model over "
+            "to the row"
+        )
+    share = _unclassified_share(
+        population.get(evidence.cohort_id, {}), group_weights[evidence.group_id], measure_type
+    )
+    if accuracy is not None and accuracy[2] is not None and evidence.group_id not in accuracy[2]:
+        accuracy = None
+    stress = stress_verdict(
+        judge_reported_lower=evidence.lower,
+        judge_reported_upper=evidence.upper,
+        acceptable_upper=claim.acceptable_upper,
+        unacceptable_lower=claim.unacceptable_lower,
+        box=accuracy[0] if accuracy is not None else None,
+        unclassified_share=share,
+    )
+    box, source = (accuracy[0], accuracy[1]) if accuracy is not None else (None, None)
+    stressed = stress.stressed
+    return JudgeErrorStressResult(
+        applicable=True,
+        judge_reported_lower=evidence.lower,
+        judge_reported_upper=evidence.upper,
+        unclassified_share=share,
+        pass_sensitivity_at_perfect_specificity=(
+            stress.pass_line.sensitivity_at_perfect_specificity
+        ),
+        pass_specificity_at_perfect_sensitivity=(
+            stress.pass_line.specificity_at_perfect_sensitivity
+        ),
+        fail_sensitivity_at_perfect_specificity=(
+            stress.fail_line.sensitivity_at_perfect_specificity
+        ),
+        fail_specificity_at_perfect_sensitivity=(
+            stress.fail_line.specificity_at_perfect_sensitivity
+        ),
+        accuracy_source=source,
+        sensitivity_lower=box.sensitivity_lower if box else None,
+        sensitivity_upper=box.sensitivity_upper if box else None,
+        specificity_lower=box.specificity_lower if box else None,
+        specificity_upper=box.specificity_upper if box else None,
+        stressed_status=stressed.verdict if stressed else None,
+        true_risk_lower=stressed.true_risk_lower if stressed else None,
+        true_risk_upper=stressed.true_risk_upper if stressed else None,
+        identified=stressed.identified if stressed else None,
+        robust=stressed.verdict == status if stressed else None,
     )
 
 
@@ -4557,6 +5411,10 @@ def _claims(
     )
     group_weights = {group.id: group.weights for group in data.groups}
     measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
+    stress_population = (
+        population or _labelled_population(plan, data) if plan.report.judge_error_stress else {}
+    )
+    stress_box = _primary_accuracy_box(plan) if plan.report.judge_error_stress else None
     results: list[ClaimResult] = []
     corrected_claims: list[str] = []
     uncorrected_claims: list[str] = []
@@ -4596,6 +5454,7 @@ def _claims(
                     upper=upper,
                     acceptable_upper=claim.acceptable_upper,
                     unacceptable_lower=claim.unacceptable_lower,
+                    verdict_range=VerdictRange(),
                     alpha=None,
                     multiplicity_family=claim.family,
                     method=method,
@@ -4611,6 +5470,9 @@ def _claims(
             continue
         alpha = family.alpha
         correction_note: str | None = None
+        # Filled only where the claim is decided directly on the evidence intervals: a
+        # judge-corrected or noisy-valid decision has no per-profile counterpart.
+        profile_verdicts: list[ClaimProfileVerdict] = []
 
         # A validated correction retargets the claim from judge-reported risk onto true
         # risk. The threshold in the plan is about the model, not about the judge.
@@ -4638,23 +5500,30 @@ def _claims(
             uncorrected_claims.append(claim.id)
 
         if claim.method == "noisy_valid_test":
-            gap = (
-                _pooled_calibration_gap(
-                    population.get(evidence.cohort_id, {}),
-                    design_type=plan.design.type,
-                    measure_type=measure_types[evidence.measure_id],
-                    weights=group_weights[evidence.group_id],
-                )
+            scope = (
+                _judge_scope(plan, evidence.cohort_id, evidence.group_id)
                 if isinstance(evidence, GroupRiskResult)
                 else None
             )
-            status, reasons, lower, upper, method, alpha = _noisy_valid_claim(
+            gap = (
+                _pooled_calibration_gap(
+                    _scope_population(population, data, scope),
+                    design_type=plan.design.type,
+                    measure_type=measure_types[evidence.measure_id],
+                    weights=group_weights[evidence.group_id],
+                    group_id=scope[1],
+                )
+                if isinstance(evidence, GroupRiskResult) and scope is not None
+                else None
+            )
+            status, reasons, lower, upper, method, alpha, verdict_range = _noisy_valid_claim(
                 claim=claim,
                 evidence=evidence,
                 eligible=eligible,
                 family_alpha=family.alpha,
                 judge_summary=judge_summary,
                 gap=gap,
+                scope=scope,
             )
             estimate = None
             correction_note = None
@@ -4664,6 +5533,7 @@ def _claims(
             # certifying correction only judge-reported risk remains, and the labels may show
             # the judge missing failures: a refused calibration used to pass claims that way.
             status = "INCONCLUSIVE"
+            verdict_range = VerdictRange()
             # A correction the labels cannot certify for this estimand says why itself.
             why = [
                 warning
@@ -4671,6 +5541,8 @@ def _claims(
                 if interval.interval_id == "judge_corrected_validated"
                 for warning in interval.warnings
             ]
+            if evidence is not None and _judge_scope_excludes(plan, evidence.group_id):
+                why.append(_out_of_scope_reason(evidence.group_id))
             reasons = [
                 "The plan declares a validated judge calibration, but this claim's evidence has "
                 "no certifying correction, so it is not decided on judge-reported risk."
@@ -4685,6 +5557,17 @@ def _claims(
                 unacceptable_lower=claim.unacceptable_lower,
                 eligible=eligible,
             )
+            profile_verdicts = _profile_verdicts(
+                claim,
+                evidence,
+                status=status,
+                lower=lower,
+                upper=upper,
+                confirmatory_and_valid=bool(
+                    integrity_valid and plan.analysis.intent == "confirmatory"
+                ),
+            )
+            verdict_range = claim_verdict_range(lower=lower, upper=upper, eligible=eligible)
         if not integrity_valid and lower is not None and upper is not None:
             reasons = [
                 "Bounds were computed but are ineligible for certification because data "
@@ -4708,6 +5591,34 @@ def _claims(
             else:
                 reasons.append("Exploratory analyses cannot produce a safety pass.")
             status = "INCONCLUSIVE"
+        # ORDER MATTERS: after the exploratory demotion above, so `status` is the final one.
+        stress = None
+        if plan.report.judge_error_stress:
+            stress = _claim_judge_error_stress(
+                claim=claim,
+                evidence=evidence,
+                status=status,
+                why_not=(
+                    "the analysis is exploratory, so the claim is not decided on its bounds"
+                    if exploratory
+                    else "the claim was not decided on its bounds: they are not certifying, or "
+                    "data integrity is invalid"
+                    if not eligible
+                    else "the noisy-but-valid test already accounts for judge error"
+                    if claim.method == "noisy_valid_test"
+                    else "the claim is decided on a validated judge correction, which already "
+                    "accounts for judge error"
+                    if correction is not None
+                    else "the plan's validated calibration leaves the claim INCONCLUSIVE rather "
+                    "than deciding it on judge-reported risk"
+                    if validated_judge
+                    else None
+                ),
+                measure_types=measure_types,
+                population=stress_population,
+                group_weights=group_weights,
+                accuracy=stress_box,
+            )
         if correction_note is not None:
             reasons.insert(0, correction_note)
             if alpha != family.alpha:
@@ -4715,6 +5626,11 @@ def _claims(
                     f"The error budget is the union of the claim family ({family.alpha:.12g}) "
                     f"and the judge calibration, giving {alpha:.12g}."
                 )
+        if not profile_verdicts and _has_sensitivity_profiles(evidence):
+            reasons.append(
+                "Verdicts under the sensitivity independence profiles are not reported, "
+                "because this claim is not decided directly on the profile intervals."
+            )
         results.append(
             ClaimResult(
                 claim_id=claim.id,
@@ -4728,6 +5644,7 @@ def _claims(
                 upper=upper,
                 acceptable_upper=claim.acceptable_upper,
                 unacceptable_lower=claim.unacceptable_lower,
+                verdict_range=verdict_range,
                 alpha=alpha,
                 multiplicity_family=claim.family,
                 method=method,
@@ -4735,6 +5652,8 @@ def _claims(
                 evidence_refs=evidence_refs,
                 reasons=reasons,
                 warnings=list(evidence.warnings) if evidence else [],
+                profile_verdicts=profile_verdicts,
+                judge_error_stress=stress,
             )
         )
     if corrected_claims:
@@ -4806,34 +5725,160 @@ def _resolved_design(data: NormalizedData, hierarchy: list[str]) -> list[dict[st
     return rows
 
 
-def analyze(
-    *,
-    plan: AnalysisPlan | str | Path,
-    logs: LogInput = None,
-    parallel: bool | int = False,
-    source: EvaluationSource | None = None,
-) -> SafetyReport:
-    resolved = _coerce_plan(plan)
-    diagnostics = validate_plan_references(resolved)
-    data = ingest(resolved, _source(logs, parallel, source))
-    validate_profile_fields(resolved.design.independence_profiles, data.manifest)
-    diagnostics.extend(data.diagnostics)
-    estimates = _prompt_estimates(resolved, data, diagnostics)
-    hierarchy_nodes = _hierarchy_nodes(resolved, data)
+def _scope(plan: AnalysisPlan) -> dict[str, Any]:
+    """The report's scope statement, which says what population the results are about."""
+    if plan.design.type == "sampled":
+        # The Horvitz-Thompson intervals are about the whole declared frame, not only the
+        # items that were drawn.
+        return {
+            "design": "sampled",
+            "randomness": (
+                "items drawn from the declared frame with recorded inclusion probabilities, "
+                "and stochastic rollouts within the drawn items"
+            ),
+            "estimand": plan.inputs.estimand,
+            "disclaimer": (
+                "Results apply to the declared item frame, from which the evaluated items "
+                "were drawn with the recorded inclusion probabilities, and to the specified "
+                "stochastic rollout process. They do not estimate failure prevalence over "
+                "prompts outside the frame or establish safety for omitted hazards or "
+                "deployment conditions."
+            ),
+        }
+    return {
+        "design": "fixed",
+        "randomness": "stochastic rollouts within fixed prompts",
+        "estimand": plan.inputs.estimand,
+        "disclaimer": (
+            "Results apply to the declared fixed evaluation set and specified "
+            "stochastic rollout process. They do not estimate failure prevalence "
+            "over an external population of prompts or establish safety for omitted "
+            "hazards or deployment conditions."
+        ),
+    }
+
+
+def _report_frame(plan: AnalysisPlan) -> dict[str, Any]:
+    """The report fields that come from the plan alone, whether or not its input was read."""
+
+    return {
+        "package_version": __version__,
+        "analysis": {
+            **plan.analysis.model_dump(mode="json"),
+            "plan_sha256": canonical_plan_hash(plan),
+        },
+        "scope": _scope(plan),
+        "presentation": {"include_decisions": plan.report.include_decisions},
+        "multiplicity": [family.model_dump(mode="json") for family in plan.multiplicity.families],
+    }
+
+
+def _design_frame(plan: AnalysisPlan) -> dict[str, Any]:
+    """The report's design fields that come from the plan alone."""
+
+    return {
+        "manifest": report_path(plan.inputs.design_manifest, plan),
+        "hierarchy": plan.design.hierarchy,
+        "independence_profiles": {
+            profile_id: profile.model_dump(mode="json")
+            for profile_id, profile in plan.design.independence_profiles.items()
+        },
+    }
+
+
+def _unread_input_report(plan: AnalysisPlan, diagnostics: list[Diagnostic]) -> SafetyReport:
+    """The report of an analysis whose input could not be read.
+
+    The diagnostics carry the ``INGEST_FAILED`` error, so integrity is invalid. The report has
+    no observations, estimates or comparisons, and every claim is INCONCLUSIVE, so that the
+    failure is written down and audited like any other invalid analysis.
+    """
+
+    families = {family.id: family for family in plan.multiplicity.families}
+    claims = [
+        ClaimResult(
+            claim_id=claim.id,
+            title=claim.title,
+            status="INCONCLUSIVE",
+            statistical_status="INCONCLUSIVE",
+            policy_status="INCONCLUSIVE",
+            acceptable_upper=claim.acceptable_upper,
+            unacceptable_lower=claim.unacceptable_lower,
+            verdict_range=VerdictRange(),
+            alpha=families[claim.family].alpha if claim.family in families else None,
+            multiplicity_family=claim.family,
+            method="unavailable",
+            mandatory=claim.mandatory,
+            evidence_refs=[
+                f"comparison:{claim.comparison}"
+                if claim.comparison
+                else f"risk:{claim.cohort}:{claim.group}:{claim.measure}"
+            ],
+            reasons=["The analysis input could not be read; see the INGEST_FAILED diagnostic."],
+        )
+        for claim in sorted(plan.claims, key=lambda item: item.id)
+    ]
+    report = SafetyReport(
+        **_report_frame(plan),
+        provenance={"source_format": {}, "sources": []},
+        integrity=_sorted_integrity(diagnostics),
+        design={
+            **_design_frame(plan),
+            "manifest_sha256": None,
+            "prompt_count": None,
+            "groups": [],
+        },
+        cohorts=[],
+        prompt_estimates=[],
+        group_risks=[],
+        comparisons=[],
+        claims=claims,
+        policy_events=[],
+        decision=roll_up(
+            [claim.status for claim in claims if claim.mandatory],
+            integrity_valid=False,
+            zero_tolerance_failure=False,
+            confirmatory=plan.analysis.intent == "confirmatory",
+        ),
+    )
+    report._resolved_plan = report_plan(plan)
+    return report
+
+
+@dataclass
+class _AnalysisCore:
+    """What one plan decides over one normalized source, before the report is assembled."""
+
+    estimates: list[PromptEstimate]
+    risks: list[GroupRiskResult]
+    hierarchy_risks: list[HierarchyRiskResult]
+    comparisons: list[ComparisonResult]
+    judge_calibration_summary: dict[str, Any] | None
+    panel_correction: dict[str, Any] | None
+    comparison_sets: list[ComparisonSetResult]
+    integrity_status: Literal["valid", "degraded", "invalid"]
+    claims: list[ClaimResult]
+
+
+def _analysis_core(
+    plan: AnalysisPlan, data: NormalizedData, diagnostics: list[Diagnostic]
+) -> _AnalysisCore:
+    estimates = _prompt_estimates(plan, data, diagnostics)
+    hierarchy_nodes = _hierarchy_nodes(plan, data)
     direct_context = _direct_mean_context(
-        resolved,
+        plan,
         data,
         nodes=hierarchy_nodes,
     )
     risks = _group_risks(
-        resolved,
+        plan,
         data,
         estimates,
         diagnostics,
         direct_context=direct_context,
     )
     hierarchy_risks = _hierarchy_risks(
-        resolved,
+        plan,
         data,
         hierarchy_nodes,
         estimates,
@@ -4841,34 +5886,181 @@ def analyze(
         direct_context,
     )
     _project_hierarchy_regions(
-        resolved,
+        plan,
         data,
         hierarchy_nodes,
         risks,
         hierarchy_risks,
         diagnostics,
     )
-    comparisons = _comparisons(resolved, data, estimates, diagnostics)
+    comparisons = _comparisons(plan, data, estimates, diagnostics)
     # Applied last so it corrects the bounds that are actually displayed, after both
     # the hierarchy and comparison region projections have settled.
     judge_calibration_summary = _apply_judge_correction(
-        resolved, data, hierarchy_nodes, risks, hierarchy_risks, comparisons, diagnostics
+        plan, data, hierarchy_nodes, risks, hierarchy_risks, comparisons, diagnostics
     )
-    panel_correction = _apply_panel_derived_correction(
-        resolved, risks, hierarchy_risks, diagnostics
-    )
-    comparison_sets = _comparison_set_results(resolved, comparisons, risks)
+    panel_correction = _apply_panel_derived_correction(plan, risks, hierarchy_risks, diagnostics)
+    comparison_sets = _comparison_set_results(plan, comparisons, risks)
     integrity_status = _integrity_status(diagnostics)
-    integrity_certifiable = integrity_status != "invalid"
     claims = _claims(
-        resolved,
+        plan,
         data,
         risks,
         comparisons,
-        integrity_certifiable,
+        integrity_status != "invalid",
         diagnostics,
         judge_calibration_summary,
     )
+    return _AnalysisCore(
+        estimates=estimates,
+        risks=risks,
+        hierarchy_risks=hierarchy_risks,
+        comparisons=comparisons,
+        judge_calibration_summary=judge_calibration_summary,
+        panel_correction=panel_correction,
+        comparison_sets=comparison_sets,
+        integrity_status=integrity_status,
+        claims=claims,
+    )
+
+
+def _judge_plan(plan: AnalysisPlan, judge: JudgeSpec) -> AnalysisPlan:
+    """The plan as it would read with this judge as its only, primary outcome.
+
+    The plan's judge calibration validates its primary outcome, not this judge, so it is
+    left out, and so is the panel, which a single judge's run has no use for.
+    """
+
+    inputs = plan.inputs.model_copy(
+        update={
+            "score": judge.score,
+            "judges": [],
+            "composites": [],
+            "judge_calibration": None,
+            "panel_groups": None,
+        }
+    )
+    outputs = plan.outputs.model_copy(update={"judge_claims": False})
+    return plan.model_copy(update={"inputs": inputs, "outputs": outputs})
+
+
+def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeInputs) -> None:
+    """Decide every claim again on each declared judge's verdicts, beside the primary's.
+
+    Each judge's run is the analysis the plan would give with that judge as its primary
+    outcome, over the same rollouts, so comparing judge configurations is one analysis.
+    """
+
+    by_id = {judge.id: judge for judge in plan.inputs.judges}
+    for entry in panel["judges"]:
+        judge_plan = _judge_plan(plan, by_id[entry["id"]])
+        diagnostics = validate_plan_references(judge_plan)
+        data = normalize(
+            judge_plan, inputs.manifest.copy(), copy.deepcopy(inputs.groups), inputs.source
+        )
+        diagnostics.extend(data.diagnostics)
+        core = _analysis_core(judge_plan, data, diagnostics)
+        entry["integrity"] = core.integrity_status
+        entry["claims"] = [
+            {
+                "claim_id": claim.claim_id,
+                "status": claim.status,
+                "estimate": claim.estimate,
+                "lower": claim.lower,
+                "upper": claim.upper,
+                "method": claim.method,
+            }
+            for claim in sorted(core.claims, key=lambda item: item.claim_id)
+        ]
+
+
+def _scorer_configurations(value: Any, score_name: str) -> list[Any] | None:
+    """The configurations a run records for the scorer named like a judge's score.
+
+    None when the run records no scorers at all, an empty list when none has that name.
+    """
+
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return None
+    scorers = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(scorers, list):
+        return None
+    return [
+        {key: item[key] for key in sorted(item) if key != "name"}
+        for item in scorers
+        if isinstance(item, dict) and item.get("name") == score_name
+    ]
+
+
+def _add_judge_configurations(
+    panel: dict[str, Any], plan: AnalysisPlan, data: NormalizedData, source_data: SourceData
+) -> None:
+    """Record, per judge and cohort, the scorer configurations and model roles of its runs.
+
+    The values are the distinct ones the cohort's runs record, sorted by their canonical
+    form; a cohort whose runs record none says so with null.
+    """
+
+    runs_by_key = {run.run_key: run for run in source_data.runs}
+    by_id = {judge.id: judge for judge in plan.inputs.judges}
+    for entry in panel["judges"]:
+        score_name = by_id[entry["id"]].score.name
+        configuration: dict[str, Any] = {}
+        for summary in sorted(data.cohorts, key=lambda item: item["cohort_id"]):
+            scorers: dict[str, Any] = {}
+            roles: dict[str, Any] = {}
+            for run_key in summary["run_keys"]:
+                attributes = runs_by_key[run_key].attributes
+                found = _scorer_configurations(attributes.get("scorers"), score_name)
+                if found is not None:
+                    for item in found:
+                        scorers[sha256_value(item)] = item
+                role_value = attributes.get("model_roles")
+                if isinstance(role_value, str):
+                    role_value = json.loads(role_value)
+                if isinstance(role_value, dict):
+                    roles[sha256_value(role_value)] = role_value
+            configuration[summary["cohort_id"]] = {
+                "scorer": [scorers[key] for key in sorted(scorers)] or None,
+                "model_roles": [roles[key] for key in sorted(roles)] or None,
+            }
+        entry["configuration"] = configuration
+
+
+def analyze(
+    *,
+    plan: AnalysisPlan | str | Path,
+    logs: LogInput = None,
+    parallel: bool | int = False,
+    source: EvaluationSource | None = None,
+) -> SafetyReport:
+    """Run the analysis a plan declares on its evaluation data and return the safety report.
+
+    ``plan`` is an ``AnalysisPlan`` or the path of a plan file, read with ``load_plan``. The
+    data comes from ``source`` when given, or else from the Inspect logs in ``logs``, read with
+    ``parallel`` passed to Inspect's log reader. Passing both ``logs`` and ``source`` is an
+    error. The report holds the prompt-level estimates, group and hierarchy risk bounds,
+    comparisons, claims with their pass, fail or inconclusive status, and the overall
+    decision. Its results apply to the declared fixed evaluation set, not to a wider prompt
+    population. Write it to disk with ``SafetyReport.write``. Raises when the data cannot be read;
+    ``validate`` reports that as a diagnostic instead.
+    """
+
+    resolved = _coerce_plan(plan)
+    diagnostics = validate_plan_references(resolved)
+    read = _read_input(resolved, logs, parallel, source, diagnostics)
+    if read is None:
+        return _unread_input_report(resolved, diagnostics)
+    data, judge_inputs = read
+    core = _analysis_core(resolved, data, diagnostics)
+    estimates = core.estimates
+    risks = core.risks
+    hierarchy_risks = core.hierarchy_risks
+    comparisons = core.comparisons
+    judge_calibration_summary = core.judge_calibration_summary
+    comparison_sets = core.comparison_sets
+    integrity_certifiable = core.integrity_status != "invalid"
+    claims = core.claims
     events = _policy_events(resolved, data)
     decision = roll_up(
         [claim.status for claim in claims if claim.mandatory],
@@ -4876,19 +6068,15 @@ def analyze(
         zero_tolerance_failure=bool(events),
         confirmatory=resolved.analysis.intent == "confirmatory",
     )
-    integrity = IntegritySummary(
-        status=integrity_status,
-        diagnostics=sorted(
-            diagnostics, key=lambda item: (item.severity, item.code, item.scope or "")
-        ),
-    )
+    integrity = _sorted_integrity(diagnostics)
     judge_panel = _judge_panel_summary(resolved, data)
-    if judge_panel is not None and panel_correction is not None:
-        judge_panel["derived_correction"] = panel_correction
-    plan_hash = canonical_plan_hash(resolved)
+    if judge_panel is not None and core.panel_correction is not None:
+        judge_panel["derived_correction"] = core.panel_correction
+    if judge_panel is not None and judge_inputs is not None:
+        _add_judge_claims(judge_panel, resolved, judge_inputs)
+        _add_judge_configurations(judge_panel, resolved, data, judge_inputs.source)
     report = SafetyReport(
-        package_version=__version__,
-        analysis={**resolved.analysis.model_dump(mode="json"), "plan_sha256": plan_hash},
+        **_report_frame(resolved),
         provenance={
             "source_format": data.source_format,
             "sources": [
@@ -4905,27 +6093,10 @@ def analyze(
             ),
             **({"judge_panel": judge_panel} if judge_panel else {}),
         },
-        scope={
-            "design": "fixed",
-            "randomness": "stochastic rollouts within fixed prompts",
-            "estimand": resolved.inputs.estimand,
-            "disclaimer": (
-                "Results apply to the declared fixed evaluation set and specified "
-                "stochastic rollout process. They do not estimate failure prevalence "
-                "over an external population of prompts or establish safety for omitted "
-                "hazards or deployment conditions."
-            ),
-        },
-        presentation={"include_decisions": resolved.report.include_decisions},
         integrity=integrity,
         design={
-            "manifest": report_path(resolved.inputs.design_manifest, resolved),
+            **_design_frame(resolved),
             "manifest_sha256": sha256_value(data.manifest.to_dict(orient="records")),
-            "hierarchy": resolved.design.hierarchy,
-            "independence_profiles": {
-                profile_id: profile.model_dump(mode="json")
-                for profile_id, profile in resolved.design.independence_profiles.items()
-            },
             "prompt_count": len(data.manifest),
             "groups": [
                 {"id": group.id, "title": group.title, "prompt_count": len(group.prompt_ids)}
@@ -4948,7 +6119,6 @@ def analyze(
         ),
         comparisons=sorted(comparisons, key=lambda item: item.comparison_id),
         comparison_sets=comparison_sets,
-        multiplicity=[family.model_dump(mode="json") for family in resolved.multiplicity.families],
         claims=sorted(claims, key=lambda item: item.claim_id),
         policy_events=events,
         decision=decision,

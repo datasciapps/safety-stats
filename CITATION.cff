@@ -1,0 +1,24 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it using the metadata from this file."
+type: software
+title: "Inspect Safety Stats"
+abstract: "Fixed-design statistical risk analysis for Inspect AI safety evaluations."
+version: 0.15.0
+license: MIT
+authors:
+  - given-names: Andrew
+    family-names: Duncan
+  - given-names: Rahul
+    family-names: Sharma
+  - given-names: Jonas
+    family-names: Hanselle
+  - given-names: Sergey
+    family-names: Redyuk
+  - given-names: Sebastian
+    family-names: Vollmer
+  - name: "safety_stats contributors"
+keywords:
+  - inspect-ai
+  - ai-safety
+  - statistics
+  - evaluation

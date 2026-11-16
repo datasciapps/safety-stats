@@ -72,6 +72,13 @@ PROMPT_STORE = "prompts.restricted.csv"
 
 @dataclass(frozen=True)
 class MaterializedRun:
+    """A summary of what :func:`materialize_run` wrote.
+
+    The counts are of sampling units. ``dataset`` is the first cohort's dataset path.
+    ``kernel_mismatch`` is None when the running kernel's id matches the plan's, and
+    otherwise says how they differ. ``resumed`` counts units replayed from an earlier run.
+    """
+
     output: Path
     dataset: Path
     selections: int
@@ -87,11 +94,15 @@ class MaterializedRun:
 
 
 def resolve_kernel(specification: str) -> RewriteKernel:
-    """Resolve ``fake``, ``fake:invalid_every=N``, or ``module:attribute``.
+    """Resolve ``fake``, ``fake:invalid_every=N``, ``module:attribute`` or ``file.py:attribute``.
 
     A provider-backed kernel is supplied as an import path so nothing in this package
     depends on a particular rewriter client. The attribute may be a kernel or a
     zero-argument factory returning one.
+
+    ``module:attribute`` is imported from ``sys.path`` as the caller left it; this function
+    does not add the working directory (the CLI does, as ``python -m`` would). A kernel file
+    is executed under a private module name and is not left in ``sys.modules``.
     """
 
     if specification == "fake" or specification.startswith("fake:"):
@@ -119,19 +130,26 @@ def resolve_kernel(specification: str) -> RewriteKernel:
     if candidate.suffix == ".py":
         if not candidate.is_file():
             raise ValueError(f"kernel file {candidate} does not exist")
-        loader = importlib.util.spec_from_file_location(candidate.stem, candidate)
+        name = f"_inspect_safety_stats_kernel_{candidate.stem}"
+        loader = importlib.util.spec_from_file_location(name, candidate)
         if loader is None or loader.loader is None:
             raise ValueError(f"kernel file {candidate} could not be loaded")
         module = importlib.util.module_from_spec(loader)
-        # Registered before execution so dataclasses and typing inside it resolve.
-        sys.modules[candidate.stem] = module
-        loader.loader.exec_module(module)
+        # ORDER MATTERS: the module is registered before execution and removed after it.
+        # dataclasses look the defining module up in sys.modules while the class body runs,
+        # so executing an unregistered file that defines a dataclass fails. Leaving it
+        # registered would keep global state, and under its bare stem a file named like
+        # an installed module (json.py) would replace that module for the whole process.
+        previous = sys.modules.get(name)
+        sys.modules[name] = module
+        try:
+            loader.loader.exec_module(module)
+        finally:
+            if previous is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = previous
     else:
-        # A console script does not put the working directory on sys.path, but someone
-        # naming a module on the command line means the one in their project.
-        working = str(Path.cwd())
-        if working not in sys.path:
-            sys.path.insert(0, working)
         try:
             module = importlib.import_module(target)
         except ModuleNotFoundError as exc:
@@ -318,7 +336,9 @@ def _judge_correction(
 
     The root is corrected under every declared scenario, since sensitivity to the judge is
     mostly a root-level question. Nodes and slices are corrected under the primary scenario
-    only, which keeps the artifact readable on a taxonomy with hundreds of nodes.
+    only, which keeps the artifact readable on a taxonomy with hundreds of nodes. A measured
+    calibration certifies the root only, and only when the root weights its units equally:
+    every other corrected estimate is a sensitivity that names why.
     """
 
     spec = plan.judge_calibration
@@ -338,7 +358,9 @@ def _judge_correction(
             targets = [tree.root]
             if scenario.id == spec.primary:
                 targets = [*tree.nodes, *slices]
-            corrected.extend(correct(targets, calibration, interval_alpha=alpha))
+            corrected.extend(
+                correct(targets, calibration, interval_alpha=alpha, root_id=tree.root.node_id)
+            )
         meta: dict[str, Any] = {
             "judge_calibration": {"mode": "assumed", "primary": spec.primary}
         }
@@ -353,7 +375,14 @@ def _judge_correction(
                 "judge_calibration": {"mode": "validated", "available": False}
             }
             return [], unavailable
-        corrected.extend(correct([*tree.nodes, *slices], measured, interval_alpha=alpha))
+        corrected.extend(
+            correct(
+                [*tree.nodes, *slices],
+                measured,
+                interval_alpha=alpha,
+                root_id=tree.root.node_id,
+            )
+        )
         meta = {
             "judge_calibration": {
                 "mode": "validated",
