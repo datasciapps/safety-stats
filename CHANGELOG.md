@@ -7,6 +7,15 @@ described in their pull requests.
 
 ### Added
 
+- **Direct `worst_of_k` interval (experimental).** A `worst_of_k` measure with
+  `direct_interval: true` gets a KL/Chernoff interval on its group rows. Each prompt enters as
+  `floor(n / k)` independent blocks, so the interval narrows as rollouts grow. Before, the only
+  interval was the propagated prompt envelope, which can be very wide. The interval is calibrated
+  with the direct-mean intervals and needs a fixed design with rollout-level independence; other
+  plans are refused. Plans without the field are unchanged. `worst_of_k_kl_chernoff_bounds` is
+  exported from `stats`. See
+  [Worst-of-k interval](docs/statistical-methods.md#worst-of-k-interval-experimental).
+
 - **Rollout files (experimental).** Results from any evaluation system can be analysed from a
   runs file and a rollouts file in JSON Lines or CSV: `analyze` and `validate` take
   `--runs` and `--rollouts` in place of `--logs`, and `source=RolloutFiles(...)` in place of
