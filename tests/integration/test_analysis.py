@@ -8,10 +8,10 @@ import pytest
 from inspect_safety_stats import analyze, load_plan, render_visualization, write_visualization
 from inspect_safety_stats.api import _alpha_by_prompt, _prompt_blocked
 from inspect_safety_stats.config.loader import canonical_plan_hash
-from inspect_safety_stats.config.models import CohortSpec, PromptBoundsSpec
+from inspect_safety_stats.config.models import CohortSpec, PromptBoundsSpec, RiskMeasureSpec
 from inspect_safety_stats.ingest.inspect_logs import ErrorContext, NormalizedData
 from inspect_safety_stats.ingest.manifest import load_manifest
-from inspect_safety_stats.schema.reports import Diagnostic, SafetyReport
+from inspect_safety_stats.schema.reports import Diagnostic, RiskIntervalResult, SafetyReport
 
 
 def _write_inputs(tmp_path: Path) -> Path:
@@ -2385,6 +2385,52 @@ def test_a_refused_judge_calibration_never_lets_a_claim_pass_on_judge_reported_r
     assert claim.status == "INCONCLUSIVE"
     assert report.decision != "PASS"
     assert any("validated judge calibration" in reason for reason in claim.reasons)
+
+
+def test_a_judge_correction_never_certifies_more_than_its_base_row(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A diagnostic-only mean has a diagnostic base, so its correction is diagnostic too."""
+    _label_everything(tmp_path, monkeypatch)
+    plan = load_plan(
+        _random_sample_validated_plan(
+            tmp_path,
+            claim_method="corrected_interval",
+            sampling="simple_random_within_judge_stratum",
+        )
+    )
+    # Without direct means the propagated envelope is each mean's primary interval, and a
+    # diagnostic-only measure makes it diagnostic.
+    plan.outputs.direct_mean_intervals.enabled = False
+    plan.outputs.risk_measures.append(
+        RiskMeasureSpec(id="mean_diagnostic", type="weighted_mean", diagnostic_only=True)
+    )
+
+    report = analyze(plan=plan, logs="ignored")
+
+    rank = {"invalid": 0, "diagnostic": 1, "certifying": 2}
+    corrected_rows = 0
+    for row in [*report.group_risks, *report.hierarchy_risks]:
+        for interval in row.intervals:
+            if interval.interval_id == "judge_corrected_validated":
+                corrected_rows += 1
+                assert rank[interval.eligibility] <= rank[row.eligibility]
+    assert corrected_rows >= 2
+
+    def corrected(measure_id: str) -> RiskIntervalResult:
+        row = next(item for item in report.group_risks if item.measure_id == measure_id)
+        return next(
+            item for item in row.intervals if item.interval_id == "judge_corrected_validated"
+        )
+
+    diagnostic = corrected("mean_diagnostic")
+    assert diagnostic.eligibility == "diagnostic"
+    assert diagnostic.role == "sensitivity"
+    assert diagnostic.simultaneous_coverage is None
+    (warning,) = diagnostic.warnings
+    assert "the judge-system interval it corrects is diagnostic" in warning
+    # The same mean without the flag is a whole-cohort, self-weighting row, still certified.
+    assert corrected("mean").eligibility == "certifying"
 
 
 def test_worst_of_k_is_not_judge_correctable() -> None:
