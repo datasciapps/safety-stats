@@ -29,6 +29,14 @@ described in their pull requests.
 
 ### Changed
 
+- **An unlabelled judge stratum is completed, not refused (changes results).** A validated
+  judge calibration needed a human label in both judge strata. A stratum without one is now
+  completed conservatively: its error rate is bounded by [0, 1], the correction is still
+  reported, and a `JUDGE_STRATUM_UNLABELLED_COMPLETED` warning names the stratum. With both
+  strata unlabelled the calibration is still refused. `JudgeCalibration` gains
+  `completed_strata`. See
+  [Judge misclassification](docs/judge-misclassification.md#estimation-and-error-budget).
+
 - **Unbiased `worst_of_k` estimates (changes results).** The row estimate plugged each prompt's
   failure rate into `1 - (1 - p)^k`, which understates the risk. It is now the unbiased
   U-statistic, `1 - C(n - f, k) / C(n, k)` per prompt, weighted over prompts, so estimates
