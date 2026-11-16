@@ -934,6 +934,21 @@ class ReportSpec(StrictModel):
     # Experimental. Left out of the plan dump while off, so a plan that does not opt in keeps
     # its hash and every artifact it produced before the field existed.
     judge_error_stress: bool = False
+    # Experimental (#11): write claims.json beside report.json. Left out of the plan dump while
+    # off, like judge_error_stress.
+    claims_export: bool = False
+
+    @model_validator(mode="after")
+    def claims_export_needs_decisions(self) -> ReportSpec:
+        # claims.json carries every claim's status. With include_decisions false the rendered
+        # report leaves statuses out, and whether that hides or redacts them is open (#58), so
+        # the export is refused rather than deciding it here.
+        if self.claims_export and not self.include_decisions:
+            raise ValueError(
+                "report.claims_export needs report.include_decisions: true, because claims.json "
+                "carries each claim's status"
+            )
+        return self
 
     @model_serializer(mode="wrap")
     def leave_out_judge_error_stress_when_off(
@@ -942,6 +957,8 @@ class ReportSpec(StrictModel):
         data: dict[str, Any] = handler(self)
         if not self.judge_error_stress:
             data.pop("judge_error_stress", None)
+        if not self.claims_export:
+            data.pop("claims_export", None)
         return data
 
 
