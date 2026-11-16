@@ -793,6 +793,45 @@ judge whose accuracy varies with the prompt or with the model under test is not 
 declared box is an assumption, not evidence. The certifying route remains a `validated`
 calibration.
 
+## Judge flip rate under content-preserving wrappers (experimental)
+
+The corrections above need the judge's error rates, from human labels or from a declared
+assumption. A flip rate needs neither. It measures one way the judge errs. Each judge-positive
+completion is rescored by the same judge after it is wrapped in text that leaves the harmful
+content verbatim, such as a refusal prefix, benign text before and after, an educational frame
+or a story frame. A verdict that becomes safe is a flip. Gao (arXiv:2606.25487) reports flips
+on 57-100% of true positives for three LLM judges and on 3.4% for the HarmBench classifier.
+
+The direction matters for a PASS claim. A flip is a false negative, and false negatives
+understate risk. A judge that flips often under wrappers is likely to miss unsafe completions
+that are framed like this in the run itself. So a PASS certified with that judge rests on its
+sensitivity, which a high flip rate puts in doubt.
+
+`inputs.judge_flip` reads the rescored verdicts and reports a `JUDGE_FLIP_RATE` diagnostic: the
+share of rescored completions that flip under at least one wrapper, and under each wrapper,
+each with an exact Clopper-Pearson interval (see
+[the plan reference](plan-reference.md#judge-flip-rate-experimental)). With `sampling: all`
+the interval is about the run's judge-positive completions. With `simple_random` it is about
+the same population, through the sample. Above the declared `warn_above` the diagnostic is a
+warning. The package does not rescore: [`examples/judge_flip`](../examples/judge_flip/README.md)
+has an Inspect task that rescores a run's judge-positive completions under four wrappers and
+writes the manifest, offline with simulated models or live with the run's judge.
+
+What it assumes:
+
+- **The wrappers preserve content.** A wrapper that weakens the content turns a correct
+  "safe" into a flip. Gao's human audit found all 80 flipped responses still harmful, but
+  that holds for their wrappers. Check new ones the same way.
+- **Judge-positive is not truly unsafe.** The rate is over completions the judge called
+  unsafe, and some of those are false positives. A flip of a false positive is a correction.
+  With a precise judge the difference is small. With an imprecise one the rate overstates the
+  judge's misses.
+
+The flip rate is a screen, not a correction. It never changes a claim, an interval or the
+decision. It does not estimate the judge's sensitivity on the run's own outputs, because the
+run's false negatives need not look like wrapped positives. To bound risk under judge error,
+use a `validated` calibration.
+
 ## Getting to evidence
 
 `mode: validated` supplies the machinery; the labels are the remaining cost. An anchor must
