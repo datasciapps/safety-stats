@@ -541,6 +541,19 @@ class RiskMeasureSpec(StrictModel):
     threshold: PlanFloat | None = None
     threshold_column: str | None = None
     diagnostic_only: bool = False
+    # Experimental, worst_of_k only: a direct interval from the unbiased per-prompt shares.
+    direct_interval: bool = False
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_direct_interval(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        # Left out unless requested, so plans without it keep their hash and rows their
+        # parameters.
+        data: dict[str, Any] = handler(self)
+        if not self.direct_interval:
+            data.pop("direct_interval", None)
+        return data
 
     @model_validator(mode="after")
     def validate_parameters(self) -> RiskMeasureSpec:
@@ -552,6 +565,11 @@ class RiskMeasureSpec(StrictModel):
             raise ValueError("top_k_mean requires k > 0")
         if self.type == "worst_of_k" and (self.k is None or self.k <= 0):
             raise ValueError("worst_of_k requires k > 0")
+        if self.direct_interval and self.type != "worst_of_k":
+            raise ValueError(
+                "direct_interval applies to worst_of_k measures only; weighted means get "
+                "direct intervals from outputs.direct_mean_intervals"
+            )
         if self.type in {"threshold_exceedance", "threshold_excess"}:
             if (self.threshold is None) == (self.threshold_column is None):
                 raise ValueError(f"{self.type} requires exactly one threshold source")

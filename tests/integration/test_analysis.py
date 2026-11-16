@@ -3099,6 +3099,151 @@ def test_worst_of_k_reports_the_unbiased_estimate(
     assert worst_of_25.upper is not None
 
 
+def _opt_in_worst_of_k_interval(plan_path: Path, k: int = 2) -> None:
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "{id: worst_of_2, type: worst_of_k, k: 2}",
+            f"{{id: worst_of_2, type: worst_of_k, k: {k}, direct_interval: true}}",
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_an_opted_in_worst_of_k_row_has_a_direct_interval_in_the_mean_family(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from inspect_safety_stats.stats import worst_of_k_kl_chernoff_bounds
+
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+    plan_path = _write_inputs(tmp_path)
+    before = analyze(plan=plan_path, logs="ignored")
+    _opt_in_worst_of_k_interval(plan_path)
+    report = analyze(plan=plan_path, logs="ignored")
+
+    row = next(item for item in report.group_risks if item.measure_id == "worst_of_2")
+    assert row.primary_interval_id == "direct_worst_of_k_kl_chernoff"
+    direct = next(item for item in row.intervals if item.role == "primary")
+    propagated = next(
+        item for item in row.intervals if item.interval_id == "propagated_prompt_envelope"
+    )
+    assert propagated.role == "reference"
+    # Two targets share the two-sided family alpha of 0.05: the mean and worst_of_2 on cyber.
+    assert direct.alpha_lower == direct.alpha_upper == pytest.approx(0.0125, rel=1e-12, abs=0)
+    expected = worst_of_k_kl_chernoff_bounds(
+        [10, 0], [0, 0], [20, 20], [0.5, 0.5], k=2, alpha_lower=0.0125, alpha_upper=0.0125
+    )
+    assert (row.lower, row.upper) == (expected.lower, expected.upper)
+    assert row.lower is not None and row.upper is not None and row.estimate is not None
+    assert row.lower <= row.estimate <= row.upper
+    assert direct.independent_block_count == 20
+    assert direct.eligibility == "certifying"
+
+    # The mean's direct interval now shares the family with worst_of_2.
+    def mean_alpha(result: SafetyReport) -> float | None:
+        mean = next(item for item in result.group_risks if item.measure_id == "mean")
+        return next(item for item in mean.intervals if item.role == "primary").alpha_lower
+
+    assert mean_alpha(before) == pytest.approx(0.025, rel=1e-12, abs=0)
+    assert mean_alpha(report) == pytest.approx(0.0125, rel=1e-12, abs=0)
+    unopted = next(item for item in before.group_risks if item.measure_id == "worst_of_2")
+    assert unopted.primary_interval_id == "propagated_prompt_envelope"
+
+
+def test_a_worst_of_k_interval_beyond_the_rollouts_says_the_design_cannot_bound_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_frames(monkeypatch, _frames())
+    plan_path = _write_inputs(tmp_path)
+    _opt_in_worst_of_k_interval(plan_path, k=25)
+    report = analyze(plan=plan_path, logs="ignored")
+
+    row = next(item for item in report.group_risks if item.measure_id == "worst_of_2")
+    assert row.primary_interval_id == "propagated_prompt_envelope"
+    assert "The design cannot bound 25 attempts" in " ".join(row.warnings)
+
+
+def test_plans_keep_their_hash_without_the_worst_of_k_interval(tmp_path: Path) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan = load_plan(plan_path)
+    assert "direct_interval" not in plan.model_dump(mode="json")["outputs"]["risk_measures"][4]
+    unchanged = canonical_plan_hash(plan)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "{id: worst_of_2, type: worst_of_k, k: 2}",
+            "{id: worst_of_2, type: worst_of_k, k: 2, direct_interval: false}",
+        ),
+        encoding="utf-8",
+    )
+    assert canonical_plan_hash(load_plan(plan_path)) == unchanged
+    _opt_in_worst_of_k_interval(_write_inputs(tmp_path))
+    assert canonical_plan_hash(load_plan(plan_path)) != unchanged
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        (
+            (
+                "    enabled: true\n    method: weighted_hoeffding",
+                "    enabled: false\n    method: weighted_hoeffding",
+            ),
+            "needs outputs.direct_mean_intervals.enabled",
+        ),
+        (("      primary: rollout", "      primary: prompt"), "must block by rollout"),
+        (
+            (
+                "design:\n  type: fixed\n",
+                "design:\n  type: sampled\n  inclusion_probability_column: inclusion_probability\n",
+            ),
+            "needs design.type: fixed",
+        ),
+        (
+            (
+                "    independence:\n      primary: rollout",
+                "    hierarchy_nodes: true\n    hierarchy_calibration: frontier_sidak\n"
+                "    independence:\n      primary: rollout",
+            ),
+            "frontier_sidak calibration is not supported",
+        ),
+    ],
+)
+def test_plans_refuse_a_worst_of_k_interval_they_cannot_calibrate(
+    tmp_path: Path, edit: tuple[str, str], message: str
+) -> None:
+    from inspect_safety_stats.validate.plan import validate_plan_references
+
+    plan_path = _write_inputs(tmp_path)
+    _opt_in_worst_of_k_interval(plan_path)
+    text = plan_path.read_text(encoding="utf-8")
+    assert edit[0] in text
+    plan_path.write_text(text.replace(edit[0], edit[1]), encoding="utf-8")
+    problems = [
+        item.message
+        for item in validate_plan_references(load_plan(plan_path))
+        if item.code == "PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED"
+    ]
+    assert len(problems) == 1
+    assert message in problems[0]
+
+
+def test_only_worst_of_k_measures_take_a_direct_interval(tmp_path: Path) -> None:
+    from pydantic import ValidationError
+
+    plan_path = _write_inputs(tmp_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "{id: worst, type: maximum}", "{id: worst, type: maximum, direct_interval: true}"
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError, match="applies to worst_of_k measures only"):
+        load_plan(plan_path)
+
+
 def test_a_judge_correction_of_a_projected_base_keeps_its_simultaneous_floor(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

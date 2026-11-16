@@ -458,6 +458,24 @@ from `f_j` failures in `n_j` classified rollouts. Plugging the failure rate into
 would understate the risk, because the transform is concave. With fewer than `k` classified
 rollouts on some prompt, no estimate is reported, but the bounds still are.
 
+`direct_interval: true` on a `worst_of_k` measure (experimental, off by default) adds a direct
+interval to its group rows and makes it the row's primary interval. The propagated envelope stays
+as a reference. Each prompt's unbiased estimate enters the KL/Chernoff bound as `floor(n / k)`
+independent blocks, so the interval narrows with prompts and with rollouts per prompt. See
+[Worst-of-k interval](statistical-methods.md#worst-of-k-interval-experimental).
+
+```yaml
+    - {id: worst_of_4, type: worst_of_k, k: 4, direct_interval: true}
+```
+
+The interval shares the alpha of `outputs.direct_mean_intervals`, so that section must be
+enabled. Each opted-in measure is one more target in the family on every selected group. The
+plan is refused (`PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED`) when the design is sampled, when
+`hierarchy_calibration` is `frontier_sidak`, or when the primary independence profile does not
+block by rollout. Other measure types reject the field. If a prompt has fewer than `k` attempted
+rollouts, the row keeps the envelope and warns. Leaving the field out, or setting it to `false`,
+keeps the plan hash unchanged.
+
 `coverage_mode: two_sided` is the default. It interprets the multiplicity-family alpha as the
 total error budget for the displayed lower-to-upper range and divides it equally between tails.
 Thus family alpha `0.05` produces a simultaneous two-sided coverage floor of 95%, with 97.5%
