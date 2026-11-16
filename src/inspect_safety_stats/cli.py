@@ -446,12 +446,28 @@ def version_command() -> None:
 @app.command("hash-plan")
 def hash_plan_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
+    inference: Annotated[
+        bool,
+        typer.Option(
+            "--inference",
+            help=(
+                "Print the inference hash instead: the plan's hash without the thresholds a "
+                "decision policy may set, which a decision policy names (experimental)."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Print a plan's canonical SHA-256, for registering a frozen plan."""
 
     from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
 
-    typer.echo(canonical_plan_hash(load_plan(plan)))
+    resolved = load_plan(plan)
+    if inference:
+        from inspect_safety_stats.config.decision_policy import inference_plan_hash
+
+        typer.echo(inference_plan_hash(resolved))
+    else:
+        typer.echo(canonical_plan_hash(resolved))
 
 
 @generative_app.command("compile")
