@@ -16,6 +16,13 @@ from pydantic import (
     model_validator,
 )
 
+from inspect_safety_stats.config.methods import (
+    DEFAULT_COMPARISON_METHOD,
+    DEFAULT_DIRECT_MEAN_INTERVAL_METHOD,
+    ComparisonMethod,
+    DirectMeanMethod,
+)
+
 
 def _refuse_booleans(kind: str) -> BeforeValidator:
     def refuse(value: object) -> object:
@@ -607,20 +614,8 @@ class PromptBoundsSpec(StrictModel):
 
 class DirectMeanIntervalsSpec(StrictModel):
     enabled: bool = False
-    method: Literal[
-        "weighted_hoeffding",
-        "weighted_empirical_bernstein",
-        "weighted_kl_chernoff",
-        "weighted_betting",
-    ] = "weighted_empirical_bernstein"
-    reference_methods: list[
-        Literal[
-            "weighted_hoeffding",
-            "weighted_empirical_bernstein",
-            "weighted_kl_chernoff",
-            "weighted_betting",
-        ]
-    ] = Field(default_factory=list)
+    method: DirectMeanMethod = DEFAULT_DIRECT_MEAN_INTERVAL_METHOD
+    reference_methods: list[DirectMeanMethod] = Field(default_factory=list)
     family: str | None = None
     groups: list[str] | None = None
     simultaneous: bool = True
@@ -697,18 +692,8 @@ class ComparisonSpec(StrictModel):
         "risk_ratio",
         "relative_risk_reduction",
     ] = "risk_difference"
-    method: Literal[
-        "weighted_hoeffding",
-        "weighted_empirical_bernstein",
-        "weighted_kl_chernoff",
-    ] = "weighted_kl_chernoff"
-    reference_methods: list[
-        Literal[
-            "weighted_hoeffding",
-            "weighted_empirical_bernstein",
-            "weighted_kl_chernoff",
-        ]
-    ] = Field(default_factory=list)
+    method: ComparisonMethod = DEFAULT_COMPARISON_METHOD
+    reference_methods: list[ComparisonMethod] = Field(default_factory=list)
     family: str | None = None
     simultaneous: bool = True
     coverage_mode: Literal["two_sided", "per_direction"] = "two_sided"
@@ -771,18 +756,8 @@ class ComparisonSetSpec(StrictModel):
     ]
     group: str
     measure: str
-    method: Literal[
-        "weighted_hoeffding",
-        "weighted_empirical_bernstein",
-        "weighted_kl_chernoff",
-    ] = "weighted_kl_chernoff"
-    reference_methods: list[
-        Literal[
-            "weighted_hoeffding",
-            "weighted_empirical_bernstein",
-            "weighted_kl_chernoff",
-        ]
-    ] = Field(default_factory=list)
+    method: ComparisonMethod = DEFAULT_COMPARISON_METHOD
+    reference_methods: list[ComparisonMethod] = Field(default_factory=list)
     family: str
     coverage_mode: Literal["two_sided", "per_direction"] = "two_sided"
     independence: IndependenceSelectionSpec
