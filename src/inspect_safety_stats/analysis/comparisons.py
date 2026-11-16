@@ -21,7 +21,7 @@ from inspect_safety_stats.analysis.comparison_regions import (
     _project_comparison_hierarchy_regions,
     _project_multi_arm_comparison_regions,
 )
-from inspect_safety_stats.analysis.estimates import _block_index, _prompt_blocked
+from inspect_safety_stats.analysis.estimates import _block_index, prompt_blocked
 from inspect_safety_stats.analysis.measures import _coverage_floors, _independence
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.records import NormalizedData
@@ -104,7 +104,7 @@ def _comparisons(
             warnings: list[str] = []
             blocked = any(
                 item.n_total <= 0
-                or _prompt_blocked(diagnostics, item.cohort_id, item.prompt_id)
+                or prompt_blocked(diagnostics, item.cohort_id, item.prompt_id)
                 for item in [*candidate_items, *baseline_items]
             )
             if blocked:

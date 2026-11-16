@@ -47,7 +47,7 @@ def _thresholds(
 
 # Measures that are probabilities whenever every value is. Threshold excess is not one: a
 # negative threshold lets it exceed 1.
-_PROBABILITY_MEASURES = frozenset(
+PROBABILITY_MEASURES = frozenset(
     {
         "weighted_mean",
         "maximum",
@@ -67,15 +67,15 @@ def _risk_value(
     *,
     threshold: float | np.ndarray | None = None,
 ) -> float:
-    value = _unclipped_risk_value(values, weights, measure, threshold=threshold)
-    if measure.type in _PROBABILITY_MEASURES:
+    value = unclipped_risk_value(values, weights, measure, threshold=threshold)
+    if measure.type in PROBABILITY_MEASURES:
         # Floating-point sums can land just outside [0, 1]: nine weights of 1/9 sum to
         # 1.0000000000000002. A judge correction then rejects the bound as no probability.
         return min(1.0, max(0.0, value))
     return value
 
 
-def _unclipped_risk_value(
+def unclipped_risk_value(
     values: list[float],
     weights: list[float],
     measure: RiskMeasureSpec,

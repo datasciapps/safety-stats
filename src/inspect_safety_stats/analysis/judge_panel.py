@@ -6,7 +6,7 @@ import itertools
 from dataclasses import dataclass
 from typing import Any
 
-from inspect_safety_stats.analysis.judge_calibration import _JUDGE_CORRECTABLE_MEASURES
+from inspect_safety_stats.analysis.judge_calibration import JUDGE_CORRECTABLE_MEASURES
 from inspect_safety_stats.analysis.results import RiskRows
 from inspect_safety_stats.config.models import AnalysisPlan, JudgeAccuracySpec, JudgeSpec
 from inspect_safety_stats.ingest.records import NormalizedData
@@ -248,7 +248,7 @@ def _primary_accuracy_box(plan: AnalysisPlan) -> _DeclaredBox | None:
 
 
 @dataclass(frozen=True)
-class _PanelCorrection:
+class PanelCorrection:
     """The rows with their panel-derived intervals, and the correction's summary."""
 
     rows: RiskRows
@@ -256,16 +256,16 @@ class _PanelCorrection:
     summary: dict[str, Any] | None
 
 
-def _apply_panel_derived_correction(
+def apply_panel_derived_correction(
     plan: AnalysisPlan, rows: RiskRows, diagnostics: list[Diagnostic]
-) -> _PanelCorrection:
+) -> PanelCorrection:
     """The rows with panel-derived intervals added. The rows given are left as they were."""
 
     corrected = rows.copy()
     summary = _add_panel_derived_correction(
         plan, corrected.risks, corrected.hierarchy_risks, diagnostics
     )
-    return _PanelCorrection(rows=corrected, summary=summary)
+    return PanelCorrection(rows=corrected, summary=summary)
 
 
 def _add_panel_derived_correction(
@@ -329,7 +329,7 @@ def _add_panel_derived_correction(
     correctable = {
         measure.id
         for measure in plan.outputs.risk_measures
-        if measure.type in _JUDGE_CORRECTABLE_MEASURES
+        if measure.type in JUDGE_CORRECTABLE_MEASURES
     }
     targets: list[GroupRiskResult | HierarchyRiskResult] = [
         *(row for row in risks if row.measure_id in correctable),

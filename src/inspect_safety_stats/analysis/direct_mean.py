@@ -8,7 +8,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from inspect_safety_stats.analysis.estimates import _block_index, _prompt_blocked
+from inspect_safety_stats.analysis.estimates import _block_index, prompt_blocked
 from inspect_safety_stats.analysis.measures import _coverage_floors, _independence, _parameter
 from inspect_safety_stats.config.models import AnalysisPlan, RiskMeasureSpec
 from inspect_safety_stats.ingest.manifest import load_inclusion_probabilities
@@ -554,7 +554,7 @@ def _worst_of_k_direct_interval(
     if calibration is None:
         return None, ["The direct-mean multiplicity family is unavailable."]
     if any(
-        item.n_total <= 0 or _prompt_blocked(diagnostics, cohort_id, item.prompt_id)
+        item.n_total <= 0 or prompt_blocked(diagnostics, cohort_id, item.prompt_id)
         for item in prompt_results
     ):
         return None, ["A complete valid attempted-rollout ledger is required."]

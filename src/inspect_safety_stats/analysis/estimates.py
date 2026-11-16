@@ -12,7 +12,7 @@ from inspect_safety_stats.stats.independence import BlockIndex, block_index
 from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
 
 
-def _alpha_by_prompt(
+def alpha_by_prompt(
     plan: AnalysisPlan,
     data: NormalizedData,
     diagnostics: list[Diagnostic],
@@ -84,7 +84,7 @@ def _block_index(data: NormalizedData) -> BlockIndex:
     return data.block_index
 
 
-def _prompt_blocked(diagnostics: list[Diagnostic], cohort: str, prompt: str) -> bool:
+def prompt_blocked(diagnostics: list[Diagnostic], cohort: str, prompt: str) -> bool:
     global_codes = {
         "PLAN_DUPLICATE_ID",
         "PLAN_UNKNOWN_REFERENCE",
@@ -130,7 +130,7 @@ def _prompt_estimates(
     data: NormalizedData,
     diagnostics: list[Diagnostic],
 ) -> list[PromptEstimate]:
-    allocations = _alpha_by_prompt(plan, data, diagnostics)
+    allocations = alpha_by_prompt(plan, data, diagnostics)
     manifest = data.manifest.set_index("prompt_id", drop=False)
     by_key: dict[tuple[str, str], list[Observation]] = {}
     for observation in data.observations:
@@ -142,7 +142,7 @@ def _prompt_estimates(
             valid = [row for row in rows if row.failure is not None]
             failures = sum(bool(row.failure) for row in valid)
             bounded_unknown = [row for row in rows if _bounds_carry_unknown_outcome(plan, row)]
-            blocked = _prompt_blocked(diagnostics, cohort_id, prompt_id)
+            blocked = prompt_blocked(diagnostics, cohort_id, prompt_id)
             alpha = allocations.get(prompt_id)
             lower = upper = None
             eligibility: Eligibility = "invalid"

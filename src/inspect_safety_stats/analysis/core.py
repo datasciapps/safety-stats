@@ -14,9 +14,9 @@ from inspect_safety_stats.analysis.comparisons import _comparison_set_results, _
 from inspect_safety_stats.analysis.direct_mean import _direct_mean_context, _hierarchy_nodes
 from inspect_safety_stats.analysis.estimates import _prompt_estimates
 from inspect_safety_stats.analysis.inputs import _integrity_status, _JudgeInputs
-from inspect_safety_stats.analysis.judge_correction import _apply_judge_correction
-from inspect_safety_stats.analysis.judge_panel import _apply_panel_derived_correction
-from inspect_safety_stats.analysis.regions import _project_hierarchy_regions
+from inspect_safety_stats.analysis.judge_correction import apply_judge_correction
+from inspect_safety_stats.analysis.judge_panel import apply_panel_derived_correction
+from inspect_safety_stats.analysis.regions import project_hierarchy_regions
 from inspect_safety_stats.analysis.results import RiskRows
 from inspect_safety_stats.analysis.risks import _group_risks, _hierarchy_risks
 from inspect_safety_stats.config.canonicalize import sha256_value
@@ -80,11 +80,11 @@ def _analysis_core(
     computed = RiskRows(risks=risks, hierarchy_risks=hierarchy_risks, comparisons=comparisons)
     # Each adjusting stage returns new rows and passes them on, so the judge correction
     # corrects the bounds that are displayed: the projected ones.
-    projected = _project_hierarchy_regions(plan, data, hierarchy_nodes, computed, diagnostics)
-    judge_correction = _apply_judge_correction(
+    projected = project_hierarchy_regions(plan, data, hierarchy_nodes, computed, diagnostics)
+    judge_correction = apply_judge_correction(
         plan, data, hierarchy_nodes, projected, diagnostics
     )
-    panel_correction = _apply_panel_derived_correction(plan, judge_correction.rows, diagnostics)
+    panel_correction = apply_panel_derived_correction(plan, judge_correction.rows, diagnostics)
     final = panel_correction.rows
     risks, hierarchy_risks, comparisons = final.risks, final.hierarchy_risks, final.comparisons
     judge_calibration_summary = judge_correction.summary
@@ -162,7 +162,7 @@ def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeI
         ]
 
 
-def _scorer_configurations(value: Any, score_name: str) -> list[Any] | None:
+def scorer_configurations(value: Any, score_name: str) -> list[Any] | None:
     """The configurations a run records for the scorer named like a judge's score.
 
     None when the run records no scorers at all, an empty list when none has that name.
@@ -199,7 +199,7 @@ def _add_judge_configurations(
             roles: dict[str, Any] = {}
             for run_key in summary["run_keys"]:
                 attributes = runs_by_key[run_key].attributes
-                found = _scorer_configurations(attributes.get("scorers"), score_name)
+                found = scorer_configurations(attributes.get("scorers"), score_name)
                 if found is not None:
                     for item in found:
                         scorers[sha256_value(item)] = item

@@ -7,15 +7,15 @@ from typing import cast
 from inspect_safety_stats.analysis.comparison_intervals import _comparison_targets
 from inspect_safety_stats.analysis.comparison_regions import _multi_arm_effect_interval
 from inspect_safety_stats.analysis.judge_calibration import (
+    PromptRollouts,
     _judge_scope,
     _JudgeScope,
-    _pooled_calibration_gap,
-    _PromptRollouts,
     _scope_population,
     _uncertified_base_warning,
     _uncertified_correction_warning,
     _unclassified_assumption,
     _unclassified_share,
+    pooled_calibration_gap,
 )
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.records import NormalizedData
@@ -162,7 +162,7 @@ def _judge_corrected_comparison_interval(
 def _apply_judge_correction_to_comparisons(
     plan: AnalysisPlan,
     data: NormalizedData,
-    population: dict[str, dict[str, _PromptRollouts]],
+    population: dict[str, dict[str, PromptRollouts]],
     comparisons: list[ComparisonResult],
     by_scope: dict[_JudgeScope, JudgeCalibration],
     family_id: str | None,
@@ -202,7 +202,7 @@ def _apply_judge_correction_to_comparisons(
         # Each arm is corrected with its own cohort's labels, so each must be identified.
         gaps: list[str] = []
         for arm, scope in (("candidate", candidate_scope), ("baseline", baseline_scope)):
-            gap = _pooled_calibration_gap(
+            gap = pooled_calibration_gap(
                 _scope_population(population, data, scope),
                 design_type=plan.design.type,
                 measure_type=measure_types[result.measure_id],

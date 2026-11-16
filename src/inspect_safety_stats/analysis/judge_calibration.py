@@ -39,14 +39,14 @@ from inspect_safety_stats.stats.misclassification import (
 
 # Risk measures whose value is positively homogeneous and translation equivariant,
 # so the affine judge correction R* = R * rho_1 + (1 - R) * rho_0 applies unchanged.
-# A validated calibration certifies only the weighted mean: see _pooled_calibration_gap.
-_JUDGE_CORRECTABLE_MEASURES = frozenset(
+# A validated calibration certifies only the weighted mean: see pooled_calibration_gap.
+JUDGE_CORRECTABLE_MEASURES = frozenset(
     {"weighted_mean", "maximum", "cvar", "top_k_mean"}
 )
 
 
 @dataclass(frozen=True)
-class _PromptRollouts:
+class PromptRollouts:
     """One prompt's rollouts in one cohort, counted the ways its rates divide by them."""
 
     classified: int
@@ -84,10 +84,10 @@ def _judge_scopes(plan: AnalysisPlan) -> list[_JudgeScope]:
 
 
 def _scope_population(
-    population: dict[str, dict[str, _PromptRollouts]],
+    population: dict[str, dict[str, PromptRollouts]],
     data: NormalizedData,
     scope: _JudgeScope,
-) -> dict[str, _PromptRollouts]:
+) -> dict[str, PromptRollouts]:
     """The labelled population of one calibration: its cohort's, cut to its group's prompts."""
 
     cohort_id, group_id = scope
@@ -115,7 +115,7 @@ def _scope_rollouts(group_id: str | None, noun: str = "rollouts") -> str:
 
 def _labelled_population(
     plan: AnalysisPlan, data: NormalizedData
-) -> dict[str, dict[str, _PromptRollouts]]:
+) -> dict[str, dict[str, PromptRollouts]]:
     """Per cohort and prompt, the rollouts behind its rates.
 
     A cohort's classified rollouts are the population its judge labels are drawn from.
@@ -131,13 +131,13 @@ def _labelled_population(
         elif _bounds_carry_unknown_outcome(plan, row):
             tally[1] += 1
     return {
-        cohort_id: {prompt_id: _PromptRollouts(*tally) for prompt_id, tally in prompts.items()}
+        cohort_id: {prompt_id: PromptRollouts(*tally) for prompt_id, tally in prompts.items()}
         for cohort_id, prompts in counts.items()
     }
 
 
-def _pooled_calibration_gap(
-    population: dict[str, _PromptRollouts],
+def pooled_calibration_gap(
+    population: dict[str, PromptRollouts],
     *,
     design_type: str,
     measure_type: str,
@@ -189,7 +189,7 @@ def _pooled_calibration_gap(
 
 
 def _unclassified_share(
-    population: dict[str, _PromptRollouts], weights: dict[str, float], measure_type: str
+    population: dict[str, PromptRollouts], weights: dict[str, float], measure_type: str
 ) -> float:
     """The weight a row's bounds put on rollouts they complete as unknown outcomes.
 

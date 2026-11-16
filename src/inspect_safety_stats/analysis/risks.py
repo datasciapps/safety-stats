@@ -15,7 +15,7 @@ from inspect_safety_stats.analysis.direct_mean import (
     _HierarchyNode,
     _worst_of_k_direct_interval,
 )
-from inspect_safety_stats.analysis.estimates import _prompt_blocked
+from inspect_safety_stats.analysis.estimates import prompt_blocked
 from inspect_safety_stats.analysis.measures import (
     _coverage_floors,
     _independence,
@@ -158,7 +158,7 @@ def _group_risks(
                         )
                     elif any(
                         (item.n_total <= 0 and plan.design.type != "sampled")
-                        or _prompt_blocked(diagnostics, cohort_id, item.prompt_id)
+                        or prompt_blocked(diagnostics, cohort_id, item.prompt_id)
                         for item in prompt_results
                     ):
                         direct_warnings.append(
@@ -350,7 +350,7 @@ def _hierarchy_risks(
                 )
             elif any(
                 (item.n_total <= 0 and plan.design.type != "sampled")
-                or _prompt_blocked(diagnostics, cohort_id, item.prompt_id)
+                or prompt_blocked(diagnostics, cohort_id, item.prompt_id)
                 for item in prompt_results
             ):
                 warnings.append("A complete valid attempted-rollout ledger is required.")

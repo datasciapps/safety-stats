@@ -6,17 +6,17 @@ from collections.abc import Mapping
 from typing import Any, cast
 
 from inspect_safety_stats.analysis.judge_calibration import (
-    _JUDGE_CORRECTABLE_MEASURES,
+    JUDGE_CORRECTABLE_MEASURES,
+    PromptRollouts,
     _judge_scope,
     _judge_scope_excludes,
     _JudgeScope,
     _labelled_population,
     _out_of_scope_reason,
-    _pooled_calibration_gap,
-    _PromptRollouts,
     _scope_population,
     _scope_rollouts,
     _unclassified_share,
+    pooled_calibration_gap,
 )
 from inspect_safety_stats.analysis.judge_panel import _DeclaredBox, _primary_accuracy_box
 from inspect_safety_stats.config.models import AnalysisPlan, ClaimSpec
@@ -220,7 +220,7 @@ def _noisy_valid_claim(
     )
 
 
-def _profile_verdicts(
+def verdicts_by_profile(
     claim: Any,
     evidence: ComparisonResult | GroupRiskResult | None,
     *,
@@ -313,7 +313,7 @@ def _claim_judge_error_stress(
     status: Decision,
     why_not: str | None,
     measure_types: Mapping[str, str],
-    population: dict[str, dict[str, _PromptRollouts]],
+    population: dict[str, dict[str, PromptRollouts]],
     group_weights: dict[str, dict[str, float]],
     accuracy: _DeclaredBox | None,
 ) -> JudgeErrorStressResult:
@@ -339,7 +339,7 @@ def _claim_judge_error_stress(
     if why_not is not None:
         return skipped(why_not)
     measure_type = measure_types[evidence.measure_id]
-    if measure_type not in _JUDGE_CORRECTABLE_MEASURES:
+    if measure_type not in JUDGE_CORRECTABLE_MEASURES:
         return skipped(
             f"a {measure_type} measure does not carry the judge's per-prompt error model over "
             "to the row"
@@ -507,7 +507,7 @@ def _claims(
                 else None
             )
             gap = (
-                _pooled_calibration_gap(
+                pooled_calibration_gap(
                     _scope_population(population, data, scope),
                     design_type=plan.design.type,
                     measure_type=measure_types[evidence.measure_id],
@@ -558,7 +558,7 @@ def _claims(
                 unacceptable_lower=claim.unacceptable_lower,
                 eligible=eligible,
             )
-            profile_verdicts = _profile_verdicts(
+            profile_verdicts = verdicts_by_profile(
                 claim,
                 evidence,
                 status=status,

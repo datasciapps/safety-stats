@@ -8,19 +8,19 @@ from typing import Any
 from inspect_safety_stats.analysis.comparison_judges import _apply_judge_correction_to_comparisons
 from inspect_safety_stats.analysis.direct_mean import _HierarchyNode
 from inspect_safety_stats.analysis.judge_calibration import (
-    _JUDGE_CORRECTABLE_MEASURES,
+    JUDGE_CORRECTABLE_MEASURES,
     _assumed_judge_calibrations,
     _judge_corrected_interval,
     _judge_scope,
     _judge_scopes,
     _JudgeScope,
     _labelled_population,
-    _pooled_calibration_gap,
     _scope_population,
     _transported_judge_interval,
     _uncertified_correction_warning,
     _unclassified_share,
     _validated_judge_calibrations,
+    pooled_calibration_gap,
 )
 from inspect_safety_stats.analysis.results import RiskRows
 from inspect_safety_stats.config.loader import report_path
@@ -141,7 +141,7 @@ def _delta_reference_interval(
 
 
 @dataclass(frozen=True)
-class _JudgeCorrection:
+class JudgeCorrection:
     """The rows with their judge-corrected intervals, and the calibration they used."""
 
     rows: RiskRows
@@ -149,13 +149,13 @@ class _JudgeCorrection:
     summary: dict[str, Any]
 
 
-def _apply_judge_correction(
+def apply_judge_correction(
     plan: AnalysisPlan,
     data: NormalizedData,
     hierarchy_nodes: list[_HierarchyNode],
     rows: RiskRows,
     diagnostics: list[Diagnostic],
-) -> _JudgeCorrection:
+) -> JudgeCorrection:
     """The rows with judge-corrected intervals added. The rows given are left as they were."""
 
     corrected = rows.copy()
@@ -168,7 +168,7 @@ def _apply_judge_correction(
         corrected.comparisons,
         diagnostics,
     )
-    return _JudgeCorrection(rows=corrected, summary=summary)
+    return JudgeCorrection(rows=corrected, summary=summary)
 
 
 def _add_judge_corrections(
@@ -195,7 +195,7 @@ def _add_judge_corrections(
     correctable = {
         measure.id
         for measure in plan.outputs.risk_measures
-        if measure.type in _JUDGE_CORRECTABLE_MEASURES
+        if measure.type in JUDGE_CORRECTABLE_MEASURES
     }
     targets: list[GroupRiskResult | HierarchyRiskResult] = [
         *(row for row in risks if row.measure_id in correctable),
@@ -300,7 +300,7 @@ def _add_judge_corrections(
             continue
         weights, measure_type = weighting(result)
         scope_population = _scope_population(population, data, scope)
-        gap = _pooled_calibration_gap(
+        gap = pooled_calibration_gap(
             scope_population,
             design_type=plan.design.type,
             measure_type=measure_type,

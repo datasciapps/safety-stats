@@ -2,14 +2,14 @@
 
 ``tests/property/test_risk_properties.py`` checks the measure functions one by one. This file
 runs the same checks over every measure type a plan accepts, through
-``_unclipped_risk_value``, the function the pipeline itself calls, and with unequal weights for
+``unclipped_risk_value``, the function the pipeline itself calls, and with unequal weights for
 every measure that admits them. ``test_the_registry_lists_every_measure_a_plan_can_select``
 fails until a new measure type is registered in ``tests/conformance.py``.
 
 It also checks the two properties the analysis declares by hand, against what the measures do:
 
-- ``_PROBABILITY_MEASURES``: the value is a probability whenever every item's risk is.
-- ``_JUDGE_CORRECTABLE_MEASURES``: the measure commutes with the judge correction
+- ``PROBABILITY_MEASURES``: the value is a probability whenever every item's risk is.
+- ``JUDGE_CORRECTABLE_MEASURES``: the measure commutes with the judge correction
   ``r -> rho_0 + (rho_1 - rho_0) r``, so correcting the measure's value is the same as
   correcting every item first.
 
@@ -26,8 +26,8 @@ import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
-from inspect_safety_stats.analysis.judge_calibration import _JUDGE_CORRECTABLE_MEASURES
-from inspect_safety_stats.analysis.measures import _PROBABILITY_MEASURES, _unclipped_risk_value
+from inspect_safety_stats.analysis.judge_calibration import JUDGE_CORRECTABLE_MEASURES
+from inspect_safety_stats.analysis.measures import PROBABILITY_MEASURES, unclipped_risk_value
 from inspect_safety_stats.config.models import RiskMeasureSpec
 from tests.conformance import MEASURE_CASES, MeasureCase
 
@@ -49,7 +49,7 @@ RISKS = st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=
 
 
 def _value(case: MeasureCase, values: list[float], weights: list[float]) -> float:
-    return _unclipped_risk_value(values, weights, case.spec, threshold=case.threshold)
+    return unclipped_risk_value(values, weights, case.spec, threshold=case.threshold)
 
 
 def _applies(case: MeasureCase, values: list[float]) -> bool:
@@ -79,8 +79,8 @@ def _draw(data: st.DataObject, case: MeasureCase) -> tuple[list[float], list[flo
 def test_the_registry_lists_every_measure_a_plan_can_select() -> None:
     selectable = set(get_args(RiskMeasureSpec.model_fields["type"].annotation))
     assert selectable == set(MEASURE_CASES), "register new measure types in tests/conformance.py"
-    assert _PROBABILITY_MEASURES <= selectable
-    assert _JUDGE_CORRECTABLE_MEASURES <= selectable
+    assert PROBABILITY_MEASURES <= selectable
+    assert JUDGE_CORRECTABLE_MEASURES <= selectable
 
 
 @_cases()
@@ -158,7 +158,7 @@ _BATTERY: tuple[tuple[list[float], list[float]], ...] = (
 )
 
 
-@_cases(lambda case: case.spec.type in _PROBABILITY_MEASURES)
+@_cases(lambda case: case.spec.type in PROBABILITY_MEASURES)
 @settings(deadline=None)
 @given(data=st.data())
 def test_declared_probability_measures_stay_in_the_unit_interval(
@@ -170,7 +170,7 @@ def test_declared_probability_measures_stay_in_the_unit_interval(
 
 
 @pytest.mark.parametrize(
-    "measure", sorted(set(MEASURE_CASES) - _PROBABILITY_MEASURES)
+    "measure", sorted(set(MEASURE_CASES) - PROBABILITY_MEASURES)
 )
 def test_undeclared_probability_measures_do_leave_the_unit_interval(measure: str) -> None:
     values = [
@@ -180,7 +180,7 @@ def test_undeclared_probability_measures_do_leave_the_unit_interval(measure: str
         if _applies(case, battery_values)
     ]
     assert any(not 0 <= value <= 1 for value in values), (
-        f"{measure} stayed in [0, 1] on every input: add it to _PROBABILITY_MEASURES"
+        f"{measure} stayed in [0, 1] on every input: add it to PROBABILITY_MEASURES"
     )
 
 
@@ -188,7 +188,7 @@ def _corrected(values: list[float], rho_0: float, rho_1: float) -> list[float]:
     return [rho_0 + (rho_1 - rho_0) * value for value in values]
 
 
-@_cases(lambda case: case.spec.type in _JUDGE_CORRECTABLE_MEASURES)
+@_cases(lambda case: case.spec.type in JUDGE_CORRECTABLE_MEASURES)
 @settings(deadline=None)
 @given(
     data=st.data(),
@@ -212,7 +212,7 @@ def test_judge_correctable_measures_commute_with_the_correction(
 
 
 @pytest.mark.parametrize(
-    "measure", sorted(set(MEASURE_CASES) - _JUDGE_CORRECTABLE_MEASURES)
+    "measure", sorted(set(MEASURE_CASES) - JUDGE_CORRECTABLE_MEASURES)
 )
 def test_measures_not_declared_correctable_do_not_commute_with_the_correction(
     measure: str,
@@ -228,6 +228,6 @@ def test_measures_not_declared_correctable_do_not_commute_with_the_correction(
                 gaps.append(abs(corrected - (rho_0 + (rho_1 - rho_0) * measured)))
     assert max(gaps) > 1e-6, (
         f"{measure} commuted with the correction on every input: "
-        "add it to _JUDGE_CORRECTABLE_MEASURES"
+        "add it to JUDGE_CORRECTABLE_MEASURES"
     )
 

@@ -15,9 +15,9 @@ EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "real_simpleqa"
 
 # The stages in the order the core runs them, by the name the core calls them under.
 STAGES = (
-    "_project_hierarchy_regions",
-    "_apply_judge_correction",
-    "_apply_panel_derived_correction",
+    "project_hierarchy_regions",
+    "apply_judge_correction",
+    "apply_panel_derived_correction",
 )
 
 
@@ -61,7 +61,7 @@ def test_adjusting_stages_return_new_rows_and_leave_their_input_unchanged(
     for name, (before, after, _) in calls.items():
         assert after == before, f"{name} changed the rows it was given"
     # The projection changes the rows it returns, so the check above is not vacuous.
-    before, _, returned = calls["_project_hierarchy_regions"]
+    before, _, returned = calls["project_hierarchy_regions"]
     assert returned != before
     assert any(
         row.projection_method == "hierarchy_linear_program" for row in report.hierarchy_risks

@@ -39,7 +39,7 @@ def _direct_interval_for_region(
     )
 
 
-def _project_hierarchy_regions(
+def project_hierarchy_regions(
     plan: AnalysisPlan,
     data: NormalizedData,
     nodes: list[_HierarchyNode],
