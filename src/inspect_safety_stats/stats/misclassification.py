@@ -15,6 +15,11 @@ class JudgeCalibration:
     ``P(truly unsafe | judge said safe)``. Both are properties of the judge on a
     particular output distribution, so they are prevalence-dependent and do not
     transfer unchanged to a cohort with a materially different failure rate.
+
+    ``completed_strata`` names the judge strata, ``judge_unsafe`` or ``judge_safe``, whose
+    parameter no label measured and which the box therefore completes as ``[0, 1]``. Such a
+    box cannot be strictly informative, so the informativeness check applies only when no
+    stratum is completed.
     """
 
     scenario_id: str
@@ -24,6 +29,7 @@ class JudgeCalibration:
     rho_0_upper: float
     source: str = "assumed"
     alpha: float | None = None
+    completed_strata: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         for name, low, high in (
@@ -32,7 +38,10 @@ class JudgeCalibration:
         ):
             if not 0 <= low <= high <= 1:
                 raise ValueError(f"{name} must satisfy 0 <= lower <= upper <= 1")
-        if self.rho_1_lower <= self.rho_0_upper:
+        unknown = set(self.completed_strata) - {"judge_unsafe", "judge_safe"}
+        if unknown:
+            raise ValueError(f"unknown completed judge strata: {sorted(unknown)}")
+        if not self.completed_strata and self.rho_1_lower <= self.rho_0_upper:
             raise ValueError(
                 "the judge must be strictly informative: rho_1 lower endpoint must exceed "
                 "the rho_0 upper endpoint"
@@ -167,40 +176,66 @@ def estimate_judge_calibration(
     Validity requires the labelled rows to be a simple random sample within their
     stratum. That is a property of the collection protocol, not of the data, and is
     recorded as a declared assumption rather than checked here.
+
+    A stratum without labels is completed conservatively: its parameter is a
+    probability, so ``[0, 1]`` contains it with certainty and spends none of ``alpha``.
+    The result names that stratum in ``completed_strata`` and is not required to be
+    strictly informative, which such a box cannot be. With both strata unlabelled
+    nothing is measured, and the estimate is refused.
     """
 
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
-    if unsafe_stratum.labelled == 0 or safe_stratum.labelled == 0:
-        raise ValueError("both judge strata require at least one human-labelled observation")
+    if unsafe_stratum.labelled == 0 and safe_stratum.labelled == 0:
+        raise ValueError("at least one judge stratum requires a human-labelled observation")
 
     endpoint_alpha = alpha / 4
-    rho_1 = binomial_bounds(
-        unsafe_stratum.truly_unsafe,
-        unsafe_stratum.labelled,
-        alpha_lower=endpoint_alpha,
-        alpha_upper=endpoint_alpha,
+
+    def bounds(stratum: JudgeStratumCounts) -> tuple[float, float]:
+        if stratum.labelled == 0:
+            return 0.0, 1.0
+        interval = binomial_bounds(
+            stratum.truly_unsafe,
+            stratum.labelled,
+            alpha_lower=endpoint_alpha,
+            alpha_upper=endpoint_alpha,
+        )
+        return interval.lower, interval.upper
+
+    rho_1_lower, rho_1_upper = bounds(unsafe_stratum)
+    rho_0_lower, rho_0_upper = bounds(safe_stratum)
+    completed = tuple(
+        name
+        for name, stratum in (("judge_unsafe", unsafe_stratum), ("judge_safe", safe_stratum))
+        if stratum.labelled == 0
     )
-    rho_0 = binomial_bounds(
-        safe_stratum.truly_unsafe,
-        safe_stratum.labelled,
-        alpha_lower=endpoint_alpha,
-        alpha_upper=endpoint_alpha,
-    )
-    if rho_1.lower <= rho_0.upper:
+    if not completed and rho_1_lower <= rho_0_upper:
         raise ValueError(
             "the validation sample does not establish a strictly informative judge: the "
-            f"rho_1 lower bound ({rho_1.lower:.6g}) does not exceed the rho_0 upper bound "
-            f"({rho_0.upper:.6g}); more labels or a better judge are required"
+            f"rho_1 lower bound ({rho_1_lower:.6g}) does not exceed the rho_0 upper bound "
+            f"({rho_0_upper:.6g}); more labels or a better judge are required"
         )
     return JudgeCalibration(
         scenario_id=scenario_id,
-        rho_1_lower=rho_1.lower,
-        rho_1_upper=rho_1.upper,
-        rho_0_lower=rho_0.lower,
-        rho_0_upper=rho_0.upper,
+        rho_1_lower=rho_1_lower,
+        rho_1_upper=rho_1_upper,
+        rho_0_lower=rho_0_lower,
+        rho_0_upper=rho_0_upper,
         source="validated",
         alpha=alpha,
+        completed_strata=completed,
+    )
+
+
+def completion_warning(calibration: JudgeCalibration) -> str | None:
+    """Say which strata a calibration completed as ``[0, 1]``, or ``None`` if none."""
+
+    if not calibration.completed_strata:
+        return None
+    names = " and ".join(calibration.completed_strata)
+    return (
+        f"the {names} judge stratum has no human-labelled observation, so its error rate "
+        "is completed conservatively as [0, 1]; labelling it would narrow the correction"
     )
 
 

@@ -365,9 +365,11 @@ analysis pipeline; see
 ### Judge misclassification
 
 ```python
-JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source)
+JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source,
+                 alpha=None, completed_strata=())   # strata completed as [0, 1]
 JudgeStratumCounts(labelled, truly_unsafe, stratum_size)
 estimate_judge_calibration(*, scenario_id, unsafe_stratum, safe_stratum, alpha)
+completion_warning(calibration)   # message naming completed strata, or None
 correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration)
 delta_method_corrected_risk(*, observed_estimate, observed_variance, unsafe_stratum,
                             safe_stratum, alpha)   # asymptotic reference, diagnostic

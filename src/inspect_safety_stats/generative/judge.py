@@ -28,6 +28,7 @@ from inspect_safety_stats.schema.reports import Diagnostic
 from inspect_safety_stats.stats.misclassification import (
     JudgeCalibration,
     JudgeStratumCounts,
+    completion_warning,
     correct_judge_risk,
     estimate_judge_calibration,
 )
@@ -199,6 +200,17 @@ def measured_calibration(
             )
         )
         return None, diagnostics
+    warning = completion_warning(calibration)
+    if warning is not None:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_STRATUM_UNLABELLED_COMPLETED",
+                severity="WARNING",
+                message=warning,
+                scope=cohort_id,
+                details={"completed_strata": list(calibration.completed_strata)},
+            )
+        )
     return calibration, diagnostics
 
 

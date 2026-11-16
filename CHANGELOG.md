@@ -41,6 +41,14 @@ described in their pull requests.
 
 ### Changed
 
+- **An unlabelled judge stratum is completed, not refused (changes results).** A validated
+  judge calibration needed a human label in both judge strata. A stratum without one is now
+  completed conservatively: its error rate is bounded by [0, 1], the correction is still
+  reported, and a `JUDGE_STRATUM_UNLABELLED_COMPLETED` warning names the stratum. With both
+  strata unlabelled the calibration is still refused. `JudgeCalibration` gains
+  `completed_strata`. See
+  [Judge misclassification](docs/judge-misclassification.md#estimation-and-error-budget).
+
 - **One grader across the JailbreakBench comparison arms (example).** The plan that
   `examples/real_jailbreakbench/run_jailbreakbench.py` writes now matches every cohort on
   `task_arg_grader_model` as well as the model, and log selection picks logs by model and

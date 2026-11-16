@@ -99,6 +99,7 @@ from inspect_safety_stats.stats.misclassification import (
     JudgeCalibration,
     JudgeStratumCounts,
     TruthStratumCounts,
+    completion_warning,
     correct_judge_risk,
     delta_method_corrected_risk,
     estimate_judge_calibration,
@@ -2042,6 +2043,17 @@ def _validated_judge_calibrations(
                 )
             )
             continue
+        warning = completion_warning(calibrations[cohort_id])
+        if warning is not None:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_STRATUM_UNLABELLED_COMPLETED",
+                    severity="WARNING",
+                    message=warning,
+                    scope=cohort_id,
+                    details={"completed_strata": list(calibrations[cohort_id].completed_strata)},
+                )
+            )
         summaries[cohort_id] = {
             "judge_unsafe": {
                 "labelled": unsafe.labelled,
@@ -2109,10 +2121,21 @@ def _judge_corrected_interval(
         f"[{calibration.rho_0_lower:.6g}, {calibration.rho_0_upper:.6g}].",
     ]
     if validated:
+        if calibration.completed_strata:
+            assumptions.append(
+                "The "
+                + " and ".join(calibration.completed_strata)
+                + " judge stratum has no human label, so its range is [0, 1], which holds "
+                "with certainty; any other range is an exact Clopper-Pearson bound from "
+                "human labels drawn within its judge stratum."
+            )
+        else:
+            assumptions.append(
+                "Those two ranges are exact Clopper-Pearson bounds from human labels drawn "
+                "within each judge stratum."
+            )
         assumptions.extend(
             [
-                "Those two ranges are exact Clopper-Pearson bounds from human labels drawn "
-                "within each judge stratum.",
                 "The labelled rows are a simple random sample within their judge stratum; "
                 "this is a property of the declared collection protocol, not of the data.",
                 "Human adjudication is treated as ground truth.",
