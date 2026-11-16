@@ -7,6 +7,17 @@ described in their pull requests.
 
 ### Added
 
+- **Claims by judge (experimental).** With `outputs.judge_claims: true`, a plan with a judge
+  panel also decides every claim on each declared judge's verdicts, as the plan would with that
+  judge as its primary outcome, over the same rollouts. Each judge in
+  `provenance.judge_panel.judges` of `report.json` gains its run's `integrity`, its `claims`
+  rows (status, estimate, lower and upper bound, method) and the `configuration` its cohorts'
+  runs record: the options of the scorer named like the judge's score and the model roles,
+  `null` where none are recorded. `report.md` adds a "Claims by judge (experimental)" table to
+  the judge panel section. The rows do not enter the decision. The option requires
+  `inputs.judges`. Plans that leave it off keep their hash and write the same report bytes as
+  before. See [Claims by judge](docs/plan-reference.md#claims-by-judge-experimental).
+
 - **Transported judge calibration (experimental).** `inputs.judge_calibration.mode:
   transported` takes a judge's sensitivity from a published human-labelled validation set,
   such as HarmBench's classifier validation set, instead of labels on the run's own outputs.

@@ -143,7 +143,7 @@ def _write_frame(
 
 def _patch(monkeypatch: pytest.MonkeyPatch, evals: pd.DataFrame, samples: pd.DataFrame) -> None:
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: evals
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",

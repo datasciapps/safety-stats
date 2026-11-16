@@ -166,7 +166,9 @@ def _frames() -> tuple[pd.DataFrame, pd.DataFrame]:
 @pytest.fixture(autouse=True)
 def _offline_logs(monkeypatch: pytest.MonkeyPatch) -> None:
     evals, samples = _frames()
-    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: evals)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+    )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,

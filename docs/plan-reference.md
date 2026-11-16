@@ -219,6 +219,35 @@ composite's box is derived by Fréchet bounds within blocks and products across 
 risk is partially identified by inverting Rogan–Gladen over it (the whole unit interval when the
 box admits an uninformative panel). See [Judge misclassification](judge-misclassification.md).
 
+#### Claims by judge (experimental)
+
+The report's claims are decided on the primary outcome alone. To see what each declared judge
+would decide, set `outputs.judge_claims: true`. The analysis then runs the plan again once per
+judge, with that judge's `score` as the primary outcome and without `judges`, `composites` or
+`judge_calibration` (the calibration validates the primary outcome, not the other judges). Every
+run uses the same rollouts, and the logs are read once.
+
+```yaml
+outputs:
+  judge_claims: true
+```
+
+Each judge in `provenance.judge_panel.judges` of `report.json` gains:
+
+- `integrity`: the integrity status of that judge's run.
+- `claims`: one row per claim, with `claim_id`, `status`, `estimate`, `lower`, `upper` and
+  `method`.
+- `configuration`: per cohort, the distinct configurations of the scorer named like the judge's
+  score (`scorer`) and the model roles (`model_roles`) that the cohort's runs record. Inspect
+  logs record them under `eval.scorers` and `eval.model_roles`. Where the runs record none, the
+  value is `null`.
+
+`report.md` shows the same rows under **Claims by judge (experimental)** in the judge panel
+section, without the status column when `report.include_decisions` is false. The rows compare
+judge configurations. They do not enter the decision and are not adjusted for multiplicity
+across judges. The option requires `inputs.judges`. A plan that leaves it off keeps its hash and
+writes the same report bytes as before.
+
 ## `design`
 
 | Field | Meaning |

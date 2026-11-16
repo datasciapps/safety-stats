@@ -227,7 +227,9 @@ def test_a_3_0_plan_reads_inspect_logs(monkeypatch: pytest.MonkeyPatch, tmp_path
             for epoch in (1, 2)
         ]
     )
-    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: evals)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+    )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,

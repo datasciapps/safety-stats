@@ -189,6 +189,65 @@ def _claim_status(claim: Any) -> str:
     return f"`{claim.status}` (descriptive: `{claim.descriptive_status}`)"
 
 
+def _recorded(values: list[Any] | None) -> str:
+    if values is None:
+        return "not recorded"
+    return "; ".join(
+        f"`{_escape(json.dumps(value, sort_keys=True, separators=(',', ':')))}`"
+        for value in values
+    )
+
+
+def _judge_claim_lines(
+    panel: dict[str, Any], places: int, include_decisions: bool
+) -> list[str]:
+    """The judge panel's per-judge claim rows and recorded configurations, when the plan
+    asked for them with ``outputs.judge_claims``."""
+
+    judges = [judge for judge in panel["judges"] if "claims" in judge]
+    if not judges:
+        return []
+    status_header, status_rule = ("Status | ", "---|") if include_decisions else ("", "")
+    lines = [
+        "",
+        "### Claims by judge (experimental)",
+        "",
+        "Each judge's rows are the claims this plan gives with that judge's verdicts as its "
+        "primary outcome, over the same rollouts, without the panel or the judge calibration. "
+        "They compare judge configurations. The report's decision rests on the primary outcome "
+        "alone, and these rows are not adjusted for their number.",
+        "",
+        f"| Judge | Integrity | Claim | {status_header}Estimate | Lower | Upper | Method |",
+        f"|---|---|---|{status_rule}---:|---:|---:|---|",
+    ]
+    for judge in judges:
+        for claim in judge["claims"]:
+            status = f"`{claim['status']}` | " if include_decisions else ""
+            lines.append(
+                f"| {_escape(judge['id'])} | `{judge['integrity']}` | "
+                f"{_escape(claim['claim_id'])} | {status}"
+                f"{_number(claim['estimate'], places)} | {_number(claim['lower'], places)} | "
+                f"{_number(claim['upper'], places)} | {_escape(claim['method'])} |"
+            )
+    lines.extend(
+        [
+            "",
+            "The scorer configuration and model roles each cohort's runs record, by judge: the "
+            "options of the scorer named like the judge's score.",
+            "",
+            "| Judge | Cohort | Scorer | Model roles |",
+            "|---|---|---|---|",
+        ]
+    )
+    for judge in judges:
+        for cohort_id, recorded in sorted(judge["configuration"].items()):
+            lines.append(
+                f"| {_escape(judge['id'])} | {_escape(cohort_id)} | "
+                f"{_recorded(recorded['scorer'])} | {_recorded(recorded['model_roles'])} |"
+            )
+    return lines
+
+
 def _markdown(report: SafetyReport) -> str:
     places = int(report._resolved_plan.get("report", {}).get("decimal_places", 6))
     include_decisions = bool(report.presentation.get("include_decisions", True))
@@ -419,6 +478,7 @@ def _markdown(report: SafetyReport) -> str:
                         f"{'—' if agreement is None else f'{agreement:.4f}'} | "
                         f"{'—' if kappa is None else f'{kappa:.4f}'} |"
                     )
+        lines.extend(_judge_claim_lines(panel, places, include_decisions))
     judge_rows = [
         (risk, interval)
         for risk in report.group_risks
