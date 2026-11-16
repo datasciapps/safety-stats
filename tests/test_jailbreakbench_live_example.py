@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import analyze, load_plan
+from inspect_safety_stats import analyze, load_plan, validate
 
 EXAMPLE_DIR = Path(__file__).parents[1] / "examples" / "real_jailbreakbench"
 sys.path.insert(0, str(EXAMPLE_DIR))
@@ -23,6 +23,10 @@ from jailbreakbench_live import (  # noqa: E402
     samples,
 )
 from run_jailbreakbench import write_design, write_plan  # noqa: E402
+
+
+def _header_eval(model: str, grader: str = "model/grader") -> SimpleNamespace:
+    return SimpleNamespace(model=model, task_args={"grader_model": grader})
 
 
 def test_pinned_jbb_dataset_is_complete_and_balanced() -> None:
@@ -67,6 +71,7 @@ def test_runner_writes_balanced_multi_arm_plan(tmp_path: Path) -> None:
             "variant": "model/variant",
         },
         reference="baseline",
+        grader_model="model/grader",
         run_id="jbb-test",
         frozen_at="2026-08-21T12:00:00+00:00",
         attack_name="direct_request",
@@ -79,8 +84,14 @@ def test_runner_writes_balanced_multi_arm_plan(tmp_path: Path) -> None:
     assert set(manifest.groupby("category_id").size()) == {10}
     assert plan.design.hierarchy == ["category_id", "prompt_id"]
     assert plan.design.weights.hierarchy == ["category_id", "prompt_id"]
-    assert plan.cohorts["baseline"].match == {"model": "model/baseline"}
-    assert plan.cohorts["candidate"].match == {"model": "model/candidate"}
+    assert plan.cohorts["baseline"].match == {
+        "model": "model/baseline",
+        "task_arg_grader_model": "model/grader",
+    }
+    assert plan.cohorts["candidate"].match == {
+        "model": "model/candidate",
+        "task_arg_grader_model": "model/grader",
+    }
     assert len(plan.comparison_sets) == 1
     assert plan.comparison_sets[0].contrasts.reference == "baseline"
     expanded = plan.expanded_comparisons()
@@ -109,6 +120,7 @@ def test_analysis_selects_newest_successful_log_per_arm(
             "variant": "model/variant",
         },
         reference="baseline",
+        grader_model="model/grader",
         run_id="jbb-log-selection",
         frozen_at="2026-08-21T12:00:00+00:00",
         attack_name="direct_request",
@@ -119,22 +131,27 @@ def test_analysis_selects_newest_successful_log_per_arm(
         SimpleNamespace(name="candidate-failed.eval", mtime=4.0),
         SimpleNamespace(name="candidate-success.eval", mtime=2.0),
         SimpleNamespace(name="variant-success.eval", mtime=5.0),
+        # Newer, but graded by another model: comparing it would compare judges.
+        SimpleNamespace(name="variant-self-graded.eval", mtime=6.0),
     ]
     headers = {
+        "variant-self-graded.eval": SimpleNamespace(
+            status="success", eval=_header_eval("model/variant", grader="model/variant")
+        ),
         "baseline-old.eval": SimpleNamespace(
-            status="success", eval=SimpleNamespace(model="model/baseline")
+            status="success", eval=_header_eval("model/baseline")
         ),
         "baseline-new.eval": SimpleNamespace(
-            status="success", eval=SimpleNamespace(model="model/baseline")
+            status="success", eval=_header_eval("model/baseline")
         ),
         "candidate-failed.eval": SimpleNamespace(
-            status="error", eval=SimpleNamespace(model="model/candidate")
+            status="error", eval=_header_eval("model/candidate")
         ),
         "candidate-success.eval": SimpleNamespace(
-            status="success", eval=SimpleNamespace(model="model/candidate")
+            status="success", eval=_header_eval("model/candidate")
         ),
         "variant-success.eval": SimpleNamespace(
-            status="success", eval=SimpleNamespace(model="model/variant")
+            status="success", eval=_header_eval("model/variant")
         ),
     }
     monkeypatch.setattr(runner, "list_eval_logs", lambda *args, **kwargs: infos)
@@ -151,7 +168,44 @@ def test_analysis_selects_newest_successful_log_per_arm(
     ]
 
 
-def _offline_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
+def test_log_selection_refuses_an_arm_graded_only_by_another_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    write_design(tmp_path / "design.csv", rollouts=2, attack_name="direct_request")
+    write_plan(
+        tmp_path / "analysis-plan.yaml",
+        arms={"baseline": "model/baseline", "candidate": "model/candidate"},
+        reference="baseline",
+        grader_model="model/grader",
+        run_id="jbb-one-judge",
+        frozen_at="2026-08-21T12:00:00+00:00",
+        attack_name="direct_request",
+    )
+    infos = [
+        SimpleNamespace(name="baseline.eval", mtime=1.0),
+        SimpleNamespace(name="candidate-self-graded.eval", mtime=2.0),
+    ]
+    headers = {
+        "baseline.eval": SimpleNamespace(status="success", eval=_header_eval("model/baseline")),
+        "candidate-self-graded.eval": SimpleNamespace(
+            status="success", eval=_header_eval("model/candidate", grader="model/candidate")
+        ),
+    }
+    monkeypatch.setattr(runner, "list_eval_logs", lambda *args, **kwargs: infos)
+    monkeypatch.setattr(
+        runner,
+        "read_eval_log",
+        lambda info, header_only=True: headers[info.name],
+    )
+
+    with pytest.raises(RuntimeError, match="model/candidate graded by model/grader"):
+        runner.latest_successful_logs(tmp_path)
+
+
+def _offline_frames(
+    graders: dict[str, str] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    graders = graders or {}
     evaluations = []
     sample_rows = []
     for arm, model in (
@@ -171,6 +225,7 @@ def _offline_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
                 "task_name": "jailbreakbench_100",
                 "task_version": "1.0",
                 "model": model,
+                "task_arg_grader_model": graders.get(arm, "model/grader"),
                 "model_generate_config": {"temperature": 1.0, "max_tokens": 512},
                 "solver": "generate",
                 "solver_args": {},
@@ -212,6 +267,7 @@ def test_complete_offline_analysis_and_visualizer(
             "variant": "model/variant",
         },
         reference="baseline",
+        grader_model="model/grader",
         run_id="jbb-offline",
         frozen_at="2026-08-21T12:00:00+00:00",
         attack_name="direct_request",
@@ -264,3 +320,38 @@ def test_complete_offline_analysis_and_visualizer(
     first_goal = behavior_rows()[0]["Goal"]
     for name in ("report.html", "report.md", "report.json"):
         assert first_goal not in (output / name).read_text(encoding="utf-8")
+
+
+def test_an_arm_graded_by_another_model_leaves_its_cohort_empty(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    write_design(tmp_path / "design.csv", rollouts=2, attack_name="direct_request")
+    write_plan(
+        tmp_path / "analysis-plan.yaml",
+        arms={
+            "baseline": "model/baseline",
+            "candidate": "model/candidate",
+            "variant": "model/variant",
+        },
+        reference="baseline",
+        grader_model="model/grader",
+        run_id="jbb-mixed-judges",
+        frozen_at="2026-08-21T12:00:00+00:00",
+        attack_name="direct_request",
+    )
+    eval_frame, sample_frame = _offline_frames(graders={"candidate": "model/candidate"})
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df",
+        lambda logs: eval_frame,
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    integrity = validate(plan=tmp_path / "analysis-plan.yaml", logs="ignored")
+    assert integrity.status == "invalid"
+    assert any(
+        diagnostic.code == "COHORT_EMPTY" and diagnostic.scope == "candidate"
+        for diagnostic in integrity.diagnostics
+    )
