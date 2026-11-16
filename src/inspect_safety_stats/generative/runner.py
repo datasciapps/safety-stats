@@ -94,11 +94,15 @@ class MaterializedRun:
 
 
 def resolve_kernel(specification: str) -> RewriteKernel:
-    """Resolve ``fake``, ``fake:invalid_every=N``, or ``module:attribute``.
+    """Resolve ``fake``, ``fake:invalid_every=N``, ``module:attribute`` or ``file.py:attribute``.
 
     A provider-backed kernel is supplied as an import path so nothing in this package
     depends on a particular rewriter client. The attribute may be a kernel or a
     zero-argument factory returning one.
+
+    ``module:attribute`` is imported from ``sys.path`` as the caller left it; this function
+    does not add the working directory (the CLI does, as ``python -m`` would). A kernel file
+    is executed under a private module name and is not left in ``sys.modules``.
     """
 
     if specification == "fake" or specification.startswith("fake:"):
@@ -126,19 +130,26 @@ def resolve_kernel(specification: str) -> RewriteKernel:
     if candidate.suffix == ".py":
         if not candidate.is_file():
             raise ValueError(f"kernel file {candidate} does not exist")
-        loader = importlib.util.spec_from_file_location(candidate.stem, candidate)
+        name = f"_inspect_safety_stats_kernel_{candidate.stem}"
+        loader = importlib.util.spec_from_file_location(name, candidate)
         if loader is None or loader.loader is None:
             raise ValueError(f"kernel file {candidate} could not be loaded")
         module = importlib.util.module_from_spec(loader)
-        # Registered before execution so dataclasses and typing inside it resolve.
-        sys.modules[candidate.stem] = module
-        loader.loader.exec_module(module)
+        # ORDER MATTERS: the module is registered before execution and removed after it.
+        # dataclasses look the defining module up in sys.modules while the class body runs,
+        # so executing an unregistered file that defines a dataclass fails. Leaving it
+        # registered would keep global state, and under its bare stem a file named like
+        # an installed module (json.py) would replace that module for the whole process.
+        previous = sys.modules.get(name)
+        sys.modules[name] = module
+        try:
+            loader.loader.exec_module(module)
+        finally:
+            if previous is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = previous
     else:
-        # A console script does not put the working directory on sys.path, but someone
-        # naming a module on the command line means the one in their project.
-        working = str(Path.cwd())
-        if working not in sys.path:
-            sys.path.insert(0, working)
         try:
             module = importlib.import_module(target)
         except ModuleNotFoundError as exc:
@@ -370,6 +381,8 @@ def _judge_correction(
                 "alpha_spent": measured.alpha,
             }
         }
+        if measured.completed_strata:
+            meta["judge_calibration"]["completed_strata"] = list(measured.completed_strata)
 
     for comparison in comparisons:
         diagnostics.append(

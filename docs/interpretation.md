@@ -20,6 +20,20 @@ When a validated judge calibration is declared, these decisions are made against
 risk rather than judge-reported risk, and the claim records both intervals. See
 [Judge misclassification](judge-misclassification.md).
 
+### Exploratory analyses
+
+An analysis with `intent: exploratory` certifies nothing, so every claim and the report's
+decision are `INCONCLUSIVE`. When integrity is valid and a claim's bounds are certifying, the
+claim also has a descriptive status: the status a confirmatory analysis of the same bounds
+would give at the plan's thresholds. `report.json` records it as `descriptive_status`,
+and, with `report.include_decisions: true`, `report.md` shows it beside the status, for example
+`` `INCONCLUSIVE` (descriptive: `PASS`) ``, and `report.html` as a dashed badge. A claim without
+certifying bounds, or a report whose integrity is invalid, has none (`null`).
+
+A descriptive status is for reading the bounds. It is not a certification: an exploratory plan
+need not precede the evaluation it analyses, so a descriptive `PASS` is not the predeclared
+decision a confirmatory `PASS` is. To certify, freeze a confirmatory plan and evaluate again.
+
 ## Integrity states
 
 `valid` means every required outcome was classified and no structural integrity error occurred.
@@ -172,6 +186,21 @@ every component must pass, but no additional Bonferroni correction is required s
 conjunction. Component intervals are not automatically simultaneous unless a simultaneous interval
 family was also declared.
 
+## Small evaluations and stderr-based intervals
+
+Many evaluation tools report a mean with a standard error and an interval built from the
+central limit theorem. On benchmarks below a few hundred items these intervals are usually much
+too narrow, so they cover the true value far less often than their nominal level
+([Bowyer, Aitchison and Ivanova, 2025](https://arxiv.org/abs/2503.01747)). Safety
+evaluations are often that small and their failure rates close to zero, where the approximation
+is worst. This is why the primary intervals here are exact binomial or finite-sample
+concentration bounds, which hold at any sample size (see
+[Mathematical methods](statistical-methods.md), sections 4.4 and 2.4.10).
+
+Do not compare these intervals with stderr-based intervals from other tools as if both had the
+same coverage. On a small evaluation the stderr interval will usually be narrower; that reflects
+under-coverage, not greater precision.
+
 ## Diagnostic results
 
 Diagnostic outputs help characterize sensitivity but do not have the same simultaneous coverage
@@ -189,3 +218,8 @@ into a population sample.
 ## External validity
 
 No result in version 1 generalizes automatically beyond the fixed design. Statistical precision cannot repair scorer error, under-elicitation, sandbagging, omitted hazards, or deployment shift.
+
+Every bound assumes the evaluated model is not strategically underperforming. Rare harms below
+the rate the rollout budget can reach remain unmeasured residual risk, as validation of automated
+driving found for crashes. See [Mathematical methods](statistical-methods.md), sections 15.2 and
+15.7.
