@@ -99,6 +99,74 @@ def test_prove_red_compares_with_an_earlier_commit_once_the_change_is_committed(
     assert "PROVEN: the tests fail against src/ at HEAD~1" in proven.stdout
 
 
+_EXAMPLE_TEST = (
+    "import sys\nfrom pathlib import Path\n\n"
+    "sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'examples' / 'toy'))\n\n"
+    "from helper import double\n\n\n"
+    "def test_double():\n    assert {assertion}\n"
+)
+
+
+@pytest.fixture
+def toy_example(toy: Path) -> Path:
+    """A repository whose committed example is buggy and whose working tree fixes it.
+
+    The test puts the example on sys.path by its own location, as the example tests here do,
+    so exporting src/ alone leaves the working tree's fixed copy in both runs.
+    """
+    example = toy / "examples" / "toy"
+    example.mkdir(parents=True)
+    (example / "helper.py").write_text(_BUGGY, encoding="utf-8")
+    _git(toy, "add", ".")
+    _git(toy, "commit", "-q", "-s", "-m", "Add a buggy example")
+    (example / "helper.py").write_text(_FIXED, encoding="utf-8")
+    assert _git(toy, "status", "--porcelain") == " M examples/toy/helper.py\n"
+    return toy
+
+
+def test_prove_red_points_to_tree_for_a_fix_outside_src(toy_example: Path) -> None:
+    result = _prove_red(toy_example, _EXAMPLE_TEST.format(assertion="double(2) == 4"))
+    assert result.returncode == 2, result.stdout + result.stderr
+    assert "pass --tree" in result.stderr
+
+
+def test_prove_red_proves_a_fix_outside_src_in_an_exported_tree(toy_example: Path) -> None:
+    test = _EXAMPLE_TEST.format(assertion="double(2) == 4")
+    (toy_example / "tests" / "test_toy.py").write_text(test, encoding="utf-8")
+    status = _git(toy_example, "status", "--porcelain", "--untracked-files=all")
+    result = _prove_red(toy_example, test, "--tree")
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "PROVEN: the tests fail against the tree at HEAD" in result.stdout
+    assert (toy_example / "examples" / "toy" / "helper.py").read_text(encoding="utf-8") == _FIXED
+    assert _git(toy_example, "status", "--porcelain", "--untracked-files=all") == status
+
+
+def test_prove_red_in_an_exported_tree_rejects_a_test_that_misses_the_fix(
+    toy_example: Path,
+) -> None:
+    result = _prove_red(toy_example, _EXAMPLE_TEST.format(assertion="double(2) > 0"), "--tree")
+    assert result.returncode == 1, result.stdout + result.stderr
+    assert "NOT PROVEN: the tests pass against the tree at HEAD" in result.stdout
+
+
+def test_exported_tree_is_a_repository_with_the_working_trees_tests(
+    toy_example: Path, tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tests that ask git about their checkout, as the repository tests do, run there too."""
+    monkeypatch.syspath_prepend(str(SCRIPTS))
+    source_trees = importlib.import_module("_source_trees")
+    (toy_example / "tests" / "test_new.py").write_text("NEW = 1\n", encoding="utf-8")
+    (toy_example / "tests" / "__pycache__").mkdir()
+    (toy_example / "tests" / "__pycache__" / "stale.pyc").write_bytes(b"")
+    tree = tmp_path_factory.mktemp("tree")
+    assert source_trees.export_tree(toy_example, "HEAD", "tests", tree) is None
+    files = _git(tree, "ls-files").split()
+    assert "tests/test_new.py" in files and "examples/toy/helper.py" in files
+    assert not any("__pycache__" in name for name in files)
+    assert (tree / "examples" / "toy" / "helper.py").read_text(encoding="utf-8") == _BUGGY
+    assert Path(_git(tree, "rev-parse", "--show-toplevel").strip()).resolve() == tree.resolve()
+
+
 @pytest.fixture
 def compare_artifacts(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
     monkeypatch.syspath_prepend(str(SCRIPTS))
