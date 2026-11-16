@@ -81,6 +81,34 @@ def test_hash_plan_refuses_to_register_the_inference_hash(tmp_path: Path) -> Non
     assert not receipt_path.exists()
 
 
+@pytest.mark.parametrize(
+    ("old", "new", "named"),
+    [
+        ("decimal_places: 6", "decimal_places: true", "report.decimal_places: "),
+        ('schema_version: "2.0"', 'schema_version: "2.0"\nunknown_field: 1', "unknown_field: "),
+        ('schema_version: "2.0"', 'schema_version: "9.9"', "'9.9'"),
+        ('schema_version: "2.0"', 'schema_version: ["unclosed', "Plan invalid: "),
+    ],
+    ids=["boolean-field", "unknown-field", "schema-version", "yaml-syntax"],
+)
+def test_hash_plan_reports_an_invalid_plan_on_one_line_and_exits_3(
+    tmp_path: Path, old: str, new: str, named: str
+) -> None:
+    plan = _plan(tmp_path)
+    text = plan.read_text(encoding="utf-8")
+    assert old in text
+    plan.write_text(text.replace(old, new), encoding="utf-8")
+
+    result = runner.invoke(app, ["hash-plan", "--plan", str(plan)])
+
+    assert result.exit_code == 3
+    output = plain(result.output)
+    assert output.startswith("Plan invalid: ")
+    assert named in output
+    assert "\n" not in output.strip()
+    assert "Traceback" not in output
+
+
 def test_a_receipt_records_utc_to_the_second(tmp_path: Path) -> None:
     path = tmp_path / "r.json"
     local = datetime(2026, 3, 1, 14, 30, 5, 999, tzinfo=timezone.utc).astimezone()

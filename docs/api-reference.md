@@ -445,6 +445,8 @@ correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibra
 delta_method_corrected_risk(*, observed_estimate, observed_variance, unsafe_stratum,
                             safe_stratum, alpha)   # asymptotic reference, diagnostic
 TruthStratumCounts(labelled, judge_positive)
+lang_reiczigel_corrected_risk(*, apparent_rate, apparent_size, truly_unsafe, truly_safe,
+                              alpha)   # approximate limits, diagnostic
 noisy_valid_certification(*, judge_reported_lower, judge_reported_upper, judge_reported_alpha,
                           truly_unsafe, truly_safe, calibration_alpha, acceptable_upper,
                           unacceptable_lower)   # finite-sample threshold test
@@ -619,7 +621,9 @@ Exit codes of `analyze`:
 | Integrity `invalid` with `--allow-invalid` | `0` | `2`, because an invalid analysis is never PASS |
 | The analysis cannot run, for example an unreadable plan | `3` | `3` |
 
-`validate` exits `3` for invalid input and `0` otherwise. `generative analyze` exits `3` when
+`validate` exits `3` for invalid input and `0` otherwise. `hash-plan` exits `3` for a plan it
+cannot read or validate, and prints `Plan invalid:` with each failing field on one line.
+Before this release it printed a traceback and exited `1`. `generative analyze` exits `3` when
 its report carries an `ERROR` diagnostic, and still writes the report. Before this release it
 exited `2`, which `analyze` uses for INCONCLUSIVE.
 
@@ -675,6 +679,15 @@ projection.root_upper, projection.levels, projection.expected_unsampled_nodes
 `rewrite(request) -> RewriteOutcome` method. `DeterministicFakeKernel` stands in for it in
 tests; [`examples/generative_live/rewriter.py`](../examples/generative_live/rewriter.py) is a
 provider-backed reference implementation.
+
+**Conversations (experimental).** Under `rewrite.output: conversation` a kernel returns
+`RewriteOutcome(status="valid", messages=...)`, a tuple of `ChatTurn(role, content)` with
+the roles `user` and `assistant` and, unless the plan attaches system prompts, `system`.
+`conversation_problem(turns)` says why a conversation cannot be evaluated, or returns
+`None`, so a kernel parsing one out of model output can report a malformed reply as
+`invalid`. `RewriteRequest.system_prompt` and `RewriteRequest.conversation_turns` carry the
+plan's system-prompt and turns arms for the request's path. See
+[conversations and system prompts](generative-evaluation.md#conversations-and-system-prompts-experimental).
 
 **Supplying a validator** (experimental) is needed only when the plan sets
 `rewrite.validation.invoke`. Pass `validator=` to `materialize_run` (or `--validator` on the
