@@ -327,6 +327,19 @@ def _markdown(report: SafetyReport) -> str:
                 "assumes the judge never errs."
             )
         )
+        scoped = calibration.get("groups")
+        if scoped:
+            preamble += (
+                " The calibration is scoped to the groups "
+                + ", ".join(f"`{_escape(item)}`" for item in scoped)
+                + (
+                    ": each cohort has one calibration per group, from the labels on that "
+                    "group's rollouts"
+                    if validated
+                    else ": the declared accuracies apply to those groups' rows only"
+                )
+                + ", and rows of other groups are not corrected."
+            )
         lines.extend(
             [
                 "",
@@ -380,7 +393,37 @@ def _markdown(report: SafetyReport) -> str:
             )
         if validated:
             cohorts = (report.provenance.get("judge_calibration") or {}).get("cohorts") or {}
-            if cohorts:
+            if cohorts and scoped:
+                lines.extend(
+                    [
+                        "",
+                        "Human labels behind each cohort's calibration for each group:",
+                        "",
+                        (
+                            "| Cohort | Group | Judge-unsafe labelled / stratum | Truly unsafe | "
+                            "Judge-safe labelled / stratum | Truly unsafe |"
+                        ),
+                        "|---|---|---|---:|---|---:|",
+                    ]
+                )
+                for cohort_id, by_group in cohorts.items():
+                    for group_id, strata in by_group.items():
+                        unsafe, safe = strata["judge_unsafe"], strata["judge_safe"]
+                        lines.append(
+                            "| "
+                            + " | ".join(
+                                [
+                                    _escape(cohort_id),
+                                    _escape(group_id),
+                                    f"{unsafe['labelled']} / {unsafe['stratum_size']}",
+                                    str(unsafe["truly_unsafe"]),
+                                    f"{safe['labelled']} / {safe['stratum_size']}",
+                                    str(safe["truly_unsafe"]),
+                                ]
+                            )
+                            + " |"
+                        )
+            elif cohorts:
                 lines.extend(
                     [
                         "",
