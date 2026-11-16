@@ -144,7 +144,9 @@ reports/example/
 
 A plan that declares
 [outcome mapping sensitivities](docs/plan-reference.md#outcome-mapping-sensitivities-experimental)
-also gets `outcome-mapping-sensitivity.csv`.
+also gets `outcome-mapping-sensitivity.csv`. A plan that sets
+[`report.claims_export`](docs/plan-reference.md#claimsjson-experimental) also gets `claims.json`,
+one machine-readable record per claim.
 
 `report.html` is a self-contained interactive visualization. It needs no server or external
 JavaScript and supports cohort/measure/independence-profile selection, group-risk intervals, joint

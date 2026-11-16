@@ -6,9 +6,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from inspect_safety_stats.analysis.estimates import _bounds_carry_unknown_outcome
-from inspect_safety_stats.config.models import AnalysisPlan, PublishedValidationSetSpec
+from inspect_safety_stats.config.models import (
+    AnalysisPlan,
+    JudgeCalibrationSpec,
+    PublishedValidationSetSpec,
+)
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.ingest.validation import (
+    check_labelled_prefix,
     fine_stratum_counts,
     judge_stratum_counts,
     load_validation_manifest,
@@ -32,6 +37,7 @@ from inspect_safety_stats.stats.judge_calibration import (
     unlabelled_fine_strata_diagnostic,
 )
 from inspect_safety_stats.stats.misclassification import (
+    CalibrationBound,
     JudgeCalibration,
     correct_judge_risk,
     transport_judge_risk,
@@ -272,15 +278,18 @@ def _validated_judge_calibrations(
     dict[_JudgeScope, dict[str, Any]],
     float | None,
     dict[_JudgeScope, Any],
+    dict[str, Any] | None,
 ]:
     """Estimate one calibration per cohort, or per cohort and scoped group, from human labels.
 
     A scoped calibration counts only the labels, and the stratum sizes, of its group's rollouts.
+    The last item records the declared labelling protocol and what checking it found, or is
+    ``None`` when the plan declares none.
     """
 
     spec = plan.inputs.judge_calibration
     if spec is None or spec.mode != "validated":
-        return {}, {}, None, {}
+        return {}, {}, None, {}, None
     family = next((item for item in plan.multiplicity.families if item.id == spec.family), None)
     if family is None:
         diagnostics.append(
@@ -291,7 +300,7 @@ def _validated_judge_calibrations(
                 scope="inputs.judge_calibration",
             )
         )
-        return {}, {}, None, {}
+        return {}, {}, None, {}, None
     if spec.validation_manifest is None:
         raise ValueError("a validated inputs.judge_calibration requires a validation_manifest")
     try:
@@ -305,7 +314,16 @@ def _validated_judge_calibrations(
                 scope="inputs.judge_calibration",
             )
         )
-        return {}, {}, None, {}
+        return {}, {}, None, {}, None
+
+    protocol = _labelling_protocol(spec, labels, diagnostics)
+    if spec.protocol is not None and protocol is None:
+        return {}, {}, None, {}, None
+    bound: CalibrationBound = (
+        "confidence_sequence"
+        if spec.protocol is not None and spec.protocol.stopping == "data_dependent"
+        else "clopper_pearson"
+    )
 
     declared: dict[str, str] | None = None
     if spec.sampling == "stratified_without_replacement":
@@ -322,7 +340,7 @@ def _validated_judge_calibrations(
                     scope="inputs.judge_calibration",
                 )
             )
-            return {}, {}, None, {}
+            return {}, {}, None, {}, None
         design = fine_stratum_counts(data.observations, labels, declared)
         # The strata file is the design: a classified row it does not place, or a key that
         # names no classified row, means the sizes it implies are not the design's.
@@ -350,7 +368,7 @@ def _validated_judge_calibrations(
                     )
                 )
         if design.unstratified or design.unknown_strata:
-            return {}, {}, None, {}
+            return {}, {}, None, {}, None
 
     _, unmatched = judge_stratum_counts(data.observations, labels)
     scopes = _judge_scopes(plan)
@@ -426,6 +444,7 @@ def _validated_judge_calibrations(
             scenario_id="validated",
             alpha=per_calibration_alpha,
             fine=None if declared is None else fine.get(scope, {}),
+            bound=bound,
         )
         if outcome.empty_strata:
             diagnostics.append(
@@ -478,7 +497,54 @@ def _validated_judge_calibrations(
                 scope="inputs.judge_calibration",
             )
         )
-    return calibrations, summaries, family.alpha, truth_strata
+    return calibrations, summaries, family.alpha, truth_strata, protocol
+
+
+def _labelling_protocol(
+    spec: JudgeCalibrationSpec,
+    labels: dict[str, bool],
+    diagnostics: list[Diagnostic],
+) -> dict[str, Any] | None:
+    """Check the labels against the declared labelling protocol, and record both.
+
+    ``None`` with an ERROR diagnostic when the labels break the protocol, and ``None``
+    without one when the plan declares no protocol.
+    """
+
+    protocol = spec.protocol
+    if protocol is None:
+        return None
+    try:
+        prefix = check_labelled_prefix(protocol.queue, labels, tier=protocol.tier)
+        if protocol.stopping == "fixed_size" and prefix.labelled != protocol.size:
+            raise ValueError(
+                f"the labelling protocol fixes {protocol.size} labels in advance, but the "
+                f"validation manifest has {prefix.labelled}"
+            )
+    except (OSError, ValueError) as exc:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_LABELLING_PROTOCOL_VIOLATED",
+                severity="ERROR",
+                message=str(exc),
+                scope="inputs.judge_calibration.protocol",
+            )
+        )
+        return None
+    return {
+        "queue_sha256": prefix.queue_sha256,
+        "queue_rows": prefix.queue_rows,
+        "labelled_prefix": prefix.labelled,
+        "tier": protocol.tier,
+        "seed": protocol.seed,
+        "stopping": protocol.stopping,
+        "size": protocol.size,
+        "bound": (
+            "confidence_sequence"
+            if protocol.stopping == "data_dependent"
+            else "clopper_pearson"
+        ),
+    }
 
 
 def _judge_corrected_interval(
@@ -581,23 +647,40 @@ def _judge_corrected_interval(
                 ]
             )
     elif validated:
+        sequence = calibration.bound == "confidence_sequence"
+        method = (
+            "anytime-valid hypergeometric confidence sequence (Waudby-Smith and Ramdas, 2020)"
+            if sequence
+            else "exact Clopper-Pearson bound"
+        )
         if calibration.completed_strata:
             assumptions.append(
                 "The "
                 + " and ".join(calibration.completed_strata)
                 + " judge stratum has no human label, so its range is [0, 1], which holds "
-                "with certainty; any other range is an exact Clopper-Pearson bound from "
+                f"with certainty; any other range is an {method} from "
                 "human labels drawn within its judge stratum."
             )
         else:
             assumptions.append(
-                "Those two ranges are exact Clopper-Pearson bounds from human labels drawn "
-                "within each judge stratum."
+                f"Each of those two ranges is an {method} from human labels drawn "
+                "within its judge stratum."
+                if sequence
+                else "Those two ranges are exact Clopper-Pearson bounds from human labels "
+                "drawn within each judge stratum."
             )
         assumptions.extend(
             [
-                "The labelled rows are a simple random sample within their judge stratum; "
-                "this is a property of the declared collection protocol, not of the data.",
+                (
+                    "The labelled rows were drawn one at a time, without replacement and in a "
+                    "random order, within their judge stratum, as the declared labelling "
+                    "queue orders them; the ranges hold at every number of labels at once, "
+                    "so labelling may have stopped because of the labels seen."
+                    if sequence
+                    else "The labelled rows are a simple random sample within their judge "
+                    "stratum; this is a property of the declared collection protocol, not "
+                    "of the data."
+                ),
                 "Human adjudication is treated as ground truth.",
             ]
         )

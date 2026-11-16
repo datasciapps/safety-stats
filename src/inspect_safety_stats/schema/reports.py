@@ -473,6 +473,9 @@ class ReportPresentation(ResultModel):
     # The plan's primary outcome mapping; recorded only when the plan declares outcome mapping
     # sensitivities (experimental), which show it beside the alternatives.
     primary_outcome_mapping: dict[str, Any] | None = None
+    # True when the plan asks for claims.json (report.claims_export, experimental); None
+    # otherwise, which keeps report.json as it was before the export existed.
+    claims_export: bool | None = None
 
     @model_serializer(mode="wrap")
     def leave_out_absent_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:

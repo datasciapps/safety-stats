@@ -282,6 +282,38 @@ class PublishedValidationSetSpec(StrictModel):
         return self
 
 
+class LabellingProtocolSpec(StrictModel):
+    """Experimental: how the human labels of a validated calibration were collected.
+
+    ``queue`` is a CSV whose ``observation_id`` column lists the rollouts in the order they
+    are to be labelled; a queue that orders each judge stratum by a seeded random
+    permutation makes every prefix a simple random sample within each stratum. ``tier``
+    keeps only the queue rows whose ``tier`` column has that value, for a queue that also
+    holds rows the calibration does not use. ``seed`` records the permutation's seed for an
+    audit; the package cannot recompute the queue from it.
+
+    The analysis checks that the validation manifest labels exactly the first rows of the
+    queue. ``stopping`` declares why labelling stopped there: ``fixed_size`` at ``size`` rows,
+    which the analysis checks; ``label_independent`` at a point chosen without looking at the
+    labels, such as when time ran out; ``data_dependent`` possibly because of the labels,
+    which only anytime-valid bounds allow, so the calibration then uses confidence sequences.
+    """
+
+    queue: Path
+    tier: str | None = Field(default=None, min_length=1)
+    seed: PlanInt | None = None
+    stopping: Literal["fixed_size", "label_independent", "data_dependent"]
+    size: PlanInt | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def size_only_when_fixed(self) -> LabellingProtocolSpec:
+        if self.stopping == "fixed_size" and self.size is None:
+            raise ValueError("labelling protocol stopping: fixed_size requires a size")
+        if self.stopping != "fixed_size" and self.size is not None:
+            raise ValueError("labelling protocol size applies only to stopping: fixed_size")
+        return self
+
+
 class JudgeCalibrationSpec(OmitsAbsentFields):
     """Judge-misclassification calibration, either declared, transported or measured.
 
@@ -300,7 +332,7 @@ class JudgeCalibrationSpec(OmitsAbsentFields):
 
     # Left out of the serialised plan when absent, so the hash and the resolved plan of a
     # plan without them are what they were before the fields existed.
-    absent_when_none = ("published_set", "groups", "validation_strata")
+    absent_when_none = ("published_set", "groups", "validation_strata", "protocol")
 
     mode: Literal["assumed", "validated", "transported"] = "assumed"
     scenarios: list[JudgeCalibrationScenarioSpec] = Field(default_factory=list)
@@ -315,10 +347,25 @@ class JudgeCalibrationSpec(OmitsAbsentFields):
     # Experimental: the declared fine stratum of every classified observation, for
     # sampling: stratified_without_replacement.
     validation_strata: Path | None = None
+    # Experimental: how the labels were collected, which the analysis checks.
+    protocol: LabellingProtocolSpec | None = None
 
     @model_validator(mode="after")
     def validate_mode(self) -> JudgeCalibrationSpec:
         _group_scope(self.groups, "judge calibration")
+        if self.protocol is not None and self.mode != "validated":
+            raise ValueError("a labelling protocol requires mode: validated")
+        if (
+            self.protocol is not None
+            and self.protocol.stopping == "data_dependent"
+            and self.sampling != "simple_random_within_judge_stratum"
+        ):
+            # The noisy-but-valid test's bounds by true class, and the stratified design's
+            # fine-stratum bounds, have no anytime-valid form here yet.
+            raise ValueError(
+                "labelling protocol stopping: data_dependent requires sampling: "
+                "simple_random_within_judge_stratum"
+            )
         if self.mode != "transported" and self.published_set is not None:
             raise ValueError("published_set requires mode: transported")
         stratified = self.sampling == "stratified_without_replacement"
@@ -964,6 +1011,21 @@ class ReportSpec(StrictModel):
     # Experimental. Left out of the plan dump while off, so a plan that does not opt in keeps
     # its hash and every artifact it produced before the field existed.
     judge_error_stress: bool = False
+    # Experimental (#11): write claims.json beside report.json. Left out of the plan dump while
+    # off, like judge_error_stress.
+    claims_export: bool = False
+
+    @model_validator(mode="after")
+    def claims_export_needs_decisions(self) -> ReportSpec:
+        # claims.json carries every claim's status. With include_decisions false the rendered
+        # report leaves statuses out, and whether that hides or redacts them is open (#58), so
+        # the export is refused rather than deciding it here.
+        if self.claims_export and not self.include_decisions:
+            raise ValueError(
+                "report.claims_export needs report.include_decisions: true, because claims.json "
+                "carries each claim's status"
+            )
+        return self
 
     @model_serializer(mode="wrap")
     def leave_out_judge_error_stress_when_off(
@@ -972,6 +1034,8 @@ class ReportSpec(StrictModel):
         data: dict[str, Any] = handler(self)
         if not self.judge_error_stress:
             data.pop("judge_error_stress", None)
+        if not self.claims_export:
+            data.pop("claims_export", None)
         return data
 
 

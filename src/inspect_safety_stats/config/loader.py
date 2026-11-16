@@ -82,6 +82,10 @@ def load_plan(path: str | Path) -> AnalysisPlan:
     flip = plan.inputs.judge_flip
     if flip is not None and not flip.manifest.is_absolute():
         flip.manifest = (source.parent / flip.manifest).resolve()
+    if calibration is not None and calibration.protocol is not None:
+        queue = calibration.protocol.queue
+        if not queue.is_absolute():
+            calibration.protocol.queue = (source.parent / queue).resolve()
     return plan
 
 
@@ -133,6 +137,10 @@ def report_plan(plan: AnalysisPlan) -> dict[str, Any]:
         value["inputs"]["judge_flip"]["manifest"] = report_path(
             plan.inputs.judge_flip.manifest, plan
         )
+    if calibration is not None and calibration.protocol is not None:
+        value["inputs"]["judge_calibration"]["protocol"]["queue"] = report_path(
+            calibration.protocol.queue, plan
+        )
     return value
 
 
@@ -165,4 +173,8 @@ def canonical_plan_value(plan: AnalysisPlan) -> dict[str, Any]:
             flip_manifest = _plan_relative(flip.manifest, source)
             if flip_manifest is not None:
                 value["inputs"]["judge_flip"]["manifest"] = flip_manifest
+        if calibration is not None and calibration.protocol is not None:
+            queue = _plan_relative(calibration.protocol.queue, source)
+            if queue is not None:
+                value["inputs"]["judge_calibration"]["protocol"]["queue"] = queue
     return value

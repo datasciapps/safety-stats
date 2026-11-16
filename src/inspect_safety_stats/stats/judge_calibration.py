@@ -22,6 +22,7 @@ from typing import Any
 
 from inspect_safety_stats.schema.reports import Diagnostic
 from inspect_safety_stats.stats.misclassification import (
+    CalibrationBound,
     FineStratumBounds,
     JudgeCalibration,
     JudgeStratumCounts,
@@ -240,12 +241,13 @@ def calibrate_cohort(
     scenario_id: str,
     alpha: float,
     fine: FineStrata | None = None,
+    bound: CalibrationBound = "clopper_pearson",
 ) -> CohortCalibration:
     """Estimate one cohort's calibration from its strata within its share ``alpha``.
 
     With ``fine``, the declared fine strata whose sums ``strata`` holds, the labels are
     read as a stratified sample without replacement; without, as a simple random sample
-    within each judge stratum.
+    within each judge stratum, bounded by ``bound``.
     """
 
     empty = strata.empty
@@ -258,6 +260,7 @@ def calibrate_cohort(
                 unsafe_stratum=strata.judge_unsafe,
                 safe_stratum=strata.judge_safe,
                 alpha=alpha,
+                bound=bound,
             )
             return CohortCalibration(strata=strata, calibration=calibration)
         stratified = estimate_stratified_judge_calibration(
