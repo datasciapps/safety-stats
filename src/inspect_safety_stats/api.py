@@ -4814,6 +4814,8 @@ def analyze(
     source: EvaluationSource | None = None,
 ) -> SafetyReport:
     resolved = _coerce_plan(plan)
+    if resolved.inputs.score.mapping_sensitivities:
+        raise NotImplementedError("inputs.score.mapping_sensitivities is not analysed yet")
     diagnostics = validate_plan_references(resolved)
     data = ingest(resolved, _source(logs, parallel, source))
     validate_profile_fields(resolved.design.independence_profiles, data.manifest)
