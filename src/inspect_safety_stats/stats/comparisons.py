@@ -8,18 +8,9 @@ from typing import Literal
 import numpy as np
 from numpy.typing import ArrayLike
 
-from inspect_safety_stats.stats.direct_mean import (
-    DirectMeanBounds,
-    weighted_empirical_bernstein_mean_bounds,
-    weighted_hoeffding_mean_bounds,
-    weighted_kl_chernoff_mean_bounds,
-)
+from inspect_safety_stats.config.methods import DEFAULT_STATS_FUNCTION_METHOD, ComparisonMethod
+from inspect_safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES, DirectMeanBounds
 
-ComparisonMethod = Literal[
-    "weighted_hoeffding",
-    "weighted_empirical_bernstein",
-    "weighted_kl_chernoff",
-]
 ComparisonIndependenceUnit = Literal["rollout", "prompt_cluster"]
 
 
@@ -122,11 +113,7 @@ def _arrays(
 
 
 def _direct_function(method: ComparisonMethod) -> Callable[..., DirectMeanBounds]:
-    return {
-        "weighted_hoeffding": weighted_hoeffding_mean_bounds,
-        "weighted_empirical_bernstein": weighted_empirical_bernstein_mean_bounds,
-        "weighted_kl_chernoff": weighted_kl_chernoff_mean_bounds,
-    }[method]
+    return DIRECT_MEAN_ENGINES[method].counts
 
 
 def _variance_centers(method: ComparisonMethod, centers: np.ndarray) -> dict[str, np.ndarray]:
@@ -173,7 +160,7 @@ def direct_risk_difference_bounds(
     *,
     alpha_lower: float,
     alpha_upper: float,
-    method: ComparisonMethod = "weighted_empirical_bernstein",
+    method: ComparisonMethod = DEFAULT_STATS_FUNCTION_METHOD,
     independence_unit: ComparisonIndependenceUnit = "rollout",
 ) -> DirectComparisonBounds:
     """Bound a fixed-design weighted candidate-minus-baseline failure risk.
@@ -325,7 +312,7 @@ def direct_ratio_bounds(
     *,
     alpha_lower: float,
     alpha_upper: float,
-    method: ComparisonMethod = "weighted_empirical_bernstein",
+    method: ComparisonMethod = DEFAULT_STATS_FUNCTION_METHOD,
     independence_unit: ComparisonIndependenceUnit = "rollout",
     estimand: Literal["risk_ratio", "relative_risk_reduction"] = "risk_ratio",
 ) -> RatioComparisonBounds:

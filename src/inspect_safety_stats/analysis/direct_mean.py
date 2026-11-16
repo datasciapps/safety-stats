@@ -10,6 +10,7 @@ import pandas as pd
 
 from inspect_safety_stats.analysis.estimates import _block_index, prompt_blocked
 from inspect_safety_stats.analysis.measures import _coverage_floors, _independence, _parameter
+from inspect_safety_stats.config.methods import DirectMeanMethod
 from inspect_safety_stats.config.models import AnalysisPlan, RiskMeasureSpec
 from inspect_safety_stats.ingest.manifest import load_inclusion_probabilities
 from inspect_safety_stats.ingest.records import NormalizedData
@@ -23,11 +24,8 @@ from inspect_safety_stats.stats.design_based import (
 )
 from inspect_safety_stats.stats.direct_mean import (
     BETTING_KERNEL,
+    DIRECT_MEAN_ENGINES,
     DirectMeanBounds,
-    weighted_bounded_betting_mean_bounds,
-    weighted_bounded_empirical_bernstein_mean_bounds,
-    weighted_bounded_hoeffding_mean_bounds,
-    weighted_bounded_kl_chernoff_mean_bounds,
     worst_of_k_kl_chernoff_bounds,
 )
 from inspect_safety_stats.stats.independence import (
@@ -398,20 +396,16 @@ def _direct_mean_context(
 
 
 def _direct_bounds(
-    method: str,
+    method: DirectMeanMethod,
     blocks: BoundedBlocks,
     *,
     endpoint_alpha: float,
     independence_profile: str,
 ) -> DirectMeanBounds:
-    function = {
-        "weighted_hoeffding": weighted_bounded_hoeffding_mean_bounds,
-        "weighted_empirical_bernstein": weighted_bounded_empirical_bernstein_mean_bounds,
-        "weighted_kl_chernoff": weighted_bounded_kl_chernoff_mean_bounds,
-        "weighted_betting": weighted_bounded_betting_mean_bounds,
-    }.get(method)
-    if function is None:
+    engines = DIRECT_MEAN_ENGINES.get(method)
+    if engines is None:
         raise ValueError(f"unsupported direct mean interval method {method!r}")
+    function = engines.bounded
     return function(
         blocks.lower,
         blocks.upper,
@@ -899,7 +893,7 @@ def _direct_intervals(
 
 def _add_single_valued_bound(
     interval: RiskIntervalResult,
-    method: str,
+    method: DirectMeanMethod,
     blocks: BoundedBlocks,
     independence_profile: str,
 ) -> None:
