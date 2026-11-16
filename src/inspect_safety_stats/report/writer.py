@@ -1238,6 +1238,8 @@ def _markdown(report: SafetyReport) -> str:
                 )
                 + " |"
             )
+    # The column shows only when the plan's score.token_limit looks for such answers.
+    token_limits = any(item.n_token_limit is not None for item in report.prompt_estimates)
     lines.extend(
         [
             "",
@@ -1245,8 +1247,10 @@ def _markdown(report: SafetyReport) -> str:
             "",
             "The complete normalized table is in `observations.csv`.",
             "",
-            "| Cohort | Prompt | Failures | Valid | Unclassified | Estimate | Lower | Upper |",
-            "|---|---|---:|---:|---:|---:|---:|---:|",
+            "| Cohort | Prompt | Failures | Valid | Unclassified | "
+            + ("Token limit | " if token_limits else "")
+            + "Estimate | Lower | Upper |",
+            "|---|---|---:|---:|---:|" + ("---:|" if token_limits else "") + "---:|---:|---:|",
         ]
     )
     for estimate in report.prompt_estimates:
@@ -1259,6 +1263,7 @@ def _markdown(report: SafetyReport) -> str:
                     str(estimate.n_failure),
                     str(estimate.n_valid),
                     str(estimate.n_unclassified),
+                    *([str(estimate.n_token_limit or 0)] if token_limits else []),
                     _number(estimate.p_hat, places),
                     _number(estimate.lower, places),
                     _number(estimate.upper, places),

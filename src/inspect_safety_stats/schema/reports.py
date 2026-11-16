@@ -47,6 +47,10 @@ class PromptEstimate(ResultModel):
     n_error: int
     n_unclassified: int = 0
     n_policy_blocked_safe: int = 0
+    # Rollouts whose answer stopped at the generation token limit without a score or a sample
+    # error, counted as the plan's score.token_limit says; None when it is "score", which does
+    # not look.
+    n_token_limit: int | None = None
     p_hat: float | None = None
     lower: float | None = None
     upper: float | None = None
@@ -56,6 +60,17 @@ class PromptEstimate(ResultModel):
     missingness_robust: bool = False
     eligibility: Eligibility = "invalid"
     warnings: list[str] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_token_limit_count(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        # Left out unless the plan's score.token_limit looks, so a report that does not keeps
+        # the bytes it had before the field existed.
+        data: dict[str, Any] = handler(self)
+        if self.n_token_limit is None:
+            data.pop("n_token_limit", None)
+        return data
 
 
 class RiskIntervalResult(ResultModel):

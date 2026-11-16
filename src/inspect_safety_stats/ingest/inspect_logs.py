@@ -184,6 +184,24 @@ def _stop_of(output: Any) -> StopContext | None:
     )
 
 
+def _token_limit_stop_of(output: Any) -> StopContext | None:
+    """The stop of a sample's output at the generation token limit, or None for any other end.
+
+    Inspect records an answer that ran out of generation tokens with stop reason `max_tokens`.
+    """
+
+    if output is None or getattr(output, "stop_reason", None) != "max_tokens":
+        return None
+    completion = getattr(output, "completion", "") or ""
+    return StopContext(
+        content_delivered=bool(completion.strip()),
+        block_type=None,
+        block_category=None,
+        block_error=False,
+        stop_reason="max_tokens",
+    )
+
+
 def _stop_context(
     *,
     log_path: str,
@@ -192,14 +210,15 @@ def _stop_context(
     provided: dict[str, EvalLog],
     cache: dict[str, dict[str, StopContext]],
 ) -> StopContext | None:
-    # Read only when the plan asks for content-filter stops. Unlike error contexts, a log that
-    # cannot be read is an error: the plan's outcome of a block would otherwise depend on it.
+    # Read only when the plan asks for content-filter or token-limit stops. Unlike error
+    # contexts, a log that cannot be read is an error: the plan's outcome of a stop would
+    # otherwise depend on it.
     cache_key = eval_id if eval_id in provided else log_path
     if cache_key not in cache:
         log = provided.get(eval_id) or read_eval_log(log_path)
         stops: dict[str, StopContext] = {}
         for sample in log.samples or []:
-            stop = _stop_of(sample.output)
+            stop = _stop_of(sample.output) or _token_limit_stop_of(sample.output)
             if stop is not None:
                 stops[str(sample.uuid)] = stop
         cache[cache_key] = stops

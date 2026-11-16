@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import csv
+import io
+import json
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -1500,6 +1504,151 @@ def test_content_filter_stops_are_refused_for_a_source_that_cannot_report_them(
     assert report.integrity.status == "invalid"
     failure = next(item for item in report.integrity.diagnostics if item.code == "INGEST_FAILED")
     assert "does not report" in failure.message
+
+
+def _token_limit_plan(tmp_path: Path, token_limit: str | None, missing: str) -> Path:
+    plan_path = _write_inputs(tmp_path)
+    option = "" if token_limit is None else f"\n    token_limit: {token_limit}"
+    text = plan_path.read_text(encoding="utf-8").replace(
+        "    missing: block\n    errors: block",
+        f"    missing: {missing}\n    errors: block{option}",
+    )
+    plan_path.write_text(text, encoding="utf-8", newline="\n")
+    return plan_path
+
+
+def _truncated_first_rollout(monkeypatch: pytest.MonkeyPatch, *, scored: bool = False) -> None:
+    # The first rollout of p1 ran out of generation tokens; its scorer left it unscored, or
+    # scored it as a failure.
+    eval_frame, sample_frame = _frames(missing_score=not scored)
+    if scored:
+        target = (sample_frame["id"] == "p1") & (sample_frame["epoch"] == 1)
+        sample_frame.loc[target, "score_harmful"] = "FAIL"
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    stop = StopContext(
+        content_delivered=True,
+        block_type=None,
+        block_category=None,
+        block_error=False,
+        stop_reason="max_tokens",
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs._stop_context",
+        lambda **kwargs: stop if kwargs["sample_id"] == "p1-1" else None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("token_limit", "missing", "status", "failures", "valid", "count"),
+    [
+        # Before the option, and at its default, the truncated answer is only a missing score,
+        # and the report does not count it on its own.
+        (None, "conservative_bounds", "degraded", 0, 19, None),
+        ("score", "conservative_bounds", "degraded", 0, 19, None),
+        # `missing` leaves it to score.missing, and counts it.
+        ("missing", "conservative_bounds", "degraded", 0, 19, 1),
+        ("missing", "count_as_failure", "valid", 1, 20, 1),
+        # `safe` and `failure` classify it, whatever score.missing says.
+        ("safe", "count_as_failure", "valid", 0, 20, 1),
+        ("failure", "conservative_bounds", "valid", 1, 20, 1),
+    ],
+)
+def test_an_unscored_answer_at_the_token_limit_counts_as_the_plan_says(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    token_limit: str | None,
+    missing: str,
+    status: str,
+    failures: int,
+    valid: int,
+    count: int | None,
+) -> None:
+    plan_path = _token_limit_plan(tmp_path, token_limit, missing)
+    _truncated_first_rollout(monkeypatch)
+    report = analyze(plan=plan_path, logs="ignored")
+    estimate = next(item for item in report.prompt_estimates if item.prompt_id == "p1")
+    assert report.integrity.status == status
+    assert (estimate.n_failure, estimate.n_valid) == (failures, valid)
+    assert estimate.n_token_limit == count
+    others = [item for item in report.prompt_estimates if item.prompt_id != "p1"]
+    assert all(item.n_token_limit == (None if count is None else 0) for item in others)
+    reached = [item for item in report.integrity.diagnostics if item.code == "TOKEN_LIMIT_REACHED"]
+    if count is None:
+        assert reached == []
+    else:
+        assert [(item.scope, item.details["token_limit"]) for item in reached] == [
+            ("eval-1:p1:1", token_limit)
+        ]
+
+
+def test_a_truncated_answer_that_was_scored_keeps_its_score(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _token_limit_plan(tmp_path, "safe", "conservative_bounds")
+    _truncated_first_rollout(monkeypatch, scored=True)
+    report = analyze(plan=plan_path, logs="ignored")
+    estimate = next(item for item in report.prompt_estimates if item.prompt_id == "p1")
+    assert (estimate.n_failure, estimate.n_valid, estimate.n_token_limit) == (1, 20, 0)
+
+
+def test_the_token_limit_count_is_written_only_when_the_plan_looks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _truncated_first_rollout(monkeypatch)
+    (tmp_path / "default").mkdir()
+    (tmp_path / "looking").mkdir()
+    default = analyze(
+        plan=_token_limit_plan(tmp_path / "default", None, "count_as_failure"), logs="ignored"
+    )
+    looking = analyze(
+        plan=_token_limit_plan(tmp_path / "looking", "failure", "conservative_bounds"),
+        logs="ignored",
+    )
+    default_dir = default.write(tmp_path / "default-report")
+    looking_dir = looking.write(tmp_path / "looking-report")
+
+    def first_p1(directory: Path) -> dict[str, Any]:
+        payload = json.loads((directory / "report.json").read_text(encoding="utf-8"))
+        return next(item for item in payload["prompt_estimates"] if item["prompt_id"] == "p1")
+
+    assert "n_token_limit" not in first_p1(default_dir)
+    assert first_p1(looking_dir)["n_token_limit"] == 1
+    assert "Token limit" not in (default_dir / "report.md").read_text(encoding="utf-8")
+    assert "| Token limit |" in (looking_dir / "report.md").read_text(encoding="utf-8")
+    default_csv = (default_dir / "observations.csv").read_text(encoding="utf-8")
+    looking_csv = (looking_dir / "observations.csv").read_text(encoding="utf-8")
+    default_header = default_csv.splitlines()[0]
+    looking_rows = list(csv.DictReader(io.StringIO(looking_csv)))
+    assert "token_limit_unscored" not in default_header
+    assert sum(row["token_limit_unscored"] == "True" for row in looking_rows) == 1
+    assert "token_limit" not in json.dumps(default._resolved_plan)
+
+
+def test_token_limit_is_refused_for_a_source_that_cannot_report_stops(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from inspect_safety_stats.ingest import inspect_logs
+
+    plan_path = _token_limit_plan(tmp_path, "missing", "conservative_bounds")
+    _truncated_first_rollout(monkeypatch)
+    read = inspect_logs.read_inspect_source
+    monkeypatch.setattr(
+        inspect_logs,
+        "read_inspect_source",
+        lambda logs, parallel=False: replace(read(logs, parallel=parallel), stop_context=None),
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+    assert report.integrity.status == "invalid"
+    failure = next(item for item in report.integrity.diagnostics if item.code == "INGEST_FAILED")
+    assert "score.token_limit" in failure.message
 
 
 def test_inspect_blank_error_field_is_not_a_sample_error(

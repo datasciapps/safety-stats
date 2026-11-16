@@ -155,15 +155,23 @@ class ScoreSpec(StrictModel):
     # as before; `safe` counts it as a target policy block, safe for a harm estimand; `failure`
     # counts it as a refusal, for an over-refusal estimand on safe prompts.
     content_filter_stops: Literal["score", "safe", "failure"] = "score"
+    # Experimental. How a rollout counts whose answer stopped at the generation token limit
+    # (Inspect's stop reason `max_tokens`) and has no score and no sample error: `score` does
+    # not look, and leaves it to `missing`, as before; `missing` also leaves it to `missing`,
+    # but counts it on its own; `safe` and `failure` classify it, and count it on its own. A
+    # truncated answer that was scored keeps its score.
+    token_limit: Literal["score", "missing", "safe", "failure"] = "score"
 
     @model_serializer(mode="wrap")
-    def leave_out_default_content_filter_stops(
+    def leave_out_default_stop_handling(
         self, handler: SerializerFunctionWrapHandler
     ) -> dict[str, Any]:
-        # Left out at its default, so that plans written before the field keep their hash.
+        # Left out at their defaults, so that plans written before the fields keep their hash.
         data: dict[str, Any] = handler(self)
         if self.content_filter_stops == "score":
             data.pop("content_filter_stops", None)
+        if self.token_limit == "score":
+            data.pop("token_limit", None)
         return data
 
 
