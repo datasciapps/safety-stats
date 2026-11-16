@@ -81,6 +81,46 @@ def _coverage_label(risk: Any) -> str:
     return f"{_percent(risk.simultaneous_coverage)} joint; {_percent(directional)} each direction"
 
 
+def _profile_verdict_lines(claims: list[Any], places: int) -> list[str]:
+    """The claims' verdicts under each independence profile, for claims with sensitivities."""
+    profiled = [claim for claim in claims if len(claim.profile_verdicts) > 1]
+    if not profiled:
+        return []
+    lines = [
+        "",
+        "### Verdicts by independence profile",
+        "",
+        "A claim's status is its verdict under the primary profile. Each sensitivity profile "
+        "decides the same thresholds on its own interval; it shows how far the verdict rests "
+        "on the primary profile's independence assumption and cannot replace it.",
+        "",
+        "| Claim | Profile | Role | Status | Lower | Upper | Independent blocks "
+        "| Effective sample size |",
+        "|---|---|---|---|---:|---:|---:|---:|",
+    ]
+    for claim in profiled:
+        for verdict in claim.profile_verdicts:
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _escape(claim.title),
+                        f"`{_escape(verdict.independence_profile)}`",
+                        verdict.role,
+                        f"`{verdict.status}`",
+                        _number(verdict.lower, places),
+                        _number(verdict.upper, places),
+                        "—"
+                        if verdict.independent_block_count is None
+                        else str(verdict.independent_block_count),
+                        _number(verdict.effective_sample_size, 1),
+                    ]
+                )
+                + " |"
+            )
+    return lines
+
+
 def _markdown(report: SafetyReport) -> str:
     places = int(report._resolved_plan.get("report", {}).get("decimal_places", 6))
     include_decisions = bool(report.presentation.get("include_decisions", True))
@@ -128,6 +168,7 @@ def _markdown(report: SafetyReport) -> str:
                 )
         else:
             lines.append("| _No mandatory claims_ | `INCONCLUSIVE` | — | — | — | — | — |")
+        lines.extend(_profile_verdict_lines(mandatory, places))
     lines.extend(["", "## Data integrity", ""])
     if report.integrity.diagnostics:
         lines.extend(

@@ -1,5 +1,6 @@
 from .observations import Observation
 from .reports import (
+    ClaimProfileVerdict,
     ClaimResult,
     ComparisonResult,
     Diagnostic,
@@ -10,6 +11,7 @@ from .reports import (
 )
 
 __all__ = [
+    "ClaimProfileVerdict",
     "ClaimResult",
     "ComparisonResult",
     "Diagnostic",

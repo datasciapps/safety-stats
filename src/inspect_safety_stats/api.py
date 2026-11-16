@@ -37,6 +37,7 @@ from inspect_safety_stats.ingest.validation import (
 )
 from inspect_safety_stats.schema.observations import Observation, observation_field
 from inspect_safety_stats.schema.reports import (
+    ClaimProfileVerdict,
     ClaimResult,
     ComparisonResult,
     ComparisonSetResult,
@@ -4511,6 +4512,92 @@ def _noisy_valid_claim(
     )
 
 
+def _profile_verdicts(
+    claim: Any,
+    evidence: ComparisonResult | GroupRiskResult | None,
+    *,
+    status: Decision,
+    lower: float | None,
+    upper: float | None,
+    confirmatory_and_valid: bool,
+) -> list[ClaimProfileVerdict]:
+    """Return the claim's verdict under its primary and each sensitivity profile.
+
+    The primary row repeats the claim's decision. Each sensitivity row decides the same
+    thresholds on that profile's interval computed with the primary interval's method.
+    Evidence whose primary interval assumes no independence profile, such as the propagated
+    prompt envelope, has no rows.
+    """
+    if evidence is None:
+        return []
+    primary = next(
+        (item for item in evidence.intervals if item.interval_id == evidence.primary_interval_id),
+        None,
+    )
+    if primary is None or primary.independence_profile is None:
+        return []
+    rows = [
+        ClaimProfileVerdict(
+            independence_profile=primary.independence_profile,
+            role="primary",
+            status=status,
+            interval_id=primary.interval_id,
+            lower=lower,
+            upper=upper,
+            independent_block_count=primary.independent_block_count,
+            effective_sample_size=primary.effective_sample_size,
+        )
+    ]
+    for interval in evidence.intervals:
+        if (
+            interval.role != "sensitivity"
+            or interval.method != primary.method
+            or interval.independence_profile is None
+            or interval.independence_profile == primary.independence_profile
+        ):
+            continue
+        sensitivity_status, _ = decide_claim(
+            lower=interval.lower,
+            upper=interval.upper,
+            acceptable_upper=claim.acceptable_upper,
+            unacceptable_lower=claim.unacceptable_lower,
+            eligible=confirmatory_and_valid and interval.eligibility == "certifying",
+        )
+        rows.append(
+            ClaimProfileVerdict(
+                independence_profile=interval.independence_profile,
+                role="sensitivity",
+                status=sensitivity_status,
+                interval_id=interval.interval_id,
+                lower=interval.lower,
+                upper=interval.upper,
+                independent_block_count=interval.independent_block_count,
+                effective_sample_size=interval.effective_sample_size,
+            )
+        )
+    return rows
+
+
+def _has_sensitivity_profiles(evidence: ComparisonResult | GroupRiskResult | None) -> bool:
+    """Whether the evidence has intervals under a profile other than its primary one."""
+    if evidence is None:
+        return False
+    primary_profile = next(
+        (
+            item.independence_profile
+            for item in evidence.intervals
+            if item.interval_id == evidence.primary_interval_id
+        ),
+        None,
+    )
+    return any(
+        item.role == "sensitivity"
+        and item.independence_profile is not None
+        and item.independence_profile != primary_profile
+        for item in evidence.intervals
+    )
+
+
 def _claims(
     plan: AnalysisPlan,
     data: NormalizedData,
@@ -4587,6 +4674,9 @@ def _claims(
             continue
         alpha = family.alpha
         correction_note: str | None = None
+        # Filled only where the claim is decided directly on the evidence intervals: a
+        # judge-corrected or noisy-valid decision has no per-profile counterpart.
+        profile_verdicts: list[ClaimProfileVerdict] = []
 
         # A validated correction retargets the claim from judge-reported risk onto true
         # risk. The threshold in the plan is about the model, not about the judge.
@@ -4661,6 +4751,16 @@ def _claims(
                 unacceptable_lower=claim.unacceptable_lower,
                 eligible=eligible,
             )
+            profile_verdicts = _profile_verdicts(
+                claim,
+                evidence,
+                status=status,
+                lower=lower,
+                upper=upper,
+                confirmatory_and_valid=bool(
+                    integrity_valid and plan.analysis.intent == "confirmatory"
+                ),
+            )
         if not integrity_valid and lower is not None and upper is not None:
             reasons = [
                 "Bounds were computed but are ineligible for certification because data "
@@ -4681,6 +4781,11 @@ def _claims(
                     f"The error budget is the union of the claim family ({family.alpha:.12g}) "
                     f"and the judge calibration, giving {alpha:.12g}."
                 )
+        if not profile_verdicts and _has_sensitivity_profiles(evidence):
+            reasons.append(
+                "Verdicts under the sensitivity independence profiles are not reported, "
+                "because this claim is not decided directly on the profile intervals."
+            )
         results.append(
             ClaimResult(
                 claim_id=claim.id,
@@ -4700,6 +4805,7 @@ def _claims(
                 evidence_refs=evidence_refs,
                 reasons=reasons,
                 warnings=list(evidence.warnings) if evidence else [],
+                profile_verdicts=profile_verdicts,
             )
         )
     if corrected_claims:
