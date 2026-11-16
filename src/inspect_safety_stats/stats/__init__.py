@@ -52,7 +52,12 @@ from .misclassification import (
     delta_method_corrected_risk,
 )
 from .multiplicity import bonferroni_allocate
-from .paired import exact_mcnemar, newcombe_paired_interval
+from .paired import (
+    exact_mcnemar,
+    exact_mcnemar_partial,
+    newcombe_paired_interval,
+    newcombe_paired_interval_partial,
+)
 from .planning import zero_failure_sample_size
 from .risk import (
     entropic_risk,
@@ -91,8 +96,10 @@ __all__ = [
     "direct_risk_difference_bounds",
     "entropic_risk",
     "exact_mcnemar",
+    "exact_mcnemar_partial",
     "FrontierTargetCalibration",
     "newcombe_paired_interval",
+    "newcombe_paired_interval_partial",
     "HierarchyRegionProjection",
     "IndependentFrontier",
     "LinearIntervalConstraint",

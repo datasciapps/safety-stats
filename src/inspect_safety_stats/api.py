@@ -106,7 +106,15 @@ from inspect_safety_stats.stats.misclassification import (
     noisy_valid_certification,
 )
 from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
-from inspect_safety_stats.stats.paired import exact_mcnemar, newcombe_paired_interval
+from inspect_safety_stats.stats.paired import (
+    PartialPairing,
+    exact_mcnemar,
+    exact_mcnemar_partial,
+    favourable_and_adverse_completions,
+    newcombe_paired_interval,
+    newcombe_paired_interval_partial,
+    partial_pairing,
+)
 from inspect_safety_stats.stats.risk import (
     entropic_risk,
     maximum_risk,
@@ -3334,21 +3342,15 @@ def _paired_comparison_diagnostics(
 ) -> tuple[int | None, dict[str, int], float | None, int | None, dict[str, Any]]:
     if not spec.pair_key or not spec.diagnostic_methods:
         return None, {}, None, None, {}
+    # Unscored rows stay in: a pair with an unscored arm is bounded by the completions of its
+    # unknown outcome instead of breaking the pairing (L1). A key absent from one arm still does.
     arm_rows = {
-        spec.candidate: [
+        arm: [
             row
             for row in data.observations
-            if row.cohort_id == spec.candidate
-            and row.prompt_id in prompt_ids
-            and row.failure is not None
-        ],
-        spec.baseline: [
-            row
-            for row in data.observations
-            if row.cohort_id == spec.baseline
-            and row.prompt_id in prompt_ids
-            and row.failure is not None
-        ],
+            if row.cohort_id == arm and row.prompt_id in prompt_ids
+        ]
+        for arm in (spec.candidate, spec.baseline)
     }
     maps: dict[str, dict[tuple[Any, ...], Observation]] = {}
     for arm, rows in arm_rows.items():
@@ -3367,8 +3369,23 @@ def _paired_comparison_diagnostics(
             f"{len(baseline_keys - candidate_keys)} baseline-only pairs"
         )
     keys = sorted(candidate_keys, key=repr)
-    cand = [bool(maps[spec.candidate][key].failure) for key in keys]
-    base = [bool(maps[spec.baseline][key].failure) for key in keys]
+    cand_outcomes = [maps[spec.candidate][key].failure for key in keys]
+    base_outcomes = [maps[spec.baseline][key].failure for key in keys]
+    pairing = partial_pairing(cand_outcomes, base_outcomes)
+    if pairing.scored_pair_count == pairing.pair_count:
+        cand = [bool(value) for value in cand_outcomes]
+        base = [bool(value) for value in base_outcomes]
+        return _complete_paired_diagnostics(spec, maps, keys, cand, base)
+    return _partial_paired_diagnostics(spec, maps, keys, cand_outcomes, base_outcomes, pairing)
+
+
+def _complete_paired_diagnostics(
+    spec: ComparisonSpec,
+    maps: dict[str, dict[tuple[Any, ...], Observation]],
+    keys: list[tuple[Any, ...]],
+    cand: list[bool],
+    base: list[bool],
+) -> tuple[int | None, dict[str, int], float | None, int | None, dict[str, Any]]:
     mcnemar = exact_mcnemar(cand, base)
     discordant = {
         "candidate_safe_baseline_failure": mcnemar.candidate_safe_baseline_failure,
@@ -3418,6 +3435,107 @@ def _paired_comparison_diagnostics(
             "maximum_leave_one_cluster_out_shift": boot.maximum_leave_one_cluster_out_shift,
             "replicates": boot.replicates,
             "seed": boot.seed,
+            "label": "diagnostic_fixed_design_resampling",
+        }
+    return len(keys), discordant, p_value, cluster_count, outputs
+
+
+def _partial_paired_diagnostics(
+    spec: ComparisonSpec,
+    maps: dict[str, dict[tuple[Any, ...], Observation]],
+    keys: list[tuple[Any, ...]],
+    cand: list[bool | None],
+    base: list[bool | None],
+    pairing: PartialPairing,
+) -> tuple[int | None, dict[str, int], float | None, int | None, dict[str, Any]]:
+    """Paired diagnostics when some pairs have an unscored arm.
+
+    Every bound and p-value holds for each completion of the unscored outcomes. The point
+    estimate is not identified, so each method reports estimate_lower and estimate_upper in its
+    place. The discordant counts are those of the scored pairs.
+    """
+
+    mcnemar = exact_mcnemar_partial(cand, base)
+    scored = mcnemar.scored
+    discordant = {
+        "candidate_safe_baseline_failure": (
+            scored.candidate_safe_baseline_failure if scored is not None else 0
+        ),
+        "candidate_failure_baseline_safe": (
+            scored.candidate_failure_baseline_safe if scored is not None else 0
+        ),
+    }
+    outputs: dict[str, Any] = {
+        "partial_pairing": {
+            "pair_count": pairing.pair_count,
+            "scored_pair_count": pairing.scored_pair_count,
+            "candidate_unscored_pair_count": pairing.candidate_unscored_pair_count,
+            "baseline_unscored_pair_count": pairing.baseline_unscored_pair_count,
+            "both_unscored_pair_count": pairing.both_unscored_pair_count,
+            "completion": "every_completion_of_unscored_outcomes",
+        }
+    }
+    p_value = None
+    if "exact_mcnemar" in spec.diagnostic_methods:
+        p_value = mcnemar.p_value_two_sided
+        outputs["exact_mcnemar"] = {
+            "estimate_lower": mcnemar.estimate_lower,
+            "estimate_upper": mcnemar.estimate_upper,
+            "p_value_two_sided": mcnemar.p_value_two_sided,
+            "p_value_candidate_worse": mcnemar.p_value_candidate_worse,
+            "p_value_candidate_better": mcnemar.p_value_candidate_better,
+        }
+    if "newcombe_paired" in spec.diagnostic_methods:
+        paired_interval = newcombe_paired_interval_partial(cand, base)
+        outputs["newcombe_paired"] = {
+            "estimate_lower": paired_interval.estimate_lower,
+            "estimate_upper": paired_interval.estimate_upper,
+            "lower": paired_interval.lower,
+            "upper": paired_interval.upper,
+            "alpha_lower": paired_interval.alpha_lower,
+            "alpha_upper": paired_interval.alpha_upper,
+            "method": paired_interval.method,
+            "completion_count": paired_interval.completion_count,
+            "label": "diagnostic_requires_independent_pairs",
+        }
+    cluster_count = None
+    if "fixed_cluster_bootstrap" in spec.diagnostic_methods:
+        if not spec.cluster_key:
+            raise ValueError("fixed_cluster_bootstrap requires cluster_key")
+        clusters = [_observation_attr(maps[spec.candidate][key], spec.cluster_key) for key in keys]
+        # The resampling draws depend only on the clusters and the seed, so every replicate
+        # mean, and with it every quantile, is lowest at the favourable completion and highest
+        # at the adverse one.
+        (fav_cand, fav_base), (adv_cand, adv_base) = favourable_and_adverse_completions(
+            cand, base
+        )
+        favourable = paired_cluster_bootstrap(
+            [float(c) - float(b) for c, b in zip(fav_cand, fav_base, strict=True)],
+            clusters,
+            replicates=spec.bootstrap_replicates,
+            seed=spec.bootstrap_seed,
+        )
+        adverse = paired_cluster_bootstrap(
+            [float(c) - float(b) for c, b in zip(adv_cand, adv_base, strict=True)],
+            clusters,
+            replicates=spec.bootstrap_replicates,
+            seed=spec.bootstrap_seed,
+        )
+        cluster_count = favourable.cluster_count
+        outputs["fixed_cluster_bootstrap"] = {
+            "estimate_lower": favourable.estimate,
+            "estimate_upper": adverse.estimate,
+            "lower": favourable.lower,
+            "upper": adverse.upper,
+            "minimum_cluster_size": favourable.minimum_cluster_size,
+            "maximum_cluster_size": favourable.maximum_cluster_size,
+            "cluster_size_ratio": favourable.cluster_size_ratio,
+            "maximum_leave_one_cluster_out_shift": max(
+                favourable.maximum_leave_one_cluster_out_shift,
+                adverse.maximum_leave_one_cluster_out_shift,
+            ),
+            "replicates": favourable.replicates,
+            "seed": favourable.seed,
             "label": "diagnostic_fixed_design_resampling",
         }
     return len(keys), discordant, p_value, cluster_count, outputs
@@ -4223,6 +4341,22 @@ def _comparisons(
                         cluster_count,
                         diagnostic_outputs,
                     ) = _paired_comparison_diagnostics(spec, data, set(target.prompt_ids))
+                    partial = diagnostic_outputs.get("partial_pairing")
+                    if partial is not None:
+                        message = (
+                            f"{partial['pair_count'] - partial['scored_pair_count']} of "
+                            f"{partial['pair_count']} pairs have an unscored arm; the paired "
+                            "diagnostics bound every completion of the unscored outcomes"
+                        )
+                        diagnostics.append(
+                            Diagnostic(
+                                code="PAIR_UNSCORED_COMPLETED",
+                                severity="WARNING",
+                                message=message,
+                                scope=spec.id,
+                            )
+                        )
+                        warnings.append(message)
                 except ValueError as exc:
                     diagnostics.append(
                         Diagnostic(
