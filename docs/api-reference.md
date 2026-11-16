@@ -99,12 +99,18 @@ rejection_power(*, trials, true_rate, threshold, alpha)
 rejection_sample_size(*, true_rate, threshold, alpha, power, max_trials=1_000_000)
 fixed_design_detectable_failure_rates(trials, weights, *, threshold, support_alpha,
                                       rejection_alpha, power, independence_unit="rollout")
+comparison_resolvable_differences(candidate_trials, baseline_trials, weights, *, margin,
+                                  alpha_lower, alpha_upper, power, independence_unit="rollout")
 ```
 
 The detectable-rate functions exactly invert the corresponding one-sided binomial test. They
 return `None` when the requested direction is unattainable at the supplied horizon and alpha.
 `fixed_design_detectable_failure_rates` gives the weighted-design analogue under an
 independent-rollout Hoeffding guarantee, permitting heterogeneous prompt probabilities.
+`comparison_resolvable_differences` (experimental) returns the risk differences a two-arm
+design resolves at a margin under the same kind of guarantee, for the `weighted_hoeffding`
+comparison with `rollout`, `pair` or `prompt_cluster` blocks; see
+[Planning a comparison](model-comparisons.md#planning-a-comparison-experimental).
 
 Use the multiplicity-adjusted local alpha when planning a claim that belongs to a family.
 
@@ -491,6 +497,10 @@ inspect-safety-stats plan fixed-design --manifest DESIGN.csv --threshold P [--al
     [--rollouts N] [--weights STRATEGY] [--hierarchy LEVELS] [--weight-column COLUMN]
     [--independence-unit UNIT] [--family-size M]
 inspect-safety-stats plan fixed-design --plan PLAN [--manifest DESIGN.csv] [--power B] [--rollouts N]
+inspect-safety-stats plan comparison --manifest DESIGN.csv --margin D [--alpha A] [--power B]
+    [--candidate-rollouts N] [--baseline-rollouts N] [--weights STRATEGY] [--hierarchy LEVELS]
+    [--weight-column COLUMN] [--independence-unit rollout|pair|prompt_cluster]
+    [--coverage-mode two_sided|per_direction] [--family-size M]
 inspect-safety-stats plan pilot --manifest DESIGN.csv --per-stratum K --seed S --output PILOT.csv
     [--strata COLUMNS]
 inspect-safety-stats hash-plan --plan PLAN [--inference | --register RECEIPT.json]
@@ -568,6 +578,10 @@ which supplies them.
 `analyze` and `validate` take `--decision-policy POLICY`, a file whose thresholds replace the
 plan's for the claims it sets, and `hash-plan --inference` prints the hash such a policy names
 (experimental; see [Decision policies](decision-policy.md)).
+
+`plan comparison` (experimental) reads the manifest as `plan fixed-design --manifest` does and
+reports the risk differences a two-arm design resolves at `--margin`; see
+[Planning a comparison](model-comparisons.md#planning-a-comparison-experimental).
 
 `plan pilot` (experimental) draws `K` prompts at random from each combination of the
 `--strata` columns (`task_id` by default) and writes the whole manifest with
