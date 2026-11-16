@@ -13,6 +13,7 @@ import pandas as pd
 import pytest
 
 from inspect_safety_stats import analyze
+from inspect_safety_stats.ingest.pilot import draw_pilot
 
 FRAME_SIZE = 200
 INCLUSION = 0.3
@@ -302,3 +303,46 @@ def test_fixed_size_requires_a_constant_probability_within_each_stratum(
     codes = {item.code for item in report.integrity.diagnostics}
     assert "SAMPLE_STRATUM_INCONSISTENT" in codes
     assert report.integrity.status == "invalid"
+
+
+def test_a_drawn_pilot_frame_is_analysed_as_a_fixed_size_design(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """draw_pilot's frame is the frame of a fixed-size design, with no columns to edit."""
+    plan_path, evals, samples = _write_frame(tmp_path, fixed_size=True)
+    frame = pd.read_csv(tmp_path / "design.csv").drop(columns="inclusion_probability")
+    pilot = draw_pilot(frame, per_stratum=12, strata=["sampling_stratum"], seed=20261116)
+    pilot.to_csv(tmp_path / "design.csv", index=False)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8")
+        .replace("stratum_column: sampling_stratum", "stratum_column: pilot_stratum")
+        .replace(
+            "inclusion_probability_column: inclusion_probability",
+            "inclusion_probability_column: pilot_inclusion_probability",
+        ),
+        encoding="utf-8",
+    )
+    template = samples.iloc[0].to_dict()
+    drawn = pilot.loc[pilot["pilot_selected"], "prompt_id"].tolist()
+    pilot_samples = pd.DataFrame(
+        [
+            {
+                **template,
+                "sample_id": f"{prompt_id}-{epoch}",
+                "id": prompt_id,
+                "epoch": epoch,
+                "score_harmful": "FAIL" if epoch == 1 and index % 3 == 0 else "PASS",
+            }
+            for index, prompt_id in enumerate(drawn)
+            for epoch in range(1, ROLLOUTS + 1)
+        ]
+    )
+    _patch(monkeypatch, evals, pilot_samples)
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert report.integrity.status == "valid", report.integrity.diagnostics
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    primary = next(item for item in mean.intervals if item.role == "primary")
+    assert primary.interval_id.startswith("stratified_without_replacement_")
+    assert primary.independent_block_count == 24
