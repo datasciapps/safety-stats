@@ -322,9 +322,30 @@ class IndependenceUnitOption(str, Enum):
 
 @plan_app.command("fixed-design")
 def fixed_design_planning_command(
-    manifest: Annotated[Path, typer.Option("--manifest", exists=True, dir_okay=False)],
-    threshold: Annotated[float, typer.Option("--threshold", min=0.0, max=1.0)],
-    alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
+    ctx: typer.Context,
+    manifest: Annotated[
+        Path | None,
+        typer.Option(
+            "--manifest",
+            exists=True,
+            dir_okay=False,
+            help="Design manifest; with --plan, overrides the plan's inputs.design_manifest.",
+        ),
+    ] = None,
+    threshold: Annotated[float | None, typer.Option("--threshold", min=0.0, max=1.0)] = None,
+    plan_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--plan",
+            exists=True,
+            dir_okay=False,
+            help=(
+                "Analysis plan: plan every claim with the plan's groups, weights, hierarchy, "
+                "independence profile, multiplicity family and thresholds."
+            ),
+        ),
+    ] = None,
+    alpha:Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
     power: Annotated[float, typer.Option("--power", min=0.0, max=1.0)] = 0.9,
     rollouts: Annotated[int | None, typer.Option("--rollouts", min=1)] = None,
     weights: Annotated[
@@ -343,7 +364,34 @@ def fixed_design_planning_command(
     expected rollout counts that `analyze` will resolve. Rollout counts come
     from the manifest's `expected_rollouts` column unless `--rollouts` supplies
     a uniform override.
+
+    With --plan, every claim is planned as `analyze` will decide it, and the options the
+    plan supplies are refused rather than overridden.
     """
+
+    if plan_path is not None:
+        supplied = [
+            f"--{name.replace('_', '-')}"
+            for name in (
+                "threshold",
+                "alpha",
+                "weights",
+                "hierarchy",
+                "weight_column",
+                "independence_unit",
+                "family_size",
+            )
+            # typer vendors its own click, so the source is compared by name.
+            if getattr(ctx.get_parameter_source(name), "name", "DEFAULT") != "DEFAULT"
+        ]
+        if supplied:
+            raise typer.BadParameter(
+                f"{', '.join(supplied)} cannot be combined with --plan, which supplies them"
+            )
+        _plan_fixed_design_from_plan(plan_path, manifest, power=power, rollouts=rollouts)
+        return
+    if manifest is None or threshold is None:
+        raise typer.BadParameter("give --manifest and --threshold, or --plan")
 
     from inspect_safety_stats.config.models import WeightSpec
     from inspect_safety_stats.ingest.manifest import load_manifest, resolve_weights
@@ -415,6 +463,78 @@ def fixed_design_planning_command(
             f"across {family_size} simultaneous claims)"
         )
     typer.echo(f"One-sided alpha per direction: {local_alpha:g}")
+
+
+def _rate(value: float | None) -> str:
+    return "unattainable" if value is None else f"{value:.8g}"
+
+
+def _plan_fixed_design_from_plan(
+    plan_path: Path, manifest: Path | None, *, power: float, rollouts: int | None
+) -> None:
+    from inspect_safety_stats.claim_planning import PlannedClaim, plan_claims
+    from inspect_safety_stats.config.loader import load_plan
+
+    try:
+        plan = load_plan(plan_path)
+        claims = plan_claims(plan, power=power, manifest=manifest, rollouts=rollouts)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Claims: {len(claims)}")
+    typer.echo(f"Target power: {power:.8g}")
+    for item in claims:
+        typer.echo("")
+        if not isinstance(item, PlannedClaim):
+            typer.echo(f"Claim {item.claim_id}: not planned: {item.reason}")
+            continue
+        typer.echo(
+            f"Claim {item.claim_id}: cohort {item.cohort}, group {item.group}, "
+            f"measure {item.measure}"
+        )
+        typer.echo(f"  Prompts: {item.prompts}")
+        typer.echo(f"  Total rollouts: {item.total_rollouts}")
+        typer.echo(
+            f"  Independence profile: {item.independence_profile}"
+            + (
+                ""
+                if item.independent_blocks is None
+                else f" ({item.independent_blocks} independent blocks)"
+            )
+        )
+        rates = item.support or item.rejection
+        if rates is not None:
+            typer.echo(f"  Effective sample size: {rates.effective_sample_size:.8g}")
+        alpha = item.alpha
+        share = {
+            "pointwise": "pointwise, not simultaneous",
+            "flat_bonferroni": (
+                f"Bonferroni share of {alpha.directional_family_alpha:g} across "
+                f"{alpha.target_count} targets and {alpha.cohort_count} cohorts"
+            ),
+            "frontier_sidak": (
+                f"Bonferroni share of {alpha.directional_family_alpha:g} across "
+                f"{alpha.target_count} targets and {alpha.cohort_count} cohorts; conservative, "
+                "as analyze calibrates frontier_sidak"
+            ),
+        }[alpha.calibration]
+        typer.echo(
+            f"  One-sided alpha per direction: {alpha.endpoint_alpha:.8g} "
+            f"(family {alpha.family_id}, {share})"
+        )
+        typer.echo(
+            f"  PASS at acceptable_upper {item.acceptable_upper:.8g}: maximum certifiable "
+            "failure rate at target power "
+            + _rate(item.support.maximum_certifiable_failure_rate if item.support else None)
+        )
+        typer.echo(
+            f"  FAIL at unacceptable_lower {item.unacceptable_lower:.8g}: minimum detectable "
+            "failure rate at target power "
+            + _rate(item.rejection.minimum_detectable_failure_rate if item.rejection else None)
+        )
+    if not any(isinstance(item, PlannedClaim) for item in claims):
+        typer.echo("")
+        typer.echo("No claim of this plan could be planned.", err=True)
+        raise typer.Exit(1)
 
 
 @schema_app.command("plan")
