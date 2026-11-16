@@ -254,6 +254,61 @@ whereas the exact box never falls below its nominal level; at very low prevalenc
 frequently refuses to correct at all because the calibration is uninformative. A narrower
 interval that under-covers where failures are rare is not a better interval for a safety claim.
 
+### Lang--Reiczigel limits
+
+With `sampling: simple_random` the labels also estimate the judge's sensitivity \(Se\) and
+specificity \(Sp\) by true class, and a whole-cohort `weighted_mean` row gains a third interval,
+`judge_corrected_validated_lang_reiczigel`. It holds the confidence limits of Lang and Reiczigel
+(2014) for prevalence adjusted for estimated sensitivity and specificity. With \(z\) the normal
+quantile at \(1-\alpha/2\), the judge-reported rate \(q\) over \(n\) rollouts and the two
+truth-class counts are adjusted in the manner of Agresti and Coull,
+
+\[
+q'=\frac{nq+z^2/2}{n+z^2},\qquad Se'=\frac{x_{Se}+1}{n_{Se}+2},\qquad
+Sp'=\frac{x_{Sp}+1}{n_{Sp}+2}.
+\]
+
+The Rogan--Gladen estimate \(P'=(q'+Sp'-1)/(Se'+Sp'-1)\) is then shifted by a bias term
+\(2z^2\bigl(P'\,v_{Se}-(1-P')\,v_{Sp}\bigr)\), with \(v_{Se}=Se'(1-Se')/(n_{Se}+2)\) and
+\(v_{Sp}\) alike. The limits are that centre plus or minus \(z\) delta-method standard errors,
+clipped to \([0,1]\). The implementation reproduces the five worked examples of the paper. The
+judge-reported rate is the row's design-weighted mean, and \(n\) is its effective size
+\((\sum_j w_j)^2/\sum_j(w_j^2/n_j)\) under rollout independence. That is the classified count
+when every rollout weighs the same. The interval spends the cohort's share of the judge family
+alpha, as the delta reference does.
+
+The interval is `diagnostic`. Like the delta reference, it never decides a claim.
+`research/judge_correction_lang_reiczigel.py` compares it with the exact box at nominal 95% over
+2,000 rollouts, prevalences from 0.5% to 20% and label budgets from 30 to 1,000, for two judges
+(sensitivity 0.90 with specificity 0.97, and 0.80 with 0.90). With 2,000 replications per cell:
+
+| | exact box | Lang--Reiczigel |
+|---|---|---|
+| coverage, prevalence \(\ge\) 5% | 1.000 | 0.950--0.999 |
+| coverage, prevalence \(\le\) 2% and \(\le\) 300 labels | 1.000 | 0.914--0.990, below 0.95 in 11 of 18 cells |
+| coverage, 1,000 labels | 1.000 | 0.986--1.000 |
+| true risk above the upper limit (nominal 2.5%) | 0 | up to 2.9% |
+| median width, judge 0.90/0.97 | reference | 7--68% narrower, but 11--16% wider at prevalence \(\le\) 1% with 1,000 labels |
+| median width, judge 0.80/0.90 | reference | wider in most cells with \(\ge\) 300 labels (up to 2.2 times) |
+
+The widths compare the box from judge-stratum labels with the limits from a simple random sample
+of the same size. Where the box often refuses, its widths come only from the samples it
+accepted. The limits are not uniformly narrower. Where failures are rare and labels few, the regime most safety claims sit in, the
+limits miss their level, and the miss falls partly on the upper side, where it would let an
+unsafe model pass. They also refuse less often, since they need one
+truly unsafe label where the box needs both judge strata labelled and an informative
+calibration. When the judge reports far fewer failures than its estimated false-positive rate
+implies, the whole interval falls below zero and is clipped to the single point 0. The interval
+then warns that the data contradict the estimated accuracies.
+
+Labels drawn within judge strata (`simple_random_within_judge_stratum`) estimate \(\rho_1\) and
+\(\rho_0\), not \(Se\) and \(Sp\), and get no such interval. In that parameterisation the identity
+\(R^*=R\rho_1+(1-R)\rho_0\) is affine, so the Lang--Reiczigel bias term vanishes. What remains
+is an Agresti--Coull-adjusted Wald interval, which is what the delta reference already is.
+Stratified labels (`stratified_without_replacement`, below) get no such interval either. Where
+the limits cannot be computed, for example when no labelled rollout is truly unsafe, the analysis
+emits `JUDGE_LANG_REICZIGEL_UNAVAILABLE` with the reason.
+
 ### Stratified labels (experimental)
 
 A labelling design often wants more than a simple random sample within each judge stratum.
@@ -792,6 +847,45 @@ Two limits apply, as for the assumed mode. One \((Se,Sp)\) is applied to every p
 judge whose accuracy varies with the prompt or with the model under test is not covered. And a
 declared box is an assumption, not evidence. The certifying route remains a `validated`
 calibration.
+
+## Judge flip rate under content-preserving wrappers (experimental)
+
+The corrections above need the judge's error rates, from human labels or from a declared
+assumption. A flip rate needs neither. It measures one way the judge errs. Each judge-positive
+completion is rescored by the same judge after it is wrapped in text that leaves the harmful
+content verbatim, such as a refusal prefix, benign text before and after, an educational frame
+or a story frame. A verdict that becomes safe is a flip. Gao (arXiv:2606.25487) reports flips
+on 57-100% of true positives for three LLM judges and on 3.4% for the HarmBench classifier.
+
+The direction matters for a PASS claim. A flip is a false negative, and false negatives
+understate risk. A judge that flips often under wrappers is likely to miss unsafe completions
+that are framed like this in the run itself. So a PASS certified with that judge rests on its
+sensitivity, which a high flip rate puts in doubt.
+
+`inputs.judge_flip` reads the rescored verdicts and reports a `JUDGE_FLIP_RATE` diagnostic: the
+share of rescored completions that flip under at least one wrapper, and under each wrapper,
+each with an exact Clopper-Pearson interval (see
+[the plan reference](plan-reference.md#judge-flip-rate-experimental)). With `sampling: all`
+the interval is about the run's judge-positive completions. With `simple_random` it is about
+the same population, through the sample. Above the declared `warn_above` the diagnostic is a
+warning. The package does not rescore: [`examples/judge_flip`](../examples/judge_flip/README.md)
+has an Inspect task that rescores a run's judge-positive completions under four wrappers and
+writes the manifest, offline with simulated models or live with the run's judge.
+
+What it assumes:
+
+- **The wrappers preserve content.** A wrapper that weakens the content turns a correct
+  "safe" into a flip. Gao's human audit found all 80 flipped responses still harmful, but
+  that holds for their wrappers. Check new ones the same way.
+- **Judge-positive is not truly unsafe.** The rate is over completions the judge called
+  unsafe, and some of those are false positives. A flip of a false positive is a correction.
+  With a precise judge the difference is small. With an imprecise one the rate overstates the
+  judge's misses.
+
+The flip rate is a screen, not a correction. It never changes a claim, an interval or the
+decision. It does not estimate the judge's sensitivity on the run's own outputs, because the
+run's false negatives need not look like wrapped positives. To bound risk under judge error,
+use a `validated` calibration.
 
 ## Getting to evidence
 

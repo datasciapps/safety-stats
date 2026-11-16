@@ -18,6 +18,30 @@ described in their pull requests.
   adds a reference auditor kernel and `plan-auditor.yaml`. See
   [Conversations and system prompts](docs/generative-evaluation.md#conversations-and-system-prompts-experimental).
 
+- **Lang-Reiczigel limits in validated judge mode (changes report bytes).** With
+  `sampling: simple_random`, each whole-cohort `weighted_mean` row now carries a
+  `judge_corrected_validated_lang_reiczigel` interval beside the exact Clopper-Pearson box:
+  the limits of Lang and Reiczigel (2014) for prevalence adjusted for estimated sensitivity
+  and specificity. They are `diagnostic` and never decide a claim, because a coverage
+  simulation (`research/judge_correction_lang_reiczigel.py`) shows them falling to 91.4%
+  at nominal 95% where prevalence is 2% or below and labels number 300 or fewer, and not
+  uniformly narrower than the box. Where they cannot be computed,
+  `JUDGE_LANG_REICZIGEL_UNAVAILABLE` says why. Python callers get
+  `lang_reiczigel_corrected_risk`. Labels drawn within judge strata, or under
+  `stratified_without_replacement`, get no such interval.
+
+- **Judge flip rate under content-preserving wrappers (experimental, #122).**
+  `inputs.judge_flip` reads a CSV of the primary judge's verdicts on the run's judge-positive
+  completions, rescored inside wrappers that keep the content verbatim, such as a story
+  frame. `analyze` adds a `JUDGE_FLIP_RATE` diagnostic to the integrity section of
+  `report.json` and `report.md`: the share that flips to safe under at least one wrapper and
+  under each, with exact Clopper-Pearson intervals. Above the plan's `warn_above` it is a
+  warning. It never changes a claim or the decision. A manifest that does not fit the run is a
+  `JUDGE_FLIP_INVALID` error. Plans without the section keep their hash and outputs.
+  [`examples/judge_flip`](examples/judge_flip/README.md) rescores a run under four wrappers
+  and writes the manifest; the package itself does not call a model. See
+  [Judge flip rate](docs/judge-misclassification.md#judge-flip-rate-under-content-preserving-wrappers-experimental).
+
 - **`claims.json`, a machine-readable record of every claim (experimental, #11).** With
   `report.claims_export: true`, `analyze` also writes `claims.json`: for each claim its status,
   estimand and thresholds, the bound it was decided on with its alpha, the interval and

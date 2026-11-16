@@ -35,13 +35,20 @@ from inspect_safety_stats.schema.reports import (
 )
 from inspect_safety_stats.stats.misclassification import (
     JudgeStratumCounts,
+    TruthStratumCounts,
     delta_method_corrected_risk,
+    lang_reiczigel_corrected_risk,
     transported_sensitivity_lower,
 )
 
 
-def _judge_reported_variance(data: NormalizedData, cohort_id: str, group_id: str) -> float | None:
-    """Binomial variance of the design-weighted judge-reported mean under rollout independence."""
+def _judge_reported_counts(
+    data: NormalizedData, cohort_id: str, group_id: str
+) -> list[tuple[float, int, int]] | None:
+    """Each prompt's ``(weight, judge-reported failures, classified rollouts)`` in a group.
+
+    ``None`` when the group is unknown or a prompt has no classified rollout.
+    """
 
     group = next((item for item in data.groups if item.id == group_id), None)
     if group is None:
@@ -55,13 +62,46 @@ def _judge_reported_variance(data: NormalizedData, cohort_id: str, group_id: str
             continue
         tally[0] += int(observation.failure)
         tally[1] += 1
+    if any(classified == 0 for _, classified in counts.values()):
+        return None
+    return [
+        (group.weights[prompt_id], failures, classified)
+        for prompt_id, (failures, classified) in counts.items()
+    ]
+
+
+def _judge_reported_variance(data: NormalizedData, cohort_id: str, group_id: str) -> float | None:
+    """Binomial variance of the design-weighted judge-reported mean under rollout independence."""
+
+    counts = _judge_reported_counts(data, cohort_id, group_id)
+    if counts is None:
+        return None
     variance = 0.0
-    for prompt_id, (failures, classified) in counts.items():
-        if classified == 0:
-            return None
+    for weight, failures, classified in counts:
         rate = failures / classified
-        variance += group.weights[prompt_id] ** 2 * rate * (1 - rate) / classified
+        variance += weight**2 * rate * (1 - rate) / classified
     return variance
+
+
+def _judge_reported_effective_size(
+    data: NormalizedData, cohort_id: str, group_id: str
+) -> float | None:
+    """Rollouts an unweighted binomial mean would need for the weighted mean's variance.
+
+    Under rollout independence and a common rate ``p`` the design-weighted mean has variance
+    ``p (1 - p) sum_j w_j^2 / n_j`` for weights summing to one, so the effective size is
+    ``(sum_j w_j)^2 / sum_j (w_j^2 / n_j)``: the classified count when every rollout weighs
+    the same.
+    """
+
+    counts = _judge_reported_counts(data, cohort_id, group_id)
+    if counts is None:
+        return None
+    total = sum(weight for weight, _, _ in counts)
+    spread = sum(weight**2 / classified for weight, _, classified in counts)
+    if total <= 0 or spread <= 0:
+        return None
+    return total**2 / spread
 
 
 def _delta_reference_interval(
@@ -134,6 +174,100 @@ def _delta_reference_interval(
             "Stratum proportions are Agresti-Coull stabilised, (x + 2) / (n + 4).",
             "Shown as the asymptotic reference for the exact vertex box: the gap between "
             "them is the price of the finite-sample guarantee.",
+        ],
+        eligibility="diagnostic",
+        warnings=warnings,
+    )
+
+
+def _lang_reiczigel_interval(
+    *,
+    result: GroupRiskResult,
+    data: NormalizedData,
+    truth: dict[str, Any],
+    alpha: float,
+    family_id: str | None,
+    gap: str | None = None,
+    unclassified_share: float = 0.0,
+    scoped_group: str | None = None,
+) -> RiskIntervalResult | str:
+    """Lang-Reiczigel limits beside the exact validated correction, or why there are none."""
+
+    if result.estimate is None or result.lower is None or result.upper is None:
+        return "the row has no judge-reported estimate"
+    unsafe = truth.get("truly_unsafe")
+    safe = truth.get("truly_safe")
+    if not unsafe or not safe:
+        missing = "truly unsafe" if not unsafe else "truly safe"
+        return f"no labelled rollout is {missing}, so the judge's accuracy is not estimated"
+    size = _judge_reported_effective_size(data, result.cohort_id, result.group_id)
+    if size is None:
+        return "a prompt in the row has no classified rollout"
+    try:
+        limits = lang_reiczigel_corrected_risk(
+            apparent_rate=result.estimate,
+            apparent_size=size,
+            truly_unsafe=TruthStratumCounts(**unsafe),
+            truly_safe=TruthStratumCounts(**safe),
+            alpha=alpha,
+        )
+    except ValueError as exc:
+        return str(exc)
+    warnings = [_uncertified_correction_warning(gap, scoped_group)] if gap is not None else []
+    if unclassified_share > 0:
+        warnings.append(
+            f"It covers the classified rollouts only: {unclassified_share:.6g} of the row's "
+            "weight rests on unclassified rollouts, which the exact box keeps at their worst "
+            "case."
+        )
+    if limits.sensitivity_estimate < 0.5 or limits.specificity_estimate < 0.5:
+        warnings.append(
+            f"Estimated sensitivity {limits.sensitivity_estimate:.6g} or specificity "
+            f"{limits.specificity_estimate:.6g} is below 0.5; the method was developed for "
+            "both at or above 0.5."
+        )
+    if limits.upper == 0:
+        warnings.append(
+            "The judge reported fewer failures than its estimated false-positive rate "
+            "implies, so the whole interval fell below zero and was clipped to the single "
+            "point 0. The data contradict the estimated accuracies; this is not evidence "
+            "of zero risk."
+        )
+    return RiskIntervalResult(
+        interval_id="judge_corrected_validated_lang_reiczigel",
+        lower=limits.lower,
+        upper=limits.upper,
+        method="lang_reiczigel_judge_misclassification_correction",
+        role="sensitivity",
+        varied_assumption="judge_error",
+        coverage_scope=(
+            f"{result.coverage_scope}_judge_corrected_lang_reiczigel"
+            if result.coverage_scope
+            else "judge_corrected_lang_reiczigel"
+        ),
+        family=family_id,
+        family_alpha=alpha,
+        completion_estimate_lower=limits.estimate,
+        completion_estimate_upper=limits.estimate,
+        effective_sample_size=size,
+        raw_lower=result.lower,
+        raw_upper=result.upper,
+        calibration_method="validated_judge_calibration_lang_reiczigel",
+        assumptions=[
+            "The reported estimand is true failure risk, not judge-reported failure risk.",
+            "Approximate limits of Lang and Reiczigel (2014) for prevalence adjusted for "
+            "estimated sensitivity and specificity: Agresti-Coull-adjusted counts, a bias "
+            "shift and a Wald half-width. They carry no coverage guarantee and cannot "
+            "support a claim.",
+            "Sensitivity and specificity are estimated from the labelled rollouts by true "
+            "class, which requires the labels to be a simple random sample of the cohort's "
+            "classified rollouts.",
+            "The judge-reported rate is the row's design-weighted mean over an effective "
+            f"{size:.6g} rollouts, (sum_j w_j)^2 / sum_j (w_j^2 / n_j), under rollout "
+            "independence.",
+            "In simulation (research/judge_correction_lang_reiczigel.py) their coverage "
+            "falls to 91.4% at nominal 95% where prevalence is 2% or below and labels "
+            "number 300 or fewer.",
         ],
         eligibility="diagnostic",
         warnings=warnings,
@@ -343,6 +477,34 @@ def _add_judge_corrections(
             )
             if reference is not None:
                 result.intervals.append(reference)
+            # Lang-Reiczigel needs sensitivity and specificity, which only labels drawn
+            # as a simple random sample estimate without bias.
+            if spec.sampling == "simple_random":
+                limits = _lang_reiczigel_interval(
+                    result=result,
+                    data=data,
+                    truth=truth_strata.get(scope, {}),
+                    alpha=judge_alpha / scope_count,
+                    family_id=spec.family,
+                    gap=gap,
+                    unclassified_share=share,
+                    scoped_group=scope[1],
+                )
+                if isinstance(limits, str):
+                    diagnostics.append(
+                        Diagnostic(
+                            code="JUDGE_LANG_REICZIGEL_UNAVAILABLE",
+                            severity="INFO",
+                            message=(
+                                f"no Lang-Reiczigel limits for group {result.group_id!r}: "
+                                f"{limits}"
+                            ),
+                            scope=result.cohort_id,
+                            details={"group_id": result.group_id},
+                        )
+                    )
+                else:
+                    result.intervals.append(limits)
     _apply_judge_correction_to_comparisons(
         plan, data, population, comparisons, by_scope, spec.family, diagnostics
     )
