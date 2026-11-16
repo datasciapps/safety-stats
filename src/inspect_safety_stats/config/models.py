@@ -433,9 +433,37 @@ class CompositeJudgeSpec(StrictModel):
     judges: list[str] = Field(min_length=2)
 
 
+class JudgeFlipSpec(StrictModel):
+    """Experimental: the judge's flip rate under content-preserving wrappers (#122).
+
+    ``manifest`` is a CSV with columns ``observation_id``, ``wrapper`` and ``verdict``: the
+    primary judge's verdict (``safe`` or ``unsafe``) on a judge-positive completion of the run
+    after it was rescored inside one wrapper, one row per completion and wrapper. Every rescored
+    completion carries a row for every declared wrapper. With ``sampling: all`` every
+    judge-positive completion of the run was rescored; with ``simple_random`` a simple random
+    sample of them was. The flip rate is a diagnostic: it never changes a claim status, and a
+    rate above ``warn_above`` gives a warning. ``alpha`` is the two-sided error level of its
+    Clopper-Pearson interval.
+    """
+
+    manifest: Path
+    wrappers: list[str] = Field(min_length=1)
+    sampling: Literal["all", "simple_random"] = "all"
+    warn_above: PlanFloat = Field(gt=0, lt=1)
+    alpha: PlanFloat = Field(default=0.05, gt=0, lt=1)
+
+    @model_validator(mode="after")
+    def distinct_wrappers(self) -> JudgeFlipSpec:
+        if any(not item.strip() for item in self.wrappers):
+            raise ValueError("judge_flip wrappers must be non-empty names")
+        if len(set(self.wrappers)) != len(self.wrappers):
+            raise ValueError("judge_flip wrappers must be unique")
+        return self
+
+
 class InputsSpec(OmitsAbsentFields):
     # sample_join is None only under schema 3.0, which leaves it out of the plan.
-    absent_when_none = ("sample_join", "panel_groups")
+    absent_when_none = ("sample_join", "panel_groups", "judge_flip")
 
     design_manifest: Path
     estimand: Literal["end_to_end_system", "underlying_model"] = "end_to_end_system"
@@ -447,6 +475,8 @@ class InputsSpec(OmitsAbsentFields):
     composites: list[CompositeJudgeSpec] = Field(default_factory=list)
     # The groups the judge panel section also breaks its counts and agreement down by.
     panel_groups: list[str] | None = None
+    # Experimental: the primary judge's flip rate under content-preserving wrappers.
+    judge_flip: JudgeFlipSpec | None = None
 
     @model_validator(mode="after")
     def validate_judge_panel(self) -> InputsSpec:

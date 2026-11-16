@@ -7,6 +7,16 @@ described in their pull requests.
 
 ### Added
 
+- **Judge flip rate under content-preserving wrappers (experimental, #122).**
+  `inputs.judge_flip` reads a CSV of the primary judge's verdicts on the run's judge-positive
+  completions, rescored inside wrappers that keep the content verbatim, such as a story
+  frame. `analyze` adds a `JUDGE_FLIP_RATE` diagnostic to the integrity section of
+  `report.json` and `report.md`: the share that flips to safe under at least one wrapper and
+  under each, with exact Clopper-Pearson intervals. Above the plan's `warn_above` it is a
+  warning. It never changes a claim or the decision. A manifest that does not fit the run is a
+  `JUDGE_FLIP_INVALID` error. Plans without the section keep their hash and outputs. See
+  [Judge flip rate](docs/judge-misclassification.md#judge-flip-rate-under-content-preserving-wrappers-experimental).
+
 - **Arm contrasts and a simultaneous slice family in generative evaluation (experimental).**
   A generative plan can declare `inference.slice_family`: slices of arm levels and contrasts
   between two values of one arm level, such as one wrapper against another. They are covered

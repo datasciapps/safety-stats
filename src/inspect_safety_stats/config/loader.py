@@ -47,11 +47,12 @@ def load_plan(path: str | Path) -> AnalysisPlan:
     """Read and validate an analysis plan from a YAML (``.yaml``, ``.yml``) or JSON file.
 
     The plan must declare a schema version this release reads (2.0 or 3.0), and an unquoted
-    number is accepted. Relative paths to the design manifest and the judge-calibration
-    validation manifest are resolved against the plan's own directory, so a plan works from any
-    working directory. Raises ``ValueError`` for any other suffix, a root that is not an
-    object, or an unsupported schema version, and pydantic's ``ValidationError`` for an
-    invalid plan. The fields are documented in docs/plan-reference.md.
+    number is accepted. Relative paths to the design manifest, the judge-calibration
+    validation manifest and the judge flip manifest are resolved against the plan's own
+    directory, so a plan works from any working directory. Raises ``ValueError`` for any
+    other suffix, a root that is not an object, or an unsupported schema version, and
+    pydantic's ``ValidationError`` for an invalid plan. The fields are documented in
+    docs/plan-reference.md.
     """
 
     source = Path(path).resolve()
@@ -78,6 +79,9 @@ def load_plan(path: str | Path) -> AnalysisPlan:
         strata = calibration.validation_strata
         if not strata.is_absolute():
             calibration.validation_strata = (source.parent / strata).resolve()
+    flip = plan.inputs.judge_flip
+    if flip is not None and not flip.manifest.is_absolute():
+        flip.manifest = (source.parent / flip.manifest).resolve()
     return plan
 
 
@@ -125,6 +129,10 @@ def report_plan(plan: AnalysisPlan) -> dict[str, Any]:
         value["inputs"]["judge_calibration"]["validation_strata"] = report_path(
             calibration.validation_strata, plan
         )
+    if plan.inputs.judge_flip is not None:
+        value["inputs"]["judge_flip"]["manifest"] = report_path(
+            plan.inputs.judge_flip.manifest, plan
+        )
     return value
 
 
@@ -152,4 +160,9 @@ def canonical_plan_value(plan: AnalysisPlan) -> dict[str, Any]:
             strata = _plan_relative(calibration.validation_strata, source)
             if strata is not None:
                 value["inputs"]["judge_calibration"]["validation_strata"] = strata
+        flip = plan.inputs.judge_flip
+        if flip is not None:
+            flip_manifest = _plan_relative(flip.manifest, source)
+            if flip_manifest is not None:
+                value["inputs"]["judge_flip"]["manifest"] = flip_manifest
     return value
