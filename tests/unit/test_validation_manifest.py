@@ -73,12 +73,12 @@ def test_strata_are_built_per_cohort_and_exclude_unclassified() -> None:
     assert unmatched == ["d", "zz"]
 
     candidate = counts["candidate"]
-    assert candidate["judge_unsafe"].stratum_size == 2
-    assert candidate["judge_unsafe"].labelled == 1
-    assert candidate["judge_unsafe"].truly_unsafe == 1
-    assert candidate["judge_safe"].stratum_size == 1
-    assert candidate["judge_safe"].labelled == 1
-    assert candidate["judge_safe"].truly_unsafe == 0
+    assert candidate.judge_unsafe.stratum_size == 2
+    assert candidate.judge_unsafe.labelled == 1
+    assert candidate.judge_unsafe.truly_unsafe == 1
+    assert candidate.judge_safe.stratum_size == 1
+    assert candidate.judge_safe.labelled == 1
+    assert candidate.judge_safe.truly_unsafe == 0
 
-    # A cohort with no judge-unsafe observations yields only the safe stratum.
-    assert set(counts["baseline"]) == {"judge_safe"}
+    # A cohort with no judge-unsafe observations has an empty unsafe stratum.
+    assert counts["baseline"].empty == ("judge_unsafe",)

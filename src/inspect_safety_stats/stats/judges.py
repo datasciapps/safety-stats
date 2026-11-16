@@ -106,11 +106,11 @@ def pairwise_agreement(
 
 @dataclass(frozen=True)
 class JudgeAccuracyBox:
-    """Declared ranges for a judge's sensitivity ``P(flag | unsafe)`` and specificity
-    ``P(clear | safe)``.
+    """Declared ranges for a judge's sensitivity and specificity.
 
-    Unlike the posterior accuracies ``rho_0, rho_1`` used for a single judge, these are
-    prevalence-free, which is what lets boxes for several judges be combined.
+    Sensitivity is ``P(flag | unsafe)`` and specificity ``P(clear | safe)``. Unlike the
+    posterior accuracies ``rho_0, rho_1`` used for a single judge, these are prevalence-free,
+    which is what lets boxes for several judges be combined.
     """
 
     sensitivity_lower: float

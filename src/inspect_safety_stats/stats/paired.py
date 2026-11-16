@@ -109,6 +109,16 @@ def newcombe_paired_interval(
 
 
 def exact_mcnemar(candidate: list[bool], baseline: list[bool]) -> McNemarResult:
+    """Exact McNemar test of paired failure outcomes, candidate against baseline.
+
+    ``candidate`` and ``baseline`` are equal-length, nonempty lists of booleans, ``True``
+    meaning failure, paired by position. The test is a binomial test with probability one half
+    on the discordant pairs. It returns the matched-pairs table, the estimated difference in
+    failure rates (candidate minus baseline), and two-sided and both one-sided p-values. All
+    p-values are 1 when no pair is discordant. Derived in docs/statistical-methods.md,
+    section 7.3.
+    """
+
     if len(candidate) != len(baseline) or not candidate:
         raise ValueError("candidate and baseline must be nonempty and equal length")
     if not all(isinstance(x, bool) for x in candidate + baseline):
