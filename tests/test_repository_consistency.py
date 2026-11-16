@@ -243,6 +243,23 @@ def test_declared_python_versions_match_the_requirement() -> None:
     )
 
 
+# Split so that this file does not match its own pattern. Reports write Windows paths with
+# forward slashes, so this also matches a Windows home directory written that way. Backslash
+# forms are not matched: the HarmBench behaviours dataset quotes Windows shell sessions run in
+# a guest account's home directory.
+_HOME_DIRECTORY = re.compile(rb"/" rb"Users/[A-Za-z]")
+
+
+def test_no_tracked_file_names_a_local_home_directory() -> None:
+    """Example READMEs and committed reports once carried a maintainer's checkout path (#27)."""
+    offenders = [
+        path.relative_to(ROOT).as_posix()
+        for path in _tracked("*")
+        if path.is_file() and _HOME_DIRECTORY.search(path.read_bytes())
+    ]
+    assert offenders == []
+
+
 def test_the_package_has_no_runtime_asserts() -> None:
     """Python strips asserts under -O, so a runtime check must raise (CONTRIBUTING 5.2)."""
     # The imported package, not the checkout, so that scripts/prove_red.py can test it.
