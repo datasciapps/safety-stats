@@ -17,7 +17,11 @@ import numpy as np
 import pandas as pd
 
 from inspect_safety_stats.config.models import AnalysisPlan, ClaimSpec
-from inspect_safety_stats.ingest.manifest import load_manifest, resolve_groups
+from inspect_safety_stats.ingest.manifest import (
+    load_manifest,
+    plan_manifest_columns,
+    resolve_groups,
+)
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.stats.planning import (
     FixedDesignDetectableRates,
@@ -191,7 +195,10 @@ def plan_claims(
         raise ValueError(
             "the plan declares a sampled design; plan fixed-design plans fixed designs only"
         )
-    frame = load_manifest(manifest if manifest is not None else plan.inputs.design_manifest)
+    frame = load_manifest(
+        manifest if manifest is not None else plan.inputs.design_manifest,
+        plan_manifest_columns(plan),
+    )
     if rollouts is None and "expected_rollouts" not in frame:
         raise ValueError(
             "the design manifest has no expected_rollouts column; "

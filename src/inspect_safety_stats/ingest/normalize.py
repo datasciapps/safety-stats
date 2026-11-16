@@ -23,6 +23,7 @@ from inspect_safety_stats.ingest.manifest import (
     ResolvedGroup,
     load_inclusion_probabilities,
     load_manifest,
+    plan_manifest_columns,
     resolve_groups,
 )
 from inspect_safety_stats.ingest.outcomes import is_missing, map_outcome
@@ -887,7 +888,7 @@ def read_inputs(
 
     # ORDER MATTERS: the manifest is loaded before the source is read, so a broken manifest
     # is reported before any log is opened, as it always was.
-    manifest = load_manifest(plan.inputs.design_manifest)
+    manifest = load_manifest(plan.inputs.design_manifest, plan_manifest_columns(plan))
     groups = resolve_groups(plan, manifest)
     return manifest, groups, source.read()
 

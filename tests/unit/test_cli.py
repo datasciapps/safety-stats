@@ -220,6 +220,19 @@ def test_fixed_design_planning_rejects_an_unused_weight_column(tmp_path: Path) -
     assert accepted.exit_code == 0, accepted.output
 
 
+def test_fixed_design_planning_needs_only_the_levels_its_weights_name(tmp_path: Path) -> None:
+    manifest = tmp_path / "design.csv"
+    manifest.write_text("prompt_id,expected_rollouts\np1,20\np2,20\n", encoding="utf-8")
+    arguments = ["plan", "fixed-design", "--manifest", str(manifest), "--threshold", "0.5"]
+    accepted = runner.invoke(app, [*arguments, "--weights", "equal_prompt"])
+    assert accepted.exit_code == 0, accepted.output
+    assert "Prompts: 2" in accepted.stdout
+    # The default nested hierarchy names task_id and question_id, so they stay required.
+    rejected = runner.invoke(app, arguments)
+    assert rejected.exit_code != 0
+    assert "missing required columns: question_id, task_id" in plain(rejected.output)
+
+
 def test_cli_errors_render_in_tests_as_they_do_on_ci() -> None:
     """tests/conftest.py forces CI's rendering, so raw-text assertions fail locally as well.
 
