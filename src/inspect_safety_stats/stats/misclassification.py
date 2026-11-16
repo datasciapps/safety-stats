@@ -6,6 +6,8 @@ from typing import Literal
 
 from inspect_safety_stats.stats.binomial import binomial_bounds
 
+CalibrationBound = Literal["clopper_pearson", "confidence_sequence"]
+
 
 @dataclass(frozen=True)
 class JudgeCalibration:
@@ -20,6 +22,9 @@ class JudgeCalibration:
     parameter no label measured and which the box therefore completes as ``[0, 1]``. Such a
     box cannot be strictly informative, so the informativeness check applies only when no
     stratum is completed.
+
+    ``bound`` names how a validated box bounds each measured stratum: exact Clopper-Pearson
+    intervals, or anytime-valid confidence sequences for labelling that may stop on results.
     """
 
     scenario_id: str
@@ -30,6 +35,7 @@ class JudgeCalibration:
     source: str = "assumed"
     alpha: float | None = None
     completed_strata: tuple[str, ...] = ()
+    bound: CalibrationBound = "clopper_pearson"
 
     def __post_init__(self) -> None:
         for name, low, high in (
@@ -158,9 +164,6 @@ class JudgeStratumCounts:
             raise ValueError("labelled count cannot exceed the stratum size")
 
 
-CalibrationBound = Literal["clopper_pearson", "confidence_sequence"]
-
-
 def hypergeometric_confidence_sequence(
     stratum: JudgeStratumCounts, *, alpha: float
 ) -> tuple[float, float]:
@@ -280,6 +283,7 @@ def estimate_judge_calibration(
         source="validated",
         alpha=alpha,
         completed_strata=completed,
+        bound=bound,
     )
 
 

@@ -151,6 +151,38 @@ class JudgeCalibrationScenarioSpec(StrictModel):
         return self
 
 
+class LabellingProtocolSpec(StrictModel):
+    """Experimental: how the human labels of a validated calibration were collected.
+
+    ``queue`` is a CSV whose ``observation_id`` column lists the rollouts in the order they
+    are to be labelled; a queue that orders each judge stratum by a seeded random
+    permutation makes every prefix a simple random sample within each stratum. ``tier``
+    keeps only the queue rows whose ``tier`` column has that value, for a queue that also
+    holds rows the calibration does not use. ``seed`` records the permutation's seed for an
+    audit; the package cannot recompute the queue from it.
+
+    The analysis checks that the validation manifest labels exactly the first rows of the
+    queue. ``stopping`` declares why labelling stopped there: ``fixed_size`` at ``size`` rows,
+    which the analysis checks; ``label_independent`` at a point chosen without looking at the
+    labels, such as when time ran out; ``data_dependent`` possibly because of the labels,
+    which only anytime-valid bounds allow, so the calibration then uses confidence sequences.
+    """
+
+    queue: Path
+    tier: str | None = Field(default=None, min_length=1)
+    seed: PlanInt | None = None
+    stopping: Literal["fixed_size", "label_independent", "data_dependent"]
+    size: PlanInt | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def size_only_when_fixed(self) -> LabellingProtocolSpec:
+        if self.stopping == "fixed_size" and self.size is None:
+            raise ValueError("labelling protocol stopping: fixed_size requires a size")
+        if self.stopping != "fixed_size" and self.size is not None:
+            raise ValueError("labelling protocol size applies only to stopping: fixed_size")
+        return self
+
+
 class JudgeCalibrationSpec(StrictModel):
     """Judge-misclassification calibration, either declared or measured.
 
@@ -168,6 +200,15 @@ class JudgeCalibrationSpec(StrictModel):
     sampling: Literal["simple_random_within_judge_stratum", "simple_random"] = (
         "simple_random_within_judge_stratum"
     )
+    protocol: LabellingProtocolSpec | None = None
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_protocol(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # A plan without a protocol keeps the resolved form and hash it had before the field.
+        data: dict[str, Any] = handler(self)
+        if self.protocol is None:
+            data.pop("protocol", None)
+        return data
 
     @model_validator(mode="after")
     def validate_mode(self) -> JudgeCalibrationSpec:
@@ -178,6 +219,8 @@ class JudgeCalibrationSpec(StrictModel):
                 raise ValueError(
                     "validation_manifest and family require mode: validated"
                 )
+            if self.protocol is not None:
+                raise ValueError("a labelling protocol requires mode: validated")
             ids = [item.id for item in self.scenarios]
             if len(set(ids)) != len(ids):
                 raise ValueError("judge calibration scenario identifiers must be unique")
@@ -192,6 +235,17 @@ class JudgeCalibrationSpec(StrictModel):
             raise ValueError("validated judge calibration requires a validation_manifest")
         if not self.family:
             raise ValueError("validated judge calibration requires a multiplicity family")
+        if (
+            self.protocol is not None
+            and self.protocol.stopping == "data_dependent"
+            and self.sampling == "simple_random"
+        ):
+            # The noisy-but-valid test bounds sensitivity and the false-positive rate by true
+            # class with Clopper-Pearson, which has no anytime-valid form here yet.
+            raise ValueError(
+                "labelling protocol stopping: data_dependent requires sampling: "
+                "simple_random_within_judge_stratum"
+            )
         if self.scenarios or self.primary is not None:
             raise ValueError(
                 "validated judge calibration estimates its accuracies from labels; "

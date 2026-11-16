@@ -64,6 +64,10 @@ def load_plan(path: str | Path) -> AnalysisPlan:
         validation = calibration.validation_manifest
         if not validation.is_absolute():
             calibration.validation_manifest = (source.parent / validation).resolve()
+    if calibration is not None and calibration.protocol is not None:
+        queue = calibration.protocol.queue
+        if not queue.is_absolute():
+            calibration.protocol.queue = (source.parent / queue).resolve()
     return plan
 
 
@@ -107,6 +111,10 @@ def report_plan(plan: AnalysisPlan) -> dict[str, Any]:
         value["inputs"]["judge_calibration"]["validation_manifest"] = report_path(
             calibration.validation_manifest, plan
         )
+    if calibration is not None and calibration.protocol is not None:
+        value["inputs"]["judge_calibration"]["protocol"]["queue"] = report_path(
+            calibration.protocol.queue, plan
+        )
     return value
 
 
@@ -124,4 +132,8 @@ def canonical_plan_hash(plan: AnalysisPlan) -> str:
             validation = _plan_relative(calibration.validation_manifest, source)
             if validation is not None:
                 value["inputs"]["judge_calibration"]["validation_manifest"] = validation
+        if calibration is not None and calibration.protocol is not None:
+            queue = _plan_relative(calibration.protocol.queue, source)
+            if queue is not None:
+                value["inputs"]["judge_calibration"]["protocol"]["queue"] = queue
     return sha256_value(value)

@@ -21,6 +21,7 @@ from inspect_safety_stats.config.models import (
     ComparisonSpec,
     DirectMeanIntervalsSpec,
     IndependenceSelectionSpec,
+    JudgeCalibrationSpec,
     RiskMeasureSpec,
 )
 from inspect_safety_stats.decision.engine import decide_claim, roll_up
@@ -31,6 +32,7 @@ from inspect_safety_stats.ingest.manifest import (
 from inspect_safety_stats.ingest.normalize import ingest
 from inspect_safety_stats.ingest.records import EvaluationSource, NormalizedData
 from inspect_safety_stats.ingest.validation import (
+    check_labelled_prefix,
     judge_stratum_counts,
     load_validation_manifest,
     truth_stratum_counts,
@@ -96,6 +98,7 @@ from inspect_safety_stats.stats.judges import (
     pairwise_agreement,
 )
 from inspect_safety_stats.stats.misclassification import (
+    CalibrationBound,
     JudgeCalibration,
     JudgeStratumCounts,
     TruthStratumCounts,
@@ -1946,13 +1949,21 @@ def _validated_judge_calibrations(
     data: NormalizedData,
     diagnostics: list[Diagnostic],
 ) -> tuple[
-    dict[str, JudgeCalibration], dict[str, dict[str, Any]], float | None, dict[str, Any]
+    dict[str, JudgeCalibration],
+    dict[str, dict[str, Any]],
+    float | None,
+    dict[str, Any],
+    dict[str, Any] | None,
 ]:
-    """Estimate one calibration per cohort from human labels within judge strata."""
+    """Estimate one calibration per cohort from human labels within judge strata.
+
+    The last item records the declared labelling protocol and what checking it found, or
+    is ``None`` when the plan declares none.
+    """
 
     spec = plan.inputs.judge_calibration
     if spec is None or spec.mode != "validated":
-        return {}, {}, None, {}
+        return {}, {}, None, {}, None
     family = next((item for item in plan.multiplicity.families if item.id == spec.family), None)
     if family is None:
         diagnostics.append(
@@ -1963,7 +1974,7 @@ def _validated_judge_calibrations(
                 scope="inputs.judge_calibration",
             )
         )
-        return {}, {}, None, {}
+        return {}, {}, None, {}, None
     if spec.validation_manifest is None:
         raise ValueError("a validated inputs.judge_calibration requires a validation_manifest")
     try:
@@ -1977,7 +1988,16 @@ def _validated_judge_calibrations(
                 scope="inputs.judge_calibration",
             )
         )
-        return {}, {}, None, {}
+        return {}, {}, None, {}, None
+
+    protocol = _labelling_protocol(spec, labels, diagnostics)
+    if spec.protocol is not None and protocol is None:
+        return {}, {}, None, {}, None
+    bound: CalibrationBound = (
+        "confidence_sequence"
+        if spec.protocol is not None and spec.protocol.stopping == "data_dependent"
+        else "clopper_pearson"
+    )
 
     counts, unmatched = judge_stratum_counts(data.observations, labels)
     truth_strata: dict[str, Any] = {}
@@ -2032,6 +2052,7 @@ def _validated_judge_calibrations(
                 unsafe_stratum=unsafe,
                 safe_stratum=safe,
                 alpha=per_cohort_alpha,
+                bound=bound,
             )
         except ValueError as exc:
             diagnostics.append(
@@ -2066,7 +2087,54 @@ def _validated_judge_calibrations(
                 "stratum_size": safe.stratum_size,
             },
         }
-    return calibrations, summaries, family.alpha, truth_strata
+    return calibrations, summaries, family.alpha, truth_strata, protocol
+
+
+def _labelling_protocol(
+    spec: JudgeCalibrationSpec,
+    labels: dict[str, bool],
+    diagnostics: list[Diagnostic],
+) -> dict[str, Any] | None:
+    """Check the labels against the declared labelling protocol, and record both.
+
+    ``None`` with an ERROR diagnostic when the labels break the protocol, and ``None``
+    without one when the plan declares no protocol.
+    """
+
+    protocol = spec.protocol
+    if protocol is None:
+        return None
+    try:
+        prefix = check_labelled_prefix(protocol.queue, labels, tier=protocol.tier)
+        if protocol.stopping == "fixed_size" and prefix.labelled != protocol.size:
+            raise ValueError(
+                f"the labelling protocol fixes {protocol.size} labels in advance, but the "
+                f"validation manifest has {prefix.labelled}"
+            )
+    except (OSError, ValueError) as exc:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_LABELLING_PROTOCOL_VIOLATED",
+                severity="ERROR",
+                message=str(exc),
+                scope="inputs.judge_calibration.protocol",
+            )
+        )
+        return None
+    return {
+        "queue_sha256": prefix.queue_sha256,
+        "queue_rows": prefix.queue_rows,
+        "labelled_prefix": prefix.labelled,
+        "tier": protocol.tier,
+        "seed": protocol.seed,
+        "stopping": protocol.stopping,
+        "size": protocol.size,
+        "bound": (
+            "confidence_sequence"
+            if protocol.stopping == "data_dependent"
+            else "clopper_pearson"
+        ),
+    }
 
 
 def _judge_corrected_interval(
@@ -2121,23 +2189,40 @@ def _judge_corrected_interval(
         f"[{calibration.rho_0_lower:.6g}, {calibration.rho_0_upper:.6g}].",
     ]
     if validated:
+        sequence = calibration.bound == "confidence_sequence"
+        method = (
+            "anytime-valid hypergeometric confidence sequence (Waudby-Smith and Ramdas, 2020)"
+            if sequence
+            else "exact Clopper-Pearson bound"
+        )
         if calibration.completed_strata:
             assumptions.append(
                 "The "
                 + " and ".join(calibration.completed_strata)
                 + " judge stratum has no human label, so its range is [0, 1], which holds "
-                "with certainty; any other range is an exact Clopper-Pearson bound from "
+                f"with certainty; any other range is an {method} from "
                 "human labels drawn within its judge stratum."
             )
         else:
             assumptions.append(
-                "Those two ranges are exact Clopper-Pearson bounds from human labels drawn "
-                "within each judge stratum."
+                f"Each of those two ranges is an {method} from human labels drawn "
+                "within its judge stratum."
+                if sequence
+                else "Those two ranges are exact Clopper-Pearson bounds from human labels "
+                "drawn within each judge stratum."
             )
         assumptions.extend(
             [
-                "The labelled rows are a simple random sample within their judge stratum; "
-                "this is a property of the declared collection protocol, not of the data.",
+                (
+                    "The labelled rows were drawn one at a time, without replacement and in a "
+                    "random order, within their judge stratum, as the declared labelling "
+                    "queue orders them; the ranges hold at every number of labels at once, "
+                    "so labelling may have stopped because of the labels seen."
+                    if sequence
+                    else "The labelled rows are a simple random sample within their judge "
+                    "stratum; this is a property of the declared collection protocol, not "
+                    "of the data."
+                ),
                 "Human adjudication is treated as ground truth.",
             ]
         )
@@ -2600,7 +2685,7 @@ def _apply_judge_correction(
             "primary": spec.primary,
         }
 
-    by_cohort, summaries, judge_alpha, truth_strata = _validated_judge_calibrations(
+    by_cohort, summaries, judge_alpha, truth_strata, protocol = _validated_judge_calibrations(
         plan, data, diagnostics
     )
     for result in targets:
@@ -2659,6 +2744,8 @@ def _apply_judge_correction(
         "validation_manifest": str(spec.validation_manifest),
         "cohorts": summaries,
         "truth_strata": truth_strata,
+        # Only a plan that declares a protocol gets the key, so other reports keep their bytes.
+        **({"protocol": protocol} if protocol is not None else {}),
     }
 
 
