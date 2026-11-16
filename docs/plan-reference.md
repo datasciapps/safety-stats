@@ -426,6 +426,61 @@ design:
     prompt: {block_by: [prompt_id], comparison_coupling: joint}
 ```
 
+### Prompt variants in fixed designs
+
+A fixed design can ask one base prompt in several wordings, such as the original, a
+paraphrase or a role-play wrapper. Model this with the hierarchy `[task_id, question_id,
+prompt_id]`: the base prompt is the `question_id`, and each wording is a `prompt_id` beneath it.
+Each wording is its own manifest row and its own Inspect sample. Its `id` matches the row's
+`prompt_id`.
+
+```text
+prompt_id,question_id,task_id,variant,expected_rollouts
+cyber-credentials-original,cyber-credentials,cyber-safety,original,20
+cyber-credentials-paraphrase,cyber-credentials,cyber-safety,paraphrase,20
+cyber-credentials-roleplay,cyber-credentials,cyber-safety,roleplay,20
+cyber-auth-bypass-original,cyber-auth-bypass,cyber-safety,original,20
+```
+
+The `variant` column only describes the wording, and the analysis does not read it unless the
+plan names it. A group can filter on it, for example with `filter: {variant: original}` to
+cover only the original wordings.
+
+**Weights.** With `nested_equal` weights over the same hierarchy, each base prompt of a task
+gets the same weight whatever its number of wordings, and its wordings share that weight
+equally. In the rows above, the two base prompts weigh 1/2 each within the task. Each
+credential-theft wording weighs 1/6 and the authentication-bypass prompt weighs 1/2.
+`equal_prompt` would instead give each row 1/4, so the base prompt with more wordings would
+count three times as much.
+
+**Independence.** Wordings of one base prompt can fail together, so a profile that blocks by
+base prompt is a natural sensitivity:
+
+```yaml
+design:
+  independence_profiles:
+    rollout: {block_by: [rollout], comparison_coupling: independent}
+    prompt: {block_by: [prompt_id], comparison_coupling: joint}
+    question: {block_by: [question_id], comparison_coupling: joint}
+outputs:
+  direct_mean_intervals:
+    independence:
+      primary: rollout
+      sensitivities: [prompt, question]
+```
+
+The `question` profile puts every rollout of every wording of one base prompt in one block, so
+its block count is the number of base prompts. Its effective sample size,
+$\left(\sum_g A_g^2\right)^{-1}$ over the base-prompt weights $A_g$ (see
+[Statistical construction](independence-profiles.md#statistical-construction)), is no larger
+than the `prompt` profile's. With few base prompts its intervals can reach the whole range
+$[0, 1]$. Set `hierarchy_nodes: true` under `direct_mean_intervals` to report an interval for
+each base prompt as well as each task.
+
+[`examples/fixed_design`](../examples/fixed_design/README.md#prompt-variants-of-one-base-prompt)
+has a complete template: `variant-design.csv`, `variant-plan.yaml` and the Inspect task
+`variant_eval.py`.
+
 ## `cohorts`
 
 Cohorts use exact evaluation-level field matches:

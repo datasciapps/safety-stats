@@ -202,6 +202,10 @@ smallest blocks that are defensibly independent. Making blocks coarser is not au
 correct: it changes the assumption from independence of individual generations to independence of
 whole batches, and very few blocks can make meaningful finite-sample inference impossible.
 
+When a design asks one base prompt in several wordings, a `block_by: [question_id]` profile
+treats all wordings of a base prompt as one block. See
+[Prompt variants in fixed designs](plan-reference.md#prompt-variants-in-fixed-designs).
+
 The HTML report has one global independence-profile selector. It displays only the selected
 profile's intervals in risk charts, hierarchy trees, and comparison summaries. JSON and CSV retain
 all prespecified profiles, their independent-block counts, effective sample sizes, calibration
