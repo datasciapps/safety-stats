@@ -337,6 +337,25 @@ candidate minus baseline. `exact_mcnemar` returns the full 2×2 table and three 
 p-values. `newcombe_paired_interval` implements Newcombe method 10 with separate one-sided error
 levels.
 
+```python
+exact_mcnemar_partial(candidate, baseline)
+newcombe_paired_interval_partial(
+    candidate,
+    baseline,
+    *,
+    alpha_lower=0.05,
+    alpha_upper=0.05,
+)
+```
+
+These accept `None` for an unscored outcome and return bounds that hold for every completion of
+the unknown outcomes. `exact_mcnemar_partial` returns the largest one-sided and two-sided
+p-values over the completions, `estimate_lower` and `estimate_upper`, and the McNemar result of
+the fully scored pairs as `scored`, or `None` when there are none.
+`newcombe_paired_interval_partial` returns the lowest lower bound and the highest upper bound
+over the completions, the range of the estimate, and `completion_count`, the number of distinct
+2×2 tables the completions produce.
+
 `paired_cluster_bootstrap` is available from
 `inspect_safety_stats.stats.clusters`. It resamples whole creator-declared clusters while
 preserving pairs. It is a fixed-design sensitivity analysis, not a population interval.

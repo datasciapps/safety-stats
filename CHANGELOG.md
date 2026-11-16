@@ -50,6 +50,17 @@ described in their pull requests.
 
 ### Changed
 
+- **Unscored pairs are bounded, not a broken pairing (changes results).** With `pair_key`, one
+  unscored rollout in either arm left its pair unmatched, so the comparison got `PAIR_BROKEN`
+  and the report's integrity became `invalid`. The pair is now kept, and the paired diagnostics
+  report bounds over every scoring of the unknown outcomes, with `estimate_lower` and
+  `estimate_upper` in place of `estimate`, a `partial_pairing` record in `diagnostic_outputs`
+  and a `PAIR_UNSCORED_COMPLETED` warning. A pair unscored in both arms, which was dropped
+  without notice, is now counted and bounded too. A key missing from one arm is still
+  `PAIR_BROKEN`. `exact_mcnemar_partial` and `newcombe_paired_interval_partial` are exported
+  from `stats`. See
+  [Pairs with an unscored arm](docs/model-comparisons.md#pairs-with-an-unscored-arm).
+
 - **An unlabelled judge stratum is completed, not refused (changes results).** A validated
   judge calibration needed a human label in both judge strata. A stratum without one is now
   completed conservatively: its error rate is bounded by [0, 1], the correction is still

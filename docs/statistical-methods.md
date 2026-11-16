@@ -1618,6 +1618,14 @@ The library must report and normally reject:
 - different prompts or task versions under the same key;
 - mismatched generation settings that invalidate the intended comparison.
 
+A case that both arms attempted but one did not score is not a broken pair. The package keeps it
+and bounds each paired diagnostic over every completion of the unknown outcome. A one-sided exact
+McNemar p-value \(P(\mathrm{Bin}(d, 1/2) \ge n_{10})\) cannot fall when a pair's difference
+falls, so its maximum over the completions is attained at one of the two extreme completions.
+Newcombe's bound is not monotone in the cell counts, so it is minimised and maximised over every
+reachable table. See
+[Pairs with an unscored arm](model-comparisons.md#pairs-with-an-unscored-arm).
+
 ### 7.6 AI-evaluation precedent
 
 Paired analysis is increasingly being productized for model evaluation. NVIDIA NeMo Evaluator uses exact McNemar comparisons on the same problems and reports human-readable `PASS`, `WARN`, `BLOCK`, and `INCONCLUSIVE` outcomes [22]. In safety-adjacent clinical LLM evaluation, exact McNemar tests with Holm correction have been used to compare harmful-content and safety outcomes across models [27]. These are useful precedents for both the mathematics and the decision interface.

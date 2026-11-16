@@ -484,6 +484,8 @@ intervals only. `frontier_sidak` requires `hierarchy_nodes: true`.
 
 Pair and cluster keys for McNemar, Newcombe, and bootstrap diagnostics are supplied by the creator;
 the package never infers them. These diagnostics remain separate from the primary direct interval.
+A pair with an unscored arm is kept and bounded over every scoring of its unknown outcome; see
+[Pairs with an unscored arm](model-comparisons.md#pairs-with-an-unscored-arm).
 
 See [Fixed-design model and configuration comparisons](model-comparisons.md) for the complete
 mathematical construction, assumptions, output fields, and visualization guide.
