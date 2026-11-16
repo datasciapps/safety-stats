@@ -177,6 +177,56 @@ design has \(\pi_j=n_h/N_h\) constant inside a stratum. Three checks enforce tha
   must match its plan **exactly**; any shortfall means the declared probabilities misstate
   the sample.
 
+## Drawing a random pilot
+
+A pilot estimates what the full study will cost and roughly what its rates will be. Its
+means estimate those quantities without bias only if the pilot prompts are a random sample.
+The first prompts of each category are not one: identifiers are often assigned in an order
+that tracks length, difficulty or source.
+
+`plan pilot` (experimental) draws a pilot at random within strata of a design manifest:
+
+```bash
+inspect-safety-stats plan pilot --manifest design.csv --per-stratum 5 --seed 20261116 \
+    --output pilot.csv
+```
+
+It draws `--per-stratum` prompts from each combination of the `--strata` columns
+(`task_id` by default; an empty value makes the whole manifest one stratum) by simple random
+sampling without replacement, and writes the whole manifest with three added columns:
+
+| Column | Meaning |
+|---|---|
+| `pilot_stratum` | The stratum's values, joined by `/` |
+| `pilot_inclusion_probability` | Draws over stratum size, \(n_h/N_h\) |
+| `pilot_selected` | `True` for the prompts to run in the pilot |
+
+Each prompt's rank is a SHA-256 hash of the seed and its `prompt_id`, so the draw:
+
+- uses only the manifest and the seed, never an outcome;
+- does not depend on the order of the manifest's rows or on the platform;
+- is nested: a pilot drawn with a larger `--per-stratum` and the same seed contains the
+  smaller one, so a pilot can be extended without discarding the prompts already run.
+
+Record the seed with the pilot. The command refuses a stratum with fewer prompts than
+`--per-stratum`, a missing value in a strata column, strata values that would share a label
+once joined, a manifest that already has the added columns, and an `--output` that would
+overwrite the manifest. Values are written back as they appear in the manifest.
+
+The pilot frame is the frame of a fixed-size sampled design, so the pilot's rates can be
+analysed as a sample of the whole manifest without editing any column:
+
+```yaml
+design:
+  type: sampled
+  sampling: fixed_size
+  stratum_column: pilot_stratum
+  inclusion_probability_column: pilot_inclusion_probability
+```
+
+In Python, `draw_pilot(manifest, per_stratum=..., strata=[...], seed=...)` in
+`inspect_safety_stats.ingest.pilot` returns the same frame as a DataFrame.
+
 ## Not yet supported
 
 Comparisons across cohorts on a sampled frame. Correcting them means giving each arm its own

@@ -423,13 +423,15 @@ inspect-safety-stats plan detectable-rate --trials N --threshold P --alpha A --p
 inspect-safety-stats plan fixed-design --manifest DESIGN.csv --threshold P [--alpha A] [--power B]
     [--rollouts N] [--weights STRATEGY] [--hierarchy LEVELS] [--weight-column COLUMN]
     [--independence-unit UNIT] [--family-size M]
+inspect-safety-stats plan pilot --manifest DESIGN.csv --per-stratum K --seed S --output PILOT.csv
+    [--strata COLUMNS]
 inspect-safety-stats hash-plan --plan PLAN
 inspect-safety-stats schema plan
 inspect-safety-stats schema report
 inspect-safety-stats version
 ```
 
-Every `plan` subcommand accepts `--family-size M`, which plans at the Bonferroni share
+Every `plan` subcommand except `pilot` accepts `--family-size M`, which plans at the Bonferroni share
 `alpha / M`. Use it to match the `equal_bonferroni` allocation that `analyze` applies to a
 family of `M` simultaneous claims, so a planned rollout count is sufficient at analysis time
 rather than only in isolation. `plan fixed-design` reads the design manifest itself: weights
@@ -438,6 +440,11 @@ follow the declared strategy (`nested_equal` by default, `equal_prompt`, or `exp
 `--rollouts` supplies a uniform override. Its guarantees are the independent-rollout weighted
 Hoeffding construction of `fixed_design_detectable_failure_rates`; pass
 `--independence-unit prompt_cluster` to plan under prompt-level independence instead.
+
+`plan pilot` (experimental) draws `K` prompts at random from each combination of the
+`--strata` columns (`task_id` by default) and writes the whole manifest with
+`pilot_stratum`, `pilot_inclusion_probability` and `pilot_selected` added. See
+[Drawing a random pilot](design-based-sampling.md#drawing-a-random-pilot).
 
 Repeat `--logs` to select multiple files or directories. `--runs` and `--rollouts` name the two
 files of a neutral rollout source instead of Inspect logs, and are given together
