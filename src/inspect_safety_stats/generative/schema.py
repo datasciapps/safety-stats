@@ -237,6 +237,17 @@ class RewriteDeduplicationSpec(StrictModel):
     on_duplicate: Literal["retry", "accept"] = "retry"
 
 
+def turn_count(level: str, value: str) -> int:
+    """The user-turn count a value of the conversation-turns arm declares."""
+
+    if not value.isdigit() or int(value) < 1:
+        raise ValueError(
+            f"rewrite.conversation_turns arm {level!r} has value {value!r}; its values are "
+            "user-turn counts, positive integers such as '1' or '3'"
+        )
+    return int(value)
+
+
 class SystemPromptSpec(StrictModel):
     """An arm over system prompts (experimental).
 
@@ -266,6 +277,15 @@ class RewriteSpec(StrictModel):
     # user and generator-written assistant turns), materialized as Inspect message lists.
     output: Literal["prompt", "conversation"] = "prompt"
     system_prompts: SystemPromptSpec | None = None
+    # Experimental. An arm whose values are user-turn counts: each conversation on a path
+    # must have exactly that many user turns, or the attempt is rejected as invalid.
+    conversation_turns: str | None = None
+
+    @model_validator(mode="after")
+    def turns_need_conversations(self) -> RewriteSpec:
+        if self.conversation_turns is not None and self.output != "conversation":
+            raise ValueError("rewrite.conversation_turns requires rewrite.output: conversation")
+        return self
 
     def stores_conversations(self) -> bool:
         """Whether accepted rewrites are conversations rather than bare prompts."""
@@ -420,9 +440,22 @@ class GenerativePlan(StrictModel):
 
     @model_validator(mode="after")
     def system_prompts_name_an_arm(self) -> GenerativePlan:
+        turns_level = self.rewrite.conversation_turns
+        if turns_level is not None:
+            turns_arm = self.taxonomy.arms.get(turns_level)
+            if turns_arm is None:
+                raise ValueError(
+                    f"rewrite.conversation_turns {turns_level!r} is not an arm in taxonomy.arms"
+                )
+            for value in turns_arm.values or []:
+                turn_count(turns_level, value.id)
         spec = self.rewrite.system_prompts
         if spec is None:
             return self
+        if spec.level == turns_level:
+            raise ValueError(
+                "rewrite.system_prompts and rewrite.conversation_turns name the same arm"
+            )
         arm = self.taxonomy.arms.get(spec.level)
         if arm is None:
             raise ValueError(

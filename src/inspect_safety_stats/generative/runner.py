@@ -14,13 +14,13 @@ import importlib.util
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from inspect_safety_stats.generative.comparisons import ComparisonResult, compare_cohorts
 from inspect_safety_stats.generative.execution import (
     AcceptedRewrite,
     acceptance_by_level,
-    check_system_prompts,
+    check_conversation_arms,
     execute_rewrites,
     load_seed_texts,
     prompt_store_writer,
@@ -88,7 +88,7 @@ class MaterializedRun:
 
 
 def resolve_kernel(specification: str) -> RewriteKernel:
-    """Resolve ``fake``, ``fake:invalid_every=N``, or ``module:attribute``.
+    """Resolve ``fake``, ``fake:invalid_every=N,output=conversation``, or ``module:attribute``.
 
     A provider-backed kernel is supplied as an import path so nothing in this package
     depends on a particular rewriter client. The attribute may be a kernel or a
@@ -98,14 +98,19 @@ def resolve_kernel(specification: str) -> RewriteKernel:
     if specification == "fake" or specification.startswith("fake:"):
         options = specification[5:] if ":" in specification else ""
         invalid_every = 0
-        if options:
-            key, _, value = options.partition("=")
-            if key != "invalid_every" or not value.isdigit():
+        output: Literal["prompt", "conversation"] = "prompt"
+        for option in options.split(",") if options else []:
+            key, _, value = option.partition("=")
+            if key == "invalid_every" and value.isdigit():
+                invalid_every = int(value)
+            elif key == "output" and value in ("prompt", "conversation"):
+                output = "conversation" if value == "conversation" else "prompt"
+            else:
                 raise ValueError(
-                    f"unrecognised fake kernel option {options!r}; expected invalid_every=N"
+                    f"unrecognised fake kernel option {option!r}; expected invalid_every=N "
+                    "or output=prompt|conversation, separated by commas"
                 )
-            invalid_every = int(value)
-        return DeterministicFakeKernel(invalid_every=invalid_every)
+        return DeterministicFakeKernel(invalid_every=invalid_every, output=output)
 
     # rpartition, so a Windows drive letter in a file path is not mistaken for the
     # separator.
@@ -234,7 +239,7 @@ def materialize_run(
             (directory / name).unlink(missing_ok=True)
 
     taxonomy = compile_taxonomy(plan, base_path=base)
-    check_system_prompts(plan, taxonomy)
+    check_conversation_arms(plan, taxonomy)
     fingerprint = resolve_kernel_fingerprint(plan, base_path=base)
     design = plan_design(taxonomy, plan)
     rewriter = resolve_kernel(kernel)

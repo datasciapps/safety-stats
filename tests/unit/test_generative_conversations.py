@@ -335,3 +335,81 @@ def test_a_resumed_system_prompt_run_rebuilds_the_same_dataset(
     assert (tmp_path / "run" / "datasets" / "dataset.jsonl").read_text(
         encoding="utf-8"
     ) == dataset
+
+
+def turns_plan(tmp_path: Path, turns: list[str] | None = None, **rewrite: Any) -> Path:
+    plan = base_plan()
+    plan["sampling"] = {"method": "direct", "total_rewrites": 60}
+    plan["taxonomy"]["arms"]["turns"] = {
+        "values": [{"id": value, "weight": 1 / len(turns or ["1", "3"])}
+                   for value in (turns or ["1", "3"])]
+    }
+    plan["taxonomy"]["hierarchy"].append("turns")
+    plan["rewrite"].update({"output": "conversation", "conversation_turns": "turns", **rewrite})
+    return materialize(tmp_path, plan, SEEDS_WITH_TEXT)
+
+
+def turns_of(node_id: str) -> int:
+    return int(dict(part.split("=", 1) for part in node_id.split("|")[1:])["turns"])
+
+
+def test_every_conversation_has_its_arm_value_of_user_turns(tmp_path: Path) -> None:
+    plan, selections, fingerprint, texts = prepare(turns_plan(tmp_path))
+    kernel = DeterministicFakeKernel(output="conversation")
+    result = execute_rewrites(plan, selections, kernel, fingerprint, texts)
+    by_unit = {item.sampling_unit_id: item for item in result.accepted}
+    counts = set()
+    for selection in selections:
+        messages = by_unit[selection.sampling_unit_id].messages
+        assert messages is not None
+        expected = turns_of(selection.node_id)
+        counts.add(expected)
+        assert sum(turn.role == "user" for turn in messages) == expected
+    assert counts == {1, 3}
+
+
+def test_a_conversation_with_another_turn_count_is_rejected(tmp_path: Path) -> None:
+    plan, selections, fingerprint, texts = prepare(turns_plan(tmp_path))
+    # Always two user turns, which neither arm value declares.
+    result = execute_rewrites(plan, selections, ConversationKernel(), fingerprint, texts)
+    assert not result.accepted
+    assert len(result.exhausted) == len(selections)
+    assert all(record.rewrite_attempts == 5 for record in result.rewrites)
+
+
+def test_the_turns_arm_needs_conversations_and_counts(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="requires rewrite.output: conversation"):
+        load_generative_plan(turns_plan(tmp_path, output="prompt"))
+    with pytest.raises(ValueError, match="positive integers"):
+        load_generative_plan(turns_plan(tmp_path, turns=["1", "many"]))
+    with pytest.raises(ValueError, match="positive integers"):
+        load_generative_plan(turns_plan(tmp_path, turns=["0", "2"]))
+    with pytest.raises(ValueError, match="not an arm"):
+        load_generative_plan(turns_plan(tmp_path, conversation_turns="problem_class"))
+
+
+def test_the_turns_arm_enters_the_fingerprint(tmp_path: Path) -> None:
+    with_turns = resolve_kernel_fingerprint(
+        load_generative_plan(turns_plan(tmp_path)), base_path=tmp_path
+    )
+    plan = base_plan()
+    plan["rewrite"]["output"] = "conversation"
+    without = resolve_kernel_fingerprint(
+        load_generative_plan(materialize(tmp_path, plan)), base_path=tmp_path
+    )
+    assert with_turns.sha256 != without.sha256
+
+
+def test_the_fake_kernel_writes_conversations_from_the_command_line(
+    tmp_path: Path,
+) -> None:
+    kernel = runner_module.resolve_kernel("fake:invalid_every=7,output=conversation")
+    assert isinstance(kernel, DeterministicFakeKernel)
+    assert (kernel.invalid_every, kernel.output) == (7, "conversation")
+    run = materialize_run(turns_plan(tmp_path), tmp_path / "run",
+                          kernel="fake:output=conversation")
+    assert run.accepted == run.selections
+    first = json.loads(run.dataset.read_text(encoding="utf-8").splitlines()[0])
+    assert isinstance(first["input"], list)
+    with pytest.raises(ValueError, match="unrecognised fake kernel option 'output=chat'"):
+        runner_module.resolve_kernel("fake:output=chat")

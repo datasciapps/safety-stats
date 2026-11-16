@@ -27,6 +27,7 @@ from inspect_safety_stats.generative.kernels import (
     RewriteRequest,
     decode_conversation,
     encode_conversation,
+    user_turns,
 )
 from inspect_safety_stats.generative.ledger import (
     IncrementalCsvWriter,
@@ -34,7 +35,7 @@ from inspect_safety_stats.generative.ledger import (
     SelectionRecord,
     prompt_sha256,
 )
-from inspect_safety_stats.generative.schema import GenerativePlan
+from inspect_safety_stats.generative.schema import GenerativePlan, turn_count
 from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
 
 
@@ -174,14 +175,19 @@ def _prompt_id(sampling_unit_id: str) -> str:
     return f"p-{sampling_unit_id}"
 
 
-def check_system_prompts(plan: GenerativePlan, taxonomy: CompiledTaxonomy) -> None:
-    """Refuse a system-prompt arm with a value the taxonomy can draw but no text for.
+def check_conversation_arms(plan: GenerativePlan, taxonomy: CompiledTaxonomy) -> None:
+    """Refuse a system-prompt or turns arm the taxonomy can draw a value of it cannot use.
 
     Checked before any kernel call, so a gap costs nothing to find. An arm read from a
     file is only known once the taxonomy is compiled, which is why the plan cannot check
     this on its own.
     """
 
+    turns_level = plan.rewrite.conversation_turns
+    if turns_level is not None:
+        for node in taxonomy.nodes:
+            if node.level == turns_level:
+                turn_count(turns_level, node.value)
     spec = plan.rewrite.system_prompts
     if spec is None:
         return
@@ -295,6 +301,10 @@ def execute_rewrites(
         )
         key = _dedup_key(plan, node_id, seed_id)
         system_prompt = _system_prompt(plan, path_values)
+        turns_level = plan.rewrite.conversation_turns
+        required_turns = (
+            turn_count(turns_level, path_values[turns_level]) if turns_level else None
+        )
 
         prior = completed.get(unit_id) if completed else None
         if prior is not None:
@@ -333,6 +343,7 @@ def execute_rewrites(
                     attempt=attempt,
                     selection_seed=salt_seed,
                     system_prompt=system_prompt,
+                    conversation_turns=required_turns,
                 )
             )
             if outcome.status == "error":
@@ -345,6 +356,13 @@ def execute_rewrites(
                     break
                 continue
             _check_output_kind(plan, outcome, unit_id)
+            if required_turns is not None and outcome.messages is not None:
+                # The arm is verified, not just passed on: a conversation with another
+                # count would be counted under an arm value it does not carry.
+                if user_turns(outcome.messages) != required_turns:
+                    if validation.on_invalid == "fail":
+                        break
+                    continue
             turns: tuple[ChatTurn, ...] | None = None
             if plan.rewrite.stores_conversations():
                 turns = _attach_system_prompt(outcome, system_prompt, unit_id)

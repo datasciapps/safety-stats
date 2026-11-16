@@ -120,6 +120,9 @@ class RewriteRequest:
     # The system prompt the procedure attaches to this rewrite, when the plan declares
     # rewrite.system_prompts: context for the kernel, which must not write one itself.
     system_prompt: str | None = None
+    # The number of user turns the conversation must have, when the plan declares
+    # rewrite.conversation_turns. A conversation with any other count is rejected.
+    conversation_turns: int | None = None
 
 
 @dataclass(frozen=True)
@@ -204,6 +207,8 @@ def resolve_kernel_fingerprint(
         payload["output"] = spec.output
     if spec.system_prompts is not None:
         payload["system_prompts"] = spec.system_prompts.model_dump(mode="json")
+    if spec.conversation_turns is not None:
+        payload["conversation_turns"] = spec.conversation_turns
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -220,11 +225,14 @@ class DeterministicFakeKernel:
     """A network-free kernel for tests and dry runs.
 
     Output depends only on the request, so a suite exercising the sampler and the
-    ledger never needs a provider. ``invalid_every`` forces the retry path.
+    ledger never needs a provider. ``invalid_every`` forces the retry path. With
+    ``output="conversation"`` it returns a conversation of ``request.conversation_turns``
+    user turns (one if unset), with an assistant turn between each pair.
     """
 
     kernel_id: str = "fake-rewriter"
     invalid_every: int = 0
+    output: Literal["prompt", "conversation"] = "prompt"
 
     def rewrite(self, request: RewriteRequest) -> RewriteOutcome:
         token = hashlib.sha256(
@@ -241,7 +249,12 @@ class DeterministicFakeKernel:
             return RewriteOutcome(status="invalid", detail="synthetic rejection")
         pairs = sorted(request.path_values.items())
         rendered = ", ".join(f"{level}={value}" for level, value in pairs)
-        return RewriteOutcome(
-            status="valid",
-            prompt=f"[{request.semantic_seed_id}] {request.seed_text} ({rendered}) #{token[:12]}",
-        )
+        prompt = f"[{request.semantic_seed_id}] {request.seed_text} ({rendered}) #{token[:12]}"
+        if self.output == "prompt":
+            return RewriteOutcome(status="valid", prompt=prompt)
+        turns: list[ChatTurn] = []
+        for index in range(1, (request.conversation_turns or 1)):
+            turns.append(ChatTurn("user", f"Turn {index} leading to {request.semantic_seed_id}"))
+            turns.append(ChatTurn("assistant", f"Reply {index} #{token[:12]}"))
+        turns.append(ChatTurn("user", prompt))
+        return RewriteOutcome(status="valid", messages=tuple(turns))
