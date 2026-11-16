@@ -260,8 +260,10 @@ class JudgeCalibrationSpec(StrictModel):
 
     ``mode: assumed`` carries no evidence: every corrected interval it produces is a
     diagnostic sensitivity result. ``mode: validated`` estimates the same two conditional
-    accuracies from human labels drawn within each judge stratum, and its corrected
-    intervals are certifying at the combined error budget.
+    accuracies from human labels drawn within each judge stratum. Its corrected root is
+    certifying at the combined error budget when the root weights every unit equally; its
+    corrected nodes and slices are sensitivities, since the pooled labels do not measure
+    the judge's accuracy within them.
 
     Human labels key on the sample identifier materialization wrote, since a generative
     run has no prompt manifest to key on.

@@ -105,7 +105,7 @@ def test_a_pessimistic_scenario_is_never_tighter(
     assert root["pessimistic"].upper >= root["declared"].upper
 
 
-def test_validated_mode_is_certifying_and_spends_its_own_alpha(
+def test_validated_mode_certifies_the_root_and_spends_its_own_alpha(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     artifacts = tmp_path / "run"
@@ -116,7 +116,10 @@ def test_validated_mode_is_certifying_and_spends_its_own_alpha(
 
     report = analyze_run(plan, artifacts, "logs", cohort="candidate")
     assert report.corrected
-    assert {item.eligibility for item in report.corrected} == {"certifying"}
+    # The pooled labels measure the judge for the equal-weight root only (#109).
+    eligibility = {item.node_id: item.eligibility for item in report.corrected}
+    assert eligibility.pop("all") == "certifying"
+    assert eligibility and set(eligibility.values()) == {"diagnostic"}
     block = report.evaluation["judge_calibration"]
     assert block["mode"] == "validated" and block["available"] is True
     assert block["rho_1"][0] > block["rho_0"][1]        # strictly informative
@@ -163,7 +166,10 @@ def test_an_unlabelled_judge_stratum_is_completed_with_a_warning(
     assert block["available"] is True
     assert block["rho_1"] == [0.0, 1.0]
     assert block["completed_strata"] == ["judge_unsafe"]
-    assert {item.eligibility for item in report.corrected} == {"certifying"}
+    # The pooled labels measure the judge for the equal-weight root only (#109).
+    eligibility = {item.node_id: item.eligibility for item in report.corrected}
+    assert eligibility.pop("all") == "certifying"
+    assert eligibility and set(eligibility.values()) == {"diagnostic"}
     root = next(i for i in report.corrected if i.node_id == "all")
     assert root.lower == 0.0
     assert root.upper >= report.tree.root.upper

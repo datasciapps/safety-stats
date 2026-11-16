@@ -336,7 +336,9 @@ def _judge_correction(
 
     The root is corrected under every declared scenario, since sensitivity to the judge is
     mostly a root-level question. Nodes and slices are corrected under the primary scenario
-    only, which keeps the artifact readable on a taxonomy with hundreds of nodes.
+    only, which keeps the artifact readable on a taxonomy with hundreds of nodes. A measured
+    calibration certifies the root only, and only when the root weights its units equally:
+    every other corrected estimate is a sensitivity that names why.
     """
 
     spec = plan.judge_calibration
@@ -356,7 +358,9 @@ def _judge_correction(
             targets = [tree.root]
             if scenario.id == spec.primary:
                 targets = [*tree.nodes, *slices]
-            corrected.extend(correct(targets, calibration, interval_alpha=alpha))
+            corrected.extend(
+                correct(targets, calibration, interval_alpha=alpha, root_id=tree.root.node_id)
+            )
         meta: dict[str, Any] = {
             "judge_calibration": {"mode": "assumed", "primary": spec.primary}
         }
@@ -371,7 +375,14 @@ def _judge_correction(
                 "judge_calibration": {"mode": "validated", "available": False}
             }
             return [], unavailable
-        corrected.extend(correct([*tree.nodes, *slices], measured, interval_alpha=alpha))
+        corrected.extend(
+            correct(
+                [*tree.nodes, *slices],
+                measured,
+                interval_alpha=alpha,
+                root_id=tree.root.node_id,
+            )
+        )
         meta = {
             "judge_calibration": {
                 "mode": "validated",
