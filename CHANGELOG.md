@@ -7,6 +7,20 @@ described in their pull requests.
 
 ### Added
 
+- **Decision policies (experimental).** Claim thresholds can come from a decision policy kept
+  apart from the plan, and be set or revised after the run, without changing the plan's hash
+  or voiding certification: thresholds never enter the bounds, so the error rate of a verdict
+  holds at any thresholds. `analyze` and `validate` take `--decision-policy` (Python:
+  `decision_policy=`). A policy names its plan by the inference hash, which leaves out the
+  thresholds of `corrected_interval` claims (`hash-plan --inference`); it cannot set
+  `noisy_valid_test` claims, whose test uses their thresholds. `report.json` gains a
+  `decision_policy` section with every version, its time and whether it came after the first
+  evaluation started, and the thresholds each claim was decided at; `report.md` shows the same.
+  New diagnostics: `DECISION_POLICY_MISMATCH`, `DECISION_POLICY_UNKNOWN_CLAIM`,
+  `DECISION_POLICY_FIXED_CLAIM` (errors) and `DECISION_POLICY_AFTER_GENERATION` (info).
+  `schema decision-policy` prints the policy schema. Analyses without a policy write the same
+  bytes as before. See [Decision policies](docs/decision-policy.md).
+
 - **Content-filter stops as policy blocks (experimental).** `inputs.score.content_filter_stops`
   decides before the run how a rollout counts when a provider's content filter stopped its
   output before any content, as Claude 5-series models report a safety-classifier decline:

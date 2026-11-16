@@ -10,7 +10,7 @@ missing-score policies, duplicates, completeness and sampled-design checks.
 from __future__ import annotations
 
 import math
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 import numpy as np
@@ -149,6 +149,12 @@ def _configuration(
     }
 
 
+def _utc(value: datetime) -> datetime:
+    """A time with no zone read as UTC, as the plan's freeze time is."""
+
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 def normalize(
     plan: AnalysisPlan,
     manifest: pd.DataFrame,
@@ -284,6 +290,10 @@ def normalize(
             }
         )
 
+    first_started_at = min(
+        (_utc(run.started_at) for run in run_records.values() if run.started_at is not None),
+        default=None,
+    )
     if plan.analysis.intent == "confirmatory" and plan.analysis.plan_frozen_at is not None:
         observed = [
             run.started_at for run in run_records.values() if run.started_at is not None
@@ -814,6 +824,7 @@ def normalize(
                 source_hashes=source_hashes,
                 judge_verdicts=judge_verdicts,
                 source_format=dict(source.source_format),
+                first_started_at=first_started_at,
             )
         for cohort_id in plan.cohorts:
             realized = sum(
@@ -862,6 +873,7 @@ def normalize(
         source_hashes=source_hashes,
         judge_verdicts=judge_verdicts,
         source_format=dict(source.source_format),
+        first_started_at=first_started_at,
     )
 
 

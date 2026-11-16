@@ -429,9 +429,10 @@ inspect-safety-stats plan detectable-rate --trials N --threshold P --alpha A --p
 inspect-safety-stats plan fixed-design --manifest DESIGN.csv --threshold P [--alpha A] [--power B]
     [--rollouts N] [--weights STRATEGY] [--hierarchy LEVELS] [--weight-column COLUMN]
     [--independence-unit UNIT] [--family-size M]
-inspect-safety-stats hash-plan --plan PLAN
+inspect-safety-stats hash-plan --plan PLAN [--inference]
 inspect-safety-stats schema plan
 inspect-safety-stats schema report
+inspect-safety-stats schema decision-policy
 inspect-safety-stats version
 ```
 
@@ -444,6 +445,10 @@ follow the declared strategy (`nested_equal` by default, `equal_prompt`, or `exp
 `--rollouts` supplies a uniform override. Its guarantees are the independent-rollout weighted
 Hoeffding construction of `fixed_design_detectable_failure_rates`; pass
 `--independence-unit prompt_cluster` to plan under prompt-level independence instead.
+
+`analyze` and `validate` take `--decision-policy POLICY`, a file whose thresholds replace the
+plan's for the claims it sets, and `hash-plan --inference` prints the hash such a policy names
+(experimental; see [Decision policies](decision-policy.md)).
 
 Repeat `--logs` to select multiple files or directories. `--runs` and `--rollouts` name the two
 files of a neutral rollout source instead of Inspect logs, and are given together
