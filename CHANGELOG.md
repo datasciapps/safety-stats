@@ -12,6 +12,15 @@ described in their pull requests.
   `--runs` and `--rollouts` in place of `--logs`, and `source=RolloutFiles(...)` in place of
   `logs=` in Python. See [Rollout files](docs/rollout-files.md).
 
+- **A live rewrite kernel without an external API.** The live generative example runs with an
+  open-weight model served locally through Inspect's `vllm/` provider:
+  `examples/generative_live/plan-local.yaml` with the kernel factory `build_local_kernel`. The
+  example's kernel now takes its model, template and decoding settings from the plan rather
+  than keeping its own copies, passes a seed fixed by each request, validates at temperature
+  0, and reports a refusal as an invalid rewrite, so refusals show by arm in
+  `acceptance.csv`. See
+  [Without an external API](examples/generative_live/README.md#without-an-external-api).
+
 - **Plan schema 3.0.** Plans name run and rollout fields neutrally, so one plan works with
   any source: `run_key`, `model`, `status` and `run_id` for runs; `run_key`, `item_id`,
   `repeat` and `rollout_id` for rollouts; any other source field as `attributes.<name>`.

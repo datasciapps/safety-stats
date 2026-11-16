@@ -7,7 +7,8 @@ answer. This one has no known answer. It exists to be **run against real provide
 that the path from a declared taxonomy to a reported bound is exercised with a real
 rewriter, a real target model and a real model-graded judge.
 
-You supply the API access. Nothing here runs without it.
+You supply the API access, or a locally served open-weight model (see
+[Without an external API](#without-an-external-api)). Nothing here runs without one of them.
 
 ## What is real, and what you write
 
@@ -16,6 +17,7 @@ You supply the API access. Nothing here runs without it.
 | [`rewriter.py`](rewriter.py) | a `RewriteKernel` backed by any model Inspect can reach — **the one piece a real evaluation requires you to write**, kept here as a reference |
 | [`generative_live.py`](generative_live.py) | the Inspect task: reads the materialized dataset, generates, grades with a model judge |
 | [`plan.yaml`](plan.yaml) | a small budget — 60 rewrites — configured for `openai/gpt-4o` and `openai/gpt-4o-mini` |
+| [`plan-local.yaml`](plan-local.yaml) | the same design with every model an open-weight one served through Inspect's `vllm/` provider |
 
 `--kernel` takes either `module:attribute` for something importable, or
 `path/to/file.py:attribute` for a local file. The file form is what you want for a kernel
@@ -88,6 +90,42 @@ always works.
 
 If materialization is interrupted — a rate limit, a dropped connection — add `--resume`.
 Ledgers are appended per unit, so only the outstanding rewrites run again.
+
+## Without an external API
+
+Where no prompt may leave your infrastructure, run every model through Inspect's `vllm/`
+provider. [`plan-local.yaml`](plan-local.yaml) names `vllm/Qwen/Qwen2.5-7B-Instruct` as the
+rewriter, the equivalence validator and the target. Change the model there, in
+`rewrite.model` and the cohort's `model`, to whatever open-weight model you serve: the kernel
+takes its model and decoding settings from the plan, so nothing else needs to change.
+
+Inspect starts a vLLM server for the model, which needs `vllm` installed and a GPU, or
+connects to one you already run when `VLLM_BASE_URL` is set. The commands are the ones above
+with the local plan, the local kernel factory and a local grader:
+
+```bash
+inspect-safety-stats generative materialize \
+  --plan examples/generative_live/plan-local.yaml \
+  --output run/local \
+  --kernel examples/generative_live/rewriter.py:build_local_kernel
+
+inspect eval examples/generative_live/generative_live.py \
+  --model vllm/Qwen/Qwen2.5-7B-Instruct \
+  -T dataset=run/local/datasets/dataset.jsonl \
+  -T grader_model=vllm/Qwen/Qwen2.5-7B-Instruct \
+  --log-dir run/local/logs
+
+inspect-safety-stats generative analyze \
+  --plan examples/generative_live/plan-local.yaml \
+  --artifacts run/local --logs run/local/logs --output run/local/report
+```
+
+An open-weight rewriter may refuse to paraphrase a harmful probe, and the prompt template was
+tuned against `openai/gpt-4o`. The kernel reports a refusal as an invalid rewrite, so read
+`acceptance.csv` before the bounds: an arm with many exhausted units is one where the accepted
+prompts are a filtered slice of what the plan declares. In this configuration one model also
+grades its own answers. The plan's `judge_calibration` scenarios are declared, not measured,
+so they do not account for that.
 
 ## What it costs, and how long
 

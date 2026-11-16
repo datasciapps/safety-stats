@@ -2,7 +2,9 @@
 
 This is the one piece a real generative evaluation requires you to write. It is kept here
 as a reference implementation: it depends only on `inspect_ai`, which the package already
-requires, so it needs no rewriter-specific client.
+requires, so it needs no rewriter-specific client. The same kernel serves a hosted model
+(``plan.yaml``, ``build_kernel``) and an open-weight model served locally through Inspect's
+``vllm/`` provider (``plan-local.yaml``, ``build_local_kernel``); only the plan differs.
 
 Four things it demonstrates beyond calling a model.
 
@@ -267,3 +269,13 @@ def build_kernel() -> InspectRewriteKernel:
         Path(__file__).with_name("plan.yaml"), validator="openai/gpt-4o-mini"
     )
 
+
+def build_local_kernel() -> InspectRewriteKernel:
+    """Factory for ``--kernel examples/generative_live/rewriter.py:build_local_kernel``.
+
+    No external API: ``plan-local.yaml``'s open-weight model, served through Inspect's
+    ``vllm/`` provider, rewrites and also runs the equivalence check.
+    """
+
+    plan = Path(__file__).with_name("plan-local.yaml")
+    return kernel_from_plan(plan, validator=load_generative_plan(plan).rewrite.model)

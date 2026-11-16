@@ -146,3 +146,32 @@ def test_an_apology_inside_a_rewrite_is_not_a_refusal(rewriter: ModuleType) -> N
     kernel = rewriter.build_kernel()
     scripted(kernel, [roleplay, "YES"])
     assert kernel.rewrite(request()).status == "valid"
+
+
+def test_the_local_kernel_calls_no_external_api(rewriter: ModuleType) -> None:
+    """The string the runbook prints, and every model it would call served by vLLM."""
+
+    from inspect_safety_stats.generative import load_generative_plan
+    from inspect_safety_stats.generative.runner import resolve_kernel
+
+    kernel = resolve_kernel(f"{EXAMPLE / 'rewriter.py'}:build_local_kernel")
+    plan = load_generative_plan(EXAMPLE / "plan-local.yaml")
+
+    assert kernel.kernel_id == plan.rewrite.kernel_id == "local-paraphrase-v1"
+    assert kernel.model == plan.rewrite.model
+    assert kernel.validator == plan.rewrite.model
+    models = [kernel.model, kernel.validator]
+    models += [cohort.model for cohort in plan.target.cohorts.values()]
+    assert all(model.startswith("vllm/") for model in models), models
+
+
+def test_the_local_plan_differs_from_the_hosted_one_only_where_it_must() -> None:
+    hosted = yaml.safe_load((EXAMPLE / "plan.yaml").read_text(encoding="utf-8"))
+    local = yaml.safe_load((EXAMPLE / "plan-local.yaml").read_text(encoding="utf-8"))
+    for document in (hosted, local):
+        document.pop("evaluation")
+        for key in ("kernel_id", "provider", "model"):
+            document["rewrite"].pop(key)
+        document["rewrite"]["validation"].pop("validator_id")
+        document["target"]["cohorts"]["baseline"].pop("model")
+    assert hosted == local
