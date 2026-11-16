@@ -42,6 +42,18 @@ DecisionPolicyOption = Annotated[
         ),
     ),
 ]
+ReceiptOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--registration-receipt",
+        exists=True,
+        dir_okay=False,
+        help=(
+            "Receipt written by hash-plan --register: checked against the plan's hash and "
+            "the earliest evaluation start. Experimental: see docs/plan-reference.md."
+        ),
+    ),
+]
 RunsOption = Annotated[
     Path | None,
     typer.Option(
@@ -100,6 +112,7 @@ def analyze_command(
     ] = False,
     allow_invalid: Annotated[bool, typer.Option("--allow-invalid")] = False,
     decision_policy: DecisionPolicyOption = None,
+    registration_receipt: ReceiptOption = None,
 ) -> None:
     """Analyze completed Inspect logs or rollout files against a plan and write the report."""
 
@@ -113,6 +126,7 @@ def analyze_command(
             parallel=parallel or False,
             source=source,
             decision_policy=decision_policy,
+            registration_receipt=registration_receipt,
         )
         path = report.write(output, overwrite=overwrite)
     except Exception as exc:
@@ -150,6 +164,7 @@ def validate_command(
     rollouts: RolloutsOption = None,
     parallel: Annotated[int, typer.Option("--parallel", min=0)] = 0,
     decision_policy: DecisionPolicyOption = None,
+    registration_receipt: ReceiptOption = None,
 ) -> None:
     """Check logs or rollout files against a plan (manifest, cohorts, rollouts, scores)."""
 
@@ -162,6 +177,7 @@ def validate_command(
         parallel=parallel or False,
         source=source,
         decision_policy=decision_policy,
+        registration_receipt=registration_receipt,
     )
     for diagnostic in result.diagnostics:
         scope = f" [{diagnostic.scope}]" if diagnostic.scope else ""
@@ -620,18 +636,54 @@ def hash_plan_command(
             ),
         ),
     ] = False,
+    register: Annotated[
+        Path | None,
+        typer.Option(
+            "--register",
+            dir_okay=False,
+            help=(
+                "Also write a registration receipt (the hash and the current UTC time) to "
+                "this new file, for analyze --registration-receipt. Anchor it externally, "
+                "for example in a signed commit. Experimental: see docs/plan-reference.md."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Print a plan's canonical SHA-256, for registering a frozen plan."""
 
     from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
 
+    if inference and register is not None:
+        # A receipt records the canonical hash, which analyze checks; registering the
+        # inference hash would make a receipt no analysis can match.
+        raise typer.BadParameter("--register records the canonical hash; omit --inference")
     resolved = load_plan(plan)
     if inference:
         from inspect_safety_stats.config.decision_policy import inference_plan_hash
 
         typer.echo(inference_plan_hash(resolved))
-    else:
-        typer.echo(canonical_plan_hash(resolved))
+        return
+    digest = canonical_plan_hash(resolved)
+    # The hash stays the first line on its own: scripts read it.
+    typer.echo(digest)
+    if register is None:
+        return
+    from inspect_safety_stats.config.registration import write_receipt
+
+    try:
+        receipt = write_receipt(register, digest, package_version=__version__)
+    except FileExistsError as exc:
+        typer.echo(
+            f"Registration failed: {register} exists; a receipt is never overwritten",
+            err=True,
+        )
+        raise typer.Exit(code=3) from exc
+    typer.echo(f"Registered at: {receipt.registered_at.isoformat()}")
+    typer.echo(f"Receipt: {register}")
+    typer.echo(
+        "The receipt's time is the local clock's. Anchor the receipt externally, for "
+        "example in a signed commit or with a timestamping service, before generation starts."
+    )
 
 
 @generative_app.command("compile")

@@ -19,6 +19,7 @@ import pandas as pd
 from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.loader import report_path
 from inspect_safety_stats.config.models import ATTRIBUTE_PREFIX, AnalysisPlan
+from inspect_safety_stats.config.registration import RegistrationReceipt
 from inspect_safety_stats.ingest.manifest import (
     ResolvedGroup,
     load_inclusion_probabilities,
@@ -161,8 +162,13 @@ def normalize(
     manifest: pd.DataFrame,
     groups: list[ResolvedGroup],
     source: SourceData,
+    receipt: RegistrationReceipt | None = None,
 ) -> NormalizedData:
-    """Apply the plan's ingestion rules to the runs and rollouts of one source."""
+    """Apply the plan's ingestion rules to the runs and rollouts of one source.
+
+    ``receipt``, when given, is a registration receipt whose hash the caller has matched to
+    the frozen plan; it is checked against the earliest selected evaluation start.
+    """
 
     stops = plan.inputs.score.content_filter_stops
     stop_context = source.stop_context
@@ -325,6 +331,8 @@ def normalize(
                     ),
                 )
             )
+        elif receipt is not None:
+            diagnostics.extend(_receipt_timing(receipt, observed))
         elif plan.analysis.registration is None:
             diagnostics.append(
                 Diagnostic(
@@ -876,6 +884,41 @@ def normalize(
         source_format=dict(source.source_format),
         first_started_at=first_started_at,
     )
+
+
+def _receipt_timing(receipt: RegistrationReceipt, observed: list[Any]) -> list[Diagnostic]:
+    """Whether a receipt that belongs to the plan predates the earliest observed start."""
+
+    registered = receipt.registered_at.isoformat()
+    details = {"plan_sha256": receipt.plan_sha256, "registered_at": registered}
+    if observed and receipt.registered_at > min(observed):
+        return [
+            Diagnostic(
+                code="PLAN_RECEIPT_POSTHOC",
+                severity="ERROR",
+                message=(
+                    f"the plan was registered at {registered}, later than the earliest "
+                    "selected evaluation"
+                ),
+                details=details,
+            )
+        ]
+    checked = (
+        "before the earliest selected evaluation"
+        if observed
+        else "but no selected evaluation reports a start time to check it against"
+    )
+    return [
+        Diagnostic(
+            code="PLAN_REGISTERED",
+            severity="INFO",
+            message=(
+                f"the plan's hash was registered at {registered}, {checked}; the receipt's "
+                "time is only as trustworthy as the external timestamp that anchors it"
+            ),
+            details=details,
+        )
+    ]
 
 
 def read_inputs(

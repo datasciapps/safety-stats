@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -14,6 +15,7 @@ from inspect_safety_stats.api import validate
 from inspect_safety_stats.cli import app
 from inspect_safety_stats.config.decision_policy import DecisionPolicy, inference_plan_hash
 from inspect_safety_stats.config.loader import canonical_plan_hash
+from inspect_safety_stats.config.registration import write_receipt
 from inspect_safety_stats.validate.decision_policy import validate_decision_policy
 from tests.cli_output import plain
 
@@ -338,3 +340,26 @@ def test_the_schema_command_prints_the_decision_policy_schema() -> None:
     schema = json.loads(plain(result.output))
     assert schema["title"] == "DecisionPolicy"
     assert set(schema["required"]) == {"inference_plan_sha256", "versions"}
+
+
+def test_a_registration_receipt_matches_the_frozen_plan_under_a_policy(
+    plan_path: Path, tmp_path: Path
+) -> None:
+    receipt = tmp_path / "plan.receipt.json"
+    write_receipt(
+        receipt,
+        canonical_plan_hash(load_plan(plan_path)),
+        package_version="0",
+        now=datetime(2025, 6, 1, tzinfo=timezone.utc),
+    )
+    policy = _policy(plan_path, _version("v1", "2026-02-01T00:00:00Z", "mean_safe", 0.01, 0.9))
+
+    report = analyze(
+        plan=plan_path, logs="ignored", decision_policy=policy, registration_receipt=receipt
+    )
+
+    # The policy changes the thresholds the analysis decides with, not the registered plan.
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "PLAN_RECEIPT_MISMATCH" not in codes
+    assert "PLAN_REGISTERED" in codes
+    assert "PLAN_SELF_DECLARED" not in codes

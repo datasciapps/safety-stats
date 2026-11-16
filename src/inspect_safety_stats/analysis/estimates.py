@@ -90,6 +90,8 @@ def prompt_blocked(diagnostics: list[Diagnostic], cohort: str, prompt: str) -> b
         "PLAN_UNKNOWN_REFERENCE",
         "PLAN_DIAGNOSTIC_GATE",
         "PLAN_POSTHOC",
+        "PLAN_RECEIPT_MISMATCH",
+        "PLAN_RECEIPT_POSTHOC",
         "INGEST_FAILED",
         "COHORT_OVERLAP",
         "ALPHA_ALLOCATION_INVALID",

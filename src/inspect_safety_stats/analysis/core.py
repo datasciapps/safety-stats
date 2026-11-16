@@ -144,7 +144,11 @@ def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeI
         judge_plan = _judge_plan(plan, by_id[entry["id"]])
         diagnostics = validate_plan_references(judge_plan)
         data = normalize(
-            judge_plan, inputs.manifest.copy(), copy.deepcopy(inputs.groups), inputs.source
+            judge_plan,
+            inputs.manifest.copy(),
+            copy.deepcopy(inputs.groups),
+            inputs.source,
+            inputs.receipt,
         )
         diagnostics.extend(data.diagnostics)
         core = _analysis_core(judge_plan, data, diagnostics)

@@ -45,6 +45,42 @@ Exploratory analyses cannot produce `PASS`. Their claims are `INCONCLUSIVE`, and
 as `descriptive_status` what a confirmatory analysis of the same bounds would give. See
 [Exploratory analyses](interpretation.md#exploratory-analyses).
 
+### Registration receipts (experimental)
+
+`plan_frozen_at` is a time the author writes, so a confirmatory report labels its timing
+self-declared (`PLAN_SELF_DECLARED`). A registration receipt records when the plan's hash was
+registered, so that a reader can check it against the start of generation:
+
+```bash
+inspect-safety-stats hash-plan --plan plan.yaml --register plan.receipt.json
+```
+
+The command prints the hash as before, then writes `plan.receipt.json`, which holds the plan's
+canonical SHA-256 and the current UTC time to the second. It never overwrites an existing
+receipt. The time comes from the local clock, so a receipt proves nothing until it is anchored
+somewhere a reader trusts, before generation starts. For example, commit it in a signed commit
+and push it, or have a timestamping service sign its hash
+(`openssl ts -query -data plan.receipt.json -sha256 -cert -out plan.receipt.tsq`, sent to an RFC 3161 server).
+
+Pass the receipt to `analyze` or `validate` with `--registration-receipt plan.receipt.json`,
+or `registration_receipt=` in Python. They check two things:
+
+| Code | Severity | When |
+|---|---|---|
+| `PLAN_RECEIPT_MISMATCH` | error | The receipt's hash is not this plan's hash. Any plan edit changes the hash. |
+| `PLAN_RECEIPT_POSTHOC` | error | Confirmatory plan: the receipt is later than the earliest selected evaluation start. |
+| `PLAN_REGISTERED` | info | Confirmatory plan: the receipt matches and is not later than the earliest start. Replaces `PLAN_SELF_DECLARED`. |
+
+Both errors make integrity `invalid`. The checks do not verify the external anchor: the
+`PLAN_REGISTERED` message says so, and a reader who relies on the timing checks the signed
+commit or timestamp token themselves. The receipt is given to the command rather than named
+in the plan, so that the plan's hash does not depend on it.
+
+The receipt records the canonical hash, the one `hash-plan` prints without `--inference`;
+`--register` cannot be combined with `--inference`. A [decision policy](decision-policy.md)
+leaves the registered plan and its hash as they were, so a receipt still matches when the
+analysis uses one.
+
 ## `inputs`
 
 `design_manifest` points to the fixed-design CSV. Each rollout joins the manifest's `prompt_id`
