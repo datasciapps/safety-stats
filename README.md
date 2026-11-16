@@ -91,6 +91,9 @@ then analyzes and compares their logs:
 python examples/demo/run_demo.py
 ```
 
+The [quickstart](docs/quickstart.md) analyzes a bundled log of a real evaluation, also offline,
+and shows what a failing validation looks like.
+
 Plan a zero-failure study:
 
 ```bash
@@ -155,7 +158,8 @@ inspect-safety-stats visualize \
 
 `analyze` exits with code `0` after a completed analysis whose integrity is valid or degraded,
 and `3` when the analysis cannot run or its integrity is invalid. An invalid analysis still
-writes its report, so the diagnostics can be audited; `--allow-invalid` makes it exit `0`.
+writes its report, so the diagnostics can be audited, and so does an analysis whose manifest,
+logs or rollout files cannot be read; `--allow-invalid` makes it exit `0`.
 Use `--decision-exit-codes` to opt into decision-sensitive exit codes for completed analyses
 (`0` pass, `1` fail, and `2` inconclusive).
 
@@ -210,6 +214,10 @@ Every report states:
 
 > Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions.
 
+Every bound also assumes that the evaluated model is not sandbagging, that is, not
+strategically underperforming on the evaluation. The statistics here cannot detect that, and harms rarer than the rollout budget can reach remain unmeasured. See
+[Mathematical methods](docs/statistical-methods.md), sections 15.2 and 15.7.
+
 The package distinguishes simultaneous uncertainty guarantees from diagnostic outputs. Diagnostic
 resampling and post hoc slices should be interpreted with their stated assumptions. Optional threshold decisions can be enabled with
 `report.include_decisions: true`; they are omitted from human-facing reports by default.
@@ -240,6 +248,10 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Generative example: multilingual jailbreak rewrites](examples/generative_multilingual/README.md) (experimental)
 - [Live generative example: real providers end to end](examples/generative_live/README.md) (experimental)
 - [Secondary calibration example: XSTest over-refusal](examples/real_xstest/README.md)
+
+## Citing
+
+To cite the package, use the metadata in [CITATION.cff](CITATION.cff).
 
 ## License
 

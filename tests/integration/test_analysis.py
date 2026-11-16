@@ -310,8 +310,18 @@ def test_empirical_hierarchy_intervals_and_independence_sensitivity(
         )
         sensitivity = [interval for interval in node.intervals if interval.role == "sensitivity"]
         assert {interval.independence_profile for interval in sensitivity} == {"prompt"}
+        # A sensitivity says what it varies, so it cannot be read as a judge-error scenario.
+        assert {interval.varied_assumption for interval in sensitivity} == {"independence"}
+        assert all(
+            interval.varied_assumption is None
+            for interval in node.intervals
+            if interval.role != "sensitivity"
+        )
 
     output = report.write(tmp_path / "hierarchy-report")
+    markdown = (output / "report.md").read_text(encoding="utf-8")
+    assert "| sensitivity (independence) |" in markdown
+    assert "| sensitivity |" not in markdown
     hierarchy_csv = (output / "hierarchy-risks.csv").read_text(encoding="utf-8")
     assert "weighted_empirical_bernstein" in hierarchy_csv
     assert "prompt" in hierarchy_csv
@@ -568,6 +578,7 @@ def test_judge_calibration_emits_assumed_correction_sensitivities(
     # An assumption can never certify.
     assert declared.eligibility == "diagnostic"
     assert declared.role == "sensitivity"
+    assert declared.varied_assumption == "judge_error"
     # The uncorrected bounds are retained for comparison, and the primary is untouched.
     assert declared.raw_lower == pytest.approx(mean.lower)
     assert declared.raw_upper == pytest.approx(mean.upper)
@@ -1269,6 +1280,67 @@ def test_inspect_blank_error_field_is_not_a_sample_error(
     )
     report = analyze(plan=plan_path, logs="ignored")
     assert report.integrity.status == "valid"
+
+
+def _two_sample_errors(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """A plan whose logs have two sample errors in one log, read through stubbed frames."""
+
+    plan_path = _write_inputs(tmp_path)
+    eval_frame, sample_frame = _frames()
+    target = (sample_frame["id"] == "p1") & (sample_frame["epoch"].isin([1, 2]))
+    sample_frame.loc[target, "score_harmful"] = None
+    sample_frame.loc[target, "error"] = "provider error"
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    return plan_path
+
+
+def test_an_unreadable_transcript_is_reported_not_swallowed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _two_sample_errors(monkeypatch, tmp_path)
+    reads: list[str] = []
+
+    def unreadable(path: str) -> None:
+        reads.append(path)
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.read_eval_log", unreadable)
+    plan = load_plan(plan_path)
+    plan.inputs.score.errors = "end_to_end"
+    report = analyze(plan=plan, logs="ignored")
+    unread = [item for item in report.integrity.diagnostics if item.code == "TRANSCRIPT_UNREAD"]
+    assert len(unread) == 1
+    assert unread[0].severity == "WARNING"
+    errored = [item for item in report._observations if item.error is not None]
+    assert [item.error_stage for item in errored] == ["unknown", "unknown"]
+    # Named as the report names the log everywhere else, never by its local path.
+    assert unread[0].details == {
+        "source": errored[0].source,
+        "reason": "FileNotFoundError",
+        "sample_errors": 2,
+    }
+    assert reads == ["/not/a/local/log.eval"]
+
+
+def test_a_defect_in_reading_a_transcript_is_not_an_unknown_error_stage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _two_sample_errors(monkeypatch, tmp_path)
+
+    def broken(path: str) -> None:
+        raise RuntimeError("a defect in the reader")
+
+    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.read_eval_log", broken)
+    report = analyze(plan=plan_path, logs="ignored")
+    assert report.integrity.status == "invalid"
+    failed = [item for item in report.integrity.diagnostics if item.code == "INGEST_FAILED"]
+    assert [item.message for item in failed] == ["a defect in the reader"]
 
 
 def test_plan_load_resolves_manifest_path(tmp_path: Path) -> None:
@@ -2096,6 +2168,7 @@ def test_panel_derived_correction_is_reported_as_a_diagnostic(
     )
     assert derived.eligibility == "diagnostic"
     assert derived.role == "sensitivity"
+    assert derived.varied_assumption == "judge_error"
     assert derived.method == "derived_panel_misclassification_correction"
     assert any("block" in assumption.lower() for assumption in derived.assumptions)
     box = composite_accuracy_box(
@@ -2266,6 +2339,7 @@ def test_validated_correction_reports_directional_coverage_and_a_delta_reference
     )
     assert delta.eligibility == "diagnostic"
     assert delta.role == "sensitivity"
+    assert delta.varied_assumption == "judge_error"
     assert delta.method == "delta_method_judge_misclassification_correction"
     assert delta.lower is not None and delta.upper is not None
     assert exact.lower is not None and exact.upper is not None
@@ -2660,3 +2734,172 @@ def test_a_report_names_its_inputs_relative_to_the_plan(
     for path in sorted(written.rglob("*")):
         if path.is_file():
             assert tmp_path.name not in path.read_text(encoding="utf-8", errors="replace"), path
+
+
+def _patch_frames_with_failures(
+    monkeypatch: pytest.MonkeyPatch, failing_epochs: int = 0
+) -> None:
+    eval_frame, sample_frame = _frames()
+    if failing_epochs:
+        failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= failing_epochs)
+        sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+
+@pytest.mark.parametrize(
+    "method", ["weighted_hoeffding", "weighted_empirical_bernstein", "weighted_kl_chernoff"]
+)
+def test_single_valued_bound_is_reported_per_direct_interval_when_requested(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, method: str
+) -> None:
+    from inspect_safety_stats.stats.single_valued import SINGLE_VALUED_BOUND_GUARANTEE
+
+    plan = load_plan(_write_inputs(tmp_path))
+    spec = plan.outputs.direct_mean_intervals
+    spec.method = method
+    spec.hierarchy_nodes = True
+    spec.single_valued_bound = True
+    assert spec.independence is not None
+    spec.independence.sensitivities = ["prompt"]
+    _patch_frames_with_failures(monkeypatch, failing_epochs=3)
+
+    report = analyze(plan=plan, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    direct = [item for item in mean.intervals if item.interval_id.startswith("direct_")]
+    assert {item.independence_profile for item in direct} == {"rollout", "prompt"}
+    nodes = [item for node in report.hierarchy_risks for item in node.intervals]
+    for interval in [*direct, *nodes]:
+        assert interval.single_valued_bound is not None
+        assert interval.single_valued_bound_guarantee == SINGLE_VALUED_BOUND_GUARANTEE
+        assert 0 < interval.single_valued_bound <= 1
+    # Not the family-calibrated endpoint: M is U + delta at the node's own delta.
+    primary = next(item for item in direct if item.role == "primary")
+    assert primary.single_valued_bound_delta is not None
+    assert primary.single_valued_bound > primary.single_valued_bound_delta
+    # The propagated prompt-bound interval is no member of an engine family and carries none.
+    propagated = [item for item in mean.intervals if not item.interval_id.startswith("direct_")]
+    assert propagated and all(item.single_valued_bound is None for item in propagated)
+    # Other measures have no direct intervals and so no M.
+    assert all(
+        item.single_valued_bound is None
+        for row in report.group_risks
+        if row.measure_id != "mean"
+        for item in row.intervals
+    )
+
+    output = report.write(tmp_path / "report")
+    markdown = (output / "report.md").read_text(encoding="utf-8")
+    assert "## Single-valued bounds (experimental)" in markdown
+    assert "P(M < R) ≤ R" in markdown
+    payload = (output / "report.json").read_text(encoding="utf-8")
+    assert '"single_valued_bound_guarantee"' in payload
+
+
+def test_single_valued_bound_matches_the_engine_family_on_the_raw_bounds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With rollout blocks and equal weights, M equals the standalone computation."""
+    import numpy as np
+
+    from inspect_safety_stats.stats import weighted_bounded_hoeffding_mean_bounds
+    from inspect_safety_stats.stats.single_valued import single_valued_bound
+
+    plan = load_plan(_write_inputs(tmp_path))
+    plan.outputs.direct_mean_intervals.single_valued_bound = True
+    _patch_frames_with_failures(monkeypatch, failing_epochs=3)
+
+    report = analyze(plan=plan, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    primary = next(item for item in mean.intervals if item.role == "primary")
+    outcomes = np.zeros(40)
+    outcomes[:3] = 1.0
+    weights = np.full(40, 1 / 40)
+    expected = single_valued_bound(
+        lambda delta: weighted_bounded_hoeffding_mean_bounds(
+            outcomes,
+            outcomes,
+            weights,
+            alpha_lower=delta,
+            alpha_upper=delta,
+            independence_profile="rollout",
+        ).upper
+    )
+    assert primary.single_valued_bound == pytest.approx(expected.value, rel=1e-12, abs=0)
+
+
+def test_reports_without_the_single_valued_bound_leave_its_fields_out(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Off by default: the plan hash, the resolved plan and the report keep their bytes."""
+    plan_path = _write_inputs(tmp_path)
+    plan = load_plan(plan_path)
+    assert "single_valued_bound" not in plan.model_dump(mode="json")["outputs"][
+        "direct_mean_intervals"
+    ]
+    _patch_frames_with_failures(monkeypatch)
+    output = analyze(plan=plan, logs="ignored").write(tmp_path / "report")
+    for name in ("report.json", "report.md", "plan.resolved.yaml", "hierarchy-risks.csv"):
+        assert "single_valued" not in (output / name).read_text(encoding="utf-8"), name
+    enabled = load_plan(plan_path)
+    enabled.outputs.direct_mean_intervals.single_valued_bound = True
+    assert canonical_plan_hash(enabled) != canonical_plan_hash(plan)
+
+
+def test_single_valued_bound_needs_enabled_direct_mean_intervals() -> None:
+    from pydantic import ValidationError
+
+    from inspect_safety_stats.config.models import DirectMeanIntervalsSpec
+
+    with pytest.raises(ValidationError, match="single_valued_bound requires enabled"):
+        DirectMeanIntervalsSpec(single_valued_bound=True)
+
+
+def test_single_valued_bound_is_refused_with_judge_calibration(tmp_path: Path) -> None:
+    from inspect_safety_stats.validate.plan import validate_plan_references
+
+    plan_path = _write_inputs(tmp_path)
+    text = plan_path.read_text(encoding="utf-8")
+    text = text.replace(
+        "    method: weighted_hoeffding\n",
+        "    method: weighted_hoeffding\n    single_valued_bound: true\n",
+        1,
+    ).replace(
+        "    errors: block\n",
+        "    errors: block\n"
+        "  judge_calibration:\n"
+        "    mode: assumed\n"
+        "    primary: s\n"
+        "    scenarios:\n"
+        "      - {id: s, rho_1: {lower: 0.9, upper: 1.0}, rho_0: {lower: 0.0, upper: 0.05}}\n",
+        1,
+    )
+    plan_path.write_text(text, encoding="utf-8")
+    diagnostics = validate_plan_references(load_plan(plan_path))
+    refused = [item for item in diagnostics if item.code == "PLAN_SINGLE_VALUED_BOUND_UNSUPPORTED"]
+    assert len(refused) == 1
+    assert refused[0].severity == "ERROR"
+    assert "judge calibration" in refused[0].message
+
+
+def test_single_valued_bound_is_refused_under_a_sampled_design(tmp_path: Path) -> None:
+    from inspect_safety_stats.validate.plan import validate_plan_references
+
+    plan = load_plan(_write_inputs(tmp_path))
+    plan.outputs.direct_mean_intervals.single_valued_bound = True
+    # Only the design type matters to this check; a full sampling spec is beside the point.
+    object.__setattr__(plan.design, "type", "sampled")
+    refused = [
+        item
+        for item in validate_plan_references(plan)
+        if item.code == "PLAN_SINGLE_VALUED_BOUND_UNSUPPORTED"
+    ]
+    assert len(refused) == 1
+    assert "sampled design" in refused[0].message

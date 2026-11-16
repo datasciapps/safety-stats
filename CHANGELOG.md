@@ -7,6 +7,26 @@ described in their pull requests.
 
 ### Added
 
+- **A single-valued risk bound for system models (experimental).** Fault trees and Markov
+  models take one number per component, not an interval at a chosen alpha. With
+  `outputs.direct_mean_intervals.single_valued_bound: true`, every direct-mean interval also
+  reports M, the smallest U_δ + δ over its own one-sided upper bounds U_δ for that node alone.
+  M needs no alpha and has P(M < R) ≤ R. It does not enter claims and is not simultaneous.
+  Each interval in `report.json` gains `single_valued_bound`, `single_valued_bound_delta` and
+  `single_valued_bound_guarantee`, and `report.md` a "Single-valued bounds (experimental)"
+  section. Under a sampled design or with judge calibration the plan is refused with
+  `PLAN_SINGLE_VALUED_BOUND_UNSUPPORTED`. Plans that leave the option off keep their hash and
+  write the same report bytes as before. See
+  [Single-valued bound for system models](docs/statistical-methods.md#single-valued-bound-for-system-models-experimental).
+
+- **Sensitivity intervals say what they vary (changes report bytes).** The interval role
+  `sensitivity` covered both intervals under another independence profile and judge-error
+  corrections, so an independence sensitivity could be read as a judge sensitivity. Each
+  interval in `report.json` now has `varied_assumption`: `independence` or `judge_error` on a
+  sensitivity interval, `null` on a primary or reference one. `report.md` and `report.html`
+  show the role as `sensitivity (independence)` or `sensitivity (judge error)`. The role values
+  are unchanged, and reports written before the field still load.
+
 - **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory
   analysis makes every claim `INCONCLUSIVE`, so a reader had to compare its bounds with the
   thresholds by hand. Each claim in `report.json` now has `descriptive_status`: in an
@@ -49,6 +69,34 @@ described in their pull requests.
   now has a one-line description.
 
 ### Changed
+
+- **`analyze` reports input it cannot read (changes behaviour).** A missing or broken
+  design manifest, or logs or rollout files that cannot be read, made `analyze` raise and
+  write no report, while `validate` reported the same input as an `INGEST_FAILED` error. Both
+  now read their input the same way: `analyze` returns a report whose integrity is invalid,
+  with the `INGEST_FAILED` diagnostic, no estimates, and every claim `INCONCLUSIVE`. The CLI
+  writes that report and exits `3`, or `0` (`2` with `--decision-exit-codes`) under
+  `--allow-invalid`, where it printed `Analysis failed` and wrote nothing. A plan that cannot
+  be loaded still fails without a report. Passing both `logs` and `source` to `validate` now
+  raises `ValueError`, as it does in `analyze`, where it was reported as `INGEST_FAILED`.
+
+- **An unreadable transcript is reported (adds a diagnostic).** To find where a sample error
+  happened, the Inspect adapter reads the log's transcript again, and any exception in that
+  read silently left the error's stage `unknown`. A log that cannot be read (a missing,
+  truncated or malformed file) now gives a `TRANSCRIPT_UNREAD` warning naming the log, the
+  error type and how many sample errors it leaves without a stage; their classification is
+  unchanged, since an unknown stage is never counted as a policy block. Any other exception
+  is no longer swallowed and fails the input as `INGEST_FAILED`. Analyses whose logs can be
+  read are unchanged.
+
+- **Kernel loading leaves `sys.modules` and `sys.path` as it found them (Python API).**
+  `materialize_run` and `generative.runner.resolve_kernel` no longer put the working
+  directory first on `sys.path` before importing a `module:attribute` kernel; the module is
+  imported from `sys.path` as the caller set it. A `path/to/file.py:attribute` kernel is no
+  longer left in `sys.modules` under its file name, so a kernel file named like an installed
+  module (`json.py`) no longer replaces that module for the rest of the process. The
+  `generative materialize` command still finds a kernel module in the working directory.
+  Reports are unchanged.
 
 - **An unlabelled judge stratum is completed, not refused (changes results).** A validated
   judge calibration needed a human label in both judge strata. A stratum without one is now

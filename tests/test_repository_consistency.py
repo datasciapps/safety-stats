@@ -211,7 +211,7 @@ def _pyproject() -> str:
 
 
 def test_version_is_consistent_everywhere_it_is_written() -> None:
-    """The version lives in three files and has to be bumped in all of them."""
+    """The version lives in four files and has to be bumped in all of them."""
     declared = re.search(r'^version = "([^"]+)"', _pyproject(), flags=re.MULTILINE)
     assert declared is not None, "pyproject.toml no longer declares a version"
     assert declared.group(1) == __version__
@@ -220,6 +220,9 @@ def test_version_is_consistent_everywhere_it_is_written() -> None:
     current = re.search(r"remains current in `([0-9]+\.[0-9]+\.[0-9]+)`", profiles)
     assert current is not None, "independence-profiles.md no longer states a current version"
     assert current.group(1) == __version__
+
+    citation = yaml.safe_load((ROOT / "CITATION.cff").read_text(encoding="utf-8"))
+    assert str(citation["version"]) == __version__, "CITATION.cff states another version"
 
 
 def test_declared_python_versions_match_the_requirement() -> None:
