@@ -71,6 +71,23 @@ class StopContext:
 
 
 @dataclass(frozen=True)
+class SampleOrder:
+    """The sample order a run recorded, for analyses that read trials in draw order (#126).
+
+    ``shuffle`` is the run's shuffle setting as the source recorded it: an integer seed, True
+    for a shuffle without a recorded seed, or None when the samples were not shuffled.
+    ``sample_ids`` lists the run's sample ids in the order they were scheduled, or is None
+    when the source does not record it.
+    """
+
+    run_key: str
+    source: str
+    shuffle: Any
+    shuffled: bool | None
+    sample_ids: tuple[str, ...] | None
+
+
+@dataclass(frozen=True)
 class RunRecord:
     """One evaluation run, as a source adapter reports it.
 

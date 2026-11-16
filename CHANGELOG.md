@@ -7,6 +7,19 @@ described in their pull requests.
 
 ### Added
 
+- **Anytime-valid bounds for runs stopped early (experimental, #126).**
+  `outputs.anytime_bounds` reports, for each cohort and group, a one-sided upper bound on the
+  weighted mean failure probability that holds at every point of the run's sample order at
+  once, and so wherever a rule such as optstop's stopped the run. The run must use Inspect's
+  `sample_shuffle` with an integer seed; a run without a recorded order is refused with an
+  `ANYTIME_ORDER_UNRECORDED` error. `analyze` adds an `ANYTIME_UPPER_BOUND` diagnostic with
+  the bound and, for each weighted-mean claim, whether it lies at or below the claim's
+  `acceptable_upper`. Claims and the decision keep their fixed-horizon status. Plans without
+  the section keep their hash and outputs. `research/optstop_coverage.py` simulates optstop's
+  stopping rule: the bound misses at most alpha, while Clopper-Pearson at the stop misses up to
+  0.208 at a nominal 0.05. See
+  [Runs that optstop stopped](docs/sequential-design.md#runs-that-optstop-stopped-126).
+
 - **Judge flip rate under content-preserving wrappers (experimental, #122).**
   `inputs.judge_flip` reads a CSV of the primary judge's verdicts on the run's judge-positive
   completions, rescored inside wrappers that keep the content verbatim, such as a story
