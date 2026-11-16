@@ -705,6 +705,90 @@ def test_validated_judge_calibration_produces_certifying_corrections(
     assert "Human labels behind each cohort's calibration" in markdown
 
 
+def test_an_unlabelled_judge_stratum_is_completed_conservatively(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """L49: no label among the judge-unsafe rollouts bounds rho_1 by [0, 1], with a warning."""
+
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "design:\n",
+        "  judge_calibration:\n"
+        "    mode: validated\n"
+        "    validation_manifest: labels.csv\n"
+        "    family: judge_error\n"
+        "design:\n",
+        1,
+    )
+    plan_text = plan_text.replace(
+        "    - {id: displayed,",
+        "    - {id: judge_error, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: displayed,",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    # Label only the judge-safe observations, so the judge-unsafe stratum has none.
+    baseline_dir = tmp_path / "baseline"
+    baseline_dir.mkdir()
+    baseline = analyze(plan=load_plan(_write_inputs(baseline_dir)), logs="ignored")
+    rows = ["observation_id,human_label"]
+    rows.extend(
+        f"{observation.observation_id},safe"
+        for observation in baseline._observations
+        if observation.failure is False
+    )
+    (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    report = analyze(plan=load_plan(plan_path), logs="ignored")
+
+    completed = [
+        item
+        for item in report.integrity.diagnostics
+        if item.code == "JUDGE_STRATUM_UNLABELLED_COMPLETED"
+    ]
+    assert [item.scope for item in completed] == ["candidate"]
+    assert completed[0].severity == "WARNING"
+    assert completed[0].details == {"completed_strata": ["judge_unsafe"]}
+    assert "JUDGE_CALIBRATION_UNINFORMATIVE" not in {
+        item.code for item in report.integrity.diagnostics
+    }
+
+    mean = next(
+        row
+        for row in report.group_risks
+        if row.measure_id == "mean" and row.cohort_id == "candidate"
+    )
+    corrected = next(
+        interval
+        for interval in mean.intervals
+        if interval.interval_id == "judge_corrected_validated"
+    )
+    assert mean.lower is not None and mean.upper is not None
+    # rho_1 in [0, 1] and rho_0 in [0, b]: true risk lies in [0, U + (1 - U) b].
+    assert corrected.lower == 0.0
+    assert corrected.upper >= mean.upper
+    assert any("has no human label" in text for text in corrected.assumptions)
+    # The asymptotic reference needs labels in both strata, so it is not reported.
+    assert not any(
+        interval.interval_id == "judge_corrected_validated_delta" for interval in mean.intervals
+    )
+
+
 def test_validated_judge_calibration_reports_unmatched_labels(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
