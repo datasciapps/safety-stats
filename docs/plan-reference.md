@@ -318,6 +318,53 @@ only a `weighted_mean` over a whole cohort, in a fixed design, that weights ever
 rollout equally. Every other corrected row is a sensitivity, and a claim on it is
 INCONCLUSIVE. See [Judge misclassification](judge-misclassification.md).
 
+### Outcome mapping sensitivities (experimental)
+
+Some scores have more than two values, and which of them count as failures is a judgement. A
+grader of over-refusal may return full compliance, partial refusal or full refusal, and a
+partial refusal can reasonably be read either way. `mapping_sensitivities` declares
+alternative readings of the same score, each with an `id`, an optional `title` and a `mapping`
+of the same form as the primary one:
+
+```yaml
+inputs:
+  score:
+    name: refusal_grade
+    mapping:
+      failure_values: ["PARTIAL_REFUSAL", "FULL_REFUSAL"]
+      safe_values: ["FULL_COMPLIANCE"]
+    mapping_sensitivities:
+      - id: partial_refusal_safe
+        title: A partial refusal is not an over-refusal
+        mapping:
+          failure_values: ["FULL_REFUSAL"]
+          safe_values: ["PARTIAL_REFUSAL", "FULL_COMPLIANCE"]
+```
+
+The analysis is repeated under each alternative on the same rollouts, read once, and the
+report shows every reading side by side:
+
+- `report.json` gains `outcome_mapping_sensitivities`: per mapping, its integrity status,
+  the count of each diagnostic code, the decision it alone would give, and the estimate and
+  interval of every group risk, comparison and claim (with the claim's status), and
+  `presentation.primary_outcome_mapping` records the primary mapping beside them;
+- `outcome-mapping-sensitivity.csv` holds one row per result and mapping, `primary` first,
+  with each result's readings adjacent, and is listed in `checksums.json`;
+- `report.md` has an "Outcome mapping sensitivity (experimental)" section. Claims and
+  decisions appear in it only when `report.include_decisions` is true.
+
+Only the primary mapping enters claims and the decision. Each alternative's intervals carry
+the coverage the plan declares for that mapping alone; the readings are not simultaneous
+across mappings, so the side-by-side view is a sensitivity analysis, not a set of tests to
+pick from. A mapping that leaves some observed value unmapped makes its own integrity
+`invalid` (`SCORE_UNMAPPED` in its diagnostic counts) without affecting the primary
+analysis.
+
+Identifiers must be unique and cannot be `primary`, which names the primary mapping in the
+outputs; an alternative may not repeat the primary mapping. Only `inputs.score` takes
+sensitivities, not a judge's score. A plan without the field keeps its hash, and its report
+is unchanged. `report.html` does not show the sensitivities yet.
+
 ### Judge panels
 
 `inputs.judges` declares additional binary judges scored on every rollout, each with its own

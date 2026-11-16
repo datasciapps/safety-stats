@@ -32,7 +32,8 @@ def _integrity_status(diagnostics: list[Diagnostic]) -> Literal["valid", "degrad
 class _JudgeInputs:
     """The manifest, groups and source as read, before the primary run normalized them.
 
-    Each declared judge's run normalizes them again, so the logs are read once. ``receipt`` is
+    Each declared judge's run, and each outcome mapping sensitivity's, normalizes them again,
+    so the logs are read once. ``receipt`` is
     the registration receipt the primary run checked timing with, when it matched the plan.
     """
 

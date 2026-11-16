@@ -7,6 +7,16 @@ described in their pull requests.
 
 ### Added
 
+- **Outcome mapping sensitivities (experimental).** A score with more than two values, such
+  as a refusal grade with partial refusals, no longer has to be read one way per run.
+  `inputs.score.mapping_sensitivities` declares named alternative mappings; the analysis is
+  repeated under each on the same rollouts, and the report shows every reading side by side
+  in `report.json` (`outcome_mapping_sensitivities`), a new
+  `outcome-mapping-sensitivity.csv` and a section of `report.md`. Only the primary mapping
+  enters claims and the decision. Opt-in: plans without the field keep their hash and their
+  report bytes. See
+  [Outcome mapping sensitivities](docs/plan-reference.md#outcome-mapping-sensitivities-experimental).
+
 - **The fixed-design planner uses the analysis method.** `plan fixed-design --plan PLAN`
   plans each claim under the interval method that `outputs.direct_mean_intervals` declares
   (KL-Chernoff, empirical Bernstein or Hoeffding) by inverting that interval. It shows the

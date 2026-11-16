@@ -148,6 +148,22 @@ class OutcomeMappingSpec(StrictModel):
         return self
 
 
+class OutcomeMappingSensitivitySpec(StrictModel):
+    """Experimental: an alternative reading of the same score, reported beside the primary one.
+
+    The whole analysis is repeated under ``mapping``; its results are shown side by side with
+    the primary results and never enter a claim's status or the decision.
+    """
+
+    id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9_.-]+$")
+    title: str | None = None
+    mapping: OutcomeMappingSpec
+
+
+# The id the primary mapping has in the side-by-side outputs.
+PRIMARY_MAPPING_ID = "primary"
+
+
 class ScoreSpec(StrictModel):
     name: str = Field(min_length=1)
     mapping: OutcomeMappingSpec
@@ -168,18 +184,43 @@ class ScoreSpec(StrictModel):
     # but counts it on its own; `safe` and `failure` classify it, and count it on its own. A
     # truncated answer that was scored keeps its score.
     token_limit: Literal["score", "missing", "safe", "failure"] = "score"
+    # Experimental. Left out of the plan when empty, so that plans without it keep their hash.
+    mapping_sensitivities: list[OutcomeMappingSensitivitySpec] = Field(
+        default_factory=list,
+        description=(
+            "Experimental. Alternative outcome mappings of the same score, analysed and "
+            "reported beside the primary mapping; they never enter claims or the decision."
+        ),
+    )
 
     @model_serializer(mode="wrap")
-    def leave_out_default_stop_handling(
-        self, handler: SerializerFunctionWrapHandler
-    ) -> dict[str, Any]:
-        # Left out at their defaults, so that plans written before the fields keep their hash.
+    def leave_out_defaults(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # The experimental fields are left out at their defaults, so that plans written before
+        # them keep their hash.
         data: dict[str, Any] = handler(self)
         if self.content_filter_stops == "score":
             data.pop("content_filter_stops", None)
         if self.token_limit == "score":
             data.pop("token_limit", None)
+        if not self.mapping_sensitivities:
+            data.pop("mapping_sensitivities", None)
         return data
+
+    @model_validator(mode="after")
+    def distinct_mapping_sensitivities(self) -> ScoreSpec:
+        identifiers = [item.id for item in self.mapping_sensitivities]
+        if len(set(identifiers)) != len(identifiers):
+            raise ValueError("outcome mapping sensitivity identifiers must be unique")
+        if PRIMARY_MAPPING_ID in identifiers:
+            raise ValueError(
+                f"{PRIMARY_MAPPING_ID!r} names the primary mapping and cannot name a sensitivity"
+            )
+        for item in self.mapping_sensitivities:
+            if item.mapping == self.mapping:
+                raise ValueError(
+                    f"outcome mapping sensitivity {item.id!r} repeats the primary mapping"
+                )
+        return self
 
 
 class JudgeRateRangeSpec(StrictModel):
@@ -366,6 +407,14 @@ class JudgeSpec(StrictModel):
     block: str | None = None
     kind: Literal["judge", "monitor"] = "judge"
     accuracy: JudgeAccuracySpec | None = None
+
+    @model_validator(mode="after")
+    def no_mapping_sensitivities(self) -> JudgeSpec:
+        if self.score.mapping_sensitivities:
+            raise ValueError(
+                f"judge {self.id!r}: mapping_sensitivities applies to inputs.score only"
+            )
+        return self
 
     @model_validator(mode="after")
     def resolve_block(self) -> JudgeSpec:
