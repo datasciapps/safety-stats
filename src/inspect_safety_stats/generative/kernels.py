@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
 
+from pydantic import BaseModel
+
 from inspect_safety_stats.generative.schema import GenerativePlan
 
 ValidationStatus = Literal["valid", "invalid", "error"]
@@ -104,8 +106,8 @@ def resolve_kernel_fingerprint(
         "temperature": spec.temperature,
         "max_tokens": spec.max_tokens,
         "seed_replayable": spec.seed_replayable,
-        "validation": spec.validation.model_dump(mode="json"),
-        "deduplication": spec.deduplication.model_dump(mode="json"),
+        "validation": _settings(spec.validation),
+        "deduplication": _settings(spec.deduplication),
     }
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -116,6 +118,62 @@ def resolve_kernel_fingerprint(
         prompt_template_sha256=template_hash,
         seed_replayable=spec.seed_replayable,
     )
+
+
+# Settings added after the fingerprint was defined. Each is hashed only when it differs from
+# its default, so a plan that does not use it keeps the fingerprint it always had, and a
+# plan that does cannot be pooled with one that does not.
+_LATER_SETTINGS: dict[str, object] = {"invoke": False, "near_duplicate": "off"}
+
+
+def _settings(spec: BaseModel) -> dict[str, object]:
+    dumped = spec.model_dump(mode="json")
+    for key, default in _LATER_SETTINGS.items():
+        if key in dumped and dumped[key] == default:
+            del dumped[key]
+    return dumped
+
+
+@dataclass(frozen=True)
+class ValidationVerdict:
+    """A validator's judgement of one rewrite the kernel returned as valid."""
+
+    status: ValidationStatus
+    detail: str | None = None
+
+
+@runtime_checkable
+class RewriteValidator(Protocol):
+    """The check ``rewrite.validation.validator_id`` names, invoked by the package.
+
+    It sees the request and the rewrite the kernel returned, and says whether the rewrite
+    is acceptable: ``invalid`` puts the unit into the retry path, ``error`` is an
+    operational failure, as for a kernel. Like a kernel, it must be stateless with respect
+    to outcomes, and ``validation.mode: deterministic`` asks that the same input always
+    receive the same verdict.
+    """
+
+    validator_id: str
+
+    def validate(self, request: RewriteRequest, prompt: str) -> ValidationVerdict: ...
+
+
+@dataclass
+class DeterministicFakeValidator:
+    """A network-free validator for tests and dry runs.
+
+    It rejects a rewrite when a hash of it falls in one of ``reject_every`` buckets, so its
+    verdicts depend only on the request and the text. ``reject_every=0`` accepts everything.
+    """
+
+    validator_id: str = "fake-validator"
+    reject_every: int = 0
+
+    def validate(self, request: RewriteRequest, prompt: str) -> ValidationVerdict:
+        token = hashlib.sha256(f"{request.sampling_unit_id}|{prompt}".encode()).hexdigest()
+        if self.reject_every and int(token[:8], 16) % self.reject_every == 0:
+            return ValidationVerdict(status="invalid", detail="synthetic rejection")
+        return ValidationVerdict(status="valid")
 
 
 @dataclass

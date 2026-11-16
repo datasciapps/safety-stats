@@ -20,6 +20,19 @@ described in their pull requests.
   `family.csv`. See
   [Arm contrasts](docs/generative-evaluation.md#arm-contrasts-and-a-simultaneous-slice-family-experimental).
 
+- **Rewrite validation and near-duplicate detection in the package (experimental).** In a
+  generative plan, `rewrite.validation.invoke: true` makes materialization call the validator
+  the plan names, supplied with `--validator` (or `validator=`), on every rewrite the kernel
+  accepts. Its rejections enter the retry path. `rewrite.deduplication.near_duplicate:
+  normalized_text` also treats rewrites that differ only in case, punctuation, symbols or
+  spacing as duplicates. With either setting, materialization writes `attempts.csv`, one row
+  per kernel call without prompt text. Analysis then writes `fidelity.csv` and a `fidelity`
+  section of `report.json`, which give for each arm why attempts failed. It also adds the
+  diagnostics `GENERATIVE_FIDELITY_UNEVEN`, `GENERATIVE_VALIDATOR_MISMATCH` and
+  `GENERATIVE_RETRY_DEPENDENCE`. Plans that use neither setting keep their fingerprints and
+  outputs. See
+  [Validation and near-duplicates](docs/generative-evaluation.md#validation-and-near-duplicates-experimental).
+
 - **Outcome mapping sensitivities (experimental).** A score with more than two values, such
   as a refusal grade with partial refusals, no longer has to be read one way per run.
   `inputs.score.mapping_sensitivities` declares named alternative mappings; the analysis is

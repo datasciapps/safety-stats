@@ -9,7 +9,7 @@ fingerprints it was produced under so two runs cannot be pooled by accident.
 from __future__ import annotations
 
 import hashlib
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +17,7 @@ import pandas as pd
 
 from inspect_safety_stats.generative.comparisons import ComparisonResult
 from inspect_safety_stats.generative.contrasts import SliceFamilyResult
-from inspect_safety_stats.generative.execution import AcceptanceRow
+from inspect_safety_stats.generative.execution import AcceptanceRow, FidelityRow
 from inspect_safety_stats.generative.inference import (
     NodeEstimate,
     ReweightedEstimate,
@@ -45,6 +45,8 @@ ARTIFACTS = (
     "acceptance.csv",
     CHECKSUMS,
 )
+# Written beside those when the plan records rewrite attempts (experimental).
+OPTIONAL_ARTIFACTS = ("fidelity.csv",)
 # Written only when the plan declares inference.slice_family.
 FAMILY_ARTIFACT = "family.csv"
 FAMILY_COLUMNS = (
@@ -79,6 +81,9 @@ class GenerativeReport:
     reweightings: list[ReweightedEstimate] = field(default_factory=list)
     slice_family: SliceFamilyResult | None = None
     diagnostics: list[Diagnostic] = field(default_factory=list)
+    # None when the plan does not record rewrite attempts, so its report has no fidelity
+    # section at all rather than an empty one.
+    fidelity: list[FidelityRow] | None = None
 
     @property
     def has_errors(self) -> bool:
@@ -156,18 +161,7 @@ class GenerativeReport:
         return pd.DataFrame(rows, columns=list(FAMILY_COLUMNS))
 
     def to_dict(self) -> dict[str, Any]:
-        document = self._base_dict()
-        if self.slice_family is not None:
-            # Only when declared, so a plan without a family keeps its report unchanged.
-            document["slice_family"] = {
-                **asdict(self.slice_family),
-                "simultaneous": True,
-                "judge_scale": "reported",
-            }
-        return document
-
-    def _base_dict(self) -> dict[str, Any]:
-        return {
+        document: dict[str, Any] = {
             "schema": "generative-report/1.0",
             "package_version": __version__,
             "evaluation": self.evaluation,
@@ -199,6 +193,16 @@ class GenerativeReport:
             },
             "diagnostics": [item.model_dump(mode="json") for item in self.diagnostics],
         }
+        if self.fidelity is not None:
+            document["fidelity"] = [asdict(item) for item in self.fidelity]
+        if self.slice_family is not None:
+            # Only when declared, so a plan without a family keeps its report unchanged.
+            document["slice_family"] = {
+                **asdict(self.slice_family),
+                "simultaneous": True,
+                "judge_scale": "reported",
+            }
+        return document
 
     def write(self, output: str | Path, *, overwrite: bool = False) -> Path:
         directory = Path(output)
@@ -223,11 +227,20 @@ class GenerativeReport:
             directory / "acceptance.csv",
             pd.DataFrame([asdict(item) for item in self.acceptance]),
         )
-        covered = [name for name in ARTIFACTS if name != CHECKSUMS]
+        written = [name for name in ARTIFACTS if name != CHECKSUMS]
+        if self.fidelity is not None:
+            write_frame(
+                directory / "fidelity.csv",
+                pd.DataFrame(
+                    [asdict(item) for item in self.fidelity],
+                    columns=[item.name for item in fields(FidelityRow)],
+                ),
+            )
+            written += list(OPTIONAL_ARTIFACTS)
         if self.slice_family is not None:
             write_frame(directory / FAMILY_ARTIFACT, self._family_frame())
-            covered.append(FAMILY_ARTIFACT)
+            written.append(FAMILY_ARTIFACT)
         write_generative_report(self, directory / "report.html")
         # ORDER MATTERS: last, once every file it covers is written.
-        write_checksums(directory, covered)
+        write_checksums(directory, written)
         return directory

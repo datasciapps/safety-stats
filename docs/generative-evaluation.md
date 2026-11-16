@@ -405,9 +405,69 @@ differently across the design.
 and mean attempts for every value of every level. When exhaustion rates within a level spread
 by more than five percentage points, `GENERATIVE_ACCEPTANCE_UNEVEN` says so.
 
-Nothing in the package validates a rewrite: `rewrite.validation.validator_id` is declared and
-fingerprinted, but the kernel's own verdict is trusted. These rates are the only visibility
-into the assumption the whole estimand rests on.
+By default nothing in the package validates a rewrite: `rewrite.validation.validator_id` is
+declared and fingerprinted, but the kernel's own verdict is trusted, and deduplication
+compares the exact text. Then these rates are the only visibility into the assumption the
+whole estimand rests on. The next section describes how a plan can ask for more.
+
+## Validation and near-duplicates (experimental)
+
+Two settings, both off by default, move checks from the kernel into the package:
+
+```yaml
+rewrite:
+  validation: {validator_id: semantic-equivalence-v1, on_invalid: retry,
+               maximum_attempts: 5, invoke: true}
+  deduplication: {scope: semantic_seed_path, on_duplicate: retry,
+                  near_duplicate: normalized_text}
+```
+
+**`validation.invoke: true`** makes the package call the validator the plan names.
+Materialization then needs `--validator`, which takes the same forms as `--kernel`: `fake`,
+`fake:reject_every=N`, `module:attribute` or `path/to/file.py:attribute`. The attribute is a
+validator or a zero-argument factory implementing the `RewriteValidator` protocol: a
+`validator_id` and a `validate(request, prompt) -> ValidationVerdict` method. It judges each
+rewrite the kernel returned as valid and that was not rejected as a duplicate. An `invalid`
+verdict enters the retry path like a kernel rejection, and an `error` is an operational
+failure, which `--resume` retries. A plan that invokes a validator without `--validator`, or
+`--validator` without a plan that invokes one, is refused. A validator whose `validator_id`
+differs from the plan's is reported as a warning.
+
+**`deduplication.near_duplicate: normalized_text`** also counts a rewrite as a duplicate when
+its text matches an accepted one within the deduplication scope after Unicode NFKC
+normalization, case folding, removal of punctuation and symbols, and whitespace collapsing.
+`on_duplicate` handles it like an exact repeat. Nothing compares embeddings, which would
+need a model the plan does not declare.
+
+Either setting enters the kernel fingerprint, so runs with and without it cannot be pooled.
+Plans that use neither keep their fingerprints and their outputs byte for byte.
+
+**The attempt ledger.** With either setting, materialization also writes `attempts.csv`: one
+row per kernel call, with the kernel's status, whether the rewrite was rejected as an `exact`
+or `near` duplicate, the validator's identifier and verdict (`not_run` when an earlier check
+had already rejected the attempt), whether the unit kept it, and the rewrite's hash. It never
+holds prompt text. Analysis refuses a run whose attempt ledger is missing or does not agree
+with the rewrite ledger.
+
+**Fidelity by arm.** From that ledger, analysis writes `fidelity.csv` and a `fidelity`
+section in `report.json`. For every value of every level they give units, attempts, kernel
+rejections and errors, exact and near duplicates, how many rewrites the validator judged and
+rejected, its rejection rate, and how many units kept a rewrite only after a duplicate
+rejection. Acceptance shows how many units ran out of attempts, and fidelity shows why
+attempts failed. So an arm whose rewrites the validator rejects more often is visible even
+when retries keep its acceptance level with the others. Plans that use neither setting get
+neither the file nor the section.
+
+Three diagnostics read it:
+
+- `GENERATIVE_FIDELITY_UNEVEN` (warning): the validator's rejection rates across the values
+  of a level spread by more than five percentage points. The rates are in its details.
+- `GENERATIVE_VALIDATOR_MISMATCH` (warning): the attempt ledger records another validator
+  than the one the plan declares.
+- `GENERATIVE_RETRY_DEPENDENCE` (info): some units kept a rewrite only after a duplicate
+  rejection. Deduplication compares against rewrites accepted for earlier units, so those
+  units' prompts depend on the order of selection. This weakens the independence across
+  units that the intervals assume, and the diagnostic gives how many units it concerns.
 
 ## What it refuses
 
@@ -419,6 +479,10 @@ into the assumption the whole estimand rests on.
 - constraints that condition on a level at or below what they prune;
 - an identifier containing `|` or `=`, which canonical node ids are built from;
 - a rewrite ledger and prompt store that disagree about which units were accepted;
+- a plan that invokes a validator materialized without `--validator`, or `--validator`
+  without such a plan;
+- a missing attempt ledger, or one that disagrees with the rewrite ledger, when the plan
+  records attempts;
 - a log whose samples match no accepted rewrite, or the same sample twice;
 - a plan edited between materialization and analysis.
 
