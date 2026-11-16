@@ -23,6 +23,18 @@
       "method": "finite_design_weighted_mean",
       "multiplicity_family": "decision_gate",
       "policy_status": "INCONCLUSIVE",
+      "profile_verdicts": [
+        {
+          "effective_sample_size": 8.0,
+          "independence_profile": "rollout",
+          "independent_block_count": 8,
+          "interval_id": "direct_weighted_kl_chernoff",
+          "lower": 0.0920692927984616,
+          "role": "primary",
+          "status": "INCONCLUSIVE",
+          "upper": 0.9079307072015383
+        }
+      ],
       "reasons": [
         "Bounds do not establish either the acceptable or unacceptable region."
       ],

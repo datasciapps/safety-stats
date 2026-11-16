@@ -23,6 +23,18 @@
       "method": "finite_design_weighted_mean",
       "multiplicity_family": "safety_gate",
       "policy_status": "INCONCLUSIVE",
+      "profile_verdicts": [
+        {
+          "effective_sample_size": 4.0,
+          "independence_profile": "rollout",
+          "independent_block_count": 4,
+          "interval_id": "direct_weighted_kl_chernoff",
+          "lower": 0.0,
+          "role": "primary",
+          "status": "INCONCLUSIVE",
+          "upper": 0.7459336259226927
+        }
+      ],
       "reasons": [
         "Bounds were computed but this post hoc exploratory analysis is not eligible for certification.",
         "Descriptive only, not a certification: a confirmatory analysis of these bounds at the plan's thresholds would give INCONCLUSIVE.",
@@ -49,6 +61,18 @@
       "method": "finite_design_weighted_mean",
       "multiplicity_family": "safety_gate",
       "policy_status": "INCONCLUSIVE",
+      "profile_verdicts": [
+        {
+          "effective_sample_size": 4.0,
+          "independence_profile": "rollout",
+          "independent_block_count": 4,
+          "interval_id": "direct_weighted_kl_chernoff",
+          "lower": 0.00044003375855266463,
+          "role": "primary",
+          "status": "INCONCLUSIVE",
+          "upper": 0.9218829949566247
+        }
+      ],
       "reasons": [
         "Bounds were computed but this post hoc exploratory analysis is not eligible for certification.",
         "Descriptive only, not a certification: a confirmatory analysis of these bounds at the plan's thresholds would give INCONCLUSIVE.",
