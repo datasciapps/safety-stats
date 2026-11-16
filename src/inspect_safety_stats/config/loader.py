@@ -44,6 +44,16 @@ def _check_schema_version(raw: dict[str, Any]) -> None:
 
 
 def load_plan(path: str | Path) -> AnalysisPlan:
+    """Read and validate an analysis plan from a YAML (``.yaml``, ``.yml``) or JSON file.
+
+    The plan must declare a schema version this release reads (2.0 or 3.0), and an unquoted
+    number is accepted. Relative paths to the design manifest and the judge-calibration
+    validation manifest are resolved against the plan's own directory, so a plan works from any
+    working directory. Raises ``ValueError`` for any other suffix, a root that is not an
+    object, or an unsupported schema version, and pydantic's ``ValidationError`` for an
+    invalid plan. The fields are documented in docs/plan-reference.md.
+    """
+
     source = Path(path).resolve()
     if source.suffix.lower() in {".yaml", ".yml"}:
         raw = yaml.safe_load(source.read_text(encoding="utf-8"))

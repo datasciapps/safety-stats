@@ -64,6 +64,14 @@ class UnitOutcome:
 
 @dataclass(frozen=True)
 class NodeEstimate:
+    """The failure-rate estimate and interval for one node or cross-cutting slice.
+
+    ``estimate`` is the design-weighted mean over classified rollouts, None when none were
+    classified; ``raw_failure_rate`` is the unweighted rate. ``lower`` is 0 when only an
+    upper bound was computed. ``method`` names the kernel used, and ``frontier_id`` is set
+    only under simultaneous calibration. Slice ids start with ``slice:``.
+    """
+
     node_id: str
     level: str
     depth: int
@@ -88,6 +96,14 @@ class NodeEstimate:
 
 @dataclass(frozen=True)
 class TreeEstimate:
+    """The root and per-node estimates that :func:`estimate_tree` returns.
+
+    ``nodes`` holds only nodes that received draws, and the root alone when
+    ``report_all_nodes`` is off; ``unsampled_nodes`` lists the ids that received none.
+    ``simultaneous`` records whether the tree was calibrated as one family. See "Why the
+    intervals are exact" in ``docs/generative-evaluation.md``.
+    """
+
     root: NodeEstimate
     nodes: tuple[NodeEstimate, ...]
     unsampled_nodes: tuple[str, ...]

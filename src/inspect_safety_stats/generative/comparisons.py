@@ -46,6 +46,13 @@ INDEPENDENT_ARMS = "independent_arm_rectangle"
 
 @dataclass(frozen=True)
 class ComparisonResult:
+    """A bound on the candidate-minus-baseline risk difference at one node.
+
+    Built by :func:`compare_cohorts`. Under ``one_sided_upper`` ``lower`` is -1. The
+    discordant counts are set only for the exact paired method and are None otherwise.
+    ``candidate`` and ``baseline`` are the per-arm estimates over the same units.
+    """
+
     node_id: str
     estimand: Literal["risk_difference"]
     candidate_cohort: str

@@ -221,7 +221,7 @@ def _analyze(
 
     eval_frame, sample_frame = _frames(("candidate", "baseline") if compare else ("candidate",))
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -296,6 +296,7 @@ def test_a_pooled_calibration_never_certifies_a_row_it_does_not_measure(
         interval = _corrected(_risk(report, group, measure))
         assert interval.eligibility == "diagnostic"
         assert interval.role == "sensitivity"
+        assert interval.varied_assumption == "judge_error"
         assert interval.simultaneous_coverage is None
         assert interval.upper_one_sided_coverage is None
         (warning,) = interval.warnings
@@ -329,6 +330,7 @@ def test_a_comparison_over_part_of_a_cohort_is_a_judge_sensitivity(
     corrected = _corrected(comparison)
     assert corrected.eligibility == "diagnostic"
     assert corrected.role == "sensitivity"
+    assert corrected.varied_assumption == "judge_error"
     assert corrected.simultaneous_coverage is None
     (warning,) = corrected.warnings
     # Each arm is corrected with its own cohort's labels, so each arm is checked.
@@ -498,7 +500,7 @@ def test_an_assumed_calibration_scoped_to_a_group_corrects_only_its_rows(
 ) -> None:
     eval_frame, sample_frame = _frames(("candidate",))
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",

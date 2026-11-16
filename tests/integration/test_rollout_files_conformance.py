@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pandas as pd
@@ -200,10 +201,18 @@ def test_neutral_files_and_inspect_logs_give_the_same_report(
 ) -> None:
     plan, neutral = _inputs(tmp_path)
     evals, samples = _frames()
-    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: evals)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+    )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
+    )
+    # The transcripts are read and say nothing about the errors' stage, as the rollout files
+    # say nothing about it either.
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.read_eval_log",
+        lambda path: SimpleNamespace(samples=[]),
     )
     # One schema 3.0 plan serves both sources.
     from_inspect = analyze(plan=plan, logs="ignored").model_dump(mode="json")

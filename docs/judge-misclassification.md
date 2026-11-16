@@ -45,7 +45,8 @@ whose thresholds would need transforming. Those measures are left uncorrected.
 
 The first implementation declares \(\rho_1\) and \(\rho_0\) as ranges rather than
 estimating them. It produces **no evidence**. Every interval it emits carries
-`eligibility: diagnostic` and `role: sensitivity`, and cannot support a claim.
+`eligibility: diagnostic`, `role: sensitivity` and `varied_assumption: judge_error`, and
+cannot support a claim.
 
 ```yaml
 inputs:
@@ -150,6 +151,16 @@ cohorts (see below); each cohort's share is then split equally between \(\rho_1\
 \(\rho_0\), and each parameter's share again between its two endpoints. A union bound over
 those four endpoints spends no more than the cohort's share.
 
+A stratum with no labelled row is completed conservatively. Its parameter is a probability,
+so \([0, 1]\) contains it with certainty: the calibration uses that range, spends none of the
+budget on it, and warns with `JUDGE_STRATUM_UNLABELLED_COMPLETED`. Such a box is never
+strictly informative, so the informativeness check is skipped for it. The correction stays
+valid but wide. With \(\rho_1\in[0,1]\) and a judge-reported interval \([L, U]\), true
+risk lies in \([(1-U)\rho_{0,L},\; U+(1-U)\rho_{0,U}]\), so it can still support an upper
+claim when the judge rarely reports a failure. Labelling that stratum narrows it. The
+budget split is unchanged, so `family_alpha` overstates what was spent. If neither stratum has
+a label, the calibration is refused.
+
 The corrected interval's simultaneous coverage is therefore
 
 \[
@@ -251,7 +262,9 @@ rollouts. The two agree exactly only for a row that
   items do not bound the judge's accuracy over the frame.
 
 Equal prompt weights with equal rollout counts satisfy the weighting condition. `nested_equal`
-weights over an unbalanced hierarchy usually do not.
+weights over an unbalanced hierarchy usually do not. A correction also never supports more
+than the row it corrects: the correction of a diagnostic row, such as a `diagnostic_only`
+measure, is diagnostic too.
 
 Every other corrected row is still reported, as a **sensitivity analysis**:
 `eligibility: diagnostic`, no coverage, and a warning that names the reason. A claim that
@@ -275,7 +288,7 @@ The module produces no correction, and says why, when:
 - a cohort has an empty judge stratum (`JUDGE_VALIDATION_STRATUM_EMPTY`);
 - the labels do not establish a strictly informative judge -- the \(\rho_1\) lower bound
   fails to exceed the \(\rho_0\) upper bound, meaning more labels or a better judge are
-  needed (`JUDGE_CALIBRATION_UNINFORMATIVE`); or
+  needed -- or neither judge stratum has a label (`JUDGE_CALIBRATION_UNINFORMATIVE`); or
 - a validation row references an observation absent from the analysed logs, or one whose
   outcome was never classified (`JUDGE_VALIDATION_UNMATCHED`, an error).
 
@@ -370,6 +383,89 @@ enriched for exactly those items. Prefer the corrected interval when labels are 
 test when the judge's error rates must be prevalence-free and transportable, or when sensitivity
 can be bounded from seeded known-unsafe items rather than from a random sample.
 
+## Transported mode: a published sensitivity (experimental)
+
+Published human-labelled judge validation sets, such as HarmBench's classifier validation set
+or XSTest's annotated completions, measure a judge on outputs that other models produced.
+`mode: transported` uses such a set without human labels on the run's own outputs. It is a
+**sensitivity analysis**: every interval it emits is `eligibility: diagnostic`,
+`role: sensitivity` and `varied_assumption: judge_error`, and it never decides a claim.
+
+```yaml
+inputs:
+  judge_calibration:
+    mode: transported
+    published_set:
+      name: HarmBench classifier validation set
+      source: https://github.com/centerforaisafety/HarmBench
+      judge: HarmBench-Llama-2-13b-cls
+      rubric: HarmBench behaviour rubric
+      human_unsafe: 120          # items human annotators labelled unsafe
+      judge_flagged_unsafe: 100  # of those, the items the judge flagged
+      sensitivity_alpha: 0.05    # optional, default 0.05
+```
+
+`name`, `source`, `judge` and `rubric` are required. They record the provenance the transport
+assumption rests on, and the report repeats them. The counts above are placeholders: take them
+from the set's own publication for the judge and rubric the run actually used.
+
+### Why \(\rho\) cannot be transported
+
+\(\rho_1\) and \(\rho_0\) are predictive values, so they depend on prevalence. A published set
+chosen to be roughly half unsafe gives a judge a \(\rho_1\) its run will not have. For example,
+with a sensitivity of 0.974 and a specificity of about 0.84 (figures derived for the HarmBench
+classifier in arXiv:2606.25487), \(\rho_1\approx0.83\) on a set that is 45% unsafe. At a true
+prevalence of 1% the same judge has \(\rho_1\approx0.06\): 94% of its unsafe verdicts are false,
+and it reports a rate of about 17%. Only the prevalence-free parameters, sensitivity \(Se\) and
+specificity \(Sp\), can even be assumed to transport.
+
+### Why only the sensitivity is transported
+
+Specificity does not transport well either. The false positives a judge makes depend on what
+the outputs look like, and a published set's safe items are often chosen to be hard. In one
+open-weights evaluation, a judge flagged 4.9% of HarmBench's human-safe validation items, yet
+the run's own judged failure rate had an upper bound of 1.06%. Its false-positive rate on
+those outputs was therefore at most about 1.1%, so the published specificity was far too
+pessimistic. Plugged into the Rogan--Gladen inversion
+\(\pi=(q-(1-Sp))/(Se+Sp-1)\) (Rogan and Gladen, *American Journal of Epidemiology* 107(1),
+71--76, 1978), it would have pushed the corrected rate below zero.
+
+So the mode transports the sensitivity alone, as an exact one-sided Clopper--Pearson lower
+bound \(Se_L\) at `sensitivity_alpha` from `judge_flagged_unsafe` of `human_unsafe`. The run's
+false positives are bounded only by its own judged failures: the judged rate is
+\(q=\pi Se+(1-\pi)FPR\), and \((1-\pi)FPR\le q\). Then
+
+- the **lower bound is zero**, because every judged failure may be a false positive; and
+- the **upper bound** is \(\pi\le q_U/Se_L\), capped at one, where \(q_U\) is the ordinary
+  judge-system upper bound.
+
+The upper bound is the Rogan--Gladen inversion at its maximising corner \(Sp=1\). The inversion
+increases with \(Sp\) whenever \(q\le Se\), so declaring any specificity range that reaches one
+would give the same upper bound. When \(Se_L=0\), a judge that may catch nothing, the bound is
+\([0,1]\). A perfectly sensitive judge leaves the upper bound unchanged. Rollouts the judge
+never classified stay completed as failures. The bound is monotone and positively homogeneous
+in the prompt rates, so it applies to `weighted_mean`, `maximum`, `cvar` and `top_k_mean`, to
+every hierarchy node, but not to `entropic` or the threshold measures. If both bounds hold,
+coverage is at least one minus the sum of the row's own alpha and `sensitivity_alpha`.
+
+### What it assumes
+
+- **Transport.** The same judge and rubric, applied to this run's outputs, is at least as
+  sensitive on every prompt as on the published set. Nothing in the run checks this, and a
+  judge under attack can fail it.
+- Human adjudication on the published set is the ground truth.
+
+Each interval lists these assumptions, together with the published set and the sensitivity
+bound. `report.json` adds a `judge_corrected_transported` interval on every correctable row,
+with `method: transported_judge_sensitivity_correction`. Its provenance records the published
+set and `sensitivity_lower`, and the analysis emits the `INFO` diagnostic
+`JUDGE_CALIBRATION_TRANSPORTED`. `report.md` describes the published set in the judge
+misclassification section.
+
+`mode: transported` takes only `published_set`. It cannot be combined with scenarios, a
+validation manifest or a judge family, and only fixed-design analyses offer it: a generative
+plan that declares it is refused.
+
 ## On the generative path
 
 The same correction is available for
@@ -424,6 +520,89 @@ the identification result of the partial-identification literature made concrete
 dependent judges cannot substitute for calibration. Because declared boxes are assumptions, this
 interval is `diagnostic` and can never move a claim; the certifying route for a panel remains a
 `validated` calibration of the composite's own verdict strata.
+
+## Stressing a threshold verdict (experimental)
+
+Without a validated calibration, a threshold claim is decided on judge-reported risk. Its
+verdict then says nothing about how good the judge must be for the same verdict to hold for
+true risk. A PASS whose upper bound sits just below the threshold may need a nearly perfect
+judge. The opt-in stress analysis reports that requirement beside each claim:
+
+```yaml
+report:
+  include_decisions: true
+  judge_error_stress: true
+```
+
+It is experimental: its fields and wording may change in a minor release. It is diagnostic
+only and never changes a claim's status.
+
+**Tipping lines.** Take the prevalence-free model of the
+[noisy-but-valid test](#certifying-a-threshold-directly-the-noisy-but-valid-test),
+\(q=\pi\,Se+(1-\pi)\,FPR\) with \(FPR=1-Sp\), applied unchanged to every prompt. Like the
+correction, it carries over to `weighted_mean`, `maximum`, `cvar` and `top_k_mean`. Write
+\([L,U]\) for the judge-reported bounds, \(a\) for `acceptable_upper`, \(b\) for
+`unacceptable_lower`, and \(s\) for the share of the row's weight on rollouts the judge never
+classified. The bounds complete those rollouts as judge-safe at the lower end and judge-unsafe
+at the upper. The stress analysis keeps the same completion on the true-risk scale and inverts
+only the classified mass. Then
+
+- the PASS (\(U\le a\)) holds for true risk if and only if \((a-s)\,Se+(1-a)\,FPR\ge U-s\);
+- the FAIL (\(L\ge b\)) holds for true risk if and only if \(b\,Se+(1-s-b)\,FPR\le L\).
+
+Each condition is a line in the \((Se,Sp)\) square. The report gives where each line meets the
+two perfect edges:
+
+| Field | Meaning |
+|---|---|
+| `pass_sensitivity_at_perfect_specificity` | With no false alarms, PASS holds iff \(Se\ge (U-s)/(a-s)\) |
+| `pass_specificity_at_perfect_sensitivity` | With no misses, PASS holds iff \(Sp\le (1-U)/(1-a)\) |
+| `fail_sensitivity_at_perfect_specificity` | With no false alarms, FAIL holds iff \(Se\le L/b\) |
+| `fail_specificity_at_perfect_sensitivity` | With no misses, FAIL holds iff \(Sp\ge 1-(L-b)/(1-s-b)\) |
+
+A value above 1 or below 0 means the condition holds along the whole edge or nowhere on it.
+`null` means the line never meets that edge. For example, a PASS with \(U=4.98\%\) against
+\(a=5\%\) and no unclassified rollouts needs \(Se\ge0.996\) even at perfect specificity. A
+false negative rate above 0.4% is enough to put true risk over the threshold.
+
+The two directions differ. Missed failures (low \(Se\)) undermine a PASS, because true risk is
+higher than reported. False alarms (low \(Sp\)) undermine a FAIL, because part of the reported
+risk is judge noise. A PASS survives any specificity at perfect sensitivity, and a FAIL any
+sensitivity at perfect specificity.
+
+**Declared box.** When the primary outcome's judge declares `accuracy` ranges, the record also
+gives the true-risk bounds over that box, the verdict they give (`stressed_status`), and
+whether it matches the claim's status (`robust`). That judge is either a judge in
+`inputs.judges` whose score is the primary score, or an `any` or `all` composite whose members
+all declare ranges, with its box [derived as above](#deriving-a-panels-accuracy-box).
+`accuracy_source` names it, as `judge:<id>` or `composite:<id>`. Both inversions are separately
+monotone in \(Se\) and \(FPR\), so the bounds over the box are attained at its vertices. When the
+box admits \(Se+Sp\le1\), or no accuracy in it can produce the observed bounds, true risk is not
+identified: the bounds are \([0,1]\), `identified` is false, and the stressed verdict is
+INCONCLUSIVE. Without a declared box these fields are `null`, and the lines are still reported.
+
+**Where it does not apply.** Every claim gets a `judge_error_stress` record. Where the analysis
+does not apply, the record has `applicable: false` and a `reason`. That is the case for:
+
+- comparison claims, because the judge's accuracy may differ between arms;
+- claims without complete bounds;
+- claims not decided on their bounds: non-certifying evidence, an exploratory analysis, or
+  invalid data integrity;
+- `noisy_valid_test` claims, and claims decided on a validated correction, which already
+  account for judge error;
+- claims that a validated calibration leaves INCONCLUSIVE;
+- measures other than `weighted_mean`, `maximum`, `cvar` and `top_k_mean`.
+
+`report.md` gains a **Judge-error stress (experimental)** section after the claims, with one row
+per claim, the declared box of each source, and the reasons for claims that were not stressed.
+When `report.include_decisions` is false, the section only points to `report.json`. With the
+switch off, the field is left out of the plan's dump and of every claim, so plans that do not
+opt in keep their hash and every artifact byte for byte.
+
+Two limits apply, as for the assumed mode. One \((Se,Sp)\) is applied to every prompt, so a
+judge whose accuracy varies with the prompt or with the model under test is not covered. And a
+declared box is an assumption, not evidence. The certifying route remains a `validated`
+calibration.
 
 ## Getting to evidence
 

@@ -41,15 +41,17 @@ design:
       block_by: [category_id]
       comparison_coupling: joint
 
+# Every cohort names the same grader, so a difference between models is not a difference
+# between judges. The runner fills in each arm's model and the one grader of the run.
 cohorts:
   reference:
-    match: {model: replaced-reference-model}
+    match: {model: replaced-reference-model, task_arg_grader_model: replaced-grader-model}
     require_uniform: [task_version, model_generate_config, solver]
   candidate_a:
-    match: {model: replaced-candidate-a-model}
+    match: {model: replaced-candidate-a-model, task_arg_grader_model: replaced-grader-model}
     require_uniform: [task_version, model_generate_config, solver]
   candidate_b:
-    match: {model: replaced-candidate-b-model}
+    match: {model: replaced-candidate-b-model, task_arg_grader_model: replaced-grader-model}
     require_uniform: [task_version, model_generate_config, solver]
 
 groups:

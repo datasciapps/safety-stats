@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import copy
 import itertools
+import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
@@ -21,15 +24,19 @@ from inspect_safety_stats.config.models import (
     ComparisonSpec,
     DirectMeanIntervalsSpec,
     IndependenceSelectionSpec,
+    JudgeAccuracySpec,
+    JudgeSpec,
+    PublishedValidationSetSpec,
     RiskMeasureSpec,
 )
 from inspect_safety_stats.decision.engine import decide_claim, roll_up
 from inspect_safety_stats.ingest.manifest import (
+    ResolvedGroup,
     load_inclusion_probabilities,
     resolve_weights,
 )
-from inspect_safety_stats.ingest.normalize import ingest
-from inspect_safety_stats.ingest.records import EvaluationSource, NormalizedData
+from inspect_safety_stats.ingest.normalize import normalize, read_inputs
+from inspect_safety_stats.ingest.records import EvaluationSource, NormalizedData, SourceData
 from inspect_safety_stats.ingest.validation import (
     judge_stratum_counts,
     load_validation_manifest,
@@ -46,6 +53,7 @@ from inspect_safety_stats.schema.reports import (
     GroupRiskResult,
     HierarchyRiskResult,
     IntegritySummary,
+    JudgeErrorStressResult,
     PromptEstimate,
     RiskIntervalResult,
     SafetyReport,
@@ -87,6 +95,14 @@ from inspect_safety_stats.stats.independence import (
     direct_bounded_blocks,
     validate_profile_fields,
 )
+from inspect_safety_stats.stats.judge_calibration import (
+    NO_STRATA,
+    JudgeStrata,
+    calibrate_cohort,
+    cohort_alpha_share,
+    completion_diagnostic,
+)
+from inspect_safety_stats.stats.judge_stress import stress_verdict
 from inspect_safety_stats.stats.judges import (
     JudgeAccuracyBox,
     compose_verdicts,
@@ -101,8 +117,9 @@ from inspect_safety_stats.stats.misclassification import (
     TruthStratumCounts,
     correct_judge_risk,
     delta_method_corrected_risk,
-    estimate_judge_calibration,
     noisy_valid_certification,
+    transport_judge_risk,
+    transported_sensitivity_lower,
 )
 from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
 from inspect_safety_stats.stats.paired import exact_mcnemar, newcombe_paired_interval
@@ -116,6 +133,10 @@ from inspect_safety_stats.stats.risk import (
     weighted_mean,
     worst_of_k_estimate,
     worst_of_k_risk,
+)
+from inspect_safety_stats.stats.single_valued import (
+    SINGLE_VALUED_BOUND_GUARANTEE,
+    single_valued_bound,
 )
 from inspect_safety_stats.stats.tree_calibration import (
     IndependentFrontier,
@@ -147,13 +168,68 @@ def _source(
     """The source ``analyze`` and ``validate`` read: ``source``, or else the Inspect logs."""
 
     if source is not None:
-        if logs is not None:
-            raise ValueError("pass either logs or source, not both")
         return source
     # Imported here, so that importing this module does not load Inspect AI.
     from inspect_safety_stats.ingest.inspect_logs import InspectLogs
 
     return InspectLogs(logs, parallel=parallel)
+
+
+@dataclass
+class _JudgeInputs:
+    """The manifest, groups and source as read, before the primary run normalized them.
+
+    Each declared judge's run normalizes them again, so the logs are read once.
+    """
+
+    manifest: pd.DataFrame
+    groups: list[ResolvedGroup]
+    source: SourceData
+
+
+def _read_input(
+    plan: AnalysisPlan,
+    logs: LogInput,
+    parallel: bool | int,
+    source: EvaluationSource | None,
+    diagnostics: list[Diagnostic],
+) -> tuple[NormalizedData, _JudgeInputs | None] | None:
+    """Read and normalize the analysis input, or record why it cannot be read.
+
+    ``validate`` and ``analyze`` both read their input here, so that bad input gives both the
+    same ``INGEST_FAILED`` error. None when the input cannot be read. Passing both ``logs``
+    and ``source`` is a mistake in the call, not in the input, and raises ``ValueError``.
+    Beside the normalized data comes what the per-judge runs need, when the plan asks for
+    them with ``outputs.judge_claims``.
+    """
+
+    if source is not None and logs is not None:
+        raise ValueError("pass either logs or source, not both")
+    try:
+        manifest, groups, source_data = read_inputs(plan, _source(logs, parallel, source))
+        # ORDER MATTERS: the per-judge runs take copies made before the primary run
+        # normalizes the manifest and groups, so nothing that run does can reach them.
+        judge_inputs = (
+            _JudgeInputs(manifest.copy(), copy.deepcopy(groups), source_data)
+            if plan.outputs.judge_claims
+            else None
+        )
+        data = normalize(plan, manifest, groups, source_data)
+        validate_profile_fields(plan.design.independence_profiles, data.manifest)
+    except Exception as exc:
+        diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=str(exc)))
+        return None
+    diagnostics.extend(data.diagnostics)
+    return data, judge_inputs
+
+
+def _sorted_integrity(diagnostics: list[Diagnostic]) -> IntegritySummary:
+    return IntegritySummary(
+        status=_integrity_status(diagnostics),
+        diagnostics=sorted(
+            diagnostics, key=lambda item: (item.severity, item.code, item.scope or "")
+        ),
+    )
 
 
 def validate(
@@ -163,20 +239,20 @@ def validate(
     parallel: bool | int = False,
     source: EvaluationSource | None = None,
 ) -> IntegritySummary:
+    """Check a plan and its evaluation data without computing any bound or decision.
+
+    ``plan`` is an ``AnalysisPlan`` or the path of a plan file, read with ``load_plan``. The
+    data comes from ``source`` when given, or else from the Inspect logs in ``logs``, read with
+    ``parallel`` passed to Inspect's log reader. Passing both ``logs`` and ``source`` is an
+    error. Unlike ``analyze``, a failure to read the data does not raise: it is reported as an
+    ``INGEST_FAILED`` diagnostic. Returns the integrity status (``valid``, ``degraded`` or
+    ``invalid``) and the sorted diagnostics.
+    """
+
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
-    try:
-        normalized = ingest(resolved, _source(logs, parallel, source))
-        validate_profile_fields(resolved.design.independence_profiles, normalized.manifest)
-        diagnostics.extend(normalized.diagnostics)
-    except Exception as exc:
-        diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=str(exc)))
-    return IntegritySummary(
-        status=_integrity_status(diagnostics),
-        diagnostics=sorted(
-            diagnostics, key=lambda item: (item.severity, item.code, item.scope or "")
-        ),
-    )
+    _read_input(resolved, logs, parallel, source, diagnostics)
+    return _sorted_integrity(diagnostics)
 
 
 def _alpha_by_prompt(
@@ -957,6 +1033,7 @@ def _direct_interval_result(
         upper=bounds.upper,
         method=method,
         role=role,
+        varied_assumption="independence" if role == "sensitivity" else None,
         coverage_scope=(
             f"{scope_prefix}{calibration_scope}_{independence_profile}_fixed_design_mean_family"
         ),
@@ -1208,7 +1285,33 @@ def _direct_intervals(
                     interval_coverage=interval_coverage,
                 )
             )
+            if spec.single_valued_bound:
+                _add_single_valued_bound(results[-1], method, blocks, profile_id)
     return results
+
+
+def _add_single_valued_bound(
+    interval: RiskIntervalResult,
+    method: str,
+    blocks: BoundedBlocks,
+    independence_profile: str,
+) -> None:
+    """Attach M = inf_delta [U_delta + delta] for this node's own engine (#127).
+
+    U_delta is the engine's upper endpoint at endpoint alpha delta for this node alone, not
+    the family-calibrated endpoint, so M carries no multiplicity adjustment and no alpha.
+    """
+    bound = single_valued_bound(
+        lambda delta: _direct_bounds(
+            method,
+            blocks,
+            endpoint_alpha=delta,
+            independence_profile=independence_profile,
+        ).upper
+    )
+    interval.single_valued_bound = bound.value
+    interval.single_valued_bound_delta = bound.delta
+    interval.single_valued_bound_guarantee = SINGLE_VALUED_BOUND_GUARANTEE
 
 
 def _group_risks(
@@ -1975,6 +2078,13 @@ def _unclassified_assumption(share: float) -> str:
     )
 
 
+def _uncertified_base_warning(eligibility: str) -> str:
+    return (
+        f"Sensitivity analysis, not a certified bound: the judge-system interval it corrects "
+        f"is {eligibility}, and a correction cannot support more than its base."
+    )
+
+
 def _uncertified_correction_warning(gap: str, group_id: str | None = None) -> str:
     if group_id is not None:
         return (
@@ -2054,7 +2164,7 @@ def _validated_judge_calibrations(
 
     _, unmatched = judge_stratum_counts(data.observations, labels)
     scopes = _judge_scopes(plan)
-    counts: dict[_JudgeScope, dict[str, JudgeStratumCounts]] = {}
+    counts: dict[_JudgeScope, JudgeStrata] = {}
     truth_strata: dict[_JudgeScope, Any] = {}
     in_scope: set[str] = set()
     for scope in scopes:
@@ -2108,15 +2218,16 @@ def _validated_judge_calibrations(
     # equal share of the judge family budget. A single risk row consumes one share; a
     # comparison consumes the two it spans. A union over all of them therefore never
     # exceeds the declared family alpha.
-    per_calibration_alpha = family.alpha / len(scopes)
+    per_calibration_alpha = cohort_alpha_share(family.alpha, len(scopes))
     calibrations: dict[_JudgeScope, JudgeCalibration] = {}
     summaries: dict[_JudgeScope, dict[str, Any]] = {}
     for scope in scopes:
         cohort_id, group_id = scope
-        strata = counts.get(scope, {})
-        unsafe = strata.get("judge_unsafe")
-        safe = strata.get("judge_safe")
-        if unsafe is None or safe is None:
+        where = cohort_id if group_id is None else f"{cohort_id}/{group_id}"
+        outcome = calibrate_cohort(
+            counts.get(scope, NO_STRATA), scenario_id="validated", alpha=per_calibration_alpha
+        )
+        if outcome.empty_strata:
             diagnostics.append(
                 Diagnostic(
                     code="JUDGE_VALIDATION_STRATUM_EMPTY",
@@ -2132,35 +2243,21 @@ def _validated_judge_calibrations(
                 )
             )
             continue
-        try:
-            calibrations[scope] = estimate_judge_calibration(
-                scenario_id="validated",
-                unsafe_stratum=unsafe,
-                safe_stratum=safe,
-                alpha=per_calibration_alpha,
-            )
-        except ValueError as exc:
+        if outcome.calibration is None:
             diagnostics.append(
                 Diagnostic(
                     code="JUDGE_CALIBRATION_UNINFORMATIVE",
                     severity="WARNING",
-                    message=str(exc),
+                    message=str(outcome.refusal),
                     scope=cohort_id,
                 )
             )
             continue
-        summaries[scope] = {
-            "judge_unsafe": {
-                "labelled": unsafe.labelled,
-                "truly_unsafe": unsafe.truly_unsafe,
-                "stratum_size": unsafe.stratum_size,
-            },
-            "judge_safe": {
-                "labelled": safe.labelled,
-                "truly_unsafe": safe.truly_unsafe,
-                "stratum_size": safe.stratum_size,
-            },
-        }
+        calibrations[scope] = outcome.calibration
+        completed = completion_diagnostic(outcome.calibration, where)
+        if completed is not None:
+            diagnostics.append(completed)
+        summaries[scope] = outcome.strata.summary()
     return calibrations, summaries, family.alpha, truth_strata
 
 
@@ -2189,9 +2286,10 @@ def _judge_corrected_interval(
         unclassified_share=unclassified_share,
     )
     validated = calibration.source == "validated"
-    # Measured accuracies certify only a row they were measured for; elsewhere the
-    # corrected interval is a sensitivity, as an assumed one always is.
-    certified = validated and gap is None
+    # Measured accuracies certify only a row they were measured for, and never more than
+    # the row's own bounds support. Elsewhere the corrected interval is a sensitivity, as an
+    # assumed one always is.
+    certified = validated and gap is None and result.eligibility == "certifying"
     base = next((item for item in result.intervals if item.role == "primary"), None)
     base_alpha = base.family_alpha if base is not None else None
     spent = calibration.alpha if calibration.alpha is not None else judge_alpha
@@ -2221,10 +2319,21 @@ def _judge_corrected_interval(
         f"[{calibration.rho_0_lower:.6g}, {calibration.rho_0_upper:.6g}].",
     ]
     if validated:
+        if calibration.completed_strata:
+            assumptions.append(
+                "The "
+                + " and ".join(calibration.completed_strata)
+                + " judge stratum has no human label, so its range is [0, 1], which holds "
+                "with certainty; any other range is an exact Clopper-Pearson bound from "
+                "human labels drawn within its judge stratum."
+            )
+        else:
+            assumptions.append(
+                "Those two ranges are exact Clopper-Pearson bounds from human labels drawn "
+                "within each judge stratum."
+            )
         assumptions.extend(
             [
-                "Those two ranges are exact Clopper-Pearson bounds from human labels drawn "
-                "within each judge stratum.",
                 "The labelled rows are a simple random sample within their judge stratum; "
                 "this is a property of the declared collection protocol, not of the data.",
                 "Human adjudication is treated as ground truth.",
@@ -2270,6 +2379,8 @@ def _judge_corrected_interval(
     warnings: list[str] = []
     if validated and gap is not None:
         warnings.append(_uncertified_correction_warning(gap, scoped_group))
+    elif validated and not certified:
+        warnings.append(_uncertified_base_warning(result.eligibility))
     if not validated and primary_scenario is not None:
         if calibration.scenario_id != primary_scenario:
             warnings.append(
@@ -2285,6 +2396,7 @@ def _judge_corrected_interval(
             else "assumed_judge_misclassification_correction"
         ),
         role="reference" if certified else "sensitivity",
+        varied_assumption=None if certified else "judge_error",
         coverage_scope=(
             f"{result.coverage_scope}_judge_corrected"
             if result.coverage_scope
@@ -2303,6 +2415,67 @@ def _judge_corrected_interval(
         assumptions=assumptions,
         eligibility="certifying" if certified else "diagnostic",
         warnings=warnings,
+    )
+
+
+def _transported_judge_interval(
+    *,
+    result: GroupRiskResult | HierarchyRiskResult,
+    published: PublishedValidationSetSpec,
+    sensitivity_lower: float,
+) -> RiskIntervalResult | None:
+    """A true-risk sensitivity from a judge sensitivity measured on a published set.
+
+    Experimental. Only the sensitivity is transported; the false-positive rate is bounded
+    by the run's own judged rate, so the interval's lower end is zero.
+    """
+
+    if result.upper is None:
+        return None
+    corrected = transport_judge_risk(
+        observed_upper=result.upper,
+        observed_estimate=result.estimate,
+        sensitivity_lower=sensitivity_lower,
+    )
+    return RiskIntervalResult(
+        interval_id="judge_corrected_transported",
+        lower=corrected.lower,
+        upper=corrected.upper,
+        method="transported_judge_sensitivity_correction",
+        role="sensitivity",
+        varied_assumption="judge_error",
+        coverage_scope=(
+            f"{result.coverage_scope}_judge_corrected"
+            if result.coverage_scope
+            else "judge_corrected"
+        ),
+        completion_estimate_lower=corrected.completion_estimate_lower,
+        completion_estimate_upper=corrected.completion_estimate_upper,
+        raw_lower=result.lower,
+        raw_upper=result.upper,
+        calibration_method="transported_judge_calibration",
+        assumptions=[
+            "The reported estimand is true failure risk, not judge-reported failure risk.",
+            f"The judge's sensitivity is at least {sensitivity_lower:.6g}: the one-sided "
+            f"Clopper-Pearson lower bound at alpha {published.sensitivity_alpha:.6g} from "
+            f"{published.judge_flagged_unsafe} of {published.human_unsafe} human-unsafe items "
+            f"flagged on the published set {published.name!r} ({published.source}).",
+            f"Transport assumption: the same judge ({published.judge}) and rubric "
+            f"({published.rubric}), applied to this run's outputs, is at least as sensitive "
+            "on every prompt as on the published set, whose outputs came from other "
+            "generators. Nothing in this run checks it.",
+            "The published set's false-positive rate is not transported. This run's false "
+            "positives are bounded only by its own judged failures, so every judged failure "
+            "may be a false positive and the lower bound is zero.",
+            "The upper bound is the judge-system upper bound divided by the sensitivity "
+            "bound; unclassified rollouts stay completed as failures.",
+            "Human adjudication on the published set is treated as ground truth.",
+        ],
+        eligibility="diagnostic",
+        warnings=[
+            "Experimental transported judge calibration: a sensitivity analysis with no "
+            "coverage guarantee, which never decides a claim."
+        ],
     )
 
 
@@ -2407,6 +2580,77 @@ def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, 
     }
 
 
+def _declared_box(accuracy: JudgeAccuracySpec) -> JudgeAccuracyBox:
+    return JudgeAccuracyBox(
+        sensitivity_lower=accuracy.sensitivity.lower,
+        sensitivity_upper=accuracy.sensitivity.upper,
+        specificity_lower=accuracy.specificity.lower,
+        specificity_upper=accuracy.specificity.upper,
+    )
+
+
+def _composite_box(
+    members: list[JudgeSpec], accuracies: list[JudgeAccuracySpec], rule: str
+) -> JudgeAccuracyBox:
+    """An ``any`` or ``all`` composite's box from its members' declared boxes and blocks."""
+    return composite_accuracy_box(
+        [_declared_box(accuracy) for accuracy in accuracies],
+        [member.block or member.id for member in members],
+        rule,
+    )
+
+
+def _declared_scope(plan: AnalysisPlan, accuracies: list[JudgeAccuracySpec]) -> list[str] | None:
+    """The groups, in plan order, that every one of these declarations covers.
+
+    None when no declaration is scoped to groups, so they all hold on every rollout. A
+    declaration scoped to groups holds on those groups' rows only, so a box built from
+    several declarations holds only where all of them do; the list can then be empty.
+    """
+
+    if all(accuracy.groups is None for accuracy in accuracies):
+        return None
+    return [
+        group.id
+        for group in plan.groups
+        if all(accuracy.groups is None or group.id in accuracy.groups for accuracy in accuracies)
+    ]
+
+
+# A declared accuracy box, the verdict it is declared for, and the groups it holds on (None: all).
+_DeclaredBox = tuple[JudgeAccuracyBox, str, list[str] | None]
+
+
+def _primary_accuracy_box(plan: AnalysisPlan) -> _DeclaredBox | None:
+    """The declared accuracy box of the verdict that is the primary outcome, if it has one.
+
+    That is a declared judge whose score is the primary score, or an ``any`` or ``all``
+    composite whose judges all declare accuracy ranges. A ``majority`` composite has none.
+    """
+
+    name = plan.inputs.score.name
+    composite = next((item for item in plan.inputs.composites if item.id == name), None)
+    judges = {judge.id: judge for judge in plan.inputs.judges}
+    if composite is not None:
+        members = [judges[judge_id] for judge_id in composite.judges]
+        accuracies = [member.accuracy for member in members if member.accuracy is not None]
+        if composite.rule == "majority" or len(accuracies) != len(members):
+            return None
+        return (
+            _composite_box(members, accuracies, composite.rule),
+            f"composite:{composite.id}",
+            _declared_scope(plan, accuracies),
+        )
+    judge = next((item for item in plan.inputs.judges if item.score.name == name), None)
+    if judge is None or judge.accuracy is None:
+        return None
+    return (
+        _declared_box(judge.accuracy),
+        f"judge:{judge.id}",
+        _declared_scope(plan, [judge.accuracy]),
+    )
+
+
 def _apply_panel_derived_correction(
     plan: AnalysisPlan,
     risks: list[GroupRiskResult],
@@ -2448,41 +2692,21 @@ def _apply_panel_derived_correction(
             )
         )
         return None
-    # The groups every member's declaration holds on; None when no declaration is scoped.
-    scoped: list[str] | None = None
-    if any(accuracy.groups is not None for accuracy in accuracies):
-        scoped = [
-            group.id
-            for group in plan.groups
-            if all(
-                accuracy.groups is None or group.id in accuracy.groups for accuracy in accuracies
+    scoped = _declared_scope(plan, accuracies)
+    if scoped is not None and not scoped:
+        diagnostics.append(
+            Diagnostic(
+                code="PANEL_CORRECTION_NO_COMMON_GROUP",
+                severity="WARNING",
+                message=(
+                    f"the judges of composite {composite.id!r} declare their accuracies for "
+                    "no group in common, so no panel-derived correction is reported"
+                ),
+                scope=f"inputs.composites.{composite.id}",
             )
-        ]
-        if not scoped:
-            diagnostics.append(
-                Diagnostic(
-                    code="PANEL_CORRECTION_NO_COMMON_GROUP",
-                    severity="WARNING",
-                    message=(
-                        f"the judges of composite {composite.id!r} declare their accuracies for "
-                        "no group in common, so no panel-derived correction is reported"
-                    ),
-                    scope=f"inputs.composites.{composite.id}",
-                )
-            )
-            return None
-    boxes = [
-        JudgeAccuracyBox(
-            sensitivity_lower=accuracy.sensitivity.lower,
-            sensitivity_upper=accuracy.sensitivity.upper,
-            specificity_lower=accuracy.specificity.lower,
-            specificity_upper=accuracy.specificity.upper,
         )
-        for accuracy in accuracies
-    ]
-    box = composite_accuracy_box(
-        boxes, [member.block or member.id for member in members], composite.rule
-    )
+        return None
+    box = _composite_box(members, accuracies, composite.rule)
     correctable = {
         measure.id
         for measure in plan.outputs.risk_measures
@@ -2517,6 +2741,7 @@ def _apply_panel_derived_correction(
                 upper=identified.upper,
                 method="derived_panel_misclassification_correction",
                 role="sensitivity",
+                varied_assumption="judge_error",
                 coverage_scope=(
                     f"{result.coverage_scope}_panel_derived"
                     if result.coverage_scope
@@ -2643,6 +2868,7 @@ def _delta_reference_interval(
         upper=delta.upper,
         method="delta_method_judge_misclassification_correction",
         role="sensitivity",
+        varied_assumption="judge_error",
         coverage_scope=(
             f"{result.coverage_scope}_judge_corrected_delta"
             if result.coverage_scope
@@ -2720,6 +2946,47 @@ def _apply_judge_correction(
         # Hierarchy nodes are weighted means over their own prompts.
         key = (result.group_id, result.level, tuple(result.path.items()))
         return node_weights[key], "weighted_mean"
+
+    if spec.mode == "transported":
+        published = spec.published_set
+        if published is None:
+            raise ValueError("a transported inputs.judge_calibration requires a published_set")
+        sensitivity_lower = transported_sensitivity_lower(
+            judge_flagged_unsafe=published.judge_flagged_unsafe,
+            human_unsafe=published.human_unsafe,
+            alpha=published.sensitivity_alpha,
+        )
+        for result in targets:
+            interval = _transported_judge_interval(
+                result=result, published=published, sensitivity_lower=sensitivity_lower
+            )
+            if interval is not None:
+                result.intervals.append(interval)
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_CALIBRATION_TRANSPORTED",
+                severity="INFO",
+                message=(
+                    "Experimental: judge-corrected rows use a sensitivity transported from "
+                    f"{published.name!r}; they are sensitivity analyses and decide no claim"
+                ),
+                scope="inputs.judge_calibration",
+            )
+        )
+        return {
+            "mode": "transported",
+            "experimental": True,
+            "published_set": {
+                "name": published.name,
+                "source": published.source,
+                "judge": published.judge,
+                "rubric": published.rubric,
+                "human_unsafe": published.human_unsafe,
+                "judge_flagged_unsafe": published.judge_flagged_unsafe,
+                "sensitivity_alpha": published.sensitivity_alpha,
+            },
+            "sensitivity_lower": sensitivity_lower,
+        }
 
     if spec.mode == "assumed":
         calibrations = _assumed_judge_calibrations(plan)
@@ -3462,6 +3729,7 @@ def _comparison_interval(
         upper=upper,
         method=method,
         role=role,
+        varied_assumption="independence" if role == "sensitivity" else None,
         coverage_scope=(scope_prefix + f"_{independence_profile}_fixed_design_comparison_family"),
         coverage_mode=spec.coverage_mode,
         family=spec.family,
@@ -4061,13 +4329,19 @@ def _judge_corrected_comparison_interval(
         item.alpha or 0.0 for item in (candidate_calibration, baseline_calibration)
     )
     base_alpha = primary.family_alpha
-    certified = gap is None
+    certified = gap is None and result.eligibility == "certifying"
+    warnings: list[str] = []
+    if gap is not None:
+        warnings.append(_uncertified_correction_warning(gap, scoped_group))
+    elif not certified:
+        warnings.append(_uncertified_base_warning(result.eligibility))
     return RiskIntervalResult(
         interval_id="judge_corrected_validated",
         lower=lower,
         upper=upper,
         method="validated_judge_misclassification_correction",
         role="reference" if certified else "sensitivity",
+        varied_assumption=None if certified else "judge_error",
         coverage_scope=(
             f"{primary.coverage_scope}_judge_corrected"
             if primary.coverage_scope
@@ -4132,7 +4406,7 @@ def _judge_corrected_comparison_interval(
             ),
         ],
         eligibility="certifying" if certified else "diagnostic",
-        warnings=[_uncertified_correction_warning(gap, scoped_group)] if gap is not None else [],
+        warnings=warnings,
     )
 
 
@@ -4747,6 +5021,89 @@ def _noisy_valid_claim(
     )
 
 
+def _claim_judge_error_stress(
+    *,
+    claim: ClaimSpec,
+    evidence: ComparisonResult | GroupRiskResult | None,
+    status: Decision,
+    why_not: str | None,
+    measure_types: Mapping[str, str],
+    population: dict[str, dict[str, _PromptRollouts]],
+    group_weights: dict[str, dict[str, float]],
+    accuracy: _DeclaredBox | None,
+) -> JudgeErrorStressResult:
+    """Where a claim decided on judge-reported bounds tips, and whether a declared box holds it.
+
+    Diagnostic only: the result is reported beside the claim and never changes its status. A
+    box declared for groups that leave the claim's group out is not applied to it.
+    """
+
+    def skipped(reason: str) -> JudgeErrorStressResult:
+        return JudgeErrorStressResult(applicable=False, reason=reason)
+
+    if claim.comparison:
+        return skipped(
+            "comparison claims are not stressed: the judge's accuracy may differ between arms"
+        )
+    if (
+        not isinstance(evidence, GroupRiskResult)
+        or evidence.lower is None
+        or evidence.upper is None
+    ):
+        return skipped("the claim has no complete bounds")
+    if why_not is not None:
+        return skipped(why_not)
+    measure_type = measure_types[evidence.measure_id]
+    if measure_type not in _JUDGE_CORRECTABLE_MEASURES:
+        return skipped(
+            f"a {measure_type} measure does not carry the judge's per-prompt error model over "
+            "to the row"
+        )
+    share = _unclassified_share(
+        population.get(evidence.cohort_id, {}), group_weights[evidence.group_id], measure_type
+    )
+    if accuracy is not None and accuracy[2] is not None and evidence.group_id not in accuracy[2]:
+        accuracy = None
+    stress = stress_verdict(
+        judge_reported_lower=evidence.lower,
+        judge_reported_upper=evidence.upper,
+        acceptable_upper=claim.acceptable_upper,
+        unacceptable_lower=claim.unacceptable_lower,
+        box=accuracy[0] if accuracy is not None else None,
+        unclassified_share=share,
+    )
+    box, source = (accuracy[0], accuracy[1]) if accuracy is not None else (None, None)
+    stressed = stress.stressed
+    return JudgeErrorStressResult(
+        applicable=True,
+        judge_reported_lower=evidence.lower,
+        judge_reported_upper=evidence.upper,
+        unclassified_share=share,
+        pass_sensitivity_at_perfect_specificity=(
+            stress.pass_line.sensitivity_at_perfect_specificity
+        ),
+        pass_specificity_at_perfect_sensitivity=(
+            stress.pass_line.specificity_at_perfect_sensitivity
+        ),
+        fail_sensitivity_at_perfect_specificity=(
+            stress.fail_line.sensitivity_at_perfect_specificity
+        ),
+        fail_specificity_at_perfect_sensitivity=(
+            stress.fail_line.specificity_at_perfect_sensitivity
+        ),
+        accuracy_source=source,
+        sensitivity_lower=box.sensitivity_lower if box else None,
+        sensitivity_upper=box.sensitivity_upper if box else None,
+        specificity_lower=box.specificity_lower if box else None,
+        specificity_upper=box.specificity_upper if box else None,
+        stressed_status=stressed.verdict if stressed else None,
+        true_risk_lower=stressed.true_risk_lower if stressed else None,
+        true_risk_upper=stressed.true_risk_upper if stressed else None,
+        identified=stressed.identified if stressed else None,
+        robust=stressed.verdict == status if stressed else None,
+    )
+
+
 def _claims(
     plan: AnalysisPlan,
     data: NormalizedData,
@@ -4770,6 +5127,10 @@ def _claims(
     )
     group_weights = {group.id: group.weights for group in data.groups}
     measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
+    stress_population = (
+        population or _labelled_population(plan, data) if plan.report.judge_error_stress else {}
+    )
+    stress_box = _primary_accuracy_box(plan) if plan.report.judge_error_stress else None
     results: list[ClaimResult] = []
     corrected_claims: list[str] = []
     uncorrected_claims: list[str] = []
@@ -4781,12 +5142,13 @@ def _claims(
         else:
             evidence = risk_index.get((str(claim.cohort), str(claim.group), str(claim.measure)))
             ref = f"risk:{claim.cohort}:{claim.group}:{claim.measure}"
-        eligible = bool(
-            integrity_valid
-            and evidence is not None
-            and evidence.eligibility == "certifying"
-            and plan.analysis.intent == "confirmatory"
-        )
+        certifying = evidence is not None and evidence.eligibility == "certifying"
+        exploratory = plan.analysis.intent == "exploratory"
+        # An exploratory analysis certifies nothing, but its reader still needs what the bounds
+        # say at the plan's thresholds. Such a claim is decided as a confirmatory analysis would
+        # decide it, the result is kept as its descriptive status, and the claim stays
+        # INCONCLUSIVE below.
+        eligible = bool(integrity_valid and certifying)
         lower = evidence.lower if evidence else None
         upper = evidence.upper if evidence else None
         estimate = evidence.estimate if evidence else None
@@ -4911,14 +5273,52 @@ def _claims(
                 "Bounds were computed but are ineligible for certification because data "
                 "integrity is invalid."
             ]
-        if plan.analysis.intent == "exploratory":
-            if evidence is not None and evidence.eligibility == "certifying":
+        descriptive_status: Decision | None = None
+        if exploratory:
+            if certifying:
+                decided = reasons
                 reasons = [
                     "Bounds were computed but this post hoc exploratory analysis is not "
                     "eligible for certification."
                 ]
+                if eligible:
+                    descriptive_status = status
+                    reasons.append(
+                        f"Descriptive only, not a certification: a confirmatory analysis of "
+                        f"these bounds at the plan's thresholds would give {status}."
+                    )
+                    reasons.extend(decided)
             else:
                 reasons.append("Exploratory analyses cannot produce a safety pass.")
+            status = "INCONCLUSIVE"
+        # ORDER MATTERS: after the exploratory demotion above, so `status` is the final one.
+        stress = None
+        if plan.report.judge_error_stress:
+            stress = _claim_judge_error_stress(
+                claim=claim,
+                evidence=evidence,
+                status=status,
+                why_not=(
+                    "the analysis is exploratory, so the claim is not decided on its bounds"
+                    if exploratory
+                    else "the claim was not decided on its bounds: they are not certifying, or "
+                    "data integrity is invalid"
+                    if not eligible
+                    else "the noisy-but-valid test already accounts for judge error"
+                    if claim.method == "noisy_valid_test"
+                    else "the claim is decided on a validated judge correction, which already "
+                    "accounts for judge error"
+                    if correction is not None
+                    else "the plan's validated calibration leaves the claim INCONCLUSIVE rather "
+                    "than deciding it on judge-reported risk"
+                    if validated_judge
+                    else None
+                ),
+                measure_types=measure_types,
+                population=stress_population,
+                group_weights=group_weights,
+                accuracy=stress_box,
+            )
         if correction_note is not None:
             reasons.insert(0, correction_note)
             if alpha != family.alpha:
@@ -4933,6 +5333,7 @@ def _claims(
                 status=status,
                 statistical_status=status,
                 policy_status=status,
+                descriptive_status=descriptive_status,
                 estimate=estimate,
                 lower=lower,
                 upper=upper,
@@ -4945,6 +5346,7 @@ def _claims(
                 evidence_refs=evidence_refs,
                 reasons=reasons,
                 warnings=list(evidence.warnings) if evidence else [],
+                judge_error_stress=stress,
             )
         )
     if corrected_claims:
@@ -5016,34 +5418,136 @@ def _resolved_design(data: NormalizedData, hierarchy: list[str]) -> list[dict[st
     return rows
 
 
-def analyze(
-    *,
-    plan: AnalysisPlan | str | Path,
-    logs: LogInput = None,
-    parallel: bool | int = False,
-    source: EvaluationSource | None = None,
-) -> SafetyReport:
-    resolved = _coerce_plan(plan)
-    diagnostics = validate_plan_references(resolved)
-    data = ingest(resolved, _source(logs, parallel, source))
-    validate_profile_fields(resolved.design.independence_profiles, data.manifest)
-    diagnostics.extend(data.diagnostics)
-    estimates = _prompt_estimates(resolved, data, diagnostics)
-    hierarchy_nodes = _hierarchy_nodes(resolved, data)
+def _report_frame(plan: AnalysisPlan) -> dict[str, Any]:
+    """The report fields that come from the plan alone, whether or not its input was read."""
+
+    return {
+        "package_version": __version__,
+        "analysis": {
+            **plan.analysis.model_dump(mode="json"),
+            "plan_sha256": canonical_plan_hash(plan),
+        },
+        "scope": {
+            "design": "fixed",
+            "randomness": "stochastic rollouts within fixed prompts",
+            "estimand": plan.inputs.estimand,
+            "disclaimer": (
+                "Results apply to the declared fixed evaluation set and specified "
+                "stochastic rollout process. They do not estimate failure prevalence "
+                "over an external population of prompts or establish safety for omitted "
+                "hazards or deployment conditions."
+            ),
+        },
+        "presentation": {"include_decisions": plan.report.include_decisions},
+        "multiplicity": [family.model_dump(mode="json") for family in plan.multiplicity.families],
+    }
+
+
+def _design_frame(plan: AnalysisPlan) -> dict[str, Any]:
+    """The report's design fields that come from the plan alone."""
+
+    return {
+        "manifest": report_path(plan.inputs.design_manifest, plan),
+        "hierarchy": plan.design.hierarchy,
+        "independence_profiles": {
+            profile_id: profile.model_dump(mode="json")
+            for profile_id, profile in plan.design.independence_profiles.items()
+        },
+    }
+
+
+def _unread_input_report(plan: AnalysisPlan, diagnostics: list[Diagnostic]) -> SafetyReport:
+    """The report of an analysis whose input could not be read.
+
+    The diagnostics carry the ``INGEST_FAILED`` error, so integrity is invalid. The report has
+    no observations, estimates or comparisons, and every claim is INCONCLUSIVE, so that the
+    failure is written down and audited like any other invalid analysis.
+    """
+
+    families = {family.id: family for family in plan.multiplicity.families}
+    claims = [
+        ClaimResult(
+            claim_id=claim.id,
+            title=claim.title,
+            status="INCONCLUSIVE",
+            statistical_status="INCONCLUSIVE",
+            policy_status="INCONCLUSIVE",
+            acceptable_upper=claim.acceptable_upper,
+            unacceptable_lower=claim.unacceptable_lower,
+            alpha=families[claim.family].alpha if claim.family in families else None,
+            multiplicity_family=claim.family,
+            method="unavailable",
+            mandatory=claim.mandatory,
+            evidence_refs=[
+                f"comparison:{claim.comparison}"
+                if claim.comparison
+                else f"risk:{claim.cohort}:{claim.group}:{claim.measure}"
+            ],
+            reasons=["The analysis input could not be read; see the INGEST_FAILED diagnostic."],
+        )
+        for claim in sorted(plan.claims, key=lambda item: item.id)
+    ]
+    report = SafetyReport(
+        **_report_frame(plan),
+        provenance={"source_format": {}, "sources": []},
+        integrity=_sorted_integrity(diagnostics),
+        design={
+            **_design_frame(plan),
+            "manifest_sha256": None,
+            "prompt_count": None,
+            "groups": [],
+        },
+        cohorts=[],
+        prompt_estimates=[],
+        group_risks=[],
+        comparisons=[],
+        claims=claims,
+        policy_events=[],
+        decision=roll_up(
+            [claim.status for claim in claims if claim.mandatory],
+            integrity_valid=False,
+            zero_tolerance_failure=False,
+            confirmatory=plan.analysis.intent == "confirmatory",
+        ),
+    )
+    report._resolved_plan = report_plan(plan)
+    return report
+
+
+@dataclass
+class _AnalysisCore:
+    """What one plan decides over one normalized source, before the report is assembled."""
+
+    estimates: list[PromptEstimate]
+    risks: list[GroupRiskResult]
+    hierarchy_risks: list[HierarchyRiskResult]
+    comparisons: list[ComparisonResult]
+    judge_calibration_summary: dict[str, Any] | None
+    panel_correction: dict[str, Any] | None
+    comparison_sets: list[ComparisonSetResult]
+    integrity_status: Literal["valid", "degraded", "invalid"]
+    claims: list[ClaimResult]
+
+
+def _analysis_core(
+    plan: AnalysisPlan, data: NormalizedData, diagnostics: list[Diagnostic]
+) -> _AnalysisCore:
+    estimates = _prompt_estimates(plan, data, diagnostics)
+    hierarchy_nodes = _hierarchy_nodes(plan, data)
     direct_context = _direct_mean_context(
-        resolved,
+        plan,
         data,
         nodes=hierarchy_nodes,
     )
     risks = _group_risks(
-        resolved,
+        plan,
         data,
         estimates,
         diagnostics,
         direct_context=direct_context,
     )
     hierarchy_risks = _hierarchy_risks(
-        resolved,
+        plan,
         data,
         hierarchy_nodes,
         estimates,
@@ -5051,34 +5555,181 @@ def analyze(
         direct_context,
     )
     _project_hierarchy_regions(
-        resolved,
+        plan,
         data,
         hierarchy_nodes,
         risks,
         hierarchy_risks,
         diagnostics,
     )
-    comparisons = _comparisons(resolved, data, estimates, diagnostics)
+    comparisons = _comparisons(plan, data, estimates, diagnostics)
     # Applied last so it corrects the bounds that are actually displayed, after both
     # the hierarchy and comparison region projections have settled.
     judge_calibration_summary = _apply_judge_correction(
-        resolved, data, hierarchy_nodes, risks, hierarchy_risks, comparisons, diagnostics
+        plan, data, hierarchy_nodes, risks, hierarchy_risks, comparisons, diagnostics
     )
-    panel_correction = _apply_panel_derived_correction(
-        resolved, risks, hierarchy_risks, diagnostics
-    )
-    comparison_sets = _comparison_set_results(resolved, comparisons, risks)
+    panel_correction = _apply_panel_derived_correction(plan, risks, hierarchy_risks, diagnostics)
+    comparison_sets = _comparison_set_results(plan, comparisons, risks)
     integrity_status = _integrity_status(diagnostics)
-    integrity_certifiable = integrity_status != "invalid"
     claims = _claims(
-        resolved,
+        plan,
         data,
         risks,
         comparisons,
-        integrity_certifiable,
+        integrity_status != "invalid",
         diagnostics,
         judge_calibration_summary,
     )
+    return _AnalysisCore(
+        estimates=estimates,
+        risks=risks,
+        hierarchy_risks=hierarchy_risks,
+        comparisons=comparisons,
+        judge_calibration_summary=judge_calibration_summary,
+        panel_correction=panel_correction,
+        comparison_sets=comparison_sets,
+        integrity_status=integrity_status,
+        claims=claims,
+    )
+
+
+def _judge_plan(plan: AnalysisPlan, judge: JudgeSpec) -> AnalysisPlan:
+    """The plan as it would read with this judge as its only, primary outcome.
+
+    The plan's judge calibration validates its primary outcome, not this judge, so it is
+    left out, and so is the panel, which a single judge's run has no use for.
+    """
+
+    inputs = plan.inputs.model_copy(
+        update={
+            "score": judge.score,
+            "judges": [],
+            "composites": [],
+            "judge_calibration": None,
+            "panel_groups": None,
+        }
+    )
+    outputs = plan.outputs.model_copy(update={"judge_claims": False})
+    return plan.model_copy(update={"inputs": inputs, "outputs": outputs})
+
+
+def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeInputs) -> None:
+    """Decide every claim again on each declared judge's verdicts, beside the primary's.
+
+    Each judge's run is the analysis the plan would give with that judge as its primary
+    outcome, over the same rollouts, so comparing judge configurations is one analysis.
+    """
+
+    by_id = {judge.id: judge for judge in plan.inputs.judges}
+    for entry in panel["judges"]:
+        judge_plan = _judge_plan(plan, by_id[entry["id"]])
+        diagnostics = validate_plan_references(judge_plan)
+        data = normalize(
+            judge_plan, inputs.manifest.copy(), copy.deepcopy(inputs.groups), inputs.source
+        )
+        diagnostics.extend(data.diagnostics)
+        core = _analysis_core(judge_plan, data, diagnostics)
+        entry["integrity"] = core.integrity_status
+        entry["claims"] = [
+            {
+                "claim_id": claim.claim_id,
+                "status": claim.status,
+                "estimate": claim.estimate,
+                "lower": claim.lower,
+                "upper": claim.upper,
+                "method": claim.method,
+            }
+            for claim in sorted(core.claims, key=lambda item: item.claim_id)
+        ]
+
+
+def _scorer_configurations(value: Any, score_name: str) -> list[Any] | None:
+    """The configurations a run records for the scorer named like a judge's score.
+
+    None when the run records no scorers at all, an empty list when none has that name.
+    """
+
+    if value is None or (isinstance(value, float) and np.isnan(value)):
+        return None
+    scorers = json.loads(value) if isinstance(value, str) else value
+    if not isinstance(scorers, list):
+        return None
+    return [
+        {key: item[key] for key in sorted(item) if key != "name"}
+        for item in scorers
+        if isinstance(item, dict) and item.get("name") == score_name
+    ]
+
+
+def _add_judge_configurations(
+    panel: dict[str, Any], plan: AnalysisPlan, data: NormalizedData, source_data: SourceData
+) -> None:
+    """Record, per judge and cohort, the scorer configurations and model roles of its runs.
+
+    The values are the distinct ones the cohort's runs record, sorted by their canonical
+    form; a cohort whose runs record none says so with null.
+    """
+
+    runs_by_key = {run.run_key: run for run in source_data.runs}
+    by_id = {judge.id: judge for judge in plan.inputs.judges}
+    for entry in panel["judges"]:
+        score_name = by_id[entry["id"]].score.name
+        configuration: dict[str, Any] = {}
+        for summary in sorted(data.cohorts, key=lambda item: item["cohort_id"]):
+            scorers: dict[str, Any] = {}
+            roles: dict[str, Any] = {}
+            for run_key in summary["run_keys"]:
+                attributes = runs_by_key[run_key].attributes
+                found = _scorer_configurations(attributes.get("scorers"), score_name)
+                if found is not None:
+                    for item in found:
+                        scorers[sha256_value(item)] = item
+                role_value = attributes.get("model_roles")
+                if isinstance(role_value, str):
+                    role_value = json.loads(role_value)
+                if isinstance(role_value, dict):
+                    roles[sha256_value(role_value)] = role_value
+            configuration[summary["cohort_id"]] = {
+                "scorer": [scorers[key] for key in sorted(scorers)] or None,
+                "model_roles": [roles[key] for key in sorted(roles)] or None,
+            }
+        entry["configuration"] = configuration
+
+
+def analyze(
+    *,
+    plan: AnalysisPlan | str | Path,
+    logs: LogInput = None,
+    parallel: bool | int = False,
+    source: EvaluationSource | None = None,
+) -> SafetyReport:
+    """Run the analysis a plan declares on its evaluation data and return the safety report.
+
+    ``plan`` is an ``AnalysisPlan`` or the path of a plan file, read with ``load_plan``. The
+    data comes from ``source`` when given, or else from the Inspect logs in ``logs``, read with
+    ``parallel`` passed to Inspect's log reader. Passing both ``logs`` and ``source`` is an
+    error. The report holds the prompt-level estimates, group and hierarchy risk bounds,
+    comparisons, claims with their pass, fail or inconclusive status, and the overall
+    decision. Its results apply to the declared fixed evaluation set, not to a wider prompt
+    population. Write it to disk with ``SafetyReport.write``. Raises when the data cannot be read;
+    ``validate`` reports that as a diagnostic instead.
+    """
+
+    resolved = _coerce_plan(plan)
+    diagnostics = validate_plan_references(resolved)
+    read = _read_input(resolved, logs, parallel, source, diagnostics)
+    if read is None:
+        return _unread_input_report(resolved, diagnostics)
+    data, judge_inputs = read
+    core = _analysis_core(resolved, data, diagnostics)
+    estimates = core.estimates
+    risks = core.risks
+    hierarchy_risks = core.hierarchy_risks
+    comparisons = core.comparisons
+    judge_calibration_summary = core.judge_calibration_summary
+    comparison_sets = core.comparison_sets
+    integrity_certifiable = core.integrity_status != "invalid"
+    claims = core.claims
     events = _policy_events(resolved, data)
     decision = roll_up(
         [claim.status for claim in claims if claim.mandatory],
@@ -5086,19 +5737,15 @@ def analyze(
         zero_tolerance_failure=bool(events),
         confirmatory=resolved.analysis.intent == "confirmatory",
     )
-    integrity = IntegritySummary(
-        status=integrity_status,
-        diagnostics=sorted(
-            diagnostics, key=lambda item: (item.severity, item.code, item.scope or "")
-        ),
-    )
+    integrity = _sorted_integrity(diagnostics)
     judge_panel = _judge_panel_summary(resolved, data)
-    if judge_panel is not None and panel_correction is not None:
-        judge_panel["derived_correction"] = panel_correction
-    plan_hash = canonical_plan_hash(resolved)
+    if judge_panel is not None and core.panel_correction is not None:
+        judge_panel["derived_correction"] = core.panel_correction
+    if judge_panel is not None and judge_inputs is not None:
+        _add_judge_claims(judge_panel, resolved, judge_inputs)
+        _add_judge_configurations(judge_panel, resolved, data, judge_inputs.source)
     report = SafetyReport(
-        package_version=__version__,
-        analysis={**resolved.analysis.model_dump(mode="json"), "plan_sha256": plan_hash},
+        **_report_frame(resolved),
         provenance={
             "source_format": data.source_format,
             "sources": [
@@ -5115,27 +5762,10 @@ def analyze(
             ),
             **({"judge_panel": judge_panel} if judge_panel else {}),
         },
-        scope={
-            "design": "fixed",
-            "randomness": "stochastic rollouts within fixed prompts",
-            "estimand": resolved.inputs.estimand,
-            "disclaimer": (
-                "Results apply to the declared fixed evaluation set and specified "
-                "stochastic rollout process. They do not estimate failure prevalence "
-                "over an external population of prompts or establish safety for omitted "
-                "hazards or deployment conditions."
-            ),
-        },
-        presentation={"include_decisions": resolved.report.include_decisions},
         integrity=integrity,
         design={
-            "manifest": report_path(resolved.inputs.design_manifest, resolved),
+            **_design_frame(resolved),
             "manifest_sha256": sha256_value(data.manifest.to_dict(orient="records")),
-            "hierarchy": resolved.design.hierarchy,
-            "independence_profiles": {
-                profile_id: profile.model_dump(mode="json")
-                for profile_id, profile in resolved.design.independence_profiles.items()
-            },
             "prompt_count": len(data.manifest),
             "groups": [
                 {"id": group.id, "title": group.title, "prompt_count": len(group.prompt_ids)}
@@ -5158,7 +5788,6 @@ def analyze(
         ),
         comparisons=sorted(comparisons, key=lambda item: item.comparison_id),
         comparison_sets=comparison_sets,
-        multiplicity=[family.model_dump(mode="json") for family in resolved.multiplicity.families],
         claims=sorted(claims, key=lambda item: item.claim_id),
         policy_events=events,
         decision=decision,

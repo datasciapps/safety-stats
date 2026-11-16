@@ -6,6 +6,7 @@ absent, so the plans written before it keep their hash and their report bytes.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -14,7 +15,9 @@ from pydantic import ValidationError
 
 from inspect_safety_stats.config.loader import canonical_plan_hash
 from inspect_safety_stats.config.models import AnalysisPlan
+from inspect_safety_stats.generative.schema import load_generative_plan
 from inspect_safety_stats.validate.plan import validate_plan_references
+from tests.generative_fixtures import SEEDS, base_plan, materialize
 
 BODY = """
 analysis: {id: scoped, title: Scoped, intent: exploratory}
@@ -115,3 +118,41 @@ def test_a_scope_naming_an_undeclared_group_is_a_plan_reference_error() -> None:
             "inputs.judges.first.accuracy references unknown groups: typo",
         ),
     ]
+
+
+def test_a_transported_calibration_takes_no_group_scope() -> None:
+    data = yaml.safe_load(BODY)
+    data["inputs"]["judge_calibration"] = {
+        "mode": "transported",
+        "groups": ["harm"],
+        "published_set": {
+            "name": "set",
+            "source": "paper",
+            "judge": "judge",
+            "rubric": "rubric",
+            "human_unsafe": 10,
+            "judge_flagged_unsafe": 9,
+        },
+    }
+    with pytest.raises(ValidationError, match="family and groups"):
+        AnalysisPlan.model_validate(data)
+
+
+def test_a_generative_plan_rejects_a_group_scoped_calibration(tmp_path: Path) -> None:
+    plan = base_plan()
+    plan["judge_calibration"] = {
+        "mode": "assumed",
+        "primary": "declared",
+        "groups": ["harm"],
+        "scenarios": [
+            {
+                "id": "declared",
+                "rho_1": {"lower": 0.9, "upper": 1.0},
+                "rho_0": {"lower": 0.0, "upper": 0.1},
+            }
+        ],
+    }
+    # A generative plan declares no groups, and its own strict calibration spec has no field
+    # for them, so the scope is an unknown key there.
+    with pytest.raises(ValidationError, match=r"judge_calibration\.groups\n  Extra inputs"):
+        load_generative_plan(materialize(tmp_path, plan, SEEDS))
