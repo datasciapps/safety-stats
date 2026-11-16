@@ -436,6 +436,129 @@ def fixed_design_planning_command(
     typer.echo(f"One-sided alpha per direction: {local_alpha:g}")
 
 
+class ComparisonUnitOption(str, Enum):
+    rollout = "rollout"
+    pair = "pair"
+    prompt_cluster = "prompt_cluster"
+
+
+_COMPARISON_UNITS: dict[ComparisonUnitOption, Literal["rollout", "pair", "prompt_cluster"]] = {
+    ComparisonUnitOption.rollout: "rollout",
+    ComparisonUnitOption.pair: "pair",
+    ComparisonUnitOption.prompt_cluster: "prompt_cluster",
+}
+
+
+class CoverageModeOption(str, Enum):
+    two_sided = "two_sided"
+    per_direction = "per_direction"
+
+
+@plan_app.command("comparison")
+def comparison_planning_command(
+    manifest: Annotated[Path, typer.Option("--manifest", exists=True, dir_okay=False)],
+    margin: Annotated[float, typer.Option("--margin", min=-1.0, max=1.0)],
+    alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
+    power: Annotated[float, typer.Option("--power", min=0.0, max=1.0)] = 0.9,
+    candidate_rollouts: Annotated[int | None, typer.Option("--candidate-rollouts", min=1)] = None,
+    baseline_rollouts: Annotated[int | None, typer.Option("--baseline-rollouts", min=1)] = None,
+    weights: Annotated[
+        WeightStrategyOption, typer.Option("--weights")
+    ] = WeightStrategyOption.nested_equal,
+    hierarchy: Annotated[str, typer.Option("--hierarchy")] = "task_id,question_id,prompt_id",
+    weight_column: Annotated[str | None, typer.Option("--weight-column")] = None,
+    independence_unit: Annotated[
+        ComparisonUnitOption, typer.Option("--independence-unit")
+    ] = ComparisonUnitOption.rollout,
+    coverage_mode: Annotated[
+        CoverageModeOption, typer.Option("--coverage-mode")
+    ] = CoverageModeOption.two_sided,
+    family_size: Annotated[int, typer.Option("--family-size", min=1)] = 1,
+) -> None:
+    """Risk differences a two-arm design resolves at a margin (experimental).
+
+    The difference is candidate minus baseline risk over the manifest's weighted design.
+    Reports the largest true difference whose upper bound falls at or below --margin, and
+    the smallest whose lower bound reaches it, each with --power, under the Hoeffding
+    guarantee of the weighted_hoeffding comparison. Rollout counts per arm come from the
+    manifest's expected_rollouts column unless --candidate-rollouts or --baseline-rollouts
+    override them. --independence-unit pair plans for a profile block_by [prompt_id, repeat]
+    with joint coupling; prompt_cluster for block_by [prompt_id] with joint coupling.
+    """
+
+    from inspect_safety_stats.stats.planning import comparison_resolvable_differences
+
+    # As in analyze: two_sided splits each claim's share of the family alpha between the
+    # lower and the upper bound; per_direction spends it on each.
+    local_alpha = alpha / family_size
+    direction_alpha = (
+        local_alpha / 2 if coverage_mode is CoverageModeOption.two_sided else local_alpha
+    )
+    frame, weight_values = _planning_design(manifest, weights, hierarchy, weight_column)
+    try:
+        expected: list[int] | None = (
+            [int(value) for value in frame["expected_rollouts"]]
+            if "expected_rollouts" in frame
+            else None
+        )
+        if expected is None and (candidate_rollouts is None or baseline_rollouts is None):
+            raise ValueError(
+                "the design manifest has no expected_rollouts column; pass "
+                "--candidate-rollouts and --baseline-rollouts for uniform counts"
+            )
+        candidate_trials = (
+            [candidate_rollouts] * len(frame) if candidate_rollouts is not None else expected
+        )
+        baseline_trials = (
+            [baseline_rollouts] * len(frame) if baseline_rollouts is not None else expected
+        )
+        if candidate_trials is None or baseline_trials is None:
+            raise ValueError("rollout counts could not be resolved for both arms")
+        plan = comparison_resolvable_differences(
+            candidate_trials,
+            baseline_trials,
+            weight_values,
+            margin=margin,
+            alpha_lower=direction_alpha,
+            alpha_upper=direction_alpha,
+            power=power,
+            independence_unit=_COMPARISON_UNITS[independence_unit],
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Prompts: {len(frame)}")
+    typer.echo(f"Candidate rollouts: {sum(candidate_trials)}")
+    typer.echo(f"Baseline rollouts: {sum(baseline_trials)}")
+    typer.echo(f"Independence unit: {plan.independence_unit}")
+    typer.echo(f"Independent blocks: {plan.block_count}")
+    typer.echo(f"Effective sample size: {plan.effective_sample_size:.8g}")
+    typer.echo(f"Margin: {margin:.8g}")
+    typer.echo(f"Target power: {power:.8g}")
+    typer.echo(
+        "Largest difference with upper bound at or below the margin: "
+        + (
+            "unattainable"
+            if plan.maximum_supportable_difference is None
+            else f"{plan.maximum_supportable_difference:.8g}"
+        )
+    )
+    typer.echo(
+        "Smallest difference with lower bound at or above the margin: "
+        + (
+            "unattainable"
+            if plan.minimum_detectable_difference is None
+            else f"{plan.minimum_detectable_difference:.8g}"
+        )
+    )
+    if family_size > 1:
+        typer.echo(
+            f"Local alpha: {local_alpha:.8g} (Bonferroni share of {alpha:g} "
+            f"across {family_size} simultaneous claims)"
+        )
+    typer.echo(f"Coverage mode: {coverage_mode.value}")
+    typer.echo(f"One-sided alpha per direction: {direction_alpha:g}")
+
+
 @schema_app.command("plan")
 def plan_schema_command() -> None:
     """Print the JSON schema for analysis plans."""
