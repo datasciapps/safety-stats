@@ -30,6 +30,18 @@ app.add_typer(schema_app, name="schema")
 app.add_typer(generative_app, name="generative")
 
 
+DecisionPolicyOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--decision-policy",
+        exists=True,
+        dir_okay=False,
+        help=(
+            "A decision policy whose thresholds replace the plan's for the claims it sets, "
+            "without changing the plan's hash (experimental; docs/decision-policy.md)."
+        ),
+    ),
+]
 RunsOption = Annotated[
     Path | None,
     typer.Option(
@@ -87,6 +99,7 @@ def analyze_command(
         bool, typer.Option("--decision-exit-codes/--no-decision-exit-codes")
     ] = False,
     allow_invalid: Annotated[bool, typer.Option("--allow-invalid")] = False,
+    decision_policy: DecisionPolicyOption = None,
 ) -> None:
     """Analyze completed Inspect logs or rollout files against a plan and write the report."""
 
@@ -95,7 +108,11 @@ def analyze_command(
 
     try:
         report = run_analysis(
-            plan=plan, logs=log_input, parallel=parallel or False, source=source
+            plan=plan,
+            logs=log_input,
+            parallel=parallel or False,
+            source=source,
+            decision_policy=decision_policy,
         )
         path = report.write(output, overwrite=overwrite)
     except Exception as exc:
@@ -132,13 +149,20 @@ def validate_command(
     runs: RunsOption = None,
     rollouts: RolloutsOption = None,
     parallel: Annotated[int, typer.Option("--parallel", min=0)] = 0,
+    decision_policy: DecisionPolicyOption = None,
 ) -> None:
     """Check logs or rollout files against a plan (manifest, cohorts, rollouts, scores)."""
 
     log_input, source = _source_arguments(logs, runs, rollouts)
     from inspect_safety_stats.api import validate as run_validation
 
-    result = run_validation(plan=plan, logs=log_input, parallel=parallel or False, source=source)
+    result = run_validation(
+        plan=plan,
+        logs=log_input,
+        parallel=parallel or False,
+        source=source,
+        decision_policy=decision_policy,
+    )
     for diagnostic in result.diagnostics:
         scope = f" [{diagnostic.scope}]" if diagnostic.scope else ""
         typer.echo(f"{diagnostic.severity} {diagnostic.code}{scope}: {diagnostic.message}")
@@ -436,6 +460,15 @@ def report_schema_command() -> None:
     typer.echo(json.dumps(SafetyReport.model_json_schema(), indent=2, sort_keys=True))
 
 
+@schema_app.command("decision-policy")
+def decision_policy_schema_command() -> None:
+    """Print the JSON schema for decision policies (experimental)."""
+
+    from inspect_safety_stats.config.decision_policy import DecisionPolicy
+
+    typer.echo(json.dumps(DecisionPolicy.model_json_schema(), indent=2, sort_keys=True))
+
+
 @app.command("version")
 def version_command() -> None:
     """Print the package version."""
@@ -446,12 +479,28 @@ def version_command() -> None:
 @app.command("hash-plan")
 def hash_plan_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
+    inference: Annotated[
+        bool,
+        typer.Option(
+            "--inference",
+            help=(
+                "Print the inference hash instead: the plan's hash without the thresholds a "
+                "decision policy may set, which a decision policy names (experimental)."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Print a plan's canonical SHA-256, for registering a frozen plan."""
 
     from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
 
-    typer.echo(canonical_plan_hash(load_plan(plan)))
+    resolved = load_plan(plan)
+    if inference:
+        from inspect_safety_stats.config.decision_policy import inference_plan_hash
+
+        typer.echo(inference_plan_hash(resolved))
+    else:
+        typer.echo(canonical_plan_hash(resolved))
 
 
 @generative_app.command("compile")

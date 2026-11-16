@@ -580,6 +580,60 @@ def _claim_nodes(
     return result
 
 
+def _decision_policy_lines(report: SafetyReport, places: int) -> list[str]:
+    """The decision policy's versions and the thresholds each claim was decided at."""
+
+    record = report.decision_policy
+    if record is None:
+        return []
+    if record.applied:
+        summary = (
+            "Claim thresholds come from a decision policy kept apart from the plan "
+            "(experimental). Thresholds do not enter the bounds, so a policy set after the run "
+            "leaves the plan's hash and the verdicts' certification as they are."
+        )
+    else:
+        summary = (
+            "A decision policy was given but not applied, because it failed a check (see the "
+            "`DECISION_POLICY_*` diagnostics). The claims keep the plan's thresholds."
+        )
+    lines = [
+        "",
+        "## Decision policy",
+        "",
+        summary,
+        "",
+        f"**Inference plan SHA-256:** `{_escape(record.inference_plan_sha256)}`  ",
+        f"**Policy SHA-256:** `{_escape(record.policy_sha256)}`",
+        "",
+        "| Version | Set at | After first evaluation | Claims | Reason |",
+        "|---|---|---|---|---|",
+    ]
+    for version in record.versions:
+        after = {True: "yes", False: "no", None: "unknown"}[version.set_after_first_evaluation]
+        lines.append(
+            f"| `{_escape(version.id)}` | {_escape(version.set_at)} | {after} | "
+            + ", ".join(f"`{_escape(claim)}`" for claim in version.thresholds)
+            + f" | {_escape(version.reason) if version.reason else '—'} |"
+        )
+    lines.extend(
+        [
+            "",
+            "| Claim | Acceptable | Unacceptable | Set by | Plan's acceptable | "
+            "Plan's unacceptable |",
+            "|---|---:|---:|---|---:|---:|",
+        ]
+    )
+    for claim in record.claims:
+        lines.append(
+            f"| `{_escape(claim.claim_id)}` | {_number(claim.acceptable_upper, places)} | "
+            f"{_number(claim.unacceptable_lower, places)} | `{_escape(claim.set_by)}` | "
+            f"{_number(claim.plan_acceptable_upper, places)} | "
+            f"{_number(claim.plan_unacceptable_lower, places)} |"
+        )
+    return lines
+
+
 def _markdown(report: SafetyReport) -> str:
     places = int(report._resolved_plan.get("report", {}).get("decimal_places", 6))
     include_decisions = bool(report.presentation.get("include_decisions", True))
@@ -645,6 +699,7 @@ def _markdown(report: SafetyReport) -> str:
                 ]
             )
         lines.extend(_profile_verdict_lines(mandatory, places))
+    lines.extend(_decision_policy_lines(report, places))
     lines.extend(_judge_error_stress_lines(report, places, include_decisions))
     lines.extend(_localisation_lines(report, places, include_decisions))
     lines.extend(["", "## Data integrity", ""])

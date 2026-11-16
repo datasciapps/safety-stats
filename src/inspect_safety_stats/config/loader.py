@@ -129,6 +129,12 @@ def report_plan(plan: AnalysisPlan) -> dict[str, Any]:
 
 
 def canonical_plan_hash(plan: AnalysisPlan) -> str:
+    return sha256_value(canonical_plan_value(plan))
+
+
+def canonical_plan_value(plan: AnalysisPlan) -> dict[str, Any]:
+    """The plan as its hash covers it."""
+
     # load_plan resolves the plan's input paths against its own directory. Hash them in the
     # plan-relative form the author wrote, so the same plan hashes the same wherever it lives.
     value = plan.model_dump(mode="json", by_alias=True)
@@ -146,4 +152,4 @@ def canonical_plan_hash(plan: AnalysisPlan) -> str:
             strata = _plan_relative(calibration.validation_strata, source)
             if strata is not None:
                 value["inputs"]["judge_calibration"]["validation_strata"] = strata
-    return sha256_value(value)
+    return value
