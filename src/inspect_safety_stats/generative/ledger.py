@@ -148,6 +148,8 @@ def write_attempts(records: list[AttemptRecord], path: str | Path) -> None:
 
 
 def read_attempts(path: str | Path) -> list[AttemptRecord]:
+    """Read an attempt ledger (``attempts.csv``), refusing a unit's attempt recorded twice."""
+
     frame = pd.read_csv(path, dtype=str, keep_default_na=False)
     records = []
     for row in frame.to_dict("records"):
@@ -185,6 +187,13 @@ def write_rewrites(records: list[RewriteRecord], path: str | Path) -> None:
 
 
 def read_selections(path: str | Path) -> list[SelectionRecord]:
+    """Read and validate a selection ledger CSV, one ``SelectionRecord`` per row.
+
+    Empty cells are read as missing values. Raises ``ValueError`` when two rows share a
+    ``selection_order`` or a ``sampling_unit_id``, and pydantic's ``ValidationError`` for an
+    invalid row.
+    """
+
     frame = pd.read_csv(path, keep_default_na=False)
     records = [SelectionRecord.model_validate(_clean(row)) for row in frame.to_dict("records")]
     orders = [record.selection_order for record in records]
@@ -197,6 +206,12 @@ def read_selections(path: str | Path) -> list[SelectionRecord]:
 
 
 def read_rewrites(path: str | Path) -> list[RewriteRecord]:
+    """Read and validate a rewrite ledger CSV, one ``RewriteRecord`` per row.
+
+    Empty cells are read as missing values. Raises ``ValueError`` when two rows share a
+    ``sampling_unit_id``, and pydantic's ``ValidationError`` for an invalid row.
+    """
+
     frame = pd.read_csv(path, keep_default_na=False)
     records = [RewriteRecord.model_validate(_clean(row)) for row in frame.to_dict("records")]
     identifiers = [record.sampling_unit_id for record in records]

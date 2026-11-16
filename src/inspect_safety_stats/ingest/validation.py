@@ -6,7 +6,13 @@ from pathlib import Path
 import pandas as pd
 
 from inspect_safety_stats.schema.observations import Observation
-from inspect_safety_stats.stats.misclassification import JudgeStratumCounts, TruthStratumCounts
+from inspect_safety_stats.stats.judge_calibration import (
+    FineStrataCounts,
+    JudgeStrata,
+    count_fine_strata,
+    count_judge_strata,
+)
+from inspect_safety_stats.stats.misclassification import TruthStratumCounts
 
 REQUIRED_COLUMNS = ("observation_id", "human_label")
 _LABELS = {"safe": False, "unsafe": True}
@@ -44,44 +50,70 @@ def load_validation_manifest(path: str | Path) -> dict[str, bool]:
     return labels
 
 
+STRATA_COLUMNS = ("observation_id", "stratum")
+
+
+def load_validation_strata(path: str | Path) -> dict[str, str]:
+    """Load the declared fine stratum of each observation, keyed by its identifier.
+
+    The file lists every classified observation of the analysed cohorts, labelled or not,
+    since a stratum's size is part of the design. The judge verdict need not appear: the
+    analysis nests each declared stratum within the judge strata itself. A blank stratum is
+    rejected rather than read as a stratum of its own.
+    """
+
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    missing = [column for column in STRATA_COLUMNS if column not in frame.columns]
+    if missing:
+        raise ValueError(
+            f"validation strata file is missing required columns: {', '.join(missing)}"
+        )
+    strata: dict[str, str] = {}
+    for observation_id, raw in zip(frame["observation_id"], frame["stratum"], strict=True):
+        key = str(observation_id).strip()
+        if not key:
+            raise ValueError("validation strata file contains a blank observation_id")
+        if key in strata:
+            raise ValueError(f"validation strata file has duplicate observation_id {key!r}")
+        stratum = str(raw).strip()
+        if not stratum:
+            raise ValueError(f"validation strata file has a blank stratum for {key!r}")
+        strata[key] = stratum
+    if not strata:
+        raise ValueError("validation strata file contains no rows")
+    return strata
+
+
 def judge_stratum_counts(
     observations: list[Observation],
     labels: dict[str, bool],
-) -> tuple[dict[str, dict[str, JudgeStratumCounts]], list[str]]:
+) -> tuple[dict[str, JudgeStrata], list[str]]:
     """Cross human labels against judge verdicts, per cohort and judge stratum.
 
-    Unclassified observations belong to neither judge stratum, so they are excluded here.
-    The underlying interval completes them conservatively, and the correction keeps that
-    completion instead of mapping it through rho (see ``correct_judge_risk``).
+    Labels are keyed by observation identifier. Unclassified observations belong to
+    neither judge stratum; see :func:`count_judge_strata`, which does the counting.
     """
 
-    sizes: dict[tuple[str, bool], int] = defaultdict(int)
-    labelled: dict[tuple[str, bool], int] = defaultdict(int)
-    unsafe: dict[tuple[str, bool], int] = defaultdict(int)
-    seen: set[str] = set()
-    for row in observations:
-        if row.failure is None:
-            continue
-        key = (row.cohort_id, bool(row.failure))
-        sizes[key] += 1
-        human = labels.get(row.observation_id)
-        if human is None:
-            continue
-        seen.add(row.observation_id)
-        labelled[key] += 1
-        if human:
-            unsafe[key] += 1
+    return count_judge_strata(
+        ((row.cohort_id, row.observation_id, row.failure) for row in observations), labels
+    )
 
-    unmatched = sorted(set(labels) - seen)
-    counts: dict[str, dict[str, JudgeStratumCounts]] = {}
-    for cohort_id, verdict in sizes:
-        stratum = "judge_unsafe" if verdict else "judge_safe"
-        counts.setdefault(cohort_id, {})[stratum] = JudgeStratumCounts(
-            labelled=labelled[(cohort_id, verdict)],
-            truly_unsafe=unsafe[(cohort_id, verdict)],
-            stratum_size=sizes[(cohort_id, verdict)],
-        )
-    return counts, unmatched
+
+def fine_stratum_counts(
+    observations: list[Observation],
+    labels: dict[str, bool],
+    strata: dict[str, str],
+) -> FineStrataCounts:
+    """Cross human labels against judge verdicts within declared fine strata, per cohort.
+
+    See :func:`count_fine_strata`, which does the counting and the consistency checks.
+    """
+
+    return count_fine_strata(
+        ((row.cohort_id, row.observation_id, row.failure) for row in observations),
+        labels,
+        strata,
+    )
 
 
 def truth_stratum_counts(

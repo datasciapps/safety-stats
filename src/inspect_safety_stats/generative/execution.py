@@ -38,6 +38,12 @@ from inspect_safety_stats.generative.schema import GenerativePlan
 
 @dataclass(frozen=True)
 class AcceptedRewrite:
+    """The accepted prompt text for one sampling unit, kept out of the ledger.
+
+    ``attempts`` is the number of kernel calls the unit took; it is 0 when the entry was
+    read back from the prompt store, which does not record it.
+    """
+
     sampling_unit_id: str
     prompt_id: str
     prompt: str
@@ -47,6 +53,13 @@ class AcceptedRewrite:
 
 @dataclass(frozen=True)
 class ExecutionResult:
+    """Everything :func:`execute_rewrites` produced, replayed units included.
+
+    ``rewrites`` holds one ledger record per selected unit. ``exhausted`` and ``errored``
+    list the unit ids that ran out of attempts or hit a kernel error, and ``first_error``
+    is the detail of the first error seen in this run, or None.
+    """
+
     rewrites: tuple[RewriteRecord, ...]
     accepted: tuple[AcceptedRewrite, ...]
     duplicates_rejected: int

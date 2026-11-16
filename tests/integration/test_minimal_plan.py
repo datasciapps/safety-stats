@@ -128,7 +128,9 @@ def test_following_the_guidance_gives_a_working_analysis(
             for epoch in range(1, 11)
         ]
     )
-    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: evals)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+    )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,

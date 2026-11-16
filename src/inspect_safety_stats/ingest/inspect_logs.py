@@ -9,6 +9,7 @@ read from the transcript. The rules of the plan are applied by
 from __future__ import annotations
 
 import re
+import zipfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -18,7 +19,7 @@ from typing import Any, Literal
 import pandas as pd
 
 try:
-    from inspect_ai.analysis import evals_df, samples_df
+    from inspect_ai.analysis import EvalColumn, EvalColumns, evals_df, samples_df
     from inspect_ai.log import EvalLog, read_eval_log
 except ImportError as error:  # pragma: no cover - exercised in a fresh interpreter
     raise ImportError(
@@ -37,6 +38,7 @@ from inspect_safety_stats.ingest.records import (
     RolloutRecord,
     RunRecord,
     SourceData,
+    StopContext,
 )
 
 __all__ = [
@@ -76,17 +78,31 @@ def _error_code(*values: Any) -> str | None:
     return next((code for code in sorted(POLICY_BLOCK_CODES) if code in text), None)
 
 
+# What reading a log raises when the log is missing, truncated or not a log. Any other
+# exception is a defect, and propagates rather than passing for an unknown error stage.
+_UNREADABLE_LOG = (OSError, ValueError, zipfile.BadZipFile)
+
+
+@dataclass(frozen=True)
+class _Transcripts:
+    """The error contexts of one log's samples, or why the log could not be read."""
+
+    contexts: dict[str, ErrorContext]
+    unread_reason: str | None = None
+
+
 def _error_context(
     *,
     log_path: str,
     eval_id: str,
     sample_id: str,
     provided: dict[str, EvalLog],
-    cache: dict[str, dict[str, ErrorContext]],
+    cache: dict[str, _Transcripts],
 ) -> ErrorContext:
     cache_key = eval_id if eval_id in provided else log_path
     if cache_key not in cache:
         contexts: dict[str, ErrorContext] = {}
+        unread_reason: str | None = None
         try:
             log = provided.get(eval_id) or read_eval_log(log_path)
             for sample in log.samples or []:
@@ -127,13 +143,86 @@ def _error_context(
                     content_delivered=content_delivered,
                     provider_error_code=_error_code(sample.error, *event_errors),
                 )
-        except Exception:
+        except _UNREADABLE_LOG as error:
             contexts = {}
-        cache[cache_key] = contexts
-    return cache[cache_key].get(
+            # The exception's type only: its message may name local paths, which reports
+            # do not record.
+            unread_reason = type(error).__name__
+        cache[cache_key] = _Transcripts(contexts, unread_reason)
+    transcripts = cache[cache_key]
+    return transcripts.contexts.get(
         sample_id,
-        ErrorContext(stage="unknown", content_delivered=None, provider_error_code=None),
+        ErrorContext(
+            stage="unknown",
+            content_delivered=None,
+            provider_error_code=None,
+            unread_reason=transcripts.unread_reason,
+        ),
     )
+
+
+def _stop_of(output: Any) -> StopContext | None:
+    """The content-filter stop of a sample's output, or None when no content filter stopped it.
+
+    Claude 5-series models report a safety-classifier decline as a normal answer with stop
+    reason `refusal`, which Inspect records as `content_filter`, with the provider's category in
+    the choice's `stop_details` (Inspect 0.3.286 and later). A decline that arrives as an API
+    error comes back with the output's `error` set and Inspect's stand-in apology as content.
+    """
+
+    if output is None or getattr(output, "stop_reason", None) != "content_filter":
+        return None
+    choices = getattr(output, "choices", None) or []
+    details = getattr(choices[0], "stop_details", None) if choices else None
+    block_error = getattr(output, "error", None) is not None
+    completion = getattr(output, "completion", "") or ""
+    return StopContext(
+        content_delivered=not block_error and bool(completion.strip()),
+        block_type=getattr(details, "type", None),
+        block_category=getattr(details, "category", None),
+        block_error=block_error,
+    )
+
+
+def _token_limit_stop_of(output: Any) -> StopContext | None:
+    """The stop of a sample's output at the generation token limit, or None for any other end.
+
+    Inspect records an answer that ran out of generation tokens with stop reason `max_tokens`.
+    """
+
+    if output is None or getattr(output, "stop_reason", None) != "max_tokens":
+        return None
+    completion = getattr(output, "completion", "") or ""
+    return StopContext(
+        content_delivered=bool(completion.strip()),
+        block_type=None,
+        block_category=None,
+        block_error=False,
+        stop_reason="max_tokens",
+    )
+
+
+def _stop_context(
+    *,
+    log_path: str,
+    eval_id: str,
+    sample_id: str,
+    provided: dict[str, EvalLog],
+    cache: dict[str, dict[str, StopContext]],
+) -> StopContext | None:
+    # Read only when the plan asks for content-filter or token-limit stops. Unlike error
+    # contexts, a log that cannot be read is an error: the plan's outcome of a stop would
+    # otherwise depend on it.
+    cache_key = eval_id if eval_id in provided else log_path
+    if cache_key not in cache:
+        log = provided.get(eval_id) or read_eval_log(log_path)
+        stops: dict[str, StopContext] = {}
+        for sample in log.samples or []:
+            stop = _stop_of(sample.output) or _token_limit_stop_of(sample.output)
+            if stop is not None:
+                stops[str(sample.uuid)] = stop
+        cache[cache_key] = stops
+    return cache[cache_key].get(sample_id)
 
 
 # The Inspect versions whose log format this adapter reads; keep in step with pyproject.toml.
@@ -151,6 +240,11 @@ _CONFIGURATION_FIELDS = (
     "dataset_name",
     "epochs",
 )
+
+
+# The run fields read from each log: Inspect's defaults, and the scorers with their options, so
+# a report can record the configuration of each declared judge. ``evals_df`` leaves them out.
+_RUN_COLUMNS = [*EvalColumns, EvalColumn("scorers", path="eval.scorers")]
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -235,7 +329,7 @@ def _rollouts(samples: pd.DataFrame, runs: list[RunRecord]) -> InspectRollouts:
 def read_inspect_runs(logs: LogInput) -> list[RunRecord]:
     """Read the runs of Inspect logs, one per evaluation."""
 
-    evaluations = evals_df(logs)
+    evaluations = evals_df(logs, columns=_RUN_COLUMNS)
     if evaluations.empty:
         raise ValueError("no Inspect evaluation logs were found")
     return _runs(evaluations)
@@ -257,7 +351,7 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
 
     # ORDER MATTERS: both frames are read before either is checked, so that a run without
     # samples reports the same error it always did.
-    evaluations = evals_df(logs)
+    evaluations = evals_df(logs, columns=_RUN_COLUMNS)
     samples = samples_df(logs, parallel=parallel)
     if evaluations.empty:
         raise ValueError("no Inspect evaluation logs were found")
@@ -266,7 +360,8 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
     runs = _runs(evaluations)
     collected = _rollouts(samples, runs)
     provided = _provided_eval_logs(logs)
-    cache: dict[str, dict[str, ErrorContext]] = {}
+    cache: dict[str, _Transcripts] = {}
+    stop_cache: dict[str, dict[str, StopContext]] = {}
 
     def error_context(rollout: RolloutRecord) -> ErrorContext:
         return _error_context(
@@ -275,6 +370,15 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
             sample_id=str(rollout.sample_id),
             provided=provided,
             cache=cache,
+        )
+
+    def stop_context(rollout: RolloutRecord) -> StopContext | None:
+        return _stop_context(
+            log_path=rollout.source,
+            eval_id=rollout.run_key,
+            sample_id=str(rollout.sample_id),
+            provided=provided,
+            cache=stop_cache,
         )
 
     return SourceData(
@@ -286,6 +390,7 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
         error_context=error_context,
         source_sha256=file_sha256,
         source_format=SOURCE_FORMAT,
+        stop_context=stop_context,
     )
 
 

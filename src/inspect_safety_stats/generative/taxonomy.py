@@ -26,6 +26,14 @@ Assignments = tuple[tuple[str, str], ...]
 
 @dataclass(frozen=True)
 class CompiledNode:
+    """One node of the compiled taxonomy tree, from the root down to a terminal path.
+
+    ``node_id`` is the root id followed by ``level=value`` parts joined with ``|``.
+    ``conditional_target_weight`` is the node's weight among its siblings and
+    ``target_path_weight`` the product of those weights from the root. ``parent_id`` is
+    None only for the root, and ``rewrite_kernel_id`` is set only on terminal nodes.
+    """
+
     node_id: str
     parent_id: str | None
     level: str
@@ -42,6 +50,13 @@ class CompiledNode:
 
 @dataclass(frozen=True)
 class CompiledTaxonomy:
+    """The canonical node table that :func:`compile_taxonomy` builds from a plan.
+
+    ``fingerprint`` is a SHA-256 over the sorted node table, so two compilations of the same
+    design share it. ``pruned_zero_weight`` and ``pruned_by_constraint`` list the node ids
+    dropped for a zero weight or by a declared constraint.
+    """
+
     root_id: str
     levels: tuple[str, ...]
     semantic_seed_level: str

@@ -162,7 +162,9 @@ def test_inspect_logs_without_a_status_or_start_time_are_reported(
             }
         ]
     )
-    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: evals)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+    )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,

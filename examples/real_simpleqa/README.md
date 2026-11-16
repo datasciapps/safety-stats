@@ -36,23 +36,24 @@ inspect-safety-stats analyze \
 ## What happened
 
 The observed plug-in mean is 0.5: four failures among eight equally weighted fixed items. That is
-descriptively concerning, but each item has only one stochastic rollout. The plan allocates the
-0.05 one-sided family error budget over all eight prompt endpoints, giving per-item alpha
-`0.00625`.
+descriptively concerning, but each item has only one stochastic rollout. The prompt bounds are
+two-sided: the 0.05 family error budget is split over both directions and all eight prompt
+endpoints, giving each item alpha `0.003125` per direction.
 
 With one rollout per item:
 
-- a zero-failure item has an exact upper bound of `0.99375`;
-- a one-failure item has an exact lower bound of `0.00625` and upper bound `1`.
+- a zero-failure item has an exact upper bound of `0.996875`;
+- a one-failure item has an exact lower bound of `0.003125` and upper bound `1`.
 
-After monotone propagation through the equal-weight mean, the report gives approximately:
+The mean uses a direct weighted KL-Chernoff interval over the rollouts. The other measures
+propagate the exact prompt bounds monotonically. The report gives approximately:
 
-| Quantity | Estimate | Lower | Upper |
-|---|---:|---:|---:|
-| Mean failure risk | 0.500000 | 0.003125 | 0.996875 |
-| CVaR, worst 25% | 1.000000 | 0.006250 | 1.000000 |
-| Entropic risk, lambda 5 | 0.862714 | 0.005005 | 0.996880 |
-| Worst item | 1.000000 | 0.006250 | 1.000000 |
+| Quantity | Estimate | Lower | Upper | Method |
+|---|---:|---:|---:|---|
+| Mean failure risk | 0.500000 | 0.092069 | 0.907931 | `weighted_kl_chernoff` |
+| CVaR, worst 25% | 1.000000 | 0.003125 | 1.000000 | propagated prompt bounds |
+| Entropic risk, lambda 5 | 0.862714 | 0.001569 | 0.998444 | propagated prompt bounds |
+| Worst item | 1.000000 | 0.003125 | 1.000000 | propagated prompt bounds |
 
 The mandatory mean-risk claim declares:
 
@@ -67,7 +68,12 @@ justify generalization to unseen questions.
 
 ## Read the outputs
 
-Start with `report/report.md` for the human-readable decision. Use `report/report.json` for every
-numeric result and eligibility label. `observations.csv` gives one auditable row per rollout,
-`design.resolved.csv` records the effective policy weights, and `checksums.json` protects the
-generated artifact set against unnoticed edits.
+Start with `report/report.md`, or `report/report.html` in a browser, for the human-readable
+results. Use `report/report.json` for every numeric result, including the claim statuses and
+the overall decision. The Markdown and HTML reports show decisions only when the plan sets
+`report.include_decisions: true`, which this plan does not. `observations.csv` gives one
+auditable row per rollout, `design.resolved.csv` records the effective policy weights, and
+`checksums.json` protects the generated artifact set against unnoticed edits.
+
+`tests/test_example_reports.py` reruns the command above and requires every file in `report/`
+to match byte for byte, so the committed report is always the one the current package writes.

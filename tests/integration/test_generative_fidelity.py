@@ -56,10 +56,11 @@ def stub_logs(monkeypatch: pytest.MonkeyPatch, artifacts: Path) -> None:
             for prompt_id in prompt_ids
         ]
     )
-    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: evals)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
-        lambda logs, parallel=False: samples,
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df", lambda logs, **_: samples
     )
 
 
@@ -116,6 +117,8 @@ def test_fidelity_is_reported_by_arm(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     assert list(frame.columns) == [item.name for item in fields(FidelityRow)]
     document = json.loads((output / "report.json").read_text(encoding="utf-8"))
     assert len(document["fidelity"]) == len(report.fidelity)
+    checksums = json.loads((output / "checksums.json").read_text(encoding="utf-8"))
+    assert "fidelity.csv" in checksums
 
 
 def test_a_plan_without_attempts_has_no_fidelity_section(
@@ -126,6 +129,8 @@ def test_a_plan_without_attempts_has_no_fidelity_section(
     assert report.fidelity is None
     output = report.write(tmp_path / "report")
     assert not (output / "fidelity.csv").exists()
+    checksums = json.loads((output / "checksums.json").read_text(encoding="utf-8"))
+    assert "fidelity.csv" not in checksums
     assert "fidelity" not in json.loads((output / "report.json").read_text(encoding="utf-8"))
 
 

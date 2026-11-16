@@ -16,7 +16,11 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from inspect_safety_stats.config.models import JudgeCalibrationScenarioSpec, PlanInt
+from inspect_safety_stats.config.models import (
+    JudgeCalibrationScenarioSpec,
+    PlanFloat,
+    PlanInt,
+)
 
 RESERVED_CHARACTERS = ("|", "=")
 
@@ -56,7 +60,7 @@ class GenerativeMetadata(StrictModel):
 
 class ArmValueSpec(StrictModel):
     id: str = Field(min_length=1)
-    weight: float = Field(ge=0.0, le=1.0)
+    weight: PlanFloat = Field(ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def identifier_is_canonical(self) -> ArmValueSpec:
@@ -264,7 +268,7 @@ class RewriteSpec(StrictModel):
     provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
     prompt_template: str = Field(min_length=1)
-    temperature: float = Field(ge=0.0)
+    temperature: PlanFloat = Field(ge=0.0)
     max_tokens: PlanInt = Field(gt=0)
     seed_replayable: bool = False
     validation: RewriteValidationSpec
@@ -282,8 +286,10 @@ class JudgeCalibrationSpec(StrictModel):
 
     ``mode: assumed`` carries no evidence: every corrected interval it produces is a
     diagnostic sensitivity result. ``mode: validated`` estimates the same two conditional
-    accuracies from human labels drawn within each judge stratum, and its corrected
-    intervals are certifying at the combined error budget.
+    accuracies from human labels drawn within each judge stratum. Its corrected root is
+    certifying at the combined error budget when the root weights every unit equally; its
+    corrected nodes and slices are sensitivities, since the pooled labels do not measure
+    the judge's accuracy within them.
 
     Human labels key on the sample identifier materialization wrote, since a generative
     run has no prompt manifest to key on.
@@ -296,7 +302,7 @@ class JudgeCalibrationSpec(StrictModel):
     sampling: Literal["simple_random_within_judge_stratum"] = (
         "simple_random_within_judge_stratum"
     )
-    alpha: float = Field(default=0.05, gt=0.0, lt=1.0)
+    alpha: PlanFloat = Field(default=0.05, gt=0.0, lt=1.0)
 
     @model_validator(mode="after")
     def coherent_mode(self) -> JudgeCalibrationSpec:
@@ -392,7 +398,7 @@ class ReweightingSpec(StrictModel):
 
     id: str = Field(min_length=1)
     level: str = Field(min_length=1)
-    weights: dict[str, float] = Field(min_length=1)
+    weights: dict[str, PlanFloat] = Field(min_length=1)
 
     @model_validator(mode="after")
     def weights_are_a_distribution(self) -> ReweightingSpec:
@@ -405,7 +411,7 @@ class ReweightingSpec(StrictModel):
 
 
 class InferenceSpec(StrictModel):
-    alpha: float = Field(default=0.05, gt=0.0, lt=1.0)
+    alpha: PlanFloat = Field(default=0.05, gt=0.0, lt=1.0)
     coverage_mode: Literal["one_sided_upper", "two_sided"] = "one_sided_upper"
     report_all_nodes: bool = True
     simultaneous_tree: bool = False
@@ -413,6 +419,12 @@ class InferenceSpec(StrictModel):
 
 
 class GenerativePlan(StrictModel):
+    """A parsed and strictly validated generative evaluation plan.
+
+    Built by :func:`load_generative_plan`. Unknown keys are rejected, and ``inference``
+    falls back to its defaults when the plan omits it.
+    """
+
     schema_version: Literal["1.0"]
     evaluation: GenerativeMetadata
     taxonomy: TaxonomySpec

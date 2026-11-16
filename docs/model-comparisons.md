@@ -146,6 +146,12 @@ Candidate failures and baseline safe outcomes are therefore bounded independent 
 one weighted mean. The selected concentration engine bounds \(Q\), and the result is transformed
 back by \(\Delta=2Q-1\). This supports unequal candidate and baseline rollout counts.
 
+Empirical Bernstein estimates the variance of \(Q\) about centers fixed by arm, and uses
+whichever of a few fixed choices gives the smallest estimate: on the rollout unit, each arm's
+rollouts about 0 or about 1; on the prompt-cluster unit, about 1/2, 0 or 1. Two sparse arms then
+give a small variance and a correspondingly narrow interval, and so do arms that fail often. See
+[Statistical methods](statistical-methods.md) for the derivation.
+
 Weighted KL/Chernoff deliberately uses a different sparse-risk construction. Applying a generic
 Bernoulli-KL inversion to \(Q\), whose mean is ordinarily near one half, discards the low-variance
 structure of two near-zero harmful-compliance rates. The KL method instead constructs a joint
@@ -318,6 +324,54 @@ multiplicity:
 `two_sided` splits family alpha equally between lower and upper directions. The reported complete
 interval collection then has a familywise coverage floor of \(1-\alpha\). `per_direction` spends
 the full family alpha in each direction, so the two-sided floor is only \(1-2\alpha\).
+
+## Planning a comparison (experimental)
+
+Before a run, `plan comparison` says which risk differences a design can resolve at a
+margin. It reads the design manifest and its weights as `plan fixed-design` does:
+
+```bash
+inspect-safety-stats plan comparison \
+  --manifest design.csv \
+  --margin 0.05 \
+  --candidate-rollouts 10 --baseline-rollouts 10 \
+  --independence-unit rollout
+```
+
+It reports two differences, each reached with the target power (`--power`, 0.9 by default):
+
+- **Largest difference with upper bound at or below the margin.** If the candidate's risk is at
+  most this much above the baseline's, the comparison's upper bound falls at or below the
+  margin: a claim that the candidate is not worse by more than the margin can pass.
+- **Smallest difference with lower bound at or above the margin.** If the candidate's risk is at
+  least this much above the baseline's, the lower bound reaches the margin: a regression of
+  at least the margin is shown.
+
+Between the two lies the range of differences the design cannot settle. For 100 equally
+weighted prompts with 10 rollouts per arm, a margin of 0.05, the default alpha of 0.05 split
+over both bounds and power 0.9, the two differences are −0.059 and 0.159.
+
+Choose `--independence-unit` to match the independence profile the plan will use:
+
+| `--independence-unit` | Profile |
+|---|---|
+| `rollout` | `block_by: [rollout]`: the two arms' rollouts are independent |
+| `pair` | `block_by: [prompt_id, repeat]` with `comparison_coupling: joint`: a candidate and a baseline rollout with the same prompt and repeat may be dependent, for example through a shared seed |
+| `prompt_cluster` | `block_by: [prompt_id]` with `comparison_coupling: joint` |
+
+Allowing dependence costs width: at equal counts, `pair` places both differences about 1.4
+times as far from the margin as `rollout`. The same example gives −0.104 and 0.204.
+
+Rollout counts come from the manifest's `expected_rollouts` column for both arms unless
+`--candidate-rollouts` or `--baseline-rollouts` sets a uniform count for that arm.
+`--coverage-mode` follows the comparison's `coverage_mode`: `two_sided`, the default, splits
+alpha between the two bounds. `--family-size M` plans at the share `alpha / M`.
+
+The numbers hold for the `weighted_hoeffding` interval. The recommended
+`weighted_kl_chernoff` interval is usually narrower on sparse failures, so the planner tends to
+be pessimistic for it, but it gives no guarantee for that method. The planner assumes no
+unclassified outcomes and does not plan hierarchy-node contrasts. The derivation is in
+[Statistical methods, section 7.7](statistical-methods.md#77-planning-a-comparison-at-a-margin-experimental).
 
 ## Report and visualization
 
