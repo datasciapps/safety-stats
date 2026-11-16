@@ -173,6 +173,36 @@ def test_no_broken_internal_documentation_links() -> None:
     assert not broken, "broken internal documentation links: " + ", ".join(sorted(set(broken)))
 
 
+def test_documentation_has_no_url_placeholders() -> None:
+    """Install instructions once read ``git clone <repository-url>``, which nobody can run."""
+    placeholder = re.compile(r"<[a-z-]+-url>")
+    found = [
+        f"{path.relative_to(ROOT).as_posix()}: {match}"
+        for path in sorted(set(_tracked("*.md") + _tracked("**/*.md")))
+        for match in placeholder.findall(path.read_text(encoding="utf-8"))
+    ]
+    assert not found, "placeholders in tracked documentation: " + ", ".join(found)
+
+
+def test_documented_clones_enter_the_directory_they_create() -> None:
+    """``git clone`` names the checkout after the URL; the next ``cd`` must use that name.
+
+    The installation page once cloned the repository and then entered ``inspect-safety-stats``,
+    the package name, which is not the directory git creates.
+    """
+    clone = re.compile(r"^git clone (\S+)\n(?:cd (\S+))?", flags=re.MULTILINE)
+    checked = 0
+    wrong: list[str] = []
+    for path in sorted(set(_tracked("*.md") + _tracked("**/*.md"))):
+        for url, directory in clone.findall(path.read_text(encoding="utf-8")):
+            checked += 1
+            expected = url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+            if directory != expected:
+                wrong.append(f"{path.relative_to(ROOT).as_posix()}: cd {directory!r} after {url}")
+    assert checked >= 2, f"expected the documented clone commands to be checked, saw {checked}"
+    assert not wrong, "clone commands not followed by cd into the checkout: " + ", ".join(wrong)
+
+
 def _pyproject() -> str:
     return (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
