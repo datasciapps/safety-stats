@@ -756,7 +756,9 @@ each with an exact Clopper-Pearson interval (see
 [the plan reference](plan-reference.md#judge-flip-rate-experimental)). With `sampling: all`
 the interval is about the run's judge-positive completions. With `simple_random` it is about
 the same population, through the sample. Above the declared `warn_above` the diagnostic is a
-warning.
+warning. The package does not rescore: [`examples/judge_flip`](../examples/judge_flip/README.md)
+has an Inspect task that rescores a run's judge-positive completions under four wrappers and
+writes the manifest, offline with simulated models or live with the run's judge.
 
 What it assumes:
 

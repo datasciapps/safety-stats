@@ -14,7 +14,9 @@ described in their pull requests.
   `report.json` and `report.md`: the share that flips to safe under at least one wrapper and
   under each, with exact Clopper-Pearson intervals. Above the plan's `warn_above` it is a
   warning. It never changes a claim or the decision. A manifest that does not fit the run is a
-  `JUDGE_FLIP_INVALID` error. Plans without the section keep their hash and outputs. See
+  `JUDGE_FLIP_INVALID` error. Plans without the section keep their hash and outputs.
+  [`examples/judge_flip`](examples/judge_flip/README.md) rescores a run under four wrappers
+  and writes the manifest; the package itself does not call a model. See
   [Judge flip rate](docs/judge-misclassification.md#judge-flip-rate-under-content-preserving-wrappers-experimental).
 
 - **Arm contrasts and a simultaneous slice family in generative evaluation (experimental).**
