@@ -443,20 +443,52 @@ Hoeffding construction of `fixed_design_detectable_failure_rates`; pass
 `--independence-unit prompt_cluster` to plan under prompt-level independence instead.
 
 `plan fixed-design --plan PLAN` reads the analysis plan instead of those options, so planning
-cannot drift from the design `analyze` will use, and reports for every claim. A `weighted_mean`
-claim on a group with direct-mean intervals is planned as `analyze` decides it: on the group's
-prompts and weights, with rollout counts from the plan's design manifest (or `--manifest`, or
-`--rollouts`), under the primary independence profile of `outputs.direct_mean_intervals`, at
-the endpoint alpha that interval gets from its multiplicity family. That alpha is the
-directional family alpha divided across the selected groups, their hierarchy nodes and the
-cohorts; under `frontier_sidak` calibration the analysis spends at least this share, so the
-plan is conservative. A profile blocked by manifest columns treats each block as one
-independent contribution. The PASS side is planned at the claim's `acceptable_upper` and the
-FAIL side at its `unacceptable_lower`. Every other claim (other risk measures, comparisons,
-`noisy_valid_test`, a validated judge calibration) is listed as not planned, with the reason;
-the command exits with status 1 when no claim can be planned, and refuses sampled designs.
-`--threshold`, `--alpha`, `--weights`, `--hierarchy`, `--weight-column`,
-`--independence-unit` and `--family-size` are refused with `--plan`, which supplies them.
+cannot drift from the design `analyze` will use. Rollout counts come from the plan's design
+manifest (or `--manifest`), or from `--rollouts`. The planner runs `analyze`'s own node,
+calibration and block construction on the rollouts the manifest declares, before any of them
+exist. So every planned endpoint alpha, `frontier_sidak` calibration included, and every
+independence block is the one `analyze` will use on the same plan.
+
+A `weighted_mean` claim on a group with direct-mean intervals is planned the way `analyze`
+decides it. That is the group's primary direct-mean interval, under the method that
+`outputs.direct_mean_intervals.method` declares (`weighted_kl_chernoff`,
+`weighted_empirical_bernstein` or `weighted_hoeffding`). The planner inverts that interval:
+
+- The PASS side is planned at the claim's `acceptable_upper`. The maximum certifiable failure
+  rate is the largest weighted failure rate at which the interval's upper bound reaches that
+  threshold with at least `--power`.
+- The FAIL side is planned at the claim's `unacceptable_lower`. The minimum detectable failure
+  rate is the smallest rate at which the interval's lower bound reaches that threshold with at
+  least `--power`.
+
+These guarantees hold whatever the individual prompts' rates are. The empirical-Bernstein
+interval is planned at the largest variance its estimate allows. The chance of missing is
+bounded by the sharpest of Hoeffding's inequality and the KL-Chernoff interval's Chernoff
+kernel. The output also gives the certification floor: the upper bound when every rollout is
+safe. An `acceptable_upper` below the floor can never PASS. Beside each rate, the output shows
+the weighted Hoeffding rate of `fixed_design_detectable_failure_rates` as a reference, and
+the rates under any `reference_methods`.
+
+The analysis method is not always the sharper one. When the rollouts carry unequal weights,
+the KL-Chernoff interval uses a Poisson kernel. That kernel is tight at low failure rates and
+can be wider than Hoeffding's at high ones. The planner reports such cases as they are.
+
+Every other claim (other risk measures, comparisons, `noisy_valid_test`, a validated judge
+calibration) is listed as not planned, with the reason.
+
+The output then lists every direct-mean interval `analyze` will report: each independence
+profile, cohort, selected group and hierarchy node. For each it gives the independent blocks,
+the effective sample size, the endpoint alpha and its calibration, and the certification
+floor. A target resolves when its floor is at or below the smallest `acceptable_upper` of the
+claims planned on its group in that cohort. The levels with nodes that do not resolve are
+summarised at the end.
+
+Independence profiles must block by `rollout`, by manifest columns, or by `prompt_id`,
+`question_id`, `task_id` or `cohort_id`. A profile that blocks by a field only the logs
+supply (a run or model, say) is refused. The command exits with status 1 when no claim can be
+planned, and refuses sampled designs. `--threshold`, `--alpha`, `--weights`, `--hierarchy`,
+`--weight-column`, `--independence-unit` and `--family-size` are refused with `--plan`,
+which supplies them.
 
 Repeat `--logs` to select multiple files or directories. `--runs` and `--rollouts` name the two
 files of a neutral rollout source instead of Inspect logs, and are given together

@@ -9,7 +9,12 @@ import pytest
 from typer.testing import CliRunner
 
 from inspect_safety_stats import analyze
-from inspect_safety_stats.claim_planning import PlannedClaim, UnplannedClaim, plan_claims
+from inspect_safety_stats.claim_planning import (
+    PlannedClaim,
+    UnplannedClaim,
+    plan_claims,
+    plan_design,
+)
 from inspect_safety_stats.cli import app
 from inspect_safety_stats.config.loader import load_plan
 from inspect_safety_stats.stats.planning import fixed_design_detectable_failure_rates
@@ -93,7 +98,7 @@ def _write(tmp_path: Path, *, primary: str = "rollout", plan: str = PLAN) -> Pat
     return path
 
 
-def _frames() -> tuple[pd.DataFrame, pd.DataFrame]:
+def _frames(*, all_safe: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
     evals = pd.DataFrame(
         [
             {
@@ -124,7 +129,7 @@ def _frames() -> tuple[pd.DataFrame, pd.DataFrame]:
                 "log": "/not/a/local/log.eval",
                 "id": prompt_id,
                 "epoch": epoch,
-                "score_harmful": "FAIL" if epoch == 1 else "PASS",
+                "score_harmful": "FAIL" if epoch == 1 and not all_safe else "PASS",
                 "error": None,
                 "retries": 0,
             }
@@ -162,8 +167,7 @@ def test_planned_claims_use_the_alpha_and_design_analyze_uses(
         )
         direct = next(interval for interval in risk.intervals if interval.role == "primary")
         assert item.alpha.endpoint_alpha == pytest.approx(direct.alpha_lower, rel=1e-12, abs=0)
-        assert item.support is not None
-        assert item.support.effective_sample_size == pytest.approx(
+        assert item.planned.effective_sample_size == pytest.approx(
             direct.effective_sample_size, rel=1e-12, abs=0
         )
     # Two selected groups; nodes: all has 2 tasks and 3 questions, cyber 1 task and 2 questions.
@@ -180,7 +184,7 @@ def test_each_side_is_planned_at_its_own_threshold(tmp_path: Path) -> None:
     )
     assert item.prompts == 3
     assert item.total_rollouts == 50
-    for threshold, rates in ((0.2, item.support), (0.5, item.rejection)):
+    for threshold, rates in ((0.2, item.hoeffding_support), (0.5, item.hoeffding_rejection)):
         expected = fixed_design_detectable_failure_rates(
             [20, 10, 20],
             [1 / 3, 1 / 3, 1 / 3],
@@ -190,6 +194,132 @@ def test_each_side_is_planned_at_its_own_threshold(tmp_path: Path) -> None:
             power=0.8,
         )
         assert rates == expected
+
+
+def _patch_logs(monkeypatch: pytest.MonkeyPatch, *, all_safe: bool = False) -> None:
+    evals, samples = _frames(all_safe=all_safe)
+    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: evals)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: samples,
+    )
+
+
+def _parity_plan(calibration: str, method: str) -> str:
+    reference = "weighted_empirical_bernstein" if method == "weighted_hoeffding" else (
+        "weighted_hoeffding"
+    )
+    plan = PLAN.replace(
+        "    method: weighted_hoeffding\n",
+        f"    method: {method}\n    reference_methods: [{reference}]\n",
+    ).replace(
+        "    hierarchy_nodes: true\n    independence: {primary: PRIMARY}\n",
+        f"    hierarchy_nodes: true\n    hierarchy_calibration: {calibration}\n"
+        "    independence: {primary: rollout, sensitivities: [question]}\n",
+    )
+    assert plan.count(calibration) == 1 and plan.count("sensitivities") == 1
+    return plan
+
+
+@pytest.mark.parametrize("calibration", ["flat_bonferroni", "frontier_sidak"])
+@pytest.mark.parametrize(
+    "method", ["weighted_hoeffding", "weighted_empirical_bernstein", "weighted_kl_chernoff"]
+)
+def test_planned_intervals_match_analyze_for_every_profile_and_node(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, calibration: str, method: str
+) -> None:
+    """#9: for each profile and node, the planning alpha equals the alpha analyze assigns.
+
+    Blocks, effective sample size and calibration match too, and on logs where every rollout
+    is safe the planned certification floor is the upper bound analyze reports.
+    """
+    plan_path = _write(tmp_path, plan=_parity_plan(calibration, method))
+    _patch_logs(monkeypatch, all_safe=True)
+    report = analyze(plan=plan_path, logs="ignored")
+    reported = {}
+    for result in [
+        *(risk for risk in report.group_risks if risk.measure_id == "mean"),
+        *report.hierarchy_risks,
+    ]:
+        level = getattr(result, "level", None)
+        path = tuple(getattr(result, "path", {}).values())
+        for interval in result.intervals:
+            if interval.method == method and interval.role in {"primary", "sensitivity"}:
+                profile = interval.independence_profile
+                reported[(profile, result.cohort_id, result.group_id, level, path)] = interval
+    design = plan_design(load_plan(plan_path), power=0.9)
+    planned = {
+        (
+            item.independence_profile,
+            item.cohort,
+            item.group,
+            item.level,
+            tuple(item.path.values()),
+        ): item
+        for item in design.intervals
+    }
+    assert design.method == method
+    # Two groups (all, cyber) with 2 + 3 and 1 + 2 nodes, under two profiles.
+    assert len(planned) == 2 * (2 + 5 + 3)
+    assert set(planned) == set(reported)
+    for key, item in planned.items():
+        interval = reported[key]
+        assert item.alpha.endpoint_alpha == pytest.approx(interval.alpha_lower, rel=1e-12, abs=0)
+        assert item.alpha.calibration == interval.calibration_method
+        assert item.alpha.frontier_id == interval.calibration_frontier
+        assert item.independent_blocks == interval.independent_block_count
+        assert item.effective_sample_size == pytest.approx(
+            interval.effective_sample_size, rel=1e-12, abs=0
+        )
+        unprojected = interval.raw_upper if interval.raw_upper is not None else interval.upper
+        assert item.certification_floor == pytest.approx(unprojected, rel=1e-9, abs=1e-15)
+    if calibration == "frontier_sidak":
+        assert {item.alpha.calibration for item in planned.values()} == {"frontier_sidak"}
+
+
+def test_planned_claims_are_decided_on_the_plan_method(tmp_path: Path) -> None:
+    plan_path = _write(tmp_path, plan=_parity_plan("flat_bonferroni", "weighted_kl_chernoff"))
+    item = next(
+        claim
+        for claim in plan_claims(load_plan(plan_path), power=0.9)
+        if isinstance(claim, PlannedClaim) and claim.claim_id == "all_mean"
+    )
+    assert item.planned.method == "weighted_kl_chernoff"
+    assert [reference.method for reference in item.references] == ["weighted_hoeffding"]
+    # The rollouts carry unequal weights (nested_equal over 20, 10, 20 and 30 rollouts). At a
+    # low failure rate the KL-Chernoff interval certifies where Hoeffding cannot; at a high one
+    # its Poisson kernel is wider than Hoeffding's. The planner reports both sides as they are
+    # rather than assume the analysis method is the sharper one.
+    support, rejection = item.hoeffding_support, item.hoeffding_rejection
+    assert support is not None and rejection is not None
+    assert support.maximum_certifiable_failure_rate is None
+    assert item.planned.maximum_certifiable_failure_rate is not None
+    assert rejection.minimum_detectable_failure_rate is not None
+    assert item.planned.minimum_detectable_failure_rate is not None
+    assert item.planned.minimum_detectable_failure_rate > rejection.minimum_detectable_failure_rate
+
+
+def test_a_level_the_declared_rollouts_cannot_resolve_is_reported(tmp_path: Path) -> None:
+    """Like the generative budget table: cyber's questions are too thin for its threshold."""
+    plan_path = _write(tmp_path, plan=_parity_plan("flat_bonferroni", "weighted_kl_chernoff"))
+    design = plan_design(load_plan(plan_path), power=0.9)
+    by_target = {
+        (item.independence_profile, item.group, item.level, tuple(item.path.values())): item
+        for item in design.intervals
+    }
+    root = by_target[("rollout", "cyber", None, ())]
+    question = by_target[("rollout", "cyber", "question_id", ("t1", "q2"))]
+    assert root.acceptable_upper == question.acceptable_upper == 0.2
+    assert root.resolves is True
+    assert question.resolves is False
+    # bio has no direct-mean interval, so it has no row; a group without a claim would have
+    # no threshold to resolve against.
+    assert not any(item.group == "bio" for item in design.intervals)
+    result = runner.invoke(app, ["plan", "fixed-design", "--plan", str(plan_path)])
+    output = plain(result.output)
+    assert result.exit_code == 0, output
+    assert "Levels the declared rollouts cannot resolve:" in output
+    assert "level question_id of group cyber in cohort candidate under profile rollout" in output
 
 
 def test_rollouts_override_the_manifest_counts(tmp_path: Path) -> None:
@@ -221,7 +351,7 @@ def test_blocks_must_be_manifest_columns(tmp_path: Path) -> None:
             "    question: {block_by",
         ),
     )
-    with pytest.raises(ValueError, match="absent from the design manifest"):
+    with pytest.raises(ValueError, match="the logs supply and the design manifest does not"):
         plan_claims(load_plan(plan_path), power=0.9)
 
 

@@ -7,6 +7,19 @@ described in their pull requests.
 
 ### Added
 
+- **The fixed-design planner uses the analysis method.** `plan fixed-design --plan PLAN`
+  plans each claim under the interval method that `outputs.direct_mean_intervals` declares
+  (KL-Chernoff, empirical Bernstein or Hoeffding) by inverting that interval. It shows the
+  previous Hoeffding rates as a reference. Before, planning used Hoeffding only, while the
+  analysis decided on KL-Chernoff or empirical Bernstein, so planned and analysed rates
+  differed by an unknown margin. The endpoint alphas and independence blocks now come from
+  `analyze`'s own construction, so `frontier_sidak` calibration is planned exactly. The output
+  also lists every direct-mean interval `analyze` will report, for each independence profile,
+  cohort and hierarchy node. Each comes with its alpha, effective sample size and
+  certification floor, and the output names the levels the declared rollouts cannot resolve
+  at their group's `acceptable_upper` (#9). See
+  [Command-line interface](docs/api-reference.md#command-line-interface).
+
 - **The fixed-design planner reads the plan.** `plan fixed-design --plan PLAN` takes groups,
   weights, hierarchy, independence profile, multiplicity family and thresholds from the
   analysis plan and reports detectable rates for every claim, at the endpoint alpha `analyze`
