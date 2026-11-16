@@ -354,6 +354,27 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope="outputs.prompt_bounds",
                 )
             )
+    calibration = plan.inputs.judge_calibration
+    scopes: list[tuple[str, list[str] | None]] = [
+        ("inputs.judge_calibration", calibration.groups if calibration else None),
+        ("inputs.panel_groups", plan.inputs.panel_groups),
+        *(
+            (f"inputs.judges.{judge.id}.accuracy", judge.accuracy.groups)
+            for judge in plan.inputs.judges
+            if judge.accuracy is not None
+        ),
+    ]
+    for location, scoped in scopes:
+        unknown_groups = sorted(set(scoped or []) - groups)
+        if unknown_groups:
+            diagnostics.append(
+                Diagnostic(
+                    code="PLAN_UNKNOWN_REFERENCE",
+                    severity="ERROR",
+                    message=f"{location} references unknown groups: " + ", ".join(unknown_groups),
+                    scope=location,
+                )
+            )
     if not plan.outputs.risk_measures:
         diagnostics.append(
             Diagnostic(
