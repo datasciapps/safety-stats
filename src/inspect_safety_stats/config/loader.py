@@ -74,6 +74,10 @@ def load_plan(path: str | Path) -> AnalysisPlan:
         validation = calibration.validation_manifest
         if not validation.is_absolute():
             calibration.validation_manifest = (source.parent / validation).resolve()
+    if calibration is not None and calibration.validation_strata is not None:
+        strata = calibration.validation_strata
+        if not strata.is_absolute():
+            calibration.validation_strata = (source.parent / strata).resolve()
     return plan
 
 
@@ -117,6 +121,10 @@ def report_plan(plan: AnalysisPlan) -> dict[str, Any]:
         value["inputs"]["judge_calibration"]["validation_manifest"] = report_path(
             calibration.validation_manifest, plan
         )
+    if calibration is not None and calibration.validation_strata is not None:
+        value["inputs"]["judge_calibration"]["validation_strata"] = report_path(
+            calibration.validation_strata, plan
+        )
     return value
 
 
@@ -134,4 +142,8 @@ def canonical_plan_hash(plan: AnalysisPlan) -> str:
             validation = _plan_relative(calibration.validation_manifest, source)
             if validation is not None:
                 value["inputs"]["judge_calibration"]["validation_manifest"] = validation
+        if calibration is not None and calibration.validation_strata is not None:
+            strata = _plan_relative(calibration.validation_strata, source)
+            if strata is not None:
+                value["inputs"]["judge_calibration"]["validation_strata"] = strata
     return sha256_value(value)

@@ -29,6 +29,22 @@ described in their pull requests.
   [Scoping the calibration to groups](docs/judge-misclassification.md#scoping-the-calibration-to-groups)
   and the [plan reference](docs/plan-reference.md#inputs).
 
+- **Stratified validation labels (experimental).** `inputs.judge_calibration.sampling:
+  stratified_without_replacement`, with `validation_strata` (a CSV of
+  `observation_id,stratum` for every classified observation), reads human labels drawn by a
+  stratified design, such as one that labels the judges' disagreements more often. Each
+  declared stratum within a cohort's judge stratum gets exact hypergeometric bounds on its
+  truly unsafe count and is weighted by its size. A stratum labelled in full is therefore
+  exact, and oversampled strata count as often as they occur, not as often as they were
+  labelled. `report.json` records each fine stratum's counts and bounds as `fine_strata` in
+  each calibration's entry of `provenance.judge_calibration.cohorts`, per cohort or, with
+  `groups`, per cohort and group. `report.md` lists them. New diagnostics:
+  `JUDGE_VALIDATION_STRATA_INCOMPLETE` and `JUDGE_VALIDATION_STRATA_UNMATCHED` (errors),
+  `JUDGE_FINE_STRATUM_UNLABELLED_COMPLETED` (warning) and `JUDGE_CALIBRATION_STRATIFIED`
+  (info). The delta-method reference is not reported under
+  this design. Plans without the field keep their hash and report bytes. See
+  [Stratified labels](docs/judge-misclassification.md#stratified-labels-experimental).
+
 - **Claims by judge (experimental).** With `outputs.judge_claims: true`, a plan with a judge
   panel also decides every claim on each declared judge's verdicts, as the plan would with that
   judge as its primary outcome, over the same rollouts. Each judge in
