@@ -52,6 +52,14 @@ by its item: the Inspect sample `id`, or the `item_id` of rollout files. Schema 
 state this as `sample_join: {inspect_field: id, manifest_field: prompt_id}`, its only values;
 schema 3.0 removes the field.
 
+The manifest always needs a `prompt_id` column. It needs `question_id` and `task_id` only when
+the plan names them: in `design.hierarchy`, whose default `[task_id, question_id, prompt_id]`
+names both, in a weight `hierarchy` or `column`, a group `filter`, an independence profile's
+`block_by`, or any other field that names a manifest column. A level that the plan doesn't name
+and the manifest omits is set to each prompt's `prompt_id`, so each prompt counts as its own
+question or task in the report's prompt estimates. A plan with `hierarchy: [task_id, prompt_id]`
+can therefore use a manifest without a `question_id` column.
+
 `estimand` is `end_to_end_system` by default. In this mode, an explicit provider policy block is
 safe only if it occurred during target generation and no content was delivered. Set
 `underlying_model` to keep such blocks unclassified because the wrapper prevented observation of
