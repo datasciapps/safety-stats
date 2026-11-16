@@ -389,6 +389,8 @@
     const risks = Array.isArray(report.group_risks) ? report.group_risks : [];
     const hierarchyRisks = Array.isArray(report.hierarchy_risks) ? report.hierarchy_risks : [];
     const claims = Array.isArray(report.claims) ? report.claims : [];
+    // Experimental (#125): claims that can only FAIL, on an attacker that adapts across runs.
+    const adaptiveClaims = Array.isArray(report.adaptive_claims) ? report.adaptive_claims : [];
     const showDecisions = report.presentation?.include_decisions ?? true;
     const comparisons = Array.isArray(report.comparisons) ? report.comparisons : [];
     const comparisonSets = Array.isArray(report.comparison_sets) ? report.comparison_sets : [];
@@ -556,7 +558,8 @@
       const root = document.getElementById("claims"); clear(root);
       if (!showDecisions) return;
       const visible = claims.filter(c => !c.evidence_refs?.length || c.evidence_refs.some(ref => ref.includes(`:${state.cohort}:`)));
-      if (!visible.length) { root.append(el("p", "empty", "No claims were declared for this cohort.")); return; }
+      const visibleAdaptive = adaptiveClaims.filter(c => c.cohort_id === state.cohort);
+      if (!visible.length && !visibleAdaptive.length) { root.append(el("p", "empty", "No claims were declared for this cohort.")); return; }
       visible.forEach(claim => {
         const card = el("article", "card");
         const head = el("div", "claim-title");
@@ -613,6 +616,37 @@
           warnings: claim.warnings
         }, null, 2)));
         card.append(disclosure);
+        root.append(card);
+      });
+      visibleAdaptive.forEach(claim => {
+        const card = el("article", "card");
+        const head = el("div", "claim-title");
+        head.append(el("h3", "", `${claim.title} (adaptive attacker, experimental)`));
+        const badges = el("div", "claim-badges");
+        badges.append(el("span", `badge ${statusClass(claim.status)}`, claim.status));
+        if (claim.descriptive_status) {
+          const descriptive = el("span", `badge descriptive ${statusClass(claim.descriptive_status)}`, `Descriptive: ${claim.descriptive_status}`);
+          descriptive.title = "What a confirmatory analysis of this bound would give. Not a decision.";
+          badges.append(descriptive);
+        }
+        head.append(badges);
+        card.append(head);
+        const track = el("div", "claim-track");
+        const lower = clamp01(claim.lower);
+        const bound = el("span", "claim-bound");
+        bound.style.left = `${lower * 100}%`; bound.style.width = `${Math.max(0.3, (1 - lower) * 100)}%`;
+        const unacceptable = el("span", "threshold"); unacceptable.style.left = `${clamp01(claim.unacceptable_lower) * 100}%`;
+        track.append(bound, unacceptable); card.append(track);
+        const values = el("div", "claim-values");
+        values.append(
+          el("span", "", `Runs ${claim.runs ?? "—"}, successes ${claim.successes ?? "—"}`),
+          el("span", "", `Lower bound ${pct(claim.lower)}`),
+          el("span", "", `Unsafe ≥ ${pct(claim.unacceptable_lower)}`),
+          el("span", "", "FAIL only: no PASS")
+        );
+        card.append(values);
+        const reason = (claim.reasons || []).join(" ");
+        if (reason) card.append(el("p", "claim-reason", reason));
         root.append(card);
       });
     }

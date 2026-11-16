@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from inspect_safety_stats.schema.reports import Decision, VerdictRange
+from inspect_safety_stats.schema.reports import (
+    AdaptiveClaimResult,
+    ClaimResult,
+    Decision,
+    VerdictRange,
+)
 from inspect_safety_stats.stats.misclassification import NoisyValidCertification
 
 # The thresholds a plan allows a claim (ClaimSpec): acceptable_upper < unacceptable_lower,
@@ -84,6 +89,16 @@ def decide_claim(
     if lower >= unacceptable_lower:
         return "FAIL", [f"Lower bound {lower:.12g} is at or above {unacceptable_lower:.12g}."]
     return "INCONCLUSIVE", ["Bounds do not establish either the acceptable or unacceptable region."]
+
+
+def mandatory_statuses(
+    claims: list[ClaimResult], adaptive_claims: list[AdaptiveClaimResult]
+) -> list[Decision]:
+    """The statuses ``roll_up`` takes: every mandatory claim's, threshold and adaptive alike."""
+
+    return [claim.status for claim in claims if claim.mandatory] + [
+        claim.status for claim in adaptive_claims if claim.mandatory
+    ]
 
 
 def roll_up(

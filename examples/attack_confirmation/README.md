@@ -141,7 +141,10 @@ attack you want to evaluate; the declaration and the confirmation step stay as t
   independence profiles block by `prompt_id` or coarser.
 - **Independence across behaviours is assumed.** The attacker carries no state from one
   behaviour to the next. An attacker that learns across behaviours breaks that assumption,
-  and this example does not cover it.
+  and this example's claims do not cover it. Such an attacker can still fail a gate: an
+  [adaptive claim](../../docs/plan-reference.md#adaptive_claims-experimental) (experimental)
+  bounds its running success rate from below without assuming independence, given a manifest
+  column that fixes the attack order, and can only FAIL.
 - **Pair on behaviour.** Attack prompts differ per target, so there is no shared prompt to
   pair the two configurations on. The comparison pairs on `prompt_id`: the same behaviour,
   attacked once against each configuration.

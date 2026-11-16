@@ -168,6 +168,9 @@ def analyze_command(
         for claim in report.claims:
             if claim.mandatory:
                 typer.echo(f"{claim.status}: {claim.title}")
+        for adaptive in report.adaptive_claims:
+            if adaptive.mandatory:
+                typer.echo(f"{adaptive.status}: {adaptive.title} (adaptive attacker, FAIL only)")
         typer.echo(f"Decision: {report.decision}")
     else:
         typer.echo(f"Risk measures: {len(report.group_risks)}")

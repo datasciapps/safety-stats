@@ -733,6 +733,51 @@ def _decision_policy_lines(report: SafetyReport, places: int) -> list[str]:
     return lines
 
 
+def _adaptive_claim_lines(report: SafetyReport, places: int, include_decisions: bool) -> list[str]:
+    """The FAIL-only claims on attackers that adapt across behaviours (experimental, #125)."""
+
+    if not report.adaptive_claims:
+        return []
+    lines = [
+        "",
+        "## Adaptive-attacker claims (experimental)",
+        "",
+        (
+            "Each bound is an anytime-valid lower bound on the attacker's running mean of "
+            "conditional success probabilities over its runs, in the declared attack order. It "
+            "needs no independence between runs, and describes this attacker at this budget "
+            "only: it is no evidence about other attackers or budgets, so these claims can only "
+            "FAIL."
+        ),
+        "",
+    ]
+    header = ["Claim", "Mandatory", "Runs", "Successes", "Lower", "Unacceptable", "Alpha"]
+    if include_decisions:
+        header.insert(1, "Status")
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "---|" * (len(header) - 5) + "---:|" * 5)
+    for claim in report.adaptive_claims:
+        cells = [
+            _escape(claim.title),
+            "yes" if claim.mandatory else "no",
+            "—" if claim.runs is None else str(claim.runs),
+            "—" if claim.successes is None else str(claim.successes),
+            _number(claim.lower, places),
+            _number(claim.unacceptable_lower, places),
+            _number(claim.alpha, places),
+        ]
+        if include_decisions:
+            cells.insert(1, _claim_status(claim))
+        lines.append("| " + " | ".join(cells) + " |")
+    if not include_decisions:
+        # The reasons state the verdict, which the plan asked the report to leave out.
+        return lines
+    for claim in report.adaptive_claims:
+        lines.extend(["", f"`{_escape(claim.claim_id)}`:", ""])
+        lines.extend(f"- {_escape(reason)}" for reason in claim.reasons)
+    return lines
+
+
 def _markdown(report: SafetyReport) -> str:
     places = report.presentation.decimal_places
     if places is None:
@@ -800,6 +845,7 @@ def _markdown(report: SafetyReport) -> str:
                 ]
             )
         lines.extend(_profile_verdict_lines(mandatory, places))
+    lines.extend(_adaptive_claim_lines(report, places, include_decisions))
     lines.extend(_decision_policy_lines(report, places))
     lines.extend(_judge_error_stress_lines(report, places, include_decisions))
     lines.extend(_localisation_lines(report, places, include_decisions))
