@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, ClassVar, Literal
 
 from pydantic import (
     BaseModel,
@@ -35,6 +35,37 @@ PlanFloat = Annotated[float, _refuse_booleans("a number")]
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True, allow_inf_nan=False)
+
+
+class OmitsAbsentFields(StrictModel):
+    """A model that leaves the fields named in ``absent_when_none`` out of its dump while None.
+
+    A field added after plans were frozen is left out until a plan sets it, so the resolved plan
+    a report records, and the plan's hash, stay as they were for every plan that does not.
+    """
+
+    absent_when_none: ClassVar[tuple[str, ...]] = ()
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        for name in self.absent_when_none:
+            if getattr(self, name) is None:
+                data.pop(name, None)
+        return data
+
+
+def _group_scope(groups: list[str] | None, where: str) -> None:
+    """Reject an empty or repeated group scope; unknown groups are a plan-reference error."""
+
+    if groups is None:
+        return
+    if not groups:
+        raise ValueError(
+            f"{where} groups cannot be empty; leave the field out to cover every group"
+        )
+    if len(set(groups)) != len(groups):
+        raise ValueError(f"{where} groups must be unique")
 
 
 class RegistrationSpec(StrictModel):
@@ -180,7 +211,7 @@ class PublishedValidationSetSpec(StrictModel):
         return self
 
 
-class JudgeCalibrationSpec(StrictModel):
+class JudgeCalibrationSpec(OmitsAbsentFields):
     """Judge-misclassification calibration, either declared, transported or measured.
 
     ``mode: assumed`` carries no evidence: every corrected interval it produces is a
@@ -189,7 +220,16 @@ class JudgeCalibrationSpec(StrictModel):
     diagnostic sensitivity result. ``mode: validated`` estimates the two conditional
     accuracies from human labels drawn within each judge stratum, and its corrected
     intervals are certifying at the combined error budget.
+
+    ``groups`` scopes an assumed or validated calibration to declared groups. Without it
+    there is one calibration per cohort, for every row of the cohort. With it the assumed
+    scenarios apply only to rows of the listed groups, and validated mode estimates one
+    calibration per cohort and listed group, from the labels on that group's rollouts.
     """
+
+    # Left out of the serialised plan when absent, so the hash and the resolved plan of a
+    # plan without them are what they were before the fields existed.
+    absent_when_none = ("published_set", "groups")
 
     mode: Literal["assumed", "validated", "transported"] = "assumed"
     scenarios: list[JudgeCalibrationScenarioSpec] = Field(default_factory=list)
@@ -199,21 +239,12 @@ class JudgeCalibrationSpec(StrictModel):
     sampling: Literal["simple_random_within_judge_stratum", "simple_random"] = (
         "simple_random_within_judge_stratum"
     )
-    # Left out of the serialised plan when absent, so the hash and the resolved plan of a
-    # plan without it are what they were before the field existed.
     published_set: PublishedValidationSetSpec | None = None
-
-    @model_serializer(mode="wrap")
-    def leave_out_absent_published_set(
-        self, handler: SerializerFunctionWrapHandler
-    ) -> dict[str, Any]:
-        data: dict[str, Any] = handler(self)
-        if self.published_set is None:
-            data.pop("published_set", None)
-        return data
+    groups: list[str] | None = None
 
     @model_validator(mode="after")
     def validate_mode(self) -> JudgeCalibrationSpec:
+        _group_scope(self.groups, "judge calibration")
         if self.mode != "transported" and self.published_set is not None:
             raise ValueError("published_set requires mode: transported")
         if self.mode == "transported":
@@ -224,10 +255,11 @@ class JudgeCalibrationSpec(StrictModel):
                 or self.primary is not None
                 or self.validation_manifest is not None
                 or self.family is not None
+                or self.groups is not None
             ):
                 raise ValueError(
                     "transported judge calibration takes only a published_set; remove the "
-                    "scenarios, primary, validation_manifest and family"
+                    "scenarios, primary, validation_manifest, family and groups"
                 )
             return self
         if self.mode == "assumed":
@@ -259,11 +291,23 @@ class JudgeCalibrationSpec(StrictModel):
         return self
 
 
-class JudgeAccuracySpec(StrictModel):
-    """Declared prevalence-free accuracy ranges for one judge."""
+class JudgeAccuracySpec(OmitsAbsentFields):
+    """Declared prevalence-free accuracy ranges for one judge.
+
+    ``groups`` scopes the declaration to declared groups: the ranges hold on those groups'
+    rollouts only. Without it they hold on every rollout.
+    """
+
+    absent_when_none = ("groups",)
 
     sensitivity: JudgeRateRangeSpec
     specificity: JudgeRateRangeSpec
+    groups: list[str] | None = None
+
+    @model_validator(mode="after")
+    def valid_scope(self) -> JudgeAccuracySpec:
+        _group_scope(self.groups, "judge accuracy")
+        return self
 
 
 class JudgeSpec(StrictModel):
@@ -299,7 +343,10 @@ class CompositeJudgeSpec(StrictModel):
     judges: list[str] = Field(min_length=2)
 
 
-class InputsSpec(StrictModel):
+class InputsSpec(OmitsAbsentFields):
+    # sample_join is None only under schema 3.0, which leaves it out of the plan.
+    absent_when_none = ("sample_join", "panel_groups")
+
     design_manifest: Path
     estimand: Literal["end_to_end_system", "underlying_model"] = "end_to_end_system"
     # Schema 2.0 only; None, and left out of the plan, under schema 3.0.
@@ -308,18 +355,14 @@ class InputsSpec(StrictModel):
     judge_calibration: JudgeCalibrationSpec | None = None
     judges: list[JudgeSpec] = Field(default_factory=list)
     composites: list[CompositeJudgeSpec] = Field(default_factory=list)
-
-    @model_serializer(mode="wrap")
-    def leave_out_absent_sample_join(
-        self, handler: SerializerFunctionWrapHandler
-    ) -> dict[str, Any]:
-        data: dict[str, Any] = handler(self)
-        if self.sample_join is None:
-            data.pop("sample_join", None)
-        return data
+    # The groups the judge panel section also breaks its counts and agreement down by.
+    panel_groups: list[str] | None = None
 
     @model_validator(mode="after")
     def validate_judge_panel(self) -> InputsSpec:
+        _group_scope(self.panel_groups, "judge panel")
+        if self.panel_groups is not None and not self.judges:
+            raise ValueError("panel_groups requires declared judges")
         identifiers = [judge.id for judge in self.judges] + [item.id for item in self.composites]
         if len(set(identifiers)) != len(identifiers):
             raise ValueError("judge and composite identifiers must be unique")

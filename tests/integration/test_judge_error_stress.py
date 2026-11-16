@@ -282,3 +282,35 @@ def test_an_exploratory_claim_is_not_stressed_against_its_forced_inconclusive(
     assert stress is not None and not stress.applicable
     assert "exploratory" in str(stress.reason)
     assert stress.robust is None
+
+
+@pytest.mark.parametrize(("scope", "applied"), [("[cyber]", True), ("[first]", False)])
+def test_a_box_declared_for_other_groups_is_not_applied_to_the_claim(
+    tmp_path: Path, scope: str, applied: bool
+) -> None:
+    judges = _JUDGES.replace("upper: 0.99}}\n", f"upper: 0.99}}, groups: {scope}}}\n")
+    plan = _write(tmp_path, judges=judges)
+    plan.write_text(
+        plan.read_text(encoding="utf-8").replace(
+            "groups:\n  - id: cyber\n",
+            "groups:\n  - id: first\n    filter: {question_id: q1}\n  - id: cyber\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    report = analyze(plan=plan, logs="ignored")
+
+    claim = next(item for item in report.claims if item.claim_id == "mean_safe")
+    stress = claim.judge_error_stress
+    assert stress is not None and stress.applicable
+    # The tipping lines need no box, so they are reported either way.
+    assert stress.pass_sensitivity_at_perfect_specificity is not None
+    if applied:
+        assert stress.accuracy_source == "judge:primary_judge"
+        assert stress.stressed_status is not None
+    else:
+        assert (stress.accuracy_source, stress.stressed_status, stress.robust) == (
+            None,
+            None,
+            None,
+        )

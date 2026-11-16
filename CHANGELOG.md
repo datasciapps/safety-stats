@@ -7,6 +7,28 @@ described in their pull requests.
 
 ### Added
 
+- **Group scopes for judge calibration, declared accuracies and the judge panel.** A cohort
+  that holds several benchmarks no longer has to share one judge calibration and one panel
+  summary across them. Three optional plan fields:
+  - `inputs.judge_calibration.groups` corrects only the listed groups' rows. In `validated`
+    mode it estimates one calibration per cohort and listed group from that group's labels,
+    and splits the judge family budget over those calibrations (`per_calibration_alpha`).
+    Such a calibration certifies a `weighted_mean` over a whole listed group. A claim on a
+    row outside the scope is INCONCLUSIVE in a validated plan, and labels outside it raise
+    `JUDGE_VALIDATION_OUT_OF_SCOPE`. A `transported` calibration takes no `groups`.
+  - `inputs.judges[].accuracy.groups` limits a judge's declared ranges to the listed groups.
+    The panel-derived correction, and the judge-error stress box, then apply only where every
+    declaration behind the box holds. `PANEL_CORRECTION_NO_COMMON_GROUP` reports a composite
+    whose members share no group.
+  - `inputs.panel_groups` adds per-group counts, agreement, kappa and McNemar figures to every
+    judge, composite and pair in `provenance.judge_panel`, and a "Judge panel by group" table
+    to `report.md`.
+
+  Listed groups must be declared. Plans that leave the fields out keep their hash and write the
+  same report bytes as before. See
+  [Scoping the calibration to groups](docs/judge-misclassification.md#scoping-the-calibration-to-groups)
+  and the [plan reference](docs/plan-reference.md#inputs).
+
 - **Claims by judge (experimental).** With `outputs.judge_claims: true`, a plan with a judge
   panel also decides every claim on each declared judge's verdicts, as the plan would with that
   judge as its primary outcome, over the same rollouts. Each judge in

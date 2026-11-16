@@ -97,6 +97,7 @@ from inspect_safety_stats.stats.independence import (
 )
 from inspect_safety_stats.stats.judge_calibration import (
     NO_STRATA,
+    JudgeStrata,
     calibrate_cohort,
     cohort_alpha_share,
     completion_diagnostic,
@@ -1911,6 +1912,62 @@ class _PromptRollouts:
     attempted: int
 
 
+# A judge calibration's key: its cohort, and its group when the calibration is scoped to groups.
+_JudgeScope = tuple[str, str | None]
+
+
+def _judge_scope(plan: AnalysisPlan, cohort_id: str, group_id: str) -> _JudgeScope | None:
+    """The calibration a row of this cohort and group is corrected with, or None if none is."""
+
+    spec = plan.inputs.judge_calibration
+    if spec is None or spec.groups is None:
+        return (cohort_id, None)
+    return None if _judge_scope_excludes(plan, group_id) else (cohort_id, group_id)
+
+
+def _judge_scope_excludes(plan: AnalysisPlan, group_id: str) -> bool:
+    """Whether the judge calibration is scoped to groups that leave this one out."""
+
+    spec = plan.inputs.judge_calibration
+    return spec is not None and spec.groups is not None and group_id not in spec.groups
+
+
+def _judge_scopes(plan: AnalysisPlan) -> list[_JudgeScope]:
+    spec = plan.inputs.judge_calibration
+    groups: list[str | None] = [None] if spec is None or spec.groups is None else list(spec.groups)
+    return [(cohort_id, group_id) for cohort_id in sorted(plan.cohorts) for group_id in groups]
+
+
+def _scope_population(
+    population: dict[str, dict[str, _PromptRollouts]],
+    data: NormalizedData,
+    scope: _JudgeScope,
+) -> dict[str, _PromptRollouts]:
+    """The labelled population of one calibration: its cohort's, cut to its group's prompts."""
+
+    cohort_id, group_id = scope
+    rollouts = population.get(cohort_id, {})
+    if group_id is None:
+        return rollouts
+    prompts = set(next(group for group in data.groups if group.id == group_id).prompt_ids)
+    return {prompt_id: item for prompt_id, item in rollouts.items() if prompt_id in prompts}
+
+
+def _out_of_scope_reason(group_id: str) -> str:
+    return (
+        "The judge calibration is scoped to groups that do not include this row's group "
+        f"{group_id!r}, so no labels calibrate it."
+    )
+
+
+def _scope_rollouts(group_id: str | None, noun: str = "rollouts") -> str:
+    """Name the rollouts a calibration's labels are drawn from, as the wording of a sentence."""
+
+    if group_id is None:
+        return f"the cohort's {noun}"
+    return f"the {noun} of group {group_id!r} in the cohort"
+
+
 def _labelled_population(
     plan: AnalysisPlan, data: NormalizedData
 ) -> dict[str, dict[str, _PromptRollouts]]:
@@ -1940,8 +1997,11 @@ def _pooled_calibration_gap(
     design_type: str,
     measure_type: str,
     weights: dict[str, float],
+    group_id: str | None = None,
 ) -> str | None:
     """Why a cohort's pooled labels do not measure the judge accuracies a row needs.
+
+    With ``group_id`` the labels, and ``population``, are those of one group in the cohort.
 
     The labels are drawn uniformly within judge strata over the cohort's classified
     rollouts, so they estimate P(truly unsafe | verdict) with each of those rollouts
@@ -1963,9 +2023,11 @@ def _pooled_calibration_gap(
         )
     labelled = [(prompt_id, item) for prompt_id, item in population.items() if item.classified]
     if not labelled:
+        if group_id is not None:
+            return f"group {group_id!r} has no classified rollouts in the cohort"
         return "the cohort has no classified rollouts"
     if any(weights.get(prompt_id, 0.0) <= 0.0 for prompt_id, _ in labelled):
-        return "the row covers only part of the cohort's labelled rollouts"
+        return "the row covers only part of " + _scope_rollouts(group_id, "labelled rollouts")
     # A rollout weighs its prompt's weight over the rollouts the prompt's rate divides by.
     # Either kind of interval can be the row's primary, so both counts must agree.
     for per_rollout in (
@@ -1975,8 +2037,8 @@ def _pooled_calibration_gap(
         lightest, heaviest = min(per_rollout), max(per_rollout)
         if heaviest > lightest * (1 + 1e-9):
             return (
-                f"the row gives some of the cohort's rollouts {heaviest / lightest:.3g} times "
-                "the weight of others"
+                f"the row gives some of {_scope_rollouts(group_id)} "
+                f"{heaviest / lightest:.3g} times the weight of others"
             )
     return None
 
@@ -2023,7 +2085,14 @@ def _uncertified_base_warning(eligibility: str) -> str:
     )
 
 
-def _uncertified_correction_warning(gap: str) -> str:
+def _uncertified_correction_warning(gap: str, group_id: str | None = None) -> str:
+    if group_id is not None:
+        return (
+            f"Sensitivity analysis, not a certified bound: {gap}. The human labels weight every "
+            f"classified rollout of group {group_id!r} in the cohort equally, so they measure "
+            "the judge's accuracy only for a weighted mean that does the same, over the whole "
+            "group in a fixed design."
+        )
     return (
         f"Sensitivity analysis, not a certified bound: {gap}. The human labels weight every "
         "classified rollout of the cohort equally, so they measure the judge's accuracy only "
@@ -2054,9 +2123,15 @@ def _validated_judge_calibrations(
     data: NormalizedData,
     diagnostics: list[Diagnostic],
 ) -> tuple[
-    dict[str, JudgeCalibration], dict[str, dict[str, Any]], float | None, dict[str, Any]
+    dict[_JudgeScope, JudgeCalibration],
+    dict[_JudgeScope, dict[str, Any]],
+    float | None,
+    dict[_JudgeScope, Any],
 ]:
-    """Estimate one calibration per cohort from human labels within judge strata."""
+    """Estimate one calibration per cohort, or per cohort and scoped group, from human labels.
+
+    A scoped calibration counts only the labels, and the stratum sizes, of its group's rollouts.
+    """
 
     spec = plan.inputs.judge_calibration
     if spec is None or spec.mode != "validated":
@@ -2087,16 +2162,44 @@ def _validated_judge_calibrations(
         )
         return {}, {}, None, {}
 
-    counts, unmatched = judge_stratum_counts(data.observations, labels)
-    truth_strata: dict[str, Any] = {}
-    if spec.sampling == "simple_random":
-        # A simple random sample of the design also estimates sensitivity and the
-        # false-positive rate by true class, which the noisy-but-valid test needs.
-        for cohort_id, by_class in truth_stratum_counts(data.observations, labels).items():
-            truth_strata[cohort_id] = {
-                name: {"labelled": item.labelled, "judge_positive": item.judge_positive}
-                for name, item in by_class.items()
-            }
+    _, unmatched = judge_stratum_counts(data.observations, labels)
+    scopes = _judge_scopes(plan)
+    counts: dict[_JudgeScope, JudgeStrata] = {}
+    truth_strata: dict[_JudgeScope, Any] = {}
+    in_scope: set[str] = set()
+    for scope in scopes:
+        cohort_id, group_id = scope
+        observations = data.observations
+        if group_id is not None:
+            prompts = set(next(item for item in data.groups if item.id == group_id).prompt_ids)
+            observations = [row for row in observations if row.prompt_id in prompts]
+            in_scope.update(row.observation_id for row in observations)
+        if cohort_id in (scoped := judge_stratum_counts(observations, labels)[0]):
+            counts[scope] = scoped[cohort_id]
+        if spec.sampling == "simple_random":
+            # A simple random sample of the design also estimates sensitivity and the
+            # false-positive rate by true class, which the noisy-but-valid test needs.
+            by_class = truth_stratum_counts(observations, labels).get(cohort_id)
+            if by_class is not None:
+                truth_strata[scope] = {
+                    name: {"labelled": item.labelled, "judge_positive": item.judge_positive}
+                    for name, item in by_class.items()
+                }
+    if spec.groups is not None:
+        outside = sorted(set(labels) - set(unmatched) - in_scope)
+        if outside:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_VALIDATION_OUT_OF_SCOPE",
+                    severity="WARNING",
+                    message=(
+                        f"{len(outside)} validation rows label rollouts outside the groups the "
+                        "calibration is scoped to; they calibrate nothing"
+                    ),
+                    scope="inputs.judge_calibration",
+                    details={"observation_ids": outside[:20]},
+                )
+            )
     if unmatched:
         diagnostics.append(
             Diagnostic(
@@ -2111,15 +2214,18 @@ def _validated_judge_calibrations(
             )
         )
 
-    # Every declared cohort gets an equal share of the judge family budget. A single
-    # risk row consumes one share; a comparison consumes the two cohorts it spans. A
-    # union over all of them therefore never exceeds the declared family alpha.
-    per_cohort_alpha = cohort_alpha_share(family.alpha, len(plan.cohorts))
-    calibrations: dict[str, JudgeCalibration] = {}
-    summaries: dict[str, dict[str, Any]] = {}
-    for cohort_id in sorted(plan.cohorts):
+    # Every calibration (one per declared cohort, or per cohort and scoped group) gets an
+    # equal share of the judge family budget. A single risk row consumes one share; a
+    # comparison consumes the two it spans. A union over all of them therefore never
+    # exceeds the declared family alpha.
+    per_calibration_alpha = cohort_alpha_share(family.alpha, len(scopes))
+    calibrations: dict[_JudgeScope, JudgeCalibration] = {}
+    summaries: dict[_JudgeScope, dict[str, Any]] = {}
+    for scope in scopes:
+        cohort_id, group_id = scope
+        where = cohort_id if group_id is None else f"{cohort_id}/{group_id}"
         outcome = calibrate_cohort(
-            counts.get(cohort_id, NO_STRATA), scenario_id="validated", alpha=per_cohort_alpha
+            counts.get(scope, NO_STRATA), scenario_id="validated", alpha=per_calibration_alpha
         )
         if outcome.empty_strata:
             diagnostics.append(
@@ -2129,6 +2235,9 @@ def _validated_judge_calibrations(
                     message=(
                         f"cohort {cohort_id!r} has no observations in one judge stratum; "
                         "no judge correction is reported for it"
+                        if group_id is None
+                        else f"group {group_id!r} of cohort {cohort_id!r} has no observations "
+                        "in one judge stratum; no judge correction is reported for it"
                     ),
                     scope=cohort_id,
                 )
@@ -2144,11 +2253,11 @@ def _validated_judge_calibrations(
                 )
             )
             continue
-        calibrations[cohort_id] = outcome.calibration
-        completed = completion_diagnostic(outcome.calibration, cohort_id)
+        calibrations[scope] = outcome.calibration
+        completed = completion_diagnostic(outcome.calibration, where)
         if completed is not None:
             diagnostics.append(completed)
-        summaries[cohort_id] = outcome.strata.summary()
+        summaries[scope] = outcome.strata.summary()
     return calibrations, summaries, family.alpha, truth_strata
 
 
@@ -2161,7 +2270,12 @@ def _judge_corrected_interval(
     judge_alpha: float | None,
     gap: str | None = None,
     unclassified_share: float = 0.0,
+    scoped_group: str | None = None,
+    scoped_groups: list[str] | None = None,
 ) -> RiskIntervalResult | None:
+    """Correct one row; ``scoped_group`` names a validated calibration's group, and
+    ``scoped_groups`` the groups an assumed calibration is scoped to."""
+
     if result.lower is None or result.upper is None:
         return None
     corrected = correct_judge_risk(
@@ -2225,10 +2339,21 @@ def _judge_corrected_interval(
                 "Human adjudication is treated as ground truth.",
             ]
         )
+        if scoped_group is not None:
+            assumptions.append(
+                f"The calibration is scoped to group {scoped_group!r}: its labels and judge "
+                "strata are those of the group's rollouts in the cohort."
+            )
         if certified:
+            labels = (
+                "The labels weight every classified rollout of the cohort equally"
+                if scoped_group is None
+                else f"The labels weight every classified rollout of group {scoped_group!r} "
+                "in the cohort equally"
+            )
             assumptions.extend(
                 [
-                    "The labels weight every classified rollout of the cohort equally, and so "
+                    f"{labels}, and so "
                     "does this row, so they measure the judge's accuracy for its estimand.",
                     "Coverage is the union bound over the underlying interval and the four "
                     "calibration endpoints.",
@@ -2240,7 +2365,12 @@ def _judge_corrected_interval(
                 "These conditional accuracies are declared assumptions, not measurements; "
                 "the interval inherits no coverage guarantee from them.",
                 "The declared accuracies are prevalence-dependent and are applied unchanged "
-                "to every cohort.",
+                "to every cohort."
+                if scoped_groups is None
+                else "The declared accuracies are prevalence-dependent and are applied "
+                "unchanged to every cohort, on the rows of groups "
+                + ", ".join(repr(item) for item in scoped_groups)
+                + " only.",
             ]
         )
     if unclassified_share > 0:
@@ -2248,7 +2378,7 @@ def _judge_corrected_interval(
     assumptions.append("The underlying judge-system interval retains its own stated guarantee.")
     warnings: list[str] = []
     if validated and gap is not None:
-        warnings.append(_uncertified_correction_warning(gap))
+        warnings.append(_uncertified_correction_warning(gap, scoped_group))
     elif validated and not certified:
         warnings.append(_uncertified_base_warning(result.eligibility))
     if not validated and primary_scenario is not None:
@@ -2354,20 +2484,17 @@ def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, 
 
     Bookkeeping only. Effective votes is the Kish count over declared dependence
     blocks, and agreement is descriptive; nothing here corrects a risk estimate.
+
+    With ``inputs.panel_groups`` every judge, composite and pair also carries ``groups``:
+    the same counts and agreement for each listed group's rollouts, per cohort, so a
+    cohort that holds several benchmarks does not mix them into one figure.
     """
 
     if not plan.inputs.judges:
         return None
     cohorts = sorted(plan.cohorts)
-    by_cohort: dict[str, list[str]] = {cohort_id: [] for cohort_id in cohorts}
-    for observation in data.observations:
-        by_cohort.setdefault(observation.cohort_id, []).append(observation.observation_id)
-
-    def verdicts(cohort_id: str, judge_id: str) -> list[bool | None]:
-        return [
-            data.judge_verdicts.get(observation_id, {}).get(judge_id)
-            for observation_id in by_cohort[cohort_id]
-        ]
+    blocks = {judge.id: judge.block or judge.id for judge in plan.inputs.judges}
+    pairs = list(itertools.combinations([judge.id for judge in plan.inputs.judges], 2))
 
     def counts(values: list[bool | None]) -> dict[str, int]:
         positives = sum(value is True for value in values)
@@ -2378,76 +2505,127 @@ def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, 
             "unclassified": len(values) - positives - negatives,
         }
 
-    blocks = {judge.id: judge.block or judge.id for judge in plan.inputs.judges}
-    judges = [
+    def agreement_stats(
+        first_votes: list[bool | None], second_votes: list[bool | None]
+    ) -> dict[str, Any]:
+        summary = pairwise_agreement(first_votes, second_votes)
+        paired = [
+            (bool(a), bool(b))
+            for a, b in zip(first_votes, second_votes, strict=True)
+            if a is not None and b is not None
+        ]
+        first_only = second_only = 0
+        p_value: float | None = None
+        if paired:
+            mcnemar = exact_mcnemar([a for a, _ in paired], [b for _, b in paired])
+            first_only = mcnemar.candidate_failure_baseline_safe
+            second_only = mcnemar.candidate_safe_baseline_failure
+            p_value = mcnemar.p_value_two_sided
+        return {
+            "compared": summary.compared,
+            "disagreements": summary.disagreements,
+            "agreement": summary.agreement,
+            "kappa": summary.kappa,
+            "discordant_first_only": first_only,
+            "discordant_second_only": second_only,
+            "mcnemar_p_value": p_value,
+        }
+
+    def section(prompts: set[str] | None) -> tuple[
+        dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[dict[str, Any]]
+    ]:
+        """Per-cohort figures for each judge, composite and pair, over these prompts' rollouts.
+
+        ``prompts`` None means every rollout.
+        """
+
+        by_cohort: dict[str, list[str]] = {cohort_id: [] for cohort_id in cohorts}
+        for observation in data.observations:
+            if prompts is None or observation.prompt_id in prompts:
+                by_cohort.setdefault(observation.cohort_id, []).append(
+                    observation.observation_id
+                )
+
+        def verdicts(cohort_id: str, judge_id: str) -> list[bool | None]:
+            return [
+                data.judge_verdicts.get(observation_id, {}).get(judge_id)
+                for observation_id in by_cohort[cohort_id]
+            ]
+
+        judge_figures = {
+            judge.id: {cohort_id: counts(verdicts(cohort_id, judge.id)) for cohort_id in cohorts}
+            for judge in plan.inputs.judges
+        }
+        composite_figures = {
+            composite.id: {
+                cohort_id: counts(
+                    [
+                        compose_verdicts(
+                            {
+                                judge_id: data.judge_verdicts.get(observation_id, {}).get(judge_id)
+                                for judge_id in composite.judges
+                            },
+                            composite.rule,
+                        )
+                        for observation_id in by_cohort[cohort_id]
+                    ]
+                )
+                for cohort_id in cohorts
+            }
+            for composite in plan.inputs.composites
+        }
+        pair_figures = [
+            {
+                cohort_id: agreement_stats(verdicts(cohort_id, first), verdicts(cohort_id, second))
+                for cohort_id in cohorts
+            }
+            for first, second in pairs
+        ]
+        return judge_figures, composite_figures, pair_figures
+
+    judge_figures, composite_figures, pair_figures = section(None)
+    judges: list[dict[str, Any]] = [
         {
             "id": judge.id,
             "kind": judge.kind,
             "block": blocks[judge.id],
             "score": judge.score.name,
-            "cohorts": {cohort_id: counts(verdicts(cohort_id, judge.id)) for cohort_id in cohorts},
+            "cohorts": judge_figures[judge.id],
         }
         for judge in plan.inputs.judges
     ]
-    composites = []
-    for composite in plan.inputs.composites:
-        per_cohort = {}
-        for cohort_id in cohorts:
-            combined = [
-                compose_verdicts(
-                    {
-                        judge_id: data.judge_verdicts.get(observation_id, {}).get(judge_id)
-                        for judge_id in composite.judges
-                    },
-                    composite.rule,
-                )
-                for observation_id in by_cohort[cohort_id]
-            ]
-            per_cohort[cohort_id] = counts(combined)
-        composites.append(
-            {
-                "id": composite.id,
-                "rule": composite.rule,
-                "judges": list(composite.judges),
-                "effective_votes": effective_votes([blocks[j] for j in composite.judges]),
-                "cohorts": per_cohort,
-            }
-        )
-    agreement = []
-    for first, second in itertools.combinations([judge.id for judge in plan.inputs.judges], 2):
-        pair_cohorts = {}
-        for cohort_id in cohorts:
-            first_votes = verdicts(cohort_id, first)
-            second_votes = verdicts(cohort_id, second)
-            summary = pairwise_agreement(first_votes, second_votes)
-            paired = [
-                (bool(a), bool(b))
-                for a, b in zip(first_votes, second_votes, strict=True)
-                if a is not None and b is not None
-            ]
-            first_only = second_only = 0
-            p_value: float | None = None
-            if paired:
-                mcnemar = exact_mcnemar([a for a, _ in paired], [b for _, b in paired])
-                first_only = mcnemar.candidate_failure_baseline_safe
-                second_only = mcnemar.candidate_safe_baseline_failure
-                p_value = mcnemar.p_value_two_sided
-            pair_cohorts[cohort_id] = {
-                "compared": summary.compared,
-                "disagreements": summary.disagreements,
-                "agreement": summary.agreement,
-                "kappa": summary.kappa,
-                "discordant_first_only": first_only,
-                "discordant_second_only": second_only,
-                "mcnemar_p_value": p_value,
-            }
-        agreement.append({"first": first, "second": second, "cohorts": pair_cohorts})
-    return {
+    composites: list[dict[str, Any]] = [
+        {
+            "id": composite.id,
+            "rule": composite.rule,
+            "judges": list(composite.judges),
+            "effective_votes": effective_votes([blocks[j] for j in composite.judges]),
+            "cohorts": composite_figures[composite.id],
+        }
+        for composite in plan.inputs.composites
+    ]
+    agreement: list[dict[str, Any]] = [
+        {"first": first, "second": second, "cohorts": figures}
+        for (first, second), figures in zip(pairs, pair_figures, strict=True)
+    ]
+    panel: dict[str, Any] = {
         "judges": judges,
         "composites": composites,
         "agreement": agreement,
         "effective_votes_all": effective_votes(list(blocks.values())),
     }
+    if plan.inputs.panel_groups is not None:
+        prompts_by_group = {group.id: set(group.prompt_ids) for group in data.groups}
+        panel["groups"] = list(plan.inputs.panel_groups)
+        for group_id in plan.inputs.panel_groups:
+            by_judge, by_composite, by_pair = section(prompts_by_group[group_id])
+            for entry in judges:
+                entry.setdefault("groups", {})[group_id] = by_judge[entry["id"]]
+            for entry in composites:
+                entry.setdefault("groups", {})[group_id] = by_composite[entry["id"]]
+            for entry, figures in zip(agreement, by_pair, strict=True):
+                entry.setdefault("groups", {})[group_id] = figures
+    return panel
 
 
 def _declared_box(accuracy: JudgeAccuracySpec) -> JudgeAccuracyBox:
@@ -2470,7 +2648,28 @@ def _composite_box(
     )
 
 
-def _primary_accuracy_box(plan: AnalysisPlan) -> tuple[JudgeAccuracyBox, str] | None:
+def _declared_scope(plan: AnalysisPlan, accuracies: list[JudgeAccuracySpec]) -> list[str] | None:
+    """The groups, in plan order, that every one of these declarations covers.
+
+    None when no declaration is scoped to groups, so they all hold on every rollout. A
+    declaration scoped to groups holds on those groups' rows only, so a box built from
+    several declarations holds only where all of them do; the list can then be empty.
+    """
+
+    if all(accuracy.groups is None for accuracy in accuracies):
+        return None
+    return [
+        group.id
+        for group in plan.groups
+        if all(accuracy.groups is None or group.id in accuracy.groups for accuracy in accuracies)
+    ]
+
+
+# A declared accuracy box, the verdict it is declared for, and the groups it holds on (None: all).
+_DeclaredBox = tuple[JudgeAccuracyBox, str, list[str] | None]
+
+
+def _primary_accuracy_box(plan: AnalysisPlan) -> _DeclaredBox | None:
     """The declared accuracy box of the verdict that is the primary outcome, if it has one.
 
     That is a declared judge whose score is the primary score, or an ``any`` or ``all``
@@ -2485,11 +2684,19 @@ def _primary_accuracy_box(plan: AnalysisPlan) -> tuple[JudgeAccuracyBox, str] | 
         accuracies = [member.accuracy for member in members if member.accuracy is not None]
         if composite.rule == "majority" or len(accuracies) != len(members):
             return None
-        return _composite_box(members, accuracies, composite.rule), f"composite:{composite.id}"
+        return (
+            _composite_box(members, accuracies, composite.rule),
+            f"composite:{composite.id}",
+            _declared_scope(plan, accuracies),
+        )
     judge = next((item for item in plan.inputs.judges if item.score.name == name), None)
     if judge is None or judge.accuracy is None:
         return None
-    return _declared_box(judge.accuracy), f"judge:{judge.id}"
+    return (
+        _declared_box(judge.accuracy),
+        f"judge:{judge.id}",
+        _declared_scope(plan, [judge.accuracy]),
+    )
 
 
 def _apply_panel_derived_correction(
@@ -2504,6 +2711,10 @@ def _apply_panel_derived_correction(
     declared dependence blocks, and the judge-reported interval is inverted over that
     box. Declared boxes are assumptions, so every interval this adds is a diagnostic
     sensitivity that can never move a claim.
+
+    A judge whose accuracy declaration is scoped to groups vouches only for those groups'
+    rows, so the box holds, and a row is corrected, only in the groups every member's
+    declaration covers.
     """
 
     composite = next(
@@ -2529,6 +2740,20 @@ def _apply_panel_derived_correction(
             )
         )
         return None
+    scoped = _declared_scope(plan, accuracies)
+    if scoped is not None and not scoped:
+        diagnostics.append(
+            Diagnostic(
+                code="PANEL_CORRECTION_NO_COMMON_GROUP",
+                severity="WARNING",
+                message=(
+                    f"the judges of composite {composite.id!r} declare their accuracies for "
+                    "no group in common, so no panel-derived correction is reported"
+                ),
+                scope=f"inputs.composites.{composite.id}",
+            )
+        )
+        return None
     box = _composite_box(members, accuracies, composite.rule)
     correctable = {
         measure.id
@@ -2539,8 +2764,17 @@ def _apply_panel_derived_correction(
         *(row for row in risks if row.measure_id in correctable),
         *hierarchy_risks,
     ]
+    where = (
+        "every prompt and cohort"
+        if scoped is None
+        else "every cohort, on the rows of groups "
+        + ", ".join(repr(item) for item in scoped)
+        + " only, the groups every judge's declaration covers"
+    )
     for result in targets:
         if result.lower is None or result.upper is None:
+            continue
+        if scoped is not None and result.group_id not in scoped:
             continue
         identified = identified_risk_set(result.lower, result.upper, box)
         estimate_range = (
@@ -2579,7 +2813,7 @@ def _apply_panel_derived_correction(
                     f"{box.sensitivity_upper:.6g}] and specificity in "
                     f"[{box.specificity_lower:.6g}, {box.specificity_upper:.6g}].",
                     "Judge accuracies are declared, prevalence-free, and applied unchanged to "
-                    "every prompt and cohort; they carry no coverage guarantee.",
+                    f"{where}; they carry no coverage guarantee.",
                     "True risk is the Rogan-Gladen inversion over the box; extrema sit at the box "
                     "vertices because the inversion is separately monotone in each argument.",
                 ],
@@ -2609,6 +2843,7 @@ def _apply_panel_derived_correction(
             "sensitivity": [box.sensitivity_lower, box.sensitivity_upper],
             "specificity": [box.specificity_lower, box.specificity_upper],
         },
+        **({"groups": scoped} if scoped is not None else {}),
     }
 
 
@@ -2645,6 +2880,7 @@ def _delta_reference_interval(
     family_id: str | None,
     gap: str | None = None,
     unclassified_share: float = 0.0,
+    scoped_group: str | None = None,
 ) -> RiskIntervalResult | None:
     """Asymptotic delta-method reference beside the exact validated correction."""
 
@@ -2667,7 +2903,7 @@ def _delta_reference_interval(
         )
     except ValueError:
         return None
-    warnings = [_uncertified_correction_warning(gap)] if gap is not None else []
+    warnings = [_uncertified_correction_warning(gap, scoped_group)] if gap is not None else []
     if unclassified_share > 0:
         warnings.append(
             f"It covers the classified rollouts only: {unclassified_share:.6g} of the row's "
@@ -2724,7 +2960,9 @@ def _apply_judge_correction(
 
     Returns a summary of the calibration actually used, for the report provenance
     block. In ``assumed`` mode every scenario is applied to every cohort. In
-    ``validated`` mode one calibration is estimated per cohort from human labels.
+    ``validated`` mode one calibration is estimated per cohort from human labels. A
+    calibration scoped to groups corrects only the rows of those groups, and validated mode
+    then estimates one calibration per cohort and group.
     """
 
     spec = plan.inputs.judge_calibration
@@ -2801,6 +3039,8 @@ def _apply_judge_correction(
     if spec.mode == "assumed":
         calibrations = _assumed_judge_calibrations(plan)
         for result in targets:
+            if _judge_scope(plan, result.cohort_id, result.group_id) is None:
+                continue
             weights, measure_type = weighting(result)
             share = _unclassified_share(
                 population.get(result.cohort_id, {}), weights, measure_type
@@ -2813,6 +3053,7 @@ def _apply_judge_correction(
                     family_id=None,
                     judge_alpha=None,
                     unclassified_share=share,
+                    scoped_groups=spec.groups,
                 )
                 if interval is not None:
                     result.intervals.append(interval)
@@ -2820,32 +3061,37 @@ def _apply_judge_correction(
             "mode": "assumed",
             "scenarios": [item.scenario_id for item in calibrations],
             "primary": spec.primary,
+            **({"groups": list(spec.groups)} if spec.groups is not None else {}),
         }
 
-    by_cohort, summaries, judge_alpha, truth_strata = _validated_judge_calibrations(
+    by_scope, summaries, judge_alpha, truth_strata = _validated_judge_calibrations(
         plan, data, diagnostics
     )
+    scope_count = len(_judge_scopes(plan))
     for result in targets:
-        cohort_calibration = by_cohort.get(result.cohort_id)
-        if cohort_calibration is None:
+        scope = _judge_scope(plan, result.cohort_id, result.group_id)
+        measured = by_scope.get(scope) if scope is not None else None
+        if scope is None or measured is None:
             continue
         weights, measure_type = weighting(result)
-        cohort_population = population.get(result.cohort_id, {})
+        scope_population = _scope_population(population, data, scope)
         gap = _pooled_calibration_gap(
-            cohort_population,
+            scope_population,
             design_type=plan.design.type,
             measure_type=measure_type,
             weights=weights,
+            group_id=scope[1],
         )
-        share = _unclassified_share(cohort_population, weights, measure_type)
+        share = _unclassified_share(scope_population, weights, measure_type)
         interval = _judge_corrected_interval(
             result=result,
-            calibration=cohort_calibration,
+            calibration=measured,
             primary_scenario=None,
             family_id=spec.family,
             judge_alpha=judge_alpha,
             gap=gap,
             unclassified_share=share,
+            scoped_group=scope[1],
         )
         if interval is not None:
             result.intervals.append(interval)
@@ -2859,28 +3105,47 @@ def _apply_judge_correction(
             reference = _delta_reference_interval(
                 result=result,
                 data=data,
-                strata=summaries.get(result.cohort_id, {}),
-                alpha=judge_alpha / len(plan.cohorts),
+                strata=summaries.get(scope, {}),
+                alpha=judge_alpha / scope_count,
                 family_id=spec.family,
                 gap=gap,
                 unclassified_share=share,
+                scoped_group=scope[1],
             )
             if reference is not None:
                 result.intervals.append(reference)
     _apply_judge_correction_to_comparisons(
-        plan, data, population, comparisons, by_cohort, spec.family, diagnostics
+        plan, data, population, comparisons, by_scope, spec.family, diagnostics
     )
+    per_calibration_alpha = judge_alpha / scope_count if judge_alpha is not None else None
+    if spec.groups is None:
+        return {
+            "mode": "validated",
+            "family": spec.family,
+            "family_alpha": judge_alpha,
+            "per_cohort_alpha": per_calibration_alpha,
+            "sampling": spec.sampling,
+            "validation_manifest": str(spec.validation_manifest),
+            "cohorts": {cohort_id: item for (cohort_id, _), item in summaries.items()},
+            "truth_strata": {cohort_id: item for (cohort_id, _), item in truth_strata.items()},
+        }
+
+    def nested(by_scope: dict[_JudgeScope, Any]) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        for (cohort_id, group_id), item in by_scope.items():
+            out.setdefault(cohort_id, {})[str(group_id)] = item
+        return out
+
     return {
         "mode": "validated",
         "family": spec.family,
         "family_alpha": judge_alpha,
-        "per_cohort_alpha": (
-            judge_alpha / len(plan.cohorts) if judge_alpha is not None else None
-        ),
+        "groups": list(spec.groups),
+        "per_calibration_alpha": per_calibration_alpha,
         "sampling": spec.sampling,
         "validation_manifest": str(spec.validation_manifest),
-        "cohorts": summaries,
-        "truth_strata": truth_strata,
+        "cohorts": nested(summaries),
+        "truth_strata": nested(truth_strata),
     }
 
 
@@ -4066,6 +4331,7 @@ def _judge_corrected_comparison_interval(
     gap: str | None = None,
     candidate_share: float = 0.0,
     baseline_share: float = 0.0,
+    scoped_group: str | None = None,
 ) -> RiskIntervalResult | None:
     """Correct a comparison by correcting each arm, then recombining.
 
@@ -4114,7 +4380,7 @@ def _judge_corrected_comparison_interval(
     certified = gap is None and result.eligibility == "certifying"
     warnings: list[str] = []
     if gap is not None:
-        warnings.append(_uncertified_correction_warning(gap))
+        warnings.append(_uncertified_correction_warning(gap, scoped_group))
     elif not certified:
         warnings.append(_uncertified_base_warning(result.eligibility))
     return RiskIntervalResult(
@@ -4145,8 +4411,14 @@ def _judge_corrected_comparison_interval(
         assumptions=[
             "The reported effect is a contrast of true failure risks, not of "
             "judge-reported risks.",
-            "Each arm is corrected with its own cohort's calibration, because the "
-            "conditional judge accuracies are prevalence-dependent.",
+            (
+                "Each arm is corrected with its own cohort's calibration, because the "
+                "conditional judge accuracies are prevalence-dependent."
+                if scoped_group is None
+                else f"Each arm is corrected with its own cohort's calibration for group "
+                f"{scoped_group!r}, from the labels on that group's rollouts, because the "
+                "conditional judge accuracies are prevalence-dependent."
+            ),
             f"Candidate P(truly unsafe | judge said unsafe) lies in "
             f"[{candidate_calibration.rho_1_lower:.6g}, "
             f"{candidate_calibration.rho_1_upper:.6g}]; P(truly unsafe | judge said safe) "
@@ -4162,7 +4434,13 @@ def _judge_corrected_comparison_interval(
             "two-arm region already makes.",
             *(
                 [
-                    "Each cohort's labels weight its classified rollouts equally, and so does "
+                    (
+                        "Each cohort's labels weight its classified rollouts equally"
+                        if scoped_group is None
+                        else f"Each cohort's labels weight the classified rollouts of group "
+                        f"{scoped_group!r} equally"
+                    )
+                    + ", and so does "
                     "the comparison, so they measure the judge's accuracy for both arms.",
                     "Coverage is the union bound over that region and both arm calibrations.",
                 ]
@@ -4185,13 +4463,17 @@ def _apply_judge_correction_to_comparisons(
     data: NormalizedData,
     population: dict[str, dict[str, _PromptRollouts]],
     comparisons: list[ComparisonResult],
-    by_cohort: dict[str, JudgeCalibration],
+    by_scope: dict[_JudgeScope, JudgeCalibration],
     family_id: str | None,
     diagnostics: list[Diagnostic],
 ) -> None:
-    """Append validated corrections to comparisons that expose both arm bounds."""
+    """Append validated corrections to comparisons that expose both arm bounds.
 
-    if not by_cohort:
+    A comparison of a group the calibration is not scoped to stays uncorrected, silently:
+    the plan scoped the calibration away from it.
+    """
+
+    if not by_scope:
         return
     target_weights: dict[tuple[str, str], dict[str, float]] = {}
     for comparison in plan.expanded_comparisons():
@@ -4206,26 +4488,28 @@ def _apply_judge_correction_to_comparisons(
     measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
     skipped: list[str] = []
     for result in comparisons:
-        candidate = by_cohort.get(result.candidate_cohort)
-        baseline = by_cohort.get(result.baseline_cohort)
+        candidate_scope = _judge_scope(plan, result.candidate_cohort, result.group_id)
+        baseline_scope = _judge_scope(plan, result.baseline_cohort, result.group_id)
+        if candidate_scope is None or baseline_scope is None:
+            continue
+        candidate = by_scope.get(candidate_scope)
+        baseline = by_scope.get(baseline_scope)
         if candidate is None or baseline is None:
             skipped.append(result.result_id or result.comparison_id)
             continue
         weights = target_weights[(result.comparison_id, result.result_id or result.comparison_id)]
         # Each arm is corrected with its own cohort's labels, so each must be identified.
         gaps: list[str] = []
-        for arm, cohort_id in (
-            ("candidate", result.candidate_cohort),
-            ("baseline", result.baseline_cohort),
-        ):
+        for arm, scope in (("candidate", candidate_scope), ("baseline", baseline_scope)):
             gap = _pooled_calibration_gap(
-                population.get(cohort_id, {}),
+                _scope_population(population, data, scope),
                 design_type=plan.design.type,
                 measure_type=measure_types[result.measure_id],
                 weights=weights,
+                group_id=scope[1],
             )
             if gap is not None:
-                gaps.append(f"{arm} cohort {cohort_id!r}: {gap}")
+                gaps.append(f"{arm} cohort {scope[0]!r}: {gap}")
         measure_type = measure_types[result.measure_id]
         interval = _judge_corrected_comparison_interval(
             result=result,
@@ -4234,11 +4518,12 @@ def _apply_judge_correction_to_comparisons(
             family_id=family_id,
             gap="; ".join(gaps) or None,
             candidate_share=_unclassified_share(
-                population.get(result.candidate_cohort, {}), weights, measure_type
+                _scope_population(population, data, candidate_scope), weights, measure_type
             ),
             baseline_share=_unclassified_share(
-                population.get(result.baseline_cohort, {}), weights, measure_type
+                _scope_population(population, data, baseline_scope), weights, measure_type
             ),
+            scoped_group=candidate_scope[1],
         )
         if interval is None:
             skipped.append(result.result_id or result.comparison_id)
@@ -4649,8 +4934,13 @@ def _noisy_valid_claim(
     family_alpha: float,
     judge_summary: dict[str, Any] | None,
     gap: str | None,
+    scope: _JudgeScope | None = None,
 ) -> tuple[Decision, list[str], float | None, float | None, str, float]:
-    """Decide an aggregate claim with the finite-sample noisy-but-valid test."""
+    """Decide an aggregate claim with the finite-sample noisy-but-valid test.
+
+    ``scope`` is the calibration the claim's row is corrected with; None when the
+    calibration is scoped to groups that leave the row out.
+    """
 
     method = "noisy_valid_certification_test"
     if not isinstance(evidence, GroupRiskResult) or not eligible:
@@ -4665,15 +4955,27 @@ def _noisy_valid_claim(
             method,
             family_alpha,
         )
+    if scope is None:
+        return (
+            "INCONCLUSIVE",
+            [_out_of_scope_reason(evidence.group_id)],
+            None,
+            None,
+            method,
+            family_alpha,
+        )
     if gap is not None:
         # The truth strata pool the cohort's labels exactly as the judge strata do.
         return (
             "INCONCLUSIVE",
             [
                 f"The noisy-but-valid test cannot certify this row: {gap}. Its labels are a "
-                "simple random sample of the cohort's classified rollouts, so they measure "
+                f"simple random sample of {_scope_rollouts(scope[1], 'classified rollouts')}, "
+                "so they measure "
                 "the judge's sensitivity and false-positive rate only for a weighted mean "
-                "that weights those rollouts equally, over the whole cohort in a fixed design."
+                "that weights those rollouts equally, over the whole "
+                + ("cohort" if scope[1] is None else "group")
+                + " in a fixed design."
             ],
             None,
             None,
@@ -4682,8 +4984,12 @@ def _noisy_valid_claim(
         )
     summary = judge_summary or {}
     strata = (summary.get("truth_strata") or {}).get(evidence.cohort_id) or {}
+    if scope[1] is not None:
+        strata = strata.get(scope[1]) or {}
     judge_alpha = summary.get("family_alpha")
-    per_cohort_alpha = summary.get("per_cohort_alpha")
+    per_cohort_alpha = summary.get(
+        "per_cohort_alpha" if scope[1] is None else "per_calibration_alpha"
+    )
     base = next((item for item in evidence.intervals if item.role == "primary"), None)
     if (
         summary.get("mode") != "validated"
@@ -4772,11 +5078,12 @@ def _claim_judge_error_stress(
     measure_types: Mapping[str, str],
     population: dict[str, dict[str, _PromptRollouts]],
     group_weights: dict[str, dict[str, float]],
-    accuracy: tuple[JudgeAccuracyBox, str] | None,
+    accuracy: _DeclaredBox | None,
 ) -> JudgeErrorStressResult:
     """Where a claim decided on judge-reported bounds tips, and whether a declared box holds it.
 
-    Diagnostic only: the result is reported beside the claim and never changes its status.
+    Diagnostic only: the result is reported beside the claim and never changes its status. A
+    box declared for groups that leave the claim's group out is not applied to it.
     """
 
     def skipped(reason: str) -> JudgeErrorStressResult:
@@ -4803,6 +5110,8 @@ def _claim_judge_error_stress(
     share = _unclassified_share(
         population.get(evidence.cohort_id, {}), group_weights[evidence.group_id], measure_type
     )
+    if accuracy is not None and accuracy[2] is not None and evidence.group_id not in accuracy[2]:
+        accuracy = None
     stress = stress_verdict(
         judge_reported_lower=evidence.lower,
         judge_reported_upper=evidence.upper,
@@ -4811,7 +5120,7 @@ def _claim_judge_error_stress(
         box=accuracy[0] if accuracy is not None else None,
         unclassified_share=share,
     )
-    box, source = accuracy if accuracy is not None else (None, None)
+    box, source = (accuracy[0], accuracy[1]) if accuracy is not None else (None, None)
     stressed = stress.stressed
     return JudgeErrorStressResult(
         applicable=True,
@@ -4951,14 +5260,20 @@ def _claims(
             uncorrected_claims.append(claim.id)
 
         if claim.method == "noisy_valid_test":
+            scope = (
+                _judge_scope(plan, evidence.cohort_id, evidence.group_id)
+                if isinstance(evidence, GroupRiskResult)
+                else None
+            )
             gap = (
                 _pooled_calibration_gap(
-                    population.get(evidence.cohort_id, {}),
+                    _scope_population(population, data, scope),
                     design_type=plan.design.type,
                     measure_type=measure_types[evidence.measure_id],
                     weights=group_weights[evidence.group_id],
+                    group_id=scope[1],
                 )
-                if isinstance(evidence, GroupRiskResult)
+                if isinstance(evidence, GroupRiskResult) and scope is not None
                 else None
             )
             status, reasons, lower, upper, method, alpha = _noisy_valid_claim(
@@ -4968,6 +5283,7 @@ def _claims(
                 family_alpha=family.alpha,
                 judge_summary=judge_summary,
                 gap=gap,
+                scope=scope,
             )
             estimate = None
             correction_note = None
@@ -4984,6 +5300,8 @@ def _claims(
                 if interval.interval_id == "judge_corrected_validated"
                 for warning in interval.warnings
             ]
+            if evidence is not None and _judge_scope_excludes(plan, evidence.group_id):
+                why.append(_out_of_scope_reason(evidence.group_id))
             reasons = [
                 "The plan declares a validated judge calibration, but this claim's evidence has "
                 "no certifying correction, so it is not decided on judge-reported risk."
@@ -5336,6 +5654,7 @@ def _judge_plan(plan: AnalysisPlan, judge: JudgeSpec) -> AnalysisPlan:
             "judges": [],
             "composites": [],
             "judge_calibration": None,
+            "panel_groups": None,
         }
     )
     outputs = plan.outputs.model_copy(update={"judge_claims": False})
