@@ -413,3 +413,15 @@ def test_the_fake_kernel_writes_conversations_from_the_command_line(
     assert isinstance(first["input"], list)
     with pytest.raises(ValueError, match="unrecognised fake kernel option 'output=chat'"):
         runner_module.resolve_kernel("fake:output=chat")
+
+
+def test_a_rejected_turn_count_is_recorded_as_an_invalid_attempt(tmp_path: Path) -> None:
+    # near-duplicate detection makes materialization keep the per-attempt ledger.
+    plan_path = turns_plan(
+        tmp_path, deduplication={"scope": "semantic_seed_path", "near_duplicate": "normalized_text"}
+    )
+    plan, selections, fingerprint, texts = prepare(plan_path)
+    result = execute_rewrites(plan, selections, ConversationKernel(), fingerprint, texts)
+    assert len(result.attempts) == 5 * len(selections)
+    assert all(row.kernel_status == "invalid" for row in result.attempts)
+    assert not any(row.accepted for row in result.attempts)

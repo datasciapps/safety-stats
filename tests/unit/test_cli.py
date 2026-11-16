@@ -1,3 +1,4 @@
+import math
 import shutil
 import subprocess
 import sys
@@ -220,6 +221,121 @@ def test_fixed_design_planning_rejects_an_unused_weight_column(tmp_path: Path) -
     assert accepted.exit_code == 0, accepted.output
 
 
+def test_fixed_design_planning_needs_only_the_levels_its_weights_name(tmp_path: Path) -> None:
+    manifest = tmp_path / "design.csv"
+    manifest.write_text("prompt_id,expected_rollouts\np1,20\np2,20\n", encoding="utf-8")
+    arguments = ["plan", "fixed-design", "--manifest", str(manifest), "--threshold", "0.5"]
+    accepted = runner.invoke(app, [*arguments, "--weights", "equal_prompt"])
+    assert accepted.exit_code == 0, accepted.output
+    assert "Prompts: 2" in accepted.stdout
+    # The default nested hierarchy names task_id and question_id, so they stay required.
+    rejected = runner.invoke(app, arguments)
+    assert rejected.exit_code != 0
+    assert "missing required columns: question_id, task_id" in plain(rejected.output)
+
+
+def test_comparison_planning_needs_only_the_levels_its_weights_name(tmp_path: Path) -> None:
+    manifest = tmp_path / "design.csv"
+    manifest.write_text("prompt_id,expected_rollouts\np1,20\np2,20\n", encoding="utf-8")
+    arguments = ["plan", "comparison", "--manifest", str(manifest), "--margin", "0.1"]
+    accepted = runner.invoke(app, [*arguments, "--weights", "equal_prompt"])
+    assert accepted.exit_code == 0, accepted.output
+    assert "Prompts: 2" in accepted.stdout
+    rejected = runner.invoke(app, arguments)
+    assert rejected.exit_code != 0
+    assert "missing required columns: question_id, task_id" in plain(rejected.output)
+
+
+def _comparison_manifest(tmp_path: Path, *, counts: bool = True) -> Path:
+    manifest = tmp_path / "design.csv"
+    rows = [f"p{index},q{index},t1" + (",100" if counts else "") for index in range(1, 5)]
+    header = "prompt_id,question_id,task_id" + (",expected_rollouts" if counts else "")
+    manifest.write_text("\n".join([header, *rows]) + "\n", encoding="utf-8")
+    return manifest
+
+
+def test_comparison_planning_cli_splits_alpha_and_reports_both_directions(
+    tmp_path: Path,
+) -> None:
+    arguments = [
+        "plan",
+        "comparison",
+        "--manifest",
+        str(_comparison_manifest(tmp_path)),
+        "--margin",
+        "0.05",
+        "--power",
+        "0.8",
+        "--weights",
+        "equal_prompt",
+    ]
+    result = runner.invoke(app, arguments)
+    assert result.exit_code == 0, result.output
+    output = plain(result.output)
+    # 800 independent rollouts with range 0.25 / 100 each on the difference; two_sided spends
+    # 0.025 on each bound.
+    ranges = 800 * (0.25 / 100) ** 2
+    gap = math.sqrt(0.5 * ranges * math.log(40)) + math.sqrt(0.5 * ranges * math.log(5))
+    assert "Candidate rollouts: 400" in output
+    assert "Baseline rollouts: 400" in output
+    assert "Independent blocks: 800" in output
+    assert f"at or below the margin: {0.05 - gap:.8g}" in output
+    assert f"at or above the margin: {0.05 + gap:.8g}" in output
+    assert "One-sided alpha per direction: 0.025" in output
+
+    per_direction = runner.invoke(app, [*arguments, "--coverage-mode", "per_direction"])
+    assert per_direction.exit_code == 0, per_direction.output
+    assert "One-sided alpha per direction: 0.05" in plain(per_direction.output)
+
+
+def test_comparison_planning_cli_pairs_and_overrides_counts(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "comparison",
+            "--manifest",
+            str(_comparison_manifest(tmp_path, counts=False)),
+            "--margin",
+            "-0.02",
+            "--candidate-rollouts",
+            "30",
+            "--baseline-rollouts",
+            "20",
+            "--independence-unit",
+            "pair",
+            "--family-size",
+            "2",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    output = plain(result.output)
+    assert "Candidate rollouts: 120" in output
+    assert "Baseline rollouts: 80" in output
+    assert "Independent blocks: 120" in output
+    assert "Margin: -0.02" in output
+    assert "Local alpha: 0.025" in output
+    assert "One-sided alpha per direction: 0.0125" in output
+
+
+def test_comparison_planning_cli_needs_counts_for_both_arms(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "comparison",
+            "--manifest",
+            str(_comparison_manifest(tmp_path, counts=False)),
+            "--margin",
+            "0.05",
+            "--candidate-rollouts",
+            "30",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--baseline-rollouts" in plain(result.output)
+
+
 def test_cli_errors_render_in_tests_as_they_do_on_ci() -> None:
     """tests/conftest.py forces CI's rendering, so raw-text assertions fail locally as well.
 
@@ -274,3 +390,119 @@ def test_every_command_explains_itself_in_help() -> None:
     # Guards the walk itself: one that stopped at the root would pass without looking.
     assert len(commands) > 10
     assert [name for name, text in commands if not text] == []
+
+
+def _pilot_manifest(tmp_path: Path) -> Path:
+    manifest = tmp_path / "design.csv"
+    rows = [
+        f"{category}-{index:02d},q{index},t1,{category},{'' if index == 0 else index}"
+        for category in ("a", "b")
+        for index in range(6)
+    ]
+    manifest.write_text(
+        "prompt_id,question_id,task_id,category,length\n" + "\n".join(rows) + "\n",
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def test_pilot_cli_writes_the_frame_with_the_draw(tmp_path: Path) -> None:
+    manifest = _pilot_manifest(tmp_path)
+    output = tmp_path / "pilot" / "frame.csv"
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--strata",
+            "task_id, category",
+            "--per-stratum",
+            "2",
+            "--seed",
+            "13",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Strata: 2" in result.stdout
+    assert "Pilot prompts: 4 of 12" in result.stdout
+    assert "Seed: 13" in result.stdout
+    written = output.read_bytes()
+    assert b"\r\n" not in written
+    lines = written.decode("utf-8").splitlines()
+    original = manifest.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == original[0] + ",pilot_stratum,pilot_inclusion_probability,pilot_selected"
+    # The manifest's own text comes through, including the gap in an integer column.
+    assert [line.rsplit(",", 3)[0] for line in lines[1:]] == original[1:]
+    assert sum(line.endswith(",True") for line in lines[1:]) == 4
+    assert {line.split(",")[-2] for line in lines[1:]} == {"0.3333333333333333"}
+
+
+def test_pilot_cli_rejects_a_stratum_smaller_than_the_draw(tmp_path: Path) -> None:
+    manifest = _pilot_manifest(tmp_path)
+    output = tmp_path / "frame.csv"
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--strata",
+            "category",
+            "--per-stratum",
+            "7",
+            "--seed",
+            "1",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "2 strata hold fewer than 7 prompts" in plain(result.output)
+    assert not output.exists()
+
+
+def test_pilot_cli_will_not_overwrite_the_manifest(tmp_path: Path) -> None:
+    manifest = _pilot_manifest(tmp_path)
+    before = manifest.read_bytes()
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--per-stratum",
+            "1",
+            "--seed",
+            "1",
+            "--output",
+            str(manifest),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "must not overwrite" in plain(result.output)
+    assert manifest.read_bytes() == before
+
+
+def test_pilot_cli_requires_a_seed(tmp_path: Path) -> None:
+    manifest = _pilot_manifest(tmp_path)
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--per-stratum",
+            "1",
+            "--output",
+            str(tmp_path / "frame.csv"),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--seed" in plain(result.output)

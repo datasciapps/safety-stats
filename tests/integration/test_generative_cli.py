@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +15,10 @@ from typer.testing import CliRunner
 
 from inspect_safety_stats.cli import app
 from inspect_safety_stats.generative.ledger import read_rewrites
+from inspect_safety_stats.generative.report import ARTIFACTS
 from inspect_safety_stats.generative.runner import analyze_run, materialize_run, resolve_kernel
+from inspect_safety_stats.generative.schema import load_generative_plan
+from tests.cli_output import plain
 from tests.generative_fixtures import SEEDS_WITH_TEXT, base_plan
 
 runner = CliRunner()
@@ -74,7 +79,9 @@ def stub_logs(
                 }
             )
     samples = pd.DataFrame(rows)
-    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: evals)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+    )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
@@ -137,6 +144,22 @@ def test_analyze_produces_a_report(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert (path / "taxonomy.csv").is_file()
     frame = pd.read_csv(path / "nodes.csv")
     assert set(frame["kind"]) == {"node"}
+
+
+def test_the_report_records_the_checksum_of_every_artifact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = write_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts)
+
+    path = analyze_run(plan, artifacts, "logs", cohort="candidate").write(tmp_path / "report")
+    checksums = json.loads((path / "checksums.json").read_text(encoding="utf-8"))
+    assert sorted(item.name for item in path.iterdir()) == sorted(ARTIFACTS)
+    assert set(checksums) == set(ARTIFACTS) - {"checksums.json"}
+    for name, digest in checksums.items():
+        assert hashlib.sha256((path / name).read_bytes()).hexdigest() == digest, name
 
 
 def test_text_artifacts_have_the_same_bytes_on_every_platform(
@@ -256,6 +279,31 @@ def test_a_missing_score_column_is_an_error(
     assert any(item.code == "GENERATIVE_SCORE_ABSENT" for item in report.diagnostics)
     # Unclassified rather than dropped, so the bound still covers every draw.
     assert report.tree.root.unclassified == report.tree.root.trials
+
+
+def test_analyze_command_exits_3_on_error_diagnostics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Exit 2 is INCONCLUSIVE for analyze --decision-exit-codes; an error must not read so."""
+
+    plan = write_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts, score_column="score_something_else")
+
+    result = runner.invoke(
+        app,
+        [
+            "generative", "analyze",
+            "--plan", str(plan),
+            "--artifacts", str(artifacts),
+            "--logs", str(artifacts),
+            "--output", str(tmp_path / "report"),
+        ],
+    )
+    assert result.exit_code == 3, result.output
+    assert "GENERATIVE_SCORE_ABSENT" in result.output
+    assert (tmp_path / "report" / "report.json").is_file()
 
 
 @pytest.mark.parametrize(
@@ -513,6 +561,71 @@ def test_an_unimportable_module_suggests_the_file_form() -> None:
         resolve_kernel("no.such.module:build")
 
 
+_DATACLASS_KERNEL = (
+    "from __future__ import annotations\n\n"
+    "from dataclasses import dataclass\n\n"
+    "from inspect_safety_stats.generative import RewriteOutcome\n\n\n"
+    "@dataclass\n"
+    "class Mine:\n"
+    "    kernel_id: str = 'mine'\n\n"
+    "    def rewrite(self, request):\n"
+    "        return RewriteOutcome(status='valid', prompt='from a file')\n\n\n"
+    "def build():\n"
+    "    return Mine()\n"
+)
+
+
+def test_a_kernel_file_leaves_no_module_behind(tmp_path: Path) -> None:
+    """A file named like an installed module must not replace it for the rest of the process.
+
+    The kernel defines a dataclass, which needs its module registered while it executes.
+    """
+
+    import json as installed
+
+    module = tmp_path / "json.py"
+    module.write_text(_DATACLASS_KERNEL, encoding="utf-8")
+    before = set(sys.modules)
+
+    kernel = resolve_kernel(f"{module}:build")
+
+    assert kernel.kernel_id == "mine"
+    assert sys.modules["json"] is installed
+    assert set(sys.modules) - before == set()
+
+
+def test_resolving_a_module_kernel_leaves_sys_path_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    before = list(sys.path)
+    resolve_kernel("inspect_safety_stats.generative.kernels:DeterministicFakeKernel")
+    assert sys.path == before
+
+
+def test_the_cli_finds_a_kernel_module_in_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As `python -m` would; a console script does not put the working directory on sys.path."""
+
+    plan = write_plan(tmp_path)
+    (tmp_path / "cwd_kernel_module.py").write_text(_DATACLASS_KERNEL, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.delitem(sys.modules, "cwd_kernel_module", raising=False)
+    try:
+        result = runner.invoke(
+            app,
+            ["generative", "materialize", "--plan", str(plan),
+             "--output", str(tmp_path / "run"), "--kernel", "cwd_kernel_module:build"],
+        )
+    finally:
+        sys.modules.pop("cwd_kernel_module", None)
+    assert result.exit_code == 0, result.output
+    prompts = pd.read_csv(tmp_path / "run" / "prompts.restricted.csv")
+    assert set(prompts["prompt"]) == {"from a file"}
+
+
 def test_provider_errors_are_reported_as_such_not_as_validation(tmp_path: Path) -> None:
     """A missing API key must not read as a validator problem."""
 
@@ -541,3 +654,111 @@ def test_provider_errors_are_reported_as_such_not_as_validation(tmp_path: Path) 
     assert "provider error" in result.output
     assert "no credentials configured" in result.output
     assert "No rewrite passed validation" not in result.output
+
+
+FAMILY = {
+    "slices": [{"level": "language", "value": "maltese"}],
+    "contrasts": [
+        {"id": "roleplay-vs-plain", "level": "wrapper", "candidate": "roleplay",
+         "baseline": "plain"},
+    ],
+}
+
+
+def test_a_declared_slice_family_reaches_every_artifact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = write_plan(tmp_path, inference={"coverage_mode": "two_sided", "slice_family": FAMILY})
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts)
+
+    result = runner.invoke(
+        app,
+        [
+            "generative", "analyze",
+            "--plan", str(plan),
+            "--artifacts", str(artifacts),
+            "--logs", str(artifacts),
+            "--output", str(tmp_path / "report"),
+            "--cohort", "candidate",
+        ],
+    )
+    output = plain(result.output)
+    assert result.exit_code == 0, output
+    assert "Slice family (experimental, simultaneous):" in output
+    assert "language=maltese: upper" in output
+    assert "roleplay-vs-plain (roleplay - plain): upper" in output
+
+    report = tmp_path / "report"
+    family = json.loads((report / "report.json").read_text(encoding="utf-8"))["slice_family"]
+    assert family["simultaneous"] is True
+    assert family["coverage_mode"] == "two_sided"
+    assert [item["member_id"] for item in family["slices"]] == ["language=maltese"]
+    assert [item["id"] for item in family["contrasts"]] == ["roleplay-vs-plain"]
+
+    frame = pd.read_csv(report / "family.csv")
+    assert list(frame["kind"]) == ["slice", "contrast"]
+    contrast = frame.iloc[1]
+    assert contrast["lower"] <= contrast["estimate"] <= contrast["upper"]
+    assert b"\r" not in (report / "family.csv").read_bytes()
+    checksums = json.loads((report / "checksums.json").read_text(encoding="utf-8"))
+    assert checksums["family.csv"] == hashlib.sha256(
+        (report / "family.csv").read_bytes()
+    ).hexdigest()
+    assert "Declared slice family (experimental)" in (report / "report.html").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_a_plan_without_a_family_writes_no_family_artifact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = write_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts)
+    path = analyze_run(plan, artifacts, "logs", cohort="candidate").write(tmp_path / "report")
+    assert not (path / "family.csv").exists()
+    assert "slice_family" not in json.loads((path / "report.json").read_text(encoding="utf-8"))
+
+
+def test_a_family_under_a_judge_calibration_says_it_is_uncorrected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calibration = {
+        "mode": "assumed",
+        "primary": "declared",
+        "scenarios": [{"id": "declared", "rho_1": {"lower": 0.85, "upper": 1.0},
+                       "rho_0": {"lower": 0.0, "upper": 0.02}}],
+    }
+    plan = write_plan(
+        tmp_path, inference={"slice_family": FAMILY}, judge_calibration=calibration
+    )
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts)
+    report = analyze_run(plan, artifacts, "logs", cohort="candidate")
+    codes = {item.code for item in report.diagnostics}
+    assert "JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY" in codes
+
+
+@pytest.mark.parametrize(
+    ("family", "message"),
+    [
+        ({}, "declares no slice and no contrast"),
+        ({"slices": [{"level": "language", "value": "maltese"}] * 2}, "same slice twice"),
+        ({"contrasts": [{"id": "c", "level": "wrapper", "candidate": "plain",
+                         "baseline": "plain"}]}, "with itself"),
+        ({"contrasts": [{"id": "c", "level": "wrapper", "candidate": "plain",
+                         "baseline": "nested"}] * 2}, "same contrast id twice"),
+        ({"slices": [{"level": "problem_class", "value": "bio"}]}, "not an arm level"),
+        ({"slices": [{"level": "language", "value": "maltese", "extra": 1}]}, "extra"),
+    ],
+)
+def test_an_ill_formed_family_is_refused_at_load(
+    tmp_path: Path, family: dict[str, Any], message: str
+) -> None:
+    plan = write_plan(tmp_path, inference={"slice_family": family})
+    with pytest.raises(ValueError, match=message):
+        load_generative_plan(plan)

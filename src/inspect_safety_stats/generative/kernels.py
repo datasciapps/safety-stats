@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
 
+from pydantic import BaseModel
+
 from inspect_safety_stats.generative.schema import GenerativePlan
 
 ValidationStatus = Literal["valid", "invalid", "error"]
@@ -102,6 +104,13 @@ def decode_conversation(text: str) -> tuple[ChatTurn, ...]:
 
 @dataclass(frozen=True)
 class KernelFingerprint:
+    """The identity of a rewrite kernel's resolved configuration.
+
+    Built by :func:`resolve_kernel_fingerprint`. ``sha256`` hashes the provider, model,
+    sampling, validation and deduplication settings together with the prompt template's
+    hash, which is also kept separately as ``prompt_template_sha256``.
+    """
+
     kernel_id: str
     sha256: str
     prompt_template_sha256: str
@@ -110,6 +119,13 @@ class KernelFingerprint:
 
 @dataclass(frozen=True)
 class RewriteRequest:
+    """One call to a :class:`RewriteKernel`: a seed prompt and the path to rewrite it for.
+
+    ``path_values`` maps each level of the selected path to its value. ``attempt`` counts
+    from 1 within a sampling unit, and ``selection_seed`` is the plan's selection seed, or a
+    value derived from it and the rewrite salt when one is given.
+    """
+
     sampling_unit_id: str
     path_hash: str
     path_values: Mapping[str, str]
@@ -127,10 +143,12 @@ class RewriteRequest:
 
 @dataclass(frozen=True)
 class RewriteOutcome:
-    """What one rewrite attempt produced.
+    """What a kernel returns for one attempt.
 
-    A valid outcome carries either ``prompt``, a single user message, or ``messages``, a
-    whole conversation, as the plan's ``rewrite.output`` declares. Never both.
+    A ``valid`` outcome carries either non-empty ``prompt`` text, a single user message, or
+    ``messages``, a whole conversation, as the plan's ``rewrite.output`` declares. Never
+    both, and no other status may carry either. ``invalid`` may be retried as the plan's
+    validation settings allow; ``error`` ends the unit's attempts.
     """
 
     status: ValidationStatus
@@ -198,8 +216,8 @@ def resolve_kernel_fingerprint(
         "temperature": spec.temperature,
         "max_tokens": spec.max_tokens,
         "seed_replayable": spec.seed_replayable,
-        "validation": spec.validation.model_dump(mode="json"),
-        "deduplication": spec.deduplication.model_dump(mode="json"),
+        "validation": _settings(spec.validation),
+        "deduplication": _settings(spec.deduplication),
     }
     # Keys for opt-in settings join the payload only when they are used, so a plan that
     # uses none of them keeps the fingerprint it had before they existed.
@@ -218,6 +236,62 @@ def resolve_kernel_fingerprint(
         prompt_template_sha256=template_hash,
         seed_replayable=spec.seed_replayable,
     )
+
+
+# Settings added after the fingerprint was defined. Each is hashed only when it differs from
+# its default, so a plan that does not use it keeps the fingerprint it always had, and a
+# plan that does cannot be pooled with one that does not.
+_LATER_SETTINGS: dict[str, object] = {"invoke": False, "near_duplicate": "off"}
+
+
+def _settings(spec: BaseModel) -> dict[str, object]:
+    dumped = spec.model_dump(mode="json")
+    for key, default in _LATER_SETTINGS.items():
+        if key in dumped and dumped[key] == default:
+            del dumped[key]
+    return dumped
+
+
+@dataclass(frozen=True)
+class ValidationVerdict:
+    """A validator's judgement of one rewrite the kernel returned as valid."""
+
+    status: ValidationStatus
+    detail: str | None = None
+
+
+@runtime_checkable
+class RewriteValidator(Protocol):
+    """The check ``rewrite.validation.validator_id`` names, invoked by the package.
+
+    It sees the request and the rewrite the kernel returned, and says whether the rewrite
+    is acceptable: ``invalid`` puts the unit into the retry path, ``error`` is an
+    operational failure, as for a kernel. Like a kernel, it must be stateless with respect
+    to outcomes, and ``validation.mode: deterministic`` asks that the same input always
+    receive the same verdict.
+    """
+
+    validator_id: str
+
+    def validate(self, request: RewriteRequest, prompt: str) -> ValidationVerdict: ...
+
+
+@dataclass
+class DeterministicFakeValidator:
+    """A network-free validator for tests and dry runs.
+
+    It rejects a rewrite when a hash of it falls in one of ``reject_every`` buckets, so its
+    verdicts depend only on the request and the text. ``reject_every=0`` accepts everything.
+    """
+
+    validator_id: str = "fake-validator"
+    reject_every: int = 0
+
+    def validate(self, request: RewriteRequest, prompt: str) -> ValidationVerdict:
+        token = hashlib.sha256(f"{request.sampling_unit_id}|{prompt}".encode()).hexdigest()
+        if self.reject_every and int(token[:8], 16) % self.reject_every == 0:
+            return ValidationVerdict(status="invalid", detail="synthetic rejection")
+        return ValidationVerdict(status="valid")
 
 
 @dataclass

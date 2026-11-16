@@ -13,6 +13,7 @@ to a restricted artifact, and only its hash is recorded for provenance.
 from __future__ import annotations
 
 import hashlib
+import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,11 +26,13 @@ from inspect_safety_stats.generative.kernels import (
     RewriteKernel,
     RewriteOutcome,
     RewriteRequest,
+    RewriteValidator,
     decode_conversation,
     encode_conversation,
     user_turns,
 )
 from inspect_safety_stats.generative.ledger import (
+    AttemptRecord,
     IncrementalCsvWriter,
     RewriteRecord,
     SelectionRecord,
@@ -41,6 +44,12 @@ from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
 
 @dataclass(frozen=True)
 class AcceptedRewrite:
+    """The accepted prompt text for one sampling unit, kept out of the ledger.
+
+    ``attempts`` is the number of kernel calls the unit took; it is 0 when the entry was
+    read back from the prompt store, which does not record it.
+    """
+
     sampling_unit_id: str
     prompt_id: str
     prompt: str
@@ -53,12 +62,20 @@ class AcceptedRewrite:
 
 @dataclass(frozen=True)
 class ExecutionResult:
+    """Everything :func:`execute_rewrites` produced, replayed units included.
+
+    ``rewrites`` holds one ledger record per selected unit. ``exhausted`` and ``errored``
+    list the unit ids that ran out of attempts or hit a kernel error, and ``first_error``
+    is the detail of the first error seen in this run, or None.
+    """
+
     rewrites: tuple[RewriteRecord, ...]
     accepted: tuple[AcceptedRewrite, ...]
     duplicates_rejected: int
     exhausted: tuple[str, ...]
     errored: tuple[str, ...]
     first_error: str | None = None
+    attempts: tuple[AttemptRecord, ...] = ()
 
     @property
     def accepted_by_unit(self) -> dict[str, AcceptedRewrite]:
@@ -143,6 +160,142 @@ def uneven_acceptance(rows: list[AcceptanceRow], *, tolerance: float = 0.05) -> 
     return uneven
 
 
+@dataclass(frozen=True)
+class FidelityRow:
+    """What became of every rewrite attempt for one value of one hierarchy level.
+
+    Counts are of attempts, not units: a unit retried three times contributes three.
+    ``validator_rejection_rate`` is the share of the rewrites the validator judged that it
+    rejected, and is None where it judged none. ``retried_after_duplicate`` counts units
+    whose kept rewrite came after one of their attempts was rejected as a duplicate: their
+    prompt depends on rewrites accepted for earlier units.
+    """
+
+    level: str
+    value: str
+    units: int
+    attempts: int
+    kernel_invalid: int
+    kernel_errors: int
+    exact_duplicates: int
+    near_duplicates: int
+    validator_judged: int
+    validator_rejected: int
+    validator_errors: int
+    validator_rejection_rate: float | None
+    retried_after_duplicate: int
+
+
+def _path_parts(node_id: str) -> list[tuple[str, str]]:
+    parts = []
+    for part in node_id.split("|")[1:]:
+        if "=" in part:
+            level, value = part.split("=", 1)
+            parts.append((level, value))
+    return parts
+
+
+def units_retried_after_duplicate(attempts: list[AttemptRecord]) -> set[str]:
+    """Units whose kept rewrite followed a duplicate rejection of their own."""
+
+    rejected = {
+        item.sampling_unit_id
+        for item in attempts
+        if item.duplicate != "none" and not item.accepted
+    }
+    kept = {item.sampling_unit_id for item in attempts if item.accepted}
+    return rejected & kept
+
+
+def fidelity_by_level(
+    selections: list[SelectionRecord], attempts: list[AttemptRecord]
+) -> list[FidelityRow]:
+    """Aggregate the attempt ledger across each level of the taxonomy.
+
+    Acceptance by level says how many units ran out of attempts. This says why attempts
+    failed -- the kernel's own rejection, a duplicate, or the validator -- so an arm whose
+    rewrites the validator rejects more often than another's is visible even when retries
+    hide it from acceptance.
+    """
+
+    by_unit: dict[str, list[AttemptRecord]] = {}
+    for item in attempts:
+        by_unit.setdefault(item.sampling_unit_id, []).append(item)
+    dependent = units_retried_after_duplicate(attempts)
+    buckets: dict[tuple[str, str], list[str]] = {}
+    for selection in selections:
+        if selection.sampling_unit_id not in by_unit:
+            continue
+        for part in _path_parts(selection.node_id):
+            buckets.setdefault(part, []).append(selection.sampling_unit_id)
+
+    rows = []
+    for (level, value), units in sorted(buckets.items()):
+        made = [item for unit in units for item in by_unit[unit]]
+        judged = [item for item in made if item.validator_status in {"valid", "invalid"}]
+        rejected = sum(1 for item in judged if item.validator_status == "invalid")
+        rows.append(
+            FidelityRow(
+                level=level,
+                value=value,
+                units=len(units),
+                attempts=len(made),
+                kernel_invalid=sum(1 for item in made if item.kernel_status == "invalid"),
+                kernel_errors=sum(1 for item in made if item.kernel_status == "error"),
+                exact_duplicates=sum(1 for item in made if item.duplicate == "exact"),
+                near_duplicates=sum(1 for item in made if item.duplicate == "near"),
+                validator_judged=len(judged),
+                validator_rejected=rejected,
+                validator_errors=sum(1 for item in made if item.validator_status == "error"),
+                validator_rejection_rate=rejected / len(judged) if judged else None,
+                retried_after_duplicate=sum(1 for unit in units if unit in dependent),
+            )
+        )
+    return rows
+
+
+def uneven_fidelity(rows: list[FidelityRow], *, tolerance: float = 0.05) -> list[str]:
+    """Levels whose values the validator rejects at materially different rates."""
+
+    by_level: dict[str, list[float]] = {}
+    for row in rows:
+        if row.validator_rejection_rate is not None:
+            by_level.setdefault(row.level, []).append(row.validator_rejection_rate)
+    return sorted(
+        level
+        for level, rates in by_level.items()
+        if len(rates) >= 2 and max(rates) - min(rates) > tolerance
+    )
+
+
+def check_attempts(rewrites: list[RewriteRecord], attempts: list[AttemptRecord]) -> None:
+    """Refuse an attempt ledger that does not describe the rewrite ledger beside it."""
+
+    by_unit: dict[str, list[AttemptRecord]] = {}
+    for item in attempts:
+        by_unit.setdefault(item.sampling_unit_id, []).append(item)
+    known = {record.sampling_unit_id for record in rewrites}
+    stray = sorted(set(by_unit) - known)
+    if stray:
+        raise ValueError(
+            f"the attempt ledger records units the rewrite ledger does not: {stray[:3]}"
+        )
+    for record in rewrites:
+        rows = sorted(by_unit.get(record.sampling_unit_id, []), key=lambda item: item.attempt)
+        numbers = [item.attempt for item in rows]
+        kept = [item for item in rows if item.accepted]
+        consistent = numbers == list(range(1, record.rewrite_attempts + 1)) and (
+            [item.prompt_sha256 for item in kept] == [record.prompt_sha256]
+            if record.is_evaluable()
+            else not kept
+        )
+        if not consistent:
+            raise ValueError(
+                f"unit {record.sampling_unit_id}: the attempt ledger and the rewrite ledger "
+                "disagree about its attempts"
+            )
+
+
 def load_seed_texts(plan: GenerativePlan, *, base_path: str | Path = ".") -> dict[str, str]:
     """Read the fixed seed prompts the rewrite kernel transforms."""
 
@@ -169,6 +322,29 @@ def _dedup_key(plan: GenerativePlan, node_id: str, semantic_seed_id: str) -> str
     if scope == "structural_path":
         return node_id
     return semantic_seed_id
+
+
+def normalized_text(prompt: str) -> str:
+    """The form two rewrites are compared in under ``near_duplicate: normalized_text``.
+
+    NFKC folds compatibility forms (full-width letters, ligatures), case folding removes
+    case, and punctuation and symbols are dropped before whitespace is collapsed, so
+    rewrites that differ only in those respects compare equal. Word order, wording and
+    language still distinguish them.
+    """
+
+    folded = unicodedata.normalize("NFKC", prompt).casefold()
+    kept = "".join(
+        " " if unicodedata.category(character)[0] in {"P", "S"} else character
+        for character in folded
+    )
+    return " ".join(kept.split())
+
+
+def _near_digest(plan: GenerativePlan, prompt: str) -> str | None:
+    if plan.rewrite.deduplication.near_duplicate == "off":
+        return None
+    return prompt_sha256(normalized_text(prompt))
 
 
 def _prompt_id(sampling_unit_id: str) -> str:
@@ -256,6 +432,8 @@ def execute_rewrites(
     completed: Mapping[str, RewriteRecord] | None = None,
     already_accepted: Mapping[str, AcceptedRewrite] | None = None,
     on_unit: Callable[[RewriteRecord, AcceptedRewrite | None], None] | None = None,
+    validator: RewriteValidator | None = None,
+    on_attempt: Callable[[AttemptRecord], None] | None = None,
 ) -> ExecutionResult:
     """Draw one accepted rewrite per selected path, ledgering every attempt.
 
@@ -272,11 +450,33 @@ def execute_rewrites(
     ``on_unit`` is called as each *newly executed* unit finishes, so a caller can persist it
     before the next one starts. Replayed units do not fire it: they are already on disk, and
     re-emitting them would mean deleting the record before rewriting it.
+
+    ``validator`` is required when the plan sets ``rewrite.validation.invoke`` and refused
+    otherwise, so a declared check is never silently skipped and an undeclared one never
+    silently shapes the accepted distribution. It runs on every rewrite the kernel returns
+    as valid that is not rejected as a duplicate. When the plan records attempts, each
+    kernel call of a newly executed unit becomes an :class:`AttemptRecord`, passed to
+    ``on_attempt`` as it is made; the attempts of replayed units are already on disk.
     """
 
     validation = plan.rewrite.validation
+    if validation.invoke and validator is None:
+        raise ValueError(
+            f"the plan sets rewrite.validation.invoke, so the validator "
+            f"{validation.validator_id!r} must be supplied"
+        )
+    if validator is not None and not validation.invoke:
+        raise ValueError(
+            "a validator was supplied but the plan does not set rewrite.validation.invoke; "
+            "it would shape the accepted distribution without the plan saying so"
+        )
+    recording = plan.rewrite.records_attempts
+    attempt_records: list[AttemptRecord] = []
     deduplication = plan.rewrite.deduplication
     seen: dict[str, set[str]] = {}
+    # Normalized forms of the accepted rewrites, per deduplication key, when near
+    # duplicates are detected.
+    seen_near: dict[str, set[str]] = {}
     records: list[RewriteRecord] = []
     accepted: list[AcceptedRewrite] = []
     duplicates = 0
@@ -288,6 +488,14 @@ def execute_rewrites(
     if rewrite_salt:
         salt_digest = hashlib.sha256(f"{salt_seed}|{rewrite_salt}".encode()).digest()
         salt_seed = int.from_bytes(salt_digest[:6], "big")
+
+    def note(row: dict[str, object]) -> None:
+        if not recording:
+            return
+        entry = AttemptRecord.model_validate(row)
+        attempt_records.append(entry)
+        if on_attempt is not None:
+            on_attempt(entry)
 
     for record in selections:
         unit_id = record.sampling_unit_id
@@ -320,6 +528,9 @@ def execute_rewrites(
                 accepted.append(carried)
                 if key is not None:
                     seen.setdefault(key, set()).add(carried.prompt_sha256)
+                    near = _near_digest(plan, carried.prompt)
+                    if near is not None:
+                        seen_near.setdefault(key, set()).add(near)
             elif prior.validation_status == "error":
                 errored.append(unit_id)
             else:
@@ -333,25 +544,31 @@ def execute_rewrites(
 
         for attempt in range(1, validation.maximum_attempts + 1):
             attempts = attempt
-            outcome = kernel.rewrite(
-                RewriteRequest(
-                    sampling_unit_id=unit_id,
-                    path_hash=record.path_hash,
-                    path_values=path_values,
-                    semantic_seed_id=seed_id,
-                    seed_text=seed_texts[seed_id],
-                    attempt=attempt,
-                    selection_seed=salt_seed,
-                    system_prompt=system_prompt,
-                    conversation_turns=required_turns,
-                )
+            request = RewriteRequest(
+                sampling_unit_id=unit_id,
+                path_hash=record.path_hash,
+                path_values=path_values,
+                semantic_seed_id=seed_id,
+                seed_text=seed_texts[seed_id],
+                attempt=attempt,
+                selection_seed=salt_seed,
+                system_prompt=system_prompt,
+                conversation_turns=required_turns,
             )
+            outcome = kernel.rewrite(request)
+            row: dict[str, object] = {
+                "sampling_unit_id": unit_id,
+                "attempt": attempt,
+                "kernel_status": outcome.status,
+            }
             if outcome.status == "error":
                 status = "error"
                 if first_error is None:
                     first_error = outcome.detail
+                note(row)
                 break
             if outcome.status == "invalid":
+                note(row)
                 if validation.on_invalid == "fail":
                     break
                 continue
@@ -360,6 +577,10 @@ def execute_rewrites(
                 # The arm is verified, not just passed on: a conversation with another
                 # count would be counted under an arm value it does not carry.
                 if user_turns(outcome.messages) != required_turns:
+                    # Recorded as the kernel's own rejection: the conversation breaks the
+                    # contract the request stated, before any duplicate or validator check.
+                    row["kernel_status"] = "invalid"
+                    note(row)
                     if validation.on_invalid == "fail":
                         break
                     continue
@@ -370,12 +591,38 @@ def execute_rewrites(
             else:
                 candidate = outcome.text
             digest = prompt_sha256(candidate)
+            near = _near_digest(plan, candidate)
+            row["prompt_sha256"] = digest
             if key is not None and digest in seen.get(key, set()):
+                row["duplicate"] = "exact"
+            elif key is not None and near is not None and near in seen_near.get(key, set()):
+                row["duplicate"] = "near"
+            if row.get("duplicate") is not None:
                 duplicates += 1
                 if deduplication.on_duplicate == "retry":
+                    note(row)
+                    continue
+            if validator is not None:
+                verdict = validator.validate(request, candidate)
+                row["validator_id"] = validator.validator_id
+                row["validator_status"] = verdict.status
+                if verdict.status == "error":
+                    status = "error"
+                    if first_error is None:
+                        first_error = f"validator: {verdict.detail}"
+                    note(row)
+                    break
+                if verdict.status == "invalid":
+                    note(row)
+                    if validation.on_invalid == "fail":
+                        break
                     continue
             if key is not None:
                 seen.setdefault(key, set()).add(digest)
+                if near is not None:
+                    seen_near.setdefault(key, set()).add(near)
+            row["accepted"] = True
+            note(row)
             status = "valid"
             prompt = candidate
             messages = turns
@@ -431,6 +678,7 @@ def execute_rewrites(
         exhausted=tuple(exhausted),
         errored=tuple(errored),
         first_error=first_error,
+        attempts=tuple(attempt_records),
     )
 
 

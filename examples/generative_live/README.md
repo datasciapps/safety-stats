@@ -121,6 +121,19 @@ inspect-safety-stats generative analyze \
   --artifacts run/local --logs run/local/logs --output run/local/report
 ```
 
+Raise Inspect's request timeout before a long or heavily parallel local run. Inspect does not
+stream requests to vLLM by default, so a whole answer has to arrive within the HTTP request
+timeout, which is 600 seconds unless you set it. The server shares its throughput among all
+requests in flight, so under load a long answer can take longer than that: a high `max_tokens`
+or a reasoning model makes it likelier. A request that times out is dropped and retried from
+the start, after a backoff that grows with each retry. Inspect does not warn when this happens,
+so the run is simply slower. In one run on a single GPU with 160 requests in flight, each
+request got 1.5-2 output tokens per second, and 22 requests timed out. Pass
+`-M client_timeout=<seconds>` to `inspect eval` to raise the timeout. From Inspect 0.3.261 the
+`INSPECT_HTTP_REQUEST_TIMEOUT` environment variable also sets it. From 0.3.262,
+`--stream-idle-timeout <seconds>` streams the responses instead, and the timeout then applies to
+each wait between chunks.
+
 An open-weight rewriter may refuse to paraphrase a harmful probe, and the prompt template was
 tuned against `openai/gpt-4o`. The kernel reports a refusal as an invalid rewrite, so read
 `acceptance.csv` before the bounds: an arm with many exhausted units is one where the accepted
