@@ -155,7 +155,8 @@ inspect-safety-stats visualize \
 
 `analyze` exits with code `0` after a completed analysis whose integrity is valid or degraded,
 and `3` when the analysis cannot run or its integrity is invalid. An invalid analysis still
-writes its report, so the diagnostics can be audited; `--allow-invalid` makes it exit `0`.
+writes its report, so the diagnostics can be audited, and so does an analysis whose manifest,
+logs or rollout files cannot be read; `--allow-invalid` makes it exit `0`.
 Use `--decision-exit-codes` to opt into decision-sensitive exit codes for completed analyses
 (`0` pass, `1` fail, and `2` inconclusive).
 

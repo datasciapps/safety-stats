@@ -50,6 +50,16 @@ described in their pull requests.
 
 ### Changed
 
+- **`analyze` reports input it cannot read (changes behaviour).** A missing or broken
+  design manifest, or logs or rollout files that cannot be read, made `analyze` raise and
+  write no report, while `validate` reported the same input as an `INGEST_FAILED` error. Both
+  now read their input the same way: `analyze` returns a report whose integrity is invalid,
+  with the `INGEST_FAILED` diagnostic, no estimates, and every claim `INCONCLUSIVE`. The CLI
+  writes that report and exits `3`, or `0` (`2` with `--decision-exit-codes`) under
+  `--allow-invalid`, where it printed `Analysis failed` and wrote nothing. A plan that cannot
+  be loaded still fails without a report. Passing both `logs` and `source` to `validate` now
+  raises `ValueError`, as it does in `analyze`, where it was reported as `INGEST_FAILED`.
+
 - **An unlabelled judge stratum is completed, not refused (changes results).** A validated
   judge calibration needed a human label in both judge strata. A stratum without one is now
   completed conservatively: its error rate is bounded by [0, 1], the correction is still
