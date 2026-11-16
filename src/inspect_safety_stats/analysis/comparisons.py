@@ -232,6 +232,22 @@ def _comparisons(
                         cluster_count,
                         diagnostic_outputs,
                     ) = _paired_comparison_diagnostics(spec, data, set(target.prompt_ids))
+                    partial = diagnostic_outputs.get("partial_pairing")
+                    if partial is not None:
+                        message = (
+                            f"{partial['pair_count'] - partial['scored_pair_count']} of "
+                            f"{partial['pair_count']} pairs have an unscored arm; the paired "
+                            "diagnostics bound every completion of the unscored outcomes"
+                        )
+                        diagnostics.append(
+                            Diagnostic(
+                                code="PAIR_UNSCORED_COMPLETED",
+                                severity="WARNING",
+                                message=message,
+                                scope=spec.id,
+                            )
+                        )
+                        warnings.append(message)
                 except ValueError as exc:
                     diagnostics.append(
                         Diagnostic(

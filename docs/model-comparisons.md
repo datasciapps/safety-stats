@@ -405,6 +405,39 @@ inspect-safety-stats visualize \
   --output report/model-comparison.html
 ```
 
+## Pairs with an unscored arm
+
+The paired diagnostics (`exact_mcnemar`, `newcombe_paired` and `fixed_cluster_bootstrap`) match
+rollouts across the two arms by `pair_key`. An unscored rollout, such as one with a missing
+score or a terminal error, stays in its pair. Its outcome is unknown, so the diagnostics report
+bounds that hold for every way of scoring the unknown outcomes, instead of failing:
+
+- `exact_mcnemar` reports the largest `p_value_candidate_worse`, `p_value_candidate_better` and
+  two-sided p-value that any completion gives.
+- `newcombe_paired` reports the lowest lower bound and the highest upper bound over every
+  completion. Its `completion_count` is the number of distinct 2×2 tables the completions
+  produce.
+- `fixed_cluster_bootstrap` takes its lower bound from the completion that scores every unknown
+  candidate outcome safe and every unknown baseline outcome a failure, and its upper bound from
+  the opposite completion. The resampling draws do not depend on the outcomes, so no completion
+  gives a lower or a higher bound.
+
+The point estimate depends on the unknown outcomes, so each of these outputs carries
+`estimate_lower` and `estimate_upper` in place of `estimate`. `diagnostic_outputs` gains a
+`partial_pairing` record with the number of pairs, of fully scored pairs, and of pairs unscored
+in the candidate arm, in the baseline arm or in both. `discordant_counts` count the fully scored
+pairs. A `PAIR_UNSCORED_COMPLETED` warning says how many pairs were completed. When every pair
+is scored, the outputs are the ones above, unchanged.
+
+A pair key that one arm lacks altogether is still a structural error, `PAIR_BROKEN`, and makes
+the report's integrity `invalid`. Unscored rollouts degrade the integrity as they do without
+pairing. The completions bound the diagnostics only. The comparison's own interval treats
+unscored outcomes as set by `inputs.score.missing`.
+
+`newcombe_paired` enumerates the completions. Their number grows with the cube of the number of
+unscored pairs, and above 50 million candidate tables, a few hundred unscored pairs, the
+diagnostic fails with `PAIR_BROKEN` and a message saying so.
+
 ## Interpretation boundaries
 
 The comparison interval does not establish behavioral coverage beyond the fixed design. It also

@@ -67,7 +67,9 @@ if TYPE_CHECKING:
     from .multiplicity import bonferroni_allocate
     from .paired import (
         exact_mcnemar,
+        exact_mcnemar_partial,
         newcombe_paired_interval,
+        newcombe_paired_interval_partial,
     )
     from .planning import zero_failure_sample_size
     from .risk import (
@@ -107,8 +109,10 @@ __all__ = [
     "direct_risk_difference_bounds",
     "entropic_risk",
     "exact_mcnemar",
+    "exact_mcnemar_partial",
     "FrontierTargetCalibration",
     "newcombe_paired_interval",
+    "newcombe_paired_interval_partial",
     "HierarchyRegionProjection",
     "IndependentFrontier",
     "LinearIntervalConstraint",
@@ -180,11 +184,13 @@ _EXPORTS = {
     "effective_votes": "inspect_safety_stats.stats.judges",
     "entropic_risk": "inspect_safety_stats.stats.risk",
     "exact_mcnemar": "inspect_safety_stats.stats.paired",
+    "exact_mcnemar_partial": "inspect_safety_stats.stats.paired",
     "horvitz_thompson_mean_bounds": "inspect_safety_stats.stats.design_based",
     "identified_risk_set": "inspect_safety_stats.stats.judges",
     "maximum_risk": "inspect_safety_stats.stats.risk",
     "missingness_robust_binomial_bounds": "inspect_safety_stats.stats.binomial",
     "newcombe_paired_interval": "inspect_safety_stats.stats.paired",
+    "newcombe_paired_interval_partial": "inspect_safety_stats.stats.paired",
     "pairwise_agreement": "inspect_safety_stats.stats.judges",
     "project_contrast_hierarchy_confidence_region": "inspect_safety_stats.stats.hierarchy_region",
     "project_hierarchy_confidence_region": "inspect_safety_stats.stats.hierarchy_region",

@@ -340,6 +340,17 @@ described in their pull requests.
   design weight on those units as `unclassified_share`. See
   [judge misclassification](docs/judge-misclassification.md#on-the-generative-path).
 
+- **Unscored pairs are bounded, not a broken pairing (changes results).** With `pair_key`, one
+  unscored rollout in either arm left its pair unmatched, so the comparison got `PAIR_BROKEN`
+  and the report's integrity became `invalid`. The pair is now kept, and the paired diagnostics
+  report bounds over every scoring of the unknown outcomes, with `estimate_lower` and
+  `estimate_upper` in place of `estimate`, a `partial_pairing` record in `diagnostic_outputs`
+  and a `PAIR_UNSCORED_COMPLETED` warning. A pair unscored in both arms, which was dropped
+  without notice, is now counted and bounded too. A key missing from one arm is still
+  `PAIR_BROKEN`. `exact_mcnemar_partial` and `newcombe_paired_interval_partial` are exported
+  from `stats`. See
+  [Pairs with an unscored arm](docs/model-comparisons.md#pairs-with-an-unscored-arm).
+
 - **`analyze` reports input it cannot read (changes behaviour).** A missing or broken
   design manifest, or logs or rollout files that cannot be read, made `analyze` raise and
   write no report, while `validate` reported the same input as an `INGEST_FAILED` error. Both
