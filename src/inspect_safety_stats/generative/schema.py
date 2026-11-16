@@ -410,12 +410,58 @@ class ReweightingSpec(StrictModel):
         return self
 
 
+class FamilySliceSpec(StrictModel):
+    """Every path carrying ``level=value``, as a member of the declared family."""
+
+    level: str = Field(min_length=1)
+    value: str = Field(min_length=1)
+
+
+class ArmContrastSpec(StrictModel):
+    """Two values of one arm level, compared on the seeds that hold both."""
+
+    id: str = Field(min_length=1)
+    level: str = Field(min_length=1)
+    candidate: str = Field(min_length=1)
+    baseline: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def values_differ(self) -> ArmContrastSpec:
+        if self.candidate == self.baseline:
+            raise ValueError(f"contrast {self.id!r} compares {self.candidate!r} with itself")
+        return self
+
+
+class SliceFamilySpec(StrictModel):
+    """Experimental: slices and arm contrasts covered simultaneously at ``1 - alpha``.
+
+    Declared in the frozen plan for the same reason as design sensitivity: the family the
+    error budget is spent on must not be chosen after seeing the results.
+    """
+
+    slices: list[FamilySliceSpec] = Field(default_factory=list)
+    contrasts: list[ArmContrastSpec] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def family_is_well_formed(self) -> SliceFamilySpec:
+        if not self.slices and not self.contrasts:
+            raise ValueError("inference.slice_family declares no slice and no contrast")
+        keys = [(item.level, item.value) for item in self.slices]
+        if len(set(keys)) != len(keys):
+            raise ValueError("inference.slice_family declares the same slice twice")
+        ids = [item.id for item in self.contrasts]
+        if len(set(ids)) != len(ids):
+            raise ValueError("inference.slice_family declares the same contrast id twice")
+        return self
+
+
 class InferenceSpec(StrictModel):
     alpha: PlanFloat = Field(default=0.05, gt=0.0, lt=1.0)
     coverage_mode: Literal["one_sided_upper", "two_sided"] = "one_sided_upper"
     report_all_nodes: bool = True
     simultaneous_tree: bool = False
     design_sensitivity: list[ReweightingSpec] = Field(default_factory=list)
+    slice_family: SliceFamilySpec | None = None
 
 
 class GenerativePlan(StrictModel):
@@ -433,6 +479,21 @@ class GenerativePlan(StrictModel):
     sampling: SamplingSpec
     judge_calibration: JudgeCalibrationSpec | None = None
     inference: InferenceSpec = Field(default_factory=InferenceSpec)
+
+    @model_validator(mode="after")
+    def slice_family_is_over_arm_levels(self) -> GenerativePlan:
+        family = self.inference.slice_family
+        if family is None:
+            return self
+        for level in [item.level for item in family.slices] + [
+            item.level for item in family.contrasts
+        ]:
+            if level not in self.taxonomy.arms:
+                raise ValueError(
+                    f"inference.slice_family names {level!r}, which is not an arm level; "
+                    "slices of fixed levels are nodes of the tree"
+                )
+        return self
 
 
 def load_generative_plan(path: str | Path) -> GenerativePlan:

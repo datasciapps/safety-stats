@@ -288,7 +288,8 @@ construction. On the worked example, reading the same question off the tree as a
 over dozens of thin nodes gives 0.13--0.36; the slice gives 0.027--0.112.
 
 Slices overlap the tree's nodes, so they cannot join its Šidák frontiers and are reported
-pointwise.
+pointwise. To cover several slices at once, declare them in a
+[slice family](#arm-contrasts-and-a-simultaneous-slice-family-experimental).
 
 ## Comparisons
 
@@ -300,6 +301,73 @@ Concordant units contribute exactly zero, which is where the pairing pays: again
 arms separately, the bound is 2.0x--9.8x tighter when the arms respond alike to prompt
 difficulty, and never worse. Comparisons are pointwise and report the risk difference only;
 both arm intervals travel with each one.
+
+## Arm contrasts and a simultaneous slice family (experimental)
+
+A comparison contrasts two target models on the same rewrites. An **arm contrast** contrasts
+two values of one transformation level -- `roleplay` against `direct_request`, Maltese against
+English -- within the primary cohort. Declare the contrasts and slices you want in the frozen
+plan, and they are covered **simultaneously**:
+
+```yaml
+inference:
+  alpha: 0.05
+  coverage_mode: one_sided_upper
+  slice_family:
+    slices:
+      - {level: language, value: maltese}
+      - {level: language, value: english}
+    contrasts:
+      - {id: roleplay-vs-direct, level: wrapper, candidate: roleplay, baseline: direct_request}
+```
+
+**What a contrast estimates.** Each draw carries one value of the level, so the two arms hold
+different draws and nothing pairs them draw by draw. What they share is the semantic seeds.
+The contrast holds the seed mix fixed:
+
+\[
+\Delta = T_a - T_b,\qquad T_v=\sum_{s\in S}\pi_s\,R_s(v),
+\]
+
+where \(S\) is the set of seeds that hold both values (`shared_seeds`), \(\pi_s\) the declared
+seed weights renormalized over \(S\), and \(R_s(v)\) the declared-weight risk of the paths
+under seed \(s\) that carry value \(v\). A context weight or a constraint that makes one value
+likelier under some seeds than others therefore cannot move the contrast. When every seed holds
+both values with the same conditional weight, \(T_v\) is the slice risk and \(\Delta\) is the
+difference of the two slices. A seed that holds only one of the values is left out of the
+contrast, not imputed.
+
+**How it is bounded.** Each arm is bounded on its own, and the two are combined by a union
+bound. Under `direct` sampling each draw is reweighted by a known ratio that makes its mean
+\(T_v\). When the ratio is constant -- no context weight or constraint skews the value across
+seeds -- the arm is bounded exactly, like a slice; otherwise the Bernoulli-KL bound is applied
+to the reweighted draws, and the arm reports the largest ratio as `maximum_ratio`. The larger
+it is, the wider the interval. Under `proportional_stratified` the arm is a fixed-coefficient
+weighted sum over the seed strata, bounded by the weighted KL/Chernoff engine.
+
+**How the family is calibrated.** Declared slices of one level hold disjoint draws under
+`direct` sampling and share one Šidák frontier, as siblings in the tree do. Every other member,
+each contrast included, is a frontier of its own, and frontiers share \(\alpha\) by Bonferroni.
+`frontier_id`, `frontier_size` and `endpoint_alpha` show how much of the budget each member
+received. Under `two_sided`, coverage holds for each direction: every upper bound together, and
+every lower bound together. Under `one_sided_upper` a contrast is bounded from above only, and
+its lower endpoint is reported as -1.
+
+A family slice is not the same calculation as `--slice`. Under `direct` sampling it uses the
+same exact construction at its calibrated level. Under `proportional_stratified` it uses fixed
+stratum coefficients from the declared weights, where `--slice` normalizes the coefficients
+within the slice, so the two can differ.
+
+Declaring the family in the plan is what makes it simultaneous: a member added after seeing the
+results would change the family the error budget was spent on. For the same reason a member
+that cannot be estimated -- an unknown value, an arm without draws, a contrast whose values
+share no seed -- stops the analysis rather than being dropped. Levels must be arm levels:
+slices of fixed levels are nodes of the tree.
+
+This is experimental. The family covers the primary cohort only; a contrast between cohorts is
+`--compare`. It stays on the judge-reported scale, and with `judge_calibration` declared,
+`JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY` says so. The derivation is in
+[statistical methods](statistical-methods.md#78-arm-contrasts-on-a-generative-design-experimental).
 
 ## Sensitivity to the declared design
 
@@ -422,9 +490,10 @@ Three diagnostics read it:
 
 `report.html` is a self-contained page -- it embeds its data and fetches nothing. Alongside it,
 `report.json`, `nodes.csv`, `taxonomy.csv`, `comparisons.csv`, `diagnostics.csv`,
-`acceptance.csv`, and `checksums.json`, which holds the SHA-256 of each of the others.
-`generative analyze` exits `3` when the report carries an `ERROR` diagnostic; the report is
-still written, so the diagnostics can be read.
+`acceptance.csv`, and `checksums.json`, which holds the SHA-256 of each of the others. A plan
+that declares `inference.slice_family` also gets `family.csv`, one row per member, and a
+`slice_family` block in `report.json`. `generative analyze` exits `3` when the report carries
+an `ERROR` diagnostic; the report is still written, so the diagnostics can be read.
 
 Three fields are easy to misread:
 

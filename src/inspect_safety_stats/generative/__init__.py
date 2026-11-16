@@ -48,6 +48,15 @@ from typing import TYPE_CHECKING, Any
 # Inspect AI, pandas and SciPy before a name that needs them is used.
 if TYPE_CHECKING:
     from inspect_safety_stats.generative.comparisons import ComparisonResult, compare_cohorts
+    from inspect_safety_stats.generative.contrasts import (
+        ArmEstimate,
+        ContrastMember,
+        ContrastResult,
+        FamilySlice,
+        SliceFamilyResult,
+        SliceMember,
+        estimate_slice_family,
+    )
     from inspect_safety_stats.generative.execution import (
         AcceptanceRow,
         AcceptedRewrite,
@@ -157,6 +166,10 @@ __all__ = [
     "TreeEstimate",
     "NodeEstimate",
     "ComparisonResult",
+    "SliceFamilyResult",
+    "FamilySlice",
+    "ContrastResult",
+    "ArmEstimate",
     "ReweightedEstimate",
     "CorrectedEstimate",
     "AcceptanceRow",
@@ -184,6 +197,9 @@ __all__ = [
     "estimate_slice",
     "estimate_reweighted",
     "compare_cohorts",
+    "SliceMember",
+    "ContrastMember",
+    "estimate_slice_family",
     # Ledgers, for auditing a run.
     "SelectionRecord",
     "RewriteRecord",
@@ -196,16 +212,20 @@ __all__ = [
 _EXPORTS = {
     "AcceptanceRow": "inspect_safety_stats.generative.execution",
     "AcceptedRewrite": "inspect_safety_stats.generative.execution",
+    "ArmEstimate": "inspect_safety_stats.generative.contrasts",
     "AttemptRecord": "inspect_safety_stats.generative.ledger",
     "BudgetForecast": "inspect_safety_stats.generative.planning",
     "ComparisonResult": "inspect_safety_stats.generative.comparisons",
     "CompiledNode": "inspect_safety_stats.generative.taxonomy",
     "CompiledTaxonomy": "inspect_safety_stats.generative.taxonomy",
+    "ContrastMember": "inspect_safety_stats.generative.contrasts",
+    "ContrastResult": "inspect_safety_stats.generative.contrasts",
     "CorrectedEstimate": "inspect_safety_stats.generative.judge",
     "DeterministicFakeKernel": "inspect_safety_stats.generative.kernels",
     "DeterministicFakeValidator": "inspect_safety_stats.generative.kernels",
     "EvaluatedSample": "inspect_safety_stats.generative.join",
     "ExecutionResult": "inspect_safety_stats.generative.execution",
+    "FamilySlice": "inspect_safety_stats.generative.contrasts",
     "FidelityRow": "inspect_safety_stats.generative.execution",
     "GenerativePlan": "inspect_safety_stats.generative.schema",
     "GenerativeReport": "inspect_safety_stats.generative.report",
@@ -222,6 +242,8 @@ _EXPORTS = {
     "RewriteValidator": "inspect_safety_stats.generative.kernels",
     "SamplingDesign": "inspect_safety_stats.generative.sampling",
     "SelectionRecord": "inspect_safety_stats.generative.ledger",
+    "SliceFamilyResult": "inspect_safety_stats.generative.contrasts",
+    "SliceMember": "inspect_safety_stats.generative.contrasts",
     "StratumAllocation": "inspect_safety_stats.generative.sampling",
     "TreeEstimate": "inspect_safety_stats.generative.inference",
     "UnitOutcome": "inspect_safety_stats.generative.inference",
@@ -233,6 +255,7 @@ _EXPORTS = {
     "draw_selections": "inspect_safety_stats.generative.sampling",
     "estimate_reweighted": "inspect_safety_stats.generative.inference",
     "estimate_slice": "inspect_safety_stats.generative.inference",
+    "estimate_slice_family": "inspect_safety_stats.generative.contrasts",
     "estimate_tree": "inspect_safety_stats.generative.inference",
     "execute_rewrites": "inspect_safety_stats.generative.execution",
     "fidelity_by_level": "inspect_safety_stats.generative.execution",
@@ -258,6 +281,7 @@ _EXPORTS = {
 # Submodules stay reachable as attributes, as they were when this module imported them.
 _SUBMODULES = {
     "comparisons",
+    "contrasts",
     "execution",
     "inference",
     "inspect_bridge",
