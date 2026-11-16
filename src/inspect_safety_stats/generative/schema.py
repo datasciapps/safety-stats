@@ -16,7 +16,11 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from inspect_safety_stats.config.models import JudgeCalibrationScenarioSpec, PlanInt
+from inspect_safety_stats.config.models import (
+    JudgeCalibrationScenarioSpec,
+    PlanFloat,
+    PlanInt,
+)
 
 RESERVED_CHARACTERS = ("|", "=")
 
@@ -56,7 +60,7 @@ class GenerativeMetadata(StrictModel):
 
 class ArmValueSpec(StrictModel):
     id: str = Field(min_length=1)
-    weight: float = Field(ge=0.0, le=1.0)
+    weight: PlanFloat = Field(ge=0.0, le=1.0)
 
     @model_validator(mode="after")
     def identifier_is_canonical(self) -> ArmValueSpec:
@@ -226,15 +230,35 @@ class TaxonomySpec(StrictModel):
 
 
 class RewriteValidationSpec(StrictModel):
+    """How a rewrite is judged acceptable.
+
+    ``invoke`` is experimental. Left ``false``, ``validator_id`` is only declared and
+    fingerprinted, and the kernel's own verdict is trusted. Set ``true``, materialization
+    needs a validator whose ``validator_id`` is this one, calls it on every rewrite the
+    kernel returns as valid, and records every attempt in ``attempts.csv`` so the analysis
+    can report fidelity by arm.
+    """
+
     validator_id: str = Field(min_length=1)
     mode: Literal["deterministic"] = "deterministic"
     on_invalid: Literal["retry", "fail"] = "retry"
     maximum_attempts: PlanInt = Field(default=5, ge=1)
+    invoke: bool = False
 
 
 class RewriteDeduplicationSpec(StrictModel):
+    """Which rewrites within a scope count as the same prompt.
+
+    By default only an exact repeat of the text does. ``near_duplicate: normalized_text``
+    (experimental) also counts two rewrites that agree after Unicode NFKC normalization,
+    case folding, removal of punctuation and symbols, and whitespace collapsing, and makes
+    materialization record every attempt in ``attempts.csv``. A near duplicate is handled
+    by ``on_duplicate`` like an exact one.
+    """
+
     scope: Literal["semantic_seed_path", "structural_path", "none"] = "semantic_seed_path"
     on_duplicate: Literal["retry", "accept"] = "retry"
+    near_duplicate: Literal["off", "normalized_text"] = "off"
 
 
 class RewriteSpec(StrictModel):
@@ -244,11 +268,17 @@ class RewriteSpec(StrictModel):
     provider: str = Field(min_length=1)
     model: str = Field(min_length=1)
     prompt_template: str = Field(min_length=1)
-    temperature: float = Field(ge=0.0)
+    temperature: PlanFloat = Field(ge=0.0)
     max_tokens: PlanInt = Field(gt=0)
     seed_replayable: bool = False
     validation: RewriteValidationSpec
     deduplication: RewriteDeduplicationSpec = Field(default_factory=RewriteDeduplicationSpec)
+
+    @property
+    def records_attempts(self) -> bool:
+        """Whether materialization writes the per-attempt ledger, ``attempts.csv``."""
+
+        return self.validation.invoke or self.deduplication.near_duplicate != "off"
 
 
 class JudgeCalibrationSpec(StrictModel):
@@ -256,8 +286,10 @@ class JudgeCalibrationSpec(StrictModel):
 
     ``mode: assumed`` carries no evidence: every corrected interval it produces is a
     diagnostic sensitivity result. ``mode: validated`` estimates the same two conditional
-    accuracies from human labels drawn within each judge stratum, and its corrected
-    intervals are certifying at the combined error budget.
+    accuracies from human labels drawn within each judge stratum. Its corrected root is
+    certifying at the combined error budget when the root weights every unit equally; its
+    corrected nodes and slices are sensitivities, since the pooled labels do not measure
+    the judge's accuracy within them.
 
     Human labels key on the sample identifier materialization wrote, since a generative
     run has no prompt manifest to key on.
@@ -270,7 +302,7 @@ class JudgeCalibrationSpec(StrictModel):
     sampling: Literal["simple_random_within_judge_stratum"] = (
         "simple_random_within_judge_stratum"
     )
-    alpha: float = Field(default=0.05, gt=0.0, lt=1.0)
+    alpha: PlanFloat = Field(default=0.05, gt=0.0, lt=1.0)
 
     @model_validator(mode="after")
     def coherent_mode(self) -> JudgeCalibrationSpec:
@@ -366,7 +398,7 @@ class ReweightingSpec(StrictModel):
 
     id: str = Field(min_length=1)
     level: str = Field(min_length=1)
-    weights: dict[str, float] = Field(min_length=1)
+    weights: dict[str, PlanFloat] = Field(min_length=1)
 
     @model_validator(mode="after")
     def weights_are_a_distribution(self) -> ReweightingSpec:
@@ -378,15 +410,67 @@ class ReweightingSpec(StrictModel):
         return self
 
 
+class FamilySliceSpec(StrictModel):
+    """Every path carrying ``level=value``, as a member of the declared family."""
+
+    level: str = Field(min_length=1)
+    value: str = Field(min_length=1)
+
+
+class ArmContrastSpec(StrictModel):
+    """Two values of one arm level, compared on the seeds that hold both."""
+
+    id: str = Field(min_length=1)
+    level: str = Field(min_length=1)
+    candidate: str = Field(min_length=1)
+    baseline: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def values_differ(self) -> ArmContrastSpec:
+        if self.candidate == self.baseline:
+            raise ValueError(f"contrast {self.id!r} compares {self.candidate!r} with itself")
+        return self
+
+
+class SliceFamilySpec(StrictModel):
+    """Experimental: slices and arm contrasts covered simultaneously at ``1 - alpha``.
+
+    Declared in the frozen plan for the same reason as design sensitivity: the family the
+    error budget is spent on must not be chosen after seeing the results.
+    """
+
+    slices: list[FamilySliceSpec] = Field(default_factory=list)
+    contrasts: list[ArmContrastSpec] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def family_is_well_formed(self) -> SliceFamilySpec:
+        if not self.slices and not self.contrasts:
+            raise ValueError("inference.slice_family declares no slice and no contrast")
+        keys = [(item.level, item.value) for item in self.slices]
+        if len(set(keys)) != len(keys):
+            raise ValueError("inference.slice_family declares the same slice twice")
+        ids = [item.id for item in self.contrasts]
+        if len(set(ids)) != len(ids):
+            raise ValueError("inference.slice_family declares the same contrast id twice")
+        return self
+
+
 class InferenceSpec(StrictModel):
-    alpha: float = Field(default=0.05, gt=0.0, lt=1.0)
+    alpha: PlanFloat = Field(default=0.05, gt=0.0, lt=1.0)
     coverage_mode: Literal["one_sided_upper", "two_sided"] = "one_sided_upper"
     report_all_nodes: bool = True
     simultaneous_tree: bool = False
     design_sensitivity: list[ReweightingSpec] = Field(default_factory=list)
+    slice_family: SliceFamilySpec | None = None
 
 
 class GenerativePlan(StrictModel):
+    """A parsed and strictly validated generative evaluation plan.
+
+    Built by :func:`load_generative_plan`. Unknown keys are rejected, and ``inference``
+    falls back to its defaults when the plan omits it.
+    """
+
     schema_version: Literal["1.0"]
     evaluation: GenerativeMetadata
     taxonomy: TaxonomySpec
@@ -395,6 +479,21 @@ class GenerativePlan(StrictModel):
     sampling: SamplingSpec
     judge_calibration: JudgeCalibrationSpec | None = None
     inference: InferenceSpec = Field(default_factory=InferenceSpec)
+
+    @model_validator(mode="after")
+    def slice_family_is_over_arm_levels(self) -> GenerativePlan:
+        family = self.inference.slice_family
+        if family is None:
+            return self
+        for level in [item.level for item in family.slices] + [
+            item.level for item in family.contrasts
+        ]:
+            if level not in self.taxonomy.arms:
+                raise ValueError(
+                    f"inference.slice_family names {level!r}, which is not an arm level; "
+                    "slices of fixed levels are nodes of the tree"
+                )
+        return self
 
 
 def load_generative_plan(path: str | Path) -> GenerativePlan:

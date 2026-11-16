@@ -35,6 +35,7 @@ if TYPE_CHECKING:
         weighted_empirical_bernstein_mean_bounds,
         weighted_hoeffding_mean_bounds,
         weighted_kl_chernoff_mean_bounds,
+        worst_of_k_kl_chernoff_bounds,
     )
     from .hierarchy_region import (
         HierarchyRegionProjection,
@@ -68,7 +69,9 @@ if TYPE_CHECKING:
     from .multiplicity import bonferroni_allocate
     from .paired import (
         exact_mcnemar,
+        exact_mcnemar_partial,
         newcombe_paired_interval,
+        newcombe_paired_interval_partial,
     )
     from .planning import zero_failure_sample_size
     from .risk import (
@@ -108,8 +111,10 @@ __all__ = [
     "direct_risk_difference_bounds",
     "entropic_risk",
     "exact_mcnemar",
+    "exact_mcnemar_partial",
     "FrontierTargetCalibration",
     "newcombe_paired_interval",
+    "newcombe_paired_interval_partial",
     "HierarchyRegionProjection",
     "IndependentFrontier",
     "LinearIntervalConstraint",
@@ -132,6 +137,7 @@ __all__ = [
     "weighted_kl_chernoff_mean_bounds",
     "weighted_mean",
     "worst_of_k_estimate",
+    "worst_of_k_kl_chernoff_bounds",
     "worst_of_k_risk",
     "zero_failure_sample_size",
     "AgreementSummary",
@@ -183,12 +189,14 @@ _EXPORTS = {
     "effective_votes": "inspect_safety_stats.stats.judges",
     "entropic_risk": "inspect_safety_stats.stats.risk",
     "exact_mcnemar": "inspect_safety_stats.stats.paired",
+    "exact_mcnemar_partial": "inspect_safety_stats.stats.paired",
     "horvitz_thompson_mean_bounds": "inspect_safety_stats.stats.design_based",
     "identified_risk_set": "inspect_safety_stats.stats.judges",
     "lang_reiczigel_corrected_risk": "inspect_safety_stats.stats.misclassification",
     "maximum_risk": "inspect_safety_stats.stats.risk",
     "missingness_robust_binomial_bounds": "inspect_safety_stats.stats.binomial",
     "newcombe_paired_interval": "inspect_safety_stats.stats.paired",
+    "newcombe_paired_interval_partial": "inspect_safety_stats.stats.paired",
     "pairwise_agreement": "inspect_safety_stats.stats.judges",
     "project_contrast_hierarchy_confidence_region": "inspect_safety_stats.stats.hierarchy_region",
     "project_hierarchy_confidence_region": "inspect_safety_stats.stats.hierarchy_region",
@@ -209,6 +217,7 @@ _EXPORTS = {
     "weighted_kl_chernoff_mean_bounds": "inspect_safety_stats.stats.direct_mean",
     "weighted_mean": "inspect_safety_stats.stats.risk",
     "worst_of_k_estimate": "inspect_safety_stats.stats.risk",
+    "worst_of_k_kl_chernoff_bounds": "inspect_safety_stats.stats.direct_mean",
     "worst_of_k_risk": "inspect_safety_stats.stats.risk",
     "zero_failure_sample_size": "inspect_safety_stats.stats.planning",
 }

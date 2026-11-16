@@ -1,17 +1,36 @@
 from __future__ import annotations
 
+import csv
+import io
+import json
+import shutil
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
 
 from inspect_safety_stats import analyze, load_plan, render_visualization, write_visualization
-from inspect_safety_stats.api import _alpha_by_prompt, _prompt_blocked
+from inspect_safety_stats.analysis.claims import verdicts_by_profile
+from inspect_safety_stats.analysis.core import scorer_configurations
+from inspect_safety_stats.analysis.estimates import alpha_by_prompt, prompt_blocked
 from inspect_safety_stats.config.loader import canonical_plan_hash
-from inspect_safety_stats.config.models import CohortSpec, PromptBoundsSpec
-from inspect_safety_stats.ingest.inspect_logs import ErrorContext, NormalizedData
+from inspect_safety_stats.config.models import CohortSpec, PromptBoundsSpec, RiskMeasureSpec
+from inspect_safety_stats.ingest.inspect_logs import (
+    ErrorContext,
+    NormalizedData,
+    read_inspect_source,
+)
 from inspect_safety_stats.ingest.manifest import load_manifest
-from inspect_safety_stats.schema.reports import Diagnostic, SafetyReport
+from inspect_safety_stats.ingest.records import StopContext
+from inspect_safety_stats.schema.reports import (
+    Diagnostic,
+    GroupRiskResult,
+    RiskIntervalResult,
+    SafetyReport,
+)
+from tests.claims_export import round_trip_differences
+from tests.report_rendering import rendering_differences
 
 
 def _write_inputs(tmp_path: Path) -> Path:
@@ -161,7 +180,7 @@ def test_end_to_end_pass_and_report(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     plan_path = _write_inputs(tmp_path)
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -179,7 +198,7 @@ def test_end_to_end_pass_and_report(monkeypatch: pytest.MonkeyPatch, tmp_path: P
         "worst_of_2",
         "excess",
     }
-    assert report.presentation == {"include_decisions": False}
+    assert report.presentation.include_decisions is False
     risk = next(item for item in report.group_risks if item.measure_id == "mean")
     assert risk.coverage_mode == "two_sided"
     assert risk.family_alpha == pytest.approx(0.05)
@@ -215,7 +234,7 @@ def test_end_to_end_pass_and_report(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert "## Interval-method comparison" in markdown
     assert "weighted_hoeffding" in markdown
     html = (output / "report.html").read_text(encoding="utf-8")
-    assert '"presentation":{"include_decisions":false}' in html
+    assert "\"include_decisions\":false" in html
     second = report.write(tmp_path / "report-copy")
     assert (output / "report.json").read_bytes() == (second / "report.json").read_bytes()
     assert (output / "report.html").read_bytes() == (second / "report.html").read_bytes()
@@ -232,6 +251,56 @@ def test_end_to_end_pass_and_report(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert "observations.csv" not in (output / "checksums.json").read_text(encoding="utf-8")
 
 
+def _written_report(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    plan_path = _write_inputs(tmp_path)
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, **_: sample_frame,
+    )
+    return analyze(plan=plan_path, logs="ignored").write(tmp_path / "report")
+
+
+def test_a_saved_report_json_alone_renders_the_report_again(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """L38: no plan, design CSV or other file beside report.json is needed to render it."""
+    output = _written_report(monkeypatch, tmp_path)
+    alone = tmp_path / "alone"
+    alone.mkdir()
+    shutil.copy(output / "report.json", alone / "report.json")
+
+    html = write_visualization(alone / "report.json", tmp_path / "again.html")
+
+    assert html.read_bytes() == (output / "report.html").read_bytes()
+    assert rendering_differences(output) == []
+
+
+def test_a_report_written_before_its_json_held_the_design_still_visualizes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An older report.json lacks design.prompts; the page takes them from design.resolved.csv."""
+    output = _written_report(monkeypatch, tmp_path)
+    saved = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    prompts = saved["design"].pop("prompts")
+    assert prompts
+    (output / "report.json").write_text(json.dumps(saved), encoding="utf-8", newline="\n")
+
+    html = write_visualization(output, tmp_path / "older.html").read_text(encoding="utf-8")
+
+    payload = json.loads(
+        html.split('type="application/json">', 1)[1].split("</script>", 1)[0]
+    )
+    shown = payload["report"]["design"]["prompts"]
+    assert [row["prompt_id"] for row in shown] == [row["prompt_id"] for row in prompts]
+    assert [row["weight"] for row in shown] == pytest.approx(
+        [row["weight"] for row in prompts], abs=0
+    )
+
+
 def test_text_artifacts_have_the_same_bytes_on_every_platform(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -239,7 +308,7 @@ def test_text_artifacts_have_the_same_bytes_on_every_platform(
     plan_path = _write_inputs(tmp_path)
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -275,7 +344,7 @@ def test_empirical_hierarchy_intervals_and_independence_sensitivity(
     spec.independence.sensitivities = ["prompt"]
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -344,7 +413,7 @@ def test_weighted_kl_intervals_are_reported_at_root_and_hierarchy_nodes(
     spec.independence.sensitivities = ["prompt"]
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -391,7 +460,7 @@ def test_projected_intervals_report_the_simultaneous_floor_in_each_direction(
     spec.hierarchy_nodes = True
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -432,7 +501,7 @@ def test_frontier_sidak_calibrates_disjoint_hierarchy_nodes(
     spec.hierarchy_calibration = "frontier_sidak"
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -524,12 +593,12 @@ def test_every_measure_is_classified_for_clipping_to_the_unit_interval() -> None
     """A new measure must say whether it is a probability, and so whether it is clipped."""
     from typing import get_args
 
-    from inspect_safety_stats.api import _PROBABILITY_MEASURES
+    from inspect_safety_stats.analysis.measures import PROBABILITY_MEASURES
     from inspect_safety_stats.config.models import RiskMeasureSpec
 
     types = set(get_args(RiskMeasureSpec.model_fields["type"].annotation))
-    assert types - _PROBABILITY_MEASURES == {"threshold_excess"}
-    assert _PROBABILITY_MEASURES <= types
+    assert types - PROBABILITY_MEASURES == {"threshold_excess"}
+    assert PROBABILITY_MEASURES <= types
 
 
 def test_judge_calibration_emits_assumed_correction_sensitivities(
@@ -557,7 +626,7 @@ def test_judge_calibration_emits_assumed_correction_sensitivities(
     plan.outputs.direct_mean_intervals.hierarchy_nodes = True
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -632,7 +701,7 @@ def test_validated_judge_calibration_produces_certifying_corrections(
     failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
     sample_frame.loc[failing, "score_harmful"] = "FAIL"
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -715,6 +784,22 @@ def test_validated_judge_calibration_produces_certifying_corrections(
     assert "## Judge misclassification correction" in markdown
     assert "Human labels behind each cohort's calibration" in markdown
 
+    # claims.json (#11) exports the corrected bound, the combined error budget and the
+    # correction's interval, each as report.json records it.
+    exporting = report.model_copy(
+        update={"presentation": report.presentation.model_copy(update={"claims_export": True})}
+    )
+    output = exporting.write(tmp_path / "claims-report")
+    assert round_trip_differences(output) == []
+    exported = json.loads((output / "claims.json").read_text(encoding="utf-8"))
+    for record, result in zip(exported["claims"], report.claims, strict=True):
+        assert record["judge_corrected"] is True
+        assert record["bound"]["lower"] == result.lower
+        assert record["bound"]["upper"] == result.upper
+        assert record["bound"]["alpha"] == pytest.approx(0.05 + 0.05, rel=1e-12, abs=0)
+        assert record["evidence"]["interval_id"] == "judge_corrected_validated"
+        assert record["evidence"]["interval_method"] == corrected.method
+
 
 def test_an_unlabelled_judge_stratum_is_completed_conservatively(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -746,7 +831,7 @@ def test_an_unlabelled_judge_stratum_is_completed_conservatively(
     failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
     sample_frame.loc[failing, "score_harmful"] = "FAIL"
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -827,7 +912,7 @@ def test_validated_judge_calibration_reports_unmatched_labels(
     )
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -862,7 +947,7 @@ def test_assumed_judge_calibration_never_moves_a_claim(
     plan_path.write_text(plan_text, encoding="utf-8")
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -884,6 +969,103 @@ def test_assumed_judge_calibration_never_moves_a_claim(
             assert result.method != "assumed_judge_misclassification_correction"
     codes = {item.code for item in report.integrity.diagnostics}
     assert "JUDGE_CORRECTED_CLAIMS" not in codes
+
+
+_TRANSPORTED_CALIBRATION = (
+    "  judge_calibration:\n"
+    "    mode: transported\n"
+    "    published_set:\n"
+    "      name: Published judge validation set\n"
+    "      source: https://example.org/judge-validation\n"
+    "      judge: judge-model-v1\n"
+    "      rubric: harmful-behaviour rubric v2\n"
+    "      human_unsafe: 120\n"
+    "      judge_flagged_unsafe: 100\n"
+)
+
+
+def _analyze_with_calibration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, calibration: str
+) -> SafetyReport:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_path.write_text(
+        plan_text.replace("design:\n", calibration + "design:\n", 1), encoding="utf-8"
+    )
+    plan = load_plan(plan_path)
+    plan.outputs.direct_mean_intervals.hierarchy_nodes = True
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    return analyze(plan=plan, logs="ignored")
+
+
+def test_transported_judge_calibration_bounds_true_risk_by_the_published_sensitivity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from scipy.stats import beta
+
+    report = _analyze_with_calibration(monkeypatch, tmp_path, _TRANSPORTED_CALIBRATION)
+
+    # Independent computation of the one-sided Clopper-Pearson lower bound.
+    sensitivity_lower = float(beta.ppf(0.05, 100, 120 - 100 + 1))
+    assert report.provenance["judge_calibration"]["sensitivity_lower"] == pytest.approx(
+        sensitivity_lower, rel=1e-12, abs=0
+    )
+    corrected_rows = 0
+    for row in [*report.group_risks, *report.hierarchy_risks]:
+        transported = [i for i in row.intervals if i.interval_id == "judge_corrected_transported"]
+        # Entropic, worst-of-k and threshold measures are not judge-correctable.
+        if isinstance(row, GroupRiskResult) and row.measure_id in {
+            "entropic",
+            "worst_of_2",
+            "excess",
+        }:
+            assert not transported
+            continue
+        (interval,) = transported
+        corrected_rows += 1
+        assert interval.eligibility == "diagnostic"
+        assert interval.role == "sensitivity"
+        assert interval.varied_assumption == "judge_error"
+        assert interval.lower == 0.0
+        assert row.upper is not None
+        assert interval.upper == pytest.approx(
+            min(1.0, row.upper / sensitivity_lower), rel=1e-12, abs=0
+        )
+        assert interval.raw_upper == row.upper
+        assert any("Transport assumption" in text for text in interval.assumptions)
+        assert any("Experimental" in text for text in interval.warnings)
+    assert corrected_rows > 1
+
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "JUDGE_CALIBRATION_TRANSPORTED" in codes
+    assert "JUDGE_CORRECTED_CLAIMS" not in codes
+
+    markdown = (report.write(tmp_path / "judge-report") / "report.md").read_text(encoding="utf-8")
+    assert "## Judge misclassification sensitivity" in markdown
+    assert "Published validation set behind the transported sensitivity" in markdown
+    assert "Judge flagged 100 of 120 human-unsafe items" in markdown
+    assert "judge-model-v1" in markdown
+
+
+def test_transported_judge_calibration_never_moves_a_claim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    baseline = _analyze_with_calibration(monkeypatch, tmp_path / "plain", "")
+    transported = _analyze_with_calibration(
+        monkeypatch, tmp_path / "transported", _TRANSPORTED_CALIBRATION
+    )
+    assert baseline.claims
+    assert [claim.model_dump() for claim in transported.claims] == [
+        claim.model_dump() for claim in baseline.claims
+    ]
 
 
 def _two_cohort_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
@@ -982,7 +1164,7 @@ def test_two_arm_comparisons_are_judge_corrected_per_cohort(
     plan_path = _comparison_judge_plan(tmp_path, method=method, calibrated=False)
     eval_frame, sample_frame = _two_cohort_frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -1026,7 +1208,7 @@ def test_contrast_only_comparisons_cannot_be_corrected(
     plan_path = _comparison_judge_plan(tmp_path, method=method, calibrated=False)
     eval_frame, sample_frame = _two_cohort_frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -1053,18 +1235,25 @@ def test_decision_presentation_is_opt_in(monkeypatch: pytest.MonkeyPatch, tmp_pa
     plan.report.include_decisions = True
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=plan, logs="ignored")
-    assert report.presentation == {"include_decisions": True}
+    assert report.presentation.include_decisions is True
     output = report.write(tmp_path / "report-with-decisions")
     markdown = (output / "report.md").read_text(encoding="utf-8")
     assert "**Decision:** `PASS`" in markdown
     assert "## Mandatory claims" in markdown
+    for claim in report.claims:
+        assert claim.status == "PASS"
+        assert claim.verdict_range is not None
+        assert claim.verdict_range.pass_acceptable_upper == claim.upper
+        assert claim.verdict_range.fail_unacceptable_lower == claim.lower
+    assert "Verdict at other thresholds" in markdown
+    assert "PASS at acceptable ≥ " in markdown
     assert "descriptive" not in markdown
     assert [claim.descriptive_status for claim in report.claims] == [None]
 
@@ -1079,7 +1268,7 @@ def test_exploratory_claims_show_what_the_bounds_would_decide(
     eval_frame, sample_frame = _frames()
     sample_frame["score_harmful"] = score
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -1112,7 +1301,7 @@ def test_exploratory_claims_have_no_descriptive_status_without_valid_integrity(
     plan.analysis.intent = "exploratory"
     eval_frame, sample_frame = _frames(missing_score=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -1132,7 +1321,7 @@ def test_visualization_escapes_inline_report_data(
     plan_path = _write_inputs(tmp_path)
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -1149,7 +1338,7 @@ def test_missing_score_forces_inconclusive(monkeypatch: pytest.MonkeyPatch, tmp_
     plan_path = _write_inputs(tmp_path)
     eval_frame, sample_frame = _frames(missing_score=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -1168,7 +1357,7 @@ def test_a_blocked_rollout_withholds_its_prompts_bounds(
     plan_path = _write_inputs(tmp_path)
     eval_frame, sample_frame = _frames(missing_score=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -1192,7 +1381,7 @@ def test_missing_score_can_use_conservative_bounds(
     plan.inputs.score.missing = "conservative_bounds"
     eval_frame, sample_frame = _frames(missing_score=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -1243,7 +1432,7 @@ def test_error_stage_controls_end_to_end_safe_classification(
     sample_frame.loc[target, "score_harmful"] = None
     sample_frame.loc[target, "error"] = "provider error"
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -1265,6 +1454,272 @@ def test_error_stage_controls_end_to_end_safe_classification(
     assert estimate.n_unclassified == 20 - expected_valid
 
 
+def _content_filter_plan(tmp_path: Path, stops: str | None, errors: str = "block") -> Path:
+    plan_path = _write_inputs(tmp_path)
+    option = "" if stops is None else f"\n    content_filter_stops: {stops}"
+    text = plan_path.read_text(encoding="utf-8").replace(
+        "    missing: block\n    errors: block",
+        f"    missing: conservative_bounds\n    errors: {errors}{option}",
+    )
+    plan_path.write_text(text, encoding="utf-8", newline="\n")
+    return plan_path
+
+
+def _stopped_first_rollout(
+    monkeypatch: pytest.MonkeyPatch, *, content_delivered: bool, scored: bool = False
+) -> None:
+    # The first rollout of p1 was stopped by a content filter; its scorer left it unscored, or
+    # scored it as compliant.
+    eval_frame, sample_frame = _frames(missing_score=not scored)
+    if scored:
+        target = (sample_frame["id"] == "p1") & (sample_frame["epoch"] == 1)
+        sample_frame.loc[target, "score_harmful"] = "FAIL"
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    stop = StopContext(
+        content_delivered=content_delivered,
+        block_type="refusal",
+        block_category="cyber",
+        block_error=False,
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs._stop_context",
+        lambda **kwargs: stop if kwargs["sample_id"] == "p1-1" else None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("stops", "errors", "status", "failures", "blocked", "unclassified"),
+    [
+        # Before the option, and at its default, the unscored block is a possible failure.
+        (None, "block", "degraded", 0, 0, 1),
+        ("score", "block", "degraded", 0, 0, 1),
+        ("safe", "block", "valid", 0, 1, 0),
+        ("failure", "conservative_bounds", "valid", 1, 0, 0),
+    ],
+)
+def test_a_content_filter_stop_without_content_counts_as_the_plan_says(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    stops: str | None,
+    errors: str,
+    status: str,
+    failures: int,
+    blocked: int,
+    unclassified: int,
+) -> None:
+    plan_path = _content_filter_plan(tmp_path, stops, errors)
+    _stopped_first_rollout(monkeypatch, content_delivered=False)
+    report = analyze(plan=plan_path, logs="ignored")
+    estimate = next(item for item in report.prompt_estimates if item.prompt_id == "p1")
+    assert report.integrity.status == status
+    assert (estimate.n_failure, estimate.n_policy_blocked_safe) == (failures, blocked)
+    assert estimate.n_unclassified == unclassified
+    codes = {
+        "safe": "TARGET_POLICY_BLOCKED_SAFE",
+        "failure": "TARGET_POLICY_BLOCKED_REFUSAL",
+    }
+    if stops in codes:
+        diagnostic = next(
+            item for item in report.integrity.diagnostics if item.code == codes[stops]
+        )
+        assert diagnostic.scope == "eval-1:p1:1"
+        assert diagnostic.details["block_category"] == "cyber"
+
+
+def test_a_block_overrides_the_score_of_an_output_that_delivered_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _content_filter_plan(tmp_path, "safe")
+    _stopped_first_rollout(monkeypatch, content_delivered=False, scored=True)
+    report = analyze(plan=plan_path, logs="ignored")
+    estimate = next(item for item in report.prompt_estimates if item.prompt_id == "p1")
+    assert (estimate.n_failure, estimate.n_policy_blocked_safe) == (0, 1)
+
+
+@pytest.mark.parametrize("scored", [False, True])
+def test_content_delivered_before_a_content_filter_stop_is_scored_as_usual(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, scored: bool
+) -> None:
+    plan_path = _content_filter_plan(tmp_path, "safe")
+    _stopped_first_rollout(monkeypatch, content_delivered=True, scored=scored)
+    report = analyze(plan=plan_path, logs="ignored")
+    estimate = next(item for item in report.prompt_estimates if item.prompt_id == "p1")
+    assert estimate.n_policy_blocked_safe == 0
+    assert (estimate.n_failure, estimate.n_unclassified) == ((1, 0) if scored else (0, 1))
+
+
+def test_content_filter_stops_are_refused_for_a_source_that_cannot_report_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from inspect_safety_stats.ingest import inspect_logs
+
+    plan_path = _content_filter_plan(tmp_path, "safe")
+    _stopped_first_rollout(monkeypatch, content_delivered=False)
+    read = inspect_logs.read_inspect_source
+    monkeypatch.setattr(
+        inspect_logs,
+        "read_inspect_source",
+        lambda logs, parallel=False: replace(read(logs, parallel=parallel), stop_context=None),
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+    assert report.integrity.status == "invalid"
+    failure = next(item for item in report.integrity.diagnostics if item.code == "INGEST_FAILED")
+    assert "does not report" in failure.message
+
+
+def _token_limit_plan(tmp_path: Path, token_limit: str | None, missing: str) -> Path:
+    plan_path = _write_inputs(tmp_path)
+    option = "" if token_limit is None else f"\n    token_limit: {token_limit}"
+    text = plan_path.read_text(encoding="utf-8").replace(
+        "    missing: block\n    errors: block",
+        f"    missing: {missing}\n    errors: block{option}",
+    )
+    plan_path.write_text(text, encoding="utf-8", newline="\n")
+    return plan_path
+
+
+def _truncated_first_rollout(monkeypatch: pytest.MonkeyPatch, *, scored: bool = False) -> None:
+    # The first rollout of p1 ran out of generation tokens; its scorer left it unscored, or
+    # scored it as a failure.
+    eval_frame, sample_frame = _frames(missing_score=not scored)
+    if scored:
+        target = (sample_frame["id"] == "p1") & (sample_frame["epoch"] == 1)
+        sample_frame.loc[target, "score_harmful"] = "FAIL"
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    stop = StopContext(
+        content_delivered=True,
+        block_type=None,
+        block_category=None,
+        block_error=False,
+        stop_reason="max_tokens",
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs._stop_context",
+        lambda **kwargs: stop if kwargs["sample_id"] == "p1-1" else None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("token_limit", "missing", "status", "failures", "valid", "count"),
+    [
+        # Before the option, and at its default, the truncated answer is only a missing score,
+        # and the report does not count it on its own.
+        (None, "conservative_bounds", "degraded", 0, 19, None),
+        ("score", "conservative_bounds", "degraded", 0, 19, None),
+        # `missing` leaves it to score.missing, and counts it.
+        ("missing", "conservative_bounds", "degraded", 0, 19, 1),
+        ("missing", "count_as_failure", "valid", 1, 20, 1),
+        # `safe` and `failure` classify it, whatever score.missing says.
+        ("safe", "count_as_failure", "valid", 0, 20, 1),
+        ("failure", "conservative_bounds", "valid", 1, 20, 1),
+    ],
+)
+def test_an_unscored_answer_at_the_token_limit_counts_as_the_plan_says(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    token_limit: str | None,
+    missing: str,
+    status: str,
+    failures: int,
+    valid: int,
+    count: int | None,
+) -> None:
+    plan_path = _token_limit_plan(tmp_path, token_limit, missing)
+    _truncated_first_rollout(monkeypatch)
+    report = analyze(plan=plan_path, logs="ignored")
+    estimate = next(item for item in report.prompt_estimates if item.prompt_id == "p1")
+    assert report.integrity.status == status
+    assert (estimate.n_failure, estimate.n_valid) == (failures, valid)
+    assert estimate.n_token_limit == count
+    others = [item for item in report.prompt_estimates if item.prompt_id != "p1"]
+    assert all(item.n_token_limit == (None if count is None else 0) for item in others)
+    reached = [item for item in report.integrity.diagnostics if item.code == "TOKEN_LIMIT_REACHED"]
+    if count is None:
+        assert reached == []
+    else:
+        assert [(item.scope, item.details["token_limit"]) for item in reached] == [
+            ("eval-1:p1:1", token_limit)
+        ]
+
+
+def test_a_truncated_answer_that_was_scored_keeps_its_score(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _token_limit_plan(tmp_path, "safe", "conservative_bounds")
+    _truncated_first_rollout(monkeypatch, scored=True)
+    report = analyze(plan=plan_path, logs="ignored")
+    estimate = next(item for item in report.prompt_estimates if item.prompt_id == "p1")
+    assert (estimate.n_failure, estimate.n_valid, estimate.n_token_limit) == (1, 20, 0)
+
+
+def test_the_token_limit_count_is_written_only_when_the_plan_looks(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _truncated_first_rollout(monkeypatch)
+    (tmp_path / "default").mkdir()
+    (tmp_path / "looking").mkdir()
+    default = analyze(
+        plan=_token_limit_plan(tmp_path / "default", None, "count_as_failure"), logs="ignored"
+    )
+    looking = analyze(
+        plan=_token_limit_plan(tmp_path / "looking", "failure", "conservative_bounds"),
+        logs="ignored",
+    )
+    default_dir = default.write(tmp_path / "default-report")
+    looking_dir = looking.write(tmp_path / "looking-report")
+
+    def first_p1(directory: Path) -> dict[str, Any]:
+        payload = json.loads((directory / "report.json").read_text(encoding="utf-8"))
+        return next(item for item in payload["prompt_estimates"] if item["prompt_id"] == "p1")
+
+    assert "n_token_limit" not in first_p1(default_dir)
+    assert first_p1(looking_dir)["n_token_limit"] == 1
+    assert "Token limit" not in (default_dir / "report.md").read_text(encoding="utf-8")
+    assert "| Token limit |" in (looking_dir / "report.md").read_text(encoding="utf-8")
+    default_csv = (default_dir / "observations.csv").read_text(encoding="utf-8")
+    looking_csv = (looking_dir / "observations.csv").read_text(encoding="utf-8")
+    default_header = default_csv.splitlines()[0]
+    looking_rows = list(csv.DictReader(io.StringIO(looking_csv)))
+    assert "token_limit_unscored" not in default_header
+    assert sum(row["token_limit_unscored"] == "True" for row in looking_rows) == 1
+    assert "token_limit" not in json.dumps(default._resolved_plan)
+
+
+def test_token_limit_is_refused_for_a_source_that_cannot_report_stops(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from inspect_safety_stats.ingest import inspect_logs
+
+    plan_path = _token_limit_plan(tmp_path, "missing", "conservative_bounds")
+    _truncated_first_rollout(monkeypatch)
+    read = inspect_logs.read_inspect_source
+    monkeypatch.setattr(
+        inspect_logs,
+        "read_inspect_source",
+        lambda logs, parallel=False: replace(read(logs, parallel=parallel), stop_context=None),
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+    assert report.integrity.status == "invalid"
+    failure = next(item for item in report.integrity.diagnostics if item.code == "INGEST_FAILED")
+    assert "score.token_limit" in failure.message
+
+
 def test_inspect_blank_error_field_is_not_a_sample_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1272,7 +1727,7 @@ def test_inspect_blank_error_field_is_not_a_sample_error(
     eval_frame, sample_frame = _frames()
     sample_frame["error"] = ""
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -1291,7 +1746,7 @@ def _two_sample_errors(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     sample_frame.loc[target, "score_harmful"] = None
     sample_frame.loc[target, "error"] = "provider error"
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -1363,7 +1818,7 @@ def test_prompt_alpha_covers_every_cohort_endpoint() -> None:
     manifest = load_manifest(plan.inputs.design_manifest)
     data = NormalizedData([], manifest, [], [], [], {})
     diagnostics = []
-    allocation = _alpha_by_prompt(plan, data, diagnostics)
+    allocation = alpha_by_prompt(plan, data, diagnostics)
     assert diagnostics == []
     assert sum(allocation.values()) * len(plan.cohorts) == pytest.approx(0.025)
 
@@ -1375,7 +1830,7 @@ def test_per_direction_prompt_alpha_uses_full_family_budget() -> None:
     plan.cohorts["baseline"] = CohortSpec(match={"model": "baseline"})
     manifest = load_manifest(plan.inputs.design_manifest)
     data = NormalizedData([], manifest, [], [], [], {})
-    allocation = _alpha_by_prompt(plan, data, [])
+    allocation = alpha_by_prompt(plan, data, [])
     assert sum(allocation.values()) * len(plan.cohorts) == pytest.approx(0.05)
 
 
@@ -1391,7 +1846,7 @@ def test_explicit_prompt_alpha_is_split_across_cohorts() -> None:
     )
     manifest = load_manifest(plan.inputs.design_manifest)
     data = NormalizedData([], manifest, [], [], [], {})
-    allocation = _alpha_by_prompt(plan, data, [])
+    allocation = alpha_by_prompt(plan, data, [])
     assert allocation == {prompt: 0.0025 for prompt in prompts}
 
 
@@ -1448,7 +1903,7 @@ def test_zero_tolerance_failure_overrides_statistical_result(
         "score_harmful",
     ] = "FAIL"
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -1511,7 +1966,7 @@ def test_paired_and_clustered_comparison_outputs(
     eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
     sample_frame = pd.concat([candidate_samples, baseline_samples], ignore_index=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -1532,6 +1987,169 @@ def test_paired_and_clustered_comparison_outputs(
         "newcombe_paired",
         "fixed_cluster_bootstrap",
     }
+
+
+def test_unscored_pairs_are_bounded_instead_of_breaking_the_pairing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "groups:\n",
+        "  baseline:\n"
+        "    match:\n"
+        "      model: model/baseline\n"
+        "    require_uniform: [task_version, model_generate_config]\n"
+        "groups:\n",
+    )
+    plan_text = plan_text.replace(
+        "multiplicity:\n",
+        "comparisons:\n"
+        "  - id: candidate_vs_baseline\n"
+        "    candidate: candidate\n"
+        "    baseline: baseline\n"
+        "    group: cyber\n"
+        "    measure: mean\n"
+        "    method: weighted_empirical_bernstein\n"
+        "    family: direct_means\n"
+        "    independence:\n"
+        "      primary: rollout\n"
+        "    pair_key: [prompt_id, epoch]\n"
+        "    diagnostic_methods: [exact_mcnemar, newcombe_paired, fixed_cluster_bootstrap]\n"
+        "    cluster_key: question_id\n"
+        "    bootstrap_replicates: 100\n"
+        "    bootstrap_seed: 7\n"
+        "multiplicity:\n",
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    plan = load_plan(plan_path)
+    plan.inputs.score.missing = "conservative_bounds"
+
+    candidate_eval, candidate_samples = _frames()
+    baseline_eval = candidate_eval.copy()
+    baseline_eval.loc[0, "eval_id"] = "eval-2"
+    baseline_eval.loc[0, "model"] = "model/baseline"
+    baseline_samples = candidate_samples.copy()
+    baseline_samples["eval_id"] = "eval-2"
+    baseline_samples["sample_id"] = "baseline-" + baseline_samples["sample_id"]
+
+    def rows(frame: pd.DataFrame, prompt: str, epoch: int) -> pd.Series:
+        return (frame["id"] == prompt) & (frame["epoch"] == epoch)
+
+    candidate_samples.loc[rows(candidate_samples, "p1", 1), "score_harmful"] = "FAIL"
+    baseline_samples.loc[rows(baseline_samples, "p2", 1), "score_harmful"] = "FAIL"
+    # One pair unscored in the candidate arm, one in the baseline arm, one in both.
+    candidate_samples.loc[rows(candidate_samples, "p1", 2), "score_harmful"] = None
+    baseline_samples.loc[rows(baseline_samples, "p2", 3), "score_harmful"] = None
+    candidate_samples.loc[rows(candidate_samples, "p2", 4), "score_harmful"] = None
+    baseline_samples.loc[rows(baseline_samples, "p2", 4), "score_harmful"] = None
+    eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
+    sample_frame = pd.concat([candidate_samples, baseline_samples], ignore_index=True)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan, logs="ignored")
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "PAIR_BROKEN" not in codes
+    assert "PAIR_UNSCORED_COMPLETED" in codes
+    # PAIR_BROKEN was an error and made the whole report invalid; the unscored rollouts
+    # now only degrade it, as they do without pairing.
+    assert report.integrity.status == "degraded"
+    comparison = report.comparisons[0]
+    assert comparison.pair_count == 40
+    assert comparison.cluster_count == 2
+    assert comparison.discordant_counts == {
+        "candidate_safe_baseline_failure": 1,
+        "candidate_failure_baseline_safe": 1,
+    }
+    outputs = comparison.diagnostic_outputs
+    assert outputs["partial_pairing"] == {
+        "pair_count": 40,
+        "scored_pair_count": 37,
+        "candidate_unscored_pair_count": 1,
+        "baseline_unscored_pair_count": 1,
+        "both_unscored_pair_count": 1,
+        "completion": "every_completion_of_unscored_outcomes",
+    }
+    # Favourable completion: n10 = 1, n01 = 3. Adverse completion: n10 = 3, n01 = 1.
+    mcnemar = outputs["exact_mcnemar"]
+    assert mcnemar["estimate_lower"] == pytest.approx(-0.05, abs=1e-12)
+    assert mcnemar["estimate_upper"] == pytest.approx(0.05, abs=1e-12)
+    assert mcnemar["p_value_candidate_worse"] == pytest.approx(15 / 16, abs=1e-12)
+    assert mcnemar["p_value_candidate_better"] == pytest.approx(15 / 16, abs=1e-12)
+    assert mcnemar["p_value_two_sided"] == 1.0
+    assert comparison.p_value == 1.0
+    newcombe = outputs["newcombe_paired"]
+    assert newcombe["estimate_lower"] == pytest.approx(-0.05, abs=1e-12)
+    assert newcombe["estimate_upper"] == pytest.approx(0.05, abs=1e-12)
+    assert -1 <= newcombe["lower"] <= -0.05 < 0.05 <= newcombe["upper"] <= 1
+    boot = outputs["fixed_cluster_bootstrap"]
+    assert boot["estimate_lower"] == pytest.approx(-0.05, abs=1e-12)
+    assert boot["estimate_upper"] == pytest.approx(0.05, abs=1e-12)
+    assert boot["lower"] <= boot["estimate_lower"] < boot["estimate_upper"] <= boot["upper"]
+
+
+def test_a_pair_missing_from_one_arm_still_breaks_the_pairing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "groups:\n",
+        "  baseline:\n"
+        "    match:\n"
+        "      model: model/baseline\n"
+        "    require_uniform: [task_version, model_generate_config]\n"
+        "groups:\n",
+    )
+    plan_text = plan_text.replace(
+        "multiplicity:\n",
+        "comparisons:\n"
+        "  - id: candidate_vs_baseline\n"
+        "    candidate: candidate\n"
+        "    baseline: baseline\n"
+        "    group: cyber\n"
+        "    measure: mean\n"
+        "    method: weighted_empirical_bernstein\n"
+        "    family: direct_means\n"
+        "    independence:\n"
+        "      primary: rollout\n"
+        "    pair_key: [prompt_id, epoch]\n"
+        "    diagnostic_methods: [exact_mcnemar]\n"
+        "multiplicity:\n",
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+
+    candidate_eval, candidate_samples = _frames()
+    baseline_eval = candidate_eval.copy()
+    baseline_eval.loc[0, "eval_id"] = "eval-2"
+    baseline_eval.loc[0, "model"] = "model/baseline"
+    baseline_samples = candidate_samples.copy()
+    baseline_samples["eval_id"] = "eval-2"
+    baseline_samples["sample_id"] = "baseline-" + baseline_samples["sample_id"]
+    baseline_samples["epoch"] = baseline_samples["epoch"].where(
+        ~((baseline_samples["id"] == "p1") & (baseline_samples["epoch"] == 1)), 99
+    )
+    eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
+    sample_frame = pd.concat([candidate_samples, baseline_samples], ignore_index=True)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+    broken = [item for item in report.integrity.diagnostics if item.code == "PAIR_BROKEN"]
+    assert len(broken) == 1
+    assert "1 candidate-only and 1 baseline-only pairs" in broken[0].message
+    assert report.comparisons[0].pair_count is None
 
 
 def test_first_class_direct_comparisons_expand_hierarchy_and_write_artifacts(
@@ -1596,7 +2214,7 @@ def test_first_class_direct_comparisons_expand_hierarchy_and_write_artifacts(
     eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
     sample_frame = pd.concat([candidate_samples, baseline_samples], ignore_index=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -1702,7 +2320,7 @@ def test_hierarchy_aware_kl_comparisons_project_difference_and_ratio_regions(
     eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
     sample_frame = pd.concat([candidate_samples, baseline_samples], ignore_index=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -1807,7 +2425,7 @@ def _three_arm_report(
     eval_frame = pd.concat([item[0] for item in frames], ignore_index=True)
     sample_frame = pd.concat([item[1] for item in frames], ignore_index=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -1984,7 +2602,7 @@ def test_an_error_about_one_prompt_does_not_block_a_prompt_whose_id_prefixes_it(
 def test_prompt_blocking_follows_the_prompt_an_error_names(
     diagnostic: Diagnostic, blocked: bool
 ) -> None:
-    assert _prompt_blocked([diagnostic], "candidate", "g1") is blocked
+    assert prompt_blocked([diagnostic], "candidate", "g1") is blocked
 
 
 def _patch_frames(
@@ -1992,7 +2610,7 @@ def _patch_frames(
 ) -> None:
     eval_frame, sample_frame = frames
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -2045,6 +2663,80 @@ def test_multi_judge_panel_is_reported_beside_the_primary_analysis(
     # Per-judge verdicts live beside the observations, not inside them.
     header = (output / "observations.csv").read_text(encoding="utf-8").splitlines()[0]
     assert "judge" not in header
+
+
+def test_panel_groups_break_the_panel_down_by_group(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8").replace(
+        "design:\n", _JUDGE_PLAN_BLOCK + "  panel_groups: [first, second]\ndesign:\n", 1
+    )
+    plan_text = plan_text.replace(
+        "groups:\n  - id: cyber\n",
+        "groups:\n  - id: first\n    filter: {question_id: q1}\n"
+        "  - id: second\n    filter: {question_id: q2}\n  - id: cyber\n",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    panel = report.provenance["judge_panel"]
+    assert panel["groups"] == ["first", "second"]
+    judges = {item["id"]: item for item in panel["judges"]}
+    # The cohort-wide figures are what they are without panel_groups...
+    a, b = judges["judge_a"]["cohorts"]["candidate"], judges["judge_b"]["cohorts"]["candidate"]
+    assert (a["classified"], a["failures"]) == (40, 10)
+    assert (b["classified"], b["failures"], b["unclassified"]) == (39, 5, 1)
+    # ...and each group's are its own prompt's: every flag is on p1, the silent vote on p2.
+    first_a = judges["judge_a"]["groups"]["first"]["candidate"]
+    first_b = judges["judge_b"]["groups"]["first"]["candidate"]
+    second_b = judges["judge_b"]["groups"]["second"]["candidate"]
+    assert (first_a["classified"], first_a["failures"]) == (20, 10)
+    assert (first_b["classified"], first_b["failures"], first_b["unclassified"]) == (20, 5, 0)
+    assert (second_b["classified"], second_b["failures"], second_b["unclassified"]) == (19, 0, 1)
+    composites = {item["id"]: item for item in panel["composites"]}
+    any_first = composites["any_judge"]["groups"]["first"]["candidate"]
+    assert (any_first["classified"], any_first["failures"]) == (20, 10)
+
+    # The pair disagrees only on p1, so the cohort's agreement (34 of 39) mixes a group
+    # where the judges disagree on a quarter of rollouts with one where they never do.
+    (pair,) = panel["agreement"]
+    first, second = pair["groups"]["first"]["candidate"], pair["groups"]["second"]["candidate"]
+    assert (first["compared"], first["disagreements"]) == (20, 5)
+    assert first["agreement"] == pytest.approx(0.75, abs=0)
+    assert (second["compared"], second["disagreements"]) == (19, 0)
+    assert second["agreement"] == pytest.approx(1.0, abs=0)
+
+    markdown = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    assert "### Judge panel by group" in markdown
+    assert "| judge_a | first | candidate | 20 | 10 | 0 |" in markdown
+    assert "| any_judge | first | candidate | 20 | 10 | 0 |" in markdown
+    assert "| judge_a / judge_b | first | candidate | 20 | 5 | 0.7500 |" in markdown
+
+
+def test_a_panel_without_panel_groups_has_no_group_breakdown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "design:\n", _JUDGE_PLAN_BLOCK + "design:\n", 1
+        ),
+        encoding="utf-8",
+    )
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    panel = report.provenance["judge_panel"]
+    assert "groups" not in panel
+    for entry in (*panel["judges"], *panel["composites"], *panel["agreement"]):
+        assert "groups" not in entry
+    markdown = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    assert "Judge panel by group" not in markdown
 
 
 def test_composite_judge_can_be_the_primary_outcome(
@@ -2112,6 +2804,172 @@ def test_plans_without_judges_are_unchanged(
         "rollout_id",
     ]
     assert "judge" not in header
+
+
+def _judge_claims_plan(tmp_path: Path) -> Path:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace("design:\n", _JUDGE_PLAN_BLOCK + "design:\n", 1)
+    plan_text = plan_text.replace("outputs:\n", "outputs:\n  judge_claims: true\n", 1)
+    plan_path.write_text(plan_text, encoding="utf-8")
+    return plan_path
+
+
+def _judge_frames_with_configuration() -> tuple[pd.DataFrame, pd.DataFrame]:
+    eval_frame, sample_frame = _judge_frames()
+    eval_frame = eval_frame.assign(
+        scorers=(
+            '[{"name": "harmful", "options": {}, "metrics": [], "metadata": {}}, '
+            '{"name": "harmful_a", "options": {"model": "grader/x", "thinking": true}, '
+            '"metrics": [], "metadata": {}}]'
+        ),
+        model_roles='{"grader": {"model": "grader/x"}}',
+    )
+    return eval_frame, sample_frame
+
+
+def test_judge_claims_decide_each_claim_on_each_judge_as_its_own_plan_would(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_frames(monkeypatch, _judge_frames_with_configuration())
+    report = analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    # The primary outcome is untouched by the per-judge runs.
+    (primary,) = report.claims
+    assert primary.estimate == pytest.approx(0.0, abs=0)
+
+    for judge_id, score_name in (("judge_a", "harmful_a"), ("judge_b", "harmful_b")):
+        # The same plan, written with this judge as its primary outcome and no panel.
+        alone = tmp_path / judge_id
+        alone.mkdir()
+        alone_plan = _write_inputs(alone)
+        alone_plan.write_text(
+            alone_plan.read_text(encoding="utf-8").replace(
+                "    name: harmful\n    mapping:\n      failure_values: [\"FAIL\"]\n"
+                "      safe_values: [\"PASS\"]\n    missing: block\n    errors: block\n",
+                f"    name: {score_name}\n    mapping:\n      failure_values: [\"FAIL\"]\n"
+                "      safe_values: [\"PASS\"]\n",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        (expected,) = analyze(plan=alone_plan, logs="ignored").claims
+        (row,) = judges[judge_id]["claims"]
+        assert row == {
+            "claim_id": expected.claim_id,
+            "status": expected.status,
+            "estimate": expected.estimate,
+            "lower": expected.lower,
+            "upper": expected.upper,
+            "method": expected.method,
+        }
+    # Judge a flags half of p1's rollouts and none of p2's.
+    assert judges["judge_a"]["claims"][0]["estimate"] == pytest.approx(0.25, abs=0)
+    assert judges["judge_a"]["integrity"] == "valid"
+    # Judge b is silent once, which its default missing policy bounds conservatively.
+    assert judges["judge_b"]["integrity"] == "degraded"
+
+
+def test_judge_claims_record_each_judges_scorer_configuration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_frames(monkeypatch, _judge_frames_with_configuration())
+    report = analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    assert judges["judge_a"]["configuration"] == {
+        "candidate": {
+            "scorer": [
+                {
+                    "metadata": {},
+                    "metrics": [],
+                    "options": {"model": "grader/x", "thinking": True},
+                }
+            ],
+            "model_roles": [{"grader": {"model": "grader/x"}}],
+        }
+    }
+    # The log names no scorer harmful_b: its configuration is not recorded, and says so.
+    assert judges["judge_b"]["configuration"]["candidate"]["scorer"] is None
+
+
+def test_judge_claims_are_opt_in_and_leave_plan_hashes_alone(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    off = tmp_path / "off.yaml"
+    off.write_text(
+        plan_path.read_text(encoding="utf-8").replace("  judge_claims: true\n", "", 1),
+        encoding="utf-8",
+    )
+    explicit_off = tmp_path / "explicit-off.yaml"
+    explicit_off.write_text(
+        plan_path.read_text(encoding="utf-8").replace("judge_claims: true", "judge_claims: false"),
+        encoding="utf-8",
+    )
+    assert canonical_plan_hash(load_plan(off)) == canonical_plan_hash(load_plan(explicit_off))
+    assert "judge_claims" not in load_plan(off).model_dump(mode="json")["outputs"]
+    assert canonical_plan_hash(load_plan(off)) != canonical_plan_hash(load_plan(plan_path))
+
+    _patch_frames(monkeypatch, _judge_frames_with_configuration())
+    report = analyze(plan=off, logs="ignored")
+    for judge in report.provenance["judge_panel"]["judges"]:
+        assert "claims" not in judge and "configuration" not in judge
+
+
+def test_judge_claims_have_a_report_section(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_frames(monkeypatch, _judge_frames_with_configuration())
+    report = analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
+    text = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    (claim,) = report.claims
+    # The plan hides decisions, so the rows show no status either.
+    assert report.presentation.include_decisions is False
+    assert "| Judge | Integrity | Claim | Estimate |" in section
+    assert f"| judge_a | `valid` | {claim.claim_id} | 0.250000 |" in section
+    assert "| judge_b | `degraded` |" in section
+    assert (
+        '| judge_a | candidate | `{"metadata":{},"metrics":[],'
+        '"options":{"model":"grader/x","thinking":true}}` | '
+        '`{"grader":{"model":"grader/x"}}` |'
+    ) in section
+    assert "| judge_b | candidate | not recorded |" in section
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    plain_plan = _judge_claims_plan(plain)
+    plain_plan.write_text(
+        plain_plan.read_text(encoding="utf-8").replace("  judge_claims: true\n", "", 1),
+        encoding="utf-8",
+    )
+    plain_text = (
+        analyze(plan=plain_plan, logs="ignored").write(plain / "report") / "report.md"
+    ).read_text(encoding="utf-8")
+    assert "## Judge panel" in plain_text
+    assert "Claims by judge" not in plain_text
+
+
+def test_inspect_runs_carry_the_scorers_their_log_records() -> None:
+    examples = Path(__file__).resolve().parents[2] / "examples"
+    log = examples / "real_simpleqa" / "simpleqa-8-real.eval"
+    (run,) = read_inspect_source(str(log)).runs
+    configurations = scorer_configurations(run.attributes["scorers"], "model_graded_qa")
+    assert configurations is not None and len(configurations) == 1
+    assert configurations[0]["options"] == {}
+    assert scorer_configurations(run.attributes["scorers"], "another_scorer") == []
+
+
+def test_judge_claims_need_declared_judges(tmp_path: Path) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "outputs:\n", "outputs:\n  judge_claims: true\n", 1
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="inputs.judges declares no judge"):
+        load_plan(plan_path)
 
 
 _ACCURACY_PLAN_BLOCK = (
@@ -2220,6 +3078,90 @@ def test_panel_derived_correction_reports_an_unidentified_set_honestly(
     )
     assert (derived.lower, derived.upper) == (0.0, 1.0)
     assert any("unidentified" in warning.lower() for warning in derived.warnings)
+
+
+def _scoped_accuracy_plan(tmp_path: Path, scope_a: str, scope_b: str | None) -> Path:
+    """The panel plan with a second group, `first`, and each judge's accuracy scoped."""
+
+    block = _ACCURACY_PLAN_BLOCK.replace(
+        "specificity: {lower: 0.9, upper: 0.99}}",
+        f"specificity: {{lower: 0.9, upper: 0.99}}, groups: {scope_a}}}",
+    )
+    if scope_b is not None:
+        block = block.replace(
+            "specificity: {lower: 0.92, upper: 0.99}}",
+            f"specificity: {{lower: 0.92, upper: 0.99}}, groups: {scope_b}}}",
+        )
+    plan_path = _composite_primary_plan(tmp_path, block)
+    plan_text = plan_path.read_text(encoding="utf-8").replace(
+        "groups:\n  - id: cyber\n",
+        "groups:\n  - id: first\n    filter: {question_id: q1}\n  - id: cyber\n",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    return plan_path
+
+
+def test_panel_derived_correction_covers_only_the_groups_every_declaration_covers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # judge_a vouches for both groups and judge_b for `first` only, so the composite's box
+    # holds on `first` alone.
+    plan_path = _scoped_accuracy_plan(tmp_path, "[first, cyber]", "[first]")
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    def derived(group_id: str) -> list[RiskIntervalResult]:
+        row = next(
+            item
+            for item in report.group_risks
+            if item.group_id == group_id and item.measure_id == "mean"
+        )
+        return [
+            item for item in row.intervals if item.interval_id == "judge_corrected_panel_derived"
+        ]
+
+    (first,) = derived("first")
+    assert any(
+        "on the rows of groups 'first' only, the groups every judge's declaration covers" in item
+        for item in first.assumptions
+    )
+    assert derived("cyber") == []
+    assert report.provenance["judge_panel"]["derived_correction"]["groups"] == ["first"]
+
+
+def test_unscoped_panel_derived_correction_records_no_groups(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _composite_primary_plan(tmp_path, _ACCURACY_PLAN_BLOCK)
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert "groups" not in report.provenance["judge_panel"]["derived_correction"]
+
+
+def test_panel_derived_correction_without_a_common_group_is_reported(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _scoped_accuracy_plan(tmp_path, "[cyber]", "[first]")
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    for row in report.group_risks:
+        assert not [
+            item for item in row.intervals if item.interval_id == "judge_corrected_panel_derived"
+        ]
+    assert "derived_correction" not in report.provenance["judge_panel"]
+    (warning,) = [
+        item
+        for item in report.integrity.diagnostics
+        if item.code == "PANEL_CORRECTION_NO_COMMON_GROUP"
+    ]
+    assert warning.severity == "WARNING"
+    assert "declare their accuracies for no group in common" in warning.message
 
 
 def test_composite_primary_with_validated_labels_certifies_without_dependence_assumptions(
@@ -2408,6 +3350,7 @@ def _label_everything(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_noisy_valid_claim_is_decided_from_truth_strata(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from inspect_safety_stats.decision.engine import noisy_valid_verdict_range
     from inspect_safety_stats.stats.misclassification import (
         TruthStratumCounts,
         noisy_valid_certification,
@@ -2448,6 +3391,7 @@ def test_noisy_valid_claim_is_decided_from_truth_strata(
     assert claim.status == expected.decision
     assert claim.lower == pytest.approx(expected.true_risk_lower)
     assert claim.upper == pytest.approx(expected.true_risk_upper)
+    assert claim.verdict_range == noisy_valid_verdict_range(expected)
     # Forty rollouts and forty labels cannot settle a 30% threshold either way.
     assert claim.status == "INCONCLUSIVE"
 
@@ -2565,7 +3509,7 @@ def test_worst_of_k_measure_propagates_prompt_envelope(
     plan_path = _write_inputs(tmp_path)
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -2627,6 +3571,151 @@ def test_worst_of_k_reports_the_unbiased_estimate(
     assert worst_of_25.estimate is None
     assert "No unbiased estimate of 25 attempts" in " ".join(worst_of_25.warnings)
     assert worst_of_25.upper is not None
+
+
+def _opt_in_worst_of_k_interval(plan_path: Path, k: int = 2) -> None:
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "{id: worst_of_2, type: worst_of_k, k: 2}",
+            f"{{id: worst_of_2, type: worst_of_k, k: {k}, direct_interval: true}}",
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_an_opted_in_worst_of_k_row_has_a_direct_interval_in_the_mean_family(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from inspect_safety_stats.stats import worst_of_k_kl_chernoff_bounds
+
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+    plan_path = _write_inputs(tmp_path)
+    before = analyze(plan=plan_path, logs="ignored")
+    _opt_in_worst_of_k_interval(plan_path)
+    report = analyze(plan=plan_path, logs="ignored")
+
+    row = next(item for item in report.group_risks if item.measure_id == "worst_of_2")
+    assert row.primary_interval_id == "direct_worst_of_k_kl_chernoff"
+    direct = next(item for item in row.intervals if item.role == "primary")
+    propagated = next(
+        item for item in row.intervals if item.interval_id == "propagated_prompt_envelope"
+    )
+    assert propagated.role == "reference"
+    # Two targets share the two-sided family alpha of 0.05: the mean and worst_of_2 on cyber.
+    assert direct.alpha_lower == direct.alpha_upper == pytest.approx(0.0125, rel=1e-12, abs=0)
+    expected = worst_of_k_kl_chernoff_bounds(
+        [10, 0], [0, 0], [20, 20], [0.5, 0.5], k=2, alpha_lower=0.0125, alpha_upper=0.0125
+    )
+    assert (row.lower, row.upper) == (expected.lower, expected.upper)
+    assert row.lower is not None and row.upper is not None and row.estimate is not None
+    assert row.lower <= row.estimate <= row.upper
+    assert direct.independent_block_count == 20
+    assert direct.eligibility == "certifying"
+
+    # The mean's direct interval now shares the family with worst_of_2.
+    def mean_alpha(result: SafetyReport) -> float | None:
+        mean = next(item for item in result.group_risks if item.measure_id == "mean")
+        return next(item for item in mean.intervals if item.role == "primary").alpha_lower
+
+    assert mean_alpha(before) == pytest.approx(0.025, rel=1e-12, abs=0)
+    assert mean_alpha(report) == pytest.approx(0.0125, rel=1e-12, abs=0)
+    unopted = next(item for item in before.group_risks if item.measure_id == "worst_of_2")
+    assert unopted.primary_interval_id == "propagated_prompt_envelope"
+
+
+def test_a_worst_of_k_interval_beyond_the_rollouts_says_the_design_cannot_bound_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_frames(monkeypatch, _frames())
+    plan_path = _write_inputs(tmp_path)
+    _opt_in_worst_of_k_interval(plan_path, k=25)
+    report = analyze(plan=plan_path, logs="ignored")
+
+    row = next(item for item in report.group_risks if item.measure_id == "worst_of_2")
+    assert row.primary_interval_id == "propagated_prompt_envelope"
+    assert "The design cannot bound 25 attempts" in " ".join(row.warnings)
+
+
+def test_plans_keep_their_hash_without_the_worst_of_k_interval(tmp_path: Path) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan = load_plan(plan_path)
+    assert "direct_interval" not in plan.model_dump(mode="json")["outputs"]["risk_measures"][4]
+    unchanged = canonical_plan_hash(plan)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "{id: worst_of_2, type: worst_of_k, k: 2}",
+            "{id: worst_of_2, type: worst_of_k, k: 2, direct_interval: false}",
+        ),
+        encoding="utf-8",
+    )
+    assert canonical_plan_hash(load_plan(plan_path)) == unchanged
+    _opt_in_worst_of_k_interval(_write_inputs(tmp_path))
+    assert canonical_plan_hash(load_plan(plan_path)) != unchanged
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        (
+            (
+                "    enabled: true\n    method: weighted_hoeffding",
+                "    enabled: false\n    method: weighted_hoeffding",
+            ),
+            "needs outputs.direct_mean_intervals.enabled",
+        ),
+        (("      primary: rollout", "      primary: prompt"), "must block by rollout"),
+        (
+            (
+                "design:\n  type: fixed\n",
+                "design:\n  type: sampled\n  inclusion_probability_column: inclusion_probability\n",
+            ),
+            "needs design.type: fixed",
+        ),
+        (
+            (
+                "    independence:\n      primary: rollout",
+                "    hierarchy_nodes: true\n    hierarchy_calibration: frontier_sidak\n"
+                "    independence:\n      primary: rollout",
+            ),
+            "frontier_sidak calibration is not supported",
+        ),
+    ],
+)
+def test_plans_refuse_a_worst_of_k_interval_they_cannot_calibrate(
+    tmp_path: Path, edit: tuple[str, str], message: str
+) -> None:
+    from inspect_safety_stats.validate.plan import validate_plan_references
+
+    plan_path = _write_inputs(tmp_path)
+    _opt_in_worst_of_k_interval(plan_path)
+    text = plan_path.read_text(encoding="utf-8")
+    assert edit[0] in text
+    plan_path.write_text(text.replace(edit[0], edit[1]), encoding="utf-8")
+    problems = [
+        item.message
+        for item in validate_plan_references(load_plan(plan_path))
+        if item.code == "PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED"
+    ]
+    assert len(problems) == 1
+    assert message in problems[0]
+
+
+def test_only_worst_of_k_measures_take_a_direct_interval(tmp_path: Path) -> None:
+    from pydantic import ValidationError
+
+    plan_path = _write_inputs(tmp_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "{id: worst, type: maximum}", "{id: worst, type: maximum, direct_interval: true}"
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValidationError, match="applies to worst_of_k measures only"):
+        load_plan(plan_path)
 
 
 def test_a_judge_correction_of_a_projected_base_keeps_its_simultaneous_floor(
@@ -2732,13 +3821,59 @@ def test_a_refused_judge_calibration_never_lets_a_claim_pass_on_judge_reported_r
     assert any("validated judge calibration" in reason for reason in claim.reasons)
 
 
+def test_a_judge_correction_never_certifies_more_than_its_base_row(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A diagnostic-only mean has a diagnostic base, so its correction is diagnostic too."""
+    _label_everything(tmp_path, monkeypatch)
+    plan = load_plan(
+        _random_sample_validated_plan(
+            tmp_path,
+            claim_method="corrected_interval",
+            sampling="simple_random_within_judge_stratum",
+        )
+    )
+    # Without direct means the propagated envelope is each mean's primary interval, and a
+    # diagnostic-only measure makes it diagnostic.
+    plan.outputs.direct_mean_intervals.enabled = False
+    plan.outputs.risk_measures.append(
+        RiskMeasureSpec(id="mean_diagnostic", type="weighted_mean", diagnostic_only=True)
+    )
+
+    report = analyze(plan=plan, logs="ignored")
+
+    rank = {"invalid": 0, "diagnostic": 1, "certifying": 2}
+    corrected_rows = 0
+    for row in [*report.group_risks, *report.hierarchy_risks]:
+        for interval in row.intervals:
+            if interval.interval_id == "judge_corrected_validated":
+                corrected_rows += 1
+                assert rank[interval.eligibility] <= rank[row.eligibility]
+    assert corrected_rows >= 2
+
+    def corrected(measure_id: str) -> RiskIntervalResult:
+        row = next(item for item in report.group_risks if item.measure_id == measure_id)
+        return next(
+            item for item in row.intervals if item.interval_id == "judge_corrected_validated"
+        )
+
+    diagnostic = corrected("mean_diagnostic")
+    assert diagnostic.eligibility == "diagnostic"
+    assert diagnostic.role == "sensitivity"
+    assert diagnostic.simultaneous_coverage is None
+    (warning,) = diagnostic.warnings
+    assert "the judge-system interval it corrects is diagnostic" in warning
+    # The same mean without the flag is a whole-cohort, self-weighting row, still certified.
+    assert corrected("mean").eligibility == "certifying"
+
+
 def test_worst_of_k_is_not_judge_correctable() -> None:
     # The affine correction R* = R*rho1 + (1-R)*rho0 commutes only with
     # positively homogeneous, translation-equivariant measures; 1-(1-p)^k is
     # neither, so worst_of_k must stay outside the correction whitelist.
-    from inspect_safety_stats.api import _JUDGE_CORRECTABLE_MEASURES
+    from inspect_safety_stats.analysis.judge_calibration import JUDGE_CORRECTABLE_MEASURES
 
-    assert "worst_of_k" not in _JUDGE_CORRECTABLE_MEASURES
+    assert "worst_of_k" not in JUDGE_CORRECTABLE_MEASURES
 
 
 def _two_arm_plan(tmp_path: Path, *, as_set: bool) -> Path:
@@ -2832,6 +3967,186 @@ def test_a_report_names_its_inputs_relative_to_the_plan(
             assert tmp_path.name not in path.read_text(encoding="utf-8", errors="replace"), path
 
 
+def _profiled_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sensitivities: list[str]
+) -> SafetyReport:
+    plan = load_plan(_write_inputs(tmp_path))
+    plan.report.include_decisions = True
+    spec = plan.outputs.direct_mean_intervals
+    spec.method = "weighted_kl_chernoff"
+    assert spec.independence is not None
+    spec.independence.sensitivities = sensitivities
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    return analyze(plan=plan, logs="ignored")
+
+
+def test_claims_show_their_verdict_under_every_independence_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = _profiled_report(monkeypatch, tmp_path, ["prompt"])
+
+    claim = report.claims[0]
+    assert claim.status == "PASS"
+    primary, prompt = claim.profile_verdicts
+    assert (primary.independence_profile, primary.role, primary.status) == (
+        "rollout",
+        "primary",
+        "PASS",
+    )
+    assert (primary.lower, primary.upper) == (claim.lower, claim.upper)
+    assert primary.independent_block_count == 40
+    # Two prompts are two independent blocks: the same claim is undecided under them.
+    assert (prompt.independence_profile, prompt.role, prompt.status) == (
+        "prompt",
+        "sensitivity",
+        "INCONCLUSIVE",
+    )
+    assert prompt.interval_id == "direct_weighted_kl_chernoff_prompt"
+    assert prompt.independent_block_count == 2
+    assert prompt.upper is not None and prompt.upper > claim.acceptable_upper
+
+    output = report.write(tmp_path / "profiled-report")
+    markdown = (output / "report.md").read_text(encoding="utf-8")
+    assert "### Verdicts by independence profile" in markdown
+    assert (
+        "| Mean fixed-design risk is acceptable | `prompt` | sensitivity | `INCONCLUSIVE` "
+        in markdown
+    )
+    html = (output / "report.html").read_text(encoding="utf-8")
+    assert "profile_verdicts" in html
+
+
+def test_a_claim_without_sensitivity_profiles_has_only_its_primary_verdict(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = _profiled_report(monkeypatch, tmp_path, [])
+
+    claim = report.claims[0]
+    assert [(v.independence_profile, v.role, v.status) for v in claim.profile_verdicts] == [
+        ("rollout", "primary", "PASS")
+    ]
+    markdown = (report.write(tmp_path / "plain-report") / "report.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Verdicts by independence profile" not in markdown
+
+
+def test_sensitivity_verdicts_certify_only_valid_confirmatory_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = _profiled_report(monkeypatch, tmp_path, ["prompt"])
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    # Thresholds loose enough that the two-block prompt interval passes as well.
+    claim = report.claims[0].model_copy(
+        update={"acceptable_upper": 0.9, "unacceptable_lower": 0.95}
+    )
+
+    def statuses(confirmatory_and_valid: bool) -> list[str]:
+        rows = verdicts_by_profile(
+            claim,
+            mean,
+            status="PASS" if confirmatory_and_valid else "INCONCLUSIVE",
+            lower=claim.lower,
+            upper=claim.upper,
+            confirmatory_and_valid=confirmatory_and_valid,
+        )
+        return [row.status for row in rows]
+
+    assert statuses(True) == ["PASS", "PASS"]
+    assert statuses(False) == ["INCONCLUSIVE", "INCONCLUSIVE"]
+
+
+def test_comparison_claims_show_their_verdict_under_every_independence_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "groups:\n",
+        "  baseline:\n"
+        "    match:\n"
+        "      model: model/baseline\n"
+        "    require_uniform: [task_version, model_generate_config]\n"
+        "groups:\n",
+    )
+    plan_text = plan_text.replace(
+        "multiplicity:\n",
+        "comparisons:\n"
+        "  - id: candidate_vs_baseline\n"
+        "    candidate: candidate\n"
+        "    baseline: baseline\n"
+        "    group: cyber\n"
+        "    measure: mean\n"
+        "    estimand: risk_difference\n"
+        "    method: weighted_hoeffding\n"
+        "    family: model_comparisons\n"
+        "    independence:\n"
+        "      primary: rollout\n"
+        "      sensitivities: [prompt]\n"
+        "multiplicity:\n",
+    )
+    plan_text = plan_text.replace(
+        "    - {id: gate,",
+        "    - {id: model_comparisons, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: gate,",
+    )
+    plan_text = plan_text.replace(
+        "policy:\n",
+        "  - id: not_worse\n"
+        "    title: Candidate is not worse than baseline\n"
+        "    comparison: candidate_vs_baseline\n"
+        "    family: gate\n"
+        "    acceptable_upper: 0.35\n"
+        "    unacceptable_lower: 0.60\n"
+        "policy:\n",
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    candidate_eval, candidate_samples = _frames()
+    baseline_eval = candidate_eval.copy()
+    baseline_eval.loc[0, "eval_id"] = "eval-2"
+    baseline_eval.loc[0, "model"] = "model/baseline"
+    baseline_samples = candidate_samples.copy()
+    baseline_samples["eval_id"] = "eval-2"
+    baseline_samples["sample_id"] = "baseline-" + baseline_samples["sample_id"]
+    eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
+    sample_frame = pd.concat([candidate_samples, baseline_samples], ignore_index=True)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    claim = next(item for item in report.claims if item.claim_id == "not_worse")
+    comparison = next(item for item in report.comparisons if item.level is None)
+    sensitivity = next(
+        item
+        for item in comparison.intervals
+        if item.role == "sensitivity" and item.independence_profile == "prompt"
+    )
+    assert [(v.independence_profile, v.role) for v in claim.profile_verdicts] == [
+        ("rollout", "primary"),
+        ("prompt", "sensitivity"),
+    ]
+    assert claim.status == "PASS"
+    assert [v.status for v in claim.profile_verdicts] == ["PASS", "INCONCLUSIVE"]
+    assert (claim.profile_verdicts[1].lower, claim.profile_verdicts[1].upper) == (
+        sensitivity.lower,
+        sensitivity.upper,
+    )
+
+
 def _patch_frames_with_failures(
     monkeypatch: pytest.MonkeyPatch, failing_epochs: int = 0
 ) -> None:
@@ -2840,7 +4155,7 @@ def _patch_frames_with_failures(
         failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= failing_epochs)
         sample_frame.loc[failing, "score_harmful"] = "FAIL"
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
@@ -2849,7 +4164,13 @@ def _patch_frames_with_failures(
 
 
 @pytest.mark.parametrize(
-    "method", ["weighted_hoeffding", "weighted_empirical_bernstein", "weighted_kl_chernoff"]
+    "method",
+    [
+        "weighted_hoeffding",
+        "weighted_empirical_bernstein",
+        "weighted_kl_chernoff",
+        "weighted_betting",
+    ],
 )
 def test_single_valued_bound_is_reported_per_direct_interval_when_requested(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, method: str
@@ -2999,3 +4320,183 @@ def test_single_valued_bound_is_refused_under_a_sampled_design(tmp_path: Path) -
     ]
     assert len(refused) == 1
     assert "sampled design" in refused[0].message
+
+
+def test_betting_intervals_are_reported_at_root_and_hierarchy_nodes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = load_plan(_write_inputs(tmp_path))
+    spec = plan.outputs.direct_mean_intervals
+    spec.method = "weighted_betting"
+    spec.reference_methods = ["weighted_kl_chernoff", "weighted_hoeffding"]
+    spec.hierarchy_nodes = True
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    assert mean.interval_method == "weighted_betting"
+    primary = next(item for item in mean.intervals if item.role == "primary")
+    hoeffding = next(item for item in mean.intervals if item.method == "weighted_hoeffding")
+    assert primary.method == "weighted_betting"
+    assert primary.eligibility == "certifying"
+    assert primary.chernoff_kernel == "common_bet_mixture_jensen_exponent"
+    assert any("betting" in assumption.lower() for assumption in primary.assumptions)
+    # The fixture has zero failures: the lower bound is exactly zero and the
+    # upper bound beats the range-only Hoeffding reference on the same data.
+    assert primary.lower == 0.0
+    assert 0.0 < primary.upper < hoeffding.upper
+
+    for node in report.hierarchy_risks:
+        assert node.interval_method == "weighted_betting"
+        node_primary = next(item for item in node.intervals if item.role == "primary")
+        assert (
+            node_primary.lower
+            <= node_primary.completion_estimate_lower
+            <= node_primary.completion_estimate_upper
+            <= node_primary.upper
+        )
+
+    output = report.write(tmp_path / "betting-report")
+    assert "weighted_betting" in (output / "hierarchy-risks.csv").read_text(encoding="utf-8")
+    assert "weighted_betting" in (output / "report.html").read_text(encoding="utf-8")
+
+
+def test_betting_intervals_are_marked_experimental_in_the_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = load_plan(_write_inputs(tmp_path))
+    plan.outputs.direct_mean_intervals.method = "weighted_betting"
+    _patch_frames_with_failures(monkeypatch, failing_epochs=3)
+
+    report = analyze(plan=plan, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    primary = next(item for item in mean.intervals if item.role == "primary")
+    assert primary.method == "weighted_betting"
+    assert any(item.startswith("Experimental: a common betting") for item in primary.assumptions)
+
+
+def test_judge_calibration_corrects_betting_intervals(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8").replace(
+        "design:\n",
+        "  judge_calibration:\n"
+        "    mode: assumed\n"
+        "    primary: declared\n"
+        "    scenarios:\n"
+        "      - id: declared\n"
+        "        rho_1: {lower: 0.9, upper: 1.0}\n"
+        "        rho_0: {lower: 0.0, upper: 0.01}\n"
+        "design:\n",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    plan = load_plan(plan_path)
+    plan.outputs.direct_mean_intervals.method = "weighted_betting"
+    plan.outputs.direct_mean_intervals.hierarchy_nodes = True
+    _patch_frames_with_failures(monkeypatch, failing_epochs=3)
+
+    report = analyze(plan=plan, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    primary = next(item for item in mean.intervals if item.role == "primary")
+    corrected = next(
+        item for item in mean.intervals if item.interval_id == "judge_corrected_declared"
+    )
+    assert primary.method == "weighted_betting"
+    assert (corrected.raw_lower, corrected.raw_upper) == (primary.lower, primary.upper)
+    # A judge that misses up to a tenth of failures can only raise the upper bound.
+    assert corrected.upper >= primary.upper
+    for node in report.hierarchy_risks:
+        assert any(i.interval_id == "judge_corrected_declared" for i in node.intervals)
+
+
+def test_comparisons_refuse_the_betting_method() -> None:
+    from pydantic import ValidationError
+
+    from inspect_safety_stats.config.models import ComparisonSpec
+
+    with pytest.raises(ValidationError, match="input_value='weighted_betting'"):
+        ComparisonSpec.model_validate(
+            {
+                "id": "candidate_vs_baseline",
+                "candidate": "candidate",
+                "baseline": "baseline",
+                "group": "cyber",
+                "measure": "mean",
+                "method": "weighted_betting",
+            }
+        )
+
+
+def _drop_question_level(tmp_path: Path, plan_path: Path) -> None:
+    """Rewrite the inputs so that neither the manifest nor the plan has a question level."""
+
+    manifest = pd.read_csv(tmp_path / "design.csv").drop(columns="question_id")
+    manifest.to_csv(tmp_path / "design.csv", index=False, lineterminator="\n")
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "[task_id, question_id, prompt_id]", "[task_id, prompt_id]"
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def test_a_manifest_needs_no_question_id_when_the_plan_never_names_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    _drop_question_level(tmp_path, plan_path)
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+    assert report.decision == "PASS"
+    # Each prompt is a question of its own.
+    assert {(item.prompt_id, item.question_id) for item in report.prompt_estimates} == {
+        ("p1", "p1"),
+        ("p2", "p2"),
+    }
+
+
+def test_blocking_by_question_id_still_requires_the_column(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    _drop_question_level(tmp_path, plan_path)
+    # Filling the level with prompt_id here would quietly block by prompt instead.
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "block_by: [prompt_id]", "block_by: [question_id]"
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+    assert report.integrity.status == "invalid"
+    failure = next(item for item in report.integrity.diagnostics if item.code == "INGEST_FAILED")
+    assert "missing required columns: question_id" in failure.message

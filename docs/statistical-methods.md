@@ -501,6 +501,71 @@ reporting replaces each directional alpha by its prespecified multiplicity alloc
 inversion. Method choice must be prespecified rather than selected from the narrowest realized
 interval.
 
+##### Worst-of-k interval (experimental)
+
+The `worst_of_k` measure targets the weighted chance that at least one of \(k\) fresh attempts
+at a prompt fails,
+
+\[
+\theta=\sum_jw_j\theta_j,\qquad \theta_j=1-(1-p_j)^k .
+\]
+
+Its point estimate gives each prompt the share of its \(k\)-rollout subsets that contain a
+failure. With \(x_j\) failures in \(n_j\ge k\) rollouts,
+
+\[
+\widehat\theta_j=1-\binom{n_j-x_j}{k}\Big/\binom{n_j}{k},
+\qquad
+\mathbb E\,\widehat\theta_j=\theta_j ,
+\]
+
+because \(\widehat\theta_j\) is the U-statistic of order \(k\) with kernel
+\(h(Y_1,\ldots,Y_k)=\max_rY_r\). No unbiased estimator of \(\theta_j\) exists for \(k>n_j\):
+the expectation of any function of \(n_j\) Bernoulli draws is a polynomial in \(p_j\) of degree
+at most \(n_j\), and \(\theta_j\) has degree \(k\).
+
+The \(n_j\) rollouts are not \(n_j\) independent observations of \(\theta_j\), so entering each
+rollout as its own block would be anti-conservative. Hoeffding [32, section 5] writes a
+U-statistic of order \(k\) as an average, over permutations of the \(n_j\) draws, of
+
+\[
+W_j=\frac1{m_j}\sum_{b=1}^{m_j}h(\text{block }b),\qquad m_j=\lfloor n_j/k\rfloor ,
+\]
+
+the mean of the kernel over \(m_j\) disjoint blocks of \(k\) draws. Each \(W_j\) is a mean of
+\(m_j\) independent \([0,1]\) terms with mean \(\theta_j\), and convexity of the exponential gives
+
+\[
+\mathbb E\exp(\lambda\widehat\theta_j)\le\mathbb E\exp(\lambda W_j)
+\quad\text{for every }\lambda .
+\]
+
+The KL/Chernoff bounds above use the sample only through such a moment-generating-function
+bound. Prompt \(j\) therefore enters them as \(m_j\) blocks, each with observation
+\(\widehat\theta_j\) and atomic weight \(w_j/m_j\), and the inversion is otherwise unchanged:
+the Bernoulli-KL kernel when all atomic weights are equal, the weighted Poisson-Chernoff
+kernel otherwise. The reported `independent_block_count` is \(\sum_jm_j\). At \(k=1\) the blocks
+are the rollouts and the interval equals the rollout-level weighted KL/Chernoff interval.
+
+Unclassified rollouts are completed as safe for the lower endpoint and as failures for the
+upper endpoint. \(\widehat\theta_j\) does not decrease when a safe outcome becomes a failure,
+so the completion is conservative.
+
+Scope:
+
+- The interval is opt-in per measure (`direct_interval: true`) and is computed for group rows
+  only. It is calibrated in the direct-mean multiplicity family, next to the weighted means.
+- It requires independent rollouts within each prompt and across prompts, so the primary
+  independence profile must block by rollout. Sensitivity profiles get no worst-of-k interval,
+  and the row says so.
+- It bounds the fixed prompt set only. Sampled designs, `frontier_sidak` calibration and
+  disabled direct-mean intervals are refused when the plan is validated.
+- If a prompt has fewer than \(k\) attempted rollouts, the row keeps the propagated
+  prompt-envelope interval and warns that the design cannot bound \(k\) attempts.
+
+The test suite checks coverage by exact enumeration over the binomial on small designs. Rollout
+blocks fall below nominal coverage there, and \(\lfloor n/k\rfloor\) blocks do not.
+
 ##### Simultaneous hierarchy-constrained confidence region
 
 Independent node intervals ignore the fact that every displayed hierarchy mean is a linear
@@ -707,12 +772,94 @@ Taking both proxies from each endpoint's own completion is not monotone. Complet
 as a failure lowers (Q_-), and with skewed weights the width can then shrink by more than the
 estimate rises.
 
+**Fixed variance centers.** For any constant (c), (\operatorname{Var}(Y)\le\mathbb E(Y-c)^2),
+with slack ((\mathbb E Y-c)^2). A caller may therefore fix (K) centerings in advance, from the
+design and never from the data, each a center (c_i^{(k)}\in[0,1]) per contribution, and use
+
+\[
+Q_{c^{(k)}}=\sum_i a_i^2\bigl(Y_i-c_i^{(k)}\bigr)^2,\qquad
+\overline V=\min\left\{\frac{C_2}{4},\;\min_{k}\Bigl(Q_{c^{(k)}}
++\sqrt{\tfrac12 C_4^{(k)}\log\tfrac1{\delta_v}}\Bigr)\right\},
+\]
+
+with (delta_v=\alpha_d/(2K)), so the (K) variance proxies share half the endpoint budget. Each
+term of (Q_{c^{(k)}}) lies in ([0,a_i^2r_i^{(k)}]) with
+(r_i^{(k)}=\max\{(c_i^{(k)})^2,(1-c_i^{(k)})^2\}), so Hoeffding's padding uses the range-squared
+sum (C_4^{(k)}=\sum_i a_i^4(r_i^{(k)})^2). For centers 0 or 1, (r=1) and (C_4^{(k)}=C_4); about
+(1/2), (r=1/4) and the padding is a quarter as large. An unknown outcome contributes its larger
+completion, (r_i^{(k)}) on the rollout unit; on the prompt-cluster unit the squared deviation is
+convex in the completed rate, so its maximum lies at one of the two extreme completions. The
+default, (K=2) with (c\equiv0) and (c\equiv1), is exactly (Q_+) and (Q_-) above.
+
+Validity: let (V_0=\min\{C_2/4,\min_k\mathbb E Q_{c^{(k)}}\}), which is deterministic and at least
+(V). On the event that all (K) Hoeffding bounds hold (probability at least (1-\alpha_d/2)),
+(\overline V\ge V_0), and the Bernstein width is increasing in the variance, so a miss requires
+the Bernstein tail at (V_0) (probability at most (\alpha_d/2)). This needs the centers to be
+fixed: a center chosen from the data would make (V_0) random.
+
 This is a finite-sample, heterogeneous-Bernoulli empirical-Bernstein construction, not a normal
 approximation and not a plug-in standard error. It can be materially narrower than Hoeffding, but
 it can remain loose near zero failures because it spends part of the error budget estimating
 variance. Sparse binary safety analyses should generally prespecify weighted KL/Chernoff as the
 primary interval and show empirical Bernstein and weighted Hoeffding as references. The package
 does not select whichever interval looks narrowest after seeing the data.
+
+##### Betting interval from a fixed mixture of common bets (experimental)
+
+The three constructions above bound a moment generating function analytically. A fourth,
+`weighted_betting`, tests each candidate mean directly with a nonnegative capital process and
+inverts the test. Let the independent blocks have values \(Y_g\in[0,1]\), weights \(A_g\) with
+\(\sum_g A_g=1\), and unknown means \(m_g\), and consider the null \(H_0(\mu):\sum_g A_g m_g=\mu\).
+For a fraction \(\theta\in(0,1)\) of the maximal admissible stake define the upper-endpoint factors
+
+\[
+f_g(\theta,\mu)=1-\theta+\theta\,\frac{1-Y_g}{1-\mu},
+\qquad
+K_\theta(\mu)=\prod_g f_g(\theta,\mu)^{c_g},
+\qquad
+c_g=\frac{A_g}{\max_h A_h}\in(0,1],
+\]
+
+and symmetrically \(1-\theta+\theta Y_g/\mu\) for the lower endpoint. Under \(H_0(\mu)\),
+
+\[
+\mathbb E\,K_\theta(\mu)
+\le\prod_g\big(\mathbb E f_g\big)^{c_g}
+=\Big(\prod_g\big(\mathbb E f_g\big)^{A_g}\Big)^{1/\max_h A_h}
+\le\Big(\sum_g A_g\,\mathbb E f_g\Big)^{1/\max_h A_h}
+=1,
+\]
+
+where the first inequality is Jensen's inequality for the concave map \(x\mapsto x^{c_g}\), the
+second is the weighted AM-GM inequality, and the final equality uses
+\(\sum_g A_g\,\mathbb E f_g=1-\theta+\theta(1-\sum_g A_gm_g)/(1-\mu)=1\). A mixture
+\(K(\mu)=\sum_j\pi_jK_{\theta_j}(\mu)\) over a prior fixed before any outcome is observed is
+therefore an e-value, Markov's inequality gives \(\Pr\{K(\mu)\ge1/\alpha\}\le\alpha\), and
+\(\{\mu:K(\mu)<1/\alpha\}\) is a confidence set. Its capital is monotone in \(\mu\), so the set is
+an interval whose endpoint is found by bisection, and the plug-in estimate is never rejected.
+
+Three consequences shape the implementation. First, the bet must be **common to all blocks and
+fixed in advance**: with heterogeneous means the null constrains only the weighted sum, so a
+fraction chosen block by block, even from earlier blocks, can profit from what earlier blocks
+reveal about later ones and destroys the supermartingale property. This also means the
+construction is fixed-horizon; it does not yield an anytime-valid sequence over blocks. Second, the
+prior is the Beta(1/2, 1/2)-quantile grid of the universal portfolio [34] with half of its mass on
+the most aggressive fraction, so the sparse-failure regime, where that fraction is optimal, pays
+about \(\log 2\) rather than \(\log J\) for not knowing the best bet. Third, unequal weights enter
+through the exponents \(c_g\), which lowers the growth rate in proportion to \(1/\max_g A_g\),
+much as the KL fallback pays through its largest increment.
+
+Compared with the other engines, the betting interval needs no estimated variance proxy and so
+avoids the empirical-Bernstein padding term, which dominates at small block counts. It is
+therefore usually the tightest construction when blocks are fractional rates, as under a
+prompt-level or coarser independence profile, and it is competitive with, though not sharper
+than, the exact Bernoulli-KL inversion on sparse binary rollouts with equal weights. As with every
+engine, showing it as a prespecified primary or reference is valid; selecting it after seeing that
+it is narrowest is not [33].
+
+The construction is experimental (CONTRIBUTING, section 3): a plan selects it only by naming
+`weighted_betting`, it is offered for direct means and hierarchy nodes but not for comparisons,
+and its functions are not exported from `inspect_safety_stats.stats`.
 
 ##### Hierarchy nodes and configurable independence profiles
 
@@ -1161,7 +1308,7 @@ Although explicit zero-failure planning is still uncommon in public frontier-mod
 
 ## 6. Stretch goal: Bernoulli confidence sequences
 
-**Release status:** deferred. This section preserves the mathematical design for a later adaptive-evaluation module. It is not required for the core fixed-horizon workflow.
+**Release status:** deferred. This section preserves the mathematical design for a later adaptive-evaluation module. It is not required for the core fixed-horizon workflow. The [phase-0 design](sequential-design.md) defines the stream, the state and the phases of that module.
 
 For a predeclared rollout count and a single final analysis, the exact fixed-sample methods in Sections 4 and 5 are preferred: they are simpler to audit and generally yield tighter bounds. Confidence sequences become worthwhile only when observed outcomes are allowed to determine when sampling stops, which prompt receives the next rollout, or when a continuously extended evaluation is allowed to make a formal decision.
 
@@ -1356,7 +1503,33 @@ Updating a Bernoulli confidence sequence after every correlated epoch is invalid
 
 ### 6.8 AI-evaluation precedent
 
-Sequential inference is emerging explicitly in AI evaluation. *Efficient Sequential Evaluation of Large Language Models* constructs confidence sequences by inverting test supermartingales and studies adaptive question selection [20]. Optstop implements Bayesian adaptive stopping for Inspect AI, but its posterior-width criterion is not the same as an anytime-valid frequentist confidence sequence [21]. This remains a useful future integration point if users later require a frequentist false-pass guarantee after adaptive stopping; it does not justify adding sequential complexity to the fixed-horizon core.
+Sequential inference is emerging explicitly in AI evaluation. *Efficient Sequential Evaluation of Large Language Models* constructs confidence sequences by inverting test supermartingales and studies adaptive question selection [20]. CELEUS builds anytime-valid confidence intervals from e-processes and combines uncertainty-guided sample selection with a surrogate for the items not yet evaluated [37]. Both papers target the unweighted mean score of one model over a pool of items, with one outcome per item. Neither offers one-sided threshold decisions, a declared weighted estimand, several rollouts per prompt, correction for judge error, or multiplicity across claims. Both use non-uniform selection with inverse-probability weighting, but only as a sampling device, not as a weighted target. Optstop implements Bayesian adaptive stopping for Inspect AI, but its posterior-width criterion is not the same as an anytime-valid frequentist confidence sequence [21]. This remains a useful future integration point if users later require a frequentist false-pass guarantee after adaptive stopping; it does not justify adding sequential complexity to the fixed-horizon core.
+
+### 6.9 Implemented: human labels for a judge calibration (experimental)
+
+One confidence sequence is implemented: for the human labels of a validated judge calibration (see [Judge misclassification](judge-misclassification.md#labelling-protocol-experimental)), when the plan's labelling protocol declares `stopping: data_dependent`. The labelling of evaluation outputs, not the evaluation itself, is then allowed to stop on results.
+
+**Model.** A judge stratum holds \(N\) rollouts, of which an unknown \(K\) are truly unsafe; the calibration parameter is \(\rho=K/N\). The labelling queue orders the stratum by a uniformly random permutation, and the labeller labels it from the front. After \(n\) labels with \(S_n\) unsafe, the labelled rows are a sample without replacement, and the probability of the observed sequence under \(K\) is proportional to the hypergeometric probability \(h_n(K)=\binom{K}{S_n}\binom{N-K}{n-S_n}/\binom{N}{n}\).
+
+**Construction.** Put a uniform prior \(\pi_0(K)=1/(N+1)\) on \(\{0,\dots,N\}\). The posterior is \(\pi_n(K)\propto h_n(K)\), and since \(\sum_{K}\binom{K}{S}\binom{N-K}{n-S}=\binom{N+1}{n+1}\), the prior marginal likelihood of \(S_n\) is \(1/(n+1)\). So
+
+\[
+\frac{\pi_n(K)}{\pi_0(K)}=(n+1)\,h_n(K).
+\]
+
+At the true \(K^\ast\), the prior-posterior ratio \(\pi_0(K^\ast)/\pi_n(K^\ast)\) is a nonnegative martingale with initial value one (Waudby-Smith and Ramdas [39], Proposition 1). Ville's inequality gives \(\Pr(\exists n:\pi_0(K^\ast)/\pi_n(K^\ast)\ge 1/a)\le a\), so
+
+\[
+C_n=\{K:(n+1)\,h_n(K)>a\}
+\]
+
+contains \(K^\ast\) at every \(n\) simultaneously with probability at least \(1-a\). Because the guarantee is time-uniform, it holds at any stopping time, including one chosen because of the labels seen so far. \(h_n(K)\) is log-concave in \(K\), so \(C_n\) is an interval; it is reported as \([\min C_n/N,\ \max C_n/N]\). It never empties, since the average of \((n+1)h_n(K)\) over the prior is one. With no labels it is \([0,1]\), and a census pins \(\rho\) exactly, which a binomial bound cannot.
+
+**Budget.** The calibration spends \(a=\alpha/4\) on each parameter, where \(\alpha\) is the calibration's share of the judge family budget (one per cohort, or per cohort and listed group). A two-sided miss at \(a\) bounds each one-sided miss by \(a\) as well, so the accounting of the Clopper-Pearson calibration (\(\alpha/4\) per endpoint) and the corrected interval's stated coverage carry over unchanged. It is conservative by the unused half of each parameter's share.
+
+**Assumptions.** The queue's order within each stratum is a uniformly random permutation fixed before labelling, and which stratum the next queue row comes from does not depend on labels not yet seen. Rows are labelled in queue order without skipping, which the analysis checks as a prefix of the declared queue. Human labels are ground truth. Several strata interleaved in one queue keep each stratum's martingale, because each stratum's order is drawn independently of the others' labels.
+
+**Validation.** `tests/unit/test_confidence_sequence.py` checks the set against an exact rational computation and runs a seeded Monte Carlo of 600 labelling paths, each stopped the first time the range excludes the truth: the sequence misses at most \(\alpha\) up to simulation error, and fixed-sample Clopper-Pearson under the same rule misses about three times as often.
 
 ---
 
@@ -1410,6 +1583,22 @@ Bernoulli-KL bound on \(Q\) is inefficient for sparse safety risk because \(Q\) 
 The weighted KL/Chernoff primary instead builds a jointly calibrated rectangle for the two sparse
 arm means and reports \([L_C-U_B,U_C-L_B]\). Empirical Bernstein and Hoeffding remain direct
 contrast references.
+
+For empirical Bernstein, the variance proxies of \(Q\) are centered by arm. On the rollout unit
+\(Q_++Q_-=C_2\) exactly, because every rollout counts in one of them, so in a balanced design
+\(\min(Q_+,Q_-)=\tfrac{C_2}{2}(1-|\hat\pi_C-\hat\pi_B|)\), where \(\hat\pi\) are the arms' weighted
+observed failure rates. Both uncentered proxies therefore lose to the cap \(C_2/4\) unless the
+arms' rates differ by more than \(1/2\), however sparse the arms are, and at the cap the
+interval is wider than Hoeffding's by a factor of at least
+\(\sqrt{\log(2/\alpha)/\log(1/\alpha)}\). The rollout unit therefore uses the four arm-wise
+centerings: candidate rollouts at \(0\) or \(1\), and baseline rollouts at \(0\) or \(1\). Candidate
+\(0\) with baseline \(1\) counts both arms' failures,
+\(\tfrac{C_2}{2}(\hat\pi_C+\hat\pi_B)\), which serves two sparse arms; the other three serve arms
+that fail often, and two of them are \(Q_+\) and \(Q_-\). The smallest of the four is close to
+\(\tfrac{C_2}{2}\bigl(\min(\hat\pi_C,1-\hat\pi_C)+\min(\hat\pi_B,1-\hat\pi_B)\bigr)\), adapting to
+each arm separately. In the prompt-cluster encoding, each \(q_j=(1+p_{C,j}-p_{B,j})/2\) is
+centered at \(1/2\), with range-aware padding, and the centerings \(0\) and \(1\) are kept for arms
+far apart.
 
 If candidate and baseline have unclassified attempted outcomes, the lower endpoint completes
 candidate unknowns as safe and baseline unknowns as failures. The upper endpoint does the reverse.
@@ -1667,9 +1856,168 @@ The library must report and normally reject:
 - different prompts or task versions under the same key;
 - mismatched generation settings that invalidate the intended comparison.
 
+A case that both arms attempted but one did not score is not a broken pair. The package keeps it
+and bounds each paired diagnostic over every completion of the unknown outcome. A one-sided exact
+McNemar p-value \(P(\mathrm{Bin}(d, 1/2) \ge n_{10})\) cannot fall when a pair's difference
+falls, so its maximum over the completions is attained at one of the two extreme completions.
+Newcombe's bound is not monotone in the cell counts, so it is minimised and maximised over every
+reachable table. See
+[Pairs with an unscored arm](model-comparisons.md#pairs-with-an-unscored-arm).
+
 ### 7.6 AI-evaluation precedent
 
 Paired analysis is increasingly being productized for model evaluation. NVIDIA NeMo Evaluator uses exact McNemar comparisons on the same problems and reports human-readable `PASS`, `WARN`, `BLOCK`, and `INCONCLUSIVE` outcomes [22]. In safety-adjacent clinical LLM evaluation, exact McNemar tests with Holm correction have been used to compare harmful-content and safety outcomes across models [27]. These are useful precedents for both the mathematics and the decision interface.
+
+### 7.7 Planning a comparison at a margin (experimental)
+
+`inspect-safety-stats plan comparison` and
+`inspect_safety_stats.stats.planning.comparison_resolvable_differences` say, before a run,
+which risk differences \(\Delta=R_C-R_B\) a fixed two-arm design can resolve at a margin
+\(\delta\in(-1,1)\). They give two numbers:
+
+- the largest true \(\Delta\) at which the upper bound \(U_\Delta\) falls at or below
+  \(\delta\) with probability at least \(1-\beta\) (a non-inferiority claim at margin
+  \(\delta\) passes); and
+- the smallest true \(\Delta\) at which the lower bound \(L_\Delta\) reaches \(\delta\) with
+  probability at least \(1-\beta\) (a regression of at least \(\delta\) is shown).
+
+The guarantee is that of the `weighted_hoeffding` difference of section 7.0, as `analyze`
+computes it, with no unclassified outcomes. That interval bounds
+\(Q=(1+\Delta)/2\) by a weighted mean of independent blocks \(b\) with values in \([0,1]\) and
+masses \(m_b\). With \(c^2=\sum_bm_b^2\), Hoeffding's inequality [32] gives
+
+\[
+\Pr\{\widehat Q-Q\ge s\}\le\exp\{-2s^2/c^2\},
+\qquad
+s(\gamma)=\sqrt{\tfrac12c^2\log(1/\gamma)},
+\]
+
+and \(U_\Delta=2\widehat Q-1+2s(\alpha_U)\). With probability at least \(1-\beta\),
+\(\widehat Q<Q+s(\beta)\), and then \(U_\Delta<\Delta+2s(\alpha_U)+2s(\beta)\). So every
+\(\Delta\le\delta-g_U\) with
+
+\[
+g_U=2s(\alpha_U)+2s(\beta)
+\]
+
+has \(\Pr\{U_\Delta\le\delta\}\ge1-\beta\). The lower side is symmetric, with
+\(g_L=2s(\alpha_L)+2s(\beta)\) and \(\Delta\ge\delta+g_L\). A difference that would lie
+outside \([-1,1]\) is reported as unattainable. Prompt probabilities may differ, and the
+guarantee holds for every configuration of them.
+
+The block masses follow the independence profile the analysis will use. For prompt \(j\) with
+weight \(w_j\) and \(n_{Cj}\), \(n_{Bj}\) rollouts in the two arms:
+
+| Unit | Profile | \(c^2\) |
+|---|---|---|
+| `rollout` | `block_by: [rollout]` (arms independent) | \(\sum_j\frac{w_j^2}{4}\left(\frac1{n_{Cj}}+\frac1{n_{Bj}}\right)\) |
+| `pair` | `block_by: [prompt_id, repeat]`, `comparison_coupling: joint` | \(\sum_j\left[\underline n_j\frac{w_j^2}{4}\left(\frac1{n_{Cj}}+\frac1{n_{Bj}}\right)^2+(\overline n_j-\underline n_j)\frac{w_j^2}{4\overline n_j^2}\right]\) |
+| `prompt_cluster` | `block_by: [prompt_id]`, `comparison_coupling: joint` | \(\sum_jw_j^2\) |
+
+Here \(\underline n_j=\min(n_{Cj},n_{Bj})\) and \(\overline n_j=\max(n_{Cj},n_{Bj})\): a pair
+block holds one rollout of each arm with the same repeat index, and repeats that only the
+longer arm has form blocks of one rollout. The pair profile permits arbitrary dependence
+within a pair, for example a shared seed. Hoeffding uses only the range of a block, so it
+cannot gain from the correlation of paired outcomes; at equal counts a pair block has twice
+the variance proxy of two independent rollouts, and the resolvable differences are
+\(\sqrt2\) times further from the margin. Pairing helps the paired diagnostics of section 7.2
+to 7.4, not this guarantee.
+
+The family alpha is shared as in `analyze`: a claim's Bonferroni share
+\(\alpha/M\) is split between the two bounds under `two_sided` coverage, and spent on each
+under `per_direction`. \(M\) is the number of targets among which the family divides its
+alpha, as under `flat_bonferroni`. Hierarchy-node contrasts and `frontier_sidak` calibration
+are not planned.
+
+**Scope.** The guarantee is not one for the `weighted_kl_chernoff` or
+`weighted_empirical_bernstein` differences. Those are usually narrower on sparse failures, but
+not for every design, so a design planned here may resolve more than stated under those
+methods, and has no stated guarantee under them. Unclassified outcomes widen the analysis
+bounds and are not planned for.
+
+### 7.8 Arm contrasts on a generative design (experimental)
+
+The [generative engine](generative-evaluation.md) samples terminal paths of a declared taxonomy
+in which semantic seeds $s$ are a fixed stratification level and transformation levels (arms)
+lie below them, with declared path weights $w(h)$. An arm contrast compares two values $a$ and
+$b$ of one arm level $L$ within one target cohort. Unlike the comparisons above it is not
+paired: each sampling unit carries a single value of $L$, so the two arms hold disjoint units.
+
+**Estimand.** Write $w(s)$ for the declared weight of seed $s$, $w(s,v)$ for the total weight of
+its paths with $L=v$, and $R_s(v)$ for the risk of those paths under the declared weights
+normalized by $w(s,v)$. Let $S$ be the seeds with $w(s,a)>0$ and $w(s,b)>0$, and
+$\pi_s=w(s)/\sum_{t\in S}w(t)$. Then
+
+\[
+\Delta=T_a-T_b,\qquad T_v=\sum_{s\in S}\pi_s\,R_s(v).
+\]
+
+Both arms are averaged over the same seed mix, so a context weight or constraint that makes $a$
+likelier under some seeds than under others does not enter $\Delta$. If $w(s,v)/w(s)$ is the
+same for every seed and $S$ holds every seed, $T_v$ equals the slice risk
+$\sum_{h:L=v}w(h)p_h/\sum_{h:L=v}w(h)$ and $\Delta$ is a difference of two slices. A declared
+slice $L=v$ is bounded by the same construction with $\pi_s=w(s,v)/\sum_t w(t,v)$ over every
+seed holding $v$, which makes $T_v$ exactly the slice risk.
+
+**Direct sampling.** Paths are drawn i.i.d. from the declared distribution, independently of
+outcomes. Conditional on the number $n_v$ of draws with $L=v$ under a seed of $S$, those draws
+are i.i.d. from the declared distribution restricted there, whose mass is
+$W_v=\sum_{s\in S}w(s,v)$; a draw falls under seed $s$ with probability $w(s,v)/W_v$. With
+the known ratio $r_s=\pi_sW_v/w(s,v)$ and the unit's failure fraction $Y\in[0,1]$ (a
+failure indicator with one rollout per rewrite),
+
+\[
+\mathbb E[r_{s(j)}Y_j]=\sum_{s\in S}\frac{w(s,v)}{W_v}\,r_s\,R_s(v)=T_v.
+\]
+
+With $M=\max_s r_s$, the values $r_{s(j)}Y_j/M$ lie in $[0,1]$ and are independent with common
+mean $T_v/M$, so the Bernoulli-KL (Hoeffding 1963) bound on their mean, rescaled by $M$, bounds
+$T_v$ for every realized $n_v$, and therefore unconditionally. When all $r_s=1$, the
+observations are Bernoulli and the bound is exact Clopper--Pearson (section 4.2) with one
+rollout per rewrite. The result reports $M$ as `maximum_ratio`; the interval widens with it.
+
+**Proportional stratified sampling.** Seeds are strata with fixed draw counts $n_s$ drawn
+within the stratum from its declared distribution. Since
+$\mathbb E[\mathbf 1\{L_j=v\}Y_j]=R_s(v)\,w(s,v)/w(s)$ for a draw $j$ in stratum $s$,
+
+\[
+T_v=\mathbb E\Big[\sum_{s\in S}\frac{\pi_s\,w(s)}{w(s,v)\,n_s}\sum_{j\in s}\mathbf 1\{L_j=v\}Y_j\Big],
+\]
+
+a Horvitz--Thompson sum with fixed coefficients over independent observations in $[0,1]$. After
+normalizing the coefficients it is bounded by the weighted KL/Chernoff interval (section
+2.4.10), rescaled by the coefficients' total. Every stratum of $S$ must have received draws;
+otherwise the arm is refused.
+
+**Unclassified rollouts** are completed conservatively in both constructions: as failures for
+the upper endpoint and as safe for the lower one (section 4.5).
+
+**The contrast** at endpoint level $\alpha_e$ bounds each arm at $\alpha_e/2$ per endpoint and
+takes
+
+\[
+\big[L_a-U_b,\;U_a-L_b\big]
+\]
+
+clipped to $[-1,1]$; by the union bound it covers $\Delta$ with probability at least
+$1-\alpha_e$ per endpoint. Under `one_sided_upper` the lower endpoint is reported as $-1$.
+
+**Simultaneous family.** A plan declares slices and contrasts in `inference.slice_family`, and
+the family is calibrated by independent frontiers (section 2.4.10, *Tree-wide calibration by
+independent frontiers*). Under direct sampling, declared slices of one level hold disjoint
+units, and conditional on their counts those are independent, so they form one Šidák frontier.
+When members read shared units -- slices under proportional stratified sampling, where the
+Horvitz--Thompson sum of each slice reads every unit of its strata -- each is a frontier of its
+own. Every contrast is a frontier of its own. Frontiers share $\alpha$ by Bonferroni. Under
+`one_sided_upper` every member's upper bound covers simultaneously with probability at least
+$1-\alpha$; under `two_sided` each endpoint receives half of its member's calibrated level, and
+the guarantee holds for each direction.
+
+**Assumptions and limits.** Sampling units are independent, which path selection and rewrite
+generation deliver; dependence between rollouts within a unit is unrestricted. The family must
+be declared before the results are seen. It covers one cohort and the judge-reported scale
+only; contrasts between cohorts use the paired construction of the comparisons. The guarantee
+is about the declared design, not a population of prompts beyond it.
 
 ---
 
@@ -2079,7 +2427,7 @@ The analysis plan must freeze each claim's \(\alpha_i\) before monitoring begins
 
 Optstop and this library answer related but different questions.
 
-Optstop performs Bayesian adaptive allocation and stopping based primarily on posterior precision. Its output is useful for deciding where additional evaluation effort is valuable. Its recent paper reports substantial compute savings and empirical checks of truncation behavior [21].
+Optstop performs Bayesian adaptive allocation and stopping based primarily on posterior precision. Its output is useful for deciding where additional evaluation effort is valuable. Its recent paper reports substantial compute savings and empirical checks of truncation behavior [21]. The same paper is explicit that the two tools give different guarantees. In its simulation study (App. B.6, Table 5), 94% credible intervals covered the true rate about 80% of the time in the middle of the range (0.80 for the logit-normal model, 0.81 for the beta-binomial), and 0% of the time at the exact boundaries of 0 and 1. The paper attributes that zero to the degenerate data-generating process rather than to the model. It describes its interval-width stopping threshold as "a precision target rather than an accuracy guarantee" (App. A.1.1). Such a threshold says nothing about false passes, which is what the core gate controls.
 
 The core package focuses on fixed-horizon frequentist safety guarantees:
 
@@ -2153,6 +2501,7 @@ The original Inspect logs should remain immutable; statistical reports should be
 | Core | Multiple safety claims | Intersection-union logic, Holm tests, or Bonferroni simultaneous bounds as appropriate | Protect the declared global or simultaneous claim | Valid component methods and predeclared decision semantics | Correction is claim-dependent, not automatic |
 | Core | Exploratory discovery across many slices | Benjamini–Hochberg | False discovery rate | Standard BH dependence conditions | Must not drive deployment pass |
 | Core | Deployment gate | Two-threshold decision | Controlled false pass/fail | Valid bounds and predeclared thresholds | Inconclusive is a required outcome |
+| Experimental | Two values of one arm level of a generative design | Seed-matched arm contrast, simultaneous over a declared slice family (section 7.8) | Simultaneous coverage of declared slices and contrasts | Independent sampling units; family declared in the frozen plan | Not paired; widens with `maximum_ratio` when the declared weights skew a value across seeds |
 | Stretch | Continuously monitored or adaptively allocated rollouts | Bernoulli confidence sequence | Time-uniform coverage | Method-specific IID or martingale conditions | Adaptive selection can change the estimand |
 
 ---
@@ -2169,6 +2518,14 @@ A model may possess a dangerous capability that the scaffold, prompt, tools, or 
 
 A model may behave differently when it recognizes an evaluation. Statistical precision around evaluation behavior does not eliminate this external-validity threat. Anthropic's sabotage evaluations include explicit sandbagging and oversight-undermining experiments that illustrate why behavior observed under evaluation can be strategically unrepresentative [15].
 
+Every bound in this document is therefore conditional on the evaluated model not strategically
+underperforming. A model that deliberately fails to show a capability, or behaves more safely
+because it recognizes the evaluation, is measured correctly for the behaviour it chose to show;
+no amount of rollouts makes that behaviour representative [33]. Detecting sandbagging is a
+separate evaluation. One proposed method injects noise into the model's weights: a model that
+is not sandbagging degrades steadily as the noise grows, while a sandbagging model can improve
+anomalously. Its authors implemented it in Inspect [34]. This package does not run such checks.
+
 ### 15.3 Scorer error
 
 If an automated judge has false negatives, the observed binary outcome is a misclassified version of the true event. Let sensitivity be \(s\) and specificity be \(c\). The observed positive rate is
@@ -2177,7 +2534,7 @@ If an automated judge has false negatives, the observed binary outcome is a misc
 p_{\mathrm{obs}}=s p_{\mathrm{true}}+(1-c)(1-p_{\mathrm{true}}).
 \]
 
-Without knowledge or bounds on \(s\) and \(c\), \(p_{\mathrm{true}}\) is not identified from \(p_{\mathrm{obs}}\). Future versions should include scorer-validation and misclassification-sensitivity analysis.
+Without knowledge or bounds on \(s\) and \(c\), \(p_{\mathrm{true}}\) is not identified from \(p_{\mathrm{obs}}\). [Judge misclassification](judge-misclassification.md) describes the corrections built on this identity: declared accuracy scenarios as a sensitivity analysis, validated corrections from human labels (with an experimental stratified, finite-population variant that bounds each declared stratum with exact hypergeometric bounds), the noisy-but-valid threshold test, and an experimental stress analysis. The stress analysis reports, for a threshold verdict reached on \(p_{\mathrm{obs}}\), the line in \((s,c)\) beyond which the same verdict no longer holds for \(p_{\mathrm{true}}\).
 
 ### 15.4 Distribution shift
 
@@ -2190,6 +2547,24 @@ Exposure to benchmark items can change the measured behavior and invalidate the 
 ### 15.6 Severity aggregation
 
 A single binary event rate treats all failures alike. Critical failures should be separate claims or zero-tolerance rules rather than diluted into a broad average.
+
+### 15.7 Residual risk of rare harms
+
+The zero-failure planning in section 5 makes the cost of rare-harm claims explicit: an upper
+bound of \(\theta\) at confidence \(1-\alpha\) needs about \(\ln(1/\alpha)/\theta\) failure-free
+trials, about \(3/\theta\) at 95%, so
+every factor of ten in the rate costs a factor of ten in rollouts. Validation of automated
+driving faced the same arithmetic. Kalra and Paddock showed that demonstrating a fatality rate
+comparable to human drivers by test driving alone would take hundreds of millions to hundreds
+of billions of miles. They concluded that test driving alone cannot provide sufficient
+evidence of safety, that new ways of demonstrating it are needed, that even with them safety may
+not be established with certainty, and that regulation must therefore adapt as the technology
+and the evidence develop [35].
+
+The same holds here. A pre-deployment evaluation can bound rates that its rollout budget can
+reach. Below that, the residual risk is not shown to be small, only not measured. Claims about
+rarer harms need other evidence, such as monitoring in deployment, incident reporting and
+arguments about the system's design.
 
 These limitations belong prominently in every report because safety evidence is only as strong as both its statistical and substantive validity.
 
@@ -2345,6 +2720,21 @@ That is the role this Inspect extension should fill.
 30. H. Föllmer and T. Knispel, “Entropic Risk Measures: Coherence vs. Convexity, Model Ambiguity, and Robust Large Deviations,” *Stochastics and Dynamics* 11(2–3), 333–351, 2011. [doi:10.1142/S0219493711003334](https://doi.org/10.1142/S0219493711003334)
 31. C. Acerbi, “Spectral Measures of Risk: A Coherent Representation of Subjective Risk Aversion,” *Journal of Banking & Finance* 26(7), 1505–1518, 2002. [doi:10.1016/S0378-4266(02)00281-9](https://doi.org/10.1016/S0378-4266(02)00281-9)
 32. W. Hoeffding, “Probability Inequalities for Sums of Bounded Random Variables,” *Journal of the American Statistical Association* 58(301), 13–30, 1963. [doi:10.1080/01621459.1963.10500830](https://doi.org/10.1080/01621459.1963.10500830)
+33. I. Waudby-Smith and A. Ramdas, “Estimating means of bounded random variables by betting,” *Journal of the Royal Statistical Society, Series B* 86(1), 1–27, 2024. [doi:10.1093/jrsssb/qkad009](https://doi.org/10.1093/jrsssb/qkad009)
+34. F. Orabona and K.-S. Jun, “Tight Concentrations and Confidence Sequences from the Regret of Universal Portfolio,” *IEEE Transactions on Information Theory* 70(1), 436–455, 2024. [arXiv:2110.14099](https://arxiv.org/abs/2110.14099)
+
+### Threats to validity and small-sample evaluation
+
+33. T. van der Weij, F. Hofstätter, O. Jaffe, S. F. Brown, and F. R. Ward, “AI Sandbagging: Language Models can Strategically Underperform on Evaluations,” 2024. [arXiv:2406.07358](https://arxiv.org/abs/2406.07358)
+34. C. Tice, P. A. Kreer, N. Helm-Burger, P. S. Shahani, F. Ryzhenkov, F. Roger, C. Neo, J. Haimes, F. Hofstätter, and T. van der Weij, “Noise Injection Reveals Hidden Capabilities of Sandbagging Language Models,” NeurIPS 2025. [arXiv:2412.01784](https://arxiv.org/abs/2412.01784)
+35. N. Kalra and S. M. Paddock, “Driving to safety: How many miles of driving would it take to demonstrate autonomous vehicle reliability?,” *Transportation Research Part A: Policy and Practice* 94, 182–193, 2016. [doi:10.1016/j.tra.2016.09.010](https://doi.org/10.1016/j.tra.2016.09.010)
+36. S. Bowyer, L. Aitchison, and D. R. Ivanova, “Position: Don't Use the CLT in LLM Evals With Fewer Than a Few Hundred Datapoints,” ICML 2025. [arXiv:2503.01747](https://arxiv.org/abs/2503.01747)
+
+### Sequential evaluation and judge reliability
+
+37. Z. Zhou, Z. Ye, Z. Chen, B. Li, and F. Liu, “CELEUS: Certifiable and Efficient LLM Evaluation via E-Processes,” 2026. [arXiv:2606.20820](https://arxiv.org/abs/2606.20820)
+38. Y. Gao, “How Reliable Is Your Jailbreak Judge? Calibration and Adversarial Robustness of Automated ASR Scoring,” 2026. [arXiv:2606.25487](https://arxiv.org/abs/2606.25487)
+39. I. Waudby-Smith and A. Ramdas, “Confidence sequences for sampling without replacement,” *Advances in Neural Information Processing Systems* 33, 2020. [arXiv:2006.04347](https://arxiv.org/abs/2006.04347)
 
 ---
 

@@ -26,11 +26,25 @@ def _arrays(
 
 
 def weighted_mean(values: ArrayLike, weights: ArrayLike) -> float:
+    """Weighted mean of per-item values, the neutral baseline aggregate.
+
+    ``values`` and ``weights`` are nonempty one-dimensional arrays of equal length. The weights
+    must be finite, nonnegative and sum to one. Returns ``sum(w * x)``. Derived in
+    docs/statistical-methods.md, section 2.4.1.
+    """
+
     x, w = _arrays(values, weights)
     return float(np.dot(x, w))
 
 
 def maximum_risk(values: ArrayLike, weights: ArrayLike | None = None) -> float:
+    """Worst-item risk: the largest of the per-item values.
+
+    ``weights`` does not change the result. When given, it is only checked like the weights of
+    ``weighted_mean`` (same length, nonnegative, summing to one), so that every measure rejects
+    the same invalid designs. Derived in docs/statistical-methods.md, section 2.4.2.
+    """
+
     x = np.asarray(values, dtype=float)
     if x.ndim != 1 or len(x) == 0 or not np.all(np.isfinite(x)):
         raise ValueError("values must be a nonempty finite one-dimensional array")
@@ -40,6 +54,14 @@ def maximum_risk(values: ArrayLike, weights: ArrayLike | None = None) -> float:
 
 
 def weighted_cvar(values: ArrayLike, weights: ArrayLike, *, beta: float) -> float:
+    """Finite-design CVaR: the weighted mean of the worst ``1 - beta`` share of the design.
+
+    Items are taken from the largest value down until their weights fill ``1 - beta``, with a
+    fractional weight at the boundary. ``beta`` lies in ``[0, 1)``: zero gives the weighted
+    mean, and the result approaches the maximum as ``beta`` nears one. Weights follow
+    ``weighted_mean``. Derived in docs/statistical-methods.md, section 2.4.3.
+    """
+
     x, w = _arrays(values, weights)
     if not 0 <= beta < 1:
         raise ValueError("beta must be in [0, 1)")
@@ -56,6 +78,13 @@ def weighted_cvar(values: ArrayLike, weights: ArrayLike, *, beta: float) -> floa
 
 
 def top_k_mean(values: ArrayLike, *, k: int) -> float:
+    """Unweighted mean of the ``k`` largest values.
+
+    ``k`` is an integer from one to the number of values. With equal weights and
+    ``1 - beta = k / len(values)`` it equals ``weighted_cvar``. Described in
+    docs/statistical-methods.md, section 2.4.3.
+    """
+
     x = np.asarray(values, dtype=float)
     if x.ndim != 1 or len(x) == 0 or not np.all(np.isfinite(x)):
         raise ValueError("values must be a nonempty finite one-dimensional array")
@@ -66,6 +95,15 @@ def top_k_mean(values: ArrayLike, *, k: int) -> float:
 
 
 def entropic_risk(values: ArrayLike, weights: ArrayLike, *, lambda_: float) -> float:
+    """Entropic risk ``log(sum(w * exp(lambda_ * x))) / lambda_`` of the per-item values.
+
+    ``lambda_`` is the risk-aversion parameter, positive and finite. The result tends to the
+    weighted mean as ``lambda_`` falls to zero, and is returned as exactly the weighted mean
+    below ``1e-7``. It tends to the maximum over positively weighted items as ``lambda_``
+    grows. Items with zero weight are ignored. Weights follow ``weighted_mean``. Derived in
+    docs/statistical-methods.md, section 2.4.4.
+    """
+
     x, w = _arrays(values, weights)
     if not math.isfinite(lambda_) or lambda_ <= 0:
         raise ValueError("lambda_ must be positive and finite")
@@ -81,6 +119,13 @@ def entropic_risk(values: ArrayLike, weights: ArrayLike, *, lambda_: float) -> f
 def threshold_exceedance(
     values: ArrayLike, weights: ArrayLike, *, threshold: float | ArrayLike
 ) -> float:
+    """Total weight of the items whose value exceeds its threshold.
+
+    ``threshold`` is one finite number for every item, or an array of per-item thresholds of
+    the same shape as ``values``. An item counts only when strictly above its threshold.
+    Weights follow ``weighted_mean``. Derived in docs/statistical-methods.md, section 2.4.6.
+    """
+
     x, w = _arrays(values, weights)
     t = np.asarray(threshold, dtype=float)
     if t.ndim == 0:
@@ -93,6 +138,13 @@ def threshold_exceedance(
 def threshold_excess(
     values: ArrayLike, weights: ArrayLike, *, threshold: float | ArrayLike
 ) -> float:
+    """Weighted mean of how far each value lies above its threshold, ``sum(w * max(x - t, 0))``.
+
+    ``threshold`` is one finite number for every item, or an array of per-item thresholds of
+    the same shape as ``values``. Weights follow ``weighted_mean``. Derived in
+    docs/statistical-methods.md, section 2.4.6.
+    """
+
     x, w = _arrays(values, weights)
     t = np.asarray(threshold, dtype=float)
     if t.ndim == 0:
@@ -157,6 +209,18 @@ def worst_of_k_estimate(
         raise ValueError("failures must lie between zero and the number of rollouts")
     if np.any(n < k):
         raise ValueError(f"every prompt needs at least {k} rollouts to estimate {k} attempts")
+    return float(np.dot(w, worst_of_k_shares(f, n, k=k)))
+
+
+def worst_of_k_shares(failures: ArrayLike, rollouts: ArrayLike, *, k: int) -> NDArray[np.float64]:
+    """Per prompt, the share of its ``k``-subsets of rollouts that contain a failure.
+
+    ``1 - C(n - f, k) / C(n, k)`` for ``f`` failures in ``n >= k`` rollouts. The caller checks
+    the counts; :func:`worst_of_k_estimate` documents the evaluation.
+    """
+
+    f = np.asarray(failures)
+    n = np.asarray(rollouts)
     risks = np.empty(len(n))
     for index, (fails, total) in enumerate(zip(f.tolist(), n.tolist(), strict=True)):
         if k == 1 or fails == 0:
@@ -168,4 +232,4 @@ def worst_of_k_estimate(
         else:
             log_ratio = math.fsum(math.log1p(-fails / (total - i)) for i in range(k))
             risks[index] = 0.0 - math.expm1(log_ratio)
-    return float(np.dot(w, risks))
+    return risks
