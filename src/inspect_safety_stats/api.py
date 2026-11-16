@@ -118,6 +118,10 @@ from inspect_safety_stats.stats.risk import (
     worst_of_k_estimate,
     worst_of_k_risk,
 )
+from inspect_safety_stats.stats.single_valued import (
+    SINGLE_VALUED_BOUND_GUARANTEE,
+    single_valued_bound,
+)
 from inspect_safety_stats.stats.tree_calibration import (
     IndependentFrontier,
     any_overlap,
@@ -1233,7 +1237,33 @@ def _direct_intervals(
                     interval_coverage=interval_coverage,
                 )
             )
+            if spec.single_valued_bound:
+                _add_single_valued_bound(results[-1], method, blocks, profile_id)
     return results
+
+
+def _add_single_valued_bound(
+    interval: RiskIntervalResult,
+    method: str,
+    blocks: BoundedBlocks,
+    independence_profile: str,
+) -> None:
+    """Attach M = inf_delta [U_delta + delta] for this node's own engine (#127).
+
+    U_delta is the engine's upper endpoint at endpoint alpha delta for this node alone, not
+    the family-calibrated endpoint, so M carries no multiplicity adjustment and no alpha.
+    """
+    bound = single_valued_bound(
+        lambda delta: _direct_bounds(
+            method,
+            blocks,
+            endpoint_alpha=delta,
+            independence_profile=independence_profile,
+        ).upper
+    )
+    interval.single_valued_bound = bound.value
+    interval.single_valued_bound_delta = bound.delta
+    interval.single_valued_bound_guarantee = SINGLE_VALUED_BOUND_GUARANTEE
 
 
 def _group_risks(
