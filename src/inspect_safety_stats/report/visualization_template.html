@@ -384,8 +384,7 @@
     "use strict";
     const payload = JSON.parse(document.getElementById("inspect-safety-stats-data").textContent);
     const report = payload.report || {};
-    const designRows = Array.isArray(payload.resolved_design) ? payload.resolved_design : [];
-    const plan = payload.resolved_plan || {};
+    const designRows = Array.isArray(report.design?.prompts) ? report.design.prompts : [];
     const estimates = Array.isArray(report.prompt_estimates) ? report.prompt_estimates : [];
     const risks = Array.isArray(report.group_risks) ? report.group_risks : [];
     const hierarchyRisks = Array.isArray(report.hierarchy_risks) ? report.hierarchy_risks : [];
@@ -405,11 +404,10 @@
       ...hierarchyRisks.flatMap(row => (row.intervals || []).map(interval => interval.independence_profile)),
       ...comparisons.flatMap(row => (row.intervals || []).map(interval => interval.independence_profile))
     ]);
-    const primaryIndependence = plan.outputs?.direct_mean_intervals?.independence?.primary
+    const primaryIndependence = report.presentation?.primary_independence_profile
       || independenceProfiles[0] || "";
     const hierarchy = unique(
       (report.design && report.design.hierarchy) ||
-      (plan.design && plan.design.hierarchy) ||
       ["task_id", "question_id", "prompt_id"]
     );
     const groupTitles = new Map(groups.map(g => [String(g.id), g.title || g.id]));

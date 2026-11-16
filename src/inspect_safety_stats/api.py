@@ -267,6 +267,5 @@ def analyze(
         decision_policy=policy_record,
     )
     report._observations = data.observations
-    report._resolved_design = _resolved_design(data, resolved.design.hierarchy)
     report._resolved_plan = report_plan(frozen)
     return report

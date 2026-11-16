@@ -510,7 +510,6 @@ class SafetyReport(ResultModel):
     # plan.resolved.yaml. No rendering reads them: everything report.md, report.html and the
     # other CSVs show is in the fields above.
     _observations: list[Any] = PrivateAttr(default_factory=list)
-    _resolved_design: list[dict[str, Any]] = PrivateAttr(default_factory=list)
     _resolved_plan: dict[str, Any] = PrivateAttr(default_factory=dict)
 
     @model_serializer(mode="wrap")

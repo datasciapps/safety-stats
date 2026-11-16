@@ -10,10 +10,12 @@ from typing import Any
 
 from inspect_safety_stats.report.writer import _markdown
 from inspect_safety_stats.schema.reports import (
+    ClaimEvidenceRecord,
     ClaimResult,
     ComparisonResult,
     HierarchyRiskResult,
     IntegritySummary,
+    ReportPresentation,
     SafetyReport,
 )
 
@@ -95,7 +97,21 @@ def _report(
         analysis={"id": "a"},
         provenance={},
         scope={"disclaimer": "Fixed design."},
-        presentation={"include_decisions": include_decisions},
+        presentation=ReportPresentation(
+            include_decisions=include_decisions,
+            decimal_places=3,
+            claim_evidence=[
+                ClaimEvidenceRecord(
+                    claim_id=spec["id"],
+                    comparison=spec.get("comparison"),
+                    cohort=spec.get("cohort"),
+                    group=spec.get("group"),
+                    measure=spec.get("measure"),
+                    measure_type=measure_type if spec.get("measure") == "mean" else None,
+                )
+                for spec in claim_specs
+            ],
+        ),
         integrity=IntegritySummary(status="valid"),
         design={},
         cohorts=[],
@@ -108,11 +124,6 @@ def _report(
         policy_events=[],
         decision="PASS",
     )
-    report._resolved_plan = {
-        "report": {"decimal_places": 3},
-        "claims": claim_specs,
-        "outputs": {"risk_measures": [{"id": "mean", "type": measure_type}]},
-    }
     return report
 
 

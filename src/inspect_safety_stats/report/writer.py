@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import json
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from pathlib import Path
@@ -28,27 +29,31 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+def _csv_text(rows: list[dict[str, Any]]) -> str:
     if not rows:
-        path.write_text("", encoding="utf-8", newline="\n")
-        return
+        return ""
     fields: list[str] = []
     for row in rows:
         for field in row:
             if field not in fields:
                 fields.append(field)
-    with path.open("w", encoding="utf-8", newline="") as stream:
-        writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
-        writer.writeheader()
-        for row in rows:
-            writer.writerow(
-                {
-                    key: json.dumps(canonical_value(value), ensure_ascii=False, sort_keys=True)
-                    if isinstance(value, (dict, list))
-                    else canonical_value(value)
-                    for key, value in row.items()
-                }
-            )
+    stream = io.StringIO(newline="")
+    writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
+    writer.writeheader()
+    for row in rows:
+        writer.writerow(
+            {
+                key: json.dumps(canonical_value(value), ensure_ascii=False, sort_keys=True)
+                if isinstance(value, (dict, list))
+                else canonical_value(value)
+                for key, value in row.items()
+            }
+        )
+    return stream.getvalue()
+
+
+def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.write_text(_csv_text(rows), encoding="utf-8", newline="")
 
 
 def _escape(value: Any) -> str:
@@ -408,8 +413,21 @@ def _excludes_null(comparison: ComparisonResult) -> bool:
     return comparison.lower > null or comparison.upper < null
 
 
-def _node_label(level: str | None, path: dict[str, str]) -> str:
-    return f"{_escape(level)}: {_escape(' → '.join(path.values()))}"
+def _path_text(report: SafetyReport, path: dict[str, str]) -> str:
+    """A node's path, outermost level first.
+
+    The order comes from the design's hierarchy, not from the dictionary: report.json stores
+    its keys sorted, so a report read back from it has them in another order.
+    """
+
+    hierarchy = [str(level) for level in report.design.get("hierarchy") or []]
+    levels = [level for level in hierarchy if level in path]
+    levels += [level for level in path if level not in levels]
+    return " → ".join(path[level] for level in levels)
+
+
+def _node_label(report: SafetyReport, level: str | None, path: dict[str, str]) -> str:
+    return f"{_escape(level)}: {_escape(_path_text(report, path))}"
 
 
 def _localisation_lines(
@@ -448,7 +466,7 @@ def _localisation_lines(
         lines.extend(_effect_lines(report, node_comparisons, places))
     if claim_nodes:
         lines.append("")
-        lines.extend(_exceedance_lines(claim_nodes, places))
+        lines.extend(_exceedance_lines(report, claim_nodes, places))
     return lines
 
 
@@ -473,7 +491,7 @@ def _effect_lines(
             + " | ".join(
                 [
                     _escape(item.comparison_id),
-                    _node_label(item.level, item.path),
+                    _node_label(report, item.level, item.path),
                     _number(item.resolved_weight, places),
                     str(item.prompt_count),
                     _number(item.candidate_estimate, places),
@@ -489,6 +507,7 @@ def _effect_lines(
 
 
 def _exceedance_lines(
+    report: SafetyReport,
     claim_nodes: list[tuple[ClaimResult, str, list[HierarchyRiskResult | ComparisonResult]]],
     places: int,
 ) -> list[str]:
@@ -518,7 +537,7 @@ def _exceedance_lines(
                 [
                     _escape(claim.title),
                     _escape(evidence),
-                    _node_label(node.level, node.path),
+                    _node_label(report, node.level, node.path),
                     _number(weight, places),
                     str(node.prompt_count),
                     _number(node.estimate, places),
@@ -547,31 +566,26 @@ def _claim_nodes(
     An aggregate claim reaches hierarchy rows only through a weighted-mean measure, the one
     estimand the hierarchy rows report.
     """
-    plan = report._resolved_plan
-    specs = {str(item.get("id")): item for item in plan.get("claims") or []}
-    measure_types = {
-        str(item.get("id")): item.get("type")
-        for item in (plan.get("outputs") or {}).get("risk_measures") or []
-    }
+    specs = {item.claim_id: item for item in report.presentation.claim_evidence or []}
     result: list[tuple[ClaimResult, str, list[HierarchyRiskResult | ComparisonResult]]] = []
     for claim in report.claims:
         spec = specs.get(claim.claim_id)
         if spec is None:
             continue
         nodes: list[HierarchyRiskResult | ComparisonResult]
-        if spec.get("comparison"):
-            evidence = f"comparison {spec['comparison']}"
+        if spec.comparison:
+            evidence = f"comparison {spec.comparison}"
             nodes = [
                 item
                 for item in report.comparisons
-                if item.level is not None and item.comparison_id == spec["comparison"]
+                if item.level is not None and item.comparison_id == spec.comparison
             ]
-        elif measure_types.get(str(spec.get("measure"))) == "weighted_mean":
-            evidence = f"{spec['cohort']} / {spec['group']} / {spec['measure']}"
+        elif spec.measure_type == "weighted_mean":
+            evidence = f"{spec.cohort} / {spec.group} / {spec.measure}"
             nodes = [
                 item
                 for item in report.hierarchy_risks
-                if item.cohort_id == spec["cohort"] and item.group_id == spec["group"]
+                if item.cohort_id == spec.cohort and item.group_id == spec.group
             ]
         else:
             continue
@@ -635,7 +649,9 @@ def _decision_policy_lines(report: SafetyReport, places: int) -> list[str]:
 
 
 def _markdown(report: SafetyReport) -> str:
-    places = int(report._resolved_plan.get("report", {}).get("decimal_places", 6))
+    places = report.presentation.decimal_places
+    if places is None:
+        places = 6
     include_decisions = report.presentation.include_decisions
     lines = [
         f"# {_escape(report.analysis.get('title', report.analysis.get('id', 'Safety report')))}",
@@ -881,11 +897,18 @@ def _markdown(report: SafetyReport) -> str:
         if interval.interval_id.startswith("judge_corrected_")
     ]
     if judge_rows:
-        calibration = report._resolved_plan.get("inputs", {}).get("judge_calibration") or {}
-        primary_scenario = str(calibration.get("primary") or "")
-        validated = str(calibration.get("mode")) == "validated"
-        transported = str(calibration.get("mode")) == "transported"
-        stratified = validated and calibration.get("sampling") == "stratified_without_replacement"
+        # Corrected rows can come without a plan calibration (a judge panel's derived
+        # correction); they read as the assumed mode with no declared scenarios.
+        calibration = report.presentation.judge_calibration
+        mode = calibration.mode if calibration else None
+        primary_scenario = (calibration.primary if calibration else None) or ""
+        validated = mode == "validated"
+        transported = mode == "transported"
+        stratified = (
+            validated
+            and calibration is not None
+            and calibration.sampling == "stratified_without_replacement"
+        )
         preamble = (
             (
                 "Experimental. Only the judge's sensitivity is taken from a published "
@@ -928,7 +951,7 @@ def _markdown(report: SafetyReport) -> str:
                 "assumes the judge never errs."
             )
         )
-        scoped = calibration.get("groups")
+        scoped = calibration.groups if calibration else None
         if scoped:
             preamble += (
                 " The calibration is scoped to the groups "
@@ -1118,17 +1141,16 @@ def _markdown(report: SafetyReport) -> str:
                     ]
                 )
         else:
-            scenarios = calibration.get("scenarios") or []
+            scenarios = calibration.scenarios if calibration else []
             if scenarios:
                 lines.extend(["", "Declared scenarios:", ""])
                 for item in scenarios:
-                    rho_1, rho_0 = item.get("rho_1", {}), item.get("rho_0", {})
                     lines.append(
-                        f"- `{_escape(item.get('id'))}`: "
+                        f"- `{_escape(item.id)}`: "
                         f"P(truly unsafe | judge said unsafe) in "
-                        f"[{rho_1.get('lower')}, {rho_1.get('upper')}]; "
+                        f"[{item.rho_1.lower}, {item.rho_1.upper}]; "
                         f"P(truly unsafe | judge said safe) in "
-                        f"[{rho_0.get('lower')}, {rho_0.get('upper')}]"
+                        f"[{item.rho_0.lower}, {item.rho_0.upper}]"
                     )
     if report.hierarchy_risks:
         lines.extend(
@@ -1170,7 +1192,7 @@ def _markdown(report: SafetyReport) -> str:
                         _escape(node.cohort_id),
                         _escape(node.group_id),
                         _escape(node.level),
-                        _escape(" → ".join(node.path.values())),
+                        _escape(_path_text(report, node.path)),
                         _number(node.design_weight, places),
                         str(node.prompt_count),
                         _number(node.estimate, places),
@@ -1199,7 +1221,7 @@ def _markdown(report: SafetyReport) -> str:
         for interval in risk.intervals
         if interval.single_valued_bound is not None
     ] + [
-        (node.cohort_id, node.group_id, " → ".join(node.path.values()), interval)
+        (node.cohort_id, node.group_id, _path_text(report, node.path), interval)
         for node in report.hierarchy_risks
         for interval in node.intervals
         if interval.single_valued_bound is not None
@@ -1384,7 +1406,7 @@ def _markdown(report: SafetyReport) -> str:
                         [
                             _escape(comparison.comparison_id),
                             _escape(comparison.level),
-                            _escape(" → ".join(comparison.path.values())),
+                            _escape(_path_text(report, comparison.path)),
                             _number(comparison.resolved_weight, places),
                             str(comparison.prompt_count),
                             _number(comparison.candidate_estimate, places),
@@ -1488,9 +1510,85 @@ def _markdown(report: SafetyReport) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = False) -> Path:
+def _design_rows(report: SafetyReport) -> list[dict[str, Any]]:
+    """The rows of design.resolved.csv, with their columns in the design's order.
+
+    report.json stores the rows with sorted keys, so the order comes from the hierarchy:
+    the group, the hierarchy levels, the task, question and prompt, then the weight.
+    """
+
+    hierarchy = [str(item) for item in report.design.get("hierarchy") or []]
+    columns = [
+        "group_id",
+        *dict.fromkeys([*hierarchy, "task_id", "question_id", "prompt_id"]),
+        "weight",
+    ]
+    return [
+        {column: row[column] for column in columns if column in row}
+        for row in report.design.get("prompts") or []
+    ]
+
+
+def _hierarchy_rows(report: SafetyReport) -> list[dict[str, Any]]:
+    return [
+        {
+            "cohort_id": node.cohort_id,
+            "group_id": node.group_id,
+            "level": node.level,
+            "path": node.path,
+            "design_weight": node.design_weight,
+            "prompt_count": node.prompt_count,
+            "estimate": node.estimate,
+            "lower": node.lower,
+            "upper": node.upper,
+            "raw_lower": node.raw_lower,
+            "raw_upper": node.raw_upper,
+            "projection_method": node.projection_method,
+            "interval_method": node.interval_method,
+            "calibration_method": (
+                node.intervals[0].calibration_method if node.intervals else None
+            ),
+            "calibration_frontier": (
+                node.intervals[0].calibration_frontier if node.intervals else None
+            ),
+            "calibration_frontier_alpha": (
+                node.intervals[0].calibration_frontier_alpha if node.intervals else None
+            ),
+            "calibration_frontier_size": (
+                node.intervals[0].calibration_frontier_size if node.intervals else None
+            ),
+            "endpoint_alpha": (node.intervals[0].alpha_upper if node.intervals else None),
+            "eligibility": node.eligibility,
+            "intervals": [item.model_dump(mode="json") for item in node.intervals],
+        }
+        for node in report.hierarchy_risks
+    ]
+
+
+def _rendered(report: SafetyReport) -> dict[str, str]:
+    """The report's renderings, by file name: functions of the report model alone.
+
+    A report read back from its report.json renders to the same text (L38). plan.resolved.yaml
+    and observations.csv are not among them: they copy the analysis input.
+    """
+
     from inspect_safety_stats.report.visualization import render_visualization
 
+    return {
+        "report.md": _markdown(report),
+        "report.html": render_visualization(report),
+        "design.resolved.csv": _csv_text(_design_rows(report)),
+        "hierarchy-risks.csv": _csv_text(_hierarchy_rows(report)),
+        "comparisons.csv": _csv_text(
+            [item.model_dump(mode="json") for item in report.comparisons]
+        ),
+        "comparison-sets.csv": _csv_text(
+            [item.model_dump(mode="json") for item in report.comparison_sets]
+        ),
+    }
+
+
+def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = False) -> Path:
     directory = Path(output).resolve()
     if directory.exists() and not directory.is_dir():
         raise FileExistsError(f"report output exists and is not a directory: {directory}")
@@ -1510,62 +1608,22 @@ def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = 
         encoding="utf-8",
         newline="\n",
     )
-    (directory / "report.md").write_text(
-        _markdown(report), encoding="utf-8", newline="\n"
-    )
-    (directory / "report.html").write_text(
-        render_visualization(report), encoding="utf-8", newline="\n"
-    )
+    rendered = _rendered(report)
+    for name in ("report.md", "report.html"):
+        (directory / name).write_text(rendered[name], encoding="utf-8", newline="\n")
     (directory / "plan.resolved.yaml").write_text(
         yaml.safe_dump(canonical_value(report._resolved_plan), sort_keys=True, allow_unicode=True),
         encoding="utf-8",
         newline="\n",
     )
-    _write_csv(directory / "design.resolved.csv", report._resolved_design)
-    _write_csv(
-        directory / "hierarchy-risks.csv",
-        [
-            {
-                "cohort_id": node.cohort_id,
-                "group_id": node.group_id,
-                "level": node.level,
-                "path": node.path,
-                "design_weight": node.design_weight,
-                "prompt_count": node.prompt_count,
-                "estimate": node.estimate,
-                "lower": node.lower,
-                "upper": node.upper,
-                "raw_lower": node.raw_lower,
-                "raw_upper": node.raw_upper,
-                "projection_method": node.projection_method,
-                "interval_method": node.interval_method,
-                "calibration_method": (
-                    node.intervals[0].calibration_method if node.intervals else None
-                ),
-                "calibration_frontier": (
-                    node.intervals[0].calibration_frontier if node.intervals else None
-                ),
-                "calibration_frontier_alpha": (
-                    node.intervals[0].calibration_frontier_alpha if node.intervals else None
-                ),
-                "calibration_frontier_size": (
-                    node.intervals[0].calibration_frontier_size if node.intervals else None
-                ),
-                "endpoint_alpha": (node.intervals[0].alpha_upper if node.intervals else None),
-                "eligibility": node.eligibility,
-                "intervals": [item.model_dump(mode="json") for item in node.intervals],
-            }
-            for node in report.hierarchy_risks
-        ],
-    )
-    _write_csv(
-        directory / "comparisons.csv",
-        [item.model_dump(mode="json") for item in report.comparisons],
-    )
-    _write_csv(
-        directory / "comparison-sets.csv",
-        [item.model_dump(mode="json") for item in report.comparison_sets],
-    )
+    for name in (
+        "design.resolved.csv",
+        "hierarchy-risks.csv",
+        "comparisons.csv",
+        "comparison-sets.csv",
+    ):
+        # The CSV text carries its own line endings (csv's default CRLF); write it unchanged.
+        (directory / name).write_text(rendered[name], encoding="utf-8", newline="")
     include_observations = bool(
         report._resolved_plan.get("report", {}).get("include_observations", True)
     )
