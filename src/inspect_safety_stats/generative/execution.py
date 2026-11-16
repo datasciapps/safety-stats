@@ -23,8 +23,10 @@ from inspect_safety_stats.generative.kernels import (
     KernelFingerprint,
     RewriteKernel,
     RewriteRequest,
+    RewriteValidator,
 )
 from inspect_safety_stats.generative.ledger import (
+    AttemptRecord,
     IncrementalCsvWriter,
     RewriteRecord,
     SelectionRecord,
@@ -50,6 +52,7 @@ class ExecutionResult:
     exhausted: tuple[str, ...]
     errored: tuple[str, ...]
     first_error: str | None = None
+    attempts: tuple[AttemptRecord, ...] = ()
 
     @property
     def accepted_by_unit(self) -> dict[str, AcceptedRewrite]:
@@ -177,6 +180,8 @@ def execute_rewrites(
     completed: Mapping[str, RewriteRecord] | None = None,
     already_accepted: Mapping[str, AcceptedRewrite] | None = None,
     on_unit: Callable[[RewriteRecord, AcceptedRewrite | None], None] | None = None,
+    validator: RewriteValidator | None = None,
+    on_attempt: Callable[[AttemptRecord], None] | None = None,
 ) -> ExecutionResult:
     """Draw one accepted rewrite per selected path, ledgering every attempt.
 
@@ -193,9 +198,28 @@ def execute_rewrites(
     ``on_unit`` is called as each *newly executed* unit finishes, so a caller can persist it
     before the next one starts. Replayed units do not fire it: they are already on disk, and
     re-emitting them would mean deleting the record before rewriting it.
+
+    ``validator`` is required when the plan sets ``rewrite.validation.invoke`` and refused
+    otherwise, so a declared check is never silently skipped and an undeclared one never
+    silently shapes the accepted distribution. It runs on every rewrite the kernel returns
+    as valid that is not rejected as a duplicate. When the plan records attempts, each
+    kernel call of a newly executed unit becomes an :class:`AttemptRecord`, passed to
+    ``on_attempt`` as it is made; the attempts of replayed units are already on disk.
     """
 
     validation = plan.rewrite.validation
+    if validation.invoke and validator is None:
+        raise ValueError(
+            f"the plan sets rewrite.validation.invoke, so the validator "
+            f"{validation.validator_id!r} must be supplied"
+        )
+    if validator is not None and not validation.invoke:
+        raise ValueError(
+            "a validator was supplied but the plan does not set rewrite.validation.invoke; "
+            "it would shape the accepted distribution without the plan saying so"
+        )
+    recording = plan.rewrite.records_attempts
+    attempt_records: list[AttemptRecord] = []
     deduplication = plan.rewrite.deduplication
     seen: dict[str, set[str]] = {}
     records: list[RewriteRecord] = []
@@ -209,6 +233,14 @@ def execute_rewrites(
     if rewrite_salt:
         salt_digest = hashlib.sha256(f"{salt_seed}|{rewrite_salt}".encode()).digest()
         salt_seed = int.from_bytes(salt_digest[:6], "big")
+
+    def note(row: dict[str, object]) -> None:
+        if not recording:
+            return
+        entry = AttemptRecord.model_validate(row)
+        attempt_records.append(entry)
+        if on_attempt is not None:
+            on_attempt(entry)
 
     for record in selections:
         unit_id = record.sampling_unit_id
@@ -248,34 +280,60 @@ def execute_rewrites(
 
         for attempt in range(1, validation.maximum_attempts + 1):
             attempts = attempt
-            outcome = kernel.rewrite(
-                RewriteRequest(
-                    sampling_unit_id=unit_id,
-                    path_hash=record.path_hash,
-                    path_values=path_values,
-                    semantic_seed_id=seed_id,
-                    seed_text=seed_texts[seed_id],
-                    attempt=attempt,
-                    selection_seed=salt_seed,
-                )
+            request = RewriteRequest(
+                sampling_unit_id=unit_id,
+                path_hash=record.path_hash,
+                path_values=path_values,
+                semantic_seed_id=seed_id,
+                seed_text=seed_texts[seed_id],
+                attempt=attempt,
+                selection_seed=salt_seed,
             )
+            outcome = kernel.rewrite(request)
+            row: dict[str, object] = {
+                "sampling_unit_id": unit_id,
+                "attempt": attempt,
+                "kernel_status": outcome.status,
+            }
             if outcome.status == "error":
                 status = "error"
                 if first_error is None:
                     first_error = outcome.detail
+                note(row)
                 break
             if outcome.status == "invalid":
+                note(row)
                 if validation.on_invalid == "fail":
                     break
                 continue
             candidate = str(outcome.prompt)
             digest = prompt_sha256(candidate)
+            row["prompt_sha256"] = digest
             if key is not None and digest in seen.get(key, set()):
                 duplicates += 1
+                row["duplicate"] = "exact"
                 if deduplication.on_duplicate == "retry":
+                    note(row)
+                    continue
+            if validator is not None:
+                verdict = validator.validate(request, candidate)
+                row["validator_id"] = validator.validator_id
+                row["validator_status"] = verdict.status
+                if verdict.status == "error":
+                    status = "error"
+                    if first_error is None:
+                        first_error = f"validator: {verdict.detail}"
+                    note(row)
+                    break
+                if verdict.status == "invalid":
+                    note(row)
+                    if validation.on_invalid == "fail":
+                        break
                     continue
             if key is not None:
                 seen.setdefault(key, set()).add(digest)
+            row["accepted"] = True
+            note(row)
             status = "valid"
             prompt = candidate
             break
@@ -329,6 +387,7 @@ def execute_rewrites(
         exhausted=tuple(exhausted),
         errored=tuple(errored),
         first_error=first_error,
+        attempts=tuple(attempt_records),
     )
 
 

@@ -488,6 +488,18 @@ def generative_materialize_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
     output: Annotated[Path, typer.Option("--output")] = Path("generative-run"),
     kernel: Annotated[str, typer.Option("--kernel")] = "fake",
+    validator: Annotated[
+        str | None,
+        typer.Option(
+            "--validator",
+            help=(
+                "Experimental. The validator the plan's rewrite.validation.validator_id "
+                "names, resolved like --kernel ('fake', 'fake:reject_every=N', "
+                "'module:attribute' or 'path/to/file.py:attribute'). Required when the plan "
+                "sets rewrite.validation.invoke, refused otherwise."
+            ),
+        ),
+    ] = None,
     stage: Annotated[str, typer.Option("--stage")] = "main",
     salt: Annotated[str, typer.Option("--rewrite-salt")] = "",
     overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
@@ -510,6 +522,7 @@ def generative_materialize_command(
             overwrite=overwrite,
             resume=resume,
             rewrite_salt=salt,
+            validator=validator,
         )
     except Exception as exc:
         typer.echo(f"Materialization failed: {exc}", err=True)
@@ -517,6 +530,8 @@ def generative_materialize_command(
 
     typer.echo(f"Taxonomy fingerprint: {run.taxonomy_fingerprint}")
     typer.echo(f"Kernel: {run.kernel.kernel_id} @ {run.kernel.sha256}")
+    if run.validator_id is not None:
+        typer.echo(f"Validator: {run.validator_id}")
     typer.echo(f"Selections: {run.selections}")
     if run.resumed:
         typer.echo(f"Resumed: {run.resumed} units carried over, "
@@ -527,6 +542,8 @@ def generative_materialize_command(
     )
     if run.kernel_mismatch:
         typer.echo(f"Warning: {run.kernel_mismatch}", err=True)
+    if run.validator_mismatch:
+        typer.echo(f"Warning: {run.validator_mismatch}", err=True)
     typer.echo(f"Dataset: {run.dataset}")
     typer.echo(f"Artifacts: {run.output}")
     if run.accepted == 0:

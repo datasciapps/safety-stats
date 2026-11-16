@@ -17,6 +17,8 @@ SURFACE = {
     # The rewrite kernel, which the caller supplies.
     "RewriteKernel", "RewriteRequest", "RewriteOutcome", "KernelFingerprint",
     "DeterministicFakeKernel", "resolve_kernel_fingerprint",
+    # The validator the plan declares, which the package invokes when asked to.
+    "RewriteValidator", "ValidationVerdict", "DeterministicFakeValidator",
     # The two-phase workflow.
     "MaterializedRun", "materialize_run", "analyze_run",
     "GenerativeReport", "render_generative_report",
@@ -32,6 +34,7 @@ SURFACE = {
     "estimate_reweighted", "compare_cohorts",
     # Ledgers, for auditing a run.
     "SelectionRecord", "RewriteRecord", "read_selections", "read_rewrites",
+    "AttemptRecord", "read_attempts",
 }
 
 
