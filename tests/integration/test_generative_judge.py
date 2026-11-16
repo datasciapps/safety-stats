@@ -13,6 +13,7 @@ from inspect_safety_stats.generative.judge import judge_strata
 from inspect_safety_stats.generative.ledger import read_rewrites
 from inspect_safety_stats.generative.runner import analyze_run, materialize_run
 from inspect_safety_stats.generative.schema import load_generative_plan
+from inspect_safety_stats.ingest import inspect_logs
 from tests.integration.test_generative_cli import stub_logs, write_plan
 
 ASSUMED = {
@@ -125,6 +126,47 @@ def test_validated_mode_certifies_the_root_and_spends_its_own_alpha(
     assert block["rho_1"][0] > block["rho_0"][1]        # strictly informative
     root = next(i for i in report.corrected if i.node_id == "all")
     assert root.alpha > report.tree.alpha               # the union, not the interval alone
+
+
+def test_unclassified_units_keep_their_worst_case_through_the_correction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The labels say nothing about units with no verdict, so rho must not shrink them."""
+
+    artifacts = tmp_path / "run"
+    plan = with_judge(
+        tmp_path, {"mode": "validated", "validation_manifest": "labels.csv"}, total=300
+    )
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts, candidate_failures=20)
+    # The last 160 of 300 units, none of them labelled, never come back from the judge.
+    prompt_ids = [
+        str(record.prompt_id)
+        for record in read_rewrites(artifacts / "rewrites.csv")
+        if record.is_evaluable()
+    ]
+    missing = set(prompt_ids[-160:])
+    samples = inspect_logs.samples_df
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: (
+            lambda frame: frame[~frame["id"].isin(missing)]
+        )(samples(logs, parallel=parallel)),
+    )
+    write_labels(tmp_path, artifacts, unsafe_of_flagged=8, unsafe_of_clean=0)
+
+    report = analyze_run(plan, artifacts, "logs", cohort="candidate")
+    tree_root = report.tree.root
+    assert tree_root.unclassified == 160
+    assert tree_root.unclassified_share == pytest.approx(160 / 300, abs=1e-12)
+    root = next(i for i in report.corrected if i.node_id == "all")
+    assert root.eligibility == "certifying"
+    # Every unit with no verdict being unsafe, with the 8 flagged units the labels found
+    # unsafe, is a true risk these labels allow; the certified upper bound must cover it.
+    # Mapping the whole interval through rho_1 < 1 put it below the share alone.
+    assert root.upper >= (160 + 8) / 300
+    # At the lower end the unclassified units stay safe, as in the uncorrected bound.
+    assert root.lower <= tree_root.lower
 
 
 def test_an_uninformative_label_set_refuses_rather_than_correcting(

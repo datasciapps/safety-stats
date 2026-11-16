@@ -576,6 +576,10 @@ unequal unit weights, for example under `minimum_rewrites_per_stratum`, has the 
 Every other corrected estimate is reported as a sensitivity analysis: `eligibility:
 diagnostic`, with a warning that names the reason.
 
+Units with no judge verdict keep their completion through the correction, as on the
+fixed-design path: each estimate reports the design weight on them as
+`unclassified_share`, and only the classified mass is mapped through \(\rho\).
+
 Two further differences: human labels key on the sample identifier materialization wrote
 rather than an observation id, and comparisons are **not** corrected -- doing so would either
 discard the paired construction that makes them tight or assume a prevalence-free judge.

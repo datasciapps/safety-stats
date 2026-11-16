@@ -122,7 +122,8 @@ def judge_strata(
     ``outcomes`` are ``(sampling_unit_id, trials, failures, unclassified)`` tuples, and
     labels are keyed by the sample id a unit's rewrite was materialized under. A unit with
     an unclassified rollout belongs to neither stratum; see :func:`count_judge_strata`,
-    which does the counting.
+    which does the counting. The labels say nothing about such a unit, so :func:`correct`
+    keeps its conservative completion rather than mapping it through rho.
     """
 
     prompt_of = {
@@ -250,6 +251,9 @@ def correct(
     finds no gap for; the rest are sensitivities that say why. The reported ``alpha`` of a
     certifying estimate is the union of the interval's own budget and whatever the
     calibration spent, because that is the corrected statement's real error probability.
+
+    Units with no judge verdict keep the completion the observed bounds gave them, safe at
+    the lower end and failing at the upper: only the classified mass is mapped through rho.
     """
 
     validated = calibration.source == "validated"
@@ -263,6 +267,7 @@ def correct(
             observed_upper=estimate.upper,
             observed_estimate=estimate.estimate,
             calibration=calibration,
+            unclassified_share=estimate.unclassified_share,
         )
         corrected.append(
             CorrectedEstimate(

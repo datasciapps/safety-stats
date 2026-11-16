@@ -92,6 +92,7 @@ class NodeEstimate:
     coefficient_ratio: float
     effective_sample_size: float
     raw_failure_rate: float | None
+    unclassified_share: float
 
 
 @dataclass(frozen=True)
@@ -170,6 +171,21 @@ def _raw_failure_rate(outcomes: list[UnitOutcome]) -> float | None:
     if classified <= 0:
         return None
     return sum(item.failures for item in outcomes) / classified
+
+
+def _unclassified_share(outcomes: list[UnitOutcome], coefficients: np.ndarray) -> float:
+    """The design weight the bounds complete as an unknown outcome.
+
+    Each unit contributes its coefficient times the share of its rollouts with no
+    verdict. The bounds count that mass as safe at the lower end and as failing at the
+    upper, and a judge correction must keep it there: labels say nothing about it.
+    """
+
+    share = sum(
+        float(coefficient) * outcome.unclassified / outcome.trials
+        for outcome, coefficient in zip(outcomes, coefficients, strict=True)
+    )
+    return min(1.0, share)
 
 
 def _point_estimate(
@@ -339,6 +355,7 @@ def estimate_tree(
                 coefficient_ratio=float(normalized.max() / normalized.min()),
                 effective_sample_size=_effective_sample_size(normalized),
                 raw_failure_rate=_raw_failure_rate(node_outcomes),
+        unclassified_share=_unclassified_share(node_outcomes, normalized),
             )
         )
 
@@ -436,6 +453,7 @@ def estimate_slice(
         coefficient_ratio=float(normalized.max() / normalized.min()),
         effective_sample_size=_effective_sample_size(normalized),
         raw_failure_rate=_raw_failure_rate(slice_outcomes),
+        unclassified_share=_unclassified_share(slice_outcomes, normalized),
     )
 
 
