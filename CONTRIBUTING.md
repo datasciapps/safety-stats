@@ -22,7 +22,7 @@ Contents:
 
 ## 1. Development setup
 
-You need Python 3.10–3.12 on Linux, macOS, or Windows, and nothing else. No compiler, Rust
+You need Python 3.11–3.13 on Linux, macOS, or Windows, and nothing else. No compiler, Rust
 toolchain, GPU, or provider API key is needed to develop, test, or run any part of the package.
 
 ```bash
@@ -282,7 +282,7 @@ All three are first-class platforms.
 - **Known upstream issue.** On Windows, inspect-ai cannot read logs that live on a different
   drive from the working directory (#35).
 - **CI coverage:**
-  - Linux runs on Python 3.10–3.12 for every pull request.
+  - Linux runs on Python 3.11–3.13 for every pull request.
   - Windows runs on 3.12 for every pull request.
   - A push to `main` runs lint, types, the build and one Linux test job: the pull request
     already ran the full matrix on the merged tree.
