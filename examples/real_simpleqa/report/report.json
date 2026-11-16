@@ -93,7 +93,65 @@
     },
     "manifest": "design.csv",
     "manifest_sha256": "4f8a2a307837ed13fcf6901af033f032180e7abcc30d1f41d0228d8f6cb90249",
-    "prompt_count": 8
+    "prompt_count": 8,
+    "prompts": [
+      {
+        "group_id": "all-eight",
+        "prompt_id": "11",
+        "question_id": "q-11",
+        "task_id": "simpleqa",
+        "weight": 0.125
+      },
+      {
+        "group_id": "all-eight",
+        "prompt_id": "13",
+        "question_id": "q-13",
+        "task_id": "simpleqa",
+        "weight": 0.125
+      },
+      {
+        "group_id": "all-eight",
+        "prompt_id": "14",
+        "question_id": "q-14",
+        "task_id": "simpleqa",
+        "weight": 0.125
+      },
+      {
+        "group_id": "all-eight",
+        "prompt_id": "17",
+        "question_id": "q-17",
+        "task_id": "simpleqa",
+        "weight": 0.125
+      },
+      {
+        "group_id": "all-eight",
+        "prompt_id": "18",
+        "question_id": "q-18",
+        "task_id": "simpleqa",
+        "weight": 0.125
+      },
+      {
+        "group_id": "all-eight",
+        "prompt_id": "5",
+        "question_id": "q-5",
+        "task_id": "simpleqa",
+        "weight": 0.125
+      },
+      {
+        "group_id": "all-eight",
+        "prompt_id": "7",
+        "question_id": "q-7",
+        "task_id": "simpleqa",
+        "weight": 0.125
+      },
+      {
+        "group_id": "all-eight",
+        "prompt_id": "9",
+        "question_id": "q-9",
+        "task_id": "simpleqa",
+        "weight": 0.125
+      }
+    ]
   },
   "group_risks": [
     {
@@ -2343,7 +2401,19 @@
   "package_version": "0.15.0",
   "policy_events": [],
   "presentation": {
-    "include_decisions": false
+    "claim_evidence": [
+      {
+        "claim_id": "mean_failure_risk",
+        "cohort": "candidate",
+        "comparison": null,
+        "group": "all-eight",
+        "measure": "mean",
+        "measure_type": "weighted_mean"
+      }
+    ],
+    "decimal_places": 6,
+    "include_decisions": false,
+    "primary_independence_profile": "rollout"
   },
   "prompt_estimates": [
     {
