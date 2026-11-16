@@ -173,6 +173,14 @@ Each listed group must be declared under `groups`, and a scope can be neither em
 group twice. A `transported` calibration takes no `groups`. Generative plans have no groups and
 reject the field.
 
+`sampling: stratified_without_replacement` (experimental) reads labels drawn by a stratified
+design, such as one that labels the judges' disagreements more often. It requires
+`validation_strata`, a CSV of `observation_id,stratum` for every classified observation. The
+two fields go together, and both require `mode: validated`. Each declared stratum within a
+judge stratum is bounded exactly with hypergeometric bounds and weighted by its size. Plans
+without the field keep their hash. Generative plans do not offer this design. See
+[Stratified labels](judge-misclassification.md#stratified-labels-experimental).
+
 `mode: transported` (experimental) takes a judge's sensitivity from a published
 human-labelled validation set, and nothing else:
 
