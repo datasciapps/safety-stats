@@ -7,6 +7,18 @@ described in their pull requests.
 
 ### Added
 
+- **A single-valued risk bound for system models (experimental).** Fault trees and Markov
+  models take one number per component, not an interval at a chosen alpha. With
+  `outputs.direct_mean_intervals.single_valued_bound: true`, every direct-mean interval also
+  reports M, the smallest U_δ + δ over its own one-sided upper bounds U_δ for that node alone.
+  M needs no alpha and has P(M < R) ≤ R. It does not enter claims and is not simultaneous.
+  Each interval in `report.json` gains `single_valued_bound`, `single_valued_bound_delta` and
+  `single_valued_bound_guarantee`, and `report.md` a "Single-valued bounds (experimental)"
+  section. Under a sampled design or with judge calibration the plan is refused with
+  `PLAN_SINGLE_VALUED_BOUND_UNSUPPORTED`. Plans that leave the option off keep their hash and
+  write the same report bytes as before. See
+  [Single-valued bound for system models](docs/statistical-methods.md#single-valued-bound-for-system-models-experimental).
+
 - **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory
   analysis makes every claim `INCONCLUSIVE`, so a reader had to compare its bounds with the
   thresholds by hand. Each claim in `report.json` now has `descriptive_status`: in an
