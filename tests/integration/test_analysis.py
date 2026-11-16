@@ -2330,6 +2330,40 @@ def test_judge_claims_are_opt_in_and_leave_plan_hashes_alone(
         assert "claims" not in judge and "configuration" not in judge
 
 
+def test_judge_claims_have_a_report_section(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_frames(monkeypatch, _judge_frames_with_configuration())
+    report = analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
+    text = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    (claim,) = report.claims
+    # The plan hides decisions, so the rows show no status either.
+    assert report.presentation["include_decisions"] is False
+    assert "| Judge | Integrity | Claim | Estimate |" in section
+    assert f"| judge_a | `valid` | {claim.claim_id} | 0.250000 |" in section
+    assert "| judge_b | `degraded` |" in section
+    assert (
+        '| judge_a | candidate | `{"metadata":{},"metrics":[],'
+        '"options":{"model":"grader/x","thinking":true}}` | '
+        '`{"grader":{"model":"grader/x"}}` |'
+    ) in section
+    assert "| judge_b | candidate | not recorded |" in section
+
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    plain_plan = _judge_claims_plan(plain)
+    plain_plan.write_text(
+        plain_plan.read_text(encoding="utf-8").replace("  judge_claims: true\n", "", 1),
+        encoding="utf-8",
+    )
+    plain_text = (
+        analyze(plan=plain_plan, logs="ignored").write(plain / "report") / "report.md"
+    ).read_text(encoding="utf-8")
+    assert "## Judge panel" in plain_text
+    assert "Claims by judge" not in plain_text
+
+
 def test_inspect_runs_carry_the_scorers_their_log_records() -> None:
     examples = Path(__file__).resolve().parents[2] / "examples"
     log = examples / "real_simpleqa" / "simpleqa-8-real.eval"
