@@ -98,6 +98,35 @@ def weighted_bounded_hoeffding_mean_bounds(
     )
 
 
+def bounded_empirical_bernstein_width(
+    *,
+    concentration_variance: float,
+    fourth_power_sum: float,
+    maximum_increment: float,
+    positive_second: float,
+    negative_second: float,
+    alpha: float,
+) -> tuple[float, float]:
+    """Half-width and variance bound of one empirical-Bernstein endpoint over [0,1] blocks.
+
+    ``positive_second`` and ``negative_second`` are the weighted second moments of the block
+    values and of their complements. The planner calls this with the largest moments any
+    data of a given estimate allows, so that both share one formula.
+    """
+
+    tail_alpha = alpha / 2
+    variance_padding = math.sqrt(0.5 * fourth_power_sum * math.log(4 / alpha))
+    variance_upper = min(
+        0.25 * concentration_variance,
+        positive_second + variance_padding,
+        negative_second + variance_padding,
+    )
+    tail_log = math.log(1 / tail_alpha)
+    linear_term = maximum_increment * tail_log / 3
+    width = linear_term + math.sqrt(2 * variance_upper * tail_log + linear_term**2)
+    return width, variance_upper
+
+
 def weighted_bounded_empirical_bernstein_mean_bounds(
     completion_lower: ArrayLike,
     completion_upper: ArrayLike,
@@ -129,16 +158,14 @@ def weighted_bounded_empirical_bernstein_mean_bounds(
 
     def endpoint(values: np.ndarray, alpha: float) -> tuple[float, float, float]:
         estimate = float(np.dot(w, values))
-        tail_alpha = alpha / 2
-        variance_padding = math.sqrt(0.5 * c4 * math.log(4 / alpha))
-        variance_upper = min(
-            0.25 * c2,
-            positive_second + variance_padding,
-            negative_second + variance_padding,
+        width, variance_upper = bounded_empirical_bernstein_width(
+            concentration_variance=c2,
+            fourth_power_sum=c4,
+            maximum_increment=maximum_increment,
+            positive_second=positive_second,
+            negative_second=negative_second,
+            alpha=alpha,
         )
-        tail_log = math.log(1 / tail_alpha)
-        linear_term = maximum_increment * tail_log / 3
-        width = linear_term + math.sqrt(2 * variance_upper * tail_log + linear_term**2)
         return estimate, width, variance_upper
 
     estimate_lower, lower_width, variance_lower = endpoint(lower_values, alpha_lower)
