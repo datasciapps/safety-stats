@@ -222,6 +222,10 @@ class ClaimResult(ResultModel):
     status: Decision
     statistical_status: Decision
     policy_status: Decision
+    # In an exploratory analysis, the status a confirmatory analysis of the same data would
+    # give. It certifies nothing and never enters the decision. None in a confirmatory
+    # analysis, and when there are no certifying bounds to compare with the thresholds.
+    descriptive_status: Decision | None = None
     estimate: float | None = None
     lower: float | None = None
     upper: float | None = None

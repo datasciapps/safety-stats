@@ -20,6 +20,20 @@ When a validated judge calibration is declared, these decisions are made against
 risk rather than judge-reported risk, and the claim records both intervals. See
 [Judge misclassification](judge-misclassification.md).
 
+### Exploratory analyses
+
+An analysis with `intent: exploratory` certifies nothing, so every claim and the report's
+decision are `INCONCLUSIVE`. When integrity is valid and a claim's bounds are certifying, the
+claim also has a descriptive status: the status a confirmatory analysis of the same bounds
+would give at the plan's thresholds. `report.json` records it as `descriptive_status`,
+and, with `report.include_decisions: true`, `report.md` shows it beside the status, for example
+`` `INCONCLUSIVE` (descriptive: `PASS`) ``, and `report.html` as a dashed badge. A claim without
+certifying bounds, or a report whose integrity is invalid, has none (`null`).
+
+A descriptive status is for reading the bounds. It is not a certification: an exploratory plan
+need not precede the evaluation it analyses, so a descriptive `PASS` is not the predeclared
+decision a confirmatory `PASS` is. To certify, freeze a confirmatory plan and evaluate again.
+
 ## Integrity states
 
 `valid` means every required outcome was classified and no structural integrity error occurred.
