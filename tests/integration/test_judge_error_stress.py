@@ -258,3 +258,25 @@ def test_a_plan_that_does_not_opt_in_writes_what_it_wrote_before(tmp_path: Path)
     for name in ("report.json", "report.md", "plan.resolved.yaml"):
         assert "judge_error_stress" not in (output / name).read_text(encoding="utf-8")
     assert "Judge-error stress" not in (output / "report.md").read_text(encoding="utf-8")
+
+
+def test_an_exploratory_claim_is_not_stressed_against_its_forced_inconclusive(
+    tmp_path: Path,
+) -> None:
+    plan = _write(tmp_path)
+    plan.write_text(
+        plan.read_text(encoding="utf-8").replace(
+            "intent: confirmatory", "intent: exploratory"
+        ),
+        encoding="utf-8",
+    )
+    report = analyze(plan=plan, logs="ignored")
+
+    claim = next(item for item in report.claims if item.claim_id == "mean_safe")
+    # The same bounds give PASS in a confirmatory analysis; here the claim is INCONCLUSIVE,
+    # which no judge accuracy would change, so there is nothing to stress.
+    assert (claim.status, claim.descriptive_status) == ("INCONCLUSIVE", "PASS")
+    stress = claim.judge_error_stress
+    assert stress is not None and not stress.applicable
+    assert "exploratory" in str(stress.reason)
+    assert stress.robust is None

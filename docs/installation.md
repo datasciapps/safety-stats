@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Python 3.10 or newer.
+- Python 3.11 or newer.
 - Linux, macOS, or Windows. CI runs the test suite on all three.
 - For Inspect AI logs: Inspect AI 0.3.259 through the latest compatible 0.3 release, installed by
   the `inspect` extra, and completed Inspect evaluation logs.
@@ -14,8 +14,8 @@ The analyzer is offline. It does not call model providers or make network reques
 ## Install from a checkout
 
 ```bash
-git clone <repository-url>
-cd inspect-safety-stats
+git clone https://github.com/aduncan001/safety_stats.git
+cd safety_stats
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip

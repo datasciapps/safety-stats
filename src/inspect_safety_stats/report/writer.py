@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 
 from inspect_safety_stats.config.canonicalize import canonical_value
-from inspect_safety_stats.schema.reports import SafetyReport
+from inspect_safety_stats.schema.reports import RiskIntervalResult, SafetyReport
 
 
 def _sha256(path: Path) -> str:
@@ -67,6 +67,14 @@ def _bound_status(eligibility: str) -> str:
         "diagnostic": "diagnostic",
         "invalid": "unavailable",
     }.get(eligibility, eligibility)
+
+
+def _role_label(interval: RiskIntervalResult) -> str:
+    """The interval's role, with what a sensitivity interval varies, so that an independence
+    sensitivity cannot be read as a judge-error one."""
+    if interval.varied_assumption is None:
+        return interval.role
+    return f"{interval.role} ({interval.varied_assumption.replace('_', ' ')})"
 
 
 def _coverage_label(risk: Any) -> str:
@@ -175,6 +183,12 @@ def _judge_error_stress_lines(
     return lines
 
 
+def _claim_status(claim: Any) -> str:
+    if claim.descriptive_status is None:
+        return f"`{claim.status}`"
+    return f"`{claim.status}` (descriptive: `{claim.descriptive_status}`)"
+
+
 def _markdown(report: SafetyReport) -> str:
     places = int(report._resolved_plan.get("report", {}).get("decimal_places", 6))
     include_decisions = bool(report.presentation.get("include_decisions", True))
@@ -210,7 +224,7 @@ def _markdown(report: SafetyReport) -> str:
                     + " | ".join(
                         [
                             _escape(claim.title),
-                            f"`{claim.status}`",
+                            _claim_status(claim),
                             _number(claim.estimate, places),
                             _number(claim.lower, places),
                             _number(claim.upper, places),
@@ -222,6 +236,18 @@ def _markdown(report: SafetyReport) -> str:
                 )
         else:
             lines.append("| _No mandatory claims_ | `INCONCLUSIVE` | — | — | — | — | — |")
+        if any(claim.descriptive_status is not None for claim in mandatory):
+            lines.extend(
+                [
+                    "",
+                    (
+                        "This analysis is exploratory, so no claim is certified. A descriptive "
+                        "status is what a confirmatory analysis of the same bounds would give at "
+                        "the plan's thresholds. It is shown for reading the bounds and certifies "
+                        "nothing."
+                    ),
+                ]
+            )
     lines.extend(_judge_error_stress_lines(report, places, include_decisions))
     lines.extend(["", "## Data integrity", ""])
     if report.integrity.diagnostics:
@@ -317,7 +343,7 @@ def _markdown(report: SafetyReport) -> str:
                         _escape(risk.cohort_id),
                         _escape(risk.group_id),
                         _escape(risk.measure_id),
-                        _escape(interval.role),
+                        _escape(_role_label(interval)),
                         _escape(interval.method),
                         _escape(interval.independence_profile),
                         _number(interval.lower, places),
@@ -579,6 +605,51 @@ def _markdown(report: SafetyReport) -> str:
                 )
                 + " |"
             )
+    single_valued = [
+        (risk.cohort_id, risk.group_id, "—", interval)
+        for risk in report.group_risks
+        for interval in risk.intervals
+        if interval.single_valued_bound is not None
+    ] + [
+        (node.cohort_id, node.group_id, " → ".join(node.path.values()), interval)
+        for node in report.hierarchy_risks
+        for interval in node.intervals
+        if interval.single_valued_bound is not None
+    ]
+    if single_valued:
+        lines.extend(
+            [
+                "",
+                "## Single-valued bounds (experimental)",
+                "",
+                (
+                    "M is the smallest U + δ over one-sided upper bounds U at level δ for each "
+                    "node alone. It needs no alpha: P(M < R) ≤ R, so its miss probability "
+                    "equals the unknown risk R. It is not simultaneous over nodes and is not a "
+                    "gate. It is meant as one input per component of a system model, which "
+                    "stays conservative only if the model is monotone in it."
+                ),
+                "",
+                "| Cohort | Group | Node path | Method | Independence profile | M | δ at M |",
+                "|---|---|---|---|---|---:|---:|",
+            ]
+        )
+        for cohort_id, group_id, path, interval in single_valued:
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _escape(cohort_id),
+                        _escape(group_id),
+                        _escape(path),
+                        _escape(interval.method),
+                        _escape(interval.independence_profile),
+                        _number(interval.single_valued_bound, places),
+                        _number(interval.single_valued_bound_delta, places),
+                    ]
+                )
+                + " |"
+            )
     lines.extend(
         [
             "",
@@ -760,7 +831,7 @@ def _markdown(report: SafetyReport) -> str:
                     + " | ".join(
                         [
                             _escape(comparison.result_id),
-                            _escape(interval.role),
+                            _escape(_role_label(interval)),
                             _escape(interval.method),
                             _escape(interval.independence_profile),
                             _number(interval.lower, places),

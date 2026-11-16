@@ -91,6 +91,12 @@ from inspect_safety_stats.stats.independence import (
     direct_bounded_blocks,
     validate_profile_fields,
 )
+from inspect_safety_stats.stats.judge_calibration import (
+    NO_STRATA,
+    calibrate_cohort,
+    cohort_alpha_share,
+    completion_diagnostic,
+)
 from inspect_safety_stats.stats.judge_stress import stress_verdict
 from inspect_safety_stats.stats.judges import (
     JudgeAccuracyBox,
@@ -106,7 +112,6 @@ from inspect_safety_stats.stats.misclassification import (
     TruthStratumCounts,
     correct_judge_risk,
     delta_method_corrected_risk,
-    estimate_judge_calibration,
     noisy_valid_certification,
 )
 from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
@@ -121,6 +126,10 @@ from inspect_safety_stats.stats.risk import (
     weighted_mean,
     worst_of_k_estimate,
     worst_of_k_risk,
+)
+from inspect_safety_stats.stats.single_valued import (
+    SINGLE_VALUED_BOUND_GUARANTEE,
+    single_valued_bound,
 )
 from inspect_safety_stats.stats.tree_calibration import (
     IndependentFrontier,
@@ -152,13 +161,46 @@ def _source(
     """The source ``analyze`` and ``validate`` read: ``source``, or else the Inspect logs."""
 
     if source is not None:
-        if logs is not None:
-            raise ValueError("pass either logs or source, not both")
         return source
     # Imported here, so that importing this module does not load Inspect AI.
     from inspect_safety_stats.ingest.inspect_logs import InspectLogs
 
     return InspectLogs(logs, parallel=parallel)
+
+
+def _read_input(
+    plan: AnalysisPlan,
+    logs: LogInput,
+    parallel: bool | int,
+    source: EvaluationSource | None,
+    diagnostics: list[Diagnostic],
+) -> NormalizedData | None:
+    """Read and normalize the analysis input, or record why it cannot be read.
+
+    ``validate`` and ``analyze`` both read their input here, so that bad input gives both the
+    same ``INGEST_FAILED`` error. None when the input cannot be read. Passing both ``logs``
+    and ``source`` is a mistake in the call, not in the input, and raises ``ValueError``.
+    """
+
+    if source is not None and logs is not None:
+        raise ValueError("pass either logs or source, not both")
+    try:
+        data = ingest(plan, _source(logs, parallel, source))
+        validate_profile_fields(plan.design.independence_profiles, data.manifest)
+    except Exception as exc:
+        diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=str(exc)))
+        return None
+    diagnostics.extend(data.diagnostics)
+    return data
+
+
+def _sorted_integrity(diagnostics: list[Diagnostic]) -> IntegritySummary:
+    return IntegritySummary(
+        status=_integrity_status(diagnostics),
+        diagnostics=sorted(
+            diagnostics, key=lambda item: (item.severity, item.code, item.scope or "")
+        ),
+    )
 
 
 def validate(
@@ -168,20 +210,20 @@ def validate(
     parallel: bool | int = False,
     source: EvaluationSource | None = None,
 ) -> IntegritySummary:
+    """Check a plan and its evaluation data without computing any bound or decision.
+
+    ``plan`` is an ``AnalysisPlan`` or the path of a plan file, read with ``load_plan``. The
+    data comes from ``source`` when given, or else from the Inspect logs in ``logs``, read with
+    ``parallel`` passed to Inspect's log reader. Passing both ``logs`` and ``source`` is an
+    error. Unlike ``analyze``, a failure to read the data does not raise: it is reported as an
+    ``INGEST_FAILED`` diagnostic. Returns the integrity status (``valid``, ``degraded`` or
+    ``invalid``) and the sorted diagnostics.
+    """
+
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
-    try:
-        normalized = ingest(resolved, _source(logs, parallel, source))
-        validate_profile_fields(resolved.design.independence_profiles, normalized.manifest)
-        diagnostics.extend(normalized.diagnostics)
-    except Exception as exc:
-        diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=str(exc)))
-    return IntegritySummary(
-        status=_integrity_status(diagnostics),
-        diagnostics=sorted(
-            diagnostics, key=lambda item: (item.severity, item.code, item.scope or "")
-        ),
-    )
+    _read_input(resolved, logs, parallel, source, diagnostics)
+    return _sorted_integrity(diagnostics)
 
 
 def _alpha_by_prompt(
@@ -962,6 +1004,7 @@ def _direct_interval_result(
         upper=bounds.upper,
         method=method,
         role=role,
+        varied_assumption="independence" if role == "sensitivity" else None,
         coverage_scope=(
             f"{scope_prefix}{calibration_scope}_{independence_profile}_fixed_design_mean_family"
         ),
@@ -1213,7 +1256,33 @@ def _direct_intervals(
                     interval_coverage=interval_coverage,
                 )
             )
+            if spec.single_valued_bound:
+                _add_single_valued_bound(results[-1], method, blocks, profile_id)
     return results
+
+
+def _add_single_valued_bound(
+    interval: RiskIntervalResult,
+    method: str,
+    blocks: BoundedBlocks,
+    independence_profile: str,
+) -> None:
+    """Attach M = inf_delta [U_delta + delta] for this node's own engine (#127).
+
+    U_delta is the engine's upper endpoint at endpoint alpha delta for this node alone, not
+    the family-calibrated endpoint, so M carries no multiplicity adjustment and no alpha.
+    """
+    bound = single_valued_bound(
+        lambda delta: _direct_bounds(
+            method,
+            blocks,
+            endpoint_alpha=delta,
+            independence_profile=independence_profile,
+        ).upper
+    )
+    interval.single_valued_bound = bound.value
+    interval.single_valued_bound_delta = bound.delta
+    interval.single_valued_bound_guarantee = SINGLE_VALUED_BOUND_GUARANTEE
 
 
 def _group_risks(
@@ -1919,6 +1988,13 @@ def _unclassified_assumption(share: float) -> str:
     )
 
 
+def _uncertified_base_warning(eligibility: str) -> str:
+    return (
+        f"Sensitivity analysis, not a certified bound: the judge-system interval it corrects "
+        f"is {eligibility}, and a correction cannot support more than its base."
+    )
+
+
 def _uncertified_correction_warning(gap: str) -> str:
     return (
         f"Sensitivity analysis, not a certified bound: {gap}. The human labels weight every "
@@ -2010,14 +2086,14 @@ def _validated_judge_calibrations(
     # Every declared cohort gets an equal share of the judge family budget. A single
     # risk row consumes one share; a comparison consumes the two cohorts it spans. A
     # union over all of them therefore never exceeds the declared family alpha.
-    per_cohort_alpha = family.alpha / len(plan.cohorts)
+    per_cohort_alpha = cohort_alpha_share(family.alpha, len(plan.cohorts))
     calibrations: dict[str, JudgeCalibration] = {}
     summaries: dict[str, dict[str, Any]] = {}
     for cohort_id in sorted(plan.cohorts):
-        strata = counts.get(cohort_id, {})
-        unsafe = strata.get("judge_unsafe")
-        safe = strata.get("judge_safe")
-        if unsafe is None or safe is None:
+        outcome = calibrate_cohort(
+            counts.get(cohort_id, NO_STRATA), scenario_id="validated", alpha=per_cohort_alpha
+        )
+        if outcome.empty_strata:
             diagnostics.append(
                 Diagnostic(
                     code="JUDGE_VALIDATION_STRATUM_EMPTY",
@@ -2030,35 +2106,21 @@ def _validated_judge_calibrations(
                 )
             )
             continue
-        try:
-            calibrations[cohort_id] = estimate_judge_calibration(
-                scenario_id="validated",
-                unsafe_stratum=unsafe,
-                safe_stratum=safe,
-                alpha=per_cohort_alpha,
-            )
-        except ValueError as exc:
+        if outcome.calibration is None:
             diagnostics.append(
                 Diagnostic(
                     code="JUDGE_CALIBRATION_UNINFORMATIVE",
                     severity="WARNING",
-                    message=str(exc),
+                    message=str(outcome.refusal),
                     scope=cohort_id,
                 )
             )
             continue
-        summaries[cohort_id] = {
-            "judge_unsafe": {
-                "labelled": unsafe.labelled,
-                "truly_unsafe": unsafe.truly_unsafe,
-                "stratum_size": unsafe.stratum_size,
-            },
-            "judge_safe": {
-                "labelled": safe.labelled,
-                "truly_unsafe": safe.truly_unsafe,
-                "stratum_size": safe.stratum_size,
-            },
-        }
+        calibrations[cohort_id] = outcome.calibration
+        completed = completion_diagnostic(outcome.calibration, cohort_id)
+        if completed is not None:
+            diagnostics.append(completed)
+        summaries[cohort_id] = outcome.strata.summary()
     return calibrations, summaries, family.alpha, truth_strata
 
 
@@ -2082,9 +2144,10 @@ def _judge_corrected_interval(
         unclassified_share=unclassified_share,
     )
     validated = calibration.source == "validated"
-    # Measured accuracies certify only a row they were measured for; elsewhere the
-    # corrected interval is a sensitivity, as an assumed one always is.
-    certified = validated and gap is None
+    # Measured accuracies certify only a row they were measured for, and never more than
+    # the row's own bounds support. Elsewhere the corrected interval is a sensitivity, as an
+    # assumed one always is.
+    certified = validated and gap is None and result.eligibility == "certifying"
     base = next((item for item in result.intervals if item.role == "primary"), None)
     base_alpha = base.family_alpha if base is not None else None
     spent = calibration.alpha if calibration.alpha is not None else judge_alpha
@@ -2114,10 +2177,21 @@ def _judge_corrected_interval(
         f"[{calibration.rho_0_lower:.6g}, {calibration.rho_0_upper:.6g}].",
     ]
     if validated:
+        if calibration.completed_strata:
+            assumptions.append(
+                "The "
+                + " and ".join(calibration.completed_strata)
+                + " judge stratum has no human label, so its range is [0, 1], which holds "
+                "with certainty; any other range is an exact Clopper-Pearson bound from "
+                "human labels drawn within its judge stratum."
+            )
+        else:
+            assumptions.append(
+                "Those two ranges are exact Clopper-Pearson bounds from human labels drawn "
+                "within each judge stratum."
+            )
         assumptions.extend(
             [
-                "Those two ranges are exact Clopper-Pearson bounds from human labels drawn "
-                "within each judge stratum.",
                 "The labelled rows are a simple random sample within their judge stratum; "
                 "this is a property of the declared collection protocol, not of the data.",
                 "Human adjudication is treated as ground truth.",
@@ -2147,6 +2221,8 @@ def _judge_corrected_interval(
     warnings: list[str] = []
     if validated and gap is not None:
         warnings.append(_uncertified_correction_warning(gap))
+    elif validated and not certified:
+        warnings.append(_uncertified_base_warning(result.eligibility))
     if not validated and primary_scenario is not None:
         if calibration.scenario_id != primary_scenario:
             warnings.append(
@@ -2162,6 +2238,7 @@ def _judge_corrected_interval(
             else "assumed_judge_misclassification_correction"
         ),
         role="reference" if certified else "sensitivity",
+        varied_assumption=None if certified else "judge_error",
         coverage_scope=(
             f"{result.coverage_scope}_judge_corrected"
             if result.coverage_scope
@@ -2389,6 +2466,7 @@ def _apply_panel_derived_correction(
                 upper=identified.upper,
                 method="derived_panel_misclassification_correction",
                 role="sensitivity",
+                varied_assumption="judge_error",
                 coverage_scope=(
                     f"{result.coverage_scope}_panel_derived"
                     if result.coverage_scope
@@ -2513,6 +2591,7 @@ def _delta_reference_interval(
         upper=delta.upper,
         method="delta_method_judge_misclassification_correction",
         role="sensitivity",
+        varied_assumption="judge_error",
         coverage_scope=(
             f"{result.coverage_scope}_judge_corrected_delta"
             if result.coverage_scope
@@ -3303,6 +3382,7 @@ def _comparison_interval(
         upper=upper,
         method=method,
         role=role,
+        varied_assumption="independence" if role == "sensitivity" else None,
         coverage_scope=(scope_prefix + f"_{independence_profile}_fixed_design_comparison_family"),
         coverage_mode=spec.coverage_mode,
         family=spec.family,
@@ -3901,13 +3981,19 @@ def _judge_corrected_comparison_interval(
         item.alpha or 0.0 for item in (candidate_calibration, baseline_calibration)
     )
     base_alpha = primary.family_alpha
-    certified = gap is None
+    certified = gap is None and result.eligibility == "certifying"
+    warnings: list[str] = []
+    if gap is not None:
+        warnings.append(_uncertified_correction_warning(gap))
+    elif not certified:
+        warnings.append(_uncertified_base_warning(result.eligibility))
     return RiskIntervalResult(
         interval_id="judge_corrected_validated",
         lower=lower,
         upper=upper,
         method="validated_judge_misclassification_correction",
         role="reference" if certified else "sensitivity",
+        varied_assumption=None if certified else "judge_error",
         coverage_scope=(
             f"{primary.coverage_scope}_judge_corrected"
             if primary.coverage_scope
@@ -3960,7 +4046,7 @@ def _judge_corrected_comparison_interval(
             ),
         ],
         eligibility="certifying" if certified else "diagnostic",
-        warnings=[_uncertified_correction_warning(gap)] if gap is not None else [],
+        warnings=warnings,
     )
 
 
@@ -4665,12 +4751,13 @@ def _claims(
         else:
             evidence = risk_index.get((str(claim.cohort), str(claim.group), str(claim.measure)))
             ref = f"risk:{claim.cohort}:{claim.group}:{claim.measure}"
-        eligible = bool(
-            integrity_valid
-            and evidence is not None
-            and evidence.eligibility == "certifying"
-            and plan.analysis.intent == "confirmatory"
-        )
+        certifying = evidence is not None and evidence.eligibility == "certifying"
+        exploratory = plan.analysis.intent == "exploratory"
+        # An exploratory analysis certifies nothing, but its reader still needs what the bounds
+        # say at the plan's thresholds. Such a claim is decided as a confirmatory analysis would
+        # decide it, the result is kept as its descriptive status, and the claim stays
+        # INCONCLUSIVE below.
+        eligible = bool(integrity_valid and certifying)
         lower = evidence.lower if evidence else None
         upper = evidence.upper if evidence else None
         estimate = evidence.estimate if evidence else None
@@ -4786,14 +4873,25 @@ def _claims(
                 "Bounds were computed but are ineligible for certification because data "
                 "integrity is invalid."
             ]
-        if plan.analysis.intent == "exploratory":
-            if evidence is not None and evidence.eligibility == "certifying":
+        descriptive_status: Decision | None = None
+        if exploratory:
+            if certifying:
+                decided = reasons
                 reasons = [
                     "Bounds were computed but this post hoc exploratory analysis is not "
                     "eligible for certification."
                 ]
+                if eligible:
+                    descriptive_status = status
+                    reasons.append(
+                        f"Descriptive only, not a certification: a confirmatory analysis of "
+                        f"these bounds at the plan's thresholds would give {status}."
+                    )
+                    reasons.extend(decided)
             else:
                 reasons.append("Exploratory analyses cannot produce a safety pass.")
+            status = "INCONCLUSIVE"
+        # ORDER MATTERS: after the exploratory demotion above, so `status` is the final one.
         stress = None
         if plan.report.judge_error_stress:
             stress = _claim_judge_error_stress(
@@ -4801,8 +4899,10 @@ def _claims(
                 evidence=evidence,
                 status=status,
                 why_not=(
-                    "the claim was not decided on its bounds: they are not certifying, the "
-                    "analysis is exploratory, or data integrity is invalid"
+                    "the analysis is exploratory, so the claim is not decided on its bounds"
+                    if exploratory
+                    else "the claim was not decided on its bounds: they are not certifying, or "
+                    "data integrity is invalid"
                     if not eligible
                     else "the noisy-but-valid test already accounts for judge error"
                     if claim.method == "noisy_valid_test"
@@ -4833,6 +4933,7 @@ def _claims(
                 status=status,
                 statistical_status=status,
                 policy_status=status,
+                descriptive_status=descriptive_status,
                 estimate=estimate,
                 lower=lower,
                 upper=upper,
@@ -4917,6 +5018,102 @@ def _resolved_design(data: NormalizedData, hierarchy: list[str]) -> list[dict[st
     return rows
 
 
+def _report_frame(plan: AnalysisPlan) -> dict[str, Any]:
+    """The report fields that come from the plan alone, whether or not its input was read."""
+
+    return {
+        "package_version": __version__,
+        "analysis": {
+            **plan.analysis.model_dump(mode="json"),
+            "plan_sha256": canonical_plan_hash(plan),
+        },
+        "scope": {
+            "design": "fixed",
+            "randomness": "stochastic rollouts within fixed prompts",
+            "estimand": plan.inputs.estimand,
+            "disclaimer": (
+                "Results apply to the declared fixed evaluation set and specified "
+                "stochastic rollout process. They do not estimate failure prevalence "
+                "over an external population of prompts or establish safety for omitted "
+                "hazards or deployment conditions."
+            ),
+        },
+        "presentation": {"include_decisions": plan.report.include_decisions},
+        "multiplicity": [family.model_dump(mode="json") for family in plan.multiplicity.families],
+    }
+
+
+def _design_frame(plan: AnalysisPlan) -> dict[str, Any]:
+    """The report's design fields that come from the plan alone."""
+
+    return {
+        "manifest": report_path(plan.inputs.design_manifest, plan),
+        "hierarchy": plan.design.hierarchy,
+        "independence_profiles": {
+            profile_id: profile.model_dump(mode="json")
+            for profile_id, profile in plan.design.independence_profiles.items()
+        },
+    }
+
+
+def _unread_input_report(plan: AnalysisPlan, diagnostics: list[Diagnostic]) -> SafetyReport:
+    """The report of an analysis whose input could not be read.
+
+    The diagnostics carry the ``INGEST_FAILED`` error, so integrity is invalid. The report has
+    no observations, estimates or comparisons, and every claim is INCONCLUSIVE, so that the
+    failure is written down and audited like any other invalid analysis.
+    """
+
+    families = {family.id: family for family in plan.multiplicity.families}
+    claims = [
+        ClaimResult(
+            claim_id=claim.id,
+            title=claim.title,
+            status="INCONCLUSIVE",
+            statistical_status="INCONCLUSIVE",
+            policy_status="INCONCLUSIVE",
+            acceptable_upper=claim.acceptable_upper,
+            unacceptable_lower=claim.unacceptable_lower,
+            alpha=families[claim.family].alpha if claim.family in families else None,
+            multiplicity_family=claim.family,
+            method="unavailable",
+            mandatory=claim.mandatory,
+            evidence_refs=[
+                f"comparison:{claim.comparison}"
+                if claim.comparison
+                else f"risk:{claim.cohort}:{claim.group}:{claim.measure}"
+            ],
+            reasons=["The analysis input could not be read; see the INGEST_FAILED diagnostic."],
+        )
+        for claim in sorted(plan.claims, key=lambda item: item.id)
+    ]
+    report = SafetyReport(
+        **_report_frame(plan),
+        provenance={"source_format": {}, "sources": []},
+        integrity=_sorted_integrity(diagnostics),
+        design={
+            **_design_frame(plan),
+            "manifest_sha256": None,
+            "prompt_count": None,
+            "groups": [],
+        },
+        cohorts=[],
+        prompt_estimates=[],
+        group_risks=[],
+        comparisons=[],
+        claims=claims,
+        policy_events=[],
+        decision=roll_up(
+            [claim.status for claim in claims if claim.mandatory],
+            integrity_valid=False,
+            zero_tolerance_failure=False,
+            confirmatory=plan.analysis.intent == "confirmatory",
+        ),
+    )
+    report._resolved_plan = report_plan(plan)
+    return report
+
+
 def analyze(
     *,
     plan: AnalysisPlan | str | Path,
@@ -4924,11 +5121,23 @@ def analyze(
     parallel: bool | int = False,
     source: EvaluationSource | None = None,
 ) -> SafetyReport:
+    """Run the analysis a plan declares on its evaluation data and return the safety report.
+
+    ``plan`` is an ``AnalysisPlan`` or the path of a plan file, read with ``load_plan``. The
+    data comes from ``source`` when given, or else from the Inspect logs in ``logs``, read with
+    ``parallel`` passed to Inspect's log reader. Passing both ``logs`` and ``source`` is an
+    error. The report holds the prompt-level estimates, group and hierarchy risk bounds,
+    comparisons, claims with their pass, fail or inconclusive status, and the overall
+    decision. Its results apply to the declared fixed evaluation set, not to a wider prompt
+    population. Write it to disk with ``SafetyReport.write``. Raises when the data cannot be read;
+    ``validate`` reports that as a diagnostic instead.
+    """
+
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
-    data = ingest(resolved, _source(logs, parallel, source))
-    validate_profile_fields(resolved.design.independence_profiles, data.manifest)
-    diagnostics.extend(data.diagnostics)
+    data = _read_input(resolved, logs, parallel, source, diagnostics)
+    if data is None:
+        return _unread_input_report(resolved, diagnostics)
     estimates = _prompt_estimates(resolved, data, diagnostics)
     hierarchy_nodes = _hierarchy_nodes(resolved, data)
     direct_context = _direct_mean_context(
@@ -4987,19 +5196,12 @@ def analyze(
         zero_tolerance_failure=bool(events),
         confirmatory=resolved.analysis.intent == "confirmatory",
     )
-    integrity = IntegritySummary(
-        status=integrity_status,
-        diagnostics=sorted(
-            diagnostics, key=lambda item: (item.severity, item.code, item.scope or "")
-        ),
-    )
+    integrity = _sorted_integrity(diagnostics)
     judge_panel = _judge_panel_summary(resolved, data)
     if judge_panel is not None and panel_correction is not None:
         judge_panel["derived_correction"] = panel_correction
-    plan_hash = canonical_plan_hash(resolved)
     report = SafetyReport(
-        package_version=__version__,
-        analysis={**resolved.analysis.model_dump(mode="json"), "plan_sha256": plan_hash},
+        **_report_frame(resolved),
         provenance={
             "source_format": data.source_format,
             "sources": [
@@ -5016,27 +5218,10 @@ def analyze(
             ),
             **({"judge_panel": judge_panel} if judge_panel else {}),
         },
-        scope={
-            "design": "fixed",
-            "randomness": "stochastic rollouts within fixed prompts",
-            "estimand": resolved.inputs.estimand,
-            "disclaimer": (
-                "Results apply to the declared fixed evaluation set and specified "
-                "stochastic rollout process. They do not estimate failure prevalence "
-                "over an external population of prompts or establish safety for omitted "
-                "hazards or deployment conditions."
-            ),
-        },
-        presentation={"include_decisions": resolved.report.include_decisions},
         integrity=integrity,
         design={
-            "manifest": report_path(resolved.inputs.design_manifest, resolved),
+            **_design_frame(resolved),
             "manifest_sha256": sha256_value(data.manifest.to_dict(orient="records")),
-            "hierarchy": resolved.design.hierarchy,
-            "independence_profiles": {
-                profile_id: profile.model_dump(mode="json")
-                for profile_id, profile in resolved.design.independence_profiles.items()
-            },
             "prompt_count": len(data.manifest),
             "groups": [
                 {"id": group.id, "title": group.title, "prompt_count": len(group.prompt_ids)}
@@ -5059,7 +5244,6 @@ def analyze(
         ),
         comparisons=sorted(comparisons, key=lambda item: item.comparison_id),
         comparison_sets=comparison_sets,
-        multiplicity=[family.model_dump(mode="json") for family in resolved.multiplicity.families],
         claims=sorted(claims, key=lambda item: item.claim_id),
         policy_events=events,
         decision=decision,

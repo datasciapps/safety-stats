@@ -16,6 +16,7 @@ Comparisons are deliberately not corrected -- see :func:`comparison_refusal`.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -25,14 +26,23 @@ from inspect_safety_stats.generative.ledger import RewriteRecord
 from inspect_safety_stats.generative.schema import GenerativePlan
 from inspect_safety_stats.ingest.validation import load_validation_manifest
 from inspect_safety_stats.schema.reports import Diagnostic
+from inspect_safety_stats.stats.judge_calibration import (
+    NO_STRATA,
+    JudgeStrata,
+    calibrate_cohort,
+    cohort_alpha_share,
+    completion_diagnostic,
+    count_judge_strata,
+)
 from inspect_safety_stats.stats.misclassification import (
     JudgeCalibration,
     JudgeStratumCounts,
     correct_judge_risk,
-    estimate_judge_calibration,
 )
 
 Eligibility = Literal["diagnostic", "certifying"]
+# A generative analysis calibrates one cohort per run, so its rows share one cohort key.
+_COHORT = "run"
 
 
 @dataclass(frozen=True)
@@ -71,9 +81,10 @@ def judge_strata(
 ) -> tuple[JudgeStratumCounts, JudgeStratumCounts, list[str]]:
     """Cross human labels against judge verdicts, per judge stratum.
 
-    ``outcomes`` are ``(sampling_unit_id, trials, failures, unclassified)`` tuples. A unit
-    with an unclassified rollout belongs to neither stratum: it is already carried by the
-    conservative completion inside the interval.
+    ``outcomes`` are ``(sampling_unit_id, trials, failures, unclassified)`` tuples, and
+    labels are keyed by the sample id a unit's rewrite was materialized under. A unit with
+    an unclassified rollout belongs to neither stratum; see :func:`count_judge_strata`,
+    which does the counting.
     """
 
     prompt_of = {
@@ -81,37 +92,20 @@ def judge_strata(
         for record in rewrites
         if record.is_evaluable() and record.prompt_id is not None
     }
-    sizes = {True: 0, False: 0}
-    labelled = {True: 0, False: 0}
-    unsafe = {True: 0, False: 0}
-    seen: set[str] = set()
 
-    for unit_id, trials, failures, unclassified in outcomes:
-        if trials != 1:
-            raise ValueError(
-                "judge calibration needs one rollout per rewrite, so that a unit carries a "
-                f"single binary judge verdict; unit {unit_id} has {trials}"
-            )
-        if unclassified:
-            continue
-        verdict = failures > 0
-        sizes[verdict] += 1
-        prompt_id = prompt_of.get(unit_id)
-        if prompt_id is None:
-            continue
-        human = labels.get(prompt_id)
-        if human is None:
-            continue
-        seen.add(prompt_id)
-        labelled[verdict] += 1
-        if human:
-            unsafe[verdict] += 1
+    def rows() -> Iterator[tuple[str, str | None, bool | None]]:
+        for unit_id, trials, failures, unclassified in outcomes:
+            if trials != 1:
+                raise ValueError(
+                    "judge calibration needs one rollout per rewrite, so that a unit carries "
+                    f"a single binary judge verdict; unit {unit_id} has {trials}"
+                )
+            verdict = None if unclassified else failures > 0
+            yield _COHORT, prompt_of.get(unit_id), verdict
 
-    return (
-        JudgeStratumCounts(labelled[True], unsafe[True], sizes[True]),
-        JudgeStratumCounts(labelled[False], unsafe[False], sizes[False]),
-        sorted(set(labels) - seen),
-    )
+    counts, unmatched = count_judge_strata(rows(), labels)
+    strata = counts.get(_COHORT, NO_STRATA)
+    return strata.judge_unsafe, strata.judge_safe, unmatched
 
 
 def declared_calibration(plan: GenerativePlan, scenario_id: str | None = None) -> JudgeCalibration:
@@ -168,29 +162,29 @@ def measured_calibration(
                 scope=cohort_id,
             )
         )
-    for name, stratum in (("judge_unsafe", unsafe), ("judge_safe", safe)):
-        if stratum.stratum_size == 0:
-            diagnostics.append(
-                Diagnostic(
-                    code="JUDGE_VALIDATION_STRATUM_EMPTY",
-                    severity="WARNING",
-                    message=f"the {name} stratum is empty, so rho cannot be estimated",
-                    scope=cohort_id,
-                )
+    outcome = calibrate_cohort(
+        JudgeStrata(unsafe, safe),
+        scenario_id=cohort_id,
+        alpha=cohort_alpha_share(spec.alpha, len(plan.target.cohorts)),
+    )
+    if outcome.empty_strata:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_VALIDATION_STRATUM_EMPTY",
+                severity="WARNING",
+                message=(
+                    f"the {outcome.empty_strata[0]} stratum is empty, so rho cannot be estimated"
+                ),
+                scope=cohort_id,
             )
-            return None, diagnostics
-
-    share = spec.alpha / max(1, len(plan.target.cohorts))
-    try:
-        calibration = estimate_judge_calibration(
-            scenario_id=cohort_id, unsafe_stratum=unsafe, safe_stratum=safe, alpha=share
         )
-    except ValueError as exc:
+        return None, diagnostics
+    if outcome.calibration is None:
         diagnostics.append(
             Diagnostic(
                 code="JUDGE_CALIBRATION_UNINFORMATIVE",
                 severity="WARNING",
-                message=str(exc),
+                message=str(outcome.refusal),
                 scope=cohort_id,
                 details={
                     "judge_unsafe_labelled": unsafe.labelled,
@@ -199,7 +193,10 @@ def measured_calibration(
             )
         )
         return None, diagnostics
-    return calibration, diagnostics
+    completed = completion_diagnostic(outcome.calibration, cohort_id)
+    if completed is not None:
+        diagnostics.append(completed)
+    return outcome.calibration, diagnostics
 
 
 def correct(
