@@ -282,4 +282,6 @@ log, run with `sample_shuffle` set to a seed.
 
 - #126: certify Inspect runs that optstop stopped early with an anytime-valid bound; see
   [Runs that optstop stopped](#runs-that-optstop-stopped-126).
-- #125: FAIL-only lower bounds for attackers that adapt across behaviours.
+- #125: FAIL-only lower bounds for attackers that adapt across behaviours. Implemented as
+  `adaptive_claims` (experimental), with its own lower bound (statistical methods section
+  11.1); it does not wait for phase 1.

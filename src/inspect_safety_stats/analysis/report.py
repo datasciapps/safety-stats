@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from inspect_safety_stats.analysis.adaptive_claims import _unavailable_adaptive_claims
 from inspect_safety_stats.analysis.inputs import _sorted_integrity
 from inspect_safety_stats.config.loader import canonical_plan_hash, report_path, report_plan
 from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.decision.engine import roll_up
+from inspect_safety_stats.decision.engine import mandatory_statuses, roll_up
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.reports import (
     ClaimEvidenceRecord,
@@ -209,6 +210,9 @@ def _unread_input_report(
         )
         for claim in sorted(plan.claims, key=lambda item: item.id)
     ]
+    adaptive_claims = _unavailable_adaptive_claims(
+        plan, "The analysis input could not be read; see the INGEST_FAILED diagnostic."
+    )
     frozen = plan if frozen is None else frozen
     report = SafetyReport(
         **_report_frame(frozen),
@@ -226,9 +230,10 @@ def _unread_input_report(
         group_risks=[],
         comparisons=[],
         claims=claims,
+        adaptive_claims=adaptive_claims,
         policy_events=[],
         decision=roll_up(
-            [claim.status for claim in claims if claim.mandatory],
+            mandatory_statuses(claims, adaptive_claims),
             integrity_valid=False,
             zero_tolerance_failure=False,
             confirmatory=plan.analysis.intent == "confirmatory",

@@ -20,6 +20,42 @@ described in their pull requests.
   0.208 at a nominal 0.05. See
   [Runs that optstop stopped](docs/sequential-design.md#runs-that-optstop-stopped-126).
 
+- **FAIL-only claims on attackers that adapt across behaviours (experimental, #125).** A plan
+  can declare `adaptive_claims`: a cohort, a group, the design-manifest column that fixes the
+  attack order, and an `unacceptable_lower`. The cohort's runs, in that order, are bounded
+  from below by an anytime-valid bound on the attacker's running average of conditional
+  success probabilities, which needs no independence between runs. The claim is `FAIL` when
+  the bound reaches `unacceptable_lower` and `INCONCLUSIVE` otherwise; a plan that gives it an
+  `acceptable_upper` is refused, because the bound describes one attacker at one budget.
+  Mandatory adaptive claims enter the decision. `report.json` and `report.md` show them in
+  their own section, `report.html` beside the cohort's claims. Plans without them keep their
+  hash and their `report.json` and `report.md` bytes; every `report.html` changes bytes,
+  because it embeds the script that renders them. See
+  [`adaptive_claims`](docs/plan-reference.md#adaptive_claims-experimental).
+
+- **Multi-turn and system-prompt generation (experimental).** A generative plan can make
+  each unit a conversation instead of a prompt. `rewrite.output: conversation` lets the
+  kernel return chat messages, which the dataset carries as Inspect message lists.
+  `rewrite.system_prompts` makes the system prompt an arm: the procedure attaches a declared
+  text for each arm value. `rewrite.conversation_turns` makes the number of user turns an
+  arm, and every conversation is checked to have its arm value's count. Each key enters the
+  kernel fingerprint only when set, so existing plans materialize the same bytes and keep
+  their kernel hashes. The fake kernel takes `fake:output=conversation`. The live example
+  adds a reference auditor kernel and `plan-auditor.yaml`. See
+  [Conversations and system prompts](docs/generative-evaluation.md#conversations-and-system-prompts-experimental).
+
+- **Lang-Reiczigel limits in validated judge mode (changes report bytes).** With
+  `sampling: simple_random`, each whole-cohort `weighted_mean` row now carries a
+  `judge_corrected_validated_lang_reiczigel` interval beside the exact Clopper-Pearson box:
+  the limits of Lang and Reiczigel (2014) for prevalence adjusted for estimated sensitivity
+  and specificity. They are `diagnostic` and never decide a claim, because a coverage
+  simulation (`research/judge_correction_lang_reiczigel.py`) shows them falling to 91.4%
+  at nominal 95% where prevalence is 2% or below and labels number 300 or fewer, and not
+  uniformly narrower than the box. Where they cannot be computed,
+  `JUDGE_LANG_REICZIGEL_UNAVAILABLE` says why. Python callers get
+  `lang_reiczigel_corrected_risk`. Labels drawn within judge strata, or under
+  `stratified_without_replacement`, get no such interval.
+
 - **Judge flip rate under content-preserving wrappers (experimental, #122).**
   `inputs.judge_flip` reads a CSV of the primary judge's verdicts on the run's judge-positive
   completions, rescored inside wrappers that keep the content verbatim, such as a story

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from inspect_safety_stats.generative.execution import ExecutionResult
+from inspect_safety_stats.generative.execution import AcceptedRewrite, ExecutionResult
 from inspect_safety_stats.generative.join import (
     EvaluatedSample,
     JoinResult,
@@ -36,7 +36,12 @@ def materialize_dataset(
     result: ExecutionResult,
     path: str | Path,
 ) -> int:
-    """Write accepted rewrites as an Inspect JSONL dataset. Returns the sample count."""
+    """Write accepted rewrites as an Inspect JSONL dataset. Returns the sample count.
+
+    A single-turn rewrite becomes a string ``input``; a conversation becomes a list of
+    ``{"role", "content"}`` messages, which Inspect reads as chat messages, so the target
+    answers the conversation's final user turn.
+    """
 
     by_unit = {record.sampling_unit_id: record for record in selections}
     destination = Path(path)
@@ -53,7 +58,7 @@ def materialize_dataset(
                 json.dumps(
                     {
                         "id": entry.prompt_id,
-                        "input": entry.prompt,
+                        "input": _dataset_input(entry),
                         "metadata": {
                             "sampling_unit_id": entry.sampling_unit_id,
                             "path_hash": selection.path_hash,
@@ -70,6 +75,12 @@ def materialize_dataset(
             )
             written += 1
     return written
+
+
+def _dataset_input(entry: AcceptedRewrite) -> str | list[dict[str, str]]:
+    if entry.messages is None:
+        return entry.prompt
+    return [{"role": turn.role, "content": turn.content} for turn in entry.messages]
 
 
 def materialize_for_cohorts(
