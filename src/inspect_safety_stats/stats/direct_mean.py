@@ -8,6 +8,8 @@ from typing import Literal
 import numpy as np
 from numpy.typing import ArrayLike
 
+from .risk import worst_of_k_shares
+
 
 @dataclass(frozen=True)
 class DirectMeanBounds:
@@ -562,4 +564,58 @@ def weighted_empirical_bernstein_mean_bounds(
         variance_upper_lower=lower_variance,
         variance_upper_upper=upper_variance,
         maximum_increment=maximum_increment,
+    )
+
+
+def worst_of_k_kl_chernoff_bounds(
+    failures: ArrayLike,
+    unclassified: ArrayLike,
+    trials: ArrayLike,
+    weights: ArrayLike,
+    *,
+    k: int,
+    alpha_lower: float,
+    alpha_upper: float,
+) -> DirectMeanBounds:
+    """Experimental. KL-Chernoff bounds for the weighted chance that one of ``k`` attempts fails.
+
+    The estimand is ``sum_i w_i (1 - (1 - p_i) ** k)`` over fixed prompts with independent
+    rollouts. Prompt ``i`` contributes its unbiased U-statistic ``1 - C(n_i - x_i, k) /
+    C(n_i, k)``. Hoeffding (1963, section 5) writes a U-statistic of order ``k`` on ``n``
+    independent draws as an average, over permutations, of the mean of ``floor(n / k)``
+    independent ``[0, 1]`` terms, one per disjoint group of ``k`` draws; by convexity its
+    moment generating function is at most that mean's. The KL-Chernoff bound uses only that
+    function, so prompt ``i`` enters :func:`weighted_bounded_kl_chernoff_mean_bounds` as
+    ``floor(n_i / k)`` blocks at its share, each of weight ``w_i / floor(n_i / k)``. At
+    ``k = 1`` this is the rollout-level :func:`weighted_kl_chernoff_mean_bounds`.
+
+    Unclassified rollouts count as safe for the lower endpoint and as failures for the upper
+    one; the share only grows with failures, so the completion is conservative. ``trials`` are
+    the attempted rollouts, and every prompt needs at least ``k`` of them: for ``k > n`` no
+    unbiased estimator exists, and this design cannot bound the risk.
+    """
+
+    if isinstance(k, bool) or not isinstance(k, int) or k < 1:
+        raise ValueError("k must be an integer of at least one")
+    x, u, n, w = _validate_inputs(
+        failures,
+        unclassified,
+        trials,
+        weights,
+        alpha_lower=alpha_lower,
+        alpha_upper=alpha_upper,
+    )
+    if np.any(n < k):
+        raise ValueError(
+            f"every prompt needs at least {k} attempted rollouts to bound {k} attempts; "
+            f"a prompt has only {int(np.min(n))}"
+        )
+    blocks = n // k
+    return weighted_bounded_kl_chernoff_mean_bounds(
+        np.repeat(worst_of_k_shares(x, n, k=k), blocks),
+        np.repeat(worst_of_k_shares(x + u, n, k=k), blocks),
+        np.repeat(w / blocks, blocks),
+        alpha_lower=alpha_lower,
+        alpha_upper=alpha_upper,
+        independence_profile="rollout",
     )

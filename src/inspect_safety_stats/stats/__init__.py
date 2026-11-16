@@ -23,6 +23,7 @@ from .direct_mean import (
     weighted_empirical_bernstein_mean_bounds,
     weighted_hoeffding_mean_bounds,
     weighted_kl_chernoff_mean_bounds,
+    worst_of_k_kl_chernoff_bounds,
 )
 from .hierarchy_region import (
     HierarchyRegionProjection,
@@ -115,6 +116,7 @@ __all__ = [
     "weighted_kl_chernoff_mean_bounds",
     "weighted_mean",
     "worst_of_k_estimate",
+    "worst_of_k_kl_chernoff_bounds",
     "worst_of_k_risk",
     "zero_failure_sample_size",
     "AgreementSummary",

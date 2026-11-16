@@ -157,6 +157,18 @@ def worst_of_k_estimate(
         raise ValueError("failures must lie between zero and the number of rollouts")
     if np.any(n < k):
         raise ValueError(f"every prompt needs at least {k} rollouts to estimate {k} attempts")
+    return float(np.dot(w, worst_of_k_shares(f, n, k=k)))
+
+
+def worst_of_k_shares(failures: ArrayLike, rollouts: ArrayLike, *, k: int) -> NDArray[np.float64]:
+    """Per prompt, the share of its ``k``-subsets of rollouts that contain a failure.
+
+    ``1 - C(n - f, k) / C(n, k)`` for ``f`` failures in ``n >= k`` rollouts. The caller checks
+    the counts; :func:`worst_of_k_estimate` documents the evaluation.
+    """
+
+    f = np.asarray(failures)
+    n = np.asarray(rollouts)
     risks = np.empty(len(n))
     for index, (fails, total) in enumerate(zip(f.tolist(), n.tolist(), strict=True)):
         if k == 1 or fails == 0:
@@ -168,4 +180,4 @@ def worst_of_k_estimate(
         else:
             log_ratio = math.fsum(math.log1p(-fails / (total - i)) for i in range(k))
             risks[index] = 0.0 - math.expm1(log_ratio)
-    return float(np.dot(w, risks))
+    return risks
