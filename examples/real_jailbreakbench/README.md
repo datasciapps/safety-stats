@@ -68,7 +68,6 @@ arm intervals. This preserves coherence across every displayed comparison.
 From the repository root:
 
 ```bash
-cd /path/to/safety_stats
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[inspect,openai]'
@@ -207,6 +206,11 @@ The transformation must be identical in every model arm. It should be selected b
 comparative outputs. An optional common system message can similarly be supplied with
 `--system-prompt-file`. Comparing two configurations of the same provider model requires them to
 have distinct Inspect model identifiers; the present runner matches cohorts by model identifier.
+
+Every cohort also matches the run's `--grader-model` (`task_arg_grader_model`), so all arms are
+judged by the same grader. A log of an arm graded by another model, such as a self-graded smoke
+run in the same log directory, is not selected and joins no cohort. If no log graded by the
+run's grader exists for an arm, the runner stops and names that arm.
 
 ## Scoring and interpretation
 

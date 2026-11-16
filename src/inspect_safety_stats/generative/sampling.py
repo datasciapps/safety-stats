@@ -24,6 +24,12 @@ Method = Literal["direct", "proportional_stratified"]
 
 @dataclass(frozen=True)
 class StratumAllocation:
+    """The draws given to one semantic-seed stratum under proportional stratification.
+
+    ``stratum_weight`` is the stratum node's target path weight; ``draws`` is the declared
+    per-stratum minimum plus its largest-remainder share of the rest of the budget.
+    """
+
     stratum_id: str
     stratum_weight: float
     draws: int
@@ -31,6 +37,12 @@ class StratumAllocation:
 
 @dataclass(frozen=True)
 class SamplingDesign:
+    """The explicit sampling design that :func:`plan_design` resolves from a plan.
+
+    ``allocations`` is empty under ``direct`` sampling and holds one entry per stratum
+    under ``proportional_stratified``. :func:`draw_selections` reads it to select paths.
+    """
+
     method: Method
     total_rewrites: int
     selection_seed: int

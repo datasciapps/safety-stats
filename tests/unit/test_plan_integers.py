@@ -8,68 +8,17 @@ nested model, cannot opt out by accident.
 
 from __future__ import annotations
 
-import inspect
-import types
-import typing
-from collections.abc import Iterator
-
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from inspect_safety_stats.config.models import AnalysisPlan, ReportSpec
-from inspect_safety_stats.generative.schema import GenerativePlan
+from inspect_safety_stats.config.models import ReportSpec
+from tests.plan_fields import annotation, contains, is_scalar, plan_fields
 
-
-def _models_in(annotation: object) -> Iterator[type[BaseModel]]:
-    if inspect.isclass(annotation) and issubclass(annotation, BaseModel):
-        yield annotation
-    for argument in typing.get_args(annotation):
-        yield from _models_in(argument)
-
-
-def _plan_fields() -> dict[str, tuple[type[BaseModel], str]]:
-    """Every field of every model reachable from the two plan roots, keyed `module.Model.field`."""
-    fields: dict[str, tuple[type[BaseModel], str]] = {}
-    seen: set[type[BaseModel]] = set()
-    pending: list[type[BaseModel]] = [AnalysisPlan, GenerativePlan]
-    while pending:
-        model = pending.pop()
-        if model in seen:
-            continue
-        seen.add(model)
-        module = model.__module__.removeprefix("inspect_safety_stats.")
-        for name, info in model.model_fields.items():
-            fields[f"{module}.{model.__qualname__}.{name}"] = (model, name)
-            pending.extend(_models_in(info.rebuild_annotation()))
-    return dict(sorted(fields.items()))
-
-
-def _annotation(model: type[BaseModel], field: str) -> object:
-    return model.model_fields[field].rebuild_annotation()
-
-
-def _is_integer(annotation: object) -> bool:
-    """An integer, or an optional one: the shapes the boolean probe below can reach."""
-    origin = typing.get_origin(annotation)
-    if origin is typing.Annotated:
-        return _is_integer(typing.get_args(annotation)[0])
-    if origin in (typing.Union, types.UnionType):
-        members = [a for a in typing.get_args(annotation) if a is not type(None)]
-        return bool(members) and all(_is_integer(member) for member in members)
-    return annotation is int
-
-
-def _contains_integer(annotation: object) -> bool:
-    if annotation is int:
-        return True
-    return any(_contains_integer(argument) for argument in typing.get_args(annotation))
-
-
-PLAN_FIELDS = _plan_fields()
+PLAN_FIELDS = plan_fields()
 INTEGER_FIELDS = {
     name: (model, field)
     for name, (model, field) in PLAN_FIELDS.items()
-    if _is_integer(_annotation(model, field))
+    if is_scalar(annotation(model, field), int)
 }
 
 
@@ -97,8 +46,8 @@ def test_no_plan_field_hides_an_integer_from_the_probe() -> None:
     hidden = [
         name
         for name, (model, field) in PLAN_FIELDS.items()
-        if _contains_integer(_annotation(model, field))
-        and not _is_integer(_annotation(model, field))
+        if contains(annotation(model, field), int)
+        and not is_scalar(annotation(model, field), int)
     ]
     assert hidden == []
 

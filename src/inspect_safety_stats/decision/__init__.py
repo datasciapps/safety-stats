@@ -1,3 +1,3 @@
-from .engine import decide_claim, roll_up
+from .engine import claim_verdict_range, decide_claim, noisy_valid_verdict_range, roll_up
 
-__all__ = ["decide_claim", "roll_up"]
+__all__ = ["claim_verdict_range", "decide_claim", "noisy_valid_verdict_range", "roll_up"]

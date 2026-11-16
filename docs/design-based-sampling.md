@@ -127,6 +127,11 @@ fields deserve care:
   realized as zero. Under equal weights and equal \(\pi\) it equals the frame size. It
   measures weight concentration, not information; precision is governed by `inflation`.
 
+The report's scope statement follows the design. A sampled design's `scope` in `report.json`
+has `design: sampled` and says that results apply to the declared item frame, from which the
+evaluated items were drawn with the recorded inclusion probabilities, and not to prompts
+outside the frame. `report.md` and `report.html` print it above the claims.
+
 ## Fixed-size designs
 
 ```yaml
