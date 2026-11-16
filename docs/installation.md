@@ -2,7 +2,7 @@
 
 ## Requirements
 
-- Python 3.10 or newer.
+- Python 3.11 or newer.
 - Linux, macOS, or Windows. CI runs the test suite on all three.
 - For Inspect AI logs: Inspect AI 0.3.259 through the latest compatible 0.3 release, installed by
   the `inspect` extra, and completed Inspect evaluation logs.
