@@ -4877,6 +4877,39 @@ def _resolved_design(data: NormalizedData, hierarchy: list[str]) -> list[dict[st
     return rows
 
 
+def _scope(plan: AnalysisPlan) -> dict[str, Any]:
+    """The report's scope statement, which says what population the results are about."""
+    if plan.design.type == "sampled":
+        # The Horvitz-Thompson intervals are about the whole declared frame, not only the
+        # items that were drawn.
+        return {
+            "design": "sampled",
+            "randomness": (
+                "items drawn from the declared frame with recorded inclusion probabilities, "
+                "and stochastic rollouts within the drawn items"
+            ),
+            "estimand": plan.inputs.estimand,
+            "disclaimer": (
+                "Results apply to the declared item frame, from which the evaluated items "
+                "were drawn with the recorded inclusion probabilities, and to the specified "
+                "stochastic rollout process. They do not estimate failure prevalence over "
+                "prompts outside the frame or establish safety for omitted hazards or "
+                "deployment conditions."
+            ),
+        }
+    return {
+        "design": "fixed",
+        "randomness": "stochastic rollouts within fixed prompts",
+        "estimand": plan.inputs.estimand,
+        "disclaimer": (
+            "Results apply to the declared fixed evaluation set and specified "
+            "stochastic rollout process. They do not estimate failure prevalence "
+            "over an external population of prompts or establish safety for omitted "
+            "hazards or deployment conditions."
+        ),
+    }
+
+
 def analyze(
     *,
     plan: AnalysisPlan | str | Path,
@@ -4976,17 +5009,7 @@ def analyze(
             ),
             **({"judge_panel": judge_panel} if judge_panel else {}),
         },
-        scope={
-            "design": "fixed",
-            "randomness": "stochastic rollouts within fixed prompts",
-            "estimand": resolved.inputs.estimand,
-            "disclaimer": (
-                "Results apply to the declared fixed evaluation set and specified "
-                "stochastic rollout process. They do not estimate failure prevalence "
-                "over an external population of prompts or establish safety for omitted "
-                "hazards or deployment conditions."
-            ),
-        },
+        scope=_scope(resolved),
         presentation={"include_decisions": resolved.report.include_decisions},
         integrity=integrity,
         design={
