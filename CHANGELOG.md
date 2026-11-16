@@ -41,6 +41,12 @@ described in their pull requests.
 
 ### Changed
 
+- **One grader across the JailbreakBench comparison arms (example).** The plan that
+  `examples/real_jailbreakbench/run_jailbreakbench.py` writes now matches every cohort on
+  `task_arg_grader_model` as well as the model, and log selection picks logs by model and
+  grader. Before, a log of an arm graded by another model could enter the comparison. See
+  [One judge for every arm](docs/model-comparisons.md#one-judge-for-every-arm).
+
 - **Unbiased `worst_of_k` estimates (changes results).** The row estimate plugged each prompt's
   failure rate into `1 - (1 - p)^k`, which understates the risk. It is now the unbiased
   U-statistic, `1 - C(n - f, k) / C(n, k)` per prompt, weighted over prompts, so estimates
