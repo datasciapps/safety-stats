@@ -7,6 +7,16 @@ described in their pull requests.
 
 ### Added
 
+- **Outcome mapping sensitivities (experimental).** A score with more than two values, such
+  as a refusal grade with partial refusals, no longer has to be read one way per run.
+  `inputs.score.mapping_sensitivities` declares named alternative mappings; the analysis is
+  repeated under each on the same rollouts, and the report shows every reading side by side
+  in `report.json` (`outcome_mapping_sensitivities`), a new
+  `outcome-mapping-sensitivity.csv` and a section of `report.md`. Only the primary mapping
+  enters claims and the decision. Opt-in: plans without the field keep their hash and their
+  report bytes. See
+  [Outcome mapping sensitivities](docs/plan-reference.md#outcome-mapping-sensitivities-experimental).
+
 - **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory
   analysis makes every claim `INCONCLUSIVE`, so a reader had to compare its bounds with the
   thresholds by hand. Each claim in `report.json` now has `descriptive_status`: in an

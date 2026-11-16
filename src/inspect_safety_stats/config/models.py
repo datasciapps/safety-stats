@@ -132,7 +132,13 @@ class ScoreSpec(StrictModel):
         "end_to_end"
     )
     # Experimental. Left out of the plan when empty, so that plans without it keep their hash.
-    mapping_sensitivities: list[OutcomeMappingSensitivitySpec] = Field(default_factory=list)
+    mapping_sensitivities: list[OutcomeMappingSensitivitySpec] = Field(
+        default_factory=list,
+        description=(
+            "Experimental. Alternative outcome mappings of the same score, analysed and "
+            "reported beside the primary mapping; they never enter claims or the decision."
+        ),
+    )
 
     @model_serializer(mode="wrap")
     def leave_out_absent_mapping_sensitivities(
