@@ -621,7 +621,9 @@ Exit codes of `analyze`:
 | Integrity `invalid` with `--allow-invalid` | `0` | `2`, because an invalid analysis is never PASS |
 | The analysis cannot run, for example an unreadable plan | `3` | `3` |
 
-`validate` exits `3` for invalid input and `0` otherwise. `generative analyze` exits `3` when
+`validate` exits `3` for invalid input and `0` otherwise. `hash-plan` exits `3` for a plan it
+cannot read or validate, and prints `Plan invalid:` with each failing field on one line.
+Before this release it printed a traceback and exited `1`. `generative analyze` exits `3` when
 its report carries an `ERROR` diagnostic, and still writes the report. Before this release it
 exited `2`, which `analyze` uses for INCONCLUSIVE.
 

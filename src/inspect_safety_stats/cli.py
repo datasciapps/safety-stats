@@ -929,6 +929,19 @@ def version_command() -> None:
     typer.echo(__version__)
 
 
+def _one_line_error(exc: Exception) -> str:
+    """Render an error on one line, a pydantic error as ``field: message`` per failure."""
+
+    from pydantic import ValidationError
+
+    if isinstance(exc, ValidationError):
+        return "; ".join(
+            f"{'.'.join(str(part) for part in error['loc']) or '(root)'}: {error['msg']}"
+            for error in exc.errors()
+        )
+    return " ".join(str(exc).split())
+
+
 @app.command("hash-plan")
 def hash_plan_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
@@ -963,7 +976,15 @@ def hash_plan_command(
         # A receipt records the canonical hash, which analyze checks; registering the
         # inference hash would make a receipt no analysis can match.
         raise typer.BadParameter("--register records the canonical hash; omit --inference")
-    resolved = load_plan(plan)
+    import yaml
+
+    try:
+        resolved = load_plan(plan)
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        # pydantic's ValidationError is a ValueError; other exceptions are bugs and keep
+        # their traceback.
+        typer.echo(f"Plan invalid: {_one_line_error(exc)}", err=True)
+        raise typer.Exit(code=ExitCode.ERROR) from exc
     if inference:
         from inspect_safety_stats.config.decision_policy import inference_plan_hash
 
