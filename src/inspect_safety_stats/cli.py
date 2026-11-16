@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from enum import Enum
+from enum import Enum, IntEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
 
@@ -28,6 +28,31 @@ generative_app = typer.Typer(
 app.add_typer(plan_app, name="plan")
 app.add_typer(schema_app, name="schema")
 app.add_typer(generative_app, name="generative")
+
+
+class ExitCode(IntEnum):
+    """Every exit status a command chooses, in one table (docs/api-reference.md#exit-codes).
+
+    typer itself exits 2 on a usage error, such as a missing option, before any command runs.
+    """
+
+    OK = 0
+    # analyze --decision-exit-codes: the decision is FAIL.
+    FAIL = 1
+    # plan fixed-design --plan: no claim of the plan could be planned.
+    NOTHING_PLANNED = 1
+    # analyze --decision-exit-codes: the decision is INCONCLUSIVE.
+    INCONCLUSIVE = 2
+    # The command could not run, or its result supports no claim: an invalid integrity, or a
+    # generative analysis with ERROR diagnostics.
+    ERROR = 3
+
+
+_DECISION_EXIT_CODES = {
+    "PASS": ExitCode.OK,
+    "FAIL": ExitCode.FAIL,
+    "INCONCLUSIVE": ExitCode.INCONCLUSIVE,
+}
 
 
 DecisionPolicyOption = Annotated[
@@ -131,7 +156,7 @@ def analyze_command(
         path = report.write(output, overwrite=overwrite)
     except Exception as exc:
         typer.echo(f"Analysis failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
+        raise typer.Exit(code=ExitCode.ERROR) from exc
     typer.echo(f"Analysis: {report.analysis['id']}")
     typer.echo(f"Plan SHA-256: {report.analysis['plan_sha256']}")
     typer.echo(f"Integrity: {report.integrity.status}")
@@ -151,9 +176,9 @@ def analyze_command(
             "Pass --allow-invalid to exit 0 anyway.",
             err=True,
         )
-        raise typer.Exit(code=3)
+        raise typer.Exit(code=ExitCode.ERROR)
     if decision_exit_codes:
-        raise typer.Exit(code={"PASS": 0, "FAIL": 1, "INCONCLUSIVE": 2}[report.decision])
+        raise typer.Exit(code=_DECISION_EXIT_CODES[report.decision])
 
 
 @app.command("validate")
@@ -183,7 +208,7 @@ def validate_command(
         scope = f" [{diagnostic.scope}]" if diagnostic.scope else ""
         typer.echo(f"{diagnostic.severity} {diagnostic.code}{scope}: {diagnostic.message}")
     typer.echo(f"Integrity: {result.status}")
-    raise typer.Exit(code=3 if result.status == "invalid" else 0)
+    raise typer.Exit(code=ExitCode.ERROR if result.status == "invalid" else ExitCode.OK)
 
 
 @app.command("visualize")
@@ -200,7 +225,7 @@ def visualize_command(
         path = write_visualization(report, output, overwrite=overwrite)
     except Exception as exc:
         typer.echo(f"Visualization failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
+        raise typer.Exit(code=ExitCode.ERROR) from exc
     typer.echo(f"Visualization: {path}")
 
 
@@ -586,7 +611,7 @@ def _plan_fixed_design_from_plan(
     if not any(isinstance(item, PlannedClaim) for item in claims):
         typer.echo("")
         typer.echo("No claim of this plan could be planned.", err=True)
-        raise typer.Exit(1)
+        raise typer.Exit(code=ExitCode.NOTHING_PLANNED)
 
 
 @plan_app.command("pilot")
@@ -736,7 +761,7 @@ def hash_plan_command(
             f"Registration failed: {register} exists; a receipt is never overwritten",
             err=True,
         )
-        raise typer.Exit(code=3) from exc
+        raise typer.Exit(code=ExitCode.ERROR) from exc
     typer.echo(f"Registered at: {receipt.registered_at.isoformat()}")
     typer.echo(f"Receipt: {register}")
     typer.echo(
@@ -761,7 +786,7 @@ def generative_compile_command(
         design = plan_design(taxonomy, parsed)
     except Exception as exc:
         typer.echo(f"Compilation failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
+        raise typer.Exit(code=ExitCode.ERROR) from exc
 
     typer.echo(f"Evaluation: {parsed.evaluation.id}")
     typer.echo(f"Taxonomy fingerprint: {taxonomy.fingerprint}")
@@ -812,7 +837,7 @@ def generative_materialize_command(
         )
     except Exception as exc:
         typer.echo(f"Materialization failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
+        raise typer.Exit(code=ExitCode.ERROR) from exc
 
     typer.echo(f"Taxonomy fingerprint: {run.taxonomy_fingerprint}")
     typer.echo(f"Kernel: {run.kernel.kernel_id} @ {run.kernel.sha256}")
@@ -844,7 +869,7 @@ def generative_materialize_command(
                 "check that the kernel returns usable text.",
                 err=True,
             )
-        raise typer.Exit(code=3)
+        raise typer.Exit(code=ExitCode.ERROR)
 
 
 @generative_app.command("analyze")
@@ -879,7 +904,7 @@ def generative_analyze_command(
         path = report.write(output, overwrite=overwrite)
     except Exception as exc:
         typer.echo(f"Analysis failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
+        raise typer.Exit(code=ExitCode.ERROR) from exc
 
     root = report.tree.root
     typer.echo(f"Evaluation: {report.evaluation['id']}")
@@ -901,7 +926,7 @@ def generative_analyze_command(
             typer.echo(f"[ERROR] {diagnostic.code}: {diagnostic.message}", err=True)
     typer.echo(f"Report: {path}")
     if report.has_errors:
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=ExitCode.ERROR)
 
 
 @generative_app.command("budget")
@@ -934,7 +959,7 @@ def generative_budget_command(
         taxonomy = compile_taxonomy(parsed, base_path=plan.parent)
     except Exception as exc:
         typer.echo(f"Planning failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
+        raise typer.Exit(code=ExitCode.ERROR) from exc
 
     declared = parsed.sampling.total_rewrites
     budgets = sorted(set(budget)) if budget else sorted(

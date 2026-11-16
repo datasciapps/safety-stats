@@ -530,6 +530,17 @@ files of a neutral rollout source instead of Inspect logs, and are given togethe
 [Registration receipts](plan-reference.md#registration-receipts-experimental)). `hash-plan`
 exits `3` when the receipt file already exists.
 
+### Exit codes
+
+Every command draws its exit status from one table, `ExitCode` in `cli.py`:
+
+| Status | Meaning |
+|---|---|
+| `0` | The command completed. |
+| `1` | `analyze --decision-exit-codes`: the decision is FAIL. `plan fixed-design --plan`: no claim of the plan could be planned. |
+| `2` | `analyze --decision-exit-codes`: the decision is INCONCLUSIVE. typer also exits `2` on a usage error, such as a missing option, before the command runs. |
+| `3` | The command could not run, or its result supports no claim: an `invalid` integrity, or a `generative analyze` report with `ERROR` diagnostics. |
+
 Exit codes of `analyze`:
 
 | Situation | Default | With `--decision-exit-codes` |
@@ -539,7 +550,9 @@ Exit codes of `analyze`:
 | Integrity `invalid` with `--allow-invalid` | `0` | `2`, because an invalid analysis is never PASS |
 | The analysis cannot run, for example an unreadable plan | `3` | `3` |
 
-`validate` exits `3` for invalid input and `0` otherwise.
+`validate` exits `3` for invalid input and `0` otherwise. `generative analyze` exits `3` when
+its report carries an `ERROR` diagnostic, and still writes the report. Before this release it
+exited `2`, which `analyze` uses for INCONCLUSIVE.
 
 ## Compatibility and stability
 

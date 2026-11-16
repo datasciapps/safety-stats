@@ -247,6 +247,16 @@ described in their pull requests.
 
 ### Changed
 
+- **`generative analyze` exits `3`, not `2`, on `ERROR` diagnostics.** Exit `2` means
+  INCONCLUSIVE under `analyze --decision-exit-codes`, so a generative report with errors could
+  read as an inconclusive decision. Every command now takes its exit status from one table,
+  `ExitCode` in `cli.py`, and no other exit status changes. See
+  [Exit codes](docs/api-reference.md#exit-codes).
+
+- **The generative report writes `checksums.json`.** It holds the SHA-256 of every other file
+  the report writes, as the fixed-design report's does. The other files keep their bytes.
+  Both reports now write their files through one module, `inspect_safety_stats.report.artifacts`.
+
 - **`report.json` holds everything the report shows (changes `report.json` and
   `report.html`).** `report.md`, `report.html` and the CSVs are rendered from the report model
   alone, so a saved `report.json` renders them again without the plan or the design CSV.

@@ -25,7 +25,12 @@ from inspect_safety_stats.generative.inference import (
 from inspect_safety_stats.generative.judge import CorrectedEstimate
 from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
 from inspect_safety_stats.generative.visualization import write_generative_report
-from inspect_safety_stats.report.artifacts import write_frame, write_json
+from inspect_safety_stats.report.artifacts import (
+    CHECKSUMS,
+    write_checksums,
+    write_frame,
+    write_json,
+)
 from inspect_safety_stats.schema.reports import Diagnostic
 from inspect_safety_stats.version import __version__
 
@@ -37,6 +42,7 @@ ARTIFACTS = (
     "diagnostics.csv",
     "comparisons.csv",
     "acceptance.csv",
+    CHECKSUMS,
 )
 
 
@@ -148,4 +154,6 @@ class GenerativeReport:
             pd.DataFrame([asdict(item) for item in self.acceptance]),
         )
         write_generative_report(self, directory / "report.html")
+        # ORDER MATTERS: last, once every file it covers is written.
+        write_checksums(directory, [name for name in ARTIFACTS if name != CHECKSUMS])
         return directory
