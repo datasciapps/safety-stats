@@ -97,6 +97,16 @@ described in their pull requests.
   show the role as `sensitivity (independence)` or `sensitivity (judge error)`. The role values
   are unchanged, and reports written before the field still load.
 
+- **Where effects sit (changes `report.md`).** When a report has hierarchy rows, `report.md`
+  gains a section after the claims that lists the hierarchy nodes whose comparison interval
+  excludes no difference, with the comparison's overall effect beside them, and the nodes
+  whose estimate is above a claim's acceptable limit, saying whether the whole interval or only
+  the estimate is above. An effect concentrated in one category was visible only by reading
+  every hierarchy row. `report.json`, the CSV files and `report.html` are unchanged, and so
+  is `report.md` when there are no hierarchy comparisons and no shown claim reaches
+  hierarchy rows. See
+  [Where effects sit](docs/interpretation.md#where-effects-sit).
+
 - **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory
   analysis makes every claim `INCONCLUSIVE`, so a reader had to compare its bounds with the
   thresholds by hand. Each claim in `report.json` now has `descriptive_status`: in an

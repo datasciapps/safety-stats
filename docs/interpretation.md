@@ -129,6 +129,26 @@ every declared non-prompt node. The original group weights are normalized among 
 descendants. These rows describe the fixed design and do not estimate prevalence in a population
 of unseen tasks or questions.
 
+### Where effects sit
+
+A headline row averages over the hierarchy, so an effect concentrated in one node can look
+small there: a few points of difference overall can be a large difference in one category and
+none in the others. When a report has hierarchy rows, `report.md` lists, right after the
+claims:
+
+- every hierarchy node of a comparison whose interval excludes no difference (0 for a risk
+  difference or a relative risk reduction, 1 for a risk ratio), beside the comparison's overall
+  effect;
+- every hierarchy node whose estimate is above the acceptable limit of a claim on the same
+  evidence, with whether the whole interval or only the estimate is above. An aggregate claim
+  reaches the node rows only through a `weighted_mean` measure, the estimand they report; a
+  comparison claim reaches its comparison's node rows. The list is hidden with the decisions.
+
+These rows are pointers into the hierarchy tables, with the same intervals and coverage; they
+are not further claims. A claim decided on a judge-corrected interval is compared with
+judge-reported node rows. A claim that passes on the average while nodes sit above its limit
+passes as declared: the list makes that visible, it does not change the decision.
+
 The HTML report presents these results as a collapsible tree. Choose one **Independence profile**
 for the whole report. Every interval glyph uses the same 0–100% risk axis. The strong blue band is
 the displayed simultaneous interval and the faint gray band is its raw concentration interval
