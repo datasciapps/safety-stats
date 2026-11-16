@@ -7,6 +7,17 @@ described in their pull requests.
 
 ### Added
 
+- **Multi-turn and system-prompt generation (experimental).** A generative plan can make
+  each unit a conversation instead of a prompt. `rewrite.output: conversation` lets the
+  kernel return chat messages, which the dataset carries as Inspect message lists.
+  `rewrite.system_prompts` makes the system prompt an arm: the procedure attaches a declared
+  text for each arm value. `rewrite.conversation_turns` makes the number of user turns an
+  arm, and every conversation is checked to have its arm value's count. Each key enters the
+  kernel fingerprint only when set, so existing plans materialize the same bytes and keep
+  their kernel hashes. The fake kernel takes `fake:output=conversation`. The live example
+  adds a reference auditor kernel and `plan-auditor.yaml`. See
+  [Conversations and system prompts](docs/generative-evaluation.md#conversations-and-system-prompts-experimental).
+
 - **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory
   analysis makes every claim `INCONCLUSIVE`, so a reader had to compare its bounds with the
   thresholds by hand. Each claim in `report.json` now has `descriptive_status`: in an

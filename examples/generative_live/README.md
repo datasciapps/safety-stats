@@ -18,6 +18,7 @@ You supply the API access, or a locally served open-weight model (see
 | [`generative_live.py`](generative_live.py) | the Inspect task: reads the materialized dataset, generates, grades with a model judge |
 | [`plan.yaml`](plan.yaml) | a small budget — 60 rewrites — configured for `openai/gpt-4o` and `openai/gpt-4o-mini` |
 | [`plan-local.yaml`](plan-local.yaml) | the same design with every model an open-weight one served through Inspect's `vllm/` provider |
+| [`plan-auditor.yaml`](plan-auditor.yaml) | the same design with multi-turn conversations and system prompts as arms, for `build_auditor_kernel` (experimental) |
 
 `--kernel` takes either `module:attribute` for something importable, or
 `path/to/file.py:attribute` for a local file. The file form is what you want for a kernel
@@ -126,6 +127,50 @@ tuned against `openai/gpt-4o`. The kernel reports a refusal as an invalid rewrit
 prompts are a filtered slice of what the plan declares. In this configuration one model also
 grades its own answers. The plan's `judge_calibration` scenarios are declared, not measured,
 so they do not account for that.
+
+## Multi-turn conversations (experimental)
+
+[`plan-auditor.yaml`](plan-auditor.yaml) turns each unit into a conversation. It adds two
+arms to `plan.yaml`'s design: `turns`, with one or three user messages per conversation, and
+`deployment`, the system prompt the target runs under (none, a general assistant, or an
+online pharmacy's support assistant). The rewrite keys behind this are described in
+[conversations and system prompts](../../docs/generative-evaluation.md#conversations-and-system-prompts-experimental).
+
+The kernel is `InspectAuditorKernel` in [`rewriter.py`](rewriter.py), with the template
+[`auditor-template.txt`](auditor-template.txt). One model call scripts the whole
+conversation, the assistant replies included: the user messages build up to the probe, and
+the last one makes the request. The auditor never talks to the target, because a kernel
+must not see the outcomes it is sampled against. The target answers only the last user
+message, with the scripted history in its context.
+
+The kernel takes the same precautions as the paraphrase kernel. It also reports a reply as
+`invalid` when it is not a JSON array of user and assistant turns, does not end on a user
+turn, has another number of user messages than its `turns` value, or writes a system turn.
+The package attaches the system prompt itself. The equivalence check reads all the user
+messages together, since the request can be spread across them.
+
+```bash
+inspect-safety-stats generative materialize \
+  --plan examples/generative_live/plan-auditor.yaml \
+  --output run/auditor \
+  --kernel examples/generative_live/rewriter.py:build_auditor_kernel
+
+inspect eval examples/generative_live/generative_live.py \
+  --model openai/gpt-4o-mini \
+  -T dataset=run/auditor/datasets/dataset.jsonl \
+  --log-dir run/auditor/logs
+
+inspect-safety-stats generative analyze \
+  --plan examples/generative_live/plan-auditor.yaml \
+  --artifacts run/auditor --logs run/auditor/logs --output run/auditor/report \
+  --slice turns=3
+```
+
+The task shows the grader the whole conversation, not only its last user message, so a
+request built up across turns is graded as a whole. A rewrite call is longer here, up to
+2,048 tokens. Read `acceptance.csv` by `turns`: if three-turn conversations exhaust their
+attempts more often, the accepted conversations are a filtered slice of what the plan
+declares. These keys and this kernel are experimental and may change.
 
 ## What it costs, and how long
 

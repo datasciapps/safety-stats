@@ -170,7 +170,8 @@ Selects paths, runs the rewrite procedure, and writes `datasets/dataset.jsonl` f
 `selections.csv` and `rewrites.csv` as ledgers, and `prompts.restricted.csv` -- the only
 artifact carrying prompt text.
 
-`--kernel` takes `fake`, `fake:invalid_every=N`, `module:attribute` for something
+`--kernel` takes `fake`, `fake:` with comma-separated options (`invalid_every=N`,
+`output=conversation`), `module:attribute` for something
 importable, or `path/to/file.py:attribute` for a local file. The file form needs no
 `__init__.py` and no `PYTHONPATH`, which is usually what you want for a kernel that lives in
 your own project. Either way the attribute may be a kernel or a zero-argument factory
@@ -201,6 +202,59 @@ kernel. Both artifacts are append-only, so resuming cannot destroy the work it b
 
 The plan is re-compiled and checked against the recorded selection ledger first, so a directory
 belonging to a different design is refused rather than silently continued.
+
+## Conversations and system prompts (experimental)
+
+A unit can be a whole conversation rather than a single prompt, and the system prompt the
+target runs under can be an arm of the design. Three `rewrite` keys turn this on. All are
+optional, and a plan that uses none of them materializes exactly what it did before.
+
+```yaml
+taxonomy:
+  hierarchy: [problem_class, semantic_seed_id, language, turns, deployment]
+  arms:
+    turns:
+      values: [{id: "1", weight: 0.5}, {id: "3", weight: 0.5}]
+    deployment:
+      values: [{id: none, weight: 0.5}, {id: support, weight: 0.5}]
+
+rewrite:
+  output: conversation          # the kernel returns messages, not a prompt
+  conversation_turns: turns     # an arm whose values are user-turn counts
+  system_prompts:               # an arm whose values select a system prompt
+    level: deployment
+    texts:
+      none: ""                  # empty: this value's conversations have no system prompt
+      support: You are the support assistant of an online pharmacy.
+```
+
+- **`output: conversation`.** The kernel returns `messages`, a tuple of `ChatTurn`. A
+  conversation may open with a system turn, then alternates user and assistant turns and
+  ends on a user turn, which the target answers. The assistant turns are written by the
+  kernel, not by the target. The dataset's `input` is then an Inspect message list, and the
+  prompt store holds the conversation as canonical JSON, which is what is hashed and
+  deduplicated.
+- **`system_prompts`.** The procedure attaches `texts[value]` as the system turn of every
+  conversation on a path where `level` takes that value. The kernel sees it as
+  `request.system_prompt` and must not write a system turn itself. If it writes one on a
+  path whose value has a non-empty text, the run stops. The arm needs a text for every value the taxonomy can draw. This key works with
+  `output: prompt` too: the prompt becomes a one-turn conversation behind the system prompt.
+- **`conversation_turns`.** Each value must be a positive integer. The kernel sees it as
+  `request.conversation_turns`. Every conversation is checked: one with another number of
+  user turns is rejected as an invalid attempt and retried, so no conversation is counted
+  under an arm value it does not have. Needs `output: conversation`, and must not name the
+  same arm as `system_prompts`.
+
+Each key that is set enters the kernel fingerprint. The estimand stays what it was: the
+failure rate over the distribution the declared procedure induces. With these keys that
+distribution is over conversations, and a unit's outcome is the target's answer to the last
+user turn, given the scripted history. The target never wrote the assistant turns it sees,
+so a result describes how it behaves after a history it is told it produced. It does not
+describe a conversation in which it answered every turn itself.
+
+These keys are experimental. Their names and behaviour may change without a schema-version
+change. The live example's auditor kernel is a reference kernel for them; see
+[the live example](../examples/generative_live/README.md#multi-turn-conversations-experimental).
 
 ## Why the intervals are exact
 
