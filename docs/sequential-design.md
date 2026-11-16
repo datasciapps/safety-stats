@@ -199,4 +199,6 @@ sequence must keep them.
 ## Work that builds on this
 
 - #126: certify Inspect runs that optstop stopped early with an anytime-valid bound.
-- #125: FAIL-only lower bounds for attackers that adapt across behaviours.
+- #125: FAIL-only lower bounds for attackers that adapt across behaviours. Implemented as
+  `adaptive_claims` (experimental), with its own lower bound (statistical methods section
+  11.1); it does not wait for phase 1.

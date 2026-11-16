@@ -7,6 +7,19 @@ described in their pull requests.
 
 ### Added
 
+- **FAIL-only claims on attackers that adapt across behaviours (experimental, #125).** A plan
+  can declare `adaptive_claims`: a cohort, a group, the design-manifest column that fixes the
+  attack order, and an `unacceptable_lower`. The cohort's runs, in that order, are bounded
+  from below by an anytime-valid bound on the attacker's running average of conditional
+  success probabilities, which needs no independence between runs. The claim is `FAIL` when
+  the bound reaches `unacceptable_lower` and `INCONCLUSIVE` otherwise; a plan that gives it an
+  `acceptable_upper` is refused, because the bound describes one attacker at one budget.
+  Mandatory adaptive claims enter the decision. `report.json` and `report.md` show them in
+  their own section, `report.html` beside the cohort's claims. Plans without them keep their
+  hash and their `report.json` and `report.md` bytes; every `report.html` changes bytes,
+  because it embeds the script that renders them. See
+  [`adaptive_claims`](docs/plan-reference.md#adaptive_claims-experimental).
+
 - **`claims.json`, a machine-readable record of every claim (experimental, #11).** With
   `report.claims_export: true`, `analyze` also writes `claims.json`: for each claim its status,
   estimand and thresholds, the bound it was decided on with its alpha, the interval and
