@@ -16,6 +16,14 @@ class IndependentFrontier:
 
 @dataclass(frozen=True)
 class FrontierTargetCalibration:
+    """The one-sided error level assigned to one target by ``calibrate_independent_frontiers``.
+
+    ``frontier_alpha`` is the frontier's share of the directional family level, and
+    ``endpoint_alpha`` is the Sidak level of each of its ``frontier_size`` targets. Derived in
+    docs/statistical-methods.md, section 2.4.10, "Tree-wide calibration by independent
+    frontiers".
+    """
+
     target_id: str
     endpoint_alpha: float
     frontier_id: str

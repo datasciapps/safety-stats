@@ -10,7 +10,7 @@ missing-score policies, duplicates, completeness and sampled-design checks.
 from __future__ import annotations
 
 import math
-from datetime import timezone
+from datetime import datetime, timezone
 from typing import Any, Literal
 
 import numpy as np
@@ -19,10 +19,12 @@ import pandas as pd
 from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.loader import report_path
 from inspect_safety_stats.config.models import ATTRIBUTE_PREFIX, AnalysisPlan
+from inspect_safety_stats.config.registration import RegistrationReceipt
 from inspect_safety_stats.ingest.manifest import (
     ResolvedGroup,
     load_inclusion_probabilities,
     load_manifest,
+    plan_manifest_columns,
     resolve_groups,
 )
 from inspect_safety_stats.ingest.outcomes import is_missing, map_outcome
@@ -149,14 +151,38 @@ def _configuration(
     }
 
 
+def _utc(value: datetime) -> datetime:
+    """A time with no zone read as UTC, as the plan's freeze time is."""
+
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 def normalize(
     plan: AnalysisPlan,
     manifest: pd.DataFrame,
     groups: list[ResolvedGroup],
     source: SourceData,
+    receipt: RegistrationReceipt | None = None,
 ) -> NormalizedData:
-    """Apply the plan's ingestion rules to the runs and rollouts of one source."""
+    """Apply the plan's ingestion rules to the runs and rollouts of one source.
 
+    ``receipt``, when given, is a registration receipt whose hash the caller has matched to
+    the frozen plan; it is checked against the earliest selected evaluation start.
+    """
+
+    stops = plan.inputs.score.content_filter_stops
+    stop_context = source.stop_context
+    if stops != "score" and stop_context is None:
+        raise ValueError(
+            f"score.content_filter_stops: {stops} needs the stop reason of each output, which "
+            f"this source ({source.source_format.get('format')}) does not report"
+        )
+    token_limit = plan.inputs.score.token_limit
+    if token_limit != "score" and stop_context is None:
+        raise ValueError(
+            f"score.token_limit: {token_limit} needs the stop reason of each output, which "
+            f"this source ({source.source_format.get('format')}) does not report"
+        )
     diagnostics: list[Diagnostic] = []
     run_cohorts: dict[str, str] = {}
     run_records: dict[str, RunRecord] = {}
@@ -277,6 +303,10 @@ def normalize(
             }
         )
 
+    first_started_at = min(
+        (_utc(run.started_at) for run in run_records.values() if run.started_at is not None),
+        default=None,
+    )
     if plan.analysis.intent == "confirmatory" and plan.analysis.plan_frozen_at is not None:
         observed = [
             run.started_at for run in run_records.values() if run.started_at is not None
@@ -307,6 +337,8 @@ def normalize(
                     ),
                 )
             )
+        elif receipt is not None:
+            diagnostics.extend(_receipt_timing(receipt, observed))
         elif plan.analysis.registration is None:
             diagnostics.append(
                 Diagnostic(
@@ -404,6 +436,8 @@ def normalize(
     source_hashes: dict[str, str | None] = {}
     # How each source is named in reports. The real path still reads and hashes the file.
     source_names: dict[str, str] = {}
+    # Transcripts that could not be read, by report name: the reason and how many errors.
+    unread_transcripts: dict[str, tuple[str, int]] = {}
     for collection_order, (_, rollout) in enumerate(selected, start=1):
         run_key = rollout.run_key
         prompt_id = rollout.item_id
@@ -444,8 +478,29 @@ def normalize(
         error_stage: Literal["target_generation", "post_generation", "unknown"] | None = None
         content_delivered: bool | None = None
         provider_error_code: str | None = None
+        # A content-filter stop that delivered nothing; one that delivered content before the
+        # decline is scored like any other answer.
+        stop = None
+        # An answer without a score that stopped at the token limit, when the plan looks for
+        # one; a truncated answer that was scored keeps its score.
+        truncated = False
+        if (
+            raw_error is None
+            and (stops != "score" or token_limit != "score")
+            and stop_context is not None
+        ):
+            found = stop_context(rollout)
+            if found is not None and found.stop_reason == "content_filter":
+                if stops != "score" and not found.content_delivered:
+                    stop = found
+            elif found is not None and found.stop_reason == "max_tokens":
+                truncated = token_limit != "score" and is_missing(raw_score)
         if raw_error is not None:
             context = source.error_context(rollout)
+            if context.unread_reason is not None:
+                name = report_path(rollout.source, plan)
+                reason, count = unread_transcripts.get(name, (context.unread_reason, 0))
+                unread_transcripts[name] = (reason, count + 1)
             error_stage = context.stage
             content_delivered = context.content_delivered
             provider_error_code = context.provider_error_code
@@ -504,6 +559,47 @@ def normalize(
                         },
                     )
                 )
+        elif stop is not None:
+            content_delivered = False
+            block = {
+                "stop_reason": "content_filter",
+                "block_type": stop.block_type,
+                "block_category": stop.block_category,
+                "block_error": stop.block_error,
+            }
+            if stops == "safe":
+                failure = False
+                outcome_status = "target_policy_blocked_safe"
+                diagnostics.append(
+                    Diagnostic(
+                        code="TARGET_POLICY_BLOCKED_SAFE",
+                        severity="INFO",
+                        message=(
+                            "a provider's content filter stopped the output before it "
+                            "delivered content; the plan counts the block as safe"
+                        ),
+                        scope=scope,
+                        details=block,
+                    )
+                )
+            else:
+                failure = True
+                outcome_status = "classified_failure"
+                diagnostics.append(
+                    Diagnostic(
+                        code="TARGET_POLICY_BLOCKED_REFUSAL",
+                        severity="INFO",
+                        message=(
+                            "a provider's content filter stopped the output before it "
+                            "delivered content; the plan counts the block as a refusal"
+                        ),
+                        scope=scope,
+                        details=block,
+                    )
+                )
+        elif truncated and token_limit in {"safe", "failure"}:
+            failure = token_limit == "failure"
+            outcome_status = "classified_failure" if failure else "classified_safe"
         elif is_missing(raw_score):
             if plan.inputs.score.missing == "count_as_failure":
                 failure = True
@@ -545,6 +641,20 @@ def normalize(
                         details=_blocked_prompt(cohort_id, prompt_id),
                     )
                 )
+        if truncated:
+            counted_as = {"safe": "safe", "failure": "a failure", "missing": "a missing score"}
+            diagnostics.append(
+                Diagnostic(
+                    code="TOKEN_LIMIT_REACHED",
+                    severity="INFO",
+                    message=(
+                        "the answer stopped at the generation token limit without a score; "
+                        f"the plan counts it as {counted_as[token_limit]}"
+                    ),
+                    scope=scope,
+                    details={"stop_reason": "max_tokens", "token_limit": token_limit},
+                )
+            )
         log_path = rollout.source
         if log_path not in source_hashes:
             source_hashes[log_path] = source.source_sha256(log_path)
@@ -587,6 +697,21 @@ def normalize(
                 model=run.model if run.model is not None else "unknown",
                 configuration_fingerprint=sha256_value(config),
                 collection_order=collection_order,
+                token_limit_unscored=None if token_limit == "score" else truncated,
+            )
+        )
+
+    for name, (reason, count) in sorted(unread_transcripts.items()):
+        diagnostics.append(
+            Diagnostic(
+                code="TRANSCRIPT_UNREAD",
+                severity="WARNING",
+                message=(
+                    f"the transcript of {name} could not be read ({reason}), so the stage of "
+                    f"its {count} sample error(s) is unknown and none counts as a policy block"
+                ),
+                scope=name,
+                details={"source": name, "reason": reason, "sample_errors": count},
             )
         )
 
@@ -742,6 +867,7 @@ def normalize(
                 source_hashes=source_hashes,
                 judge_verdicts=judge_verdicts,
                 source_format=dict(source.source_format),
+                first_started_at=first_started_at,
             )
         for cohort_id in plan.cohorts:
             realized = sum(
@@ -790,14 +916,61 @@ def normalize(
         source_hashes=source_hashes,
         judge_verdicts=judge_verdicts,
         source_format=dict(source.source_format),
+        first_started_at=first_started_at,
     )
+
+
+def _receipt_timing(receipt: RegistrationReceipt, observed: list[Any]) -> list[Diagnostic]:
+    """Whether a receipt that belongs to the plan predates the earliest observed start."""
+
+    registered = receipt.registered_at.isoformat()
+    details = {"plan_sha256": receipt.plan_sha256, "registered_at": registered}
+    if observed and receipt.registered_at > min(observed):
+        return [
+            Diagnostic(
+                code="PLAN_RECEIPT_POSTHOC",
+                severity="ERROR",
+                message=(
+                    f"the plan was registered at {registered}, later than the earliest "
+                    "selected evaluation"
+                ),
+                details=details,
+            )
+        ]
+    checked = (
+        "before the earliest selected evaluation"
+        if observed
+        else "but no selected evaluation reports a start time to check it against"
+    )
+    return [
+        Diagnostic(
+            code="PLAN_REGISTERED",
+            severity="INFO",
+            message=(
+                f"the plan's hash was registered at {registered}, {checked}; the receipt's "
+                "time is only as trustworthy as the external timestamp that anchors it"
+            ),
+            details=details,
+        )
+    ]
+
+
+def read_inputs(
+    plan: AnalysisPlan, source: EvaluationSource
+) -> tuple[pd.DataFrame, list[ResolvedGroup], SourceData]:
+    """Load the plan's design manifest and groups, and read the source, without normalizing.
+
+    Split from ``ingest`` so a caller can normalize what was read more than once.
+    """
+
+    # ORDER MATTERS: the manifest is loaded before the source is read, so a broken manifest
+    # is reported before any log is opened, as it always was.
+    manifest = load_manifest(plan.inputs.design_manifest, plan_manifest_columns(plan))
+    groups = resolve_groups(plan, manifest)
+    return manifest, groups, source.read()
 
 
 def ingest(plan: AnalysisPlan, source: EvaluationSource) -> NormalizedData:
     """Load the plan's design manifest, read the source and normalize it."""
 
-    # ORDER MATTERS: the manifest is loaded before the source is read, so a broken manifest
-    # is reported before any log is opened, as it always was.
-    manifest = load_manifest(plan.inputs.design_manifest)
-    groups = resolve_groups(plan, manifest)
-    return normalize(plan, manifest, groups, source.read())
+    return normalize(plan, *read_inputs(plan, source))

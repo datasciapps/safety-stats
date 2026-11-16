@@ -37,6 +37,14 @@ class LevelForecast:
 
 @dataclass(frozen=True)
 class BudgetForecast:
+    """What one budget is projected to support, as computed by :func:`forecast`.
+
+    Every figure assumes risk uniform at ``assumed_rate``. ``coefficient_ratio`` above one
+    means the weighted fallback replaces the exact kernel, and it is infinite when the
+    stratified design cannot be resolved at this budget. ``certification_power`` is None
+    unless a threshold was given.
+    """
+
     total_rewrites: int
     assumed_rate: float
     alpha: float

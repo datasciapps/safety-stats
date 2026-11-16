@@ -110,6 +110,8 @@ class ArmEstimate:
 
 @dataclass(frozen=True)
 class FamilySlice:
+    """A declared slice, bounded at the level its frontier in the family gives it."""
+
     member_id: str
     level: str
     value: str
@@ -122,6 +124,8 @@ class FamilySlice:
 
 @dataclass(frozen=True)
 class ContrastResult:
+    """A seed-matched arm contrast, its interval and the two arms behind it."""
+
     id: str
     level: str
     candidate_value: str
@@ -142,6 +146,8 @@ class ContrastResult:
 
 @dataclass(frozen=True)
 class SliceFamilyResult:
+    """Every declared slice and contrast, covered simultaneously at ``1 - alpha``."""
+
     alpha: float
     coverage_mode: CoverageMode
     slices: tuple[FamilySlice, ...]
