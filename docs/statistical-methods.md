@@ -712,8 +712,8 @@ covariance approximations, or resampling as an exact confidence region.
 
 Hoeffding uses only the bounded range and is therefore insensitive to the observed failure
 variance. A second direct construction uses a data-dependent upper bound on the Bernstein
-variance term. Index all independent rollout contributions by (i), with binary outcome (Y_i)
-and fixed coefficient (a_i=w_j/n_j) for a rollout belonging to prompt (j). Define
+variance term. Index all independent rollout contributions by \(i\), with binary outcome \(Y_i\)
+and fixed coefficient \(a_i=w_j/n_j\) for a rollout belonging to prompt \(j\). Define
 
 \[
 C_2=\sum_i a_i^2=\sum_j\frac{w_j^2}{n_j},\qquad
@@ -733,9 +733,9 @@ For the unknown Bernstein variance
 V=\sum_i a_i^2p_i(1-p_i),
 \]
 
-we have (V\le C_2/4), (V\le\mathbb E Q_+), and
-(V\le\mathbb E Q_-). Hoeffding bounds the two expectations using the range-squared sum
-(C_4). With variance-component error probability (delta_v), a valid observable upper bound is
+we have \(V\le C_2/4\), \(V\le\mathbb E Q_+\), and
+\(V\le\mathbb E Q_-\). Hoeffding bounds the two expectations using the range-squared sum
+\(C_4\). With variance-component error probability \(\delta_v\), a valid observable upper bound is
 
 \[
 \overline V=\min\left\{
@@ -745,7 +745,7 @@ Q_- + \sqrt{\frac{C_4}{2}\log\frac1{\delta_v}}
 \right\}.
 \]
 
-Conditional on the event (V\le\overline V), inversion of Bernstein's inequality gives the
+Conditional on the event \(V\le\overline V\), inversion of Bernstein's inequality gives the
 directional half-width
 
 \[
@@ -757,24 +757,24 @@ h_{\mathrm{EB}}=
 }.
 \]
 
-For an endpoint budget (alpha_d), the implementation uses
-(delta_t=\alpha_d/2) for the Bernstein tail and
-(delta_v=\alpha_d/4) for each of the two variance proxies. A union bound therefore limits the
-endpoint failure probability to (alpha_d).
+For an endpoint budget \(\alpha_d\), the implementation uses
+\(\delta_t=\alpha_d/2\) for the Bernstein tail and
+\(\delta_v=\alpha_d/4\) for each of the two variance proxies. A union bound therefore limits the
+endpoint failure probability to \(\alpha_d\).
 
 Unknown outcomes are completed as all-safe for the lower endpoint's estimate and as all-failure
 for the upper endpoint's. The variance bound does not follow that completion. For both
-endpoints, (Q_+) comes from the all-failure completion and (Q_-) from the all-safe one. Each is
-then at least its value under any completion, so (\overline V) holds for the true labels
+endpoints, \(Q_+\) comes from the all-failure completion and \(Q_-\) from the all-safe one. Each is
+then at least its value under any completion, so \(\overline V\) holds for the true labels
 whatever they are, and the interval contains the interval of every completion.
 
 Taking both proxies from each endpoint's own completion is not monotone. Completing an unknown
-as a failure lowers (Q_-), and with skewed weights the width can then shrink by more than the
+as a failure lowers \(Q_-\), and with skewed weights the width can then shrink by more than the
 estimate rises.
 
-**Fixed variance centers.** For any constant (c), (\operatorname{Var}(Y)\le\mathbb E(Y-c)^2),
-with slack ((\mathbb E Y-c)^2). A caller may therefore fix (K) centerings in advance, from the
-design and never from the data, each a center (c_i^{(k)}\in[0,1]) per contribution, and use
+**Fixed variance centers.** For any constant \(c\), \(\operatorname{Var}(Y)\le\mathbb E(Y-c)^2\),
+with slack \((\mathbb E Y-c)^2\). A caller may therefore fix \(K\) centerings in advance, from the
+design and never from the data, each a center \(c_i^{(k)}\in[0,1]\) per contribution, and use
 
 \[
 Q_{c^{(k)}}=\sum_i a_i^2\bigl(Y_i-c_i^{(k)}\bigr)^2,\qquad
@@ -782,20 +782,20 @@ Q_{c^{(k)}}=\sum_i a_i^2\bigl(Y_i-c_i^{(k)}\bigr)^2,\qquad
 +\sqrt{\tfrac12 C_4^{(k)}\log\tfrac1{\delta_v}}\Bigr)\right\},
 \]
 
-with (delta_v=\alpha_d/(2K)), so the (K) variance proxies share half the endpoint budget. Each
-term of (Q_{c^{(k)}}) lies in ([0,a_i^2r_i^{(k)}]) with
-(r_i^{(k)}=\max\{(c_i^{(k)})^2,(1-c_i^{(k)})^2\}), so Hoeffding's padding uses the range-squared
-sum (C_4^{(k)}=\sum_i a_i^4(r_i^{(k)})^2). For centers 0 or 1, (r=1) and (C_4^{(k)}=C_4); about
-(1/2), (r=1/4) and the padding is a quarter as large. An unknown outcome contributes its larger
-completion, (r_i^{(k)}) on the rollout unit; on the prompt-cluster unit the squared deviation is
+with \(\delta_v=\alpha_d/(2K)\), so the \(K\) variance proxies share half the endpoint budget. Each
+term of \(Q_{c^{(k)}}\) lies in \([0,a_i^2r_i^{(k)}]\) with
+\(r_i^{(k)}=\max\{(c_i^{(k)})^2,(1-c_i^{(k)})^2\}\), so Hoeffding's padding uses the range-squared
+sum \(C_4^{(k)}=\sum_i a_i^4(r_i^{(k)})^2\). For centers 0 or 1, \(r=1\) and \(C_4^{(k)}=C_4\); about
+\(1/2\), \(r=1/4\) and the padding is a quarter as large. An unknown outcome contributes its larger
+completion, \(r_i^{(k)}\) on the rollout unit; on the prompt-cluster unit the squared deviation is
 convex in the completed rate, so its maximum lies at one of the two extreme completions. The
-default, (K=2) with (c\equiv0) and (c\equiv1), is exactly (Q_+) and (Q_-) above.
+default, \(K=2\) with \(c\equiv0\) and \(c\equiv1\), is exactly \(Q_+\) and \(Q_-\) above.
 
-Validity: let (V_0=\min\{C_2/4,\min_k\mathbb E Q_{c^{(k)}}\}), which is deterministic and at least
-(V). On the event that all (K) Hoeffding bounds hold (probability at least (1-\alpha_d/2)),
-(\overline V\ge V_0), and the Bernstein width is increasing in the variance, so a miss requires
-the Bernstein tail at (V_0) (probability at most (\alpha_d/2)). This needs the centers to be
-fixed: a center chosen from the data would make (V_0) random.
+Validity: let \(V_0=\min\{C_2/4,\min_k\mathbb E Q_{c^{(k)}}\}\), which is deterministic and at least
+\(V\). On the event that all \(K\) Hoeffding bounds hold (probability at least \(1-\alpha_d/2\)),
+\(\overline V\ge V_0\), and the Bernstein width is increasing in the variance, so a miss requires
+the Bernstein tail at \(V_0\) (probability at most \(\alpha_d/2\)). This needs the centers to be
+fixed: a center chosen from the data would make \(V_0\) random.
 
 This is a finite-sample, heterogeneous-Bernoulli empirical-Bernstein construction, not a normal
 approximation and not a plug-in standard error. It can be materially narrower than Hoeffding, but
