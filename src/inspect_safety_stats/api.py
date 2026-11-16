@@ -21,6 +21,7 @@ from inspect_safety_stats.config.models import (
     ComparisonSpec,
     DirectMeanIntervalsSpec,
     IndependenceSelectionSpec,
+    OutcomeMappingSensitivitySpec,
     RiskMeasureSpec,
 )
 from inspect_safety_stats.decision.engine import decide_claim, roll_up
@@ -29,7 +30,7 @@ from inspect_safety_stats.ingest.manifest import (
     resolve_weights,
 )
 from inspect_safety_stats.ingest.normalize import ingest
-from inspect_safety_stats.ingest.records import EvaluationSource, NormalizedData
+from inspect_safety_stats.ingest.records import EvaluationSource, NormalizedData, SourceData
 from inspect_safety_stats.ingest.validation import (
     judge_stratum_counts,
     load_validation_manifest,
@@ -46,9 +47,11 @@ from inspect_safety_stats.schema.reports import (
     GroupRiskResult,
     HierarchyRiskResult,
     IntegritySummary,
+    OutcomeMappingSensitivity,
     PromptEstimate,
     RiskIntervalResult,
     SafetyReport,
+    mapping_results,
 )
 from inspect_safety_stats.stats.binomial import (
     binomial_bounds,
@@ -4806,6 +4809,43 @@ def _resolved_design(data: NormalizedData, hierarchy: list[str]) -> list[dict[st
     return rows
 
 
+class _ReadOnce:
+    """A source read at most once, so that every outcome mapping analyses the same records."""
+
+    def __init__(self, source: EvaluationSource) -> None:
+        self._source = source
+        self._data: SourceData | None = None
+
+    def read(self) -> SourceData:
+        if self._data is None:
+            self._data = self._source.read()
+        return self._data
+
+
+def _outcome_mapping_sensitivity(
+    plan: AnalysisPlan, source: EvaluationSource, spec: OutcomeMappingSensitivitySpec
+) -> OutcomeMappingSensitivity:
+    alternative = plan.model_copy(deep=True)
+    alternative.inputs.score.mapping_sensitivities = []
+    alternative.inputs.score.mapping = spec.mapping.model_copy(deep=True)
+    try:
+        report = _analyze_once(alternative, source)
+    except ValueError as exc:
+        raise ValueError(f"outcome mapping sensitivity {spec.id!r}: {exc}") from exc
+    counts: dict[str, int] = {}
+    for item in report.integrity.diagnostics:
+        counts[item.code] = counts.get(item.code, 0) + 1
+    return OutcomeMappingSensitivity(
+        id=spec.id,
+        title=spec.title,
+        mapping=spec.mapping.model_dump(mode="json", exclude_none=True),
+        integrity_status=report.integrity.status,
+        diagnostic_counts=dict(sorted(counts.items())),
+        decision=report.decision,
+        results=mapping_results(report),
+    )
+
+
 def analyze(
     *,
     plan: AnalysisPlan | str | Path,
@@ -4814,10 +4854,23 @@ def analyze(
     source: EvaluationSource | None = None,
 ) -> SafetyReport:
     resolved = _coerce_plan(plan)
-    if resolved.inputs.score.mapping_sensitivities:
-        raise NotImplementedError("inputs.score.mapping_sensitivities is not analysed yet")
+    evaluation = _source(logs, parallel, source)
+    sensitivities = resolved.inputs.score.mapping_sensitivities
+    if not sensitivities:
+        return _analyze_once(resolved, evaluation)
+    evaluation = _ReadOnce(evaluation)
+    report = _analyze_once(resolved, evaluation)
+    report.outcome_mapping_sensitivities = [
+        _outcome_mapping_sensitivity(resolved, evaluation, spec) for spec in sensitivities
+    ]
+    return report
+
+
+def _analyze_once(resolved: AnalysisPlan, source: EvaluationSource) -> SafetyReport:
+    """The analysis of ``source`` under the plan's primary outcome mapping only."""
+
     diagnostics = validate_plan_references(resolved)
-    data = ingest(resolved, _source(logs, parallel, source))
+    data = ingest(resolved, source)
     validate_profile_fields(resolved.design.independence_profiles, data.manifest)
     diagnostics.extend(data.diagnostics)
     estimates = _prompt_estimates(resolved, data, diagnostics)

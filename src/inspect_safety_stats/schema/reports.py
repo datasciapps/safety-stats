@@ -3,7 +3,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+)
 
 Decision = Literal["PASS", "FAIL", "INCONCLUSIVE"]
 Eligibility = Literal["certifying", "diagnostic", "invalid"]
@@ -241,6 +248,39 @@ class ClaimResult(ResultModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class MappingSensitivityResult(ResultModel):
+    """One displayed result as an alternative outcome mapping reads it."""
+
+    kind: Literal["group_risk", "comparison", "claim"]
+    result_id: str
+    cohort_id: str | None = None
+    group_id: str | None = None
+    measure_id: str | None = None
+    estimate: float | None = None
+    lower: float | None = None
+    upper: float | None = None
+    # A claim's status under this mapping. It certifies nothing and never enters the decision.
+    status: Decision | None = None
+
+
+class OutcomeMappingSensitivity(ResultModel):
+    """Experimental: the analysis repeated under one declared alternative outcome mapping.
+
+    Each mapping's intervals carry the coverage the plan declares for that mapping alone; they
+    are not simultaneous across mappings. Nothing here enters a claim's status or the decision.
+    """
+
+    id: str
+    title: str | None = None
+    mapping: dict[str, Any]
+    integrity_status: Literal["valid", "degraded", "invalid"]
+    # How many diagnostics of each code this mapping's analysis raised.
+    diagnostic_counts: dict[str, int] = Field(default_factory=dict)
+    # The decision this mapping alone would give. Descriptive only.
+    decision: Decision
+    results: list[MappingSensitivityResult] = Field(default_factory=list)
+
+
 class SafetyReport(ResultModel):
     schema_version: Literal["3.0"] = "3.0"
     package_version: str
@@ -260,11 +300,64 @@ class SafetyReport(ResultModel):
     claims: list[ClaimResult]
     policy_events: list[dict[str, Any]]
     decision: Decision
+    # Experimental; left out of report.json when the plan declares no alternative mapping.
+    outcome_mapping_sensitivities: list[OutcomeMappingSensitivity] = Field(default_factory=list)
     _observations: list[Any] = PrivateAttr(default_factory=list)
     _resolved_design: list[dict[str, Any]] = PrivateAttr(default_factory=list)
     _resolved_plan: dict[str, Any] = PrivateAttr(default_factory=dict)
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_mapping_sensitivities(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if not self.outcome_mapping_sensitivities:
+            data.pop("outcome_mapping_sensitivities", None)
+        return data
 
     def write(self, output: str | Path, *, overwrite: bool = False) -> Path:
         from inspect_safety_stats.report.writer import write_report
 
         return write_report(self, output, overwrite=overwrite)
+
+
+def mapping_results(report: SafetyReport) -> list[MappingSensitivityResult]:
+    """The displayed results that outcome mapping sensitivities put side by side."""
+
+    rows = [
+        MappingSensitivityResult(
+            kind="group_risk",
+            result_id=f"{risk.cohort_id}:{risk.group_id}:{risk.measure_id}",
+            cohort_id=risk.cohort_id,
+            group_id=risk.group_id,
+            measure_id=risk.measure_id,
+            estimate=risk.estimate,
+            lower=risk.lower,
+            upper=risk.upper,
+        )
+        for risk in report.group_risks
+    ]
+    rows.extend(
+        MappingSensitivityResult(
+            kind="comparison",
+            result_id=comparison.result_id or comparison.comparison_id,
+            group_id=comparison.group_id,
+            measure_id=comparison.measure_id,
+            estimate=comparison.estimate,
+            lower=comparison.lower,
+            upper=comparison.upper,
+        )
+        for comparison in report.comparisons
+    )
+    rows.extend(
+        MappingSensitivityResult(
+            kind="claim",
+            result_id=claim.claim_id,
+            estimate=claim.estimate,
+            lower=claim.lower,
+            upper=claim.upper,
+            status=claim.status,
+        )
+        for claim in report.claims
+    )
+    return rows

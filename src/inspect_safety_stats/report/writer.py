@@ -9,7 +9,8 @@ from typing import Any
 import yaml
 
 from inspect_safety_stats.config.canonicalize import canonical_value
-from inspect_safety_stats.schema.reports import SafetyReport
+from inspect_safety_stats.config.models import PRIMARY_MAPPING_ID
+from inspect_safety_stats.schema.reports import SafetyReport, mapping_results
 
 
 def _sha256(path: Path) -> str:
@@ -85,6 +86,115 @@ def _claim_status(claim: Any) -> str:
     if claim.descriptive_status is None:
         return f"`{claim.status}`"
     return f"`{claim.status}` (descriptive: `{claim.descriptive_status}`)"
+
+
+_MAPPING_KIND_ORDER = {"group_risk": 0, "comparison": 1, "claim": 2}
+
+
+def _mapping_sensitivity_rows(report: SafetyReport) -> list[dict[str, Any]]:
+    """Every displayed result under each outcome mapping, the primary one first.
+
+    Rows of one result are adjacent, in the primary mapping's then the plan's declared order.
+    """
+
+    readings = [(PRIMARY_MAPPING_ID, mapping_results(report))]
+    readings.extend((item.id, item.results) for item in report.outcome_mapping_sensitivities)
+    rows: list[tuple[tuple[int, str], int, dict[str, Any]]] = []
+    for position, (mapping_id, results) in enumerate(readings):
+        for result in results:
+            rows.append(
+                (
+                    (_MAPPING_KIND_ORDER[result.kind], result.result_id),
+                    position,
+                    {
+                        "kind": result.kind,
+                        "result_id": result.result_id,
+                        "cohort_id": result.cohort_id,
+                        "group_id": result.group_id,
+                        "measure_id": result.measure_id,
+                        "mapping_id": mapping_id,
+                        "estimate": result.estimate,
+                        "lower": result.lower,
+                        "upper": result.upper,
+                        "status": result.status,
+                    },
+                )
+            )
+    return [row for _, _, row in sorted(rows, key=lambda item: (item[0], item[1]))]
+
+
+def _mapping_sensitivity_markdown(
+    report: SafetyReport, places: int, include_decisions: bool
+) -> list[str]:
+    lines = [
+        "",
+        "## Outcome mapping sensitivity (experimental)",
+        "",
+        (
+            "The analysis is repeated under each declared alternative outcome mapping. Each "
+            "mapping's intervals carry the coverage the plan declares for that mapping alone; "
+            "they are not simultaneous across mappings. Only the primary mapping enters claims "
+            "and the decision."
+        ),
+        "",
+        "| Mapping | Title | Failure values | Safe values | Integrity |"
+        + (" Decision |" if include_decisions else ""),
+        "|---|---|---|---|---|" + ("---|" if include_decisions else ""),
+    ]
+    primary = report._resolved_plan.get("inputs", {}).get("score", {}).get("mapping", {})
+    mappings: list[tuple[str, str | None, dict[str, Any], str, str]] = [
+        (PRIMARY_MAPPING_ID, None, primary, report.integrity.status, report.decision)
+    ]
+    mappings.extend(
+        (item.id, item.title, item.mapping, item.integrity_status, item.decision)
+        for item in report.outcome_mapping_sensitivities
+    )
+    for mapping_id, title, mapping, integrity, decision in mappings:
+        if mapping.get("failure_if") is not None:
+            rule = mapping["failure_if"]
+            failure = f"{rule.get('operator')} {rule.get('value')}"
+            safe = "otherwise"
+        else:
+            failure = ", ".join(str(value) for value in mapping.get("failure_values") or [])
+            safe = ", ".join(str(value) for value in mapping.get("safe_values") or [])
+        cells = [
+            _escape(mapping_id),
+            _escape(title),
+            _escape(failure),
+            _escape(safe),
+            f"`{integrity}`",
+        ]
+        if include_decisions:
+            descriptive = "" if mapping_id == PRIMARY_MAPPING_ID else " (descriptive)"
+            cells.append(f"`{decision}`{descriptive}")
+        lines.append("| " + " | ".join(cells) + " |")
+    lines.extend(
+        [
+            "",
+            "| Result | Mapping | Estimate | Lower | Upper |"
+            + (" Claim status |" if include_decisions else ""),
+            "|---|---|---:|---:|---:|" + ("---|" if include_decisions else ""),
+        ]
+    )
+    for row in _mapping_sensitivity_rows(report):
+        if row["kind"] == "claim" and not include_decisions:
+            continue
+        cells = [
+            _escape(f"{row['kind']} {row['result_id']}"),
+            _escape(row["mapping_id"]),
+            _number(row["estimate"], places),
+            _number(row["lower"], places),
+            _number(row["upper"], places),
+        ]
+        if include_decisions:
+            cells.append(_escape(row["status"]) if row["status"] is not None else "")
+        lines.append("| " + " | ".join(cells) + " |")
+    lines.append("")
+    lines.append(
+        "Every row is in `outcome-mapping-sensitivity.csv`; a sensitivity's diagnostics are "
+        "counted in `report.json`."
+    )
+    return lines
 
 
 def _markdown(report: SafetyReport) -> str:
@@ -694,6 +804,8 @@ def _markdown(report: SafetyReport) -> str:
                     )
                     + " |"
                 )
+    if report.outcome_mapping_sensitivities:
+        lines.extend(_mapping_sensitivity_markdown(report, places, include_decisions))
     if include_decisions and report.policy_events:
         lines.extend(["", "## Policy events", ""])
         for event in report.policy_events:
@@ -847,6 +959,12 @@ def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = 
     ]
     if include_observations:
         generated_names.append("observations.csv")
+    mapping_csv = directory / "outcome-mapping-sensitivity.csv"
+    if report.outcome_mapping_sensitivities:
+        _write_csv(mapping_csv, _mapping_sensitivity_rows(report))
+        generated_names.append(mapping_csv.name)
+    elif mapping_csv.exists():
+        mapping_csv.unlink()
     checksums = {name: _sha256(directory / name) for name in sorted(generated_names)}
     (directory / "checksums.json").write_text(
         json.dumps(checksums, indent=2, sort_keys=True) + "\n",
