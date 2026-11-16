@@ -1,7 +1,9 @@
 # Anytime-valid confidence sequences: phase-0 design
 
-**Status:** design only. Nothing here is implemented. This document is phase 0 of #10; it fixes
-what phase 1 builds and what it must refuse. The mathematics is in
+**Status:** phase 0 of #10, a design; phase 1 is not built. One piece of it is: the one-sided
+bound for runs that optstop stopped (#126, experimental), in
+[Runs that optstop stopped](#runs-that-optstop-stopped-126). This document fixes what phase 1
+builds and what it must refuse. The mathematics is in
 [Statistical methods](statistical-methods.md) sections 6, 11, 12 and 16.7, and is not repeated
 here.
 
@@ -59,7 +61,8 @@ Two limits follow from that proposition:
 
 - **With replacement only.** It covers independent draws from \(q_t\), so an item can be drawn
   again. A seeded permutation, drawing without replacement, is not covered: the conditional
-  mean shifts as items are used up. Phase 1 supports draws with replacement only.
+  mean shifts as items are used up. The bound for #126 below covers a permutation by a
+  different route, for an upper bound.
 - **Every weight positive.** An item of weight zero is outside the estimand and is never drawn.
 
 ### Several rollouts per draw
@@ -196,9 +199,89 @@ decisions, a weighted estimand, several rollouts per prompt, judge correction or
 across claims. Those five are what this package already provides at the fixed horizon, and the
 sequence must keep them.
 
+## Runs that optstop stopped (#126)
+
+Optstop stops an Inspect run once a Bayesian credible interval is narrow enough. Its paper
+reports that this targets precision, not coverage (section 12). `outputs.anytime_bounds`
+(experimental, [plan reference](plan-reference.md#anytime-valid-bounds-for-runs-stopped-early-experimental))
+reports a one-sided upper bound \(U_t\) with
+
+\[
+\Pr\bigl(\exists t:\ \theta > U_t\bigr)\le\alpha ,
+\]
+
+so \(U_\tau\) is valid at the stopping time \(\tau\), whatever rule chose it. The code is
+`src/inspect_safety_stats/stats/sequential.py`.
+
+### The stream
+
+Inspect's `sample_shuffle` runs the \(N\) items in a uniformly random order, a permutation, fixed
+before the run. Item \(i\) has weight \(w_i\) and outcome \(Y_i\in[0,1]\), its failure share
+over its first \(r\) epochs, where \(r\) is declared in advance. Epochs after the first \(r\)
+are ignored, so a rule that stops an item's later epochs on its results cannot bias \(Y_i\).
+
+### Two steps, each at \(\alpha/2\)
+
+1. **The realized design mean \(S=\sum_i w_iY_i\).** Given the outcomes, the order is a
+   uniform permutation, so the prefix is a sample without replacement from the finite
+   population of the \(N\) values \(Z_i=w_iY_i/\max_j w_j\in[0,1]\). For a candidate population
+   mean \(\mu\) of the \(Z_i\), the next draw's conditional mean is
+   \(m_t(\mu)=(N\mu-\sum_{s<t}Z_s)/(N-t+1)\), which the past determines. For a bet fraction
+   \(f\in[0,1)\), the capital \(\prod_t\bigl(1-f+f(1-Z_t)/(1-m_t(\mu))\bigr)\) is then a
+   nonnegative martingale with mean one at the true \(\mu\), and so is the mixture over the
+   fixed fractions of the betting bounds (#3). Ville's inequality bounds the chance that it
+   ever reaches \(2/\alpha\). The candidates it has reached that level at, by any prefix, are
+   rejected; the capital rises with \(\mu\), so they form an upper ray.
+2. **From \(S\) to \(\theta=\sum_iw_iE[Y_i]\).** The \(Y_i\) are independent across items, so the
+   fixed-horizon KL/Chernoff bound turns an upper bound on \(S\) into one on \(\theta\). It rises
+   with \(S\), so step 1's bound can stand in for \(S\). Under a `rollout` profile the \(Nr\)
+   rollouts count as independent blocks, as they do at the fixed horizon.
+
+At \(t=N\) step 1 is exact, and only step 2 remains. The package's labelling protocol uses a
+related sequence, `hypergeometric_confidence_sequence`, for binary labels without weights
+(statistical methods, judge calibration); this one takes weighted outcomes in \([0,1]\).
+
+Replacing an outcome by a larger value lowers every factor of the capital, and the fractions
+are fixed in advance, so the bound stays valid when unfinished or unclassified epochs before
+the last observed item count as failures. Leaving such an item out instead would not be valid.
+Draws are read in the recorded order, never in completion order.
+
+### Coverage where optstop's rule stops
+
+`python research/optstop_coverage.py` (about 35 s) simulates 200 heterogeneous items with
+10 rollouts each, item failure probabilities fixed per row from a Beta distribution with
+concentration 4. The run stops once the 97% Beta(1, 1) interval of the pooled rate is at most
+0.05 wide, after at least 5 items: optstop's validation settings, on the pooled rate rather
+than its hierarchical model. 2,000 runs per row, one-sided \(\alpha=0.05\):
+
+| \(\theta\) | items at stop (median) | anytime bound misses | Clopper–Pearson at the stop misses | Clopper–Pearson, full run, misses | median anytime bound | median item-level KL bound at the stop |
+|---|---|---|---|---|---|---|
+| 0.0073 | 9 | 0.000 | 0.000 | 0.036 | 0.388 | 0.283 |
+| 0.0447 | 30 | 0.000 | 0.208 | 0.025 | 0.184 | 0.188 |
+| 0.3089 | 161 | 0.002 | 0.061 | 0.028 | 0.370 | 0.402 |
+| 0.4877 | 188 | 0.002 | 0.042 | 0.033 | 0.538 | 0.576 |
+
+The anytime bound misses at most \(\alpha\) in every row. Clopper–Pearson at the stopping time,
+the bound a run analysed as if its length had been fixed gets, misses 0.208 near
+\(\theta=0.045\). Near 0.007 neither misses: the rule stops after 9 items while Clopper–Pearson is
+still conservative there. The anytime bound is close to the fixed-horizon KL bound with items
+as the unit at the same stop, so most of its width over pooled Clopper–Pearson is item
+heterogeneity, which pooled Clopper–Pearson ignores, rather than the price of anytime
+validity. A run stopped after 30 of 200 heterogeneous items says little about the other 170.
+
+### Optstop's released shadow-mode data
+
+Optstop's repository (MIT licence) releases its shadow-mode results as
+`paper/paper_results/data/*_shadow.json`. They are run summaries: the trial count at which
+optstop would have stopped and the sample ids, but no per-trial outcomes. The bound at the stop
+cannot be computed from them. Their runs also record `sample_shuffle: null`, so the analysis
+would refuse them for having no recorded order. A shadow-mode replay needs the run's Inspect
+log, run with `sample_shuffle` set to a seed.
+
 ## Work that builds on this
 
-- #126: certify Inspect runs that optstop stopped early with an anytime-valid bound.
+- #126: certify Inspect runs that optstop stopped early with an anytime-valid bound; see
+  [Runs that optstop stopped](#runs-that-optstop-stopped-126).
 - #125: FAIL-only lower bounds for attackers that adapt across behaviours. Implemented as
   `adaptive_claims` (experimental), with its own lower bound (statistical methods section
   11.1); it does not wait for phase 1.

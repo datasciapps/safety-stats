@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from inspect_safety_stats.analysis.anytime import OrderReader, anytime_bound_diagnostics
 from inspect_safety_stats.analysis.core import (
     _add_judge_claims,
     _add_judge_configurations,
@@ -27,7 +29,7 @@ from inspect_safety_stats.config.models import AnalysisPlan, OutcomeMappingSensi
 from inspect_safety_stats.config.registration import RegistrationReceipt, load_receipt
 from inspect_safety_stats.decision.engine import roll_up
 from inspect_safety_stats.ingest.normalize import normalize, read_inputs
-from inspect_safety_stats.ingest.records import EvaluationSource, NormalizedData
+from inspect_safety_stats.ingest.records import EvaluationSource, NormalizedData, SampleOrder
 from inspect_safety_stats.schema.reports import (
     Diagnostic,
     IntegritySummary,
@@ -208,6 +210,20 @@ def validate(
     return _sorted_integrity(diagnostics)
 
 
+def _order_reader(logs: LogInput, source: EvaluationSource | None) -> OrderReader | None:
+    """How to read the runs' recorded sample orders: from Inspect logs, which record them."""
+
+    if source is not None:
+        return None
+
+    def read(sources: Mapping[str, str]) -> Mapping[str, SampleOrder]:
+        from inspect_safety_stats.ingest.inspect_logs import read_inspect_sample_orders
+
+        return read_inspect_sample_orders(sources, logs)
+
+    return read
+
+
 def analyze(
     *,
     plan: AnalysisPlan | str | Path,
@@ -255,7 +271,10 @@ def analyze(
     policy_record = _decision_policy_record(application, data.first_started_at, diagnostics)
     # ORDER MATTERS too: an invalid flip manifest must be an error before integrity is read.
     judge_flip_diagnostic(resolved, data, diagnostics)
-    core =_analysis_core(resolved, data, diagnostics)
+    # ORDER MATTERS as well: a run without a recorded order must be an error before integrity
+    # is read.
+    anytime_bound_diagnostics(resolved, data, diagnostics, _order_reader(logs, source))
+    core = _analysis_core(resolved, data, diagnostics)
     estimates = core.estimates
     risks = core.risks
     hierarchy_risks = core.hierarchy_risks

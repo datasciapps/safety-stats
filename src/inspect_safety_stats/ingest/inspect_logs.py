@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -37,6 +37,7 @@ from inspect_safety_stats.ingest.records import (
     NormalizedData,
     RolloutRecord,
     RunRecord,
+    SampleOrder,
     SourceData,
     StopContext,
 )
@@ -50,6 +51,7 @@ __all__ = [
     "ingest_inspect_logs",
     "read_inspect_rollouts",
     "read_inspect_runs",
+    "read_inspect_sample_orders",
     "read_inspect_source",
 ]
 
@@ -392,6 +394,33 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
         source_format=SOURCE_FORMAT,
         stop_context=stop_context,
     )
+
+
+def read_inspect_sample_orders(
+    sources: Mapping[str, str], logs: LogInput = None
+) -> dict[str, SampleOrder]:
+    """The recorded sample order of each run, from its log header.
+
+    ``sources`` maps each run's ``eval_id`` to the log it was read from. A log passed in
+    ``logs`` as an ``EvalLog`` is used as given; any other is read from disk, header only.
+    Inspect records ``sample_shuffle`` in the eval config and lists the sample ids in the
+    shuffled order in ``eval.dataset.sample_ids``, which is the order it schedules them in:
+    every sample's first epoch, then every sample's second, and so on.
+    """
+
+    provided = _provided_eval_logs(logs)
+    orders: dict[str, SampleOrder] = {}
+    for run_key, source in sources.items():
+        log = provided.get(run_key) or read_eval_log(source, header_only=True)
+        ids = log.eval.dataset.sample_ids
+        orders[run_key] = SampleOrder(
+            run_key=run_key,
+            source=source,
+            shuffle=log.eval.config.sample_shuffle,
+            shuffled=log.eval.dataset.shuffled,
+            sample_ids=None if ids is None else tuple(str(item) for item in ids),
+        )
+    return orders
 
 
 @dataclass(frozen=True)

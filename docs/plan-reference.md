@@ -818,6 +818,60 @@ simultaneous, does not enter claims, and is usually above a 95% bound. Each inte
 sampled design and with judge calibration. See
 [Single-valued bound for system models](statistical-methods.md#single-valued-bound-for-system-models-experimental).
 
+### Anytime-valid bounds for runs stopped early (experimental)
+
+`outputs.anytime_bounds` bounds a run that a rule such as optstop's stopped once its outcomes
+looked precise enough. The fixed-horizon bounds do not hold for such a run, because its
+length depended on its outcomes. This bound holds at every point of the run's sample order at
+once, so it holds wherever the run stopped, whatever rule chose the stop.
+
+```yaml
+outputs:
+  anytime_bounds:
+    independence_profile: prompt  # a profile of design.independence_profiles
+    family: gate                  # the multiplicity family whose alpha the bounds share
+    rollouts_per_item: 1          # optional, default 1: epochs per prompt in the stream
+    groups: [all]                 # optional, default every group
+```
+
+What it needs from the run:
+
+- **A random order fixed before the run, recorded in the log.** Run the evaluation with
+  Inspect's `sample_shuffle` set to an integer seed. Inspect then records the seed and lists
+  the sample ids in the shuffled order. Inspect does not shuffle by default. A run without a
+  shuffle, or shuffled without a recorded seed (`sample_shuffle: true`), is refused with an
+  `ANYTIME_ORDER_UNRECORDED` error, and so is any source other than Inspect logs.
+- **A stopping rule that only stops.** The rule may decide when to stop, but never which
+  prompt runs next.
+- **One run per cohort**, whose order lists every prompt of each group once. A `limit` that
+  leaves prompts out of the order is refused.
+
+Each prompt's outcome is its failure share over its first `rollouts_per_item` epochs. Inspect
+schedules every prompt's first epoch before any second epoch, so with several epochs a run
+stopped early has few complete prompts; keep the default of 1 unless every prompt ran its
+epochs. Prompts are read in the recorded order, never in the order they finished, up to the
+last prompt with an observation. Before it, an epoch that is missing or unclassified counts as
+a failure. This only raises the bound, so it stays valid.
+
+`independence_profile` must block by `rollout`, which treats the epochs of one prompt as
+independent, or by `prompt_id`, which treats only prompts as independent. A coarser profile is
+refused: the bound needs independent prompts. The family's alpha is split equally over every
+cohort and group bounded. The bound is the weighted mean failure probability of the group,
+with the group's weights.
+
+`analyze` adds an `ANYTIME_UPPER_BOUND` diagnostic (`INFO`) for each cohort and group. Its
+`details` hold the run, its seed, `population` (the group's prompts), `draws` (prompts read),
+`complete_draws`, `rollouts_counted_as_failures`, the alpha, `estimate`, `upper`, and, for
+each weighted-mean claim on that cohort and group, whether `upper` is at or below its
+`acceptable_upper` (`certified`). The bound never changes a claim's status or the decision:
+claims keep the status the fixed-horizon analysis gives them, which for a run stopped early is
+usually `INCONCLUSIVE`. Any other reason the bound cannot be computed is an
+`ANYTIME_BOUND_INVALID` error, and a plan the bound cannot serve (a sampled design, an unknown
+family, group or profile, or a coarser profile) is a `PLAN_ANYTIME_BOUNDS_INVALID` error. A
+plan without the section keeps its hash and outputs. See
+[Runs that optstop stopped](sequential-design.md#runs-that-optstop-stopped-126) for the
+construction and what it costs.
+
 ## `comparison_sets`
 
 Use a comparison set for two or more cohorts:
