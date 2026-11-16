@@ -18,6 +18,19 @@ described in their pull requests.
   protocol produce the same bytes and hash as before. See
   [Labelling protocol](docs/judge-misclassification.md#labelling-protocol-experimental).
 
+- **Arm contrasts and a simultaneous slice family in generative evaluation (experimental).**
+  A generative plan can declare `inference.slice_family`: slices of arm levels and contrasts
+  between two values of one arm level, such as one wrapper against another. They are covered
+  simultaneously at `1 - alpha` for the primary cohort. A contrast holds the mix of semantic
+  seeds fixed between its two values, so declared context weights and constraints cannot move
+  it. The family is written to `family.csv`, to a `slice_family` block in `report.json` and to
+  a section of `report.html`, and `generative analyze` prints each member's upper bound. Plans
+  without the block keep their `report.json` and CSV bytes. Every generative `report.html`
+  changes bytes, because it embeds the script of the new section, and so does
+  `checksums.json`, which holds its digest. With the block, `checksums.json` also covers
+  `family.csv`. See
+  [Arm contrasts](docs/generative-evaluation.md#arm-contrasts-and-a-simultaneous-slice-family-experimental).
+
 - **Rewrite validation and near-duplicate detection in the package (experimental).** In a
   generative plan, `rewrite.validation.invoke: true` makes materialization call the validator
   the plan names, supplied with `--validator` (or `validator=`), on every rewrite the kernel

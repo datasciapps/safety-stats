@@ -1935,6 +1935,90 @@ not for every design, so a design planned here may resolve more than stated unde
 methods, and has no stated guarantee under them. Unclassified outcomes widen the analysis
 bounds and are not planned for.
 
+### 7.8 Arm contrasts on a generative design (experimental)
+
+The [generative engine](generative-evaluation.md) samples terminal paths of a declared taxonomy
+in which semantic seeds $s$ are a fixed stratification level and transformation levels (arms)
+lie below them, with declared path weights $w(h)$. An arm contrast compares two values $a$ and
+$b$ of one arm level $L$ within one target cohort. Unlike the comparisons above it is not
+paired: each sampling unit carries a single value of $L$, so the two arms hold disjoint units.
+
+**Estimand.** Write $w(s)$ for the declared weight of seed $s$, $w(s,v)$ for the total weight of
+its paths with $L=v$, and $R_s(v)$ for the risk of those paths under the declared weights
+normalized by $w(s,v)$. Let $S$ be the seeds with $w(s,a)>0$ and $w(s,b)>0$, and
+$\pi_s=w(s)/\sum_{t\in S}w(t)$. Then
+
+\[
+\Delta=T_a-T_b,\qquad T_v=\sum_{s\in S}\pi_s\,R_s(v).
+\]
+
+Both arms are averaged over the same seed mix, so a context weight or constraint that makes $a$
+likelier under some seeds than under others does not enter $\Delta$. If $w(s,v)/w(s)$ is the
+same for every seed and $S$ holds every seed, $T_v$ equals the slice risk
+$\sum_{h:L=v}w(h)p_h/\sum_{h:L=v}w(h)$ and $\Delta$ is a difference of two slices. A declared
+slice $L=v$ is bounded by the same construction with $\pi_s=w(s,v)/\sum_t w(t,v)$ over every
+seed holding $v$, which makes $T_v$ exactly the slice risk.
+
+**Direct sampling.** Paths are drawn i.i.d. from the declared distribution, independently of
+outcomes. Conditional on the number $n_v$ of draws with $L=v$ under a seed of $S$, those draws
+are i.i.d. from the declared distribution restricted there, whose mass is
+$W_v=\sum_{s\in S}w(s,v)$; a draw falls under seed $s$ with probability $w(s,v)/W_v$. With
+the known ratio $r_s=\pi_sW_v/w(s,v)$ and the unit's failure fraction $Y\in[0,1]$ (a
+failure indicator with one rollout per rewrite),
+
+\[
+\mathbb E[r_{s(j)}Y_j]=\sum_{s\in S}\frac{w(s,v)}{W_v}\,r_s\,R_s(v)=T_v.
+\]
+
+With $M=\max_s r_s$, the values $r_{s(j)}Y_j/M$ lie in $[0,1]$ and are independent with common
+mean $T_v/M$, so the Bernoulli-KL (Hoeffding 1963) bound on their mean, rescaled by $M$, bounds
+$T_v$ for every realized $n_v$, and therefore unconditionally. When all $r_s=1$, the
+observations are Bernoulli and the bound is exact Clopper--Pearson (section 4.2) with one
+rollout per rewrite. The result reports $M$ as `maximum_ratio`; the interval widens with it.
+
+**Proportional stratified sampling.** Seeds are strata with fixed draw counts $n_s$ drawn
+within the stratum from its declared distribution. Since
+$\mathbb E[\mathbf 1\{L_j=v\}Y_j]=R_s(v)\,w(s,v)/w(s)$ for a draw $j$ in stratum $s$,
+
+\[
+T_v=\mathbb E\Big[\sum_{s\in S}\frac{\pi_s\,w(s)}{w(s,v)\,n_s}\sum_{j\in s}\mathbf 1\{L_j=v\}Y_j\Big],
+\]
+
+a Horvitz--Thompson sum with fixed coefficients over independent observations in $[0,1]$. After
+normalizing the coefficients it is bounded by the weighted KL/Chernoff interval (section
+2.4.10), rescaled by the coefficients' total. Every stratum of $S$ must have received draws;
+otherwise the arm is refused.
+
+**Unclassified rollouts** are completed conservatively in both constructions: as failures for
+the upper endpoint and as safe for the lower one (section 4.5).
+
+**The contrast** at endpoint level $\alpha_e$ bounds each arm at $\alpha_e/2$ per endpoint and
+takes
+
+\[
+\big[L_a-U_b,\;U_a-L_b\big]
+\]
+
+clipped to $[-1,1]$; by the union bound it covers $\Delta$ with probability at least
+$1-\alpha_e$ per endpoint. Under `one_sided_upper` the lower endpoint is reported as $-1$.
+
+**Simultaneous family.** A plan declares slices and contrasts in `inference.slice_family`, and
+the family is calibrated by independent frontiers (section 2.4.10, *Tree-wide calibration by
+independent frontiers*). Under direct sampling, declared slices of one level hold disjoint
+units, and conditional on their counts those are independent, so they form one Šidák frontier.
+When members read shared units -- slices under proportional stratified sampling, where the
+Horvitz--Thompson sum of each slice reads every unit of its strata -- each is a frontier of its
+own. Every contrast is a frontier of its own. Frontiers share $\alpha$ by Bonferroni. Under
+`one_sided_upper` every member's upper bound covers simultaneously with probability at least
+$1-\alpha$; under `two_sided` each endpoint receives half of its member's calibrated level, and
+the guarantee holds for each direction.
+
+**Assumptions and limits.** Sampling units are independent, which path selection and rewrite
+generation deliver; dependence between rollouts within a unit is unrestricted. The family must
+be declared before the results are seen. It covers one cohort and the judge-reported scale
+only; contrasts between cohorts use the paired construction of the comparisons. The guarantee
+is about the declared design, not a population of prompts beyond it.
+
 ---
 
 ## 8. Cluster-aware comparisons
@@ -2417,6 +2501,7 @@ The original Inspect logs should remain immutable; statistical reports should be
 | Core | Multiple safety claims | Intersection-union logic, Holm tests, or Bonferroni simultaneous bounds as appropriate | Protect the declared global or simultaneous claim | Valid component methods and predeclared decision semantics | Correction is claim-dependent, not automatic |
 | Core | Exploratory discovery across many slices | Benjamini–Hochberg | False discovery rate | Standard BH dependence conditions | Must not drive deployment pass |
 | Core | Deployment gate | Two-threshold decision | Controlled false pass/fail | Valid bounds and predeclared thresholds | Inconclusive is a required outcome |
+| Experimental | Two values of one arm level of a generative design | Seed-matched arm contrast, simultaneous over a declared slice family (section 7.8) | Simultaneous coverage of declared slices and contrasts | Independent sampling units; family declared in the frozen plan | Not paired; widens with `maximum_ratio` when the declared weights skew a value across seeds |
 | Stretch | Continuously monitored or adaptively allocated rollouts | Bernoulli confidence sequence | Time-uniform coverage | Method-specific IID or martingale conditions | Adaptive selection can change the estimand |
 
 ---
