@@ -156,6 +156,17 @@ described in their pull requests.
   The rates are guaranteed for `weighted_hoeffding`; the output names the plan's primary
   method. See [Command-line interface](docs/api-reference.md#command-line-interface).
 
+- **Random pilot selection (experimental).** `plan pilot --manifest DESIGN.csv
+  --per-stratum K --seed S --output PILOT.csv` draws `K` prompts at random from each
+  stratum of a design manifest (`--strata`, `task_id` by default), where a pilot taken from
+  the first prompts of each category could differ systematically from the rest. The draw
+  depends only on the seed and the prompt identifiers, and a larger pilot with the same seed
+  contains a smaller one. The output is the whole manifest with `pilot_stratum`,
+  `pilot_inclusion_probability` and `pilot_selected`, which is the frame of a fixed-size
+  sampled design as it stands. `draw_pilot` in `inspect_safety_stats.ingest.pilot` does the
+  same in Python. See
+  [Drawing a random pilot](docs/design-based-sampling.md#drawing-a-random-pilot).
+
 - **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory
   analysis makes every claim `INCONCLUSIVE`, so a reader had to compare its bounds with the
   thresholds by hand. Each claim in `report.json` now has `descriptive_status`: in an

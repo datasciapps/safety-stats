@@ -465,6 +465,8 @@ inspect-safety-stats plan fixed-design --manifest DESIGN.csv --threshold P [--al
     [--rollouts N] [--weights STRATEGY] [--hierarchy LEVELS] [--weight-column COLUMN]
     [--independence-unit UNIT] [--family-size M]
 inspect-safety-stats plan fixed-design --plan PLAN [--manifest DESIGN.csv] [--power B] [--rollouts N]
+inspect-safety-stats plan pilot --manifest DESIGN.csv --per-stratum K --seed S --output PILOT.csv
+    [--strata COLUMNS]
 inspect-safety-stats hash-plan --plan PLAN [--inference | --register RECEIPT.json]
 inspect-safety-stats schema plan
 inspect-safety-stats schema report
@@ -472,7 +474,7 @@ inspect-safety-stats schema decision-policy
 inspect-safety-stats version
 ```
 
-Every `plan` subcommand accepts `--family-size M`, which plans at the Bonferroni share
+Every `plan` subcommand except `pilot` accepts `--family-size M`, which plans at the Bonferroni share
 `alpha / M`. Use it to match the `equal_bonferroni` allocation that `analyze` applies to a
 family of `M` simultaneous claims, so a planned rollout count is sufficient at analysis time
 rather than only in isolation. `plan fixed-design` reads the design manifest itself: weights
@@ -505,6 +507,11 @@ the command exits with status 1 when no claim can be planned, and refuses sample
 `analyze` and `validate` take `--decision-policy POLICY`, a file whose thresholds replace the
 plan's for the claims it sets, and `hash-plan --inference` prints the hash such a policy names
 (experimental; see [Decision policies](decision-policy.md)).
+
+`plan pilot` (experimental) draws `K` prompts at random from each combination of the
+`--strata` columns (`task_id` by default) and writes the whole manifest with
+`pilot_stratum`, `pilot_inclusion_probability` and `pilot_selected` added. See
+[Drawing a random pilot](design-based-sampling.md#drawing-a-random-pilot).
 
 Repeat `--logs` to select multiple files or directories. `--runs` and `--rollouts` name the two
 files of a neutral rollout source instead of Inspect logs, and are given together

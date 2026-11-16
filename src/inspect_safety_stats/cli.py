@@ -589,6 +589,65 @@ def _plan_fixed_design_from_plan(
         raise typer.Exit(1)
 
 
+@plan_app.command("pilot")
+def pilot_command(
+    manifest: Annotated[
+        Path,
+        typer.Option("--manifest", exists=True, dir_okay=False, help="Design manifest CSV."),
+    ],
+    per_stratum: Annotated[
+        int, typer.Option("--per-stratum", min=1, help="Prompts to draw from each stratum.")
+    ],
+    seed: Annotated[
+        int, typer.Option("--seed", help="Selection seed; record it with the pilot.")
+    ],
+    output: Annotated[
+        Path,
+        typer.Option("--output", dir_okay=False, help="Pilot frame CSV to write."),
+    ],
+    strata: Annotated[
+        str,
+        typer.Option(
+            "--strata",
+            help="Comma-separated manifest columns whose combinations form the strata; "
+            "empty for one stratum.",
+        ),
+    ] = "task_id",
+) -> None:
+    """Draw a random pilot within strata of a design manifest (experimental).
+
+    Writes the whole manifest with pilot_stratum, pilot_inclusion_probability and
+    pilot_selected added. Run the pilot on the rows where pilot_selected is true. The
+    same file is the frame of a sampled design (sampling: fixed_size, stratum_column:
+    pilot_stratum, inclusion_probability_column: pilot_inclusion_probability).
+    """
+
+    import pandas as pd
+
+    from inspect_safety_stats.ingest.manifest import load_manifest
+    from inspect_safety_stats.ingest.pilot import draw_pilot
+
+    if output.resolve() == manifest.resolve():
+        raise typer.BadParameter("--output must not overwrite the design manifest")
+    columns = [column.strip() for column in strata.split(",") if column.strip()]
+    try:
+        load_manifest(manifest)
+        # Read every value as written, so the pilot frame repeats the manifest's own text
+        # rather than pandas' reading of it (an integer column with a gap would turn into
+        # floats, for example).
+        frame = pd.read_csv(manifest, dtype=str, keep_default_na=False)
+        pilot = draw_pilot(frame, per_stratum=per_stratum, strata=columns, seed=seed)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    output.parent.mkdir(parents=True, exist_ok=True)
+    pilot.to_csv(output, index=False, lineterminator="\n")
+    selected = pilot.loc[pilot["pilot_selected"]]
+    typer.echo(f"Strata: {pilot['pilot_stratum'].nunique()}")
+    typer.echo(f"Pilot prompts: {len(selected)} of {len(pilot)}")
+    typer.echo(f"Seed: {seed}")
+    typer.echo(f"Pilot frame: {output}")
+
+
 @schema_app.command("plan")
 def plan_schema_command() -> None:
     """Print the JSON schema for analysis plans."""
