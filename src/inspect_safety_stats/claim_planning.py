@@ -1,37 +1,61 @@
-"""Plan every claim of an analysis plan the way ``analyze`` will decide it.
+"""Plan an analysis plan's claims and intervals the way ``analyze`` will compute them.
 
 ``analyze`` decides a ``weighted_mean`` claim on a group with direct-mean intervals on the
-primary direct-mean interval. That interval's endpoint alpha, weights, hierarchy nodes and
-independence blocks all come from the plan, so the planner reads them from the same plan
-rather than from command-line options that can drift from it. Claims decided any other way
-are reported as not planned, with the reason.
+primary direct-mean interval, and reports such an interval for every selected group, every
+hierarchy node and every declared independence profile. Their endpoint alphas, weights and
+independence blocks all come from the plan and the design manifest. The planner does not
+recompute them: it gives analyze's own functions the rollouts the manifest declares, as if
+already observed, and reads the calibration and the blocks off the result. The interval
+method is the plan's, and the detectable rates invert that method's interval. Claims decided
+any other way are reported as not planned, with the reason.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import numpy as np
 import pandas as pd
 
+from inspect_safety_stats.config.methods import DirectMeanMethod
 from inspect_safety_stats.config.models import AnalysisPlan, ClaimSpec
 from inspect_safety_stats.ingest.manifest import (
+    ResolvedGroup,
     load_manifest,
     plan_manifest_columns,
     resolve_groups,
 )
 from inspect_safety_stats.ingest.records import NormalizedData
+from inspect_safety_stats.schema.observations import Observation, observation_field
+from inspect_safety_stats.stats.independence import (
+    BoundedBlocks,
+    direct_bounded_blocks,
+    validate_profile_fields,
+)
 from inspect_safety_stats.stats.planning import (
+    INVERTIBLE_METHODS,
     FixedDesignDetectableRates,
+    MethodDetectableRates,
+    certification_floor,
+    detectable_failure_rates,
     fixed_design_detectable_failure_rates,
 )
+
+if TYPE_CHECKING:
+    from inspect_safety_stats.analysis.direct_mean import _EndpointCalibration
+
+# Fields a block may be formed by before any rollout exists: the manifest's, and the
+# observation fields that the manifest or the plan fix.
+_PLANNABLE_OBSERVATION_FIELDS = frozenset({"prompt_id", "question_id", "task_id", "cohort_id"})
+
+Calibration = Literal["pointwise", "flat_bonferroni", "frontier_sidak"]
 
 
 @dataclass(frozen=True)
 class EndpointAlpha:
-    """The alpha of one endpoint of a direct-mean interval, and how it was derived."""
+    """The alpha of one endpoint of a direct-mean interval, as analyze calibrates it."""
 
     endpoint_alpha: float
     family_id: str
@@ -39,7 +63,35 @@ class EndpointAlpha:
     directional_family_alpha: float
     target_count: int
     cohort_count: int
-    calibration: Literal["pointwise", "flat_bonferroni", "frontier_sidak"]
+    calibration: Calibration
+    frontier_id: str | None = None
+    frontier_alpha: float | None = None
+    frontier_size: int | None = None
+
+
+@dataclass(frozen=True)
+class PlannedInterval:
+    """One direct-mean interval analyze will report: a profile, a cohort and a target.
+
+    ``certification_floor`` is the interval's upper endpoint when every rollout is safe.
+    ``acceptable_upper`` is the smallest of the group's planned claims in the cohort, and
+    ``resolves`` whether the floor is at or below it, that is whether any outcome can certify
+    this target at the group's threshold. Both are ``None`` without such a claim.
+    """
+
+    independence_profile: str
+    cohort: str
+    group: str
+    level: str | None
+    path: dict[str, str]
+    target_id: str
+    independent_blocks: int
+    effective_sample_size: float
+    alpha: EndpointAlpha
+    method: DirectMeanMethod
+    certification_floor: float
+    acceptable_upper: float | None
+    resolves: bool | None
 
 
 @dataclass(frozen=True)
@@ -52,13 +104,18 @@ class PlannedClaim:
     total_rollouts: int
     independence_profile: str
     independent_blocks: int | None
-    # The rates are guaranteed for a Hoeffding test; analyze decides on this method.
-    primary_method: str
     alpha: EndpointAlpha
     acceptable_upper: float
     unacceptable_lower: float
-    support: FixedDesignDetectableRates | None
-    rejection: FixedDesignDetectableRates | None
+    # Under the plan's interval method, then under each of its reference methods the planner
+    # can invert; the others are named in unplanned_references.
+    planned: MethodDetectableRates
+    references: tuple[MethodDetectableRates, ...]
+    unplanned_references: tuple[DirectMeanMethod, ...]
+    # The Hoeffding closed form the planner used before it read the method; None when the
+    # threshold cannot be crossed by a failure rate.
+    hoeffding_support: FixedDesignDetectableRates | None
+    hoeffding_rejection: FixedDesignDetectableRates | None
 
 
 @dataclass(frozen=True)
@@ -70,53 +127,11 @@ class UnplannedClaim:
 ClaimPlan = PlannedClaim | UnplannedClaim
 
 
-def _endpoint_alpha(plan: AnalysisPlan, data: NormalizedData) -> EndpointAlpha:
-    """The endpoint alpha ``analyze`` gives every primary direct-mean interval.
-
-    Under ``frontier_sidak`` the analysis spends at least the flat Bonferroni share, so the
-    share returned here is a conservative stand-in for it.
-    """
-
-    # Private helpers of the analysis, so that targets are counted exactly as analyze counts
-    # them; a copy here could drift from it.
-    from inspect_safety_stats.analysis.direct_mean import _hierarchy_nodes
-    from inspect_safety_stats.analysis.measures import _coverage_floors
-
-    spec = plan.outputs.direct_mean_intervals
-    family = next((item for item in plan.multiplicity.families if item.id == spec.family), None)
-    if family is None:
-        raise ValueError(
-            f"outputs.direct_mean_intervals names the undeclared multiplicity family "
-            f"{spec.family!r}"
-        )
-    directional, _, _ = _coverage_floors(family.alpha, spec.coverage_mode)
-    selected = spec.groups or [group.id for group in data.groups]
-    # analyze's targets: each selected group, each hierarchy node, and each selected group's
-    # direct worst_of_k interval, which shares the family.
-    worst_of_k_direct = sum(1 for measure in plan.outputs.risk_measures if measure.direct_interval)
-    target_count = (
-        len(selected) * (1 + worst_of_k_direct) + len(_hierarchy_nodes(plan, data))
-    )
-    cohort_count = len(plan.cohorts)
-    calibration: Literal["pointwise", "flat_bonferroni", "frontier_sidak"]
-    if not spec.simultaneous:
-        endpoint, calibration = directional, "pointwise"
-    else:
-        endpoint = directional / target_count / cohort_count
-        calibration = (
-            "frontier_sidak"
-            if spec.hierarchy_calibration == "frontier_sidak" and spec.hierarchy_nodes
-            else "flat_bonferroni"
-        )
-    return EndpointAlpha(
-        endpoint_alpha=endpoint,
-        family_id=family.id,
-        family_alpha=family.alpha,
-        directional_family_alpha=directional,
-        target_count=target_count,
-        cohort_count=cohort_count,
-        calibration=calibration,
-    )
+@dataclass(frozen=True)
+class DesignPlan:
+    claims: list[ClaimPlan]
+    intervals: list[PlannedInterval]
+    method: DirectMeanMethod | None
 
 
 def _unplanned_reason(plan: AnalysisPlan, claim: ClaimSpec) -> str | None:
@@ -158,28 +173,317 @@ def _unplanned_reason(plan: AnalysisPlan, claim: ClaimSpec) -> str | None:
             f"group {claim.group!r} has no direct-mean interval, so the claim is decided on "
             "propagated prompt bounds, which the planner does not model"
         )
+    if spec.method not in INVERTIBLE_METHODS:
+        return (
+            f"decided on the {spec.method} interval, which the planner cannot invert: its "
+            "endpoints depend on the individual block values, not only on their mean"
+        )
     return None
 
 
-def _block_weights(
-    frame: pd.DataFrame, weights: np.ndarray, block_by: list[str]
-) -> np.ndarray:
-    """Total design weight of each independent block of manifest rows."""
+def _rollout_counts(frame: pd.DataFrame, rollouts: int | None) -> dict[str, int]:
+    if rollouts is not None:
+        return {str(prompt_id): rollouts for prompt_id in frame["prompt_id"]}
+    if "expected_rollouts" not in frame:
+        raise ValueError(
+            "the design manifest has no expected_rollouts column; "
+            "pass --rollouts for a uniform count"
+        )
+    counts: dict[str, int] = {}
+    for prompt_id, value in zip(frame["prompt_id"], frame["expected_rollouts"], strict=True):
+        if isinstance(value, bool) or pd.isna(value) or float(value) != int(value) or value < 1:
+            raise ValueError(
+                f"expected_rollouts of prompt {prompt_id!r} is {value!r}; "
+                "the planner needs a positive whole number for every prompt"
+            )
+        counts[str(prompt_id)] = int(value)
+    return counts
 
-    unknown = [column for column in block_by if column not in frame]
-    if unknown:
+
+def _planned_observations(
+    plan: AnalysisPlan, frame: pd.DataFrame, counts: dict[str, int]
+) -> list[Observation]:
+    """The rollouts the manifest declares, for every cohort, all safe.
+
+    Their outcomes do not matter: calibration and blocks depend on the design only.
+    """
+
+    observations: list[Observation] = []
+    for cohort_id in sorted(plan.cohorts):
+        for row in frame.itertuples(index=False):
+            prompt_id = str(row.prompt_id)
+            for repeat in range(1, counts[prompt_id] + 1):
+                observation_id = f"planned:{cohort_id}:{prompt_id}:{repeat}"
+                observations.append(
+                    Observation(
+                        observation_id=observation_id,
+                        source="planned",
+                        run_key=f"planned:{cohort_id}",
+                        rollout_id=observation_id,
+                        item_id=prompt_id,
+                        repeat=repeat,
+                        prompt_id=prompt_id,
+                        question_id=str(row.question_id),
+                        task_id=str(row.task_id),
+                        cohort_id=cohort_id,
+                        score_name="planned",
+                        failure=False,
+                        outcome_status="classified_safe",
+                        model="planned",
+                        configuration_fingerprint="planned",
+                        collection_order=len(observations),
+                    )
+                )
+    return observations
+
+
+def _check_plannable_profiles(plan: AnalysisPlan, frame: pd.DataFrame, profiles: list[str]) -> None:
+    for profile_id in profiles:
+        for field in plan.design.independence_profiles[profile_id].block_by:
+            if field == "rollout" or field in frame.columns:
+                continue
+            if observation_field(field) not in _PLANNABLE_OBSERVATION_FIELDS:
+                raise ValueError(
+                    f"independence profile {profile_id!r} blocks by {field!r}, which the logs "
+                    "supply and the design manifest does not; the planner resolves blocks "
+                    "from the manifest only"
+                )
+
+
+def _endpoint_alpha(
+    calibration: _EndpointCalibration,
+    *,
+    family_id: str,
+    family_alpha: float,
+    directional: float,
+    target_count: int,
+    cohort_count: int,
+) -> EndpointAlpha:
+    method = calibration.method
+    if method not in ("pointwise", "flat_bonferroni", "frontier_sidak"):
+        raise RuntimeError(f"analyze calibrated an interval by an unknown method {method!r}")
+    return EndpointAlpha(
+        endpoint_alpha=calibration.endpoint_alpha,
+        family_id=family_id,
+        family_alpha=family_alpha,
+        directional_family_alpha=directional,
+        target_count=target_count,
+        cohort_count=cohort_count,
+        calibration=method,  # type: ignore[arg-type]  # checked above
+        frontier_id=calibration.frontier_id,
+        frontier_alpha=calibration.frontier_alpha,
+        frontier_size=calibration.frontier_size,
+    )
+
+
+def plan_design(
+    plan: AnalysisPlan,
+    *,
+    power: float,
+    manifest: str | Path | None = None,
+    rollouts: int | None = None,
+) -> DesignPlan:
+    """Detectable rates for every claim of ``plan``, and every interval analyze reports."""
+
+    # Private helpers of the analysis, so that nodes, calibration and blocks are analyze's
+    # own; a copy here could drift from it.
+    from inspect_safety_stats.analysis.direct_mean import (
+        _calibration_key,
+        _direct_mean_context,
+        _hierarchy_nodes,
+        _hierarchy_region_target_id,
+    )
+    from inspect_safety_stats.analysis.estimates import _block_index
+    from inspect_safety_stats.analysis.measures import _coverage_floors, _independence
+
+    if plan.design.type != "fixed":
         raise ValueError(
-            f"independence blocks by {block_by} name fields absent from the design manifest "
-            f"({', '.join(unknown)}); the planner resolves blocks from the manifest only"
+            "the plan declares a sampled design; plan fixed-design plans fixed designs only"
         )
-    missing = [column for column in block_by if frame[column].isna().any()]
-    if missing:
-        raise ValueError(
-            f"independence block column(s) {', '.join(missing)} have missing values"
+    frame = load_manifest(
+        manifest if manifest is not None else plan.inputs.design_manifest,
+        plan_manifest_columns(plan),
+    )
+    counts = _rollout_counts(frame, rollouts)
+    groups = {group.id: group for group in resolve_groups(plan, frame)}
+    spec = plan.outputs.direct_mean_intervals
+    reasons = {claim.id: _unplanned_reason(plan, claim) for claim in plan.claims}
+    family = next((item for item in plan.multiplicity.families if item.id == spec.family), None)
+    if not spec.enabled or family is None:
+        if spec.enabled:
+            reasons = {
+                claim_id: reason
+                or f"outputs.direct_mean_intervals names the undeclared family {spec.family!r}"
+                for claim_id, reason in reasons.items()
+            }
+        return DesignPlan(
+            claims=[UnplannedClaim(claim.id, str(reasons[claim.id])) for claim in plan.claims],
+            intervals=[],
+            method=None,
         )
-    keys = frame[block_by].astype(str).agg("\x1f".join, axis=1)
-    totals = pd.Series(weights, index=frame.index).groupby(keys.to_numpy(), sort=True).sum()
-    return totals.to_numpy(dtype=float)
+    independence = _independence(spec)
+    profile_ids = [independence.primary, *independence.sensitivities]
+    _check_plannable_profiles(plan, frame, profile_ids)
+    validate_profile_fields(plan.design.independence_profiles, frame)
+    data = NormalizedData(
+        observations=_planned_observations(plan, frame, counts),
+        manifest=frame,
+        groups=list(groups.values()),
+        diagnostics=[],
+        cohorts=[],
+        source_hashes={},
+    )
+    nodes = _hierarchy_nodes(plan, data)
+    context = _direct_mean_context(plan, data, nodes=nodes)
+    directional, _, _ = _coverage_floors(family.alpha, spec.coverage_mode)
+    selected = sorted(spec.groups or [group.id for group in data.groups])
+    targets: list[tuple[ResolvedGroup, str | None, dict[str, str], tuple[str, ...], np.ndarray]]
+    targets = [
+        (
+            groups[group_id],
+            None,
+            {},
+            tuple(groups[group_id].prompt_ids),
+            np.asarray([groups[group_id].weights[item] for item in groups[group_id].prompt_ids]),
+        )
+        for group_id in selected
+    ]
+    targets += [
+        (groups[node.group_id], node.level, node.path, node.prompt_ids, np.asarray(node.weights))
+        for node in nodes
+    ]
+    # analyze's family also holds each selected group's direct worst_of_k interval, which
+    # the planner does not plan but which takes its share of the alpha.
+    worst_of_k_direct = sum(1 for measure in plan.outputs.risk_measures if measure.direct_interval)
+    target_count = len(targets) + len(selected) * worst_of_k_direct
+
+    def alpha_of(cohort_id: str, target_id: str, profile_id: str) -> EndpointAlpha:
+        return _endpoint_alpha(
+            context.calibrations[_calibration_key(cohort_id, target_id, profile_id)],
+            family_id=family.id,
+            family_alpha=family.alpha,
+            directional=directional,
+            target_count=target_count,
+            cohort_count=len(plan.cohorts),
+        )
+
+    def blocks_of(
+        cohort_id: str, prompt_ids: tuple[str, ...], weights: np.ndarray, profile: str
+    ) -> BoundedBlocks:
+        return direct_bounded_blocks(
+            data.observations,
+            data.manifest,
+            plan.design.independence_profiles[profile],
+            cohort_id=cohort_id,
+            prompt_ids=prompt_ids,
+            prompt_weights=weights,
+            index=_block_index(data),
+        )
+
+    method: DirectMeanMethod = spec.method
+    claims: list[ClaimPlan] = []
+    strictest: dict[tuple[str, str], float] = {}
+    for claim in plan.claims:
+        reason = reasons[claim.id]
+        if reason is not None:
+            claims.append(UnplannedClaim(claim.id, reason))
+            continue
+        cohort_id, group = str(claim.cohort), groups[str(claim.group)]
+        key = (cohort_id, group.id)
+        strictest[key] = min(strictest.get(key, 1.0), claim.acceptable_upper)
+        prompt_ids = tuple(group.prompt_ids)
+        weights = np.asarray([group.weights[item] for item in prompt_ids], dtype=float)
+        target_id = _hierarchy_region_target_id(group.id, None, {})
+        blocks = blocks_of(cohort_id, prompt_ids, weights, independence.primary)
+        alpha = alpha_of(cohort_id, target_id, independence.primary)
+        # A threshold at or beyond 0 or 1 can never be crossed by a failure rate.
+        acceptable = claim.acceptable_upper if 0 < claim.acceptable_upper < 1 else None
+        unacceptable = claim.unacceptable_lower if 0 < claim.unacceptable_lower < 1 else None
+        planned, *references = [
+            detectable_failure_rates(
+                blocks.weights,
+                method=item,
+                alpha=alpha.endpoint_alpha,
+                power=power,
+                acceptable_upper=acceptable,
+                unacceptable_lower=unacceptable,
+            )
+            for item in [method, *spec.reference_methods]
+            if item in INVERTIBLE_METHODS
+        ]
+        block_by = plan.design.independence_profiles[independence.primary].block_by
+        rollout_profile = block_by == ["rollout"]
+        hoeffding: dict[str, FixedDesignDetectableRates | None] = {}
+        for side, threshold in (("support", acceptable), ("rejection", unacceptable)):
+            hoeffding[side] = (
+                None
+                if threshold is None
+                else fixed_design_detectable_failure_rates(
+                    (
+                        [counts[item] for item in prompt_ids]
+                        if rollout_profile
+                        else [1] * blocks.count
+                    ),
+                    weights if rollout_profile else blocks.weights,
+                    threshold=threshold,
+                    support_alpha=alpha.endpoint_alpha,
+                    rejection_alpha=alpha.endpoint_alpha,
+                    power=power,
+                    independence_unit="rollout" if rollout_profile else "prompt_cluster",
+                )
+            )
+        claims.append(
+            PlannedClaim(
+                claim_id=claim.id,
+                cohort=cohort_id,
+                group=group.id,
+                measure=str(claim.measure),
+                prompts=len(prompt_ids),
+                total_rollouts=sum(counts[item] for item in prompt_ids),
+                independence_profile=independence.primary,
+                independent_blocks=None if rollout_profile else blocks.count,
+                alpha=alpha,
+                acceptable_upper=claim.acceptable_upper,
+                unacceptable_lower=claim.unacceptable_lower,
+                planned=planned,
+                references=tuple(references),
+                unplanned_references=tuple(
+                    item for item in spec.reference_methods if item not in INVERTIBLE_METHODS
+                ),
+                hoeffding_support=hoeffding["support"],
+                hoeffding_rejection=hoeffding["rejection"],
+            )
+        )
+
+    intervals: list[PlannedInterval] = []
+    for profile_id in profile_ids:
+        for cohort_id in sorted(plan.cohorts):
+            for group, level, path, prompt_ids, weights in targets:
+                target_id = _hierarchy_region_target_id(group.id, level, path)
+                blocks = blocks_of(cohort_id, prompt_ids, weights, profile_id)
+                alpha = alpha_of(cohort_id, target_id, profile_id)
+                floor = certification_floor(
+                    blocks.weights, method=method, alpha=alpha.endpoint_alpha
+                )
+                threshold = strictest.get((cohort_id, group.id))
+                intervals.append(
+                    PlannedInterval(
+                        independence_profile=profile_id,
+                        cohort=cohort_id,
+                        group=group.id,
+                        level=level,
+                        path=dict(path),
+                        target_id=target_id,
+                        independent_blocks=blocks.count,
+                        effective_sample_size=1 / float(np.sum(np.square(blocks.weights))),
+                        alpha=alpha,
+                        method=method,
+                        certification_floor=floor,
+                        acceptable_upper=threshold,
+                        resolves=None if threshold is None else floor <= threshold,
+                    )
+                )
+    return DesignPlan(claims=claims, intervals=intervals, method=method)
 
 
 def plan_claims(
@@ -191,92 +495,4 @@ def plan_claims(
 ) -> list[ClaimPlan]:
     """Detectable rates for every claim of ``plan``, in the plan's order."""
 
-    if plan.design.type != "fixed":
-        raise ValueError(
-            "the plan declares a sampled design; plan fixed-design plans fixed designs only"
-        )
-    frame = load_manifest(
-        manifest if manifest is not None else plan.inputs.design_manifest,
-        plan_manifest_columns(plan),
-    )
-    if rollouts is None and "expected_rollouts" not in frame:
-        raise ValueError(
-            "the design manifest has no expected_rollouts column; "
-            "pass --rollouts for a uniform count"
-        )
-    groups = {group.id: group for group in resolve_groups(plan, frame)}
-    data = NormalizedData(
-        observations=[],
-        manifest=frame,
-        groups=list(groups.values()),
-        diagnostics=[],
-        cohorts=[],
-        source_hashes={},
-    )
-    spec = plan.outputs.direct_mean_intervals
-    alpha = _endpoint_alpha(plan, data) if spec.enabled else None
-    rows = frame.set_index("prompt_id", drop=False)
-    results: list[ClaimPlan] = []
-    for claim in plan.claims:
-        reason = _unplanned_reason(plan, claim)
-        if reason is not None or alpha is None or spec.independence is None:
-            results.append(UnplannedClaim(claim.id, reason or "no direct-mean interval"))
-            continue
-        group = groups[str(claim.group)]
-        prompt_ids = list(group.prompt_ids)
-        weights = np.asarray([group.weights[item] for item in prompt_ids], dtype=float)
-        selected = rows.loc[prompt_ids]
-        trials = (
-            [rollouts] * len(prompt_ids)
-            if rollouts is not None
-            else [int(value) for value in selected["expected_rollouts"]]
-        )
-        profile_id = spec.independence.primary
-        block_by = plan.design.independence_profiles[profile_id].block_by
-        unit: Literal["rollout", "prompt_cluster"] = "rollout"
-        unit_trials, unit_weights, blocks = trials, weights, None
-        if block_by != ["rollout"]:
-            # Within a block any dependence is allowed, so a block counts as one bounded
-            # contribution with its total weight, whatever its rollout count.
-            unit = "prompt_cluster"
-            unit_weights = _block_weights(selected.reset_index(drop=True), weights, block_by)
-            unit_trials = [1] * len(unit_weights)
-            blocks = len(unit_weights)
-        planned: dict[str, FixedDesignDetectableRates | None] = {}
-        for side, threshold in (
-            ("support", claim.acceptable_upper),
-            ("rejection", claim.unacceptable_lower),
-        ):
-            # A threshold at or beyond 0 or 1 can never be crossed by a failure rate.
-            planned[side] = (
-                fixed_design_detectable_failure_rates(
-                    unit_trials,
-                    unit_weights,
-                    threshold=threshold,
-                    support_alpha=alpha.endpoint_alpha,
-                    rejection_alpha=alpha.endpoint_alpha,
-                    power=power,
-                    independence_unit=unit,
-                )
-                if 0 < threshold < 1
-                else None
-            )
-        results.append(
-            PlannedClaim(
-                claim_id=claim.id,
-                cohort=str(claim.cohort),
-                group=group.id,
-                measure=str(claim.measure),
-                prompts=len(prompt_ids),
-                total_rollouts=sum(trials),
-                independence_profile=profile_id,
-                independent_blocks=blocks,
-                primary_method=spec.method,
-                alpha=alpha,
-                acceptable_upper=claim.acceptable_upper,
-                unacceptable_lower=claim.unacceptable_lower,
-                support=planned["support"],
-                rejection=planned["rejection"],
-            )
-        )
-    return results
+    return plan_design(plan, power=power, manifest=manifest, rollouts=rollouts).claims

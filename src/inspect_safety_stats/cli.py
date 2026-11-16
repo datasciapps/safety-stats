@@ -11,6 +11,7 @@ import typer
 from inspect_safety_stats.version import __version__
 
 if TYPE_CHECKING:
+    from inspect_safety_stats.claim_planning import EndpointAlpha
     from inspect_safety_stats.ingest.records import EvaluationSource
 
 # Each command imports what it needs when it runs, so that `version`, `--help`, `plan` and
@@ -517,19 +518,39 @@ def _rate(value: float | None) -> str:
     return "unattainable" if value is None else f"{value:.8g}"
 
 
+def _alpha_share(alpha: EndpointAlpha) -> str:
+    if alpha.calibration == "pointwise":
+        return "pointwise, not simultaneous"
+    if alpha.calibration == "frontier_sidak":
+        return (
+            f"Sidak share of {alpha.frontier_alpha:g} across the {alpha.frontier_size} "
+            f"target(s) of frontier {alpha.frontier_id}"
+        )
+    return (
+        f"Bonferroni share of {alpha.directional_family_alpha:g} across "
+        f"{alpha.target_count} targets and {alpha.cohort_count} cohorts"
+    )
+
+
 def _plan_fixed_design_from_plan(
     plan_path: Path, manifest: Path | None, *, power: float, rollouts: int | None
 ) -> None:
-    from inspect_safety_stats.claim_planning import PlannedClaim, plan_claims
+    from inspect_safety_stats.claim_planning import PlannedClaim, plan_design
     from inspect_safety_stats.config.loader import load_plan
 
     try:
         plan = load_plan(plan_path)
-        claims = plan_claims(plan, power=power, manifest=manifest, rollouts=rollouts)
+        design = plan_design(plan, power=power, manifest=manifest, rollouts=rollouts)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+    claims = design.claims
     typer.echo(f"Claims: {len(claims)}")
     typer.echo(f"Target power: {power:.8g}")
+    if design.method is not None:
+        typer.echo(
+            f"Interval method: {design.method}, as outputs.direct_mean_intervals declares; "
+            "Hoeffding is shown as the reference"
+        )
     for item in claims:
         typer.echo("")
         if not isinstance(item, PlannedClaim):
@@ -549,40 +570,91 @@ def _plan_fixed_design_from_plan(
                 else f" ({item.independent_blocks} independent blocks)"
             )
         )
-        rates = item.support or item.rejection
-        if rates is not None:
-            typer.echo(f"  Effective sample size: {rates.effective_sample_size:.8g}")
+        planned = item.planned
+        typer.echo(f"  Effective sample size: {planned.effective_sample_size:.8g}")
         alpha = item.alpha
-        share = {
-            "pointwise": "pointwise, not simultaneous",
-            "flat_bonferroni": (
-                f"Bonferroni share of {alpha.directional_family_alpha:g} across "
-                f"{alpha.target_count} targets and {alpha.cohort_count} cohorts"
-            ),
-            "frontier_sidak": (
-                f"Bonferroni share of {alpha.directional_family_alpha:g} across "
-                f"{alpha.target_count} targets and {alpha.cohort_count} cohorts; conservative, "
-                "as analyze calibrates frontier_sidak"
-            ),
-        }[alpha.calibration]
         typer.echo(
             f"  One-sided alpha per direction: {alpha.endpoint_alpha:.8g} "
-            f"(family {alpha.family_id}, {share})"
+            f"(family {alpha.family_id}, {_alpha_share(alpha)})"
         )
-        typer.echo(
-            "  Interval method: rates guaranteed for weighted_hoeffding; analyze decides on "
-            f"{item.primary_method}"
-        )
+        support = item.hoeffding_support
+        rejection = item.hoeffding_rejection
         typer.echo(
             f"  PASS at acceptable_upper {item.acceptable_upper:.8g}: maximum certifiable "
-            "failure rate at target power "
-            + _rate(item.support.maximum_certifiable_failure_rate if item.support else None)
+            f"failure rate at target power {_rate(planned.maximum_certifiable_failure_rate)} "
+            f"({planned.method}); Hoeffding reference "
+            + _rate(support.maximum_certifiable_failure_rate if support else None)
         )
         typer.echo(
             f"  FAIL at unacceptable_lower {item.unacceptable_lower:.8g}: minimum detectable "
-            "failure rate at target power "
-            + _rate(item.rejection.minimum_detectable_failure_rate if item.rejection else None)
+            f"failure rate at target power {_rate(planned.minimum_detectable_failure_rate)} "
+            f"({planned.method}); Hoeffding reference "
+            + _rate(rejection.minimum_detectable_failure_rate if rejection else None)
         )
+        typer.echo(
+            f"  Certification floor: {planned.certification_floor:.8g}, the upper bound "
+            "when every rollout is safe"
+        )
+        for reference in item.references:
+            typer.echo(
+                f"  Reference method {reference.method}: maximum certifiable "
+                f"{_rate(reference.maximum_certifiable_failure_rate)}, minimum detectable "
+                f"{_rate(reference.minimum_detectable_failure_rate)}"
+            )
+        for unplanned in item.unplanned_references:
+            typer.echo(
+                f"  Reference method {unplanned}: not planned; the planner cannot invert its "
+                "interval"
+            )
+    if design.intervals:
+        typer.echo("")
+        typer.echo(
+            f"Direct-mean intervals analyze will report ({design.method}); "
+            "floor is the upper bound when every rollout is safe, and a target resolves "
+            "when the floor is at or below its group's smallest acceptable_upper:"
+        )
+        typer.echo(
+            f"  {'profile':<14} {'cohort':<14} {'target':<36} {'blocks':>7} {'ESS':>9} "
+            f"{'alpha':>11} {'calibration':<15} {'floor':>9} {'resolves':>8}"
+        )
+        for interval in design.intervals:
+            target = (
+                f"{interval.group}"
+                if interval.level is None
+                else f"{interval.group}:" + "/".join(interval.path.values())
+            )
+            resolves = {None: "-", True: "yes", False: "no"}[interval.resolves]
+            typer.echo(
+                f"  {interval.independence_profile:<14} {interval.cohort:<14} {target:<36} "
+                f"{interval.independent_blocks:>7} {interval.effective_sample_size:>9.4g} "
+                f"{interval.alpha.endpoint_alpha:>11.4g} {interval.alpha.calibration:<15} "
+                f"{interval.certification_floor:>9.4g} {resolves:>8}"
+            )
+        unresolved: dict[tuple[str, str, str, str], list[int]] = {}
+        for interval in design.intervals:
+            if interval.resolves is None or interval.level is None:
+                continue
+            key = (
+                interval.independence_profile,
+                interval.cohort,
+                interval.group,
+                interval.level,
+            )
+            tally = unresolved.setdefault(key, [0, 0])
+            tally[1] += 1
+            if not interval.resolves:
+                tally[0] += 1
+        notes = [
+            f"  level {level} of group {group} in cohort {cohort} under profile {profile}: "
+            f"{failed} of {total} nodes cannot be certified at the group's acceptable_upper"
+            for (profile, cohort, group, level), (failed, total) in unresolved.items()
+            if failed
+        ]
+        if notes:
+            typer.echo("")
+            typer.echo("Levels the declared rollouts cannot resolve:")
+            for note in notes:
+                typer.echo(note)
     if not any(isinstance(item, PlannedClaim) for item in claims):
         typer.echo("")
         typer.echo("No claim of this plan could be planned.", err=True)
