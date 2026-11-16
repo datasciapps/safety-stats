@@ -7,6 +7,7 @@ from typing import cast
 import numpy as np
 
 from inspect_safety_stats.analysis.direct_mean import _hierarchy_region_target_id, _HierarchyNode
+from inspect_safety_stats.analysis.results import RiskRows
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.reports import (
@@ -42,10 +43,31 @@ def _project_hierarchy_regions(
     plan: AnalysisPlan,
     data: NormalizedData,
     nodes: list[_HierarchyNode],
+    rows: RiskRows,
+    diagnostics: list[Diagnostic],
+) -> RiskRows:
+    """The rows with their direct intervals projected onto the common hierarchy region.
+
+    The rows given are left as they were.
+    """
+
+    projected = rows.copy()
+    _project_onto_regions(
+        plan, data, nodes, projected.risks, projected.hierarchy_risks, diagnostics
+    )
+    return projected
+
+
+def _project_onto_regions(
+    plan: AnalysisPlan,
+    data: NormalizedData,
+    nodes: list[_HierarchyNode],
     risks: list[GroupRiskResult],
     hierarchy_risks: list[HierarchyRiskResult],
     diagnostics: list[Diagnostic],
 ) -> None:
+    """Project the rows' direct intervals in place: only on rows the stage has copied."""
+
     spec = plan.outputs.direct_mean_intervals
     if not spec.enabled or not spec.hierarchy_nodes or spec.hierarchy_region != "linear_program":
         return

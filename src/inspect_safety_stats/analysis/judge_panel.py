@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import itertools
+from dataclasses import dataclass
 from typing import Any
 
 from inspect_safety_stats.analysis.judge_calibration import _JUDGE_CORRECTABLE_MEASURES
+from inspect_safety_stats.analysis.results import RiskRows
 from inspect_safety_stats.config.models import AnalysisPlan, JudgeAccuracySpec, JudgeSpec
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.reports import (
@@ -245,13 +247,36 @@ def _primary_accuracy_box(plan: AnalysisPlan) -> _DeclaredBox | None:
     )
 
 
+@dataclass(frozen=True)
+class _PanelCorrection:
+    """The rows with their panel-derived intervals, and the correction's summary."""
+
+    rows: RiskRows
+    # The derived correction, for the judge panel's summary; None when there is none.
+    summary: dict[str, Any] | None
+
+
 def _apply_panel_derived_correction(
+    plan: AnalysisPlan, rows: RiskRows, diagnostics: list[Diagnostic]
+) -> _PanelCorrection:
+    """The rows with panel-derived intervals added. The rows given are left as they were."""
+
+    corrected = rows.copy()
+    summary = _add_panel_derived_correction(
+        plan, corrected.risks, corrected.hierarchy_risks, diagnostics
+    )
+    return _PanelCorrection(rows=corrected, summary=summary)
+
+
+def _add_panel_derived_correction(
     plan: AnalysisPlan,
     risks: list[GroupRiskResult],
     hierarchy_risks: list[HierarchyRiskResult],
     diagnostics: list[Diagnostic],
 ) -> dict[str, Any] | None:
-    """Partial identification of true risk when the primary outcome is a composite.
+    """Add the panel-derived intervals in place, on copied rows only.
+
+    Partial identification of true risk when the primary outcome is a composite.
 
     The composite's accuracy box is derived from its judges' declared boxes under the
     declared dependence blocks, and the judge-reported interval is inverted over that

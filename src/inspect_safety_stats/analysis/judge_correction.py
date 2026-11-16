@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from inspect_safety_stats.analysis.comparison_judges import _apply_judge_correction_to_comparisons
@@ -21,6 +22,7 @@ from inspect_safety_stats.analysis.judge_calibration import (
     _unclassified_share,
     _validated_judge_calibrations,
 )
+from inspect_safety_stats.analysis.results import RiskRows
 from inspect_safety_stats.config.loader import report_path
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.records import NormalizedData
@@ -138,7 +140,38 @@ def _delta_reference_interval(
     )
 
 
+@dataclass(frozen=True)
+class _JudgeCorrection:
+    """The rows with their judge-corrected intervals, and the calibration they used."""
+
+    rows: RiskRows
+    # The calibration actually used, for the report's provenance; empty when there is none.
+    summary: dict[str, Any]
+
+
 def _apply_judge_correction(
+    plan: AnalysisPlan,
+    data: NormalizedData,
+    hierarchy_nodes: list[_HierarchyNode],
+    rows: RiskRows,
+    diagnostics: list[Diagnostic],
+) -> _JudgeCorrection:
+    """The rows with judge-corrected intervals added. The rows given are left as they were."""
+
+    corrected = rows.copy()
+    summary = _add_judge_corrections(
+        plan,
+        data,
+        hierarchy_nodes,
+        corrected.risks,
+        corrected.hierarchy_risks,
+        corrected.comparisons,
+        diagnostics,
+    )
+    return _JudgeCorrection(rows=corrected, summary=summary)
+
+
+def _add_judge_corrections(
     plan: AnalysisPlan,
     data: NormalizedData,
     hierarchy_nodes: list[_HierarchyNode],
@@ -147,7 +180,7 @@ def _apply_judge_correction(
     comparisons: list[ComparisonResult],
     diagnostics: list[Diagnostic],
 ) -> dict[str, Any]:
-    """Map judge-system risk rows onto the true-risk scale.
+    """Map judge-system risk rows onto the true-risk scale, in place: on copied rows only.
 
     Returns a summary of the calibration actually used, for the report provenance
     block. In ``assumed`` mode every scenario is applied to every cohort. In

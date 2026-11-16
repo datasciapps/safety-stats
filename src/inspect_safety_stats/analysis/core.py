@@ -17,6 +17,7 @@ from inspect_safety_stats.analysis.inputs import _integrity_status, _JudgeInputs
 from inspect_safety_stats.analysis.judge_correction import _apply_judge_correction
 from inspect_safety_stats.analysis.judge_panel import _apply_panel_derived_correction
 from inspect_safety_stats.analysis.regions import _project_hierarchy_regions
+from inspect_safety_stats.analysis.results import RiskRows
 from inspect_safety_stats.analysis.risks import _group_risks, _hierarchy_risks
 from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.models import AnalysisPlan, JudgeSpec
@@ -74,21 +75,19 @@ def _analysis_core(
         diagnostics,
         direct_context,
     )
-    _project_hierarchy_regions(
-        plan,
-        data,
-        hierarchy_nodes,
-        risks,
-        hierarchy_risks,
-        diagnostics,
-    )
+    # Comparisons read the prompt estimates only, and project their own regions.
     comparisons = _comparisons(plan, data, estimates, diagnostics)
-    # Applied last so it corrects the bounds that are actually displayed, after both
-    # the hierarchy and comparison region projections have settled.
-    judge_calibration_summary = _apply_judge_correction(
-        plan, data, hierarchy_nodes, risks, hierarchy_risks, comparisons, diagnostics
+    computed = RiskRows(risks=risks, hierarchy_risks=hierarchy_risks, comparisons=comparisons)
+    # Each adjusting stage returns new rows and passes them on, so the judge correction
+    # corrects the bounds that are displayed: the projected ones.
+    projected = _project_hierarchy_regions(plan, data, hierarchy_nodes, computed, diagnostics)
+    judge_correction = _apply_judge_correction(
+        plan, data, hierarchy_nodes, projected, diagnostics
     )
-    panel_correction = _apply_panel_derived_correction(plan, risks, hierarchy_risks, diagnostics)
+    panel_correction = _apply_panel_derived_correction(plan, judge_correction.rows, diagnostics)
+    final = panel_correction.rows
+    risks, hierarchy_risks, comparisons = final.risks, final.hierarchy_risks, final.comparisons
+    judge_calibration_summary = judge_correction.summary
     comparison_sets = _comparison_set_results(plan, comparisons, risks)
     integrity_status = _integrity_status(diagnostics)
     claims = _claims(
@@ -106,7 +105,7 @@ def _analysis_core(
         hierarchy_risks=hierarchy_risks,
         comparisons=comparisons,
         judge_calibration_summary=judge_calibration_summary,
-        panel_correction=panel_correction,
+        panel_correction=panel_correction.summary,
         comparison_sets=comparison_sets,
         integrity_status=integrity_status,
         claims=claims,
