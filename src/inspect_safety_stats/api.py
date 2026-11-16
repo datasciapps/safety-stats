@@ -958,6 +958,7 @@ def _direct_interval_result(
         upper=bounds.upper,
         method=method,
         role=role,
+        varied_assumption="independence" if role == "sensitivity" else None,
         coverage_scope=(
             f"{scope_prefix}{calibration_scope}_{independence_profile}_fixed_design_mean_family"
         ),
@@ -2180,6 +2181,7 @@ def _judge_corrected_interval(
             else "assumed_judge_misclassification_correction"
         ),
         role="reference" if certified else "sensitivity",
+        varied_assumption=None if certified else "judge_error",
         coverage_scope=(
             f"{result.coverage_scope}_judge_corrected"
             if result.coverage_scope
@@ -2376,6 +2378,7 @@ def _apply_panel_derived_correction(
                 upper=identified.upper,
                 method="derived_panel_misclassification_correction",
                 role="sensitivity",
+                varied_assumption="judge_error",
                 coverage_scope=(
                     f"{result.coverage_scope}_panel_derived"
                     if result.coverage_scope
@@ -2500,6 +2503,7 @@ def _delta_reference_interval(
         upper=delta.upper,
         method="delta_method_judge_misclassification_correction",
         role="sensitivity",
+        varied_assumption="judge_error",
         coverage_scope=(
             f"{result.coverage_scope}_judge_corrected_delta"
             if result.coverage_scope
@@ -3290,6 +3294,7 @@ def _comparison_interval(
         upper=upper,
         method=method,
         role=role,
+        varied_assumption="independence" if role == "sensitivity" else None,
         coverage_scope=(scope_prefix + f"_{independence_profile}_fixed_design_comparison_family"),
         coverage_mode=spec.coverage_mode,
         family=spec.family,
@@ -3895,6 +3900,7 @@ def _judge_corrected_comparison_interval(
         upper=upper,
         method="validated_judge_misclassification_correction",
         role="reference" if certified else "sensitivity",
+        varied_assumption=None if certified else "judge_error",
         coverage_scope=(
             f"{primary.coverage_scope}_judge_corrected"
             if primary.coverage_scope
