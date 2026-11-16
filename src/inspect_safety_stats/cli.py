@@ -435,7 +435,11 @@ def fixed_design_planning_command(
         raise typer.BadParameter("give --manifest and --threshold, or --plan")
 
     from inspect_safety_stats.config.models import WeightSpec
-    from inspect_safety_stats.ingest.manifest import load_manifest, resolve_weights
+    from inspect_safety_stats.ingest.manifest import (
+        REQUIRED_COLUMNS,
+        load_manifest,
+        resolve_weights,
+    )
     from inspect_safety_stats.stats.planning import fixed_design_detectable_failure_rates
 
     # resolve_weights only reads the column for explicit weights; ignoring it silently would
@@ -447,7 +451,6 @@ def fixed_design_planning_command(
         "rollout" if independence_unit is IndependenceUnitOption.rollout else "prompt_cluster"
     )
     try:
-        frame = load_manifest(manifest)
         spec = WeightSpec.model_validate(
             {
                 "strategy": weights.value,
@@ -455,6 +458,10 @@ def fixed_design_planning_command(
                 "column": weight_column,
             }
         )
+        named = {"prompt_id", *(spec.hierarchy if spec.strategy == "nested_equal" else [])}
+        if spec.column is not None:
+            named.add(spec.column)
+        frame = load_manifest(manifest, [column for column in REQUIRED_COLUMNS if column in named])
         weight_values = resolve_weights(frame, spec)
         if rollouts is not None:
             trials = [rollouts] * len(frame)

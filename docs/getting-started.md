@@ -83,6 +83,8 @@ means a failure.
 
 The manifest is a CSV file with one row per prompt and columns for `prompt_id`, your hierarchy
 (`question_id` and `task_id` in the demo), `expected_rollouts` and anything a group filters on.
+It needs only the hierarchy levels your plan names; see the
+[plan reference](plan-reference.md#inputs).
 [examples/demo/design.csv](../examples/demo/design.csv) is a small one to start from.
 
 In the plan, cohorts match logs to a model or configuration, and groups select the prompts to
