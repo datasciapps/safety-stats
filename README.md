@@ -241,6 +241,10 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Live generative example: real providers end to end](examples/generative_live/README.md)
 - [Secondary calibration example: XSTest over-refusal](examples/real_xstest/README.md)
 
+## Citing
+
+To cite the package, use the metadata in [CITATION.cff](CITATION.cff).
+
 ## License
 
 MIT
