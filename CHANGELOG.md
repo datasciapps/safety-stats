@@ -60,6 +60,15 @@ described in their pull requests.
   be loaded still fails without a report. Passing both `logs` and `source` to `validate` now
   raises `ValueError`, as it does in `analyze`, where it was reported as `INGEST_FAILED`.
 
+- **An unreadable transcript is reported (adds a diagnostic).** To find where a sample error
+  happened, the Inspect adapter reads the log's transcript again, and any exception in that
+  read silently left the error's stage `unknown`. A log that cannot be read (a missing,
+  truncated or malformed file) now gives a `TRANSCRIPT_UNREAD` warning naming the log, the
+  error type and how many sample errors it leaves without a stage; their classification is
+  unchanged, since an unknown stage is never counted as a policy block. Any other exception
+  is no longer swallowed and fails the input as `INGEST_FAILED`. Analyses whose logs can be
+  read are unchanged.
+
 - **An unlabelled judge stratum is completed, not refused (changes results).** A validated
   judge calibration needed a human label in both judge strata. A stratum without one is now
   completed conservatively: its error rate is bounded by [0, 1], the correction is still
