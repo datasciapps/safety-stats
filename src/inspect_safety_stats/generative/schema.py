@@ -230,15 +230,35 @@ class TaxonomySpec(StrictModel):
 
 
 class RewriteValidationSpec(StrictModel):
+    """How a rewrite is judged acceptable.
+
+    ``invoke`` is experimental. Left ``false``, ``validator_id`` is only declared and
+    fingerprinted, and the kernel's own verdict is trusted. Set ``true``, materialization
+    needs a validator whose ``validator_id`` is this one, calls it on every rewrite the
+    kernel returns as valid, and records every attempt in ``attempts.csv`` so the analysis
+    can report fidelity by arm.
+    """
+
     validator_id: str = Field(min_length=1)
     mode: Literal["deterministic"] = "deterministic"
     on_invalid: Literal["retry", "fail"] = "retry"
     maximum_attempts: PlanInt = Field(default=5, ge=1)
+    invoke: bool = False
 
 
 class RewriteDeduplicationSpec(StrictModel):
+    """Which rewrites within a scope count as the same prompt.
+
+    By default only an exact repeat of the text does. ``near_duplicate: normalized_text``
+    (experimental) also counts two rewrites that agree after Unicode NFKC normalization,
+    case folding, removal of punctuation and symbols, and whitespace collapsing, and makes
+    materialization record every attempt in ``attempts.csv``. A near duplicate is handled
+    by ``on_duplicate`` like an exact one.
+    """
+
     scope: Literal["semantic_seed_path", "structural_path", "none"] = "semantic_seed_path"
     on_duplicate: Literal["retry", "accept"] = "retry"
+    near_duplicate: Literal["off", "normalized_text"] = "off"
 
 
 class RewriteSpec(StrictModel):
@@ -253,6 +273,12 @@ class RewriteSpec(StrictModel):
     seed_replayable: bool = False
     validation: RewriteValidationSpec
     deduplication: RewriteDeduplicationSpec = Field(default_factory=RewriteDeduplicationSpec)
+
+    @property
+    def records_attempts(self) -> bool:
+        """Whether materialization writes the per-attempt ledger, ``attempts.csv``."""
+
+        return self.validation.invoke or self.deduplication.near_duplicate != "off"
 
 
 class JudgeCalibrationSpec(StrictModel):
