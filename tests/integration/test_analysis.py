@@ -1282,6 +1282,67 @@ def test_inspect_blank_error_field_is_not_a_sample_error(
     assert report.integrity.status == "valid"
 
 
+def _two_sample_errors(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """A plan whose logs have two sample errors in one log, read through stubbed frames."""
+
+    plan_path = _write_inputs(tmp_path)
+    eval_frame, sample_frame = _frames()
+    target = (sample_frame["id"] == "p1") & (sample_frame["epoch"].isin([1, 2]))
+    sample_frame.loc[target, "score_harmful"] = None
+    sample_frame.loc[target, "error"] = "provider error"
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    return plan_path
+
+
+def test_an_unreadable_transcript_is_reported_not_swallowed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _two_sample_errors(monkeypatch, tmp_path)
+    reads: list[str] = []
+
+    def unreadable(path: str) -> None:
+        reads.append(path)
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.read_eval_log", unreadable)
+    plan = load_plan(plan_path)
+    plan.inputs.score.errors = "end_to_end"
+    report = analyze(plan=plan, logs="ignored")
+    unread = [item for item in report.integrity.diagnostics if item.code == "TRANSCRIPT_UNREAD"]
+    assert len(unread) == 1
+    assert unread[0].severity == "WARNING"
+    errored = [item for item in report._observations if item.error is not None]
+    assert [item.error_stage for item in errored] == ["unknown", "unknown"]
+    # Named as the report names the log everywhere else, never by its local path.
+    assert unread[0].details == {
+        "source": errored[0].source,
+        "reason": "FileNotFoundError",
+        "sample_errors": 2,
+    }
+    assert reads == ["/not/a/local/log.eval"]
+
+
+def test_a_defect_in_reading_a_transcript_is_not_an_unknown_error_stage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _two_sample_errors(monkeypatch, tmp_path)
+
+    def broken(path: str) -> None:
+        raise RuntimeError("a defect in the reader")
+
+    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.read_eval_log", broken)
+    report = analyze(plan=plan_path, logs="ignored")
+    assert report.integrity.status == "invalid"
+    failed = [item for item in report.integrity.diagnostics if item.code == "INGEST_FAILED"]
+    assert [item.message for item in failed] == ["a defect in the reader"]
+
+
 def test_plan_load_resolves_manifest_path(tmp_path: Path) -> None:
     plan_path = _write_inputs(tmp_path)
     plan = load_plan(plan_path)

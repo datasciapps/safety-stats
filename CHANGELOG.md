@@ -58,6 +58,25 @@ described in their pull requests.
 
 ### Changed
 
+- **`analyze` reports input it cannot read (changes behaviour).** A missing or broken
+  design manifest, or logs or rollout files that cannot be read, made `analyze` raise and
+  write no report, while `validate` reported the same input as an `INGEST_FAILED` error. Both
+  now read their input the same way: `analyze` returns a report whose integrity is invalid,
+  with the `INGEST_FAILED` diagnostic, no estimates, and every claim `INCONCLUSIVE`. The CLI
+  writes that report and exits `3`, or `0` (`2` with `--decision-exit-codes`) under
+  `--allow-invalid`, where it printed `Analysis failed` and wrote nothing. A plan that cannot
+  be loaded still fails without a report. Passing both `logs` and `source` to `validate` now
+  raises `ValueError`, as it does in `analyze`, where it was reported as `INGEST_FAILED`.
+
+- **An unreadable transcript is reported (adds a diagnostic).** To find where a sample error
+  happened, the Inspect adapter reads the log's transcript again, and any exception in that
+  read silently left the error's stage `unknown`. A log that cannot be read (a missing,
+  truncated or malformed file) now gives a `TRANSCRIPT_UNREAD` warning naming the log, the
+  error type and how many sample errors it leaves without a stage; their classification is
+  unchanged, since an unknown stage is never counted as a policy block. Any other exception
+  is no longer swallowed and fails the input as `INGEST_FAILED`. Analyses whose logs can be
+  read are unchanged.
+
 - **Kernel loading leaves `sys.modules` and `sys.path` as it found them (Python API).**
   `materialize_run` and `generative.runner.resolve_kernel` no longer put the working
   directory first on `sys.path` before importing a `module:attribute` kernel; the module is
