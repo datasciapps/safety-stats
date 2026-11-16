@@ -8,6 +8,7 @@ from typing import Any
 import yaml
 
 from inspect_safety_stats.config.canonicalize import canonical_value
+from inspect_safety_stats.report.artifacts import write_text
 from inspect_safety_stats.schema.reports import SafetyReport
 
 _TEMPLATE = Path(__file__).with_name("visualization_template.html")
@@ -110,5 +111,5 @@ def write_visualization(
     if destination.exists() and not overwrite:
         raise FileExistsError(f"visualization output already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(render_visualization(report), encoding="utf-8", newline="\n")
+    write_text(destination, render_visualization(report))
     return destination
