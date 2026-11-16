@@ -152,7 +152,10 @@ def anytime_upper_bound(
     the indices into ``weights`` of the items observed so far, in draw order, and ``outcomes``
     their outcomes in [0, 1] in the same order. The draw order must be a uniformly random
     permutation fixed before any outcome, and only a prefix of it may be passed: an item left
-    out in the middle, for example because it finished late, invalidates the bound.
+    out in the middle, for example because it finished late, invalidates the bound. An outcome
+    may instead be replaced by a larger value, such as an unfinished or unclassified item
+    counted as a failure: every factor of the capital falls when outcomes rise, and the bet
+    fractions are fixed in advance, so the bound stays valid.
 
     ``independent_rollouts`` is 1 when only items are independent. When each outcome is the
     failure share of ``r`` rollouts that are independent given the item (the ``rollout``

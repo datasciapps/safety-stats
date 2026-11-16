@@ -67,6 +67,20 @@ def test_the_bound_tightens_as_safe_draws_accumulate() -> None:
     assert uppers[-1] < 0.01
 
 
+def test_counting_unknown_outcomes_as_failures_never_lowers_the_bound() -> None:
+    rng = np.random.default_rng(8)
+    weights = rng.uniform(1, 2, 60)
+    weights /= weights.sum()
+    order = rng.permutation(60)[:40]
+    for _ in range(50):
+        outcomes = rng.binomial(3, 0.1, 40) / 3
+        raised = np.where(rng.random(40) < 0.2, 1.0, outcomes)
+        assert (
+            anytime_upper_bound(raised, order, weights, alpha=0.05).upper
+            >= anytime_upper_bound(outcomes, order, weights, alpha=0.05).upper
+        )
+
+
 def test_independent_rollouts_tighten_only_the_population_step() -> None:
     weights = np.full(200, 1 / 200)
     outcomes = np.full(100, 0.1)
