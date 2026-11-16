@@ -42,6 +42,14 @@ def test_a_calibration_without_a_protocol_dumps_as_before() -> None:
             {"sampling": "simple_random"},
             "data_dependent requires sampling: simple_random_within_judge_stratum",
         ),
+        (
+            {"queue": "q.csv", "stopping": "data_dependent"},
+            {
+                "sampling": "stratified_without_replacement",
+                "validation_strata": "strata.csv",
+            },
+            "data_dependent requires sampling: simple_random_within_judge_stratum",
+        ),
     ],
 )
 def test_plan_rules(protocol: dict[str, Any], fields: dict[str, Any], message: str) -> None:

@@ -64,6 +64,14 @@ class UnitOutcome:
 
 @dataclass(frozen=True)
 class NodeEstimate:
+    """The failure-rate estimate and interval for one node or cross-cutting slice.
+
+    ``estimate`` is the design-weighted mean over classified rollouts, None when none were
+    classified; ``raw_failure_rate`` is the unweighted rate. ``lower`` is 0 when only an
+    upper bound was computed. ``method`` names the kernel used, and ``frontier_id`` is set
+    only under simultaneous calibration. Slice ids start with ``slice:``.
+    """
+
     node_id: str
     level: str
     depth: int
@@ -84,10 +92,19 @@ class NodeEstimate:
     coefficient_ratio: float
     effective_sample_size: float
     raw_failure_rate: float | None
+    unclassified_share: float
 
 
 @dataclass(frozen=True)
 class TreeEstimate:
+    """The root and per-node estimates that :func:`estimate_tree` returns.
+
+    ``nodes`` holds only nodes that received draws, and the root alone when
+    ``report_all_nodes`` is off; ``unsampled_nodes`` lists the ids that received none.
+    ``simultaneous`` records whether the tree was calibrated as one family. See "Why the
+    intervals are exact" in ``docs/generative-evaluation.md``.
+    """
+
     root: NodeEstimate
     nodes: tuple[NodeEstimate, ...]
     unsampled_nodes: tuple[str, ...]
@@ -154,6 +171,21 @@ def _raw_failure_rate(outcomes: list[UnitOutcome]) -> float | None:
     if classified <= 0:
         return None
     return sum(item.failures for item in outcomes) / classified
+
+
+def _unclassified_share(outcomes: list[UnitOutcome], coefficients: np.ndarray) -> float:
+    """The design weight the bounds complete as an unknown outcome.
+
+    Each unit contributes its coefficient times the share of its rollouts with no
+    verdict. The bounds count that mass as safe at the lower end and as failing at the
+    upper, and a judge correction must keep it there: labels say nothing about it.
+    """
+
+    share = sum(
+        float(coefficient) * outcome.unclassified / outcome.trials
+        for outcome, coefficient in zip(outcomes, coefficients, strict=True)
+    )
+    return min(1.0, share)
 
 
 def _point_estimate(
@@ -323,6 +355,7 @@ def estimate_tree(
                 coefficient_ratio=float(normalized.max() / normalized.min()),
                 effective_sample_size=_effective_sample_size(normalized),
                 raw_failure_rate=_raw_failure_rate(node_outcomes),
+        unclassified_share=_unclassified_share(node_outcomes, normalized),
             )
         )
 
@@ -420,6 +453,7 @@ def estimate_slice(
         coefficient_ratio=float(normalized.max() / normalized.min()),
         effective_sample_size=_effective_sample_size(normalized),
         raw_failure_rate=_raw_failure_rate(slice_outcomes),
+        unclassified_share=_unclassified_share(slice_outcomes, normalized),
     )
 
 

@@ -9,15 +9,14 @@ fingerprints it was produced under so two runs cannot be pooled by accident.
 from __future__ import annotations
 
 import hashlib
-import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 from inspect_safety_stats.generative.comparisons import ComparisonResult
-from inspect_safety_stats.generative.execution import AcceptanceRow
+from inspect_safety_stats.generative.execution import AcceptanceRow, FidelityRow
 from inspect_safety_stats.generative.inference import (
     NodeEstimate,
     ReweightedEstimate,
@@ -26,6 +25,12 @@ from inspect_safety_stats.generative.inference import (
 from inspect_safety_stats.generative.judge import CorrectedEstimate
 from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
 from inspect_safety_stats.generative.visualization import write_generative_report
+from inspect_safety_stats.report.artifacts import (
+    CHECKSUMS,
+    write_checksums,
+    write_frame,
+    write_json,
+)
 from inspect_safety_stats.schema.reports import Diagnostic
 from inspect_safety_stats.version import __version__
 
@@ -37,7 +42,10 @@ ARTIFACTS = (
     "diagnostics.csv",
     "comparisons.csv",
     "acceptance.csv",
+    CHECKSUMS,
 )
+# Written beside those when the plan records rewrite attempts (experimental).
+OPTIONAL_ARTIFACTS = ("fidelity.csv",)
 
 
 def plan_sha256(path: str | Path) -> str:
@@ -46,6 +54,12 @@ def plan_sha256(path: str | Path) -> str:
 
 @dataclass
 class GenerativeReport:
+    """Everything :func:`analyze_run` estimated, and the writer for its artifacts.
+
+    ``evaluation`` names the plan hash and the taxonomy and kernel fingerprints; ``design``
+    records the resolved sampling design. :meth:`write` produces the files in ``ARTIFACTS``.
+    """
+
     evaluation: dict[str, Any]
     design: dict[str, Any]
     tree: TreeEstimate
@@ -56,6 +70,9 @@ class GenerativeReport:
     acceptance: list[AcceptanceRow] = field(default_factory=list)
     reweightings: list[ReweightedEstimate] = field(default_factory=list)
     diagnostics: list[Diagnostic] = field(default_factory=list)
+    # None when the plan does not record rewrite attempts, so its report has no fidelity
+    # section at all rather than an empty one.
+    fidelity: list[FidelityRow] | None = None
 
     @property
     def has_errors(self) -> bool:
@@ -85,7 +102,7 @@ class GenerativeReport:
         return pd.DataFrame(rows)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        document = {
             "schema": "generative-report/1.0",
             "package_version": __version__,
             "evaluation": self.evaluation,
@@ -117,6 +134,9 @@ class GenerativeReport:
             },
             "diagnostics": [item.model_dump(mode="json") for item in self.diagnostics],
         }
+        if self.fidelity is not None:
+            document["fidelity"] = [asdict(item) for item in self.fidelity]
+        return document
 
     def write(self, output: str | Path, *, overwrite: bool = False) -> Path:
         directory = Path(output)
@@ -125,24 +145,33 @@ class GenerativeReport:
                 f"{directory} is not empty; pass --overwrite to replace its contents"
             )
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / "report.json").write_text(
-            json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-            newline="\n",
+        # Unlike the fixed-design report.json, this one escapes non-ASCII text and allows NaN.
+        write_json(directory / "report.json", self.to_dict(), ensure_ascii=True, allow_nan=True)
+        write_frame(directory / "nodes.csv", self._nodes_frame())
+        write_frame(directory / "taxonomy.csv", self.taxonomy.to_frame())
+        write_frame(
+            directory / "diagnostics.csv",
+            pd.DataFrame(
+                [item.model_dump(mode="json") for item in self.diagnostics],
+                columns=["code", "severity", "message", "scope", "details"],
+            ),
         )
-        self._nodes_frame().to_csv(directory / "nodes.csv", index=False, lineterminator="\n")
-        self.taxonomy.to_frame().to_csv(
-            directory / "taxonomy.csv", index=False, lineterminator="\n"
+        write_frame(directory / "comparisons.csv", self._comparisons_frame())
+        write_frame(
+            directory / "acceptance.csv",
+            pd.DataFrame([asdict(item) for item in self.acceptance]),
         )
-        pd.DataFrame(
-            [item.model_dump(mode="json") for item in self.diagnostics],
-            columns=["code", "severity", "message", "scope", "details"],
-        ).to_csv(directory / "diagnostics.csv", index=False, lineterminator="\n")
-        self._comparisons_frame().to_csv(
-            directory / "comparisons.csv", index=False, lineterminator="\n"
-        )
-        pd.DataFrame([asdict(item) for item in self.acceptance]).to_csv(
-            directory / "acceptance.csv", index=False, lineterminator="\n"
-        )
+        written = [name for name in ARTIFACTS if name != CHECKSUMS]
+        if self.fidelity is not None:
+            write_frame(
+                directory / "fidelity.csv",
+                pd.DataFrame(
+                    [asdict(item) for item in self.fidelity],
+                    columns=[item.name for item in fields(FidelityRow)],
+                ),
+            )
+            written += list(OPTIONAL_ARTIFACTS)
         write_generative_report(self, directory / "report.html")
+        # ORDER MATTERS: last, once every file it covers is written.
+        write_checksums(directory, written)
         return directory

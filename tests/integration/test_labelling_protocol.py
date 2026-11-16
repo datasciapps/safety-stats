@@ -125,10 +125,12 @@ def logs(monkeypatch: pytest.MonkeyPatch) -> None:
             for epoch in range(1, ROLLOUTS + 1)
         ]
     )
-    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.evals_df", lambda _: evals)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+    )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
-        lambda logs, parallel=False: samples,
+        lambda logs, **_: samples,
     )
 
 

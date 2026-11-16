@@ -6,6 +6,9 @@ with target weights and a frozen stochastic rewrite kernel, and prompts are gene
 sampling that design. Path selection and rewrite generation are then sources of uncertainty
 in their own right.
 
+The generative pipeline is experimental: its public surface,
+``inspect_safety_stats.generative.__all__``, may change in any minor release.
+
 The public surface is organised around what you are trying to do.
 
 **Run an evaluation.** Two phases, because an Inspect run happens between them::
@@ -49,8 +52,10 @@ if TYPE_CHECKING:
         AcceptanceRow,
         AcceptedRewrite,
         ExecutionResult,
+        FidelityRow,
         acceptance_by_level,
         execute_rewrites,
+        fidelity_by_level,
         load_seed_texts,
     )
     from inspect_safety_stats.generative.inference import (
@@ -75,15 +80,20 @@ if TYPE_CHECKING:
     from inspect_safety_stats.generative.judge import CorrectedEstimate
     from inspect_safety_stats.generative.kernels import (
         DeterministicFakeKernel,
+        DeterministicFakeValidator,
         KernelFingerprint,
         RewriteKernel,
         RewriteOutcome,
         RewriteRequest,
+        RewriteValidator,
+        ValidationVerdict,
         resolve_kernel_fingerprint,
     )
     from inspect_safety_stats.generative.ledger import (
+        AttemptRecord,
         RewriteRecord,
         SelectionRecord,
+        read_attempts,
         read_rewrites,
         read_selections,
     )
@@ -133,6 +143,10 @@ __all__ = [
     "KernelFingerprint",
     "DeterministicFakeKernel",
     "resolve_kernel_fingerprint",
+    # The validator the plan declares, which the package invokes when asked to.
+    "RewriteValidator",
+    "ValidationVerdict",
+    "DeterministicFakeValidator",
     # The two-phase workflow.
     "MaterializedRun",
     "materialize_run",
@@ -146,6 +160,7 @@ __all__ = [
     "ReweightedEstimate",
     "CorrectedEstimate",
     "AcceptanceRow",
+    "FidelityRow",
     # Composing a flow by hand.
     "SamplingDesign",
     "StratumAllocation",
@@ -156,6 +171,7 @@ __all__ = [
     "AcceptedRewrite",
     "load_seed_texts",
     "acceptance_by_level",
+    "fidelity_by_level",
     "materialize_dataset",
     "materialize_for_cohorts",
     "read_evaluated_samples",
@@ -173,19 +189,24 @@ __all__ = [
     "RewriteRecord",
     "read_selections",
     "read_rewrites",
+    "AttemptRecord",
+    "read_attempts",
 ]
 
 _EXPORTS = {
     "AcceptanceRow": "inspect_safety_stats.generative.execution",
     "AcceptedRewrite": "inspect_safety_stats.generative.execution",
+    "AttemptRecord": "inspect_safety_stats.generative.ledger",
     "BudgetForecast": "inspect_safety_stats.generative.planning",
     "ComparisonResult": "inspect_safety_stats.generative.comparisons",
     "CompiledNode": "inspect_safety_stats.generative.taxonomy",
     "CompiledTaxonomy": "inspect_safety_stats.generative.taxonomy",
     "CorrectedEstimate": "inspect_safety_stats.generative.judge",
     "DeterministicFakeKernel": "inspect_safety_stats.generative.kernels",
+    "DeterministicFakeValidator": "inspect_safety_stats.generative.kernels",
     "EvaluatedSample": "inspect_safety_stats.generative.join",
     "ExecutionResult": "inspect_safety_stats.generative.execution",
+    "FidelityRow": "inspect_safety_stats.generative.execution",
     "GenerativePlan": "inspect_safety_stats.generative.schema",
     "GenerativeReport": "inspect_safety_stats.generative.report",
     "JoinResult": "inspect_safety_stats.generative.join",
@@ -198,11 +219,13 @@ _EXPORTS = {
     "RewriteOutcome": "inspect_safety_stats.generative.kernels",
     "RewriteRecord": "inspect_safety_stats.generative.ledger",
     "RewriteRequest": "inspect_safety_stats.generative.kernels",
+    "RewriteValidator": "inspect_safety_stats.generative.kernels",
     "SamplingDesign": "inspect_safety_stats.generative.sampling",
     "SelectionRecord": "inspect_safety_stats.generative.ledger",
     "StratumAllocation": "inspect_safety_stats.generative.sampling",
     "TreeEstimate": "inspect_safety_stats.generative.inference",
     "UnitOutcome": "inspect_safety_stats.generative.inference",
+    "ValidationVerdict": "inspect_safety_stats.generative.kernels",
     "acceptance_by_level": "inspect_safety_stats.generative.execution",
     "analyze_run": "inspect_safety_stats.generative.runner",
     "compare_cohorts": "inspect_safety_stats.generative.comparisons",
@@ -212,6 +235,7 @@ _EXPORTS = {
     "estimate_slice": "inspect_safety_stats.generative.inference",
     "estimate_tree": "inspect_safety_stats.generative.inference",
     "execute_rewrites": "inspect_safety_stats.generative.execution",
+    "fidelity_by_level": "inspect_safety_stats.generative.execution",
     "forecast": "inspect_safety_stats.generative.planning",
     "join_outcomes": "inspect_safety_stats.generative.join",
     "load_seed_texts": "inspect_safety_stats.generative.execution",
@@ -220,6 +244,7 @@ _EXPORTS = {
     "materialize_for_cohorts": "inspect_safety_stats.generative.inspect_bridge",
     "materialize_run": "inspect_safety_stats.generative.runner",
     "plan_design": "inspect_safety_stats.generative.sampling",
+    "read_attempts": "inspect_safety_stats.generative.ledger",
     "read_evaluated_samples": "inspect_safety_stats.generative.logs",
     "read_rewrites": "inspect_safety_stats.generative.ledger",
     "read_selections": "inspect_safety_stats.generative.ledger",

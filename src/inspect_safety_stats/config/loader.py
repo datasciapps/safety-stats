@@ -44,6 +44,16 @@ def _check_schema_version(raw: dict[str, Any]) -> None:
 
 
 def load_plan(path: str | Path) -> AnalysisPlan:
+    """Read and validate an analysis plan from a YAML (``.yaml``, ``.yml``) or JSON file.
+
+    The plan must declare a schema version this release reads (2.0 or 3.0), and an unquoted
+    number is accepted. Relative paths to the design manifest and the judge-calibration
+    validation manifest are resolved against the plan's own directory, so a plan works from any
+    working directory. Raises ``ValueError`` for any other suffix, a root that is not an
+    object, or an unsupported schema version, and pydantic's ``ValidationError`` for an
+    invalid plan. The fields are documented in docs/plan-reference.md.
+    """
+
     source = Path(path).resolve()
     if source.suffix.lower() in {".yaml", ".yml"}:
         raw = yaml.safe_load(source.read_text(encoding="utf-8"))
@@ -64,6 +74,10 @@ def load_plan(path: str | Path) -> AnalysisPlan:
         validation = calibration.validation_manifest
         if not validation.is_absolute():
             calibration.validation_manifest = (source.parent / validation).resolve()
+    if calibration is not None and calibration.validation_strata is not None:
+        strata = calibration.validation_strata
+        if not strata.is_absolute():
+            calibration.validation_strata = (source.parent / strata).resolve()
     if calibration is not None and calibration.protocol is not None:
         queue = calibration.protocol.queue
         if not queue.is_absolute():
@@ -111,6 +125,10 @@ def report_plan(plan: AnalysisPlan) -> dict[str, Any]:
         value["inputs"]["judge_calibration"]["validation_manifest"] = report_path(
             calibration.validation_manifest, plan
         )
+    if calibration is not None and calibration.validation_strata is not None:
+        value["inputs"]["judge_calibration"]["validation_strata"] = report_path(
+            calibration.validation_strata, plan
+        )
     if calibration is not None and calibration.protocol is not None:
         value["inputs"]["judge_calibration"]["protocol"]["queue"] = report_path(
             calibration.protocol.queue, plan
@@ -119,6 +137,12 @@ def report_plan(plan: AnalysisPlan) -> dict[str, Any]:
 
 
 def canonical_plan_hash(plan: AnalysisPlan) -> str:
+    return sha256_value(canonical_plan_value(plan))
+
+
+def canonical_plan_value(plan: AnalysisPlan) -> dict[str, Any]:
+    """The plan as its hash covers it."""
+
     # load_plan resolves the plan's input paths against its own directory. Hash them in the
     # plan-relative form the author wrote, so the same plan hashes the same wherever it lives.
     value = plan.model_dump(mode="json", by_alias=True)
@@ -132,8 +156,12 @@ def canonical_plan_hash(plan: AnalysisPlan) -> str:
             validation = _plan_relative(calibration.validation_manifest, source)
             if validation is not None:
                 value["inputs"]["judge_calibration"]["validation_manifest"] = validation
+        if calibration is not None and calibration.validation_strata is not None:
+            strata = _plan_relative(calibration.validation_strata, source)
+            if strata is not None:
+                value["inputs"]["judge_calibration"]["validation_strata"] = strata
         if calibration is not None and calibration.protocol is not None:
             queue = _plan_relative(calibration.protocol.queue, source)
             if queue is not None:
                 value["inputs"]["judge_calibration"]["protocol"]["queue"] = queue
-    return sha256_value(value)
+    return value
