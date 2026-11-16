@@ -6,7 +6,7 @@ weighted mean, in a fixed design, that does the same.
 
 from __future__ import annotations
 
-from inspect_safety_stats.api import _pooled_calibration_gap, _PromptRollouts
+from inspect_safety_stats.analysis.judge_calibration import _pooled_calibration_gap, _PromptRollouts
 
 
 def _gap(

@@ -6,12 +6,9 @@ import pandas as pd
 import pytest
 
 from inspect_safety_stats import analyze, load_plan, render_visualization, write_visualization
-from inspect_safety_stats.api import (
-    _alpha_by_prompt,
-    _profile_verdicts,
-    _prompt_blocked,
-    _scorer_configurations,
-)
+from inspect_safety_stats.analysis.claims import _profile_verdicts
+from inspect_safety_stats.analysis.core import _scorer_configurations
+from inspect_safety_stats.analysis.estimates import _alpha_by_prompt, _prompt_blocked
 from inspect_safety_stats.config.loader import canonical_plan_hash
 from inspect_safety_stats.config.models import CohortSpec, PromptBoundsSpec, RiskMeasureSpec
 from inspect_safety_stats.ingest.inspect_logs import (
@@ -539,7 +536,7 @@ def test_every_measure_is_classified_for_clipping_to_the_unit_interval() -> None
     """A new measure must say whether it is a probability, and so whether it is clipped."""
     from typing import get_args
 
-    from inspect_safety_stats.api import _PROBABILITY_MEASURES
+    from inspect_safety_stats.analysis.measures import _PROBABILITY_MEASURES
     from inspect_safety_stats.config.models import RiskMeasureSpec
 
     types = set(get_args(RiskMeasureSpec.model_fields["type"].annotation))
@@ -3397,7 +3394,7 @@ def test_worst_of_k_is_not_judge_correctable() -> None:
     # The affine correction R* = R*rho1 + (1-R)*rho0 commutes only with
     # positively homogeneous, translation-equivariant measures; 1-(1-p)^k is
     # neither, so worst_of_k must stay outside the correction whitelist.
-    from inspect_safety_stats.api import _JUDGE_CORRECTABLE_MEASURES
+    from inspect_safety_stats.analysis.judge_calibration import _JUDGE_CORRECTABLE_MEASURES
 
     assert "worst_of_k" not in _JUDGE_CORRECTABLE_MEASURES
 

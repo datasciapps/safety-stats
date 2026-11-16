@@ -6,7 +6,7 @@ runs the same checks over every measure type a plan accepts, through
 every measure that admits them. ``test_the_registry_lists_every_measure_a_plan_can_select``
 fails until a new measure type is registered in ``tests/conformance.py``.
 
-It also checks the two properties ``api.py`` declares by hand, against what the measures do:
+It also checks the two properties the analysis declares by hand, against what the measures do:
 
 - ``_PROBABILITY_MEASURES``: the value is a probability whenever every item's risk is.
 - ``_JUDGE_CORRECTABLE_MEASURES``: the measure commutes with the judge correction
@@ -26,11 +26,8 @@ import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
-from inspect_safety_stats.api import (
-    _JUDGE_CORRECTABLE_MEASURES,
-    _PROBABILITY_MEASURES,
-    _unclipped_risk_value,
-)
+from inspect_safety_stats.analysis.judge_calibration import _JUDGE_CORRECTABLE_MEASURES
+from inspect_safety_stats.analysis.measures import _PROBABILITY_MEASURES, _unclipped_risk_value
 from inspect_safety_stats.config.models import RiskMeasureSpec
 from tests.conformance import MEASURE_CASES, MeasureCase
 
