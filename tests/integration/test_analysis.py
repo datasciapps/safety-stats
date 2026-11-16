@@ -2153,6 +2153,80 @@ def test_multi_judge_panel_is_reported_beside_the_primary_analysis(
     assert "judge" not in header
 
 
+def test_panel_groups_break_the_panel_down_by_group(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8").replace(
+        "design:\n", _JUDGE_PLAN_BLOCK + "  panel_groups: [first, second]\ndesign:\n", 1
+    )
+    plan_text = plan_text.replace(
+        "groups:\n  - id: cyber\n",
+        "groups:\n  - id: first\n    filter: {question_id: q1}\n"
+        "  - id: second\n    filter: {question_id: q2}\n  - id: cyber\n",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    panel = report.provenance["judge_panel"]
+    assert panel["groups"] == ["first", "second"]
+    judges = {item["id"]: item for item in panel["judges"]}
+    # The cohort-wide figures are what they are without panel_groups...
+    a, b = judges["judge_a"]["cohorts"]["candidate"], judges["judge_b"]["cohorts"]["candidate"]
+    assert (a["classified"], a["failures"]) == (40, 10)
+    assert (b["classified"], b["failures"], b["unclassified"]) == (39, 5, 1)
+    # ...and each group's are its own prompt's: every flag is on p1, the silent vote on p2.
+    first_a = judges["judge_a"]["groups"]["first"]["candidate"]
+    first_b = judges["judge_b"]["groups"]["first"]["candidate"]
+    second_b = judges["judge_b"]["groups"]["second"]["candidate"]
+    assert (first_a["classified"], first_a["failures"]) == (20, 10)
+    assert (first_b["classified"], first_b["failures"], first_b["unclassified"]) == (20, 5, 0)
+    assert (second_b["classified"], second_b["failures"], second_b["unclassified"]) == (19, 0, 1)
+    composites = {item["id"]: item for item in panel["composites"]}
+    any_first = composites["any_judge"]["groups"]["first"]["candidate"]
+    assert (any_first["classified"], any_first["failures"]) == (20, 10)
+
+    # The pair disagrees only on p1, so the cohort's agreement (34 of 39) mixes a group
+    # where the judges disagree on a quarter of rollouts with one where they never do.
+    (pair,) = panel["agreement"]
+    first, second = pair["groups"]["first"]["candidate"], pair["groups"]["second"]["candidate"]
+    assert (first["compared"], first["disagreements"]) == (20, 5)
+    assert first["agreement"] == pytest.approx(0.75, abs=0)
+    assert (second["compared"], second["disagreements"]) == (19, 0)
+    assert second["agreement"] == pytest.approx(1.0, abs=0)
+
+    markdown = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    assert "### Judge panel by group" in markdown
+    assert "| judge_a | first | candidate | 20 | 10 | 0 |" in markdown
+    assert "| any_judge | first | candidate | 20 | 10 | 0 |" in markdown
+    assert "| judge_a / judge_b | first | candidate | 20 | 5 | 0.7500 |" in markdown
+
+
+def test_a_panel_without_panel_groups_has_no_group_breakdown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "design:\n", _JUDGE_PLAN_BLOCK + "design:\n", 1
+        ),
+        encoding="utf-8",
+    )
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    panel = report.provenance["judge_panel"]
+    assert "groups" not in panel
+    for entry in (*panel["judges"], *panel["composites"], *panel["agreement"]):
+        assert "groups" not in entry
+    markdown = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    assert "Judge panel by group" not in markdown
+
+
 def test_composite_judge_can_be_the_primary_outcome(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

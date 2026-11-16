@@ -2484,20 +2484,17 @@ def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, 
 
     Bookkeeping only. Effective votes is the Kish count over declared dependence
     blocks, and agreement is descriptive; nothing here corrects a risk estimate.
+
+    With ``inputs.panel_groups`` every judge, composite and pair also carries ``groups``:
+    the same counts and agreement for each listed group's rollouts, per cohort, so a
+    cohort that holds several benchmarks does not mix them into one figure.
     """
 
     if not plan.inputs.judges:
         return None
     cohorts = sorted(plan.cohorts)
-    by_cohort: dict[str, list[str]] = {cohort_id: [] for cohort_id in cohorts}
-    for observation in data.observations:
-        by_cohort.setdefault(observation.cohort_id, []).append(observation.observation_id)
-
-    def verdicts(cohort_id: str, judge_id: str) -> list[bool | None]:
-        return [
-            data.judge_verdicts.get(observation_id, {}).get(judge_id)
-            for observation_id in by_cohort[cohort_id]
-        ]
+    blocks = {judge.id: judge.block or judge.id for judge in plan.inputs.judges}
+    pairs = list(itertools.combinations([judge.id for judge in plan.inputs.judges], 2))
 
     def counts(values: list[bool | None]) -> dict[str, int]:
         positives = sum(value is True for value in values)
@@ -2508,76 +2505,127 @@ def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, 
             "unclassified": len(values) - positives - negatives,
         }
 
-    blocks = {judge.id: judge.block or judge.id for judge in plan.inputs.judges}
-    judges = [
+    def agreement_stats(
+        first_votes: list[bool | None], second_votes: list[bool | None]
+    ) -> dict[str, Any]:
+        summary = pairwise_agreement(first_votes, second_votes)
+        paired = [
+            (bool(a), bool(b))
+            for a, b in zip(first_votes, second_votes, strict=True)
+            if a is not None and b is not None
+        ]
+        first_only = second_only = 0
+        p_value: float | None = None
+        if paired:
+            mcnemar = exact_mcnemar([a for a, _ in paired], [b for _, b in paired])
+            first_only = mcnemar.candidate_failure_baseline_safe
+            second_only = mcnemar.candidate_safe_baseline_failure
+            p_value = mcnemar.p_value_two_sided
+        return {
+            "compared": summary.compared,
+            "disagreements": summary.disagreements,
+            "agreement": summary.agreement,
+            "kappa": summary.kappa,
+            "discordant_first_only": first_only,
+            "discordant_second_only": second_only,
+            "mcnemar_p_value": p_value,
+        }
+
+    def section(prompts: set[str] | None) -> tuple[
+        dict[str, dict[str, Any]], dict[str, dict[str, Any]], list[dict[str, Any]]
+    ]:
+        """Per-cohort figures for each judge, composite and pair, over these prompts' rollouts.
+
+        ``prompts`` None means every rollout.
+        """
+
+        by_cohort: dict[str, list[str]] = {cohort_id: [] for cohort_id in cohorts}
+        for observation in data.observations:
+            if prompts is None or observation.prompt_id in prompts:
+                by_cohort.setdefault(observation.cohort_id, []).append(
+                    observation.observation_id
+                )
+
+        def verdicts(cohort_id: str, judge_id: str) -> list[bool | None]:
+            return [
+                data.judge_verdicts.get(observation_id, {}).get(judge_id)
+                for observation_id in by_cohort[cohort_id]
+            ]
+
+        judge_figures = {
+            judge.id: {cohort_id: counts(verdicts(cohort_id, judge.id)) for cohort_id in cohorts}
+            for judge in plan.inputs.judges
+        }
+        composite_figures = {
+            composite.id: {
+                cohort_id: counts(
+                    [
+                        compose_verdicts(
+                            {
+                                judge_id: data.judge_verdicts.get(observation_id, {}).get(judge_id)
+                                for judge_id in composite.judges
+                            },
+                            composite.rule,
+                        )
+                        for observation_id in by_cohort[cohort_id]
+                    ]
+                )
+                for cohort_id in cohorts
+            }
+            for composite in plan.inputs.composites
+        }
+        pair_figures = [
+            {
+                cohort_id: agreement_stats(verdicts(cohort_id, first), verdicts(cohort_id, second))
+                for cohort_id in cohorts
+            }
+            for first, second in pairs
+        ]
+        return judge_figures, composite_figures, pair_figures
+
+    judge_figures, composite_figures, pair_figures = section(None)
+    judges: list[dict[str, Any]] = [
         {
             "id": judge.id,
             "kind": judge.kind,
             "block": blocks[judge.id],
             "score": judge.score.name,
-            "cohorts": {cohort_id: counts(verdicts(cohort_id, judge.id)) for cohort_id in cohorts},
+            "cohorts": judge_figures[judge.id],
         }
         for judge in plan.inputs.judges
     ]
-    composites = []
-    for composite in plan.inputs.composites:
-        per_cohort = {}
-        for cohort_id in cohorts:
-            combined = [
-                compose_verdicts(
-                    {
-                        judge_id: data.judge_verdicts.get(observation_id, {}).get(judge_id)
-                        for judge_id in composite.judges
-                    },
-                    composite.rule,
-                )
-                for observation_id in by_cohort[cohort_id]
-            ]
-            per_cohort[cohort_id] = counts(combined)
-        composites.append(
-            {
-                "id": composite.id,
-                "rule": composite.rule,
-                "judges": list(composite.judges),
-                "effective_votes": effective_votes([blocks[j] for j in composite.judges]),
-                "cohorts": per_cohort,
-            }
-        )
-    agreement = []
-    for first, second in itertools.combinations([judge.id for judge in plan.inputs.judges], 2):
-        pair_cohorts = {}
-        for cohort_id in cohorts:
-            first_votes = verdicts(cohort_id, first)
-            second_votes = verdicts(cohort_id, second)
-            summary = pairwise_agreement(first_votes, second_votes)
-            paired = [
-                (bool(a), bool(b))
-                for a, b in zip(first_votes, second_votes, strict=True)
-                if a is not None and b is not None
-            ]
-            first_only = second_only = 0
-            p_value: float | None = None
-            if paired:
-                mcnemar = exact_mcnemar([a for a, _ in paired], [b for _, b in paired])
-                first_only = mcnemar.candidate_failure_baseline_safe
-                second_only = mcnemar.candidate_safe_baseline_failure
-                p_value = mcnemar.p_value_two_sided
-            pair_cohorts[cohort_id] = {
-                "compared": summary.compared,
-                "disagreements": summary.disagreements,
-                "agreement": summary.agreement,
-                "kappa": summary.kappa,
-                "discordant_first_only": first_only,
-                "discordant_second_only": second_only,
-                "mcnemar_p_value": p_value,
-            }
-        agreement.append({"first": first, "second": second, "cohorts": pair_cohorts})
-    return {
+    composites: list[dict[str, Any]] = [
+        {
+            "id": composite.id,
+            "rule": composite.rule,
+            "judges": list(composite.judges),
+            "effective_votes": effective_votes([blocks[j] for j in composite.judges]),
+            "cohorts": composite_figures[composite.id],
+        }
+        for composite in plan.inputs.composites
+    ]
+    agreement: list[dict[str, Any]] = [
+        {"first": first, "second": second, "cohorts": figures}
+        for (first, second), figures in zip(pairs, pair_figures, strict=True)
+    ]
+    panel: dict[str, Any] = {
         "judges": judges,
         "composites": composites,
         "agreement": agreement,
         "effective_votes_all": effective_votes(list(blocks.values())),
     }
+    if plan.inputs.panel_groups is not None:
+        prompts_by_group = {group.id: set(group.prompt_ids) for group in data.groups}
+        panel["groups"] = list(plan.inputs.panel_groups)
+        for group_id in plan.inputs.panel_groups:
+            by_judge, by_composite, by_pair = section(prompts_by_group[group_id])
+            for entry in judges:
+                entry.setdefault("groups", {})[group_id] = by_judge[entry["id"]]
+            for entry in composites:
+                entry.setdefault("groups", {})[group_id] = by_composite[entry["id"]]
+            for entry, figures in zip(agreement, by_pair, strict=True):
+                entry.setdefault("groups", {})[group_id] = figures
+    return panel
 
 
 def _declared_box(accuracy: JudgeAccuracySpec) -> JudgeAccuracyBox:

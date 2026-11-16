@@ -198,6 +198,70 @@ def _recorded(values: list[Any] | None) -> str:
     )
 
 
+def _panel_group_lines(panel: dict[str, Any]) -> list[str]:
+    """The judge panel's counts and agreement per group, for the groups the plan lists."""
+
+    groups = panel.get("groups")
+    if not groups:
+        return []
+    lines = [
+        "",
+        "### Judge panel by group",
+        "",
+        "The same counts and agreement over each listed group's rollouts only, so that a "
+        "cohort holding several benchmarks is not summarised as one: "
+        + ", ".join(f"`{_escape(item)}`" for item in groups)
+        + ".",
+        "",
+        "| Judge | Group | Cohort | Classified | Failures | Unclassified |",
+        "|---|---|---|---:|---:|---:|",
+    ]
+    for judge in panel["judges"]:
+        for group_id in groups:
+            for cohort_id, stats in sorted(judge["groups"][group_id].items()):
+                lines.append(
+                    f"| {_escape(judge['id'])} | {_escape(group_id)} | {_escape(cohort_id)} | "
+                    f"{stats['classified']} | {stats['failures']} | {stats['unclassified']} |"
+                )
+    if panel["composites"]:
+        lines.extend(
+            [
+                "",
+                "| Composite | Group | Cohort | Classified | Failures | Unclassified |",
+                "|---|---|---|---:|---:|---:|",
+            ]
+        )
+        for composite in panel["composites"]:
+            for group_id in groups:
+                for cohort_id, stats in sorted(composite["groups"][group_id].items()):
+                    lines.append(
+                        f"| {_escape(composite['id'])} | {_escape(group_id)} | "
+                        f"{_escape(cohort_id)} | {stats['classified']} | {stats['failures']} | "
+                        f"{stats['unclassified']} |"
+                    )
+    if panel["agreement"]:
+        lines.extend(
+            [
+                "",
+                "| Judges | Group | Cohort | Compared | Disagreements | Agreement | "
+                "Cohen's kappa |",
+                "|---|---|---|---:|---:|---:|---:|",
+            ]
+        )
+        for pair in panel["agreement"]:
+            for group_id in groups:
+                for cohort_id, stats in sorted(pair["groups"][group_id].items()):
+                    agreement, kappa = stats["agreement"], stats["kappa"]
+                    lines.append(
+                        f"| {_escape(pair['first'])} / {_escape(pair['second'])} | "
+                        f"{_escape(group_id)} | {_escape(cohort_id)} | {stats['compared']} | "
+                        f"{stats['disagreements']} | "
+                        f"{'—' if agreement is None else f'{agreement:.4f}'} | "
+                        f"{'—' if kappa is None else f'{kappa:.4f}'} |"
+                    )
+    return lines
+
+
 def _judge_claim_lines(
     panel: dict[str, Any], places: int, include_decisions: bool
 ) -> list[str]:
@@ -478,6 +542,7 @@ def _markdown(report: SafetyReport) -> str:
                         f"{'—' if agreement is None else f'{agreement:.4f}'} | "
                         f"{'—' if kappa is None else f'{kappa:.4f}'} |"
                     )
+        lines.extend(_panel_group_lines(panel))
         lines.extend(_judge_claim_lines(panel, places, include_decisions))
     judge_rows = [
         (risk, interval)
