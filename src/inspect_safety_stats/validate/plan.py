@@ -15,7 +15,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
     measure_ids = [measure.id for measure in plan.outputs.risk_measures]
     family_ids = [family.id for family in plan.multiplicity.families]
     comparison_ids = [comparison.id for comparison in expanded_comparisons]
-    claim_ids = [claim.id for claim in plan.claims]
+    claim_ids = [claim.id for claim in plan.claims] + [item.id for item in plan.adaptive_claims]
     for kind, values in (
         ("group", group_ids),
         ("measure", measure_ids),
@@ -218,6 +218,26 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                         scope=claim.id,
                     )
                 )
+    for adaptive in plan.adaptive_claims:
+        unknown = [
+            f"{kind} {value!r}"
+            for kind, value, known in (
+                ("cohort", adaptive.cohort, cohorts),
+                ("group", adaptive.group, groups),
+                ("family", adaptive.family, families),
+            )
+            if value not in known
+        ]
+        if unknown:
+            diagnostics.append(
+                Diagnostic(
+                    code="PLAN_UNKNOWN_REFERENCE",
+                    severity="ERROR",
+                    message=f"adaptive claim {adaptive.id!r} references unknown "
+                    + ", ".join(unknown),
+                    scope=adaptive.id,
+                )
+            )
     prompt_bounds = plan.outputs.prompt_bounds
     prompt_family = prompt_bounds.family
     # Prompt bounds are on by default, and take their alpha from a family, simultaneous or

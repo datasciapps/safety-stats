@@ -377,6 +377,35 @@ class ClaimResult(ResultModel):
         return data
 
 
+class AdaptiveClaimResult(ResultModel):
+    """Experimental (#125): a claim that can only FAIL, on an attacker that adapts across runs.
+
+    ``lower`` bounds the attacker's running mean of conditional success probabilities over the
+    ``runs`` behaviours in ``order_field`` order, anytime-valid at ``alpha`` and with no
+    independence between runs. It describes this attacker at this budget only. The status is
+    FAIL or INCONCLUSIVE, never PASS.
+    """
+
+    claim_id: str
+    title: str
+    status: Literal["FAIL", "INCONCLUSIVE"]
+    # In an exploratory analysis, what a confirmatory analysis of the same data would give.
+    descriptive_status: Literal["FAIL", "INCONCLUSIVE"] | None = None
+    cohort_id: str
+    group_id: str
+    order_field: str
+    # The behaviours in the stream, up to the last one attacked, and the successes among them.
+    runs: int | None = None
+    successes: int | None = None
+    lower: float | None = None
+    unacceptable_lower: float
+    alpha: float | None
+    multiplicity_family: str
+    method: str
+    mandatory: bool
+    reasons: list[str] = Field(default_factory=list)
+
+
 class PolicyThresholdsRecord(ResultModel):
     acceptable_upper: float
     unacceptable_lower: float
@@ -541,6 +570,8 @@ class SafetyReport(ResultModel):
     comparison_sets: list[ComparisonSetResult] = Field(default_factory=list)
     multiplicity: list[dict[str, Any]]
     claims: list[ClaimResult]
+    # Experimental (#125); left out of report.json when the plan declares none.
+    adaptive_claims: list[AdaptiveClaimResult] = Field(default_factory=list)
     policy_events: list[dict[str, Any]]
     decision: Decision
     # Present only when the analysis was given a decision policy.
@@ -564,6 +595,8 @@ class SafetyReport(ResultModel):
             data.pop("decision_policy", None)
         if not self.outcome_mapping_sensitivities:
             data.pop("outcome_mapping_sensitivities", None)
+        if not self.adaptive_claims:
+            data.pop("adaptive_claims", None)
         return data
 
     def write(self, output: str | Path, *, overwrite: bool = False) -> Path:

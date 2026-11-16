@@ -963,6 +963,40 @@ class ClaimSpec(StrictModel):
         return self
 
 
+class AdaptiveClaimSpec(StrictModel):
+    """Experimental (#125): a claim that an attacker adapting across behaviours fails the gate.
+
+    The cohort's runs on the group's behaviours, taken in the order of the design manifest's
+    ``order_field``, form one stream. The claim bounds the attacker's running mean of
+    conditional success probabilities from below, with an anytime-valid bound that needs no
+    independence between runs, and is FAIL when that bound reaches ``unacceptable_lower``.
+
+    It can only FAIL. An upper bound on one adaptive attacker is no evidence about other
+    attackers or budgets, so the claim takes no ``acceptable_upper`` and is never PASS.
+    """
+
+    id: str = Field(min_length=1)
+    title: str
+    cohort: str
+    group: str
+    order_field: str = Field(min_length=1)
+    family: str
+    unacceptable_lower: PlanFloat = Field(gt=0, le=1)
+    mandatory: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def refuse_pass(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "acceptable_upper" in data:
+            raise ValueError(
+                "an adaptive claim can only FAIL, so it takes no acceptable_upper: its lower "
+                "bound describes one attacker at one budget, and an upper bound on that "
+                "attacker is no evidence about other attackers or budgets. Put a PASS claim "
+                "on a fixed set of attacks in claims instead"
+            )
+        return data
+
+
 class ZeroToleranceSpec(StrictModel):
     enabled: bool = True
     manifest_field: str = "zero_tolerance"
@@ -1028,10 +1062,34 @@ class AnalysisPlan(StrictModel):
     comparison_sets: list[ComparisonSetSpec] = Field(default_factory=list)
     multiplicity: MultiplicitySpec
     claims: list[ClaimSpec]
+    # Experimental (#125). Left out of the plan dump while empty, so a plan without it keeps
+    # its hash and every artifact it produced before the field existed.
+    adaptive_claims: list[AdaptiveClaimSpec] = Field(default_factory=list)
     policy: PolicySpec = Field(default_factory=PolicySpec)
     report: ReportSpec = Field(default_factory=ReportSpec)
 
     _source_path: Path | None = PrivateAttr(default=None)
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_adaptive_claims(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if not self.adaptive_claims:
+            data.pop("adaptive_claims", None)
+        return data
+
+    @model_validator(mode="after")
+    def adaptive_claims_stay_out_of_claims_export(self) -> AnalysisPlan:
+        # claims.json follows the claim schema of #11, which has an acceptable_upper for every
+        # claim. Until it has a form for a claim that can only FAIL, the two are refused
+        # together rather than leaving the adaptive claims out of the export.
+        if self.adaptive_claims and self.report.claims_export:
+            raise ValueError(
+                "report.claims_export cannot export adaptive_claims yet: claims.json has no "
+                "form for a claim that can only FAIL. Turn one of them off"
+            )
+        return self
 
     @model_validator(mode="before")
     @classmethod
