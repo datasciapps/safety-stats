@@ -470,12 +470,48 @@ class ReportPresentation(ResultModel):
     primary_independence_profile: str | None = None
     claim_evidence: list[ClaimEvidenceRecord] | None = None
     judge_calibration: JudgeCalibrationPresentation | None = None
+    # The plan's primary outcome mapping; recorded only when the plan declares outcome mapping
+    # sensitivities (experimental), which show it beside the alternatives.
+    primary_outcome_mapping: dict[str, Any] | None = None
 
     @model_serializer(mode="wrap")
     def leave_out_absent_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
         # A field a report does not record stays out of report.json, rather than null.
         data: dict[str, Any] = handler(self)
         return {key: value for key, value in data.items() if value is not None}
+
+
+class MappingSensitivityResult(ResultModel):
+    """One displayed result as an alternative outcome mapping reads it."""
+
+    kind: Literal["group_risk", "comparison", "claim"]
+    result_id: str
+    cohort_id: str | None = None
+    group_id: str | None = None
+    measure_id: str | None = None
+    estimate: float | None = None
+    lower: float | None = None
+    upper: float | None = None
+    # A claim's status under this mapping. It certifies nothing and never enters the decision.
+    status: Decision | None = None
+
+
+class OutcomeMappingSensitivity(ResultModel):
+    """Experimental: the analysis repeated under one declared alternative outcome mapping.
+
+    Each mapping's intervals carry the coverage the plan declares for that mapping alone; they
+    are not simultaneous across mappings. Nothing here enters a claim's status or the decision.
+    """
+
+    id: str
+    title: str | None = None
+    mapping: dict[str, Any]
+    integrity_status: Literal["valid", "degraded", "invalid"]
+    # How many diagnostics of each code this mapping's analysis raised.
+    diagnostic_counts: dict[str, int] = Field(default_factory=dict)
+    # The decision this mapping alone would give. Descriptive only.
+    decision: Decision
+    results: list[MappingSensitivityResult] = Field(default_factory=list)
 
 
 class SafetyReport(ResultModel):
@@ -506,6 +542,8 @@ class SafetyReport(ResultModel):
     decision: Decision
     # Present only when the analysis was given a decision policy.
     decision_policy: DecisionPolicyRecord | None = None
+    # Experimental; left out of report.json when the plan declares no alternative mapping.
+    outcome_mapping_sensitivities: list[OutcomeMappingSensitivity] = Field(default_factory=list)
     # Copies of the analysis input, written beside the report as observations.csv and
     # plan.resolved.yaml. No rendering reads them: everything report.md, report.html and the
     # other CSVs show is in the fields above.
@@ -513,17 +551,76 @@ class SafetyReport(ResultModel):
     _resolved_plan: dict[str, Any] = PrivateAttr(default_factory=dict)
 
     @model_serializer(mode="wrap")
-    def leave_out_absent_decision_policy(
+    def leave_out_absent_optional_sections(
         self, handler: SerializerFunctionWrapHandler
     ) -> dict[str, Any]:
-        # A report of an analysis without a decision policy keeps the bytes it had before
-        # decision policies existed.
+        # A report of an analysis without a decision policy or outcome mapping sensitivities
+        # keeps the bytes it had before either existed.
         data: dict[str, Any] = handler(self)
         if self.decision_policy is None:
             data.pop("decision_policy", None)
+        if not self.outcome_mapping_sensitivities:
+            data.pop("outcome_mapping_sensitivities", None)
         return data
 
     def write(self, output: str | Path, *, overwrite: bool = False) -> Path:
         from inspect_safety_stats.report.writer import write_report
 
         return write_report(self, output, overwrite=overwrite)
+
+def mapping_results(report: SafetyReport) -> list[MappingSensitivityResult]:
+    """The displayed results that outcome mapping sensitivities put side by side."""
+
+    return result_readings(report.group_risks, report.comparisons, report.claims)
+
+
+def result_readings(
+    group_risks: list[GroupRiskResult],
+    comparisons: list[ComparisonResult],
+    claims: list[ClaimResult],
+) -> list[MappingSensitivityResult]:
+    """The rows ``mapping_results`` gives, from an analysis's results before a report holds them.
+
+    Each kind is sorted as ``analyze`` sorts it in the report, so an alternative mapping's rows
+    line up with the primary's.
+    """
+
+    rows = [
+        MappingSensitivityResult(
+            kind="group_risk",
+            result_id=f"{risk.cohort_id}:{risk.group_id}:{risk.measure_id}",
+            cohort_id=risk.cohort_id,
+            group_id=risk.group_id,
+            measure_id=risk.measure_id,
+            estimate=risk.estimate,
+            lower=risk.lower,
+            upper=risk.upper,
+        )
+        for risk in sorted(
+            group_risks, key=lambda item: (item.cohort_id, item.group_id, item.measure_id)
+        )
+    ]
+    rows.extend(
+        MappingSensitivityResult(
+            kind="comparison",
+            result_id=comparison.result_id or comparison.comparison_id,
+            group_id=comparison.group_id,
+            measure_id=comparison.measure_id,
+            estimate=comparison.estimate,
+            lower=comparison.lower,
+            upper=comparison.upper,
+        )
+        for comparison in sorted(comparisons, key=lambda item: item.comparison_id)
+    )
+    rows.extend(
+        MappingSensitivityResult(
+            kind="claim",
+            result_id=claim.claim_id,
+            estimate=claim.estimate,
+            lower=claim.lower,
+            upper=claim.upper,
+            status=claim.status,
+        )
+        for claim in sorted(claims, key=lambda item: item.claim_id)
+    )
+    return rows
