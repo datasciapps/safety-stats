@@ -485,6 +485,52 @@ judge configurations. They do not enter the decision and are not adjusted for mu
 across judges. The option requires `inputs.judges`. A plan that leaves it off keeps its hash and
 writes the same report bytes as before.
 
+### Judge flip rate (experimental)
+
+`inputs.judge_flip` reports how easily the primary judge is talked out of an unsafe verdict.
+Each judge-positive completion of the run is rescored by the same judge inside wrappers that
+keep its content verbatim, such as a refusal prefix, benign text before and after, an
+educational frame or a story frame. A verdict that becomes safe is a flip. Since the content
+did not change, a flip is a false negative that the wrapper caused. The rescoring is done
+outside the package, which never calls a model, and its verdicts are passed in as a CSV.
+
+```yaml
+inputs:
+  judge_flip:
+    manifest: flips.csv           # relative to the plan
+    wrappers: [refusal_prefix, benign_padding, educational, story]
+    sampling: all                 # or simple_random
+    warn_above: 0.1               # warn when the flip rate exceeds this, in (0, 1)
+    alpha: 0.05                   # optional, default 0.05
+```
+
+The manifest has the columns `observation_id`, `wrapper` and `verdict`, with one row per
+rescored completion and wrapper. `observation_id` is the observation identifier of the
+analysed run, as in a validation manifest. `verdict` is `safe` or `unsafe`. A rescoring that
+failed must be rerun before the file is written: the analysis does not drop rows.
+
+- With `sampling: all`, every judge-positive completion of the run must be rescored. With
+  `simple_random`, the rescored completions must be a simple random sample of them, drawn
+  before rescoring, and at least one must be rescored.
+- Every rescored completion needs a row for each declared wrapper and for no other wrapper,
+  and it must be judge-positive in the run.
+
+`analyze` adds a `JUDGE_FLIP_RATE` diagnostic to the integrity section of `report.json` and
+`report.md`. Its `details` hold `judge_positive` (the run's judge-positive completions),
+`any_wrapper` (the completions that flip under at least one wrapper) and `by_wrapper` (one entry
+per wrapper). Each entry holds `flipped`, `rescored`, `estimate`, `lower` and `upper`. The
+interval is the two-sided exact Clopper-Pearson interval at `alpha`, split equally between its
+ends. Each interval holds for its own rate, not jointly with the others. The rate is pooled over
+the analysed cohorts.
+
+The diagnostic is `INFO`, or a `WARNING` when the `any_wrapper` estimate exceeds `warn_above`.
+Neither changes integrity, a claim or the decision. A manifest that cannot be read, or that
+breaks one of the rules above, is a `JUDGE_FLIP_INVALID` error, as an invalid validation
+manifest is. That error makes integrity invalid. The flip rate is reported on the fixed path
+only. A plan without the section keeps its hash and writes the same report bytes as before. See
+[Judge flip rate](judge-misclassification.md#judge-flip-rate-under-content-preserving-wrappers-experimental)
+for what the rate shows.
+
 ## `design`
 
 | Field | Meaning |
