@@ -445,12 +445,44 @@ def version_command() -> None:
 @app.command("hash-plan")
 def hash_plan_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
+    register: Annotated[
+        Path | None,
+        typer.Option(
+            "--register",
+            dir_okay=False,
+            help=(
+                "Also write a registration receipt (the hash and the current UTC time) to "
+                "this new file, for analyze --registration-receipt. Anchor it externally, "
+                "for example in a signed commit. Experimental: see docs/plan-reference.md."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Print a plan's canonical SHA-256, for registering a frozen plan."""
 
     from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
 
-    typer.echo(canonical_plan_hash(load_plan(plan)))
+    digest = canonical_plan_hash(load_plan(plan))
+    # The hash stays the first line on its own: scripts read it.
+    typer.echo(digest)
+    if register is None:
+        return
+    from inspect_safety_stats.config.registration import write_receipt
+
+    try:
+        receipt = write_receipt(register, digest, package_version=__version__)
+    except FileExistsError as exc:
+        typer.echo(
+            f"Registration failed: {register} exists; a receipt is never overwritten",
+            err=True,
+        )
+        raise typer.Exit(code=3) from exc
+    typer.echo(f"Registered at: {receipt.registered_at.isoformat()}")
+    typer.echo(f"Receipt: {register}")
+    typer.echo(
+        "The receipt's time is the local clock's. Anchor the receipt externally, for "
+        "example in a signed commit or with a timestamping service, before generation starts."
+    )
 
 
 @generative_app.command("compile")
