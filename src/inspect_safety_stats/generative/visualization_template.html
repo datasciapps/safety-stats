@@ -236,13 +236,11 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
   if (corrected.length) {
     var judge = (data.evaluation || {}).judge_calibration || {};
     root.appendChild(section("Judge misclassification"));
-    var certifying = corrected.some(function (item) {
-      return item.eligibility === "certifying";
-    });
     root.appendChild(el("p", { class: "sub", text:
-      certifying
-        ? "Measured from human labels. These bounds are on true risk and are certifying, " +
-          "at the union of the interval and calibration budgets."
+      judge.mode === "validated"
+        ? "Measured from human labels, which weight every unit of the cohort equally. " +
+          "Only a root that does the same is certifying, at the union of the interval and " +
+          "calibration budgets; nodes and slices are sensitivity results."
         : "Declared, not measured. These are sensitivity results and carry no evidence: " +
           "they cannot support a claim." }));
     if (judge.rho_1) {

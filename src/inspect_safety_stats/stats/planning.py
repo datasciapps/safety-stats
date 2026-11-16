@@ -25,6 +25,16 @@ class FixedDesignDetectableRates:
 
 
 def zero_failure_sample_size(*, threshold: float, alpha: float) -> int:
+    """Fewest trials for which zero failures certify a failure rate at or below ``threshold``.
+
+    Returns the smallest ``n`` whose one-sided Clopper-Pearson upper bound after zero failures
+    in ``n`` trials, ``1 - alpha ** (1 / n)``, is at most ``threshold``. Both ``threshold``
+    and ``alpha`` lie in ``(0, 1)``, and ``alpha`` is the one-sided error level. With
+    ``alpha = 0.05`` and a small ``threshold`` it is close to the rule of three,
+    ``3 / threshold``. Derived in
+    docs/statistical-methods.md, sections 5.1 and 5.2.
+    """
+
     if not 0 < threshold < 1:
         raise ValueError("threshold must be in (0, 1)")
     if not 0 < alpha < 1:

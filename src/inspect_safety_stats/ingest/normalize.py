@@ -157,6 +157,13 @@ def normalize(
 ) -> NormalizedData:
     """Apply the plan's ingestion rules to the runs and rollouts of one source."""
 
+    stops = plan.inputs.score.content_filter_stops
+    stop_context = source.stop_context
+    if stops != "score" and stop_context is None:
+        raise ValueError(
+            f"score.content_filter_stops: {stops} needs the stop reason of each output, which "
+            f"this source ({source.source_format.get('format')}) does not report"
+        )
     diagnostics: list[Diagnostic] = []
     run_cohorts: dict[str, str] = {}
     run_records: dict[str, RunRecord] = {}
@@ -404,6 +411,8 @@ def normalize(
     source_hashes: dict[str, str | None] = {}
     # How each source is named in reports. The real path still reads and hashes the file.
     source_names: dict[str, str] = {}
+    # Transcripts that could not be read, by report name: the reason and how many errors.
+    unread_transcripts: dict[str, tuple[str, int]] = {}
     for collection_order, (_, rollout) in enumerate(selected, start=1):
         run_key = rollout.run_key
         prompt_id = rollout.item_id
@@ -444,8 +453,19 @@ def normalize(
         error_stage: Literal["target_generation", "post_generation", "unknown"] | None = None
         content_delivered: bool | None = None
         provider_error_code: str | None = None
+        # A content-filter stop that delivered nothing; one that delivered content before the
+        # decline is scored like any other answer.
+        stop = None
+        if raw_error is None and stops != "score" and stop_context is not None:
+            stop = stop_context(rollout)
+            if stop is not None and stop.content_delivered:
+                stop = None
         if raw_error is not None:
             context = source.error_context(rollout)
+            if context.unread_reason is not None:
+                name = report_path(rollout.source, plan)
+                reason, count = unread_transcripts.get(name, (context.unread_reason, 0))
+                unread_transcripts[name] = (reason, count + 1)
             error_stage = context.stage
             content_delivered = context.content_delivered
             provider_error_code = context.provider_error_code
@@ -502,6 +522,44 @@ def normalize(
                             "content_delivered": context.content_delivered,
                             "provider_error_code": context.provider_error_code,
                         },
+                    )
+                )
+        elif stop is not None:
+            content_delivered = False
+            block = {
+                "stop_reason": "content_filter",
+                "block_type": stop.block_type,
+                "block_category": stop.block_category,
+                "block_error": stop.block_error,
+            }
+            if stops == "safe":
+                failure = False
+                outcome_status = "target_policy_blocked_safe"
+                diagnostics.append(
+                    Diagnostic(
+                        code="TARGET_POLICY_BLOCKED_SAFE",
+                        severity="INFO",
+                        message=(
+                            "a provider's content filter stopped the output before it "
+                            "delivered content; the plan counts the block as safe"
+                        ),
+                        scope=scope,
+                        details=block,
+                    )
+                )
+            else:
+                failure = True
+                outcome_status = "classified_failure"
+                diagnostics.append(
+                    Diagnostic(
+                        code="TARGET_POLICY_BLOCKED_REFUSAL",
+                        severity="INFO",
+                        message=(
+                            "a provider's content filter stopped the output before it "
+                            "delivered content; the plan counts the block as a refusal"
+                        ),
+                        scope=scope,
+                        details=block,
                     )
                 )
         elif is_missing(raw_score):
@@ -587,6 +645,20 @@ def normalize(
                 model=run.model if run.model is not None else "unknown",
                 configuration_fingerprint=sha256_value(config),
                 collection_order=collection_order,
+            )
+        )
+
+    for name, (reason, count) in sorted(unread_transcripts.items()):
+        diagnostics.append(
+            Diagnostic(
+                code="TRANSCRIPT_UNREAD",
+                severity="WARNING",
+                message=(
+                    f"the transcript of {name} could not be read ({reason}), so the stage of "
+                    f"its {count} sample error(s) is unknown and none counts as a policy block"
+                ),
+                scope=name,
+                details={"source": name, "reason": reason, "sample_errors": count},
             )
         )
 
@@ -793,11 +865,22 @@ def normalize(
     )
 
 
-def ingest(plan: AnalysisPlan, source: EvaluationSource) -> NormalizedData:
-    """Load the plan's design manifest, read the source and normalize it."""
+def read_inputs(
+    plan: AnalysisPlan, source: EvaluationSource
+) -> tuple[pd.DataFrame, list[ResolvedGroup], SourceData]:
+    """Load the plan's design manifest and groups, and read the source, without normalizing.
+
+    Split from ``ingest`` so a caller can normalize what was read more than once.
+    """
 
     # ORDER MATTERS: the manifest is loaded before the source is read, so a broken manifest
     # is reported before any log is opened, as it always was.
     manifest = load_manifest(plan.inputs.design_manifest)
     groups = resolve_groups(plan, manifest)
-    return normalize(plan, manifest, groups, source.read())
+    return manifest, groups, source.read()
+
+
+def ingest(plan: AnalysisPlan, source: EvaluationSource) -> NormalizedData:
+    """Load the plan's design manifest, read the source and normalize it."""
+
+    return normalize(plan, *read_inputs(plan, source))

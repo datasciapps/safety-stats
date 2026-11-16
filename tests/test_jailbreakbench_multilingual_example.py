@@ -249,7 +249,7 @@ def test_multilingual_offline_analysis_and_unified_visualizer(
     eval_frame, sample_frame = _offline_frames()
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.evals_df",
-        lambda logs: eval_frame,
+        lambda logs, **_: eval_frame,
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
