@@ -38,6 +38,7 @@ from inspect_safety_stats.ingest.records import (
     RolloutRecord,
     RunRecord,
     SourceData,
+    StopContext,
 )
 
 __all__ = [
@@ -158,6 +159,51 @@ def _error_context(
             unread_reason=transcripts.unread_reason,
         ),
     )
+
+
+def _stop_of(output: Any) -> StopContext | None:
+    """The content-filter stop of a sample's output, or None when no content filter stopped it.
+
+    Claude 5-series models report a safety-classifier decline as a normal answer with stop
+    reason `refusal`, which Inspect records as `content_filter`, with the provider's category in
+    the choice's `stop_details` (Inspect 0.3.286 and later). A decline that arrives as an API
+    error comes back with the output's `error` set and Inspect's stand-in apology as content.
+    """
+
+    if output is None or getattr(output, "stop_reason", None) != "content_filter":
+        return None
+    choices = getattr(output, "choices", None) or []
+    details = getattr(choices[0], "stop_details", None) if choices else None
+    block_error = getattr(output, "error", None) is not None
+    completion = getattr(output, "completion", "") or ""
+    return StopContext(
+        content_delivered=not block_error and bool(completion.strip()),
+        block_type=getattr(details, "type", None),
+        block_category=getattr(details, "category", None),
+        block_error=block_error,
+    )
+
+
+def _stop_context(
+    *,
+    log_path: str,
+    eval_id: str,
+    sample_id: str,
+    provided: dict[str, EvalLog],
+    cache: dict[str, dict[str, StopContext]],
+) -> StopContext | None:
+    # Read only when the plan asks for content-filter stops. Unlike error contexts, a log that
+    # cannot be read is an error: the plan's outcome of a block would otherwise depend on it.
+    cache_key = eval_id if eval_id in provided else log_path
+    if cache_key not in cache:
+        log = provided.get(eval_id) or read_eval_log(log_path)
+        stops: dict[str, StopContext] = {}
+        for sample in log.samples or []:
+            stop = _stop_of(sample.output)
+            if stop is not None:
+                stops[str(sample.uuid)] = stop
+        cache[cache_key] = stops
+    return cache[cache_key].get(sample_id)
 
 
 # The Inspect versions whose log format this adapter reads; keep in step with pyproject.toml.
@@ -296,6 +342,7 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
     collected = _rollouts(samples, runs)
     provided = _provided_eval_logs(logs)
     cache: dict[str, _Transcripts] = {}
+    stop_cache: dict[str, dict[str, StopContext]] = {}
 
     def error_context(rollout: RolloutRecord) -> ErrorContext:
         return _error_context(
@@ -304,6 +351,15 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
             sample_id=str(rollout.sample_id),
             provided=provided,
             cache=cache,
+        )
+
+    def stop_context(rollout: RolloutRecord) -> StopContext | None:
+        return _stop_context(
+            log_path=rollout.source,
+            eval_id=rollout.run_key,
+            sample_id=str(rollout.sample_id),
+            provided=provided,
+            cache=stop_cache,
         )
 
     return SourceData(
@@ -315,6 +371,7 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
         error_context=error_context,
         source_sha256=file_sha256,
         source_format=SOURCE_FORMAT,
+        stop_context=stop_context,
     )
 
 
