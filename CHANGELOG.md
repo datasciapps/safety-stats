@@ -50,6 +50,15 @@ described in their pull requests.
 
 ### Changed
 
+- **Kernel loading leaves `sys.modules` and `sys.path` as it found them (Python API).**
+  `materialize_run` and `generative.runner.resolve_kernel` no longer put the working
+  directory first on `sys.path` before importing a `module:attribute` kernel; the module is
+  imported from `sys.path` as the caller set it. A `path/to/file.py:attribute` kernel is no
+  longer left in `sys.modules` under its file name, so a kernel file named like an installed
+  module (`json.py`) no longer replaces that module for the rest of the process. The
+  `generative materialize` command still finds a kernel module in the working directory.
+  Reports are unchanged.
+
 - **An unlabelled judge stratum is completed, not refused (changes results).** A validated
   judge calibration needed a human label in both judge strata. A stratum without one is now
   completed conservatively: its error rate is bounded by [0, 1], the correction is still
