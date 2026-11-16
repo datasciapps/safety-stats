@@ -11,6 +11,18 @@ from numpy.typing import ArrayLike
 
 @dataclass(frozen=True)
 class DirectMeanBounds:
+    """One-sided bounds on a fixed-design weighted mean failure risk, with their ingredients.
+
+    ``lower`` and ``upper`` are the bounds, each at its own one-sided level ``alpha_lower`` or
+    ``alpha_upper``. ``completion_estimate_lower`` and ``completion_estimate_upper`` are the
+    weighted estimates the bounds start from: they differ only when some outcomes are
+    unclassified, which the lower side counts as safe and the upper side as failures.
+    ``half_width_*`` is the distance from each estimate to its bound before clipping to
+    ``[0, 1]``. ``effective_sample_size`` is ``1 / concentration_variance``. The ``variance_*``
+    fields are set by the empirical-Bernstein method and ``chernoff_kernel`` by the
+    KL/Chernoff method. Derived in docs/statistical-methods.md, section 2.4.10.
+    """
+
     lower: float
     upper: float
     completion_estimate_lower: float

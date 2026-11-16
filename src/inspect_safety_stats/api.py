@@ -163,6 +163,16 @@ def validate(
     parallel: bool | int = False,
     source: EvaluationSource | None = None,
 ) -> IntegritySummary:
+    """Check a plan and its evaluation data without computing any bound or decision.
+
+    ``plan`` is an ``AnalysisPlan`` or the path of a plan file, read with ``load_plan``. The
+    data comes from ``source`` when given, or else from the Inspect logs in ``logs``, read with
+    ``parallel`` passed to Inspect's log reader. Passing both ``logs`` and ``source`` is an
+    error. Unlike ``analyze``, a failure to read the data does not raise: it is reported as an
+    ``INGEST_FAILED`` diagnostic. Returns the integrity status (``valid``, ``degraded`` or
+    ``invalid``) and the sorted diagnostics.
+    """
+
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
     try:
@@ -4778,6 +4788,18 @@ def analyze(
     parallel: bool | int = False,
     source: EvaluationSource | None = None,
 ) -> SafetyReport:
+    """Run the analysis a plan declares on its evaluation data and return the safety report.
+
+    ``plan`` is an ``AnalysisPlan`` or the path of a plan file, read with ``load_plan``. The
+    data comes from ``source`` when given, or else from the Inspect logs in ``logs``, read with
+    ``parallel`` passed to Inspect's log reader. Passing both ``logs`` and ``source`` is an
+    error. The report holds the prompt-level estimates, group and hierarchy risk bounds,
+    comparisons, claims with their pass, fail or inconclusive status, and the overall
+    decision. Its results apply to the declared fixed evaluation set, not to a wider prompt
+    population. Write it to disk with ``SafetyReport.write``. Raises when the data cannot be read;
+    ``validate`` reports that as a diagnostic instead.
+    """
+
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
     data = ingest(resolved, _source(logs, parallel, source))

@@ -25,6 +25,14 @@ ComparisonIndependenceUnit = Literal["rollout", "prompt_cluster"]
 
 @dataclass(frozen=True)
 class DirectComparisonBounds:
+    """One-sided bounds on a weighted candidate-minus-baseline failure risk difference.
+
+    The fields mirror ``DirectMeanBounds``, on the difference scale ``[-1, 1]``. The
+    ``candidate_*`` and ``baseline_*`` fields hold the per-arm bounds when the method bounds
+    each arm separately (``weighted_kl_chernoff``), and are ``None`` otherwise. Built by
+    ``direct_risk_difference_bounds``. Derived in docs/statistical-methods.md, section 7.0.
+    """
+
     lower: float
     upper: float
     completion_estimate_lower: float
@@ -49,6 +57,14 @@ class DirectComparisonBounds:
 
 @dataclass(frozen=True)
 class RatioComparisonBounds:
+    """One-sided bounds on a risk ratio or relative risk reduction, candidate over baseline.
+
+    ``estimand`` names which. Each ratio bound combines one bound from each arm, given in
+    ``candidate_bounds`` and ``baseline_bounds``. ``estimate``, ``lower`` or ``upper`` is
+    ``None`` when the baseline risk or bound it divides by is zero, and ``warning`` then says
+    which. Described in docs/model-comparisons.md and docs/plan-reference.md.
+    """
+
     candidate_estimate: float
     baseline_estimate: float
     estimate: float | None

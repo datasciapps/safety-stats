@@ -709,6 +709,13 @@ class ReportSpec(StrictModel):
 
 
 class AnalysisPlan(StrictModel):
+    """A validated analysis plan: the design, cohorts, groups, comparisons and claims.
+
+    Read one from a file with ``load_plan``. Unknown fields are rejected. The fields are
+    documented in docs/plan-reference.md, and ``inspect-safety-stats schema plan`` prints the
+    JSON schema.
+    """
+
     schema_version: Literal["2.0", "3.0"] = "2.0"
     analysis: AnalysisMetadata
     inputs: InputsSpec

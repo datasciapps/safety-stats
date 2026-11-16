@@ -46,6 +46,12 @@ def plan_sha256(path: str | Path) -> str:
 
 @dataclass
 class GenerativeReport:
+    """Everything :func:`analyze_run` estimated, and the writer for its artifacts.
+
+    ``evaluation`` names the plan hash and the taxonomy and kernel fingerprints; ``design``
+    records the resolved sampling design. :meth:`write` produces the files in ``ARTIFACTS``.
+    """
+
     evaluation: dict[str, Any]
     design: dict[str, Any]
     tree: TreeEstimate
