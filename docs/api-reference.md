@@ -429,7 +429,7 @@ Exit codes of `analyze`:
 
 ## Compatibility and stability
 
-The runtime supports Python 3.10 or newer and Inspect AI `>=0.3.259,<0.4`. Plan and report schema
+The runtime supports Python 3.11 or newer and Inspect AI `>=0.3.259,<0.4`. Plan and report schema
 version `1.0` are strict. New fields or methods may be added compatibly within the package's
 `0.x` development series, but consumers should validate `schema_version` before automated use.
 

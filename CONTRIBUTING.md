@@ -22,7 +22,7 @@ Contents:
 
 ## 1. Development setup
 
-You need Python 3.10–3.12 on Linux, macOS, or Windows, and nothing else. No compiler, Rust
+You need Python 3.11–3.13 on Linux, macOS, or Windows, and nothing else. No compiler, Rust
 toolchain, GPU, or provider API key is needed to develop, test, or run any part of the package.
 
 ```bash
@@ -216,9 +216,11 @@ from any directory (#42).
 
 - **Measure first.** Profile before optimising. A performance pull request is class A: attach the
   timings and an A/B showing byte-identical artifacts on realistic and stress-sized designs.
-  `python scripts/compare_artifacts.py --prompts 2000` runs the bundled examples and a synthetic
-  design of that size against the committed code. Its timings are single runs, so measure
-  performance separately.
+  `python scripts/compare_artifacts.py --prompts 2000` runs the bundled examples, a synthetic
+  design of that size, and offline cases for the paths the examples do not reach (two cohorts and
+  comparisons, every error stage, judge panels and calibration, sampled designs, an incomplete
+  run, the generative design) against the committed code. Its timings are single runs, so
+  measure performance separately.
 - **Prefer algorithmic fixes in Python and NumPy:**
   - index once;
   - memoise pure functions;
@@ -282,7 +284,7 @@ All three are first-class platforms.
 - **Known upstream issue.** On Windows, inspect-ai cannot read logs that live on a different
   drive from the working directory (#35).
 - **CI coverage:**
-  - Linux runs on Python 3.10–3.12 for every pull request.
+  - Linux runs on Python 3.11–3.13 for every pull request.
   - Windows runs on 3.12 for every pull request.
   - macOS runs on pushes to `main`, weekly, and on demand. For a platform-sensitive branch, run
     `gh workflow run CI --ref <branch>`.
