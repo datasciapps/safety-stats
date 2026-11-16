@@ -53,7 +53,7 @@ def toy(tmp_path: Path) -> Path:
     (tmp_path / ".gitignore").write_text("__pycache__/\n", encoding="utf-8")
     _git(tmp_path, "init", "-q")
     _git(tmp_path, "add", ".")
-    _git(tmp_path, "commit", "-q", "-m", "Add a buggy package")
+    _git(tmp_path, "commit", "-q", "-s", "-m", "Add a buggy package")
     (package / "__init__.py").write_text(_FIXED, encoding="utf-8")
     (tmp_path / "tests").mkdir()
     return tmp_path
@@ -90,7 +90,7 @@ def test_prove_red_rejects_a_test_that_passes_without_the_change(toy: Path) -> N
 def test_prove_red_compares_with_an_earlier_commit_once_the_change_is_committed(
     toy: Path,
 ) -> None:
-    _git(toy, "commit", "-q", "-am", "Fix the package")
+    _git(toy, "commit", "-q", "-s", "-am", "Fix the package")
     nothing_to_prove = _prove_red(toy, _CATCHES_THE_BUG)
     assert nothing_to_prove.returncode == 2, nothing_to_prove.stdout + nothing_to_prove.stderr
     assert "pass --base" in nothing_to_prove.stderr
