@@ -65,6 +65,26 @@ Each interval under a sensitivity profile has `role: sensitivity` and
 `sensitivity (independence)`. A judge-misclassification sensitivity has
 `varied_assumption: judge_error` instead, so the two cannot be mistaken for each other.
 
+### Verdicts by profile
+
+Each claim in `report.json` lists its verdict under every profile in `profile_verdicts`. The
+first row is the primary profile's and repeats the claim's status and bounds. Each sensitivity
+row decides the same `acceptable_upper` and `unacceptable_lower` on that profile's interval,
+computed with the primary interval's method, under the same integrity and confirmatory
+conditions. A row also gives the interval id, the independent block count and the effective
+sample size, so a reader can see how many independent units each verdict rests on.
+
+The claim's `status`, and the report's decision, are always the primary profile's verdict.
+Sensitivity verdicts show how far that verdict depends on the primary independence assumption;
+they are never selected in its place. A `PASS` under `rollout` that is `INCONCLUSIVE` under
+`prompt` holds only if rollouts of the same prompt are independent.
+
+`report.md` adds a "Verdicts by independence profile" table under the mandatory claims when
+any of them has a sensitivity profile, and the HTML claim card lists each profile's verdict
+and bounds. Claims decided on a judge-corrected interval or the noisy-valid test have no
+per-profile counterpart and no rows; when their evidence has sensitivity profiles, a reason
+says so.
+
 Comparisons use the same selector:
 
 ```yaml
@@ -112,7 +132,7 @@ Then $0\le Y_g\le1$, $\sum_g A_g=1$, and the target is exactly
 \]
 
 The declared assumption is independence across the $Y_g$. Dependence inside a block is
-unrestricted. The same weighted Hoeffding, empirical-Bernstein, and KL/Chernoff engines can
+unrestricted. The same weighted Hoeffding, empirical-Bernstein, KL/Chernoff, and betting engines can
 therefore operate on `(Y_g, A_g)` regardless of how the evaluation creator named or nested the
 items. Missing labels are completed as zero for a lower endpoint and one for an upper endpoint
 before block aggregation.
@@ -181,6 +201,10 @@ unmodelled provider behavior make rollout independence questionable. The profile
 smallest blocks that are defensibly independent. Making blocks coarser is not automatically more
 correct: it changes the assumption from independence of individual generations to independence of
 whole batches, and very few blocks can make meaningful finite-sample inference impossible.
+
+When a design asks one base prompt in several wordings, a `block_by: [question_id]` profile
+treats all wordings of a base prompt as one block. See
+[Prompt variants in fixed designs](plan-reference.md#prompt-variants-in-fixed-designs).
 
 The HTML report has one global independence-profile selector. It displays only the selected
 profile's intervals in risk charts, hierarchy trees, and comparison summaries. JSON and CSV retain

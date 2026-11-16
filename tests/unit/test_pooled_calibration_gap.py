@@ -6,22 +6,22 @@ weighted mean, in a fixed design, that does the same.
 
 from __future__ import annotations
 
-from inspect_safety_stats.api import _pooled_calibration_gap, _PromptRollouts
+from inspect_safety_stats.analysis.judge_calibration import PromptRollouts, pooled_calibration_gap
 
 
 def _gap(
-    population: dict[str, _PromptRollouts],
+    population: dict[str, PromptRollouts],
     *,
     weights: dict[str, float],
     design_type: str = "fixed",
     measure_type: str = "weighted_mean",
 ) -> str | None:
-    return _pooled_calibration_gap(
+    return pooled_calibration_gap(
         population, design_type=design_type, measure_type=measure_type, weights=weights
     )
 
 
-EVEN = {"p1": _PromptRollouts(200, 200, 200), "p2": _PromptRollouts(200, 200, 200)}
+EVEN = {"p1": PromptRollouts(200, 200, 200), "p2": PromptRollouts(200, 200, 200)}
 HALVES = {"p1": 0.5, "p2": 0.5}
 
 
@@ -36,7 +36,7 @@ def test_unequal_prompt_weights_are_not() -> None:
 
 
 def test_unequal_rollout_counts_are_not() -> None:
-    population = {"p1": _PromptRollouts(200, 200, 200), "p2": _PromptRollouts(100, 100, 100)}
+    population = {"p1": PromptRollouts(200, 200, 200), "p2": PromptRollouts(100, 100, 100)}
     assert _gap(population, weights=HALVES) == (
         "the row gives some of the cohort's rollouts 2 times the weight of others"
     )
@@ -51,7 +51,7 @@ def test_a_row_over_part_of_the_cohort_is_not() -> None:
 def test_rollouts_a_policy_excludes_still_weigh_in_a_direct_mean() -> None:
     # Prompt bounds drop the ten excluded rollouts of p2, but direct-mean intervals divide by
     # them, so there p2's classified rollouts weigh less than p1's.
-    population = {"p1": _PromptRollouts(200, 200, 200), "p2": _PromptRollouts(200, 200, 210)}
+    population = {"p1": PromptRollouts(200, 200, 200), "p2": PromptRollouts(200, 200, 210)}
     gap = _gap(population, weights=HALVES)
     assert gap is not None and "1.05 times" in gap
 
@@ -59,12 +59,12 @@ def test_rollouts_a_policy_excludes_still_weigh_in_a_direct_mean() -> None:
 def test_unknown_outcomes_kept_in_the_bounds_weigh_alike_in_both() -> None:
     # p2's ten unclassified rollouts stay in both denominators, so every classified rollout
     # still weighs 0.5 / 200.
-    population = {"p1": _PromptRollouts(200, 200, 200), "p2": _PromptRollouts(190, 200, 200)}
+    population = {"p1": PromptRollouts(200, 200, 200), "p2": PromptRollouts(190, 200, 200)}
     assert _gap(population, weights=HALVES) is None
 
 
 def test_a_prompt_without_classified_rollouts_is_outside_the_labelled_population() -> None:
-    population = {**EVEN, "p3": _PromptRollouts(0, 50, 50)}
+    population = {**EVEN, "p3": PromptRollouts(0, 50, 50)}
     assert _gap(population, weights={"p1": 0.4, "p2": 0.4, "p3": 0.2}) is None
 
 
@@ -76,6 +76,6 @@ def test_tail_measures_and_sampled_designs_are_not_certified() -> None:
 
 
 def test_a_cohort_without_classified_rollouts_has_nothing_to_certify() -> None:
-    assert _gap({"p1": _PromptRollouts(0, 20, 20)}, weights={"p1": 1.0}) == (
+    assert _gap({"p1": PromptRollouts(0, 20, 20)}, weights={"p1": 1.0}) == (
         "the cohort has no classified rollouts"
     )

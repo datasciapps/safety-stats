@@ -19,8 +19,14 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
+from inspect_safety_stats.config.methods import DirectMeanMethod
 from inspect_safety_stats.config.models import AnalysisPlan, ClaimSpec
-from inspect_safety_stats.ingest.manifest import ResolvedGroup, load_manifest, resolve_groups
+from inspect_safety_stats.ingest.manifest import (
+    ResolvedGroup,
+    load_manifest,
+    plan_manifest_columns,
+    resolve_groups,
+)
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.observations import Observation, observation_field
 from inspect_safety_stats.stats.independence import (
@@ -29,15 +35,16 @@ from inspect_safety_stats.stats.independence import (
     validate_profile_fields,
 )
 from inspect_safety_stats.stats.planning import (
-    DirectMeanMethod,
+    INVERTIBLE_METHODS,
     FixedDesignDetectableRates,
     MethodDetectableRates,
+    certification_floor,
     detectable_failure_rates,
     fixed_design_detectable_failure_rates,
 )
 
 if TYPE_CHECKING:
-    from inspect_safety_stats.api import _EndpointCalibration
+    from inspect_safety_stats.analysis.direct_mean import _EndpointCalibration
 
 # Fields a block may be formed by before any rollout exists: the manifest's, and the
 # observation fields that the manifest or the plan fix.
@@ -100,9 +107,11 @@ class PlannedClaim:
     alpha: EndpointAlpha
     acceptable_upper: float
     unacceptable_lower: float
-    # Under the plan's interval method, then under each of its reference methods.
+    # Under the plan's interval method, then under each of its reference methods the planner
+    # can invert; the others are named in unplanned_references.
     planned: MethodDetectableRates
     references: tuple[MethodDetectableRates, ...]
+    unplanned_references: tuple[DirectMeanMethod, ...]
     # The Hoeffding closed form the planner used before it read the method; None when the
     # threshold cannot be crossed by a failure rate.
     hoeffding_support: FixedDesignDetectableRates | None
@@ -143,6 +152,11 @@ def _unplanned_reason(plan: AnalysisPlan, claim: ClaimSpec) -> str | None:
     measure = measures.get(str(claim.measure))
     if measure is None:
         return f"its measure {claim.measure!r} is not declared"
+    if measure.direct_interval:
+        return (
+            f"measure {measure.id!r} is worst_of_k with a direct interval, which the planner "
+            "does not model; the planner covers weighted_mean claims"
+        )
     if measure.type != "weighted_mean":
         return (
             f"measure {measure.id!r} is {measure.type}, decided on propagated prompt bounds; "
@@ -158,6 +172,11 @@ def _unplanned_reason(plan: AnalysisPlan, claim: ClaimSpec) -> str | None:
         return (
             f"group {claim.group!r} has no direct-mean interval, so the claim is decided on "
             "propagated prompt bounds, which the planner does not model"
+        )
+    if spec.method not in INVERTIBLE_METHODS:
+        return (
+            f"decided on the {spec.method} interval, which the planner cannot invert: its "
+            "endpoints depend on the individual block values, not only on their mean"
         )
     return None
 
@@ -268,21 +287,23 @@ def plan_design(
 
     # Private helpers of the analysis, so that nodes, calibration and blocks are analyze's
     # own; a copy here could drift from it.
-    from inspect_safety_stats.api import (
-        _block_index,
+    from inspect_safety_stats.analysis.direct_mean import (
         _calibration_key,
-        _coverage_floors,
         _direct_mean_context,
         _hierarchy_nodes,
         _hierarchy_region_target_id,
-        _independence,
     )
+    from inspect_safety_stats.analysis.estimates import _block_index
+    from inspect_safety_stats.analysis.measures import _coverage_floors, _independence
 
     if plan.design.type != "fixed":
         raise ValueError(
             "the plan declares a sampled design; plan fixed-design plans fixed designs only"
         )
-    frame = load_manifest(manifest if manifest is not None else plan.inputs.design_manifest)
+    frame = load_manifest(
+        manifest if manifest is not None else plan.inputs.design_manifest,
+        plan_manifest_columns(plan),
+    )
     counts = _rollout_counts(frame, rollouts)
     groups = {group.id: group for group in resolve_groups(plan, frame)}
     spec = plan.outputs.direct_mean_intervals
@@ -331,6 +352,10 @@ def plan_design(
         (groups[node.group_id], node.level, node.path, node.prompt_ids, np.asarray(node.weights))
         for node in nodes
     ]
+    # analyze's family also holds each selected group's direct worst_of_k interval, which
+    # the planner does not plan but which takes its share of the alpha.
+    worst_of_k_direct = sum(1 for measure in plan.outputs.risk_measures if measure.direct_interval)
+    target_count = len(targets) + len(selected) * worst_of_k_direct
 
     def alpha_of(cohort_id: str, target_id: str, profile_id: str) -> EndpointAlpha:
         return _endpoint_alpha(
@@ -338,7 +363,7 @@ def plan_design(
             family_id=family.id,
             family_alpha=family.alpha,
             directional=directional,
-            target_count=len(targets),
+            target_count=target_count,
             cohort_count=len(plan.cohorts),
         )
 
@@ -384,6 +409,7 @@ def plan_design(
                 unacceptable_lower=unacceptable,
             )
             for item in [method, *spec.reference_methods]
+            if item in INVERTIBLE_METHODS
         ]
         block_by = plan.design.independence_profiles[independence.primary].block_by
         rollout_profile = block_by == ["rollout"]
@@ -421,6 +447,9 @@ def plan_design(
                 unacceptable_lower=claim.unacceptable_lower,
                 planned=planned,
                 references=tuple(references),
+                unplanned_references=tuple(
+                    item for item in spec.reference_methods if item not in INVERTIBLE_METHODS
+                ),
                 hoeffding_support=hoeffding["support"],
                 hoeffding_rejection=hoeffding["rejection"],
             )
@@ -433,9 +462,9 @@ def plan_design(
                 target_id = _hierarchy_region_target_id(group.id, level, path)
                 blocks = blocks_of(cohort_id, prompt_ids, weights, profile_id)
                 alpha = alpha_of(cohort_id, target_id, profile_id)
-                floor = detectable_failure_rates(
-                    blocks.weights, method=method, alpha=alpha.endpoint_alpha, power=power
-                ).certification_floor
+                floor = certification_floor(
+                    blocks.weights, method=method, alpha=alpha.endpoint_alpha
+                )
                 threshold = strictest.get((cohort_id, group.id))
                 intervals.append(
                     PlannedInterval(

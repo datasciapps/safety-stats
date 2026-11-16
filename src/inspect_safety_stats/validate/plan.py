@@ -377,6 +377,28 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope="outputs.direct_mean_intervals",
                 )
             )
+    calibration = plan.inputs.judge_calibration
+    scopes: list[tuple[str, list[str] | None]] = [
+        ("inputs.judge_calibration", calibration.groups if calibration else None),
+        ("inputs.panel_groups", plan.inputs.panel_groups),
+        *(
+            (f"inputs.judges.{judge.id}.accuracy", judge.accuracy.groups)
+            for judge in plan.inputs.judges
+            if judge.accuracy is not None
+        ),
+    ]
+    for location, scoped in scopes:
+        unknown_groups = sorted(set(scoped or []) - groups)
+        if unknown_groups:
+            diagnostics.append(
+                Diagnostic(
+                    code="PLAN_UNKNOWN_REFERENCE",
+                    severity="ERROR",
+                    message=f"{location} references unknown groups: " + ", ".join(unknown_groups),
+                    scope=location,
+                )
+            )
+    diagnostics.extend(_worst_of_k_interval_problems(plan))
     if not plan.outputs.risk_measures:
         diagnostics.append(
             Diagnostic(
@@ -390,3 +412,47 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
             )
         )
     return diagnostics
+
+
+def _worst_of_k_interval_problems(plan: AnalysisPlan) -> list[Diagnostic]:
+    """What the experimental worst-of-k direct interval cannot do yet, each an error."""
+
+    requested = sorted(
+        measure.id for measure in plan.outputs.risk_measures if measure.direct_interval
+    )
+    if not requested:
+        return []
+    direct = plan.outputs.direct_mean_intervals
+    problems: list[str] = []
+    if plan.design.type != "fixed":
+        problems.append(
+            "it bounds the fixed prompt set only, so it needs design.type: fixed, not "
+            f"{plan.design.type!r}"
+        )
+    if not direct.enabled:
+        problems.append(
+            "it is calibrated in the direct-mean family, so it needs "
+            "outputs.direct_mean_intervals.enabled"
+        )
+    elif direct.hierarchy_calibration == "frontier_sidak":
+        problems.append(
+            "frontier_sidak calibration is not supported; use flat_bonferroni or "
+            "simultaneous: false"
+        )
+    if direct.enabled and direct.independence is not None:
+        profile = plan.design.independence_profiles.get(direct.independence.primary)
+        if profile is not None and profile.block_by != ["rollout"]:
+            problems.append(
+                "it needs independent rollouts, so the primary independence profile of "
+                "outputs.direct_mean_intervals must block by rollout, not "
+                f"{profile.block_by!r}"
+            )
+    return [
+        Diagnostic(
+            code="PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED",
+            severity="ERROR",
+            message=f"the direct worst_of_k interval of {', '.join(requested)}: {problem}",
+            scope="outputs.risk_measures",
+        )
+        for problem in problems
+    ]

@@ -3,12 +3,14 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Literal
+from typing import Final, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike
 from scipy.optimize import brentq
 from scipy.stats import binom
+
+from inspect_safety_stats.config.methods import DirectMeanMethod
 
 
 @dataclass(frozen=True)
@@ -26,6 +28,16 @@ class FixedDesignDetectableRates:
 
 
 def zero_failure_sample_size(*, threshold: float, alpha: float) -> int:
+    """Fewest trials for which zero failures certify a failure rate at or below ``threshold``.
+
+    Returns the smallest ``n`` whose one-sided Clopper-Pearson upper bound after zero failures
+    in ``n`` trials, ``1 - alpha ** (1 / n)``, is at most ``threshold``. Both ``threshold``
+    and ``alpha`` lie in ``(0, 1)``, and ``alpha`` is the one-sided error level. With
+    ``alpha = 0.05`` and a small ``threshold`` it is close to the rule of three,
+    ``3 / threshold``. Derived in
+    docs/statistical-methods.md, sections 5.1 and 5.2.
+    """
+
     if not 0 < threshold < 1:
         raise ValueError("threshold must be in (0, 1)")
     if not 0 < alpha < 1:
@@ -221,11 +233,15 @@ def fixed_design_detectable_failure_rates(
     )
 
 
-DirectMeanMethod = Literal[
-    "weighted_hoeffding",
-    "weighted_empirical_bernstein",
-    "weighted_kl_chernoff",
-]
+INVERTIBLE_METHODS: Final[frozenset[DirectMeanMethod]] = frozenset(
+    {"weighted_hoeffding", "weighted_empirical_bernstein", "weighted_kl_chernoff"}
+)
+"""The methods whose detectable rates the planner can derive by inverting the interval.
+
+Their endpoints follow from the estimate alone, or, for empirical Bernstein, from the worst
+data with that estimate. Any other method's endpoints depend on the individual block values,
+so no single estimate boundary separates PASS from not PASS.
+"""
 
 
 @dataclass(frozen=True)
@@ -260,9 +276,8 @@ def _planned_endpoints(
     """
 
     from inspect_safety_stats.stats.direct_mean import (
+        DIRECT_MEAN_ENGINES,
         bounded_empirical_bernstein_width,
-        weighted_bounded_hoeffding_mean_bounds,
-        weighted_bounded_kl_chernoff_mean_bounds,
     )
 
     if method == "weighted_empirical_bernstein":
@@ -276,14 +291,13 @@ def _planned_endpoints(
             alpha=alpha,
         )
         return max(0.0, estimate - width), min(1.0, estimate + width)
-    function = {
-        "weighted_hoeffding": weighted_bounded_hoeffding_mean_bounds,
-        "weighted_kl_chernoff": weighted_bounded_kl_chernoff_mean_bounds,
-    }.get(method)
-    if function is None:
-        raise ValueError(f"unsupported direct mean interval method {method!r}")
+    if method not in INVERTIBLE_METHODS:
+        raise ValueError(
+            f"the planner cannot invert the {method} interval: its endpoints depend on the "
+            "individual block values, not only on their mean"
+        )
     values = np.full(len(weights), estimate)
-    bounds = function(
+    bounds = DIRECT_MEAN_ENGINES[method].bounded(
         values,
         values,
         weights,
@@ -415,6 +429,31 @@ def detectable_failure_rates(
         minimum_detectable_failure_rate=minimum_detectable,
         effective_sample_size=1 / concentration_variance,
         blocks=len(w),
+    )
+
+
+def certification_floor(weights: ArrayLike, *, method: DirectMeanMethod, alpha: float) -> float:
+    """The upper endpoint of ``method``'s interval when every block is safe.
+
+    The data are then fully known, so this holds for every method, the ones the planner
+    cannot invert included: a threshold below it can never PASS.
+    """
+
+    from inspect_safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES
+
+    w = np.asarray(weights, dtype=float)
+    zeros = np.zeros(len(w))
+    return float(
+        DIRECT_MEAN_ENGINES[method]
+        .bounded(
+            zeros,
+            zeros,
+            w,
+            alpha_lower=alpha,
+            alpha_upper=alpha,
+            independence_profile="planned",
+        )
+        .upper
     )
 
 

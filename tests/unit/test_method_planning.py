@@ -7,14 +7,17 @@ from collections.abc import Callable
 import numpy as np
 import pytest
 
+from inspect_safety_stats.config.methods import DIRECT_MEAN_METHODS, DirectMeanMethod
 from inspect_safety_stats.stats.direct_mean import (
     DirectMeanBounds,
+    weighted_bounded_betting_mean_bounds,
     weighted_bounded_empirical_bernstein_mean_bounds,
     weighted_bounded_hoeffding_mean_bounds,
     weighted_bounded_kl_chernoff_mean_bounds,
 )
 from inspect_safety_stats.stats.planning import (
-    DirectMeanMethod,
+    INVERTIBLE_METHODS,
+    certification_floor,
     detectable_failure_rates,
     fixed_design_detectable_failure_rates,
 )
@@ -94,6 +97,34 @@ def test_certification_floor_is_the_analysis_upper_bound_on_all_safe_blocks(
     assert rates.rejection_ceiling == pytest.approx(
         _analysis(method, ones, weights).lower, rel=1e-12, abs=0
     )
+    assert certification_floor(weights, method=method, alpha=ALPHA) == pytest.approx(
+        rates.certification_floor, rel=1e-12, abs=0
+    )
+
+
+def test_the_planner_inverts_every_registered_method_but_betting() -> None:
+    assert set(DIRECT_MEAN_METHODS) - INVERTIBLE_METHODS == {"weighted_betting"}
+    assert INVERTIBLE_METHODS == set(METHODS)
+
+
+def test_betting_is_refused_for_rates_but_has_an_exact_certification_floor() -> None:
+    weights = _weights("unequal")
+    with pytest.raises(ValueError, match="cannot invert the weighted_betting interval"):
+        detectable_failure_rates(
+            weights, method="weighted_betting", alpha=ALPHA, power=0.9, acceptable_upper=0.1
+        )
+    zeros = np.zeros(len(weights))
+    expected = weighted_bounded_betting_mean_bounds(
+        zeros,
+        zeros,
+        weights,
+        alpha_lower=ALPHA,
+        alpha_upper=ALPHA,
+        independence_profile="test",
+    ).upper
+    floor = certification_floor(weights, method="weighted_betting", alpha=ALPHA)
+    assert floor == pytest.approx(expected, rel=1e-12, abs=0)
+    assert 0 < floor < 1
 
 
 @pytest.mark.parametrize("kind", ["equal", "unequal"])

@@ -8,23 +8,22 @@ from typing import Literal
 import numpy as np
 from numpy.typing import ArrayLike
 
-from inspect_safety_stats.stats.direct_mean import (
-    DirectMeanBounds,
-    weighted_empirical_bernstein_mean_bounds,
-    weighted_hoeffding_mean_bounds,
-    weighted_kl_chernoff_mean_bounds,
-)
+from inspect_safety_stats.config.methods import DEFAULT_STATS_FUNCTION_METHOD, ComparisonMethod
+from inspect_safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES, DirectMeanBounds
 
-ComparisonMethod = Literal[
-    "weighted_hoeffding",
-    "weighted_empirical_bernstein",
-    "weighted_kl_chernoff",
-]
 ComparisonIndependenceUnit = Literal["rollout", "prompt_cluster"]
 
 
 @dataclass(frozen=True)
 class DirectComparisonBounds:
+    """One-sided bounds on a weighted candidate-minus-baseline failure risk difference.
+
+    The fields mirror ``DirectMeanBounds``, on the difference scale ``[-1, 1]``. The
+    ``candidate_*`` and ``baseline_*`` fields hold the per-arm bounds when the method bounds
+    each arm separately (``weighted_kl_chernoff``), and are ``None`` otherwise. Built by
+    ``direct_risk_difference_bounds``. Derived in docs/statistical-methods.md, section 7.0.
+    """
+
     lower: float
     upper: float
     completion_estimate_lower: float
@@ -49,6 +48,14 @@ class DirectComparisonBounds:
 
 @dataclass(frozen=True)
 class RatioComparisonBounds:
+    """One-sided bounds on a risk ratio or relative risk reduction, candidate over baseline.
+
+    ``estimand`` names which. Each ratio bound combines one bound from each arm, given in
+    ``candidate_bounds`` and ``baseline_bounds``. ``estimate``, ``lower`` or ``upper`` is
+    ``None`` when the baseline risk or bound it divides by is zero, and ``warning`` then says
+    which. Described in docs/model-comparisons.md and docs/plan-reference.md.
+    """
+
     candidate_estimate: float
     baseline_estimate: float
     estimate: float | None
@@ -106,11 +113,13 @@ def _arrays(
 
 
 def _direct_function(method: ComparisonMethod) -> Callable[..., DirectMeanBounds]:
-    return {
-        "weighted_hoeffding": weighted_hoeffding_mean_bounds,
-        "weighted_empirical_bernstein": weighted_empirical_bernstein_mean_bounds,
-        "weighted_kl_chernoff": weighted_kl_chernoff_mean_bounds,
-    }[method]
+    return DIRECT_MEAN_ENGINES[method].counts
+
+
+def _variance_centers(method: ComparisonMethod, centers: np.ndarray) -> dict[str, np.ndarray]:
+    """Variance centers for the engines that estimate a variance proxy."""
+
+    return {"variance_centers": centers} if method == "weighted_empirical_bernstein" else {}
 
 
 def _transform_rollout_bounds(bounds: DirectMeanBounds) -> DirectComparisonBounds:
@@ -151,7 +160,7 @@ def direct_risk_difference_bounds(
     *,
     alpha_lower: float,
     alpha_upper: float,
-    method: ComparisonMethod = "weighted_empirical_bernstein",
+    method: ComparisonMethod = DEFAULT_STATS_FUNCTION_METHOD,
     independence_unit: ComparisonIndependenceUnit = "rollout",
 ) -> DirectComparisonBounds:
     """Bound a fixed-design weighted candidate-minus-baseline failure risk.
@@ -244,6 +253,19 @@ def direct_risk_difference_bounds(
         q_unclassified = np.concatenate([cu, bu])
         q_trials = np.concatenate([cn, bn])
         q_weights = np.concatenate([w / 2, w / 2])
+        # Candidate q-observations are failures and baseline ones are safe outcomes, so a
+        # common center sits at the wrong end for one arm. The variance proxy is centered by
+        # arm instead, with all four arm-wise choices of 0 and 1: candidate 0 and baseline 1
+        # counts both arms' failures and serves two sparse arms, and the others serve arms
+        # that fail often. Centers 0/0 and 1/1 are the uncentered proxies.
+        zeros, ones = np.zeros_like(w), np.ones_like(w)
+        arm_centerings = np.stack(
+            [
+                np.concatenate([candidate, baseline])
+                for candidate in (zeros, ones)
+                for baseline in (zeros, ones)
+            ]
+        )
         bounds = _direct_function(method)(
             q_failures,
             q_unclassified,
@@ -252,6 +274,7 @@ def direct_risk_difference_bounds(
             alpha_lower=alpha_lower,
             alpha_upper=alpha_upper,
             independence_unit="rollout",
+            **_variance_centers(method, arm_centerings),
         )
         return _transform_rollout_bounds(bounds)
 
@@ -261,6 +284,8 @@ def direct_risk_difference_bounds(
     q_trials = 2 * cn * bn
     q_failures = cn * bn + cf * bn - (bf + bu) * cn
     q_unclassified = cu * bn + bu * cn
+    # Each q_j is 1/2 plus half the arms' rate difference, so the proxy is centered at 1/2.
+    # The uncentered proxies 0 and 1 are kept for arms far apart, where q_j nears 0 or 1.
     bounds = _direct_function(method)(
         q_failures,
         q_unclassified,
@@ -269,6 +294,9 @@ def direct_risk_difference_bounds(
         alpha_lower=alpha_lower,
         alpha_upper=alpha_upper,
         independence_unit="prompt_cluster",
+        **_variance_centers(
+            method, np.stack([np.full_like(w, 0.5), np.zeros_like(w), np.ones_like(w)])
+        ),
     )
     return _transform_rollout_bounds(bounds)
 
@@ -284,7 +312,7 @@ def direct_ratio_bounds(
     *,
     alpha_lower: float,
     alpha_upper: float,
-    method: ComparisonMethod = "weighted_empirical_bernstein",
+    method: ComparisonMethod = DEFAULT_STATS_FUNCTION_METHOD,
     independence_unit: ComparisonIndependenceUnit = "rollout",
     estimand: Literal["risk_ratio", "relative_risk_reduction"] = "risk_ratio",
 ) -> RatioComparisonBounds:

@@ -201,7 +201,9 @@ def test_neutral_files_and_inspect_logs_give_the_same_report(
 ) -> None:
     plan, neutral = _inputs(tmp_path)
     evals, samples = _frames()
-    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: evals)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+    )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,

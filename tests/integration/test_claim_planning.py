@@ -147,7 +147,9 @@ def test_planned_claims_use_the_alpha_and_design_analyze_uses(
     """Endpoint alpha and effective sample size match the intervals analyze decides on."""
     plan_path = _write(tmp_path, primary=primary)
     evals, samples = _frames()
-    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: evals)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+    )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
@@ -175,6 +177,48 @@ def test_planned_claims_use_the_alpha_and_design_analyze_uses(
     assert planned["all_mean"].alpha.endpoint_alpha == pytest.approx(0.05 / 10, rel=1e-12, abs=0)
 
 
+def test_direct_worst_of_k_intervals_count_in_the_direct_mean_family(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A direct worst_of_k interval on each selected group takes a share of the family."""
+    with_worst = PLAN.replace(
+        "    - {id: worst, type: maximum}\n",
+        "    - {id: worst, type: maximum}\n"
+        "    - {id: worst2, type: worst_of_k, k: 2, direct_interval: true}\n",
+    ).replace(
+        "claims:\n",
+        "claims:\n"
+        "  - {id: all_worst2, title: Worst of 2, cohort: candidate, group: all, measure: worst2,\n"
+        "     family: gate, acceptable_upper: 0.3, unacceptable_lower: 0.6}\n",
+    )
+    assert with_worst.count("worst2") == 3
+    plan_path = _write(tmp_path, plan=with_worst)
+    evals, samples = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: samples,
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+    claims = {item.claim_id: item for item in plan_claims(load_plan(plan_path), power=0.9)}
+    planned = claims["all_mean"]
+    assert isinstance(planned, PlannedClaim)
+    risk = next(
+        result
+        for result in report.group_risks
+        if result.group_id == "all" and result.measure_id == "mean"
+    )
+    direct = next(interval for interval in risk.intervals if interval.role == "primary")
+    # Two selected groups, each with a mean and a worst-of-2 interval, and eight nodes.
+    assert planned.alpha.target_count == 2 * 2 + 8
+    assert planned.alpha.endpoint_alpha == pytest.approx(direct.alpha_lower, rel=1e-12, abs=0)
+    unplanned = claims["all_worst2"]
+    assert isinstance(unplanned, UnplannedClaim)
+    assert "worst_of_k with a direct interval" in unplanned.reason
+
+
 def test_each_side_is_planned_at_its_own_threshold(tmp_path: Path) -> None:
     plan_path = _write(tmp_path)
     item = next(
@@ -198,7 +242,9 @@ def test_each_side_is_planned_at_its_own_threshold(tmp_path: Path) -> None:
 
 def _patch_logs(monkeypatch: pytest.MonkeyPatch, *, all_safe: bool = False) -> None:
     evals, samples = _frames(all_safe=all_safe)
-    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: evals)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+    )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
@@ -223,7 +269,13 @@ def _parity_plan(calibration: str, method: str) -> str:
 
 @pytest.mark.parametrize("calibration", ["flat_bonferroni", "frontier_sidak"])
 @pytest.mark.parametrize(
-    "method", ["weighted_hoeffding", "weighted_empirical_bernstein", "weighted_kl_chernoff"]
+    "method",
+    [
+        "weighted_hoeffding",
+        "weighted_empirical_bernstein",
+        "weighted_kl_chernoff",
+        "weighted_betting",
+    ],
 )
 def test_planned_intervals_match_analyze_for_every_profile_and_node(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, calibration: str, method: str
@@ -299,6 +351,45 @@ def test_planned_claims_are_decided_on_the_plan_method(tmp_path: Path) -> None:
     assert item.planned.minimum_detectable_failure_rate > rejection.minimum_detectable_failure_rate
 
 
+def test_claims_under_a_method_the_planner_cannot_invert_are_not_planned(tmp_path: Path) -> None:
+    """weighted_betting: no rates, but the claims say why and the floors are still exact."""
+    plan_path = _write(tmp_path, plan=_parity_plan("flat_bonferroni", "weighted_betting"))
+    design = plan_design(load_plan(plan_path), power=0.9)
+    reasons = {
+        item.claim_id: item.reason for item in design.claims if isinstance(item, UnplannedClaim)
+    }
+    assert "cannot invert" in reasons["all_mean"]
+    assert "cannot invert" in reasons["cyber_mean"]
+    assert design.intervals and all(0 < item.certification_floor < 1 for item in design.intervals)
+    result = runner.invoke(app, ["plan", "fixed-design", "--plan", str(plan_path)])
+    output = plain(result.output)
+    assert result.exit_code == 1, output
+    assert "Claim all_mean: not planned: decided on the weighted_betting interval" in output
+    assert "No claim of this plan could be planned." in output
+
+
+def test_a_reference_method_the_planner_cannot_invert_is_named(tmp_path: Path) -> None:
+    plan = _parity_plan("flat_bonferroni", "weighted_kl_chernoff").replace(
+        "reference_methods: [weighted_hoeffding]",
+        "reference_methods: [weighted_hoeffding, weighted_betting]",
+    )
+    assert plan.count("weighted_betting") == 1
+    plan_path = _write(tmp_path, plan=plan)
+    item = next(
+        claim
+        for claim in plan_claims(load_plan(plan_path), power=0.9)
+        if isinstance(claim, PlannedClaim) and claim.claim_id == "all_mean"
+    )
+    assert [reference.method for reference in item.references] == ["weighted_hoeffding"]
+    assert item.unplanned_references == ("weighted_betting",)
+    result = runner.invoke(app, ["plan", "fixed-design", "--plan", str(plan_path)])
+    output = plain(result.output)
+    assert result.exit_code == 0, output
+    assert (
+        "Reference method weighted_betting: not planned; the planner cannot invert its interval"
+    ) in output
+
+
 def test_a_level_the_declared_rollouts_cannot_resolve_is_reported(tmp_path: Path) -> None:
     """Like the generative budget table: cyber's questions are too thin for its threshold."""
     plan_path = _write(tmp_path, plan=_parity_plan("flat_bonferroni", "weighted_kl_chernoff"))
@@ -364,6 +455,9 @@ def test_cli_plans_every_claim_from_the_plan(tmp_path: Path) -> None:
     assert "Claim cyber_mean: cohort candidate, group cyber, measure mean" in output
     assert "Independence profile: rollout" in output
     assert "Bonferroni share of 0.05 across 10 targets and 1 cohorts" in output
+    assert (
+        "Interval method: weighted_hoeffding, as outputs.direct_mean_intervals declares"
+    ) in output
     assert "PASS at acceptable_upper 0.2: maximum certifiable failure rate" in output
     assert "FAIL at unacceptable_lower 0.5: minimum detectable failure rate" in output
     assert "Claim all_worst: not planned:" in output

@@ -59,7 +59,7 @@ jobs:
         os: [ubuntu-latest]
         # Every version the package claims to support. The development
         # environment is 3.12, so the older two are only ever exercised here.
-        python-version: ["3.10", "3.11", "3.12"]
+        python-version: ["3.11", "3.12", "3.13"]
         # Windows on one Python version: path, encoding and line-ending problems are
         # platform-specific, not version-specific.
         include:

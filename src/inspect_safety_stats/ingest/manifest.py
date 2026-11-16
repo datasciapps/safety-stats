@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,9 @@ import pandas as pd
 from inspect_safety_stats.config.models import AnalysisPlan, GroupSpec, WeightSpec
 
 REQUIRED_COLUMNS = ("prompt_id", "question_id", "task_id")
+# Every observation and prompt estimate carries a question and a task. A manifest that omits
+# one of these levels, because its plan never names it, gives each prompt a level of its own.
+_PROMPT_LEVEL_COLUMNS = ("question_id", "task_id")
 
 
 @dataclass(frozen=True)
@@ -36,15 +40,65 @@ def load_inclusion_probabilities(manifest: pd.DataFrame, column: str) -> np.ndar
     return values
 
 
-def load_manifest(path: str | Path) -> pd.DataFrame:
+def plan_manifest_columns(plan: AnalysisPlan) -> tuple[str, ...]:
+    """The columns of ``REQUIRED_COLUMNS`` the plan names, ``prompt_id`` always among them.
+
+    A plan names a column through its hierarchy, a nested weight hierarchy, a group filter, an
+    independence profile, a sampling column, an explicit weight column, a threshold column or
+    the zero-tolerance field. A level it never names takes the prompt's own identity.
+    """
+
+    named: set[str] = set(plan.design.hierarchy)
+    for spec in [plan.design.weights, *(group.weights for group in plan.groups)]:
+        if spec is None:
+            continue
+        if spec.strategy == "nested_equal":
+            named.update(spec.hierarchy)
+        if spec.column is not None:
+            named.add(spec.column)
+    for group in plan.groups:
+        named.update(group.filter)
+    for profile in plan.design.independence_profiles.values():
+        named.update(profile.block_by)
+    for column in (
+        plan.design.inclusion_probability_column,
+        plan.design.stratum_column,
+        plan.policy.zero_tolerance.manifest_field,
+        *(measure.threshold_column for measure in plan.outputs.risk_measures),
+    ):
+        if column is not None:
+            named.add(column)
+    return tuple(column for column in REQUIRED_COLUMNS if column == "prompt_id" or column in named)
+
+
+def load_manifest(path: str | Path, required: Iterable[str] = REQUIRED_COLUMNS) -> pd.DataFrame:
+    """Read a design manifest that has every ``required`` column.
+
+    ``required`` is a subset of ``REQUIRED_COLUMNS`` and always holds ``prompt_id``; the
+    analysis passes ``plan_manifest_columns(plan)``. An identifier column the manifest omits
+    takes each prompt's ``prompt_id``.
+    """
+
+    required = tuple(required)
+    unknown = sorted(set(required) - set(REQUIRED_COLUMNS))
+    if unknown or "prompt_id" not in required:
+        raise ValueError(
+            f"required manifest columns must include prompt_id and come from {REQUIRED_COLUMNS}"
+        )
     manifest = pd.read_csv(path)
-    missing = [column for column in REQUIRED_COLUMNS if column not in manifest.columns]
+    missing = [column for column in REQUIRED_COLUMNS if column in required]
+    missing = [column for column in missing if column not in manifest.columns]
     if missing:
         raise ValueError(f"design manifest is missing required columns: {', '.join(missing)}")
     for column in REQUIRED_COLUMNS:
+        if column not in manifest.columns:
+            continue
         if manifest[column].isna().any():
             raise ValueError(f"design manifest column {column!r} contains missing values")
         manifest[column] = manifest[column].astype(str)
+    for column in _PROMPT_LEVEL_COLUMNS:
+        if column not in manifest.columns:
+            manifest[column] = manifest["prompt_id"]
     if manifest["prompt_id"].duplicated().any():
         duplicates = sorted(manifest.loc[manifest["prompt_id"].duplicated(), "prompt_id"].unique())
         raise ValueError(f"design manifest has duplicate prompt_id values: {duplicates[:10]}")

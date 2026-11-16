@@ -31,6 +31,30 @@ app.add_typer(schema_app, name="schema")
 app.add_typer(generative_app, name="generative")
 
 
+DecisionPolicyOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--decision-policy",
+        exists=True,
+        dir_okay=False,
+        help=(
+            "A decision policy whose thresholds replace the plan's for the claims it sets, "
+            "without changing the plan's hash (experimental; docs/decision-policy.md)."
+        ),
+    ),
+]
+ReceiptOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--registration-receipt",
+        exists=True,
+        dir_okay=False,
+        help=(
+            "Receipt written by hash-plan --register: checked against the plan's hash and "
+            "the earliest evaluation start. Experimental: see docs/plan-reference.md."
+        ),
+    ),
+]
 RunsOption = Annotated[
     Path | None,
     typer.Option(
@@ -88,6 +112,8 @@ def analyze_command(
         bool, typer.Option("--decision-exit-codes/--no-decision-exit-codes")
     ] = False,
     allow_invalid: Annotated[bool, typer.Option("--allow-invalid")] = False,
+    decision_policy: DecisionPolicyOption = None,
+    registration_receipt: ReceiptOption = None,
 ) -> None:
     """Analyze completed Inspect logs or rollout files against a plan and write the report."""
 
@@ -96,7 +122,12 @@ def analyze_command(
 
     try:
         report = run_analysis(
-            plan=plan, logs=log_input, parallel=parallel or False, source=source
+            plan=plan,
+            logs=log_input,
+            parallel=parallel or False,
+            source=source,
+            decision_policy=decision_policy,
+            registration_receipt=registration_receipt,
         )
         path = report.write(output, overwrite=overwrite)
     except Exception as exc:
@@ -105,7 +136,7 @@ def analyze_command(
     typer.echo(f"Analysis: {report.analysis['id']}")
     typer.echo(f"Plan SHA-256: {report.analysis['plan_sha256']}")
     typer.echo(f"Integrity: {report.integrity.status}")
-    if report.presentation.get("include_decisions", False):
+    if report.presentation.include_decisions:
         for claim in report.claims:
             if claim.mandatory:
                 typer.echo(f"{claim.status}: {claim.title}")
@@ -133,13 +164,22 @@ def validate_command(
     runs: RunsOption = None,
     rollouts: RolloutsOption = None,
     parallel: Annotated[int, typer.Option("--parallel", min=0)] = 0,
+    decision_policy: DecisionPolicyOption = None,
+    registration_receipt: ReceiptOption = None,
 ) -> None:
     """Check logs or rollout files against a plan (manifest, cohorts, rollouts, scores)."""
 
     log_input, source = _source_arguments(logs, runs, rollouts)
     from inspect_safety_stats.api import validate as run_validation
 
-    result = run_validation(plan=plan, logs=log_input, parallel=parallel or False, source=source)
+    result = run_validation(
+        plan=plan,
+        logs=log_input,
+        parallel=parallel or False,
+        source=source,
+        decision_policy=decision_policy,
+        registration_receipt=registration_receipt,
+    )
     for diagnostic in result.diagnostics:
         scope = f" [{diagnostic.scope}]" if diagnostic.scope else ""
         typer.echo(f"{diagnostic.severity} {diagnostic.code}{scope}: {diagnostic.message}")
@@ -347,7 +387,7 @@ def fixed_design_planning_command(
             ),
         ),
     ] = None,
-    alpha:Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
+    alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
     power: Annotated[float, typer.Option("--power", min=0.0, max=1.0)] = 0.9,
     rollouts: Annotated[int | None, typer.Option("--rollouts", min=1)] = None,
     weights: Annotated[
@@ -396,7 +436,11 @@ def fixed_design_planning_command(
         raise typer.BadParameter("give --manifest and --threshold, or --plan")
 
     from inspect_safety_stats.config.models import WeightSpec
-    from inspect_safety_stats.ingest.manifest import load_manifest, resolve_weights
+    from inspect_safety_stats.ingest.manifest import (
+        REQUIRED_COLUMNS,
+        load_manifest,
+        resolve_weights,
+    )
     from inspect_safety_stats.stats.planning import fixed_design_detectable_failure_rates
 
     # resolve_weights only reads the column for explicit weights; ignoring it silently would
@@ -408,7 +452,6 @@ def fixed_design_planning_command(
         "rollout" if independence_unit is IndependenceUnitOption.rollout else "prompt_cluster"
     )
     try:
-        frame = load_manifest(manifest)
         spec = WeightSpec.model_validate(
             {
                 "strategy": weights.value,
@@ -416,6 +459,10 @@ def fixed_design_planning_command(
                 "column": weight_column,
             }
         )
+        named = {"prompt_id", *(spec.hierarchy if spec.strategy == "nested_equal" else [])}
+        if spec.column is not None:
+            named.add(spec.column)
+        frame = load_manifest(manifest, [column for column in REQUIRED_COLUMNS if column in named])
         weight_values = resolve_weights(frame, spec)
         if rollouts is not None:
             trials = [rollouts] * len(frame)
@@ -554,6 +601,11 @@ def _plan_fixed_design_from_plan(
                 f"{_rate(reference.maximum_certifiable_failure_rate)}, minimum detectable "
                 f"{_rate(reference.minimum_detectable_failure_rate)}"
             )
+        for unplanned in item.unplanned_references:
+            typer.echo(
+                f"  Reference method {unplanned}: not planned; the planner cannot invert its "
+                "interval"
+            )
     if design.intervals:
         typer.echo("")
         typer.echo(
@@ -609,6 +661,65 @@ def _plan_fixed_design_from_plan(
         raise typer.Exit(1)
 
 
+@plan_app.command("pilot")
+def pilot_command(
+    manifest: Annotated[
+        Path,
+        typer.Option("--manifest", exists=True, dir_okay=False, help="Design manifest CSV."),
+    ],
+    per_stratum: Annotated[
+        int, typer.Option("--per-stratum", min=1, help="Prompts to draw from each stratum.")
+    ],
+    seed: Annotated[
+        int, typer.Option("--seed", help="Selection seed; record it with the pilot.")
+    ],
+    output: Annotated[
+        Path,
+        typer.Option("--output", dir_okay=False, help="Pilot frame CSV to write."),
+    ],
+    strata: Annotated[
+        str,
+        typer.Option(
+            "--strata",
+            help="Comma-separated manifest columns whose combinations form the strata; "
+            "empty for one stratum.",
+        ),
+    ] = "task_id",
+) -> None:
+    """Draw a random pilot within strata of a design manifest (experimental).
+
+    Writes the whole manifest with pilot_stratum, pilot_inclusion_probability and
+    pilot_selected added. Run the pilot on the rows where pilot_selected is true. The
+    same file is the frame of a sampled design (sampling: fixed_size, stratum_column:
+    pilot_stratum, inclusion_probability_column: pilot_inclusion_probability).
+    """
+
+    import pandas as pd
+
+    from inspect_safety_stats.ingest.manifest import load_manifest
+    from inspect_safety_stats.ingest.pilot import draw_pilot
+
+    if output.resolve() == manifest.resolve():
+        raise typer.BadParameter("--output must not overwrite the design manifest")
+    columns = [column.strip() for column in strata.split(",") if column.strip()]
+    try:
+        load_manifest(manifest)
+        # Read every value as written, so the pilot frame repeats the manifest's own text
+        # rather than pandas' reading of it (an integer column with a gap would turn into
+        # floats, for example).
+        frame = pd.read_csv(manifest, dtype=str, keep_default_na=False)
+        pilot = draw_pilot(frame, per_stratum=per_stratum, strata=columns, seed=seed)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    output.parent.mkdir(parents=True, exist_ok=True)
+    pilot.to_csv(output, index=False, lineterminator="\n")
+    selected = pilot.loc[pilot["pilot_selected"]]
+    typer.echo(f"Strata: {pilot['pilot_stratum'].nunique()}")
+    typer.echo(f"Pilot prompts: {len(selected)} of {len(pilot)}")
+    typer.echo(f"Seed: {seed}")
+    typer.echo(f"Pilot frame: {output}")
+
+
 @schema_app.command("plan")
 def plan_schema_command() -> None:
     """Print the JSON schema for analysis plans."""
@@ -627,6 +738,15 @@ def report_schema_command() -> None:
     typer.echo(json.dumps(SafetyReport.model_json_schema(), indent=2, sort_keys=True))
 
 
+@schema_app.command("decision-policy")
+def decision_policy_schema_command() -> None:
+    """Print the JSON schema for decision policies (experimental)."""
+
+    from inspect_safety_stats.config.decision_policy import DecisionPolicy
+
+    typer.echo(json.dumps(DecisionPolicy.model_json_schema(), indent=2, sort_keys=True))
+
+
 @app.command("version")
 def version_command() -> None:
     """Print the package version."""
@@ -637,12 +757,64 @@ def version_command() -> None:
 @app.command("hash-plan")
 def hash_plan_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
+    inference: Annotated[
+        bool,
+        typer.Option(
+            "--inference",
+            help=(
+                "Print the inference hash instead: the plan's hash without the thresholds a "
+                "decision policy may set, which a decision policy names (experimental)."
+            ),
+        ),
+    ] = False,
+    register: Annotated[
+        Path | None,
+        typer.Option(
+            "--register",
+            dir_okay=False,
+            help=(
+                "Also write a registration receipt (the hash and the current UTC time) to "
+                "this new file, for analyze --registration-receipt. Anchor it externally, "
+                "for example in a signed commit. Experimental: see docs/plan-reference.md."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Print a plan's canonical SHA-256, for registering a frozen plan."""
 
     from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
 
-    typer.echo(canonical_plan_hash(load_plan(plan)))
+    if inference and register is not None:
+        # A receipt records the canonical hash, which analyze checks; registering the
+        # inference hash would make a receipt no analysis can match.
+        raise typer.BadParameter("--register records the canonical hash; omit --inference")
+    resolved = load_plan(plan)
+    if inference:
+        from inspect_safety_stats.config.decision_policy import inference_plan_hash
+
+        typer.echo(inference_plan_hash(resolved))
+        return
+    digest = canonical_plan_hash(resolved)
+    # The hash stays the first line on its own: scripts read it.
+    typer.echo(digest)
+    if register is None:
+        return
+    from inspect_safety_stats.config.registration import write_receipt
+
+    try:
+        receipt = write_receipt(register, digest, package_version=__version__)
+    except FileExistsError as exc:
+        typer.echo(
+            f"Registration failed: {register} exists; a receipt is never overwritten",
+            err=True,
+        )
+        raise typer.Exit(code=3) from exc
+    typer.echo(f"Registered at: {receipt.registered_at.isoformat()}")
+    typer.echo(f"Receipt: {register}")
+    typer.echo(
+        "The receipt's time is the local clock's. Anchor the receipt externally, for "
+        "example in a signed commit or with a timestamping service, before generation starts."
+    )
 
 
 @generative_app.command("compile")
