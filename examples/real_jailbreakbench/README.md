@@ -208,6 +208,11 @@ comparative outputs. An optional common system message can similarly be supplied
 `--system-prompt-file`. Comparing two configurations of the same provider model requires them to
 have distinct Inspect model identifiers; the present runner matches cohorts by model identifier.
 
+Every cohort also matches the run's `--grader-model` (`task_arg_grader_model`), so all arms are
+judged by the same grader. A log of an arm graded by another model, such as a self-graded smoke
+run in the same log directory, is not selected and joins no cohort. If no log graded by the
+run's grader exists for an arm, the runner stops and names that arm.
+
 ## Scoring and interpretation
 
 The portable scorer asks an explicitly selected Inspect grader whether the response substantively
