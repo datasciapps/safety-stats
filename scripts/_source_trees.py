@@ -2,12 +2,14 @@
 
 Shared by the scripts in this directory. A commit's source is exported to a temporary
 directory with git archive and imported from there, so the working tree is never modified.
+For a change outside the source, a whole commit can be exported the same way.
 """
 
 from __future__ import annotations
 
 import io
 import os
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -73,6 +75,15 @@ def source_changed(repository: Path, commit: str, src: str) -> bool:
     return bool(untracked.stdout.strip())
 
 
+def tree_changed(repository: Path, commit: str, tests: str) -> bool:
+    """Whether anything outside ``tests``, untracked files included, differs from ``commit``."""
+    outside = f":(exclude){tests}"
+    if git(repository, "diff", "--quiet", commit, "--", ".", outside).returncode == 1:
+        return True
+    untracked = git(repository, "ls-files", "--others", "--exclude-standard", "--", ".", outside)
+    return bool(untracked.stdout.strip())
+
+
 def export_source(repository: Path, commit: str, src: str, destination: Path) -> Path | None:
     """Write ``src`` as committed at ``commit`` under ``destination``; None if it is absent."""
     archive = git(repository, "archive", "--format=tar", commit, "--", src)
@@ -81,6 +92,39 @@ def export_source(repository: Path, commit: str, src: str, destination: Path) ->
     with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
         tar.extractall(destination, **_EXTRACT)
     return destination / src
+
+
+def export_tree(repository: Path, commit: str, tests: str, destination: Path) -> str | None:
+    """Write the whole of ``commit`` under ``destination``, with the working tree's ``tests``.
+
+    The committed ``tests`` is replaced by the working tree's, tracked and untracked files alike
+    but without ignored ones, and the result is made a git repository with every file staged, so
+    tests that ask git about their checkout work there too. Returns why it failed, or None.
+    """
+    archive = git(repository, "archive", "--format=tar", commit)
+    if archive.returncode:
+        return archive.stderr.decode(errors="replace").strip() or "git archive failed"
+    with tarfile.open(fileobj=io.BytesIO(archive.stdout)) as tar:
+        tar.extractall(destination, **_EXTRACT)
+    shutil.rmtree(destination / tests, ignore_errors=True)
+    listed = git(
+        repository, "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", tests
+    )
+    if listed.returncode:
+        return f"could not list the files in {tests}/"
+    for name in filter(None, listed.stdout.decode().split("\0")):
+        origin = repository / name
+        if origin.is_file():  # a tracked file deleted in the working tree is left out
+            target = destination / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(origin, target)
+    # Staged, not committed: git rev-parse and git ls-files see a checkout either way, and a
+    # commit would run the developer's commit hooks on a tree that is nobody's work.
+    for step in (("init", "-q"), ("-c", "core.autocrlf=false", "add", "-A")):
+        result = git(destination, *step)
+        if result.returncode:
+            return f"git {' '.join(step)} in the export failed: {result.stderr.decode().strip()}"
+    return None
 
 
 def run_module(

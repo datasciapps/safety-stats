@@ -3,7 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 Decision = Literal["PASS", "FAIL", "INCONCLUSIVE"]
 Eligibility = Literal["certifying", "diagnostic", "invalid"]
@@ -56,6 +64,10 @@ class RiskIntervalResult(ResultModel):
     upper: float | None = None
     method: str
     role: Literal["primary", "reference", "sensitivity"]
+    # What a sensitivity interval varies: the independence profile its blocks come from, or
+    # the judge's error rates (an assumed calibration scenario or an uncertified correction).
+    # None for primary and reference intervals, and in reports written before the field.
+    varied_assumption: Literal["independence", "judge_error"] | None = None
     coverage_scope: str | None = None
     coverage_mode: Literal["two_sided", "per_direction"] | None = None
     family: str | None = None
@@ -94,6 +106,38 @@ class RiskIntervalResult(ResultModel):
     assumptions: list[str] = Field(default_factory=list)
     eligibility: Eligibility
     warnings: list[str] = Field(default_factory=list)
+    # Experimental (#127), set only when the plan asks for it.
+    single_valued_bound: float | None = None
+    single_valued_bound_delta: float | None = None
+    single_valued_bound_guarantee: str | None = None
+
+    @model_validator(mode="after")
+    def _varied_assumption_only_on_sensitivity(self) -> RiskIntervalResult:
+        if self.varied_assumption is not None and self.role != "sensitivity":
+            raise ValueError(
+                f"interval {self.interval_id!r} has role {self.role!r}; only a sensitivity "
+                "interval names a varied_assumption"
+            )
+        return self
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_single_valued_bound(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        # Left out unless requested, so a report that does not use the experimental bound
+        # keeps the bytes it had before the bound existed.
+        data: dict[str, Any] = handler(self)
+        if self.single_valued_bound is None:
+            for name in _SINGLE_VALUED_FIELDS:
+                data.pop(name, None)
+        return data
+
+
+_SINGLE_VALUED_FIELDS = (
+    "single_valued_bound",
+    "single_valued_bound_delta",
+    "single_valued_bound_guarantee",
+)
 
 
 class GroupRiskResult(ResultModel):
@@ -234,12 +278,44 @@ class ClaimProfileVerdict(ResultModel):
     effective_sample_size: float | None = None
 
 
+class JudgeErrorStressResult(ResultModel):
+    """How good the judge must be for a threshold claim's verdict to hold on true risk.
+
+    Experimental and diagnostic: it never moves a claim. ``applicable`` is False, with the
+    reason, when the claim was not decided on judge-reported bounds this can stress.
+    """
+
+    applicable: bool
+    reason: str | None = None
+    judge_reported_lower: float | None = None
+    judge_reported_upper: float | None = None
+    unclassified_share: float | None = None
+    pass_sensitivity_at_perfect_specificity: float | None = None
+    pass_specificity_at_perfect_sensitivity: float | None = None
+    fail_sensitivity_at_perfect_specificity: float | None = None
+    fail_specificity_at_perfect_sensitivity: float | None = None
+    accuracy_source: str | None = None
+    sensitivity_lower: float | None = None
+    sensitivity_upper: float | None = None
+    specificity_lower: float | None = None
+    specificity_upper: float | None = None
+    stressed_status: Decision | None = None
+    true_risk_lower: float | None = None
+    true_risk_upper: float | None = None
+    identified: bool | None = None
+    robust: bool | None = None
+
+
 class ClaimResult(ResultModel):
     claim_id: str
     title: str
     status: Decision
     statistical_status: Decision
     policy_status: Decision
+    # In an exploratory analysis, the status a confirmatory analysis of the same data would
+    # give. It certifies nothing and never enters the decision. None in a confirmatory
+    # analysis, and when there are no certifying bounds to compare with the thresholds.
+    descriptive_status: Decision | None = None
     estimate: float | None = None
     lower: float | None = None
     upper: float | None = None
@@ -254,9 +330,27 @@ class ClaimResult(ResultModel):
     reasons: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     profile_verdicts: list[ClaimProfileVerdict] = Field(default_factory=list)
+    # Present only when the plan opts in with report.judge_error_stress.
+    judge_error_stress: JudgeErrorStressResult | None = None
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_judge_error_stress(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if self.judge_error_stress is None:
+            data.pop("judge_error_stress", None)
+        return data
 
 
 class SafetyReport(ResultModel):
+    """The result of ``analyze``: estimates, bounds, comparisons, claims and the decision.
+
+    Its results apply to the declared fixed evaluation set. ``write`` saves it as a report
+    directory, and ``inspect-safety-stats schema report`` prints the JSON schema of its
+    ``report.json``.
+    """
+
     schema_version: Literal["3.0"] = "3.0"
     package_version: str
     analysis: dict[str, Any]

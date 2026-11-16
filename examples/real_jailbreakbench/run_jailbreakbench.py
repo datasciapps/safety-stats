@@ -61,6 +61,7 @@ def write_plan(
     *,
     arms: dict[str, str],
     reference: str,
+    grader_model: str,
     run_id: str,
     frozen_at: str,
     attack_name: str,
@@ -69,11 +70,15 @@ def write_plan(
         plan: dict[str, Any] = yaml.safe_load(stream)
     plan["analysis"]["id"] = run_id
     plan["analysis"]["title"] = f"JailbreakBench-100: {len(arms)}-arm model comparison"
-    plan["analysis"]["description"] += f" Prompt transformation: {attack_name}."
+    plan["analysis"]["description"] += (
+        f" Prompt transformation: {attack_name}. Every arm is graded by {grader_model}."
+    )
     plan["analysis"]["plan_frozen_at"] = frozen_at
+    # Every cohort matches the same grader, so a difference between arms cannot be a
+    # difference between judges: a log graded by another model joins no cohort.
     plan["cohorts"] = {
         arm_id: {
-            "match": {"model": model},
+            "match": {"model": model, "task_arg_grader_model": grader_model},
             "require_uniform": ["task_version", "model_generate_config", "solver"],
         }
         for arm_id, model in arms.items()
@@ -97,26 +102,33 @@ def analyze_run(run_dir: Path, *, overwrite: bool = False) -> Path:
 
 
 def latest_successful_logs(run_dir: Path) -> list[str]:
-    """Select the newest successful Inspect log for each declared model arm."""
+    """Select the newest successful Inspect log for each declared model arm and its grader."""
 
     with (run_dir / "analysis-plan.yaml").open(encoding="utf-8") as stream:
         plan: dict[str, Any] = yaml.safe_load(stream)
-    expected = [str(cohort["match"]["model"]) for cohort in plan["cohorts"].values()]
-    selected: dict[str, tuple[float, str]] = {}
+    expected = [
+        (str(cohort["match"]["model"]), str(cohort["match"]["task_arg_grader_model"]))
+        for cohort in plan["cohorts"].values()
+    ]
+    selected: dict[tuple[str, str], tuple[float, str]] = {}
     for info in list_eval_logs(str(run_dir / "logs"), formats=["eval"], recursive=True):
         log = read_eval_log(info, header_only=True)
-        model = str(log.eval.model)
-        if str(log.status) != "success" or model not in expected:
+        key = (str(log.eval.model), str((log.eval.task_args or {}).get("grader_model")))
+        if str(log.status) != "success" or key not in expected:
             continue
         candidate = (info.mtime or 0.0, info.name)
-        if model not in selected or candidate[0] > selected[model][0]:
-            selected[model] = candidate
-    missing = [model for model in expected if model not in selected]
+        if key not in selected or candidate[0] > selected[key][0]:
+            selected[key] = candidate
+    missing = [
+        f"{model} graded by {grader}"
+        for model, grader in expected
+        if (model, grader) not in selected
+    ]
     if missing:
         raise RuntimeError(
             "no successful Inspect log is available for model arm(s): " + ", ".join(missing)
         )
-    return [selected[model][1] for model in expected]
+    return [selected[key][1] for key in expected]
 
 
 def _arguments() -> argparse.Namespace:
@@ -226,6 +238,7 @@ def main() -> None:
         run_dir / "analysis-plan.yaml",
         arms=arms,
         reference=args.reference,
+        grader_model=grader_model,
         run_id=run_id,
         frozen_at=datetime.now(timezone.utc).isoformat(),
         attack_name=args.attack_name,

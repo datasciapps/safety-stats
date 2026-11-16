@@ -9,6 +9,7 @@ read from the transcript. The rules of the plan are applied by
 from __future__ import annotations
 
 import re
+import zipfile
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -18,7 +19,7 @@ from typing import Any, Literal
 import pandas as pd
 
 try:
-    from inspect_ai.analysis import evals_df, samples_df
+    from inspect_ai.analysis import EvalColumn, EvalColumns, evals_df, samples_df
     from inspect_ai.log import EvalLog, read_eval_log
 except ImportError as error:  # pragma: no cover - exercised in a fresh interpreter
     raise ImportError(
@@ -76,17 +77,31 @@ def _error_code(*values: Any) -> str | None:
     return next((code for code in sorted(POLICY_BLOCK_CODES) if code in text), None)
 
 
+# What reading a log raises when the log is missing, truncated or not a log. Any other
+# exception is a defect, and propagates rather than passing for an unknown error stage.
+_UNREADABLE_LOG = (OSError, ValueError, zipfile.BadZipFile)
+
+
+@dataclass(frozen=True)
+class _Transcripts:
+    """The error contexts of one log's samples, or why the log could not be read."""
+
+    contexts: dict[str, ErrorContext]
+    unread_reason: str | None = None
+
+
 def _error_context(
     *,
     log_path: str,
     eval_id: str,
     sample_id: str,
     provided: dict[str, EvalLog],
-    cache: dict[str, dict[str, ErrorContext]],
+    cache: dict[str, _Transcripts],
 ) -> ErrorContext:
     cache_key = eval_id if eval_id in provided else log_path
     if cache_key not in cache:
         contexts: dict[str, ErrorContext] = {}
+        unread_reason: str | None = None
         try:
             log = provided.get(eval_id) or read_eval_log(log_path)
             for sample in log.samples or []:
@@ -127,12 +142,21 @@ def _error_context(
                     content_delivered=content_delivered,
                     provider_error_code=_error_code(sample.error, *event_errors),
                 )
-        except Exception:
+        except _UNREADABLE_LOG as error:
             contexts = {}
-        cache[cache_key] = contexts
-    return cache[cache_key].get(
+            # The exception's type only: its message may name local paths, which reports
+            # do not record.
+            unread_reason = type(error).__name__
+        cache[cache_key] = _Transcripts(contexts, unread_reason)
+    transcripts = cache[cache_key]
+    return transcripts.contexts.get(
         sample_id,
-        ErrorContext(stage="unknown", content_delivered=None, provider_error_code=None),
+        ErrorContext(
+            stage="unknown",
+            content_delivered=None,
+            provider_error_code=None,
+            unread_reason=transcripts.unread_reason,
+        ),
     )
 
 
@@ -151,6 +175,11 @@ _CONFIGURATION_FIELDS = (
     "dataset_name",
     "epochs",
 )
+
+
+# The run fields read from each log: Inspect's defaults, and the scorers with their options, so
+# a report can record the configuration of each declared judge. ``evals_df`` leaves them out.
+_RUN_COLUMNS = [*EvalColumns, EvalColumn("scorers", path="eval.scorers")]
 
 
 def _parse_time(value: Any) -> datetime | None:
@@ -235,7 +264,7 @@ def _rollouts(samples: pd.DataFrame, runs: list[RunRecord]) -> InspectRollouts:
 def read_inspect_runs(logs: LogInput) -> list[RunRecord]:
     """Read the runs of Inspect logs, one per evaluation."""
 
-    evaluations = evals_df(logs)
+    evaluations = evals_df(logs, columns=_RUN_COLUMNS)
     if evaluations.empty:
         raise ValueError("no Inspect evaluation logs were found")
     return _runs(evaluations)
@@ -257,7 +286,7 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
 
     # ORDER MATTERS: both frames are read before either is checked, so that a run without
     # samples reports the same error it always did.
-    evaluations = evals_df(logs)
+    evaluations = evals_df(logs, columns=_RUN_COLUMNS)
     samples = samples_df(logs, parallel=parallel)
     if evaluations.empty:
         raise ValueError("no Inspect evaluation logs were found")
@@ -266,7 +295,7 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
     runs = _runs(evaluations)
     collected = _rollouts(samples, runs)
     provided = _provided_eval_logs(logs)
-    cache: dict[str, dict[str, ErrorContext]] = {}
+    cache: dict[str, _Transcripts] = {}
 
     def error_context(rollout: RolloutRecord) -> ErrorContext:
         return _error_context(

@@ -707,6 +707,31 @@ Taking both proxies from each endpoint's own completion is not monotone. Complet
 as a failure lowers (Q_-), and with skewed weights the width can then shrink by more than the
 estimate rises.
 
+**Fixed variance centers.** For any constant (c), (\operatorname{Var}(Y)\le\mathbb E(Y-c)^2),
+with slack ((\mathbb E Y-c)^2). A caller may therefore fix (K) centerings in advance, from the
+design and never from the data, each a center (c_i^{(k)}\in[0,1]) per contribution, and use
+
+\[
+Q_{c^{(k)}}=\sum_i a_i^2\bigl(Y_i-c_i^{(k)}\bigr)^2,\qquad
+\overline V=\min\left\{\frac{C_2}{4},\;\min_{k}\Bigl(Q_{c^{(k)}}
++\sqrt{\tfrac12 C_4^{(k)}\log\tfrac1{\delta_v}}\Bigr)\right\},
+\]
+
+with (delta_v=\alpha_d/(2K)), so the (K) variance proxies share half the endpoint budget. Each
+term of (Q_{c^{(k)}}) lies in ([0,a_i^2r_i^{(k)}]) with
+(r_i^{(k)}=\max\{(c_i^{(k)})^2,(1-c_i^{(k)})^2\}), so Hoeffding's padding uses the range-squared
+sum (C_4^{(k)}=\sum_i a_i^4(r_i^{(k)})^2). For centers 0 or 1, (r=1) and (C_4^{(k)}=C_4); about
+(1/2), (r=1/4) and the padding is a quarter as large. An unknown outcome contributes its larger
+completion, (r_i^{(k)}) on the rollout unit; on the prompt-cluster unit the squared deviation is
+convex in the completed rate, so its maximum lies at one of the two extreme completions. The
+default, (K=2) with (c\equiv0) and (c\equiv1), is exactly (Q_+) and (Q_-) above.
+
+Validity: let (V_0=\min\{C_2/4,\min_k\mathbb E Q_{c^{(k)}}\}), which is deterministic and at least
+(V). On the event that all (K) Hoeffding bounds hold (probability at least (1-\alpha_d/2)),
+(\overline V\ge V_0), and the Bernstein width is increasing in the variance, so a miss requires
+the Bernstein tail at (V_0) (probability at most (\alpha_d/2)). This needs the centers to be
+fixed: a center chosen from the data would make (V_0) random.
+
 This is a finite-sample, heterogeneous-Bernoulli empirical-Bernstein construction, not a normal
 approximation and not a plug-in standard error. It can be materially narrower than Hoeffding, but
 it can remain loose near zero failures because it spends part of the error budget estimating
@@ -743,6 +768,55 @@ calibration among disjoint nodes within each frontier. The resulting statement a
 simultaneously across all selected estimands for one prespecified interval construction.
 Hoeffding references and cluster sensitivities carry their own construction-specific coverage
 statements; the user must not choose a method post hoc and retain the same guarantee.
+
+##### Single-valued bound for system models (experimental)
+
+System-level safety analyses, such as fault trees and Markov models, take one number per
+component rather than an interval at a chosen \(\alpha\). The option
+`outputs.direct_mean_intervals.single_valued_bound` reports, beside each direct interval,
+
+\[
+M=\inf_{\delta\in(0,1)}\bigl[U_\delta+\delta\bigr],
+\]
+
+where \(U_\delta\) is the same construction's one-sided upper bound at level \(\delta\) for that
+node alone. For the exact binomial bound this is \(M=\min_p[p+P_p(S\le s)]\).
+
+*Assumptions.* Those of the underlying construction, and a family \(U_\delta\) that is
+non-increasing in \(\delta\) with \(P(R>U_\delta)\le\delta\) for each fixed \(\delta\). Every
+direct-mean construction in this package has both properties.
+
+*Guarantee.* \(P(M<R)\le R\), where \(R\) is the node's true weighted-mean risk. Proof: if
+\(M<R\), some \(\delta<R\) has \(U_\delta+\delta<R\), so \(U_\delta<R\). Since
+\(U_R\le U_\delta\), the level-\(R\) bound then misses \(R\), which happens with probability at
+most \(R\).
+
+*Computation.* The infimum is taken over a fixed logarithmic grid of \(\delta\) from
+\(10^{-12}\) to \(1-10^{-9}\), refined around the grid's minimiser. Every reported value is
+\(U_\delta+\delta\) at a \(\delta\) actually evaluated, so it is never below the exact
+infimum: imprecision makes \(M\) larger, never smaller. A family that rises with \(\delta\)
+anywhere on the grid is refused. The report gives the \(\delta\) that attains \(M\).
+
+*Exact check.* Enumerating the binomial distribution for the exact binomial version gives
+\(P(M<R)\) of \(7.19\times10^{-4}\) at \(R=0.05\), \(N=1000\); \(4.32\times10^{-5}\) at
+\(R=0.01\), \(N=1000\); and \(1.60\times10^{-2}\) at \(N=20\), \(R=0.4\). For 55 failures in
+1,000 rollouts, \(M=0.0808\), against \(0.0684\) for the one-sided 95% bound. The tests check
+\(P(M<R)\le R\) by exact enumeration over a grid of \(N\) and \(R\), for the exact binomial
+version and for each direct-mean construction on equal-weight binary rollouts.
+
+*Caveats.*
+
+- The guarantee's level is the unknown risk itself: strong when \(R\le0.01\), weak on paper at
+  \(R=0.2\).
+- \(M\) is usually above a 95% bound. It is an input for system models, not a replacement for
+  the claims' gate, and it never decides a claim.
+- It holds for each node alone. It is not simultaneous over nodes, groups or cohorts, and it is
+  taken from the raw node bound, not from the hierarchy projection.
+- Plugging \(M\) into a system model is conservative only if the model is monotone in it, which
+  rules out NOT gates.
+- It is refused under a sampled design and with judge calibration
+  (`PLAN_SINGLE_VALUED_BOUND_UNSUPPORTED`). With judge calibration it would bound the risk that
+  the judge reports a failure, not the corrected risk.
 
 #### 2.4.11 Recommended reporting and gating
 
@@ -1361,6 +1435,22 @@ Bernoulli-KL bound on \(Q\) is inefficient for sparse safety risk because \(Q\) 
 The weighted KL/Chernoff primary instead builds a jointly calibrated rectangle for the two sparse
 arm means and reports \([L_C-U_B,U_C-L_B]\). Empirical Bernstein and Hoeffding remain direct
 contrast references.
+
+For empirical Bernstein, the variance proxies of \(Q\) are centered by arm. On the rollout unit
+\(Q_++Q_-=C_2\) exactly, because every rollout counts in one of them, so in a balanced design
+\(\min(Q_+,Q_-)=\tfrac{C_2}{2}(1-|\hat\pi_C-\hat\pi_B|)\), where \(\hat\pi\) are the arms' weighted
+observed failure rates. Both uncentered proxies therefore lose to the cap \(C_2/4\) unless the
+arms' rates differ by more than \(1/2\), however sparse the arms are, and at the cap the
+interval is wider than Hoeffding's by a factor of at least
+\(\sqrt{\log(2/\alpha)/\log(1/\alpha)}\). The rollout unit therefore uses the four arm-wise
+centerings: candidate rollouts at \(0\) or \(1\), and baseline rollouts at \(0\) or \(1\). Candidate
+\(0\) with baseline \(1\) counts both arms' failures,
+\(\tfrac{C_2}{2}(\hat\pi_C+\hat\pi_B)\), which serves two sparse arms; the other three serve arms
+that fail often, and two of them are \(Q_+\) and \(Q_-\). The smallest of the four is close to
+\(\tfrac{C_2}{2}\bigl(\min(\hat\pi_C,1-\hat\pi_C)+\min(\hat\pi_B,1-\hat\pi_B)\bigr)\), adapting to
+each arm separately. In the prompt-cluster encoding, each \(q_j=(1+p_{C,j}-p_{B,j})/2\) is
+centered at \(1/2\), with range-aware padding, and the centerings \(0\) and \(1\) are kept for arms
+far apart.
 
 If candidate and baseline have unclassified attempted outcomes, the lower endpoint completes
 candidate unknowns as safe and baseline unknowns as failures. The upper endpoint does the reverse.
@@ -2120,6 +2210,14 @@ A model may possess a dangerous capability that the scaffold, prompt, tools, or 
 
 A model may behave differently when it recognizes an evaluation. Statistical precision around evaluation behavior does not eliminate this external-validity threat. Anthropic's sabotage evaluations include explicit sandbagging and oversight-undermining experiments that illustrate why behavior observed under evaluation can be strategically unrepresentative [15].
 
+Every bound in this document is therefore conditional on the evaluated model not strategically
+underperforming. A model that deliberately fails to show a capability, or behaves more safely
+because it recognizes the evaluation, is measured correctly for the behaviour it chose to show;
+no amount of rollouts makes that behaviour representative [33]. Detecting sandbagging is a
+separate evaluation. One proposed method injects noise into the model's weights: a model that
+is not sandbagging degrades steadily as the noise grows, while a sandbagging model can improve
+anomalously. Its authors implemented it in Inspect [34]. This package does not run such checks.
+
 ### 15.3 Scorer error
 
 If an automated judge has false negatives, the observed binary outcome is a misclassified version of the true event. Let sensitivity be \(s\) and specificity be \(c\). The observed positive rate is
@@ -2128,7 +2226,7 @@ If an automated judge has false negatives, the observed binary outcome is a misc
 p_{\mathrm{obs}}=s p_{\mathrm{true}}+(1-c)(1-p_{\mathrm{true}}).
 \]
 
-Without knowledge or bounds on \(s\) and \(c\), \(p_{\mathrm{true}}\) is not identified from \(p_{\mathrm{obs}}\). Future versions should include scorer-validation and misclassification-sensitivity analysis.
+Without knowledge or bounds on \(s\) and \(c\), \(p_{\mathrm{true}}\) is not identified from \(p_{\mathrm{obs}}\). [Judge misclassification](judge-misclassification.md) describes the corrections built on this identity: declared accuracy scenarios as a sensitivity analysis, validated corrections from human labels (with an experimental stratified, finite-population variant that bounds each declared stratum with exact hypergeometric bounds), the noisy-but-valid threshold test, and an experimental stress analysis. The stress analysis reports, for a threshold verdict reached on \(p_{\mathrm{obs}}\), the line in \((s,c)\) beyond which the same verdict no longer holds for \(p_{\mathrm{true}}\).
 
 ### 15.4 Distribution shift
 
@@ -2141,6 +2239,24 @@ Exposure to benchmark items can change the measured behavior and invalidate the 
 ### 15.6 Severity aggregation
 
 A single binary event rate treats all failures alike. Critical failures should be separate claims or zero-tolerance rules rather than diluted into a broad average.
+
+### 15.7 Residual risk of rare harms
+
+The zero-failure planning in section 5 makes the cost of rare-harm claims explicit: an upper
+bound of \(\theta\) at confidence \(1-\alpha\) needs about \(\ln(1/\alpha)/\theta\) failure-free
+trials, about \(3/\theta\) at 95%, so
+every factor of ten in the rate costs a factor of ten in rollouts. Validation of automated
+driving faced the same arithmetic. Kalra and Paddock showed that demonstrating a fatality rate
+comparable to human drivers by test driving alone would take hundreds of millions to hundreds
+of billions of miles. They concluded that test driving alone cannot provide sufficient
+evidence of safety, that new ways of demonstrating it are needed, that even with them safety may
+not be established with certainty, and that regulation must therefore adapt as the technology
+and the evidence develop [35].
+
+The same holds here. A pre-deployment evaluation can bound rates that its rollout budget can
+reach. Below that, the residual risk is not shown to be small, only not measured. Claims about
+rarer harms need other evidence, such as monitoring in deployment, incident reporting and
+arguments about the system's design.
 
 These limitations belong prominently in every report because safety evidence is only as strong as both its statistical and substantive validity.
 
@@ -2296,6 +2412,13 @@ That is the role this Inspect extension should fill.
 30. H. Föllmer and T. Knispel, “Entropic Risk Measures: Coherence vs. Convexity, Model Ambiguity, and Robust Large Deviations,” *Stochastics and Dynamics* 11(2–3), 333–351, 2011. [doi:10.1142/S0219493711003334](https://doi.org/10.1142/S0219493711003334)
 31. C. Acerbi, “Spectral Measures of Risk: A Coherent Representation of Subjective Risk Aversion,” *Journal of Banking & Finance* 26(7), 1505–1518, 2002. [doi:10.1016/S0378-4266(02)00281-9](https://doi.org/10.1016/S0378-4266(02)00281-9)
 32. W. Hoeffding, “Probability Inequalities for Sums of Bounded Random Variables,” *Journal of the American Statistical Association* 58(301), 13–30, 1963. [doi:10.1080/01621459.1963.10500830](https://doi.org/10.1080/01621459.1963.10500830)
+
+### Threats to validity and small-sample evaluation
+
+33. T. van der Weij, F. Hofstätter, O. Jaffe, S. F. Brown, and F. R. Ward, “AI Sandbagging: Language Models can Strategically Underperform on Evaluations,” 2024. [arXiv:2406.07358](https://arxiv.org/abs/2406.07358)
+34. C. Tice, P. A. Kreer, N. Helm-Burger, P. S. Shahani, F. Ryzhenkov, F. Roger, C. Neo, J. Haimes, F. Hofstätter, and T. van der Weij, “Noise Injection Reveals Hidden Capabilities of Sandbagging Language Models,” NeurIPS 2025. [arXiv:2412.01784](https://arxiv.org/abs/2412.01784)
+35. N. Kalra and S. M. Paddock, “Driving to safety: How many miles of driving would it take to demonstrate autonomous vehicle reliability?,” *Transportation Research Part A: Policy and Practice* 94, 182–193, 2016. [doi:10.1016/j.tra.2016.09.010](https://doi.org/10.1016/j.tra.2016.09.010)
+36. S. Bowyer, L. Aitchison, and D. R. Ivanova, “Position: Don't Use the CLT in LLM Evals With Fewer Than a Few Hundred Datapoints,” ICML 2025. [arXiv:2503.01747](https://arxiv.org/abs/2503.01747)
 
 ---
 

@@ -33,6 +33,7 @@ from inspect_safety_stats.generative.inference import (
     _point_estimate,
     _raw_coefficients,
     _raw_failure_rate,
+    _unclassified_share,
 )
 from inspect_safety_stats.generative.ledger import SelectionRecord
 from inspect_safety_stats.generative.sampling import SamplingDesign
@@ -46,6 +47,13 @@ INDEPENDENT_ARMS = "independent_arm_rectangle"
 
 @dataclass(frozen=True)
 class ComparisonResult:
+    """A bound on the candidate-minus-baseline risk difference at one node.
+
+    Built by :func:`compare_cohorts`. Under ``one_sided_upper`` ``lower`` is -1. The
+    discordant counts are set only for the exact paired method and are None otherwise.
+    ``candidate`` and ``baseline`` are the per-arm estimates over the same units.
+    """
+
     node_id: str
     estimand: Literal["risk_difference"]
     candidate_cohort: str
@@ -120,6 +128,7 @@ def _arm_estimate(
         coefficient_ratio=float(normalized.max() / normalized.min()),
         effective_sample_size=_effective_sample_size(normalized),
         raw_failure_rate=_raw_failure_rate(arm),
+        unclassified_share=_unclassified_share(arm, normalized),
     )
 
 

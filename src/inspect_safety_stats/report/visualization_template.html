@@ -96,6 +96,8 @@
     .badge.pass { color: var(--safe); background: var(--safe-soft); }
     .badge.fail, .badge.error { color: var(--fail); background: var(--fail-soft); }
     .badge.inconclusive, .badge.warning, .badge.degraded { color: var(--warn); background: var(--warn-soft); }
+    .badge.descriptive { background: transparent; border: 1px dashed currentColor; }
+    .claim-badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: end; }
     .meta-line { color: var(--muted); font-size: 0.84rem; margin-top: 8px; overflow-wrap: anywhere; }
     .toolbar {
       display: flex;
@@ -453,6 +455,10 @@
     }
     function clamp01(value) { return Math.max(0, Math.min(1, Number(value) || 0)); }
     function statusClass(value) { return String(value || "").toLowerCase(); }
+    function roleLabel(interval) {
+      const role = humanize(interval.role);
+      return interval.varied_assumption ? `${role} (${humanize(interval.varied_assumption).toLowerCase()})` : role;
+    }
     function boundStatus(value) {
       return ({certifying: "Coverage-guaranteed", diagnostic: "Diagnostic", invalid: "Unavailable"})[value] || humanize(value);
     }
@@ -557,7 +563,15 @@
         const card = el("article", "card");
         const head = el("div", "claim-title");
         head.append(el("h3", "", claim.title));
-        head.append(el("span", `badge ${statusClass(claim.status)}`, claim.status));
+        const badges = el("div", "claim-badges");
+        badges.append(el("span", `badge ${statusClass(claim.status)}`, claim.status));
+        if (claim.descriptive_status) {
+          // An exploratory claim certifies nothing; this is what the bounds would decide.
+          const descriptive = el("span", `badge descriptive ${statusClass(claim.descriptive_status)}`, `Descriptive: ${claim.descriptive_status}`);
+          descriptive.title = "What a confirmatory analysis of these bounds would give at the plan's thresholds. Not a certification.";
+          badges.append(descriptive);
+        }
+        head.append(badges);
         card.append(head);
         const track = el("div", "claim-track");
         const lower = clamp01(claim.lower), upper = clamp01(claim.upper), estimate = clamp01(claim.estimate);
@@ -592,6 +606,7 @@
           claim_id: claim.claim_id,
           statistical_status: claim.statistical_status,
           policy_status: claim.policy_status,
+          descriptive_status: claim.descriptive_status,
           mandatory: claim.mandatory,
           alpha: claim.alpha,
           multiplicity_family: claim.multiplicity_family,
@@ -692,7 +707,7 @@
           intervals.filter(interval => !interval.independence_profile || interval.independence_profile === state.independenceProfile).forEach(interval => {
             const intervalRow = document.createElement("tr");
             intervalRow.append(
-              el("td", "", humanize(interval.role)), el("td", "", humanize(interval.method)), el("td", "", humanize(interval.independence_profile)),
+              el("td", "", roleLabel(interval)), el("td", "", humanize(interval.method)), el("td", "", humanize(interval.independence_profile)),
               el("td", "num", pct(interval.lower)), el("td", "num", pct(interval.upper)),
               el("td", "num", interval.completion_estimate_lower === null || interval.completion_estimate_lower === undefined ? "—" : `${pct(interval.completion_estimate_lower)}–${pct(interval.completion_estimate_upper)}`),
               el("td", "num", pct(interval.simultaneous_coverage)), el("td", "", humanize(interval.coverage_scope)),
@@ -1119,7 +1134,7 @@
           const effects = row.effect_summaries || {}; disclosure.append(el("p", "section-note", `Descriptive effects: risk difference ${pct(effects.risk_difference)} · risk ratio ${fmt(effects.risk_ratio)} · relative risk reduction ${pct(effects.relative_risk_reduction)}`));
           if (alternatives.length) {
             const at = el("table", "risk-table"); const ah = document.createElement("thead"); const ahr = document.createElement("tr"); ["Role", "Method", "Independence profile", "Lower", "Upper", "Coverage"].forEach((v, i) => ahr.append(el("th", i >= 3 ? "num" : "", v))); ah.append(ahr); at.append(ah); const ab = document.createElement("tbody");
-            alternatives.forEach(interval => { const ar = document.createElement("tr"); const coverage = interval.simultaneous_coverage === null || interval.simultaneous_coverage === undefined ? "pointwise" : `${pct(interval.simultaneous_coverage)} simultaneous`; ar.append(el("td", "", interval.role), el("td", "", humanize(interval.method)), el("td", "", humanize(interval.independence_profile)), el("td", "num", effectFmt(row, interval.lower)), el("td", "num", effectFmt(row, interval.upper)), el("td", "num", coverage)); ab.append(ar); }); at.append(ab); disclosure.append(at);
+            alternatives.forEach(interval => { const ar = document.createElement("tr"); const coverage = interval.simultaneous_coverage === null || interval.simultaneous_coverage === undefined ? "pointwise" : `${pct(interval.simultaneous_coverage)} simultaneous`; ar.append(el("td", "", roleLabel(interval)), el("td", "", humanize(interval.method)), el("td", "", humanize(interval.independence_profile)), el("td", "num", effectFmt(row, interval.lower)), el("td", "num", effectFmt(row, interval.upper)), el("td", "num", coverage)); ab.append(ar); }); at.append(ab); disclosure.append(at);
           }
           if ((row.warnings || []).length) disclosure.append(el("p", "claim-reason", row.warnings.join(" · ")));
           if (Object.keys(row.diagnostic_outputs || {}).length) { const diagnostics = document.createElement("details"); diagnostics.append(el("summary", "", "Paired diagnostic outputs"), el("pre", "", JSON.stringify({pairs: row.pair_count, discordant_counts: row.discordant_counts, outputs: row.diagnostic_outputs}, null, 2))); disclosure.append(diagnostics); }

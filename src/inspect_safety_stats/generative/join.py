@@ -18,6 +18,12 @@ from inspect_safety_stats.schema.reports import Diagnostic
 
 @dataclass(frozen=True)
 class EvaluatedSample:
+    """One evaluated rollout, in the form the join consumes.
+
+    ``sample_id`` is matched against the accepted rewrites' ``prompt_id``. ``failure`` is
+    None when the rollout could not be classified.
+    """
+
     sample_id: str
     cohort_id: str
     epoch: int
@@ -26,6 +32,12 @@ class EvaluatedSample:
 
 @dataclass(frozen=True)
 class JoinResult:
+    """The per-unit outcomes :func:`join_outcomes` builds for one cohort.
+
+    ``outcomes`` has one entry per selection. ``unevaluated`` lists the units with no
+    accepted rewrite or no evaluated sample, which are completed as unclassified.
+    """
+
     outcomes: tuple[UnitOutcome, ...]
     diagnostics: tuple[Diagnostic, ...]
     unevaluated: tuple[str, ...]
