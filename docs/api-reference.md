@@ -459,6 +459,7 @@ inspect-safety-stats plan detectable-rate --trials N --threshold P --alpha A --p
 inspect-safety-stats plan fixed-design --manifest DESIGN.csv --threshold P [--alpha A] [--power B]
     [--rollouts N] [--weights STRATEGY] [--hierarchy LEVELS] [--weight-column COLUMN]
     [--independence-unit UNIT] [--family-size M]
+inspect-safety-stats plan fixed-design --plan PLAN [--manifest DESIGN.csv] [--power B] [--rollouts N]
 inspect-safety-stats hash-plan --plan PLAN [--inference]
 inspect-safety-stats schema plan
 inspect-safety-stats schema report
@@ -475,6 +476,26 @@ follow the declared strategy (`nested_equal` by default, `equal_prompt`, or `exp
 `--rollouts` supplies a uniform override. Its guarantees are the independent-rollout weighted
 Hoeffding construction of `fixed_design_detectable_failure_rates`; pass
 `--independence-unit prompt_cluster` to plan under prompt-level independence instead.
+
+`plan fixed-design --plan PLAN` reads the analysis plan instead of those options, so planning
+cannot drift from the design `analyze` will use, and reports for every claim. A `weighted_mean`
+claim on a group with direct-mean intervals is planned as `analyze` decides it: on the group's
+prompts and weights, with rollout counts from the plan's design manifest (or `--manifest`, or
+`--rollouts`), under the primary independence profile of `outputs.direct_mean_intervals`, at
+the endpoint alpha that interval gets from its multiplicity family. That alpha is the
+directional family alpha divided across the selected groups, their hierarchy nodes, the
+selected groups' direct `worst_of_k` intervals and the cohorts; under `frontier_sidak`
+calibration the analysis spends at least this share, so the plan is conservative. A profile
+blocked by manifest columns treats each block as one independent contribution. The PASS side
+is planned at the claim's `acceptable_upper` and the FAIL side at its `unacceptable_lower`, as
+the plan states them; the planner does not read a decision policy. The planned rates are
+guaranteed for a `weighted_hoeffding` interval, and the output names the plan's primary
+method, on which `analyze` decides; for another method the planner gives no guarantee. Every
+other claim (other risk measures, a direct `worst_of_k` interval, comparisons,
+`noisy_valid_test`, a validated judge calibration) is listed as not planned, with the reason;
+the command exits with status 1 when no claim can be planned, and refuses sampled designs.
+`--threshold`, `--alpha`, `--weights`, `--hierarchy`, `--weight-column`,
+`--independence-unit` and `--family-size` are refused with `--plan`, which supplies them.
 
 `analyze` and `validate` take `--decision-policy POLICY`, a file whose thresholds replace the
 plan's for the claims it sets, and `hash-plan --inference` prints the hash such a policy names
