@@ -188,18 +188,13 @@ demonstration phase 1 must turn into a test.
 
 ## Related work
 
-- **Hsu and Shekhar** (arXiv:2607.17409, reference 20 in Statistical methods) build confidence
-  sequences for LLM evaluation by testing by betting, with active querying rules.
-- **CELEUS** (Zhou et al., *Certifiable and Efficient LLM Evaluation via E-Processes*,
-  arXiv:2606.20820) builds anytime-valid intervals from e-processes, with uncertainty-guided
-  selection of items and a surrogate model for the items not evaluated.
-- **Optstop** (arXiv:2608.14425, reference 21) is the Bayesian counterpart: it stops on
-  posterior precision and gives no frequentist false-pass guarantee (section 12).
-
-The review reports that none of the three offers one-sided thresholds, weighted designs,
-several rollouts per item, judge correction or multiplicity across claims. That has been checked
-here only against the abstracts and, for Hsu and Shekhar, Proposition 4.2. Those five are what
-this package already provides at the fixed horizon, and the sequence must keep them.
+[Statistical methods](statistical-methods.md) section 6.8 compares the prior work: Hsu and
+Shekhar (reference 20) and CELEUS (reference 33) build anytime-valid intervals for LLM
+evaluation, and Optstop (reference 21) is the Bayesian counterpart, with no frequentist
+false-pass guarantee (section 12). Neither of the first two offers one-sided threshold
+decisions, a weighted estimand, several rollouts per prompt, judge correction or multiplicity
+across claims. Those five are what this package already provides at the fixed horizon, and the
+sequence must keep them.
 
 ## Work that builds on this
 
