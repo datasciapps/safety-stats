@@ -90,12 +90,18 @@ rejection_power(*, trials, true_rate, threshold, alpha)
 rejection_sample_size(*, true_rate, threshold, alpha, power, max_trials=1_000_000)
 fixed_design_detectable_failure_rates(trials, weights, *, threshold, support_alpha,
                                       rejection_alpha, power, independence_unit="rollout")
+comparison_resolvable_differences(candidate_trials, baseline_trials, weights, *, margin,
+                                  alpha_lower, alpha_upper, power, independence_unit="rollout")
 ```
 
 The detectable-rate functions exactly invert the corresponding one-sided binomial test. They
 return `None` when the requested direction is unattainable at the supplied horizon and alpha.
 `fixed_design_detectable_failure_rates` gives the weighted-design analogue under an
 independent-rollout Hoeffding guarantee, permitting heterogeneous prompt probabilities.
+`comparison_resolvable_differences` (experimental) returns the risk differences a two-arm
+design resolves at a margin under the same kind of guarantee, for the `weighted_hoeffding`
+comparison with `rollout`, `pair` or `prompt_cluster` blocks; see
+[Planning a comparison](model-comparisons.md#planning-a-comparison-experimental).
 
 Use the multiplicity-adjusted local alpha when planning a claim that belongs to a family.
 
@@ -425,6 +431,10 @@ inspect-safety-stats plan detectable-rate --trials N --threshold P --alpha A --p
 inspect-safety-stats plan fixed-design --manifest DESIGN.csv --threshold P [--alpha A] [--power B]
     [--rollouts N] [--weights STRATEGY] [--hierarchy LEVELS] [--weight-column COLUMN]
     [--independence-unit UNIT] [--family-size M]
+inspect-safety-stats plan comparison --manifest DESIGN.csv --margin D [--alpha A] [--power B]
+    [--candidate-rollouts N] [--baseline-rollouts N] [--weights STRATEGY] [--hierarchy LEVELS]
+    [--weight-column COLUMN] [--independence-unit rollout|pair|prompt_cluster]
+    [--coverage-mode two_sided|per_direction] [--family-size M]
 inspect-safety-stats hash-plan --plan PLAN
 inspect-safety-stats schema plan
 inspect-safety-stats schema report
@@ -440,6 +450,9 @@ follow the declared strategy (`nested_equal` by default, `equal_prompt`, or `exp
 `--rollouts` supplies a uniform override. Its guarantees are the independent-rollout weighted
 Hoeffding construction of `fixed_design_detectable_failure_rates`; pass
 `--independence-unit prompt_cluster` to plan under prompt-level independence instead.
+`plan comparison` (experimental) reads the manifest the same way and reports the risk
+differences a two-arm design resolves at `--margin`; see
+[Planning a comparison](model-comparisons.md#planning-a-comparison-experimental).
 
 Repeat `--logs` to select multiple files or directories. `--runs` and `--rollouts` name the two
 files of a neutral rollout source instead of Inspect logs, and are given together
