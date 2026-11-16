@@ -11,15 +11,18 @@ import ast
 import re
 import subprocess
 from pathlib import Path
+from typing import get_args
 
 import pytest
 import yaml
 
 import inspect_safety_stats
 from inspect_safety_stats import __version__
+from inspect_safety_stats.config.loader import SCHEMA_VERSIONS
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.generative.schema import GenerativePlan, load_generative_plan
 from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+from inspect_safety_stats.schema.reports import SafetyReport
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -173,6 +176,36 @@ def test_no_broken_internal_documentation_links() -> None:
     assert not broken, "broken internal documentation links: " + ", ".join(sorted(set(broken)))
 
 
+def test_documentation_has_no_url_placeholders() -> None:
+    """Install instructions once read ``git clone <repository-url>``, which nobody can run."""
+    placeholder = re.compile(r"<[a-z-]+-url>")
+    found = [
+        f"{path.relative_to(ROOT).as_posix()}: {match}"
+        for path in sorted(set(_tracked("*.md") + _tracked("**/*.md")))
+        for match in placeholder.findall(path.read_text(encoding="utf-8"))
+    ]
+    assert not found, "placeholders in tracked documentation: " + ", ".join(found)
+
+
+def test_documented_clones_enter_the_directory_they_create() -> None:
+    """``git clone`` names the checkout after the URL; the next ``cd`` must use that name.
+
+    The installation page once cloned the repository and then entered ``inspect-safety-stats``,
+    the package name, which is not the directory git creates.
+    """
+    clone = re.compile(r"^git clone (\S+)\n(?:cd (\S+))?", flags=re.MULTILINE)
+    checked = 0
+    wrong: list[str] = []
+    for path in sorted(set(_tracked("*.md") + _tracked("**/*.md"))):
+        for url, directory in clone.findall(path.read_text(encoding="utf-8")):
+            checked += 1
+            expected = url.rstrip("/").rsplit("/", 1)[-1].removesuffix(".git")
+            if directory != expected:
+                wrong.append(f"{path.relative_to(ROOT).as_posix()}: cd {directory!r} after {url}")
+    assert checked >= 2, f"expected the documented clone commands to be checked, saw {checked}"
+    assert not wrong, "clone commands not followed by cd into the checkout: " + ", ".join(wrong)
+
+
 def _pyproject() -> str:
     return (ROOT / "pyproject.toml").read_text(encoding="utf-8")
 
@@ -218,6 +251,44 @@ def test_the_package_has_no_runtime_asserts() -> None:
         if isinstance(node, ast.Assert)
     ]
     assert offenders == []
+
+
+def _versions(text: str) -> set[str]:
+    return set(re.findall(r'[`"]([0-9]+\.[0-9]+)[`"]', text))
+
+
+def test_documented_schema_versions_match_the_code() -> None:
+    """The docs name the plan and report schema versions this release reads and writes.
+
+    The API reference once said "plan and report schema version 1.0" two releases after 1.0
+    plans stopped loading (#17).
+    """
+    plan_versions = set(SCHEMA_VERSIONS)
+    assert set(get_args(AnalysisPlan.model_fields["schema_version"].annotation)) == plan_versions
+    report_versions = {SafetyReport.model_fields["schema_version"].default}
+
+    api = (ROOT / "docs" / "api-reference.md").read_text(encoding="utf-8")
+    compatibility = api.split("## Compatibility and stability", 1)[1].split("\n## ", 1)[0]
+    reads = re.search(r"reads analysis plans of\s+schema version (.+?)\(", compatibility, re.S)
+    writes = re.search(r"writes reports of schema version (`[^`]+`)", compatibility)
+    plan_reference = (ROOT / "docs" / "plan-reference.md").read_text(encoding="utf-8")
+    declared = re.search(r"`schema_version` is (.+?), and an unquoted", plan_reference, re.S)
+    contributing = (ROOT / "CONTRIBUTING.md").read_text(encoding="utf-8")
+    heading = re.search(r"^### 4\.2 Analysis plan .*$", contributing, re.M)
+
+    found = {
+        "docs/api-reference.md plan versions": (reads, plan_versions),
+        "docs/api-reference.md report version": (writes, report_versions),
+        "docs/plan-reference.md plan versions": (declared, plan_versions),
+        "CONTRIBUTING.md section 4.2 heading": (heading, plan_versions),
+    }
+    wrong = [
+        f"{where}: says {sorted(_versions(match.group(0))) if match else 'nothing'}, "
+        f"the code has {sorted(expected)}"
+        for where, (match, expected) in found.items()
+        if match is None or _versions(match.group(0)) != expected
+    ]
+    assert not wrong, "documented schema versions differ from the code: " + "; ".join(wrong)
 
 
 # CONTRIBUTING section 4.1 declares the generative surface experimental. Every user-facing

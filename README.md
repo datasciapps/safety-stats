@@ -218,7 +218,9 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 
 - [Getting started](docs/getting-started.md)
 - [Installation](docs/installation.md)
+- [Changelog](CHANGELOG.md): the changes a user can observe, newest first
 - [Contributing](CONTRIBUTING.md): development setup, engineering practices, and the interfaces that must not break
+- [Security](SECURITY.md): how to report a vulnerability, and what the package does with network access, plans, and prompt text
 - [Quickstart](docs/quickstart.md)
 - [Analysis plan reference](docs/plan-reference.md)
 - [Python and command-line API reference](docs/api-reference.md)

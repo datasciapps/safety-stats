@@ -99,6 +99,7 @@ from inspect_safety_stats.stats.misclassification import (
     JudgeCalibration,
     JudgeStratumCounts,
     TruthStratumCounts,
+    completion_warning,
     correct_judge_risk,
     delta_method_corrected_risk,
     estimate_judge_calibration,
@@ -2042,6 +2043,17 @@ def _validated_judge_calibrations(
                 )
             )
             continue
+        warning = completion_warning(calibrations[cohort_id])
+        if warning is not None:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_STRATUM_UNLABELLED_COMPLETED",
+                    severity="WARNING",
+                    message=warning,
+                    scope=cohort_id,
+                    details={"completed_strata": list(calibrations[cohort_id].completed_strata)},
+                )
+            )
         summaries[cohort_id] = {
             "judge_unsafe": {
                 "labelled": unsafe.labelled,
@@ -2109,10 +2121,21 @@ def _judge_corrected_interval(
         f"[{calibration.rho_0_lower:.6g}, {calibration.rho_0_upper:.6g}].",
     ]
     if validated:
+        if calibration.completed_strata:
+            assumptions.append(
+                "The "
+                + " and ".join(calibration.completed_strata)
+                + " judge stratum has no human label, so its range is [0, 1], which holds "
+                "with certainty; any other range is an exact Clopper-Pearson bound from "
+                "human labels drawn within its judge stratum."
+            )
+        else:
+            assumptions.append(
+                "Those two ranges are exact Clopper-Pearson bounds from human labels drawn "
+                "within each judge stratum."
+            )
         assumptions.extend(
             [
-                "Those two ranges are exact Clopper-Pearson bounds from human labels drawn "
-                "within each judge stratum.",
                 "The labelled rows are a simple random sample within their judge stratum; "
                 "this is a property of the declared collection protocol, not of the data.",
                 "Human adjudication is treated as ground truth.",
@@ -4545,12 +4568,13 @@ def _claims(
         else:
             evidence = risk_index.get((str(claim.cohort), str(claim.group), str(claim.measure)))
             ref = f"risk:{claim.cohort}:{claim.group}:{claim.measure}"
-        eligible = bool(
-            integrity_valid
-            and evidence is not None
-            and evidence.eligibility == "certifying"
-            and plan.analysis.intent == "confirmatory"
-        )
+        certifying = evidence is not None and evidence.eligibility == "certifying"
+        exploratory = plan.analysis.intent == "exploratory"
+        # An exploratory analysis certifies nothing, but its reader still needs what the bounds
+        # say at the plan's thresholds. Such a claim is decided as a confirmatory analysis would
+        # decide it, the result is kept as its descriptive status, and the claim stays
+        # INCONCLUSIVE below.
+        eligible = bool(integrity_valid and certifying)
         lower = evidence.lower if evidence else None
         upper = evidence.upper if evidence else None
         estimate = evidence.estimate if evidence else None
@@ -4666,14 +4690,24 @@ def _claims(
                 "Bounds were computed but are ineligible for certification because data "
                 "integrity is invalid."
             ]
-        if plan.analysis.intent == "exploratory":
-            if evidence is not None and evidence.eligibility == "certifying":
+        descriptive_status: Decision | None = None
+        if exploratory:
+            if certifying:
+                decided = reasons
                 reasons = [
                     "Bounds were computed but this post hoc exploratory analysis is not "
                     "eligible for certification."
                 ]
+                if eligible:
+                    descriptive_status = status
+                    reasons.append(
+                        f"Descriptive only, not a certification: a confirmatory analysis of "
+                        f"these bounds at the plan's thresholds would give {status}."
+                    )
+                    reasons.extend(decided)
             else:
                 reasons.append("Exploratory analyses cannot produce a safety pass.")
+            status = "INCONCLUSIVE"
         if correction_note is not None:
             reasons.insert(0, correction_note)
             if alpha != family.alpha:
@@ -4688,6 +4722,7 @@ def _claims(
                 status=status,
                 statistical_status=status,
                 policy_status=status,
+                descriptive_status=descriptive_status,
                 estimate=estimate,
                 lower=lower,
                 upper=upper,

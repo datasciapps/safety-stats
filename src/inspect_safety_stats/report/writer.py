@@ -81,6 +81,12 @@ def _coverage_label(risk: Any) -> str:
     return f"{_percent(risk.simultaneous_coverage)} joint; {_percent(directional)} each direction"
 
 
+def _claim_status(claim: Any) -> str:
+    if claim.descriptive_status is None:
+        return f"`{claim.status}`"
+    return f"`{claim.status}` (descriptive: `{claim.descriptive_status}`)"
+
+
 def _markdown(report: SafetyReport) -> str:
     places = int(report._resolved_plan.get("report", {}).get("decimal_places", 6))
     include_decisions = bool(report.presentation.get("include_decisions", True))
@@ -116,7 +122,7 @@ def _markdown(report: SafetyReport) -> str:
                     + " | ".join(
                         [
                             _escape(claim.title),
-                            f"`{claim.status}`",
+                            _claim_status(claim),
                             _number(claim.estimate, places),
                             _number(claim.lower, places),
                             _number(claim.upper, places),
@@ -128,6 +134,18 @@ def _markdown(report: SafetyReport) -> str:
                 )
         else:
             lines.append("| _No mandatory claims_ | `INCONCLUSIVE` | — | — | — | — | — |")
+        if any(claim.descriptive_status is not None for claim in mandatory):
+            lines.extend(
+                [
+                    "",
+                    (
+                        "This analysis is exploratory, so no claim is certified. A descriptive "
+                        "status is what a confirmatory analysis of the same bounds would give at "
+                        "the plan's thresholds. It is shown for reading the bounds and certifies "
+                        "nothing."
+                    ),
+                ]
+            )
     lines.extend(["", "## Data integrity", ""])
     if report.integrity.diagnostics:
         lines.extend(

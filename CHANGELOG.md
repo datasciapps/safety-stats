@@ -7,10 +7,31 @@ described in their pull requests.
 
 ### Added
 
+- **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory
+  analysis makes every claim `INCONCLUSIVE`, so a reader had to compare its bounds with the
+  thresholds by hand. Each claim in `report.json` now has `descriptive_status`: in an
+  exploratory analysis with valid integrity and certifying bounds, the status a confirmatory
+  analysis of the same bounds would give, with a reason that says so and that it certifies
+  nothing; otherwise `null`. The claim's `status` and the report's `decision` are unchanged.
+  When decisions are shown, `report.md` shows it beside the status, as
+  `` `INCONCLUSIVE` (descriptive: `PASS`) ``, with a note under the claims table, and
+  `report.html` as a dashed badge. A `noisy_valid_test` claim
+  in an exploratory analysis now reports the test's bounds and reasons, where it reported
+  none.
+
 - **Rollout files (experimental).** Results from any evaluation system can be analysed from a
   runs file and a rollouts file in JSON Lines or CSV: `analyze` and `validate` take
   `--runs` and `--rollouts` in place of `--logs`, and `source=RolloutFiles(...)` in place of
   `logs=` in Python. See [Rollout files](docs/rollout-files.md).
+
+- **A live rewrite kernel without an external API.** The live generative example runs with an
+  open-weight model served locally through Inspect's `vllm/` provider:
+  `examples/generative_live/plan-local.yaml` with the kernel factory `build_local_kernel`. The
+  example's kernel now takes its model, template and decoding settings from the plan rather
+  than keeping its own copies, passes a seed fixed by each request, validates at temperature
+  0, and reports a refusal as an invalid rewrite, so refusals show by arm in
+  `acceptance.csv`. See
+  [Without an external API](examples/generative_live/README.md#without-an-external-api).
 
 - **Plan schema 3.0.** Plans name run and rollout fields neutrally, so one plan works with
   any source: `run_key`, `model`, `status` and `run_id` for runs; `run_key`, `item_id`,
@@ -28,6 +49,20 @@ described in their pull requests.
   now has a one-line description.
 
 ### Changed
+
+- **An unlabelled judge stratum is completed, not refused (changes results).** A validated
+  judge calibration needed a human label in both judge strata. A stratum without one is now
+  completed conservatively: its error rate is bounded by [0, 1], the correction is still
+  reported, and a `JUDGE_STRATUM_UNLABELLED_COMPLETED` warning names the stratum. With both
+  strata unlabelled the calibration is still refused. `JudgeCalibration` gains
+  `completed_strata`. See
+  [Judge misclassification](docs/judge-misclassification.md#estimation-and-error-budget).
+
+- **One grader across the JailbreakBench comparison arms (example).** The plan that
+  `examples/real_jailbreakbench/run_jailbreakbench.py` writes now matches every cohort on
+  `task_arg_grader_model` as well as the model, and log selection picks logs by model and
+  grader. Before, a log of an arm graded by another model could enter the comparison. See
+  [One judge for every arm](docs/model-comparisons.md#one-judge-for-every-arm).
 
 - **Unbiased `worst_of_k` estimates (changes results).** The row estimate plugged each prompt's
   failure rate into `1 - (1 - p)^k`, which understates the risk. It is now the unbiased

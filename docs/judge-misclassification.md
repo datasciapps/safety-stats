@@ -150,6 +150,16 @@ cohorts (see below); each cohort's share is then split equally between \(\rho_1\
 \(\rho_0\), and each parameter's share again between its two endpoints. A union bound over
 those four endpoints spends no more than the cohort's share.
 
+A stratum with no labelled row is completed conservatively. Its parameter is a probability,
+so \([0, 1]\) contains it with certainty: the calibration uses that range, spends none of the
+budget on it, and warns with `JUDGE_STRATUM_UNLABELLED_COMPLETED`. Such a box is never
+strictly informative, so the informativeness check is skipped for it. The correction stays
+valid but wide. With \(\rho_1\in[0,1]\) and a judge-reported interval \([L, U]\), true
+risk lies in \([(1-U)\rho_{0,L},\; U+(1-U)\rho_{0,U}]\), so it can still support an upper
+claim when the judge rarely reports a failure. Labelling that stratum narrows it. The
+budget split is unchanged, so `family_alpha` overstates what was spent. If neither stratum has
+a label, the calibration is refused.
+
 The corrected interval's simultaneous coverage is therefore
 
 \[
@@ -275,7 +285,7 @@ The module produces no correction, and says why, when:
 - a cohort has an empty judge stratum (`JUDGE_VALIDATION_STRATUM_EMPTY`);
 - the labels do not establish a strictly informative judge -- the \(\rho_1\) lower bound
   fails to exceed the \(\rho_0\) upper bound, meaning more labels or a better judge are
-  needed (`JUDGE_CALIBRATION_UNINFORMATIVE`); or
+  needed -- or neither judge stratum has a label (`JUDGE_CALIBRATION_UNINFORMATIVE`); or
 - a validation row references an observation absent from the analysed logs, or one whose
   outcome was never classified (`JUDGE_VALIDATION_UNMATCHED`, an error).
 
