@@ -44,6 +44,7 @@ from inspect_safety_stats.stats import (
 )
 from tests.conformance import (
     BOUNDED_ENGINES,
+    COMPARISON_METHODS,
     COUNT_ENGINES,
     METHODS,
     MISS_TOLERANCE,
@@ -100,10 +101,14 @@ def _literal_values(model: Any, field: str) -> set[str]:
 def test_the_registry_lists_every_engine_a_plan_can_select() -> None:
     """A method a plan accepts, or a public engine, must be registered to be checked."""
 
-    selectable: set[str] = set()
-    for model in (DirectMeanIntervalsSpec, ComparisonSpec, ComparisonSetSpec):
-        selectable |= _literal_values(model, "method") | _literal_values(model, "reference_methods")
-    assert selectable == set(METHODS)
+    def selectable(*models: Any) -> set[str]:
+        values: set[str] = set()
+        for model in models:
+            values |= _literal_values(model, "method") | _literal_values(model, "reference_methods")
+        return values
+
+    assert selectable(DirectMeanIntervalsSpec) == set(METHODS)
+    assert selectable(ComparisonSpec, ComparisonSetSpec) == set(COMPARISON_METHODS)
     assert {engine.method for engine in BOUNDED_ENGINES} == set(METHODS)
 
     registered = {engine.function for engine in (*COUNT_ENGINES, *BOUNDED_ENGINES)}
@@ -326,7 +331,7 @@ def _comparison_probabilities(
 
 
 @pytest.mark.parametrize(("unit", "within"), COMPARISON_SETTINGS)
-@pytest.mark.parametrize("method", METHODS)
+@pytest.mark.parametrize("method", COMPARISON_METHODS)
 def test_comparisons_cover_exactly_on_small_designs(method: str, unit: Unit, within: str) -> None:
     """Risk differences, risk ratios and relative risk reductions, each endpoint exactly.
 
@@ -889,7 +894,7 @@ def _arm_arguments(design: dict[str, list[Any]], *, swapped: bool) -> tuple[np.n
 
 @settings(deadline=None)
 @given(
-    method=st.sampled_from(METHODS),
+    method=st.sampled_from(COMPARISON_METHODS),
     design=two_arm_designs(),
     alpha_lower=ALPHAS,
     alpha_upper=ALPHAS,
@@ -930,7 +935,7 @@ def test_swapping_the_arms_negates_the_difference_and_inverts_the_ratio(
 
 @settings(deadline=None)
 @given(
-    method=st.sampled_from(METHODS),
+    method=st.sampled_from(COMPARISON_METHODS),
     design=two_arm_designs(),
     alpha=ALPHAS,
     factor=st.floats(min_value=0.01, max_value=1.0),

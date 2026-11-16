@@ -132,7 +132,7 @@ Then $0\le Y_g\le1$, $\sum_g A_g=1$, and the target is exactly
 \]
 
 The declared assumption is independence across the $Y_g$. Dependence inside a block is
-unrestricted. The same weighted Hoeffding, empirical-Bernstein, and KL/Chernoff engines can
+unrestricted. The same weighted Hoeffding, empirical-Bernstein, KL/Chernoff, and betting engines can
 therefore operate on `(Y_g, A_g)` regardless of how the evaluation creator named or nested the
 items. Missing labels are completed as zero for a lower endpoint and one for an upper endpoint
 before block aggregation.

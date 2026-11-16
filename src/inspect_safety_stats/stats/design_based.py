@@ -8,6 +8,7 @@ import numpy as np
 from numpy.typing import ArrayLike
 
 from inspect_safety_stats.stats.direct_mean import (
+    weighted_bounded_betting_mean_bounds,
     weighted_bounded_empirical_bernstein_mean_bounds,
     weighted_bounded_hoeffding_mean_bounds,
     weighted_bounded_kl_chernoff_mean_bounds,
@@ -17,12 +18,14 @@ DesignBasedMethod = Literal[
     "weighted_hoeffding",
     "weighted_empirical_bernstein",
     "weighted_kl_chernoff",
+    "weighted_betting",
 ]
 
 _ENGINES = {
     "weighted_hoeffding": weighted_bounded_hoeffding_mean_bounds,
     "weighted_empirical_bernstein": weighted_bounded_empirical_bernstein_mean_bounds,
     "weighted_kl_chernoff": weighted_bounded_kl_chernoff_mean_bounds,
+    "weighted_betting": weighted_bounded_betting_mean_bounds,
 }
 
 

@@ -603,12 +603,14 @@ class DirectMeanIntervalsSpec(StrictModel):
         "weighted_hoeffding",
         "weighted_empirical_bernstein",
         "weighted_kl_chernoff",
+        "weighted_betting",
     ] = "weighted_empirical_bernstein"
     reference_methods: list[
         Literal[
             "weighted_hoeffding",
             "weighted_empirical_bernstein",
             "weighted_kl_chernoff",
+            "weighted_betting",
         ]
     ] = Field(default_factory=list)
     family: str | None = None
