@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol, runtime_checkable
@@ -20,6 +20,86 @@ from pydantic import BaseModel
 from inspect_safety_stats.generative.schema import GenerativePlan
 
 ValidationStatus = Literal["valid", "invalid", "error"]
+ChatRole = Literal["system", "user", "assistant"]
+CHAT_ROLES: tuple[ChatRole, ...] = ("system", "user", "assistant")
+
+
+@dataclass(frozen=True)
+class ChatTurn:
+    """One message of a generated conversation.
+
+    Assistant turns in a generated conversation are written by the generator, not by the
+    target: the target model answers only the final user turn, conditioned on the rest.
+    """
+
+    role: ChatRole
+    content: str
+
+    def __post_init__(self) -> None:
+        if self.role not in CHAT_ROLES:
+            raise ValueError(f"chat role must be one of {', '.join(CHAT_ROLES)}; got {self.role!r}")
+        if not self.content.strip():
+            raise ValueError(f"a {self.role} turn must carry text")
+
+
+def conversation_problem(turns: Sequence[ChatTurn]) -> str | None:
+    """Why ``turns`` cannot be evaluated as a conversation, or ``None`` if it can.
+
+    The target answers the conversation's last turn, so it must end on a user turn. A
+    system turn may only open it, and user and assistant turns alternate, as chat
+    templates expect. A kernel that parses a conversation out of model output can call
+    this to report a malformed one as an invalid rewrite rather than raise.
+    """
+
+    if not turns:
+        return "the conversation has no turns"
+    body = list(turns[1:]) if turns[0].role == "system" else list(turns)
+    if not body:
+        return "the conversation has only a system turn"
+    if any(turn.role == "system" for turn in body):
+        return "a system turn may only open the conversation"
+    if body[0].role != "user":
+        return "the conversation must open with a user turn after any system turn"
+    for earlier, later in zip(body, body[1:], strict=False):
+        if earlier.role == later.role:
+            return f"two {later.role} turns follow each other"
+    if body[-1].role != "user":
+        return "the conversation must end on a user turn, which the target answers"
+    return None
+
+
+def user_turns(turns: Sequence[ChatTurn]) -> int:
+    return sum(1 for turn in turns if turn.role == "user")
+
+
+def encode_conversation(turns: Sequence[ChatTurn]) -> str:
+    """The canonical text of a conversation: what is hashed, deduplicated and stored."""
+
+    return json.dumps(
+        [{"role": turn.role, "content": turn.content} for turn in turns],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def decode_conversation(text: str) -> tuple[ChatTurn, ...]:
+    """Read back :func:`encode_conversation`'s output, rejecting anything else."""
+
+    try:
+        document = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"stored conversation is not JSON: {exc}") from exc
+    if not isinstance(document, list) or not all(isinstance(item, dict) for item in document):
+        raise ValueError("stored conversation is not a list of messages")
+    turns = []
+    for item in document:
+        if set(item) != {"role", "content"} or not isinstance(item["content"], str):
+            raise ValueError("a stored message must have exactly a role and text content")
+        turns.append(ChatTurn(role=item["role"], content=item["content"]))
+    problem = conversation_problem(turns)
+    if problem is not None:
+        raise ValueError(f"stored conversation is malformed: {problem}")
+    return tuple(turns)
 
 
 @dataclass(frozen=True)
@@ -53,26 +133,56 @@ class RewriteRequest:
     seed_text: str
     attempt: int
     selection_seed: int
+    # The system prompt the procedure attaches to this rewrite, when the plan declares
+    # rewrite.system_prompts: context for the kernel, which must not write one itself.
+    system_prompt: str | None = None
+    # The number of user turns the conversation must have, when the plan declares
+    # rewrite.conversation_turns. A conversation with any other count is rejected.
+    conversation_turns: int | None = None
 
 
 @dataclass(frozen=True)
 class RewriteOutcome:
     """What a kernel returns for one attempt.
 
-    A ``valid`` outcome must carry non-empty ``prompt`` text and no other status may carry
-    any. ``invalid`` may be retried as the plan's validation settings allow; ``error`` ends
-    the unit's attempts.
+    A ``valid`` outcome carries either non-empty ``prompt`` text, a single user message, or
+    ``messages``, a whole conversation, as the plan's ``rewrite.output`` declares. Never
+    both, and no other status may carry either. ``invalid`` may be retried as the plan's
+    validation settings allow; ``error`` ends the unit's attempts.
     """
 
     status: ValidationStatus
     prompt: str | None = None
     detail: str | None = None
+    messages: tuple[ChatTurn, ...] | None = None
 
     def __post_init__(self) -> None:
-        if self.status == "valid" and not self.prompt:
-            raise ValueError("a valid rewrite must carry prompt text")
-        if self.status != "valid" and self.prompt is not None:
-            raise ValueError("only a valid rewrite may carry prompt text")
+        if self.messages is not None:
+            # A list would make the frozen outcome unhashable and mutable from outside.
+            object.__setattr__(self, "messages", tuple(self.messages))
+        if self.status == "valid":
+            if self.prompt is not None and self.messages is not None:
+                raise ValueError("a valid rewrite carries prompt text or messages, not both")
+            if self.messages is None and not self.prompt:
+                raise ValueError("a valid rewrite must carry prompt text or messages")
+            if self.messages is not None:
+                problem = conversation_problem(self.messages)
+                if problem is not None:
+                    raise ValueError(
+                        f"a valid rewrite must carry a well-formed conversation: {problem}"
+                    )
+        elif self.prompt is not None or self.messages is not None:
+            raise ValueError("only a valid rewrite may carry prompt text or messages")
+
+    @property
+    def text(self) -> str:
+        """The canonical text of a valid outcome: the prompt, or the encoded conversation."""
+
+        if self.messages is not None:
+            return encode_conversation(self.messages)
+        if self.prompt is None:
+            raise ValueError(f"a {self.status} rewrite has no text")
+        return self.prompt
 
 
 @runtime_checkable
@@ -109,6 +219,14 @@ def resolve_kernel_fingerprint(
         "validation": _settings(spec.validation),
         "deduplication": _settings(spec.deduplication),
     }
+    # Keys for opt-in settings join the payload only when they are used, so a plan that
+    # uses none of them keeps the fingerprint it had before they existed.
+    if spec.output != "prompt":
+        payload["output"] = spec.output
+    if spec.system_prompts is not None:
+        payload["system_prompts"] = spec.system_prompts.model_dump(mode="json")
+    if spec.conversation_turns is not None:
+        payload["conversation_turns"] = spec.conversation_turns
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()
@@ -181,11 +299,14 @@ class DeterministicFakeKernel:
     """A network-free kernel for tests and dry runs.
 
     Output depends only on the request, so a suite exercising the sampler and the
-    ledger never needs a provider. ``invalid_every`` forces the retry path.
+    ledger never needs a provider. ``invalid_every`` forces the retry path. With
+    ``output="conversation"`` it returns a conversation of ``request.conversation_turns``
+    user turns (one if unset), with an assistant turn between each pair.
     """
 
     kernel_id: str = "fake-rewriter"
     invalid_every: int = 0
+    output: Literal["prompt", "conversation"] = "prompt"
 
     def rewrite(self, request: RewriteRequest) -> RewriteOutcome:
         token = hashlib.sha256(
@@ -202,7 +323,12 @@ class DeterministicFakeKernel:
             return RewriteOutcome(status="invalid", detail="synthetic rejection")
         pairs = sorted(request.path_values.items())
         rendered = ", ".join(f"{level}={value}" for level, value in pairs)
-        return RewriteOutcome(
-            status="valid",
-            prompt=f"[{request.semantic_seed_id}] {request.seed_text} ({rendered}) #{token[:12]}",
-        )
+        prompt = f"[{request.semantic_seed_id}] {request.seed_text} ({rendered}) #{token[:12]}"
+        if self.output == "prompt":
+            return RewriteOutcome(status="valid", prompt=prompt)
+        turns: list[ChatTurn] = []
+        for index in range(1, (request.conversation_turns or 1)):
+            turns.append(ChatTurn("user", f"Turn {index} leading to {request.semantic_seed_id}"))
+            turns.append(ChatTurn("assistant", f"Reply {index} #{token[:12]}"))
+        turns.append(ChatTurn("user", prompt))
+        return RewriteOutcome(status="valid", messages=tuple(turns))
