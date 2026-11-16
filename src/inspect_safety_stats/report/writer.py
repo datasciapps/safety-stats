@@ -555,6 +555,7 @@ def _markdown(report: SafetyReport) -> str:
         primary_scenario = str(calibration.get("primary") or "")
         validated = str(calibration.get("mode")) == "validated"
         transported = str(calibration.get("mode")) == "transported"
+        stratified = validated and calibration.get("sampling") == "stratified_without_replacement"
         preamble = (
             (
                 "Experimental. Only the judge's sensitivity is taken from a published "
@@ -566,6 +567,19 @@ def _markdown(report: SafetyReport) -> str:
                 "carry no coverage guarantee and cannot support a safety claim."
             )
             if transported
+            else (
+                "Experimental. These accuracies sum exact hypergeometric bounds over the "
+                "declared fine strata of each judge stratum, each weighted by its size, from "
+                "human labels drawn without replacement within each fine stratum. The fine "
+                "strata weight every classified rollout of a cohort equally, so they certify "
+                "only a weighted mean that does the same, over the whole cohort in a fixed "
+                "design. Those rows are coverage-guaranteed at the union of the underlying "
+                "interval's budget and the calibration budget; every other corrected row is a "
+                "sensitivity analysis, marked diagnostic below. Validity rests on each fine "
+                "stratum's labelled rows being a simple random sample of it, of a size fixed "
+                "independently of the labels, which is a property of the collection protocol."
+            )
+            if stratified
             else (
                 "These accuracies are exact Clopper-Pearson bounds from human labels drawn "
                 "within each judge stratum. The labels weight every classified rollout of a "
@@ -708,6 +722,47 @@ def _markdown(report: SafetyReport) -> str:
                                 str(unsafe["truly_unsafe"]),
                                 f"{safe['labelled']} / {safe['stratum_size']}",
                                 str(safe["truly_unsafe"]),
+                            ]
+                        )
+                        + " |"
+                    )
+            # A scoped calibration nests its summaries one level deeper, by group.
+            scoped_summaries = [
+                (cohort_id, group_id, strata)
+                for cohort_id, by_group in cohorts.items()
+                for group_id, strata in (by_group.items() if scoped else [(None, by_group)])
+            ]
+            fine_rows = [
+                (cohort_id, group_id, item)
+                for cohort_id, group_id, strata in scoped_summaries
+                for item in strata.get("fine_strata") or []
+            ]
+            if fine_rows:
+                lines.extend(
+                    [
+                        "",
+                        "Declared fine strata, with exact bounds on each one's truly unsafe "
+                        "count (a census is exact; an unlabelled stratum spans all its rows):",
+                        "",
+                        "| Cohort | "
+                        + ("Group | " if scoped else "")
+                        + "Judge stratum | Fine stratum | Labelled / size | Truly unsafe | "
+                        "Truly unsafe count bounds |",
+                        "|---|" + ("---|" if scoped else "") + "---|---|---|---:|---|",
+                    ]
+                )
+                for cohort_id, group_id, item in fine_rows:
+                    lines.append(
+                        "| "
+                        + " | ".join(
+                            [
+                                _escape(cohort_id),
+                                *([_escape(group_id)] if scoped else []),
+                                _escape(item["judge_stratum"]),
+                                _escape(item["stratum"]),
+                                f"{item['labelled']} / {item['stratum_size']}",
+                                str(item["truly_unsafe"]),
+                                f"{item['truly_unsafe_lower']}–{item['truly_unsafe_upper']}",
                             ]
                         )
                         + " |"
