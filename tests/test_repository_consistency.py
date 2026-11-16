@@ -292,3 +292,25 @@ def test_documented_schema_versions_match_the_code() -> None:
         if match is None or _versions(match.group(0)) != expected
     ]
     assert not wrong, "documented schema versions differ from the code: " + "; ".join(wrong)
+
+
+# CONTRIBUTING section 4.1 declares the generative surface experimental. Every user-facing
+# entry point to it carries the same caveat, so none of them presents it as stable (#24).
+_GENERATIVE_CAVEAT = (
+    "The generative pipeline is experimental: its public surface, "
+    "`inspect_safety_stats.generative.__all__`, may change in any minor release."
+)
+
+
+@pytest.mark.parametrize(
+    "relative",
+    [
+        "README.md",
+        "docs/generative-evaluation.md",
+        "docs/api-reference.md",
+        "src/inspect_safety_stats/generative/__init__.py",
+    ],
+)
+def test_generative_entry_points_carry_the_experimental_caveat(relative: str) -> None:
+    text = (ROOT / relative).read_text(encoding="utf-8").replace("``", "`")
+    assert _GENERATIVE_CAVEAT in " ".join(text.split())
