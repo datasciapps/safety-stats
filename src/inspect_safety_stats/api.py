@@ -2419,6 +2419,10 @@ def _apply_panel_derived_correction(
     declared dependence blocks, and the judge-reported interval is inverted over that
     box. Declared boxes are assumptions, so every interval this adds is a diagnostic
     sensitivity that can never move a claim.
+
+    A judge whose accuracy declaration is scoped to groups vouches only for those groups'
+    rows, so the box holds, and a row is corrected, only in the groups every member's
+    declaration covers.
     """
 
     composite = next(
@@ -2444,6 +2448,29 @@ def _apply_panel_derived_correction(
             )
         )
         return None
+    # The groups every member's declaration holds on; None when no declaration is scoped.
+    scoped: list[str] | None = None
+    if any(accuracy.groups is not None for accuracy in accuracies):
+        scoped = [
+            group.id
+            for group in plan.groups
+            if all(
+                accuracy.groups is None or group.id in accuracy.groups for accuracy in accuracies
+            )
+        ]
+        if not scoped:
+            diagnostics.append(
+                Diagnostic(
+                    code="PANEL_CORRECTION_NO_COMMON_GROUP",
+                    severity="WARNING",
+                    message=(
+                        f"the judges of composite {composite.id!r} declare their accuracies for "
+                        "no group in common, so no panel-derived correction is reported"
+                    ),
+                    scope=f"inputs.composites.{composite.id}",
+                )
+            )
+            return None
     boxes = [
         JudgeAccuracyBox(
             sensitivity_lower=accuracy.sensitivity.lower,
@@ -2465,8 +2492,17 @@ def _apply_panel_derived_correction(
         *(row for row in risks if row.measure_id in correctable),
         *hierarchy_risks,
     ]
+    where = (
+        "every prompt and cohort"
+        if scoped is None
+        else "every cohort, on the rows of groups "
+        + ", ".join(repr(item) for item in scoped)
+        + " only, the groups every judge's declaration covers"
+    )
     for result in targets:
         if result.lower is None or result.upper is None:
+            continue
+        if scoped is not None and result.group_id not in scoped:
             continue
         identified = identified_risk_set(result.lower, result.upper, box)
         estimate_range = (
@@ -2504,7 +2540,7 @@ def _apply_panel_derived_correction(
                     f"{box.sensitivity_upper:.6g}] and specificity in "
                     f"[{box.specificity_lower:.6g}, {box.specificity_upper:.6g}].",
                     "Judge accuracies are declared, prevalence-free, and applied unchanged to "
-                    "every prompt and cohort; they carry no coverage guarantee.",
+                    f"{where}; they carry no coverage guarantee.",
                     "True risk is the Rogan-Gladen inversion over the box; extrema sit at the box "
                     "vertices because the inversion is separately monotone in each argument.",
                 ],
@@ -2534,6 +2570,7 @@ def _apply_panel_derived_correction(
             "sensitivity": [box.sensitivity_lower, box.sensitivity_upper],
             "specificity": [box.specificity_lower, box.specificity_upper],
         },
+        **({"groups": scoped} if scoped is not None else {}),
     }
 
 

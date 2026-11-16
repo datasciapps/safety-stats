@@ -11,7 +11,7 @@ from inspect_safety_stats.config.loader import canonical_plan_hash
 from inspect_safety_stats.config.models import CohortSpec, PromptBoundsSpec
 from inspect_safety_stats.ingest.inspect_logs import ErrorContext, NormalizedData
 from inspect_safety_stats.ingest.manifest import load_manifest
-from inspect_safety_stats.schema.reports import Diagnostic, SafetyReport
+from inspect_safety_stats.schema.reports import Diagnostic, RiskIntervalResult, SafetyReport
 
 
 def _write_inputs(tmp_path: Path) -> Path:
@@ -2004,6 +2004,90 @@ def test_panel_derived_correction_reports_an_unidentified_set_honestly(
     )
     assert (derived.lower, derived.upper) == (0.0, 1.0)
     assert any("unidentified" in warning.lower() for warning in derived.warnings)
+
+
+def _scoped_accuracy_plan(tmp_path: Path, scope_a: str, scope_b: str | None) -> Path:
+    """The panel plan with a second group, `first`, and each judge's accuracy scoped."""
+
+    block = _ACCURACY_PLAN_BLOCK.replace(
+        "specificity: {lower: 0.9, upper: 0.99}}",
+        f"specificity: {{lower: 0.9, upper: 0.99}}, groups: {scope_a}}}",
+    )
+    if scope_b is not None:
+        block = block.replace(
+            "specificity: {lower: 0.92, upper: 0.99}}",
+            f"specificity: {{lower: 0.92, upper: 0.99}}, groups: {scope_b}}}",
+        )
+    plan_path = _composite_primary_plan(tmp_path, block)
+    plan_text = plan_path.read_text(encoding="utf-8").replace(
+        "groups:\n  - id: cyber\n",
+        "groups:\n  - id: first\n    filter: {question_id: q1}\n  - id: cyber\n",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    return plan_path
+
+
+def test_panel_derived_correction_covers_only_the_groups_every_declaration_covers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # judge_a vouches for both groups and judge_b for `first` only, so the composite's box
+    # holds on `first` alone.
+    plan_path = _scoped_accuracy_plan(tmp_path, "[first, cyber]", "[first]")
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    def derived(group_id: str) -> list[RiskIntervalResult]:
+        row = next(
+            item
+            for item in report.group_risks
+            if item.group_id == group_id and item.measure_id == "mean"
+        )
+        return [
+            item for item in row.intervals if item.interval_id == "judge_corrected_panel_derived"
+        ]
+
+    (first,) = derived("first")
+    assert any(
+        "on the rows of groups 'first' only, the groups every judge's declaration covers" in item
+        for item in first.assumptions
+    )
+    assert derived("cyber") == []
+    assert report.provenance["judge_panel"]["derived_correction"]["groups"] == ["first"]
+
+
+def test_unscoped_panel_derived_correction_records_no_groups(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _composite_primary_plan(tmp_path, _ACCURACY_PLAN_BLOCK)
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert "groups" not in report.provenance["judge_panel"]["derived_correction"]
+
+
+def test_panel_derived_correction_without_a_common_group_is_reported(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _scoped_accuracy_plan(tmp_path, "[cyber]", "[first]")
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    for row in report.group_risks:
+        assert not [
+            item for item in row.intervals if item.interval_id == "judge_corrected_panel_derived"
+        ]
+    assert "derived_correction" not in report.provenance["judge_panel"]
+    (warning,) = [
+        item
+        for item in report.integrity.diagnostics
+        if item.code == "PANEL_CORRECTION_NO_COMMON_GROUP"
+    ]
+    assert warning.severity == "WARNING"
+    assert "declare their accuracies for no group in common" in warning.message
 
 
 def test_composite_primary_with_validated_labels_certifies_without_dependence_assumptions(
