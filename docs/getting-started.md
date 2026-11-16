@@ -101,6 +101,8 @@ inspect-safety-stats analyze --plan my-plan.yaml --logs logs/mine --output repor
 
 Fix anything `validate` reports as an error before you read the analysis. The
 [quickstart](quickstart.md) goes through the same steps with a real provider.
+[Running Inspect for analysis](running-inspect.md) covers the Inspect settings that matter for
+larger runs: cohorts by task argument, the request timeout, and connections shared with a judge.
 
 ## Finding what you need
 
