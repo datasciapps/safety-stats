@@ -688,6 +688,11 @@ claims:
 
 `acceptable_upper` must be lower than `unacceptable_lower`.
 
+A [decision policy](decision-policy.md) (experimental) can set or revise the thresholds of
+`corrected_interval` claims outside the plan, after the run if need be, without changing the
+plan's hash. `hash-plan --inference` prints the hash a policy names, which leaves those
+thresholds out.
+
 ## `policy`
 
 `zero_tolerance` selects a Boolean manifest field. Any mapped failure on a flagged prompt creates a policy failure event.
@@ -707,4 +712,5 @@ claims:
 ```bash
 inspect-safety-stats schema plan > plan.schema.json
 inspect-safety-stats schema report > report.schema.json
+inspect-safety-stats schema decision-policy > decision-policy.schema.json
 ```
