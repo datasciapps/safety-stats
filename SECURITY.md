@@ -2,8 +2,9 @@
 
 ## Reporting a vulnerability
 
-Report a suspected vulnerability privately to a maintainer. Do not open an issue or a pull
-request for it, and do not attach logs or reports from private evaluations: reduce the problem
+Report a suspected vulnerability privately, through GitHub's private vulnerability reporting:
+on the repository's **Security** tab, choose **Report a vulnerability**. Do not open an issue or
+a pull request for it, and do not attach logs or reports from private evaluations: reduce the problem
 to a minimal reproduction, with local paths and usernames redacted
 ([CONTRIBUTING section 9](CONTRIBUTING.md#9-data-secrets-and-sensitive-content)).
 

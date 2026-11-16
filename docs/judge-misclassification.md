@@ -45,7 +45,8 @@ whose thresholds would need transforming. Those measures are left uncorrected.
 
 The first implementation declares \(\rho_1\) and \(\rho_0\) as ranges rather than
 estimating them. It produces **no evidence**. Every interval it emits carries
-`eligibility: diagnostic` and `role: sensitivity`, and cannot support a claim.
+`eligibility: diagnostic`, `role: sensitivity` and `varied_assumption: judge_error`, and
+cannot support a claim.
 
 ```yaml
 inputs:

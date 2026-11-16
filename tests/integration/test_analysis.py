@@ -310,8 +310,18 @@ def test_empirical_hierarchy_intervals_and_independence_sensitivity(
         )
         sensitivity = [interval for interval in node.intervals if interval.role == "sensitivity"]
         assert {interval.independence_profile for interval in sensitivity} == {"prompt"}
+        # A sensitivity says what it varies, so it cannot be read as a judge-error scenario.
+        assert {interval.varied_assumption for interval in sensitivity} == {"independence"}
+        assert all(
+            interval.varied_assumption is None
+            for interval in node.intervals
+            if interval.role != "sensitivity"
+        )
 
     output = report.write(tmp_path / "hierarchy-report")
+    markdown = (output / "report.md").read_text(encoding="utf-8")
+    assert "| sensitivity (independence) |" in markdown
+    assert "| sensitivity |" not in markdown
     hierarchy_csv = (output / "hierarchy-risks.csv").read_text(encoding="utf-8")
     assert "weighted_empirical_bernstein" in hierarchy_csv
     assert "prompt" in hierarchy_csv
@@ -568,6 +578,7 @@ def test_judge_calibration_emits_assumed_correction_sensitivities(
     # An assumption can never certify.
     assert declared.eligibility == "diagnostic"
     assert declared.role == "sensitivity"
+    assert declared.varied_assumption == "judge_error"
     # The uncorrected bounds are retained for comparison, and the primary is untouched.
     assert declared.raw_lower == pytest.approx(mean.lower)
     assert declared.raw_upper == pytest.approx(mean.upper)
@@ -2157,6 +2168,7 @@ def test_panel_derived_correction_is_reported_as_a_diagnostic(
     )
     assert derived.eligibility == "diagnostic"
     assert derived.role == "sensitivity"
+    assert derived.varied_assumption == "judge_error"
     assert derived.method == "derived_panel_misclassification_correction"
     assert any("block" in assumption.lower() for assumption in derived.assumptions)
     box = composite_accuracy_box(
@@ -2327,6 +2339,7 @@ def test_validated_correction_reports_directional_coverage_and_a_delta_reference
     )
     assert delta.eligibility == "diagnostic"
     assert delta.role == "sensitivity"
+    assert delta.varied_assumption == "judge_error"
     assert delta.method == "delta_method_judge_misclassification_correction"
     assert delta.lower is not None and delta.upper is not None
     assert exact.lower is not None and exact.upper is not None

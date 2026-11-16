@@ -7,6 +7,14 @@ described in their pull requests.
 
 ### Added
 
+- **Sensitivity intervals say what they vary (changes report bytes).** The interval role
+  `sensitivity` covered both intervals under another independence profile and judge-error
+  corrections, so an independence sensitivity could be read as a judge sensitivity. Each
+  interval in `report.json` now has `varied_assumption`: `independence` or `judge_error` on a
+  sensitivity interval, `null` on a primary or reference one. `report.md` and `report.html`
+  show the role as `sensitivity (independence)` or `sensitivity (judge error)`. The role values
+  are unchanged, and reports written before the field still load.
+
 - **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory
   analysis makes every claim `INCONCLUSIVE`, so a reader had to compare its bounds with the
   thresholds by hand. Each claim in `report.json` now has `descriptive_status`: in an
@@ -68,6 +76,15 @@ described in their pull requests.
   unchanged, since an unknown stage is never counted as a policy block. Any other exception
   is no longer swallowed and fails the input as `INGEST_FAILED`. Analyses whose logs can be
   read are unchanged.
+
+- **Kernel loading leaves `sys.modules` and `sys.path` as it found them (Python API).**
+  `materialize_run` and `generative.runner.resolve_kernel` no longer put the working
+  directory first on `sys.path` before importing a `module:attribute` kernel; the module is
+  imported from `sys.path` as the caller set it. A `path/to/file.py:attribute` kernel is no
+  longer left in `sys.modules` under its file name, so a kernel file named like an installed
+  module (`json.py`) no longer replaces that module for the rest of the process. The
+  `generative materialize` command still finds a kernel module in the working directory.
+  Reports are unchanged.
 
 - **An unlabelled judge stratum is completed, not refused (changes results).** A validated
   judge calibration needed a human label in both judge strata. A stratum without one is now
