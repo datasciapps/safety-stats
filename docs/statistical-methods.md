@@ -1307,7 +1307,7 @@ Updating a Bernoulli confidence sequence after every correlated epoch is invalid
 
 ### 6.8 AI-evaluation precedent
 
-Sequential inference is emerging explicitly in AI evaluation. *Efficient Sequential Evaluation of Large Language Models* constructs confidence sequences by inverting test supermartingales and studies adaptive question selection [20]. Optstop implements Bayesian adaptive stopping for Inspect AI, but its posterior-width criterion is not the same as an anytime-valid frequentist confidence sequence [21]. This remains a useful future integration point if users later require a frequentist false-pass guarantee after adaptive stopping; it does not justify adding sequential complexity to the fixed-horizon core.
+Sequential inference is emerging explicitly in AI evaluation. *Efficient Sequential Evaluation of Large Language Models* constructs confidence sequences by inverting test supermartingales and studies adaptive question selection [20]. CELEUS builds anytime-valid confidence intervals from e-processes and combines uncertainty-guided sample selection with a surrogate for the items not yet evaluated [33]. Both papers target the unweighted mean score of one model over a pool of items, with one outcome per item. Neither offers one-sided threshold decisions, a declared weighted estimand, several rollouts per prompt, correction for judge error, or multiplicity across claims. Both use non-uniform selection with inverse-probability weighting, but only as a sampling device, not as a weighted target. Optstop implements Bayesian adaptive stopping for Inspect AI, but its posterior-width criterion is not the same as an anytime-valid frequentist confidence sequence [21]. This remains a useful future integration point if users later require a frequentist false-pass guarantee after adaptive stopping; it does not justify adding sequential complexity to the fixed-horizon core.
 
 ---
 
@@ -2030,7 +2030,7 @@ The analysis plan must freeze each claim's \(\alpha_i\) before monitoring begins
 
 Optstop and this library answer related but different questions.
 
-Optstop performs Bayesian adaptive allocation and stopping based primarily on posterior precision. Its output is useful for deciding where additional evaluation effort is valuable. Its recent paper reports substantial compute savings and empirical checks of truncation behavior [21].
+Optstop performs Bayesian adaptive allocation and stopping based primarily on posterior precision. Its output is useful for deciding where additional evaluation effort is valuable. Its recent paper reports substantial compute savings and empirical checks of truncation behavior [21]. The same paper is explicit that the two tools give different guarantees. In its simulation study (App. B.6, Table 5), 94% credible intervals covered the true rate about 80% of the time in the middle of the range (0.80 for the logit-normal model, 0.81 for the beta-binomial), and 0% of the time at the exact boundaries of 0 and 1. The paper attributes that zero to the degenerate data-generating process rather than to the model. It describes its interval-width stopping threshold as "a precision target rather than an accuracy guarantee" (App. A.1.1). Such a threshold says nothing about false passes, which is what the core gate controls.
 
 The core package focuses on fixed-horizon frequentist safety guarantees:
 
@@ -2296,6 +2296,11 @@ That is the role this Inspect extension should fill.
 30. H. Föllmer and T. Knispel, “Entropic Risk Measures: Coherence vs. Convexity, Model Ambiguity, and Robust Large Deviations,” *Stochastics and Dynamics* 11(2–3), 333–351, 2011. [doi:10.1142/S0219493711003334](https://doi.org/10.1142/S0219493711003334)
 31. C. Acerbi, “Spectral Measures of Risk: A Coherent Representation of Subjective Risk Aversion,” *Journal of Banking & Finance* 26(7), 1505–1518, 2002. [doi:10.1016/S0378-4266(02)00281-9](https://doi.org/10.1016/S0378-4266(02)00281-9)
 32. W. Hoeffding, “Probability Inequalities for Sums of Bounded Random Variables,” *Journal of the American Statistical Association* 58(301), 13–30, 1963. [doi:10.1080/01621459.1963.10500830](https://doi.org/10.1080/01621459.1963.10500830)
+
+### Sequential evaluation and judge reliability
+
+33. Z. Zhou, Z. Ye, Z. Chen, B. Li, and F. Liu, “CELEUS: Certifiable and Efficient LLM Evaluation via E-Processes,” 2026. [arXiv:2606.20820](https://arxiv.org/abs/2606.20820)
+34. Y. Gao, “How Reliable Is Your Jailbreak Judge? Calibration and Adversarial Robustness of Automated ASR Scoring,” 2026. [arXiv:2606.25487](https://arxiv.org/abs/2606.25487)
 
 ---
 
