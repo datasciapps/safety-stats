@@ -3,6 +3,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -28,6 +29,7 @@ from inspect_safety_stats.schema.reports import (
     RiskIntervalResult,
     SafetyReport,
 )
+from tests.report_rendering import rendering_differences
 
 
 def _write_inputs(tmp_path: Path) -> Path:
@@ -195,7 +197,7 @@ def test_end_to_end_pass_and_report(monkeypatch: pytest.MonkeyPatch, tmp_path: P
         "worst_of_2",
         "excess",
     }
-    assert report.presentation == {"include_decisions": False}
+    assert report.presentation.include_decisions is False
     risk = next(item for item in report.group_risks if item.measure_id == "mean")
     assert risk.coverage_mode == "two_sided"
     assert risk.family_alpha == pytest.approx(0.05)
@@ -231,7 +233,7 @@ def test_end_to_end_pass_and_report(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert "## Interval-method comparison" in markdown
     assert "weighted_hoeffding" in markdown
     html = (output / "report.html").read_text(encoding="utf-8")
-    assert '"presentation":{"include_decisions":false}' in html
+    assert "\"include_decisions\":false" in html
     second = report.write(tmp_path / "report-copy")
     assert (output / "report.json").read_bytes() == (second / "report.json").read_bytes()
     assert (output / "report.html").read_bytes() == (second / "report.html").read_bytes()
@@ -246,6 +248,56 @@ def test_end_to_end_pass_and_report(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     report.write(output, overwrite=True)
     assert not (output / "observations.csv").exists()
     assert "observations.csv" not in (output / "checksums.json").read_text(encoding="utf-8")
+
+
+def _written_report(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    plan_path = _write_inputs(tmp_path)
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, **_: sample_frame,
+    )
+    return analyze(plan=plan_path, logs="ignored").write(tmp_path / "report")
+
+
+def test_a_saved_report_json_alone_renders_the_report_again(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """L38: no plan, design CSV or other file beside report.json is needed to render it."""
+    output = _written_report(monkeypatch, tmp_path)
+    alone = tmp_path / "alone"
+    alone.mkdir()
+    shutil.copy(output / "report.json", alone / "report.json")
+
+    html = write_visualization(alone / "report.json", tmp_path / "again.html")
+
+    assert html.read_bytes() == (output / "report.html").read_bytes()
+    assert rendering_differences(output) == []
+
+
+def test_a_report_written_before_its_json_held_the_design_still_visualizes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """An older report.json lacks design.prompts; the page takes them from design.resolved.csv."""
+    output = _written_report(monkeypatch, tmp_path)
+    saved = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    prompts = saved["design"].pop("prompts")
+    assert prompts
+    (output / "report.json").write_text(json.dumps(saved), encoding="utf-8", newline="\n")
+
+    html = write_visualization(output, tmp_path / "older.html").read_text(encoding="utf-8")
+
+    payload = json.loads(
+        html.split('type="application/json">', 1)[1].split("</script>", 1)[0]
+    )
+    shown = payload["report"]["design"]["prompts"]
+    assert [row["prompt_id"] for row in shown] == [row["prompt_id"] for row in prompts]
+    assert [row["weight"] for row in shown] == pytest.approx(
+        [row["weight"] for row in prompts], abs=0
+    )
 
 
 def test_text_artifacts_have_the_same_bytes_on_every_platform(
@@ -1173,7 +1225,7 @@ def test_decision_presentation_is_opt_in(monkeypatch: pytest.MonkeyPatch, tmp_pa
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=plan, logs="ignored")
-    assert report.presentation == {"include_decisions": True}
+    assert report.presentation.include_decisions is True
     output = report.write(tmp_path / "report-with-decisions")
     markdown = (output / "report.md").read_text(encoding="utf-8")
     assert "**Decision:** `PASS`" in markdown
@@ -2693,7 +2745,7 @@ def test_judge_claims_have_a_report_section(
     section = text[text.index("### Claims by judge (experimental)") :]
     (claim,) = report.claims
     # The plan hides decisions, so the rows show no status either.
-    assert report.presentation["include_decisions"] is False
+    assert report.presentation.include_decisions is False
     assert "| Judge | Integrity | Claim | Estimate |" in section
     assert f"| judge_a | `valid` | {claim.claim_id} | 0.250000 |" in section
     assert "| judge_b | `degraded` |" in section

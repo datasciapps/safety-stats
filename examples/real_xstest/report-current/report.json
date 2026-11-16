@@ -149,7 +149,121 @@
     },
     "manifest": "design.csv",
     "manifest_sha256": "16987ec53d48b7d1660a7ed37af6593686badceae7de169debb998860af09117",
-    "prompt_count": 8
+    "prompt_count": 8,
+    "prompts": [
+      {
+        "group_id": "all-pairs",
+        "prompt_id": "v2-1",
+        "question_id": "homonym-pair-1",
+        "task_id": "xstest-refusal-calibration",
+        "weight": 0.125
+      },
+      {
+        "group_id": "all-pairs",
+        "prompt_id": "v2-2",
+        "question_id": "homonym-pair-2",
+        "task_id": "xstest-refusal-calibration",
+        "weight": 0.125
+      },
+      {
+        "group_id": "all-pairs",
+        "prompt_id": "v2-26",
+        "question_id": "homonym-pair-1",
+        "task_id": "xstest-refusal-calibration",
+        "weight": 0.125
+      },
+      {
+        "group_id": "all-pairs",
+        "prompt_id": "v2-27",
+        "question_id": "homonym-pair-2",
+        "task_id": "xstest-refusal-calibration",
+        "weight": 0.125
+      },
+      {
+        "group_id": "all-pairs",
+        "prompt_id": "v2-28",
+        "question_id": "homonym-pair-3",
+        "task_id": "xstest-refusal-calibration",
+        "weight": 0.125
+      },
+      {
+        "group_id": "all-pairs",
+        "prompt_id": "v2-29",
+        "question_id": "homonym-pair-4",
+        "task_id": "xstest-refusal-calibration",
+        "weight": 0.125
+      },
+      {
+        "group_id": "all-pairs",
+        "prompt_id": "v2-3",
+        "question_id": "homonym-pair-3",
+        "task_id": "xstest-refusal-calibration",
+        "weight": 0.125
+      },
+      {
+        "group_id": "all-pairs",
+        "prompt_id": "v2-4",
+        "question_id": "homonym-pair-4",
+        "task_id": "xstest-refusal-calibration",
+        "weight": 0.125
+      },
+      {
+        "group_id": "safe-prompts",
+        "prompt_id": "v2-1",
+        "question_id": "homonym-pair-1",
+        "task_id": "xstest-refusal-calibration",
+        "weight": 0.25
+      },
+      {
+        "group_id": "safe-prompts",
+        "prompt_id": "v2-2",
+        "question_id": "homonym-pair-2",
+        "task_id": "xstest-refusal-calibration",
+        "weight": 0.25
+      },
+      {
+        "group_id": "safe-prompts",
+        "prompt_id": "v2-3",
+        "question_id": "homonym-pair-3",
+        "task_id": "xstest-refusal-calibration",
+        "weight": 0.25
+      },
+      {
+        "group_id": "safe-prompts",
+        "prompt_id": "v2-4",
+        "question_id": "homonym-pair-4",
+        "task_id": "xstest-refusal-calibration",
+        "weight": 0.25
+      },
+      {
+        "group_id": "unsafe-prompts",
+        "prompt_id": "v2-26",
+        "question_id": "homonym-pair-1",
+        "task_id": "xstest-refusal-calibration",
+        "weight": 0.25
+      },
+      {
+        "group_id": "unsafe-prompts",
+        "prompt_id": "v2-27",
+        "question_id": "homonym-pair-2",
+        "task_id": "xstest-refusal-calibration",
+        "weight": 0.25
+      },
+      {
+        "group_id": "unsafe-prompts",
+        "prompt_id": "v2-28",
+        "question_id": "homonym-pair-3",
+        "task_id": "xstest-refusal-calibration",
+        "weight": 0.25
+      },
+      {
+        "group_id": "unsafe-prompts",
+        "prompt_id": "v2-29",
+        "question_id": "homonym-pair-4",
+        "task_id": "xstest-refusal-calibration",
+        "weight": 0.25
+      }
+    ]
   },
   "group_risks": [
     {
@@ -4527,7 +4641,27 @@
     }
   ],
   "presentation": {
-    "include_decisions": false
+    "claim_evidence": [
+      {
+        "claim_id": "safe_prompt_calibration",
+        "cohort": "published_gpt4_replay",
+        "comparison": null,
+        "group": "safe-prompts",
+        "measure": "mean",
+        "measure_type": "weighted_mean"
+      },
+      {
+        "claim_id": "unsafe_prompt_calibration",
+        "cohort": "published_gpt4_replay",
+        "comparison": null,
+        "group": "unsafe-prompts",
+        "measure": "mean",
+        "measure_type": "weighted_mean"
+      }
+    ],
+    "decimal_places": 6,
+    "include_decisions": false,
+    "primary_independence_profile": "rollout"
   },
   "prompt_estimates": [
     {

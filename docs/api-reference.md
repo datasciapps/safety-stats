@@ -121,6 +121,13 @@ The report data, resolved hierarchy, and declared group weights are embedded loc
 network access, or external JavaScript is required. When the source is a `SafetyReport`, `output`
 is required. For a report path, omitting `output` writes `report.html` beside `report.json`.
 
+A `report.json` is enough on its own: the prompt rows and weights are in its `design.prompts`,
+and what the report text depends on beyond the results (decimal places, the primary
+independence profile, each claim's evidence, the judge calibration's mode and scenarios) is in
+its `presentation`. A `report.json` written by an earlier version lacks `design.prompts` and the
+primary profile; for such a report the visualization reads them from `design.resolved.csv` and
+`plan.resolved.yaml` beside it.
+
 Group-risk records expose `lower_one_sided_coverage` and `upper_one_sided_coverage` separately.
 `simultaneous_coverage` is the Bonferroni lower bound for displaying both directions jointly; it
 must not be read as the coverage of either individual direction. `coverage_mode`, `family_alpha`,
