@@ -357,7 +357,10 @@ into the assumption the whole estimand rests on.
 ## Reading the report
 
 `report.html` is a self-contained page -- it embeds its data and fetches nothing. Alongside it,
-`report.json`, `nodes.csv`, `taxonomy.csv`, `comparisons.csv` and `diagnostics.csv`.
+`report.json`, `nodes.csv`, `taxonomy.csv`, `comparisons.csv`, `diagnostics.csv`,
+`acceptance.csv`, and `checksums.json`, which holds the SHA-256 of each of the others.
+`generative analyze` exits `3` when the report carries an `ERROR` diagnostic; the report is
+still written, so the diagnostics can be read.
 
 Three fields are easy to misread:
 

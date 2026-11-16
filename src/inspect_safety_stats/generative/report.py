@@ -9,7 +9,6 @@ fingerprints it was produced under so two runs cannot be pooled by accident.
 from __future__ import annotations
 
 import hashlib
-import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -26,6 +25,12 @@ from inspect_safety_stats.generative.inference import (
 from inspect_safety_stats.generative.judge import CorrectedEstimate
 from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
 from inspect_safety_stats.generative.visualization import write_generative_report
+from inspect_safety_stats.report.artifacts import (
+    CHECKSUMS,
+    write_checksums,
+    write_frame,
+    write_json,
+)
 from inspect_safety_stats.schema.reports import Diagnostic
 from inspect_safety_stats.version import __version__
 
@@ -37,6 +42,7 @@ ARTIFACTS = (
     "diagnostics.csv",
     "comparisons.csv",
     "acceptance.csv",
+    CHECKSUMS,
 )
 
 
@@ -131,24 +137,23 @@ class GenerativeReport:
                 f"{directory} is not empty; pass --overwrite to replace its contents"
             )
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / "report.json").write_text(
-            json.dumps(self.to_dict(), indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-            newline="\n",
+        # Unlike the fixed-design report.json, this one escapes non-ASCII text and allows NaN.
+        write_json(directory / "report.json", self.to_dict(), ensure_ascii=True, allow_nan=True)
+        write_frame(directory / "nodes.csv", self._nodes_frame())
+        write_frame(directory / "taxonomy.csv", self.taxonomy.to_frame())
+        write_frame(
+            directory / "diagnostics.csv",
+            pd.DataFrame(
+                [item.model_dump(mode="json") for item in self.diagnostics],
+                columns=["code", "severity", "message", "scope", "details"],
+            ),
         )
-        self._nodes_frame().to_csv(directory / "nodes.csv", index=False, lineterminator="\n")
-        self.taxonomy.to_frame().to_csv(
-            directory / "taxonomy.csv", index=False, lineterminator="\n"
-        )
-        pd.DataFrame(
-            [item.model_dump(mode="json") for item in self.diagnostics],
-            columns=["code", "severity", "message", "scope", "details"],
-        ).to_csv(directory / "diagnostics.csv", index=False, lineterminator="\n")
-        self._comparisons_frame().to_csv(
-            directory / "comparisons.csv", index=False, lineterminator="\n"
-        )
-        pd.DataFrame([asdict(item) for item in self.acceptance]).to_csv(
-            directory / "acceptance.csv", index=False, lineterminator="\n"
+        write_frame(directory / "comparisons.csv", self._comparisons_frame())
+        write_frame(
+            directory / "acceptance.csv",
+            pd.DataFrame([asdict(item) for item in self.acceptance]),
         )
         write_generative_report(self, directory / "report.html")
+        # ORDER MATTERS: last, once every file it covers is written.
+        write_checksums(directory, [name for name in ARTIFACTS if name != CHECKSUMS])
         return directory

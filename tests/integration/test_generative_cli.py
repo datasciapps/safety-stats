@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -14,6 +15,7 @@ from typer.testing import CliRunner
 
 from inspect_safety_stats.cli import app
 from inspect_safety_stats.generative.ledger import read_rewrites
+from inspect_safety_stats.generative.report import ARTIFACTS
 from inspect_safety_stats.generative.runner import analyze_run, materialize_run, resolve_kernel
 from tests.generative_fixtures import SEEDS_WITH_TEXT, base_plan
 
@@ -142,6 +144,22 @@ def test_analyze_produces_a_report(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert set(frame["kind"]) == {"node"}
 
 
+def test_the_report_records_the_checksum_of_every_artifact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = write_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts)
+
+    path = analyze_run(plan, artifacts, "logs", cohort="candidate").write(tmp_path / "report")
+    checksums = json.loads((path / "checksums.json").read_text(encoding="utf-8"))
+    assert sorted(item.name for item in path.iterdir()) == sorted(ARTIFACTS)
+    assert set(checksums) == set(ARTIFACTS) - {"checksums.json"}
+    for name, digest in checksums.items():
+        assert hashlib.sha256((path / name).read_bytes()).hexdigest() == digest, name
+
+
 def test_text_artifacts_have_the_same_bytes_on_every_platform(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -259,6 +277,31 @@ def test_a_missing_score_column_is_an_error(
     assert any(item.code == "GENERATIVE_SCORE_ABSENT" for item in report.diagnostics)
     # Unclassified rather than dropped, so the bound still covers every draw.
     assert report.tree.root.unclassified == report.tree.root.trials
+
+
+def test_analyze_command_exits_3_on_error_diagnostics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Exit 2 is INCONCLUSIVE for analyze --decision-exit-codes; an error must not read so."""
+
+    plan = write_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts, score_column="score_something_else")
+
+    result = runner.invoke(
+        app,
+        [
+            "generative", "analyze",
+            "--plan", str(plan),
+            "--artifacts", str(artifacts),
+            "--logs", str(artifacts),
+            "--output", str(tmp_path / "report"),
+        ],
+    )
+    assert result.exit_code == 3, result.output
+    assert "GENERATIVE_SCORE_ABSENT" in result.output
+    assert (tmp_path / "report" / "report.json").is_file()
 
 
 @pytest.mark.parametrize(

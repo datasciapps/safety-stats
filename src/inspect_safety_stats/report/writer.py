@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import csv
-import hashlib
-import io
 import json
 from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from pathlib import Path
@@ -11,6 +8,14 @@ from typing import Any
 import yaml
 
 from inspect_safety_stats.config.canonicalize import canonical_value
+from inspect_safety_stats.report.artifacts import (
+    csv_text,
+    write_checksums,
+    write_csv,
+    write_csv_text,
+    write_json,
+    write_text,
+)
 from inspect_safety_stats.schema.reports import (
     ClaimResult,
     ComparisonResult,
@@ -19,41 +24,6 @@ from inspect_safety_stats.schema.reports import (
     SafetyReport,
     VerdictRange,
 )
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _csv_text(rows: list[dict[str, Any]]) -> str:
-    if not rows:
-        return ""
-    fields: list[str] = []
-    for row in rows:
-        for field in row:
-            if field not in fields:
-                fields.append(field)
-    stream = io.StringIO(newline="")
-    writer = csv.DictWriter(stream, fieldnames=fields, extrasaction="ignore")
-    writer.writeheader()
-    for row in rows:
-        writer.writerow(
-            {
-                key: json.dumps(canonical_value(value), ensure_ascii=False, sort_keys=True)
-                if isinstance(value, (dict, list))
-                else canonical_value(value)
-                for key, value in row.items()
-            }
-        )
-    return stream.getvalue()
-
-
-def _write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
-    path.write_text(_csv_text(rows), encoding="utf-8", newline="")
 
 
 def _escape(value: Any) -> str:
@@ -1577,12 +1547,12 @@ def _rendered(report: SafetyReport) -> dict[str, str]:
     return {
         "report.md": _markdown(report),
         "report.html": render_visualization(report),
-        "design.resolved.csv": _csv_text(_design_rows(report)),
-        "hierarchy-risks.csv": _csv_text(_hierarchy_rows(report)),
-        "comparisons.csv": _csv_text(
+        "design.resolved.csv": csv_text(_design_rows(report)),
+        "hierarchy-risks.csv": csv_text(_hierarchy_rows(report)),
+        "comparisons.csv": csv_text(
             [item.model_dump(mode="json") for item in report.comparisons]
         ),
-        "comparison-sets.csv": _csv_text(
+        "comparison-sets.csv": csv_text(
             [item.model_dump(mode="json") for item in report.comparison_sets]
         ),
     }
@@ -1595,26 +1565,13 @@ def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = 
     if directory.exists() and any(directory.iterdir()) and not overwrite:
         raise FileExistsError(f"report directory already exists and is not empty: {directory}")
     directory.mkdir(parents=True, exist_ok=True)
-    report_json = directory / "report.json"
-    report_json.write_text(
-        json.dumps(
-            canonical_value(report.model_dump(mode="json")),
-            ensure_ascii=False,
-            allow_nan=False,
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
+    write_json(directory / "report.json", canonical_value(report.model_dump(mode="json")))
     rendered = _rendered(report)
     for name in ("report.md", "report.html"):
-        (directory / name).write_text(rendered[name], encoding="utf-8", newline="\n")
-    (directory / "plan.resolved.yaml").write_text(
+        write_text(directory / name, rendered[name])
+    write_text(
+        directory / "plan.resolved.yaml",
         yaml.safe_dump(canonical_value(report._resolved_plan), sort_keys=True, allow_unicode=True),
-        encoding="utf-8",
-        newline="\n",
     )
     for name in (
         "design.resolved.csv",
@@ -1622,13 +1579,12 @@ def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = 
         "comparisons.csv",
         "comparison-sets.csv",
     ):
-        # The CSV text carries its own line endings (csv's default CRLF); write it unchanged.
-        (directory / name).write_text(rendered[name], encoding="utf-8", newline="")
+        write_csv_text(directory / name, rendered[name])
     include_observations = bool(
         report._resolved_plan.get("report", {}).get("include_observations", True)
     )
     if include_observations:
-        _write_csv(
+        write_csv(
             directory / "observations.csv",
             [item.model_dump(mode="json") for item in report._observations],
         )
@@ -1646,10 +1602,5 @@ def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = 
     ]
     if include_observations:
         generated_names.append("observations.csv")
-    checksums = {name: _sha256(directory / name) for name in sorted(generated_names)}
-    (directory / "checksums.json").write_text(
-        json.dumps(checksums, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-        newline="\n",
-    )
+    write_checksums(directory, generated_names)
     return directory
