@@ -12,6 +12,16 @@ described in their pull requests.
   `--runs` and `--rollouts` in place of `--logs`, and `source=RolloutFiles(...)` in place of
   `logs=` in Python. See [Rollout files](docs/rollout-files.md).
 
+- **Judge-error stress for threshold claims (experimental).** With
+  `report.judge_error_stress: true`, every claim in `report.json` gains a `judge_error_stress`
+  record, and `report.md` gains a section after the claims. For a claim decided on
+  judge-reported bounds, the record gives the sensitivity and specificity at which the PASS or
+  FAIL would no longer hold for true risk. When the primary outcome's judge, or its `any` or
+  `all` composite, declares accuracy ranges, it also gives the verdict over that box and whether
+  it matches the claim. It never changes a claim. Plans without the field keep their hash and
+  their output. See
+  [Stressing a threshold verdict](docs/judge-misclassification.md#stressing-a-threshold-verdict-experimental).
+
 - **Plan schema 3.0.** Plans name run and rollout fields neutrally, so one plan works with
   any source: `run_key`, `model`, `status` and `run_id` for runs; `run_key`, `item_id`,
   `repeat` and `rollout_id` for rollouts; any other source field as `attributes.<name>`.
