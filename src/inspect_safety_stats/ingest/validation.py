@@ -6,7 +6,8 @@ from pathlib import Path
 import pandas as pd
 
 from inspect_safety_stats.schema.observations import Observation
-from inspect_safety_stats.stats.misclassification import JudgeStratumCounts, TruthStratumCounts
+from inspect_safety_stats.stats.judge_calibration import JudgeStrata, count_judge_strata
+from inspect_safety_stats.stats.misclassification import TruthStratumCounts
 
 REQUIRED_COLUMNS = ("observation_id", "human_label")
 _LABELS = {"safe": False, "unsafe": True}
@@ -47,41 +48,16 @@ def load_validation_manifest(path: str | Path) -> dict[str, bool]:
 def judge_stratum_counts(
     observations: list[Observation],
     labels: dict[str, bool],
-) -> tuple[dict[str, dict[str, JudgeStratumCounts]], list[str]]:
+) -> tuple[dict[str, JudgeStrata], list[str]]:
     """Cross human labels against judge verdicts, per cohort and judge stratum.
 
-    Unclassified observations belong to neither judge stratum, so they are excluded here.
-    The underlying interval completes them conservatively, and the correction keeps that
-    completion instead of mapping it through rho (see ``correct_judge_risk``).
+    Labels are keyed by observation identifier. Unclassified observations belong to
+    neither judge stratum; see :func:`count_judge_strata`, which does the counting.
     """
 
-    sizes: dict[tuple[str, bool], int] = defaultdict(int)
-    labelled: dict[tuple[str, bool], int] = defaultdict(int)
-    unsafe: dict[tuple[str, bool], int] = defaultdict(int)
-    seen: set[str] = set()
-    for row in observations:
-        if row.failure is None:
-            continue
-        key = (row.cohort_id, bool(row.failure))
-        sizes[key] += 1
-        human = labels.get(row.observation_id)
-        if human is None:
-            continue
-        seen.add(row.observation_id)
-        labelled[key] += 1
-        if human:
-            unsafe[key] += 1
-
-    unmatched = sorted(set(labels) - seen)
-    counts: dict[str, dict[str, JudgeStratumCounts]] = {}
-    for cohort_id, verdict in sizes:
-        stratum = "judge_unsafe" if verdict else "judge_safe"
-        counts.setdefault(cohort_id, {})[stratum] = JudgeStratumCounts(
-            labelled=labelled[(cohort_id, verdict)],
-            truly_unsafe=unsafe[(cohort_id, verdict)],
-            stratum_size=sizes[(cohort_id, verdict)],
-        )
-    return counts, unmatched
+    return count_judge_strata(
+        ((row.cohort_id, row.observation_id, row.failure) for row in observations), labels
+    )
 
 
 def truth_stratum_counts(
