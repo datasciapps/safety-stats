@@ -40,6 +40,11 @@ Any object with a `read()` method that returns the package's `SourceData` record
 source; `inspect_safety_stats.ingest.EvaluationSource` is the protocol. Passing both `logs` and
 `source` is an error. `validate` takes the same `source` keyword.
 
+`registration_receipt` (experimental) names a receipt written by `hash-plan --register`.
+`analyze` and `validate` check it against the plan's hash and the earliest evaluation start;
+see [Registration receipts](plan-reference.md#registration-receipts-experimental). `analyze`
+raises `ValueError` for a malformed receipt, and `validate` reports it as `INGEST_FAILED`.
+
 ### `validate`
 
 ```python
@@ -423,7 +428,7 @@ inspect-safety-stats plan detectable-rate --trials N --threshold P --alpha A --p
 inspect-safety-stats plan fixed-design --manifest DESIGN.csv --threshold P [--alpha A] [--power B]
     [--rollouts N] [--weights STRATEGY] [--hierarchy LEVELS] [--weight-column COLUMN]
     [--independence-unit UNIT] [--family-size M]
-inspect-safety-stats hash-plan --plan PLAN
+inspect-safety-stats hash-plan --plan PLAN [--register RECEIPT.json]
 inspect-safety-stats schema plan
 inspect-safety-stats schema report
 inspect-safety-stats version
@@ -442,6 +447,12 @@ Hoeffding construction of `fixed_design_detectable_failure_rates`; pass
 Repeat `--logs` to select multiple files or directories. `--runs` and `--rollouts` name the two
 files of a neutral rollout source instead of Inspect logs, and are given together
 (experimental; see [Rollout files](rollout-files.md)).
+
+`hash-plan --register RECEIPT.json` also writes a registration receipt. `analyze` and
+`validate` check one with `--registration-receipt RECEIPT.json`, and the Python functions with
+`registration_receipt=` (experimental; see
+[Registration receipts](plan-reference.md#registration-receipts-experimental)). `hash-plan`
+exits `3` when the receipt file already exists.
 
 Exit codes of `analyze`:
 

@@ -123,4 +123,4 @@ The manifest's `expected_rollouts` must match the number of terminal sample epoc
 
 ### The plan is reported as post hoc
 
-For a confirmatory analysis, `analysis.plan_frozen_at` must precede the earliest selected evaluation. A registration hash is recommended for stronger provenance.
+For a confirmatory analysis, `analysis.plan_frozen_at` must precede the earliest selected evaluation. A registration hash is recommended for stronger provenance. `PLAN_RECEIPT_POSTHOC` means the same for a [registration receipt](plan-reference.md#registration-receipts-experimental): it was written after generation started.

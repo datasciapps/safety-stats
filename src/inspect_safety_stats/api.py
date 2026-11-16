@@ -23,6 +23,7 @@ from inspect_safety_stats.config.models import (
     IndependenceSelectionSpec,
     RiskMeasureSpec,
 )
+from inspect_safety_stats.config.registration import load_receipt
 from inspect_safety_stats.decision.engine import decide_claim, roll_up
 from inspect_safety_stats.ingest.manifest import (
     load_inclusion_probabilities,
@@ -162,11 +163,13 @@ def validate(
     logs: LogInput = None,
     parallel: bool | int = False,
     source: EvaluationSource | None = None,
+    registration_receipt: str | Path | None = None,
 ) -> IntegritySummary:
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
     try:
-        normalized = ingest(resolved, _source(logs, parallel, source))
+        receipt = None if registration_receipt is None else load_receipt(registration_receipt)
+        normalized = ingest(resolved, _source(logs, parallel, source), receipt)
         validate_profile_fields(resolved.design.independence_profiles, normalized.manifest)
         diagnostics.extend(normalized.diagnostics)
     except Exception as exc:
@@ -257,6 +260,8 @@ def _prompt_blocked(diagnostics: list[Diagnostic], cohort: str, prompt: str) -> 
         "PLAN_UNKNOWN_REFERENCE",
         "PLAN_DIAGNOSTIC_GATE",
         "PLAN_POSTHOC",
+        "PLAN_RECEIPT_MISMATCH",
+        "PLAN_RECEIPT_POSTHOC",
         "INGEST_FAILED",
         "COHORT_OVERLAP",
         "ALPHA_ALLOCATION_INVALID",
@@ -4777,10 +4782,12 @@ def analyze(
     logs: LogInput = None,
     parallel: bool | int = False,
     source: EvaluationSource | None = None,
+    registration_receipt: str | Path | None = None,
 ) -> SafetyReport:
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
-    data = ingest(resolved, _source(logs, parallel, source))
+    receipt = None if registration_receipt is None else load_receipt(registration_receipt)
+    data = ingest(resolved, _source(logs, parallel, source), receipt)
     validate_profile_fields(resolved.design.independence_profiles, data.manifest)
     diagnostics.extend(data.diagnostics)
     estimates = _prompt_estimates(resolved, data, diagnostics)

@@ -53,6 +53,18 @@ RolloutsOption = Annotated[
         ),
     ),
 ]
+ReceiptOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--registration-receipt",
+        exists=True,
+        dir_okay=False,
+        help=(
+            "Receipt written by hash-plan --register: checked against the plan's hash and "
+            "the earliest evaluation start. Experimental: see docs/plan-reference.md."
+        ),
+    ),
+]
 
 
 def _source_arguments(
@@ -86,6 +98,7 @@ def analyze_command(
         bool, typer.Option("--decision-exit-codes/--no-decision-exit-codes")
     ] = False,
     allow_invalid: Annotated[bool, typer.Option("--allow-invalid")] = False,
+    registration_receipt: ReceiptOption = None,
 ) -> None:
     """Analyze completed Inspect logs or rollout files against a plan and write the report."""
 
@@ -94,7 +107,11 @@ def analyze_command(
 
     try:
         report = run_analysis(
-            plan=plan, logs=log_input, parallel=parallel or False, source=source
+            plan=plan,
+            logs=log_input,
+            parallel=parallel or False,
+            source=source,
+            registration_receipt=registration_receipt,
         )
         path = report.write(output, overwrite=overwrite)
     except Exception as exc:
@@ -131,13 +148,20 @@ def validate_command(
     runs: RunsOption = None,
     rollouts: RolloutsOption = None,
     parallel: Annotated[int, typer.Option("--parallel", min=0)] = 0,
+    registration_receipt: ReceiptOption = None,
 ) -> None:
     """Check logs or rollout files against a plan (manifest, cohorts, rollouts, scores)."""
 
     log_input, source = _source_arguments(logs, runs, rollouts)
     from inspect_safety_stats.api import validate as run_validation
 
-    result = run_validation(plan=plan, logs=log_input, parallel=parallel or False, source=source)
+    result = run_validation(
+        plan=plan,
+        logs=log_input,
+        parallel=parallel or False,
+        source=source,
+        registration_receipt=registration_receipt,
+    )
     for diagnostic in result.diagnostics:
         scope = f" [{diagnostic.scope}]" if diagnostic.scope else ""
         typer.echo(f"{diagnostic.severity} {diagnostic.code}{scope}: {diagnostic.message}")

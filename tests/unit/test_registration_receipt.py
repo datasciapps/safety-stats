@@ -10,9 +10,11 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from inspect_safety_stats import validate
 from inspect_safety_stats.cli import app
 from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
 from inspect_safety_stats.config.registration import load_receipt, write_receipt
+from inspect_safety_stats.ingest.rollout_files import RolloutFiles
 from tests.cli_output import plain
 
 runner = CliRunner()
@@ -101,3 +103,181 @@ def test_a_malformed_receipt_is_rejected(
     path.write_text(json.dumps(receipt), encoding="utf-8")
     with pytest.raises(ValueError, match=message):
         load_receipt(path)
+
+
+PLAN = """
+schema_version: "2.0"
+analysis:
+  id: receipt
+  title: Registration receipt
+  intent: INTENT
+  plan_frozen_at: 2026-01-01T00:00:00Z
+inputs:
+  design_manifest: design.csv
+  score:
+    name: harmful
+    mapping:
+      failure_values: ["FAIL"]
+      safe_values: ["PASS"]
+design:
+  rollout_key: [run_key, item_id, repeat]
+cohorts:
+  candidate:
+    match: {team: red}
+groups:
+  - id: all
+outputs:
+  prompt_bounds:
+    enabled: true
+    family: displayed
+  risk_measures:
+    - {id: mean, type: weighted_mean}
+multiplicity:
+  families:
+    - {id: displayed, purpose: simultaneous_intervals, method: bonferroni, alpha: 0.05}
+claims: []
+"""
+
+STARTED = "2026-02-01T00:00:00Z"
+
+
+def _source(tmp_path: Path, started_at: str | None = STARTED) -> RolloutFiles:
+    (tmp_path / "design.csv").write_text(
+        "prompt_id,question_id,task_id,expected_rollouts\np1,q1,t1,2\n", encoding="utf-8"
+    )
+    run = {"run_key": "r1", "team": "red", "status": "success", "model": "m"}
+    runs = tmp_path / "runs.jsonl"
+    runs.write_text(json.dumps({**run, "started_at": started_at}) + "\n", encoding="utf-8")
+    rollouts = tmp_path / "rollouts.jsonl"
+    rollouts.write_text(
+        "".join(
+            json.dumps({"run_key": "r1", "item_id": "p1", "repeat": r, "score_harmful": "PASS"})
+            + "\n"
+            for r in (1, 2)
+        ),
+        encoding="utf-8",
+    )
+    return RolloutFiles(runs=runs, rollouts=rollouts)
+
+
+def _codes(
+    tmp_path: Path,
+    *,
+    registered_at: str | None = "2026-01-15T00:00:00+00:00",
+    sha256: str | None = None,
+    intent: str = "confirmatory",
+    started_at: str | None = STARTED,
+) -> dict[str, dict[str, object]]:
+    plan = tmp_path / "plan.yaml"
+    plan.write_text(PLAN.replace("INTENT", intent), encoding="utf-8")
+    source = _source(tmp_path, started_at)
+    receipt = None
+    if registered_at is not None:
+        receipt = tmp_path / "receipt.json"
+        receipt.unlink(missing_ok=True)
+        write_receipt(
+            receipt,
+            sha256 or canonical_plan_hash(load_plan(plan)),
+            package_version="0",
+            now=datetime.fromisoformat(registered_at),
+        )
+    summary = validate(plan=plan, source=source, registration_receipt=receipt)
+    return {
+        item.code: {"severity": item.severity, "message": item.message, **item.details}
+        for item in summary.diagnostics
+    }
+
+
+def test_without_a_receipt_timing_stays_self_declared(tmp_path: Path) -> None:
+    codes = _codes(tmp_path, registered_at=None)
+    assert codes["PLAN_SELF_DECLARED"]["severity"] == "WARNING"
+    assert not {"PLAN_REGISTERED", "PLAN_RECEIPT_POSTHOC", "PLAN_RECEIPT_MISMATCH"} & set(codes)
+
+
+def test_a_receipt_that_predates_generation_replaces_the_self_declared_warning(
+    tmp_path: Path,
+) -> None:
+    codes = _codes(tmp_path)
+    assert "PLAN_SELF_DECLARED" not in codes
+    registered = codes["PLAN_REGISTERED"]
+    assert registered["severity"] == "INFO"
+    assert registered["registered_at"] == "2026-01-15T00:00:00+00:00"
+    assert "before the earliest selected evaluation" in str(registered["message"])
+
+
+def test_a_receipt_later_than_the_first_generation_is_an_error(tmp_path: Path) -> None:
+    codes = _codes(tmp_path, registered_at="2026-02-01T00:00:01+00:00")
+    assert codes["PLAN_RECEIPT_POSTHOC"]["severity"] == "ERROR"
+    assert not {"PLAN_REGISTERED", "PLAN_SELF_DECLARED"} & set(codes)
+
+
+def test_a_receipt_at_the_first_generation_time_predates_it(tmp_path: Path) -> None:
+    # Registration at the same second as the start is not later than it, as for
+    # plan_frozen_at.
+    codes = _codes(tmp_path, registered_at="2026-02-01T00:00:00+00:00")
+    assert "PLAN_REGISTERED" in codes
+
+
+def test_a_receipt_for_another_plan_is_an_error_and_proves_no_timing(tmp_path: Path) -> None:
+    codes = _codes(tmp_path, sha256="0" * 64)
+    assert codes["PLAN_RECEIPT_MISMATCH"]["severity"] == "ERROR"
+    assert codes["PLAN_SELF_DECLARED"]["severity"] == "WARNING"
+    assert "PLAN_REGISTERED" not in codes
+
+
+def test_a_receipt_for_another_plan_is_an_error_for_an_exploratory_plan_too(
+    tmp_path: Path,
+) -> None:
+    codes = _codes(tmp_path, sha256="0" * 64, intent="exploratory")
+    assert codes["PLAN_RECEIPT_MISMATCH"]["severity"] == "ERROR"
+
+
+def test_a_receipt_says_when_there_is_no_start_time_to_check(tmp_path: Path) -> None:
+    codes = _codes(tmp_path, started_at=None)
+    assert "START_TIME_UNOBSERVED" in codes
+    assert "no selected evaluation reports a start time" in str(
+        codes["PLAN_REGISTERED"]["message"]
+    )
+
+
+def test_validate_reports_a_malformed_receipt_instead_of_crashing(tmp_path: Path) -> None:
+    plan = tmp_path / "plan.yaml"
+    plan.write_text(PLAN.replace("INTENT", "confirmatory"), encoding="utf-8")
+    receipt = tmp_path / "receipt.json"
+    receipt.write_text("{}", encoding="utf-8")
+    summary = validate(plan=plan, source=_source(tmp_path), registration_receipt=receipt)
+    assert summary.status == "invalid"
+    assert any(
+        item.code == "INGEST_FAILED" and "registration receipt" in item.message
+        for item in summary.diagnostics
+    )
+
+
+def test_analyze_cli_checks_the_receipt_end_to_end(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    receipt = tmp_path / "plan.receipt.json"
+    write_receipt(
+        receipt,
+        canonical_plan_hash(load_plan(plan)),
+        package_version="0",
+        now=datetime(2000, 1, 1, tzinfo=timezone.utc),
+    )
+    result = runner.invoke(
+        app,
+        [
+            "analyze",
+            "--plan",
+            str(plan),
+            "--logs",
+            str(SIMPLEQA / "simpleqa-8-real.eval"),
+            "--output",
+            str(tmp_path / "report"),
+            "--registration-receipt",
+            str(receipt),
+        ],
+    )
+    assert result.exit_code == 0, plain(result.output)
+    report = json.loads((tmp_path / "report" / "report.json").read_text(encoding="utf-8"))
+    codes = {item["code"] for item in report["integrity"]["diagnostics"]}
+    assert "PLAN_REGISTERED" in codes
+    assert "PLAN_SELF_DECLARED" not in codes

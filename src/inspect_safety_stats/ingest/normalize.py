@@ -17,8 +17,9 @@ import numpy as np
 import pandas as pd
 
 from inspect_safety_stats.config.canonicalize import sha256_value
-from inspect_safety_stats.config.loader import report_path
+from inspect_safety_stats.config.loader import canonical_plan_hash, report_path
 from inspect_safety_stats.config.models import ATTRIBUTE_PREFIX, AnalysisPlan
+from inspect_safety_stats.config.registration import RegistrationReceipt
 from inspect_safety_stats.ingest.manifest import (
     ResolvedGroup,
     load_inclusion_probabilities,
@@ -154,8 +155,13 @@ def normalize(
     manifest: pd.DataFrame,
     groups: list[ResolvedGroup],
     source: SourceData,
+    receipt: RegistrationReceipt | None = None,
 ) -> NormalizedData:
-    """Apply the plan's ingestion rules to the runs and rollouts of one source."""
+    """Apply the plan's ingestion rules to the runs and rollouts of one source.
+
+    ``receipt``, when given, is checked against the plan's hash and the earliest selected
+    evaluation start.
+    """
 
     diagnostics: list[Diagnostic] = []
     run_cohorts: dict[str, str] = {}
@@ -277,6 +283,20 @@ def normalize(
             }
         )
 
+    if receipt is not None and receipt.plan_sha256 != canonical_plan_hash(plan):
+        diagnostics.append(
+            Diagnostic(
+                code="PLAN_RECEIPT_MISMATCH",
+                severity="ERROR",
+                message=(
+                    "the registration receipt records another plan: its hash is "
+                    f"{receipt.plan_sha256}, this plan's is {canonical_plan_hash(plan)}"
+                ),
+            )
+        )
+        # A receipt for another plan says nothing about this one's timing.
+        receipt = None
+
     if plan.analysis.intent == "confirmatory" and plan.analysis.plan_frozen_at is not None:
         observed = [
             run.started_at for run in run_records.values() if run.started_at is not None
@@ -307,6 +327,8 @@ def normalize(
                     ),
                 )
             )
+        elif receipt is not None:
+            diagnostics.extend(_receipt_timing(receipt, observed))
         elif plan.analysis.registration is None:
             diagnostics.append(
                 Diagnostic(
@@ -793,11 +815,50 @@ def normalize(
     )
 
 
-def ingest(plan: AnalysisPlan, source: EvaluationSource) -> NormalizedData:
+def _receipt_timing(receipt: RegistrationReceipt, observed: list[Any]) -> list[Diagnostic]:
+    """Whether a receipt that belongs to the plan predates the earliest observed start."""
+
+    registered = receipt.registered_at.isoformat()
+    details = {"plan_sha256": receipt.plan_sha256, "registered_at": registered}
+    if observed and receipt.registered_at > min(observed):
+        return [
+            Diagnostic(
+                code="PLAN_RECEIPT_POSTHOC",
+                severity="ERROR",
+                message=(
+                    f"the plan was registered at {registered}, later than the earliest "
+                    "selected evaluation"
+                ),
+                details=details,
+            )
+        ]
+    checked = (
+        "before the earliest selected evaluation"
+        if observed
+        else "but no selected evaluation reports a start time to check it against"
+    )
+    return [
+        Diagnostic(
+            code="PLAN_REGISTERED",
+            severity="INFO",
+            message=(
+                f"the plan's hash was registered at {registered}, {checked}; the receipt's "
+                "time is only as trustworthy as the external timestamp that anchors it"
+            ),
+            details=details,
+        )
+    ]
+
+
+def ingest(
+    plan: AnalysisPlan,
+    source: EvaluationSource,
+    receipt: RegistrationReceipt | None = None,
+) -> NormalizedData:
     """Load the plan's design manifest, read the source and normalize it."""
 
     # ORDER MATTERS: the manifest is loaded before the source is read, so a broken manifest
     # is reported before any log is opened, as it always was.
     manifest = load_manifest(plan.inputs.design_manifest)
     groups = resolve_groups(plan, manifest)
-    return normalize(plan, manifest, groups, source.read())
+    return normalize(plan, manifest, groups, source.read(), receipt)
