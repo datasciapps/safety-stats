@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -511,6 +512,71 @@ def test_a_missing_kernel_file_or_attribute_says_which(tmp_path: Path) -> None:
 def test_an_unimportable_module_suggests_the_file_form() -> None:
     with pytest.raises(ValueError, match="path/to/file.py:build"):
         resolve_kernel("no.such.module:build")
+
+
+_DATACLASS_KERNEL = (
+    "from __future__ import annotations\n\n"
+    "from dataclasses import dataclass\n\n"
+    "from inspect_safety_stats.generative import RewriteOutcome\n\n\n"
+    "@dataclass\n"
+    "class Mine:\n"
+    "    kernel_id: str = 'mine'\n\n"
+    "    def rewrite(self, request):\n"
+    "        return RewriteOutcome(status='valid', prompt='from a file')\n\n\n"
+    "def build():\n"
+    "    return Mine()\n"
+)
+
+
+def test_a_kernel_file_leaves_no_module_behind(tmp_path: Path) -> None:
+    """A file named like an installed module must not replace it for the rest of the process.
+
+    The kernel defines a dataclass, which needs its module registered while it executes.
+    """
+
+    import json as installed
+
+    module = tmp_path / "json.py"
+    module.write_text(_DATACLASS_KERNEL, encoding="utf-8")
+    before = set(sys.modules)
+
+    kernel = resolve_kernel(f"{module}:build")
+
+    assert kernel.kernel_id == "mine"
+    assert sys.modules["json"] is installed
+    assert set(sys.modules) - before == set()
+
+
+def test_resolving_a_module_kernel_leaves_sys_path_alone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    before = list(sys.path)
+    resolve_kernel("inspect_safety_stats.generative.kernels:DeterministicFakeKernel")
+    assert sys.path == before
+
+
+def test_the_cli_finds_a_kernel_module_in_the_working_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """As `python -m` would; a console script does not put the working directory on sys.path."""
+
+    plan = write_plan(tmp_path)
+    (tmp_path / "cwd_kernel_module.py").write_text(_DATACLASS_KERNEL, encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.delitem(sys.modules, "cwd_kernel_module", raising=False)
+    try:
+        result = runner.invoke(
+            app,
+            ["generative", "materialize", "--plan", str(plan),
+             "--output", str(tmp_path / "run"), "--kernel", "cwd_kernel_module:build"],
+        )
+    finally:
+        sys.modules.pop("cwd_kernel_module", None)
+    assert result.exit_code == 0, result.output
+    prompts = pd.read_csv(tmp_path / "run" / "prompts.restricted.csv")
+    assert set(prompts["prompt"]) == {"from a file"}
 
 
 def test_provider_errors_are_reported_as_such_not_as_validation(tmp_path: Path) -> None:

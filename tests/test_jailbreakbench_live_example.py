@@ -304,8 +304,15 @@ def test_complete_offline_analysis_and_visualizer(
         "prompt",
         "category",
     }
+    # The non-primary profiles are independence sensitivities, labelled as such.
+    assert {
+        (interval.independence_profile, interval.varied_assumption)
+        for interval in difference.intervals
+        if interval.role == "sensitivity"
+    } == {("prompt", "independence"), ("category", "independence")}
 
     output = report.write(tmp_path / "report")
+    assert "| sensitivity (independence) |" in (output / "report.md").read_text(encoding="utf-8")
     assert (output / "report.html").exists()
     assert (output / "comparisons.csv").exists()
     assert (output / "hierarchy-risks.csv").exists()

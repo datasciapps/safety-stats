@@ -404,6 +404,8 @@ def normalize(
     source_hashes: dict[str, str | None] = {}
     # How each source is named in reports. The real path still reads and hashes the file.
     source_names: dict[str, str] = {}
+    # Transcripts that could not be read, by report name: the reason and how many errors.
+    unread_transcripts: dict[str, tuple[str, int]] = {}
     for collection_order, (_, rollout) in enumerate(selected, start=1):
         run_key = rollout.run_key
         prompt_id = rollout.item_id
@@ -446,6 +448,10 @@ def normalize(
         provider_error_code: str | None = None
         if raw_error is not None:
             context = source.error_context(rollout)
+            if context.unread_reason is not None:
+                name = report_path(rollout.source, plan)
+                reason, count = unread_transcripts.get(name, (context.unread_reason, 0))
+                unread_transcripts[name] = (reason, count + 1)
             error_stage = context.stage
             content_delivered = context.content_delivered
             provider_error_code = context.provider_error_code
@@ -587,6 +593,20 @@ def normalize(
                 model=run.model if run.model is not None else "unknown",
                 configuration_fingerprint=sha256_value(config),
                 collection_order=collection_order,
+            )
+        )
+
+    for name, (reason, count) in sorted(unread_transcripts.items()):
+        diagnostics.append(
+            Diagnostic(
+                code="TRANSCRIPT_UNREAD",
+                severity="WARNING",
+                message=(
+                    f"the transcript of {name} could not be read ({reason}), so the stage of "
+                    f"its {count} sample error(s) is unknown and none counts as a policy block"
+                ),
+                scope=name,
+                details={"source": name, "reason": reason, "sample_errors": count},
             )
         )
 

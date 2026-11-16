@@ -20,7 +20,11 @@ report = analyze(
 
 `plan` accepts an `AnalysisPlan` or a YAML/JSON path. `logs` accepts any local path, sequence of
 paths, or loaded `EvalLog` object accepted by Inspect's dataframe readers. The function returns a
-validated `SafetyReport`. It does not write files until `report.write(...)` is called.
+validated `SafetyReport`. It does not write files until `report.write(...)` is called. When the
+design manifest, logs or rollout files cannot be read, the report's integrity is `invalid`,
+its diagnostics include `INGEST_FAILED` with the reason, it has no estimates, and every claim
+is `INCONCLUSIVE`; `validate` reports the same input the same way. A plan that cannot be
+loaded raises.
 
 Results from another evaluation system are passed as `source` instead of `logs`
 (experimental). `RolloutFiles` reads a runs file and a rollouts file in the neutral format of
@@ -499,9 +503,9 @@ Exit codes of `analyze`:
 | Situation | Default | With `--decision-exit-codes` |
 |---|---|---|
 | Integrity `valid` or `degraded` | `0` | `0` PASS, `1` FAIL, `2` INCONCLUSIVE |
-| Integrity `invalid` (the report is still written) | `3` | `3` |
+| Integrity `invalid`, an unreadable manifest, log or rollout file included (the report is still written) | `3` | `3` |
 | Integrity `invalid` with `--allow-invalid` | `0` | `2`, because an invalid analysis is never PASS |
-| The analysis cannot run, for example an unreadable plan or log | `3` | `3` |
+| The analysis cannot run, for example an unreadable plan | `3` | `3` |
 
 `validate` exits `3` for invalid input and `0` otherwise.
 

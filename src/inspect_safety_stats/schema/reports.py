@@ -3,7 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
 
 Decision = Literal["PASS", "FAIL", "INCONCLUSIVE"]
 Eligibility = Literal["certifying", "diagnostic", "invalid"]
@@ -56,6 +64,10 @@ class RiskIntervalResult(ResultModel):
     upper: float | None = None
     method: str
     role: Literal["primary", "reference", "sensitivity"]
+    # What a sensitivity interval varies: the independence profile its blocks come from, or
+    # the judge's error rates (an assumed calibration scenario or an uncertified correction).
+    # None for primary and reference intervals, and in reports written before the field.
+    varied_assumption: Literal["independence", "judge_error"] | None = None
     coverage_scope: str | None = None
     coverage_mode: Literal["two_sided", "per_direction"] | None = None
     family: str | None = None
@@ -94,6 +106,38 @@ class RiskIntervalResult(ResultModel):
     assumptions: list[str] = Field(default_factory=list)
     eligibility: Eligibility
     warnings: list[str] = Field(default_factory=list)
+    # Experimental (#127), set only when the plan asks for it.
+    single_valued_bound: float | None = None
+    single_valued_bound_delta: float | None = None
+    single_valued_bound_guarantee: str | None = None
+
+    @model_validator(mode="after")
+    def _varied_assumption_only_on_sensitivity(self) -> RiskIntervalResult:
+        if self.varied_assumption is not None and self.role != "sensitivity":
+            raise ValueError(
+                f"interval {self.interval_id!r} has role {self.role!r}; only a sensitivity "
+                "interval names a varied_assumption"
+            )
+        return self
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_single_valued_bound(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        # Left out unless requested, so a report that does not use the experimental bound
+        # keeps the bytes it had before the bound existed.
+        data: dict[str, Any] = handler(self)
+        if self.single_valued_bound is None:
+            for name in _SINGLE_VALUED_FIELDS:
+                data.pop(name, None)
+        return data
+
+
+_SINGLE_VALUED_FIELDS = (
+    "single_valued_bound",
+    "single_valued_bound_delta",
+    "single_valued_bound_guarantee",
+)
 
 
 class GroupRiskResult(ResultModel):

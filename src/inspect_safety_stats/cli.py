@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
@@ -691,6 +692,13 @@ def generative_materialize_command(
     """
 
     from inspect_safety_stats.generative.runner import materialize_run
+
+    # A console script does not put the working directory on sys.path, as `python -m` does,
+    # but someone naming a module on the command line means the one in their project. The
+    # CLI owns the process, so it sets this; the library leaves sys.path to its caller.
+    working = str(Path.cwd())
+    if working not in sys.path:
+        sys.path.insert(0, working)
 
     try:
         run = materialize_run(
