@@ -288,7 +288,7 @@ def _add_judge_corrections(
             **({"groups": list(spec.groups)} if spec.groups is not None else {}),
         }
 
-    by_scope, summaries, judge_alpha, truth_strata = _validated_judge_calibrations(
+    by_scope, summaries, judge_alpha, truth_strata, protocol = _validated_judge_calibrations(
         plan, data, diagnostics
     )
     scope_count = len(_judge_scopes(plan))
@@ -378,6 +378,9 @@ def _add_judge_corrections(
             "cohorts": nested(summaries),
             "truth_strata": nested(truth_strata),
         }
+    if protocol is not None:
+        # Only a plan that declares a protocol gets the key, so other reports keep their bytes.
+        summary["protocol"] = protocol
     if stratified:
         # Only a stratified design records it, so other reports keep their bytes.
         summary["experimental"] = True

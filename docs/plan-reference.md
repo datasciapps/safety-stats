@@ -285,6 +285,16 @@ judge stratum is bounded exactly with hypergeometric bounds and weighted by its 
 without the field keep their hash. Generative plans do not offer this design. See
 [Stratified labels](judge-misclassification.md#stratified-labels-experimental).
 
+`protocol` (experimental, `mode: validated` only) declares how the labels were collected:
+`queue`, a CSV of `observation_id` in labelling order, relative to the plan; `tier`, to keep
+only queue rows whose `tier` column has that value; `seed`, recorded for an audit; and
+`stopping`, one of `fixed_size` (with `size`), `label_independent` or `data_dependent`. The
+analysis checks that the manifest labels exactly the queue's first rows, and that `size` rows
+are labelled under `fixed_size`. `data_dependent` bounds each stratum with an anytime-valid
+confidence sequence instead of Clopper-Pearson, and requires
+`sampling: simple_random_within_judge_stratum`. See
+[Labelling protocol](judge-misclassification.md#labelling-protocol-experimental).
+
 `mode: transported` (experimental) takes a judge's sensitivity from a published
 human-labelled validation set, and nothing else:
 
