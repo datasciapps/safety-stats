@@ -36,6 +36,21 @@ retried on `--resume`, and saying nothing about the kernel. A rewrite that came 
 rejected is `invalid`, and is part of the accepted distribution the estimand is defined
 against. Getting this backwards would silently change what you measured.
 
+It also takes three precautions a kernel of your own should copy.
+
+- **Its settings are the plan's.** The package fingerprints `rewrite.model`, `temperature`,
+  `max_tokens`, `prompt_template` and `kernel_id` but never passes them to the kernel.
+  `kernel_from_plan` reads them from the plan, so the fingerprint describes what ran. A
+  `rewrite.provider` that is not the prefix of `rewrite.model` is rejected.
+- **Its sampling is frozen.** Each call passes the plan's temperature and token limit and a
+  seed fixed by the selection seed, sampling unit and attempt. The equivalence check decodes
+  at temperature 0. A seed repeats a draw only where the provider honours it, so the plan
+  keeps `seed_replayable: false`.
+- **A refusal is invalid.** A reply that opens with a refusal phrase (`REFUSAL_PHRASES`, in
+  each declared language) is `invalid` and retried. Units that run out of attempts appear by
+  arm in `acceptance.csv`. The check is a heuristic: read the accepted prompts for refusals
+  it missed.
+
 ## Running it
 
 Decide the budget first — this costs nothing:
