@@ -13,6 +13,18 @@ from .risk import worst_of_k_shares
 
 @dataclass(frozen=True)
 class DirectMeanBounds:
+    """One-sided bounds on a fixed-design weighted mean failure risk, with their ingredients.
+
+    ``lower`` and ``upper`` are the bounds, each at its own one-sided level ``alpha_lower`` or
+    ``alpha_upper``. ``completion_estimate_lower`` and ``completion_estimate_upper`` are the
+    weighted estimates the bounds start from: they differ only when some outcomes are
+    unclassified, which the lower side counts as safe and the upper side as failures.
+    ``half_width_*`` is the distance from each estimate to its bound before clipping to
+    ``[0, 1]``. ``effective_sample_size`` is ``1 / concentration_variance``. The ``variance_*``
+    fields are set by the empirical-Bernstein method and ``chernoff_kernel`` by the
+    KL/Chernoff method. Derived in docs/statistical-methods.md, section 2.4.10.
+    """
+
     lower: float
     upper: float
     completion_estimate_lower: float
@@ -291,6 +303,60 @@ def _completed_observations(
     return estimate, positive_second, negative_second
 
 
+def _variance_centerings(variance_centers: ArrayLike | None, weights: np.ndarray) -> np.ndarray:
+    """Validated centerings, one row of per-prompt centers each.
+
+    The default rows 0 and 1 are the uncentered proxies Q+ and Q-.
+    """
+
+    if variance_centers is None:
+        return np.stack([np.zeros_like(weights), np.ones_like(weights)])
+    shape_message = "variance_centers must have one center per prompt, in one row per centering"
+    try:
+        centers = np.atleast_2d(np.asarray(variance_centers, dtype=float))
+    except ValueError as error:  # ragged rows
+        raise ValueError(shape_message) from error
+    if centers.ndim != 2 or centers.shape[1:] != weights.shape:
+        raise ValueError(shape_message)
+    if not np.all(np.isfinite(centers)) or np.any(centers < 0) or np.any(centers > 1):
+        raise ValueError("variance_centers must lie in [0, 1]")
+    return centers
+
+
+def _centered_second_moment(
+    failures: np.ndarray,
+    unclassified: np.ndarray,
+    trials: np.ndarray,
+    weights: np.ndarray,
+    centers: np.ndarray,
+    independence_unit: IndependenceUnit,
+) -> tuple[float, float]:
+    """Observed second moment about fixed centers, and its Hoeffding range term.
+
+    For any fixed ``c``, ``Var(Y) <= E[(Y - c)^2]``, so the second moment estimates an upper
+    bound on the variance of the weighted mean. It is taken at its largest over unknown
+    completions: an unknown outcome contributes whichever completion lies farther from its
+    center. Each term of the sum lies in ``[0, a^2 r]`` with ``r = max(c^2, (1 - c)^2)``, so the
+    sum of the squared term ranges is the fourth-power sum weighted by ``r^2``. For centers 0
+    and 1, ``r = 1`` and these are exactly Q+, Q- and the unweighted fourth-power sum.
+    """
+
+    n = trials.astype(float)
+    x = failures.astype(float)
+    u = unclassified.astype(float)
+    far = np.maximum(np.square(centers), np.square(1 - centers))
+    if independence_unit == "rollout":
+        per_prompt = x * np.square(1 - centers) + (n - x - u) * np.square(centers) + u * far
+        second = float(np.sum(np.square(weights) * per_prompt / np.square(n)))
+        ranges = float(np.sum(np.power(weights, 4) / np.power(n, 3) * np.square(far)))
+        return second, ranges
+    low = np.square(x / n - centers)
+    high = np.square((x + u) / n - centers)
+    second = float(np.dot(np.square(weights), np.maximum(low, high)))
+    ranges = float(np.sum(np.power(weights, 4) * np.square(far)))
+    return second, ranges
+
+
 def _bernoulli_kl(observed: float, mean: float) -> float:
     """Binary relative entropy ``kl(observed || mean)`` with stable endpoints."""
 
@@ -501,6 +567,7 @@ def weighted_empirical_bernstein_mean_bounds(
     alpha_lower: float,
     alpha_upper: float,
     independence_unit: IndependenceUnit = "rollout",
+    variance_centers: ArrayLike | None = None,
 ) -> DirectMeanBounds:
     """Variance-adaptive finite-sample bounds for a fixed weighted Bernoulli mean.
 
@@ -508,6 +575,16 @@ def weighted_empirical_bernstein_mean_bounds(
     squared outcomes and squared complements. The remaining endpoint error budget
     is used in Bernstein's inequality. This remains valid for heterogeneous prompt
     probabilities under the declared independence unit.
+
+    ``variance_centers`` holds one or more centerings, each a row with one center in [0, 1]
+    per prompt, fixed by the design and never by the data. Each centering gives a proxy, the
+    second moment about its centers, and the bound uses the smallest, so half of the endpoint
+    error budget is split equally across the centerings. The default, centerings 0 and 1,
+    gives the second moments of the outcomes and of their complements. Callers whose
+    observations sit near different ends of [0, 1] by construction, such as the two arms of a
+    risk difference, pass centers per prompt: about 0 or 1 alone, their second moment is
+    large even when every observation is nearly constant. A one-dimensional array is a single
+    centering.
     """
 
     x, u, n, w = _validate_inputs(
@@ -518,29 +595,29 @@ def weighted_empirical_bernstein_mean_bounds(
         alpha_lower=alpha_lower,
         alpha_upper=alpha_upper,
     )
-    concentration_variance, fourth_power_sum, maximum_increment = _concentration_geometry(
+    concentration_variance, _, maximum_increment = _concentration_geometry(
         n, w, independence_unit
     )
     # Unclassified outcomes can complete to any count from x to x + u, and the variance bound
-    # must hold for every completion. Q+ grows and Q- shrinks with the count, so each comes
-    # from the completion that maximises it, for both endpoints. Taking both from the
+    # must hold for every completion. Each proxy therefore takes every unknown at the
+    # completion farther from its center, for both endpoints. Taking the proxies from each
     # endpoint's own completion let the all-failure upper endpoint fall below the upper
     # endpoint of the true labels.
-    _, positive_second, _ = _completed_observations(x + u, n, w, independence_unit)
-    _, _, negative_second = _completed_observations(x, n, w, independence_unit)
+    proxies = [
+        _centered_second_moment(x, u, n, w, centers, independence_unit)
+        for centers in _variance_centerings(variance_centers, w)
+    ]
 
     def endpoint(counts: np.ndarray, alpha: float) -> tuple[float, float, float]:
         estimate, _, _ = _completed_observations(counts, n, w, independence_unit)
         tail_alpha = alpha / 2
-        variance_component_alpha = alpha / 4
-        variance_padding = math.sqrt(
-            0.5 * fourth_power_sum * math.log(1 / variance_component_alpha)
-        )
-        variance_upper = min(
-            0.25 * concentration_variance,
-            positive_second + variance_padding,
-            negative_second + variance_padding,
-        )
+        # Half the budget goes to the Bernstein tail, the other half is split across the
+        # proxies. With the two default proxies this is alpha / 4 each.
+        variance_component_alpha = alpha / (2 * len(proxies))
+        variance_upper = 0.25 * concentration_variance
+        for second, ranges in proxies:
+            variance_padding = math.sqrt(0.5 * ranges * math.log(1 / variance_component_alpha))
+            variance_upper = min(variance_upper, second + variance_padding)
         tail_log = math.log(1 / tail_alpha)
         linear_term = maximum_increment * tail_log / 3
         width = linear_term + math.sqrt(2 * variance_upper * tail_log + linear_term**2)

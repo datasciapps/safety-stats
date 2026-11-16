@@ -42,7 +42,6 @@ substituted.
 From the repository root:
 
 ```bash
-cd /path/to/safety_stats
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[inspect,openai,translation]'

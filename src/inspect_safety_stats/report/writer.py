@@ -3,13 +3,21 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from inspect_safety_stats.config.canonicalize import canonical_value
-from inspect_safety_stats.schema.reports import SafetyReport
+from inspect_safety_stats.schema.reports import (
+    ClaimResult,
+    ComparisonResult,
+    HierarchyRiskResult,
+    RiskIntervalResult,
+    SafetyReport,
+    VerdictRange,
+)
 
 
 def _sha256(path: Path) -> str:
@@ -55,6 +63,44 @@ def _number(value: float | None, places: int) -> str:
     return f"{value:.{places}f}"
 
 
+def _verdict_range(verdict_range: VerdictRange | None, places: int) -> str:
+    """State a claim's verdict range, with each boundary rounded so that the statement holds.
+
+    The PASS boundary rounds up and the FAIL boundary down. A boundary that rounding moves is
+    no longer attained, so it reads as inclusive.
+    """
+
+    if verdict_range is None:
+        return "—"
+    step = Decimal(1).scaleb(-places)
+    parts = []
+    for verdict, value, strict, name, rounding, symbols in (
+        (
+            "PASS",
+            verdict_range.pass_acceptable_upper,
+            verdict_range.pass_strict,
+            "acceptable",
+            ROUND_CEILING,
+            (">", "≥"),
+        ),
+        (
+            "FAIL",
+            verdict_range.fail_unacceptable_lower,
+            verdict_range.fail_strict,
+            "unacceptable",
+            ROUND_FLOOR,
+            ("<", "≤"),
+        ),
+    ):
+        if value is None:
+            continue
+        exact = Decimal(repr(value))
+        shown = exact.quantize(step, rounding=rounding)
+        symbol = symbols[0] if strict and shown == exact else symbols[1]
+        parts.append(f"{verdict} at {name} {symbol} {shown}")
+    return "; ".join(parts) if parts else "INCONCLUSIVE at every threshold"
+
+
 def _percent(value: float | None, places: int = 1) -> str:
     if value is None:
         return "—"
@@ -69,6 +115,14 @@ def _bound_status(eligibility: str) -> str:
     }.get(eligibility, eligibility)
 
 
+def _role_label(interval: RiskIntervalResult) -> str:
+    """The interval's role, with what a sensitivity interval varies, so that an independence
+    sensitivity cannot be read as a judge-error one."""
+    if interval.varied_assumption is None:
+        return interval.role
+    return f"{interval.role} ({interval.varied_assumption.replace('_', ' ')})"
+
+
 def _coverage_label(risk: Any) -> str:
     if risk.simultaneous_coverage is None:
         return "—"
@@ -79,6 +133,451 @@ def _coverage_label(risk: Any) -> str:
     ]
     directional = min(directional_values) if directional_values else None
     return f"{_percent(risk.simultaneous_coverage)} joint; {_percent(directional)} each direction"
+
+
+def _profile_verdict_lines(claims: list[Any], places: int) -> list[str]:
+    """The claims' verdicts under each independence profile, for claims with sensitivities."""
+    profiled = [claim for claim in claims if len(claim.profile_verdicts) > 1]
+    if not profiled:
+        return []
+    lines = [
+        "",
+        "### Verdicts by independence profile",
+        "",
+        "A claim's status is its verdict under the primary profile. Each sensitivity profile "
+        "decides the same thresholds on its own interval; it shows how far the verdict rests "
+        "on the primary profile's independence assumption and cannot replace it.",
+        "",
+        "| Claim | Profile | Role | Status | Lower | Upper | Independent blocks "
+        "| Effective sample size |",
+        "|---|---|---|---|---:|---:|---:|---:|",
+    ]
+    for claim in profiled:
+        for verdict in claim.profile_verdicts:
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _escape(claim.title),
+                        f"`{_escape(verdict.independence_profile)}`",
+                        verdict.role,
+                        f"`{verdict.status}`",
+                        _number(verdict.lower, places),
+                        _number(verdict.upper, places),
+                        "—"
+                        if verdict.independent_block_count is None
+                        else str(verdict.independent_block_count),
+                        _number(verdict.effective_sample_size, 1),
+                    ]
+                )
+                + " |"
+            )
+    return lines
+
+
+def _judge_error_stress_lines(
+    report: SafetyReport, places: int, include_decisions: bool
+) -> list[str]:
+    """The judge-error stress section, present only when the plan opted in."""
+
+    stressed = [
+        (claim, claim.judge_error_stress)
+        for claim in report.claims
+        if claim.judge_error_stress is not None
+    ]
+    if not stressed:
+        return []
+    lines = ["", "## Judge-error stress (experimental)", ""]
+    if not include_decisions:
+        return [
+            *lines,
+            "This report omits decisions (`report.include_decisions` is false), so the judge "
+            "accuracy at which each verdict would change is only in `report.json`, under each "
+            "claim's `judge_error_stress`.",
+        ]
+    lines.extend(
+        [
+            "Each claim below was decided on the risk the **judge reports**. With sensitivity "
+            "Se and specificity Sp applied unchanged to every rollout, the verdict holds for "
+            "**true** risk only on one side of a line in (Se, Sp). The columns give where that "
+            "line meets the edges of perfect specificity and perfect sensitivity; a value above "
+            "1 or below 0 means the condition holds along the whole edge or nowhere on it. "
+            "Unclassified rollouts keep their conservative completion. Where the primary "
+            "outcome's judge declares accuracy ranges, the verdict on true risk over that box "
+            "is shown too. Declared ranges are assumptions: nothing here moves a claim.",
+            "",
+            (
+                "| Claim | Status | Judge-reported bounds | PASS: Se at least (Sp = 1) | "
+                "PASS: Sp at most (Se = 1) | FAIL: Se at most (Sp = 1) | "
+                "FAIL: Sp at least (Se = 1) | True risk over declared accuracy | "
+                "Verdict there | Robust |"
+            ),
+            "|---|---|---|---:|---:|---:|---:|---|---|---|",
+        ]
+    )
+    reasons: list[str] = []
+    for claim, stress in stressed:
+        if not stress.applicable:
+            reasons.append(f"- {_escape(claim.title)}: {_escape(stress.reason)}.")
+            cells = ["not applicable", *["—"] * 7]
+        else:
+            cells = [
+                f"{_number(stress.judge_reported_lower, places)}–"
+                f"{_number(stress.judge_reported_upper, places)}",
+                _number(stress.pass_sensitivity_at_perfect_specificity, places),
+                _number(stress.pass_specificity_at_perfect_sensitivity, places),
+                _number(stress.fail_sensitivity_at_perfect_specificity, places),
+                _number(stress.fail_specificity_at_perfect_sensitivity, places),
+                (
+                    f"{_number(stress.true_risk_lower, places)}–"
+                    f"{_number(stress.true_risk_upper, places)}"
+                    + ("" if stress.identified else " (not identified)")
+                    if stress.stressed_status is not None
+                    else "no declared accuracy"
+                ),
+                f"`{stress.stressed_status}`" if stress.stressed_status else "—",
+                "—" if stress.robust is None else "yes" if stress.robust else "**no**",
+            ]
+        lines.append(
+            "| " + " | ".join([_escape(claim.title), f"`{claim.status}`", *cells]) + " |"
+        )
+    sources = sorted(
+        {
+            (
+                stress.accuracy_source,
+                stress.sensitivity_lower,
+                stress.sensitivity_upper,
+                stress.specificity_lower,
+                stress.specificity_upper,
+            )
+            for _, stress in stressed
+            if stress.accuracy_source is not None
+        },
+        key=lambda item: str(item[0]),
+    )
+    for source, se_low, se_high, sp_low, sp_high in sources:
+        lines.extend(
+            [
+                "",
+                f"Declared accuracy of `{_escape(source)}`: sensitivity in "
+                f"[{_number(se_low, places)}, {_number(se_high, places)}], specificity in "
+                f"[{_number(sp_low, places)}, {_number(sp_high, places)}].",
+            ]
+        )
+    if reasons:
+        lines.extend(["", "Not stressed:", "", *reasons])
+    return lines
+
+
+def _claim_status(claim: Any) -> str:
+    if claim.descriptive_status is None:
+        return f"`{claim.status}`"
+    return f"`{claim.status}` (descriptive: `{claim.descriptive_status}`)"
+
+
+def _recorded(values: list[Any] | None) -> str:
+    if values is None:
+        return "not recorded"
+    return "; ".join(
+        f"`{_escape(json.dumps(value, sort_keys=True, separators=(',', ':')))}`"
+        for value in values
+    )
+
+
+def _panel_group_lines(panel: dict[str, Any]) -> list[str]:
+    """The judge panel's counts and agreement per group, for the groups the plan lists."""
+
+    groups = panel.get("groups")
+    if not groups:
+        return []
+    lines = [
+        "",
+        "### Judge panel by group",
+        "",
+        "The same counts and agreement over each listed group's rollouts only, so that a "
+        "cohort holding several benchmarks is not summarised as one: "
+        + ", ".join(f"`{_escape(item)}`" for item in groups)
+        + ".",
+        "",
+        "| Judge | Group | Cohort | Classified | Failures | Unclassified |",
+        "|---|---|---|---:|---:|---:|",
+    ]
+    for judge in panel["judges"]:
+        for group_id in groups:
+            for cohort_id, stats in sorted(judge["groups"][group_id].items()):
+                lines.append(
+                    f"| {_escape(judge['id'])} | {_escape(group_id)} | {_escape(cohort_id)} | "
+                    f"{stats['classified']} | {stats['failures']} | {stats['unclassified']} |"
+                )
+    if panel["composites"]:
+        lines.extend(
+            [
+                "",
+                "| Composite | Group | Cohort | Classified | Failures | Unclassified |",
+                "|---|---|---|---:|---:|---:|",
+            ]
+        )
+        for composite in panel["composites"]:
+            for group_id in groups:
+                for cohort_id, stats in sorted(composite["groups"][group_id].items()):
+                    lines.append(
+                        f"| {_escape(composite['id'])} | {_escape(group_id)} | "
+                        f"{_escape(cohort_id)} | {stats['classified']} | {stats['failures']} | "
+                        f"{stats['unclassified']} |"
+                    )
+    if panel["agreement"]:
+        lines.extend(
+            [
+                "",
+                "| Judges | Group | Cohort | Compared | Disagreements | Agreement | "
+                "Cohen's kappa |",
+                "|---|---|---|---:|---:|---:|---:|",
+            ]
+        )
+        for pair in panel["agreement"]:
+            for group_id in groups:
+                for cohort_id, stats in sorted(pair["groups"][group_id].items()):
+                    agreement, kappa = stats["agreement"], stats["kappa"]
+                    lines.append(
+                        f"| {_escape(pair['first'])} / {_escape(pair['second'])} | "
+                        f"{_escape(group_id)} | {_escape(cohort_id)} | {stats['compared']} | "
+                        f"{stats['disagreements']} | "
+                        f"{'—' if agreement is None else f'{agreement:.4f}'} | "
+                        f"{'—' if kappa is None else f'{kappa:.4f}'} |"
+                    )
+    return lines
+
+
+def _judge_claim_lines(
+    panel: dict[str, Any], places: int, include_decisions: bool
+) -> list[str]:
+    """The judge panel's per-judge claim rows and recorded configurations, when the plan
+    asked for them with ``outputs.judge_claims``."""
+
+    judges = [judge for judge in panel["judges"] if "claims" in judge]
+    if not judges:
+        return []
+    status_header, status_rule = ("Status | ", "---|") if include_decisions else ("", "")
+    lines = [
+        "",
+        "### Claims by judge (experimental)",
+        "",
+        "Each judge's rows are the claims this plan gives with that judge's verdicts as its "
+        "primary outcome, over the same rollouts, without the panel or the judge calibration. "
+        "They compare judge configurations. The report's decision rests on the primary outcome "
+        "alone, and these rows are not adjusted for their number.",
+        "",
+        f"| Judge | Integrity | Claim | {status_header}Estimate | Lower | Upper | Method |",
+        f"|---|---|---|{status_rule}---:|---:|---:|---|",
+    ]
+    for judge in judges:
+        for claim in judge["claims"]:
+            status = f"`{claim['status']}` | " if include_decisions else ""
+            lines.append(
+                f"| {_escape(judge['id'])} | `{judge['integrity']}` | "
+                f"{_escape(claim['claim_id'])} | {status}"
+                f"{_number(claim['estimate'], places)} | {_number(claim['lower'], places)} | "
+                f"{_number(claim['upper'], places)} | {_escape(claim['method'])} |"
+            )
+    lines.extend(
+        [
+            "",
+            "The scorer configuration and model roles each cohort's runs record, by judge: the "
+            "options of the scorer named like the judge's score.",
+            "",
+            "| Judge | Cohort | Scorer | Model roles |",
+            "|---|---|---|---|",
+        ]
+    )
+    for judge in judges:
+        for cohort_id, recorded in sorted(judge["configuration"].items()):
+            lines.append(
+                f"| {_escape(judge['id'])} | {_escape(cohort_id)} | "
+                f"{_recorded(recorded['scorer'])} | {_recorded(recorded['model_roles'])} |"
+            )
+    return lines
+
+
+_NULL_EFFECT = {"risk_difference": 0.0, "relative_risk_reduction": 0.0, "risk_ratio": 1.0}
+
+
+def _excludes_null(comparison: ComparisonResult) -> bool:
+    null = _NULL_EFFECT.get(comparison.estimand)
+    if null is None or comparison.lower is None or comparison.upper is None:
+        return False
+    return comparison.lower > null or comparison.upper < null
+
+
+def _node_label(level: str | None, path: dict[str, str]) -> str:
+    return f"{_escape(level)}: {_escape(' → '.join(path.values()))}"
+
+
+def _localisation_lines(
+    report: SafetyReport, places: int, include_decisions: bool
+) -> list[str]:
+    """The hierarchy nodes where an effect or a limit exceedance sits, for the first page.
+
+    Headline rows average over the hierarchy, so an effect concentrated in one node can look
+    small there. This lists the nodes a reader would otherwise find only by reading every
+    hierarchy row. The section appears only when there is something to look for: hierarchy
+    comparison rows, or (with decisions shown) a claim whose evidence has hierarchy rows.
+    """
+    node_comparisons = [item for item in report.comparisons if item.level is not None]
+    claim_nodes = _claim_nodes(report) if include_decisions else []
+    if not (node_comparisons or claim_nodes):
+        return []
+    looked_for = []
+    if node_comparisons:
+        looked_for.append("whose comparison interval excludes no difference")
+    if claim_nodes:
+        looked_for.append("whose estimate is above a claim's acceptable limit")
+    lines = [
+        "",
+        "## Where effects sit",
+        "",
+        (
+            "Headline rows average over the hierarchy, so an effect concentrated in one node "
+            "can look small there. This section lists the hierarchy nodes "
+            + ", and the nodes ".join(looked_for)
+            + ". Their intervals are those of the hierarchy rows below; they are not "
+            "separate claims."
+        ),
+    ]
+    if node_comparisons:
+        lines.append("")
+        lines.extend(_effect_lines(report, node_comparisons, places))
+    if claim_nodes:
+        lines.append("")
+        lines.extend(_exceedance_lines(claim_nodes, places))
+    return lines
+
+
+def _effect_lines(
+    report: SafetyReport, node_comparisons: list[ComparisonResult], places: int
+) -> list[str]:
+    effects = [item for item in node_comparisons if _excludes_null(item)]
+    if not effects:
+        return ["No hierarchy node's comparison interval excludes no difference."]
+    overall = {item.comparison_id: item for item in report.comparisons if item.level is None}
+    lines = [
+        (
+            "| Comparison | Node | Design weight | Prompts | Candidate risk | "
+            "Baseline risk | Effect | Confidence interval | Overall effect |"
+        ),
+        "|---|---|---:|---:|---:|---:|---:|---|---:|",
+    ]
+    for item in effects:
+        headline = overall.get(item.comparison_id)
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _escape(item.comparison_id),
+                    _node_label(item.level, item.path),
+                    _number(item.resolved_weight, places),
+                    str(item.prompt_count),
+                    _number(item.candidate_estimate, places),
+                    _number(item.baseline_estimate, places),
+                    _number(item.estimate, places),
+                    f"{_number(item.lower, places)}–{_number(item.upper, places)}",
+                    _number(headline.estimate if headline else None, places),
+                ]
+            )
+            + " |"
+        )
+    return lines
+
+
+def _exceedance_lines(
+    claim_nodes: list[tuple[ClaimResult, str, list[HierarchyRiskResult | ComparisonResult]]],
+    places: int,
+) -> list[str]:
+    rows = [
+        (claim, evidence, node)
+        for claim, evidence, nodes in claim_nodes
+        for node in nodes
+        if node.estimate is not None and node.estimate > claim.acceptable_upper
+    ]
+    if not rows:
+        return ["No hierarchy node's estimate is above a claim's acceptable limit."]
+    lines = [
+        (
+            "| Claim | Evidence | Node | Design weight | Prompts | Estimate | "
+            "Confidence interval | Acceptable limit | Claim estimate | Position |"
+        ),
+        "|---|---|---|---:|---:|---:|---|---:|---:|---|",
+    ]
+    for claim, evidence, node in rows:
+        above = node.lower is not None and node.lower > claim.acceptable_upper
+        weight = (
+            node.design_weight if isinstance(node, HierarchyRiskResult) else node.resolved_weight
+        )
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    _escape(claim.title),
+                    _escape(evidence),
+                    _node_label(node.level, node.path),
+                    _number(weight, places),
+                    str(node.prompt_count),
+                    _number(node.estimate, places),
+                    f"{_number(node.lower, places)}–{_number(node.upper, places)}",
+                    _number(claim.acceptable_upper, places),
+                    _number(claim.estimate, places),
+                    "interval above the limit" if above else "estimate above the limit",
+                ]
+            )
+            + " |"
+        )
+    lines.extend(
+        [
+            "",
+            "Node rows are judge-reported risks; any judge correction applies only to the claim.",
+        ]
+    )
+    return lines
+
+
+def _claim_nodes(
+    report: SafetyReport,
+) -> list[tuple[ClaimResult, str, list[HierarchyRiskResult | ComparisonResult]]]:
+    """Each claim whose evidence has hierarchy rows, with a label for it and those rows.
+
+    An aggregate claim reaches hierarchy rows only through a weighted-mean measure, the one
+    estimand the hierarchy rows report.
+    """
+    plan = report._resolved_plan
+    specs = {str(item.get("id")): item for item in plan.get("claims") or []}
+    measure_types = {
+        str(item.get("id")): item.get("type")
+        for item in (plan.get("outputs") or {}).get("risk_measures") or []
+    }
+    result: list[tuple[ClaimResult, str, list[HierarchyRiskResult | ComparisonResult]]] = []
+    for claim in report.claims:
+        spec = specs.get(claim.claim_id)
+        if spec is None:
+            continue
+        nodes: list[HierarchyRiskResult | ComparisonResult]
+        if spec.get("comparison"):
+            evidence = f"comparison {spec['comparison']}"
+            nodes = [
+                item
+                for item in report.comparisons
+                if item.level is not None and item.comparison_id == spec["comparison"]
+            ]
+        elif measure_types.get(str(spec.get("measure"))) == "weighted_mean":
+            evidence = f"{spec['cohort']} / {spec['group']} / {spec['measure']}"
+            nodes = [
+                item
+                for item in report.hierarchy_risks
+                if item.cohort_id == spec["cohort"] and item.group_id == spec["group"]
+            ]
+        else:
+            continue
+        if nodes:
+            result.append((claim, evidence, nodes))
+    return result
 
 
 def _markdown(report: SafetyReport) -> str:
@@ -104,8 +603,11 @@ def _markdown(report: SafetyReport) -> str:
                 "",
                 "## Mandatory claims",
                 "",
-                "| Claim | Status | Estimate | Lower | Upper | Acceptable | Unacceptable |",
-                "|---|---|---:|---:|---:|---:|---:|",
+                (
+                    "| Claim | Status | Estimate | Lower | Upper | Acceptable | Unacceptable | "
+                    "Verdict at other thresholds |"
+                ),
+                "|---|---|---:|---:|---:|---:|---:|---|",
             ]
         )
         mandatory = [claim for claim in report.claims if claim.mandatory]
@@ -116,18 +618,35 @@ def _markdown(report: SafetyReport) -> str:
                     + " | ".join(
                         [
                             _escape(claim.title),
-                            f"`{claim.status}`",
+                            _claim_status(claim),
                             _number(claim.estimate, places),
                             _number(claim.lower, places),
                             _number(claim.upper, places),
                             _number(claim.acceptable_upper, places),
                             _number(claim.unacceptable_lower, places),
+                            _verdict_range(claim.verdict_range, places),
                         ]
                     )
                     + " |"
                 )
         else:
-            lines.append("| _No mandatory claims_ | `INCONCLUSIVE` | — | — | — | — | — |")
+            lines.append("| _No mandatory claims_ | `INCONCLUSIVE` | — | — | — | — | — | — |")
+        if any(claim.descriptive_status is not None for claim in mandatory):
+            lines.extend(
+                [
+                    "",
+                    (
+                        "This analysis is exploratory, so no claim is certified. A descriptive "
+                        "status is what a confirmatory analysis of the same bounds would give at "
+                        "the plan's thresholds, and the verdict at other thresholds is what it "
+                        "would give at those. Both are shown for reading the bounds and certify "
+                        "nothing."
+                    ),
+                ]
+            )
+        lines.extend(_profile_verdict_lines(mandatory, places))
+    lines.extend(_judge_error_stress_lines(report, places, include_decisions))
+    lines.extend(_localisation_lines(report, places, include_decisions))
     lines.extend(["", "## Data integrity", ""])
     if report.integrity.diagnostics:
         lines.extend(
@@ -222,7 +741,7 @@ def _markdown(report: SafetyReport) -> str:
                         _escape(risk.cohort_id),
                         _escape(risk.group_id),
                         _escape(risk.measure_id),
-                        _escape(interval.role),
+                        _escape(_role_label(interval)),
                         _escape(interval.method),
                         _escape(interval.independence_profile),
                         _number(interval.lower, places),
@@ -298,6 +817,8 @@ def _markdown(report: SafetyReport) -> str:
                         f"{'—' if agreement is None else f'{agreement:.4f}'} | "
                         f"{'—' if kappa is None else f'{kappa:.4f}'} |"
                     )
+        lines.extend(_panel_group_lines(panel))
+        lines.extend(_judge_claim_lines(panel, places, include_decisions))
     judge_rows = [
         (risk, interval)
         for risk in report.group_risks
@@ -308,8 +829,33 @@ def _markdown(report: SafetyReport) -> str:
         calibration = report._resolved_plan.get("inputs", {}).get("judge_calibration") or {}
         primary_scenario = str(calibration.get("primary") or "")
         validated = str(calibration.get("mode")) == "validated"
+        transported = str(calibration.get("mode")) == "transported"
+        stratified = validated and calibration.get("sampling") == "stratified_without_replacement"
         preamble = (
             (
+                "Experimental. Only the judge's sensitivity is taken from a published "
+                "human-labelled set, on the assumption that the same judge and rubric are at "
+                "least as sensitive on this run's outputs as on that set's, which came from "
+                "other generators. The set's false-positive rate is not transported: this "
+                "run's false positives are bounded only by its own judged failures, so the "
+                "lower bound is zero and only the upper bound is informative. The rows below "
+                "carry no coverage guarantee and cannot support a safety claim."
+            )
+            if transported
+            else (
+                "Experimental. These accuracies sum exact hypergeometric bounds over the "
+                "declared fine strata of each judge stratum, each weighted by its size, from "
+                "human labels drawn without replacement within each fine stratum. The fine "
+                "strata weight every classified rollout of a cohort equally, so they certify "
+                "only a weighted mean that does the same, over the whole cohort in a fixed "
+                "design. Those rows are coverage-guaranteed at the union of the underlying "
+                "interval's budget and the calibration budget; every other corrected row is a "
+                "sensitivity analysis, marked diagnostic below. Validity rests on each fine "
+                "stratum's labelled rows being a simple random sample of it, of a size fixed "
+                "independently of the labels, which is a property of the collection protocol."
+            )
+            if stratified
+            else (
                 "These accuracies are exact Clopper-Pearson bounds from human labels drawn "
                 "within each judge stratum. The labels weight every classified rollout of a "
                 "cohort equally, so they certify only a weighted mean that does the same, over "
@@ -327,6 +873,19 @@ def _markdown(report: SafetyReport) -> str:
                 "assumes the judge never errs."
             )
         )
+        scoped = calibration.get("groups")
+        if scoped:
+            preamble += (
+                " The calibration is scoped to the groups "
+                + ", ".join(f"`{_escape(item)}`" for item in scoped)
+                + (
+                    ": each cohort has one calibration per group, from the labels on that "
+                    "group's rollouts"
+                    if validated
+                    else ": the declared accuracies apply to those groups' rows only"
+                )
+                + ", and rows of other groups are not corrected."
+            )
         lines.extend(
             [
                 "",
@@ -340,8 +899,12 @@ def _markdown(report: SafetyReport) -> str:
                     "Every other interval in this report estimates the risk that the **judge "
                     "reports** a failure. This section maps those intervals onto the underlying "
                     "**true** failure risk using "
-                    + ("measured" if validated else "declared")
-                    + " conditional judge accuracies."
+                    + (
+                        "a judge sensitivity transported from a published validation set."
+                        if transported
+                        else ("measured" if validated else "declared")
+                        + " conditional judge accuracies."
+                    )
                 ),
                 "",
                 preamble,
@@ -380,7 +943,37 @@ def _markdown(report: SafetyReport) -> str:
             )
         if validated:
             cohorts = (report.provenance.get("judge_calibration") or {}).get("cohorts") or {}
-            if cohorts:
+            if cohorts and scoped:
+                lines.extend(
+                    [
+                        "",
+                        "Human labels behind each cohort's calibration for each group:",
+                        "",
+                        (
+                            "| Cohort | Group | Judge-unsafe labelled / stratum | Truly unsafe | "
+                            "Judge-safe labelled / stratum | Truly unsafe |"
+                        ),
+                        "|---|---|---|---:|---|---:|",
+                    ]
+                )
+                for cohort_id, by_group in cohorts.items():
+                    for group_id, strata in by_group.items():
+                        unsafe, safe = strata["judge_unsafe"], strata["judge_safe"]
+                        lines.append(
+                            "| "
+                            + " | ".join(
+                                [
+                                    _escape(cohort_id),
+                                    _escape(group_id),
+                                    f"{unsafe['labelled']} / {unsafe['stratum_size']}",
+                                    str(unsafe["truly_unsafe"]),
+                                    f"{safe['labelled']} / {safe['stratum_size']}",
+                                    str(safe["truly_unsafe"]),
+                                ]
+                            )
+                            + " |"
+                        )
+            elif cohorts:
                 lines.extend(
                     [
                         "",
@@ -408,6 +1001,67 @@ def _markdown(report: SafetyReport) -> str:
                         )
                         + " |"
                     )
+            # A scoped calibration nests its summaries one level deeper, by group.
+            scoped_summaries = [
+                (cohort_id, group_id, strata)
+                for cohort_id, by_group in cohorts.items()
+                for group_id, strata in (by_group.items() if scoped else [(None, by_group)])
+            ]
+            fine_rows = [
+                (cohort_id, group_id, item)
+                for cohort_id, group_id, strata in scoped_summaries
+                for item in strata.get("fine_strata") or []
+            ]
+            if fine_rows:
+                lines.extend(
+                    [
+                        "",
+                        "Declared fine strata, with exact bounds on each one's truly unsafe "
+                        "count (a census is exact; an unlabelled stratum spans all its rows):",
+                        "",
+                        "| Cohort | "
+                        + ("Group | " if scoped else "")
+                        + "Judge stratum | Fine stratum | Labelled / size | Truly unsafe | "
+                        "Truly unsafe count bounds |",
+                        "|---|" + ("---|" if scoped else "") + "---|---|---|---:|---|",
+                    ]
+                )
+                for cohort_id, group_id, item in fine_rows:
+                    lines.append(
+                        "| "
+                        + " | ".join(
+                            [
+                                _escape(cohort_id),
+                                *([_escape(group_id)] if scoped else []),
+                                _escape(item["judge_stratum"]),
+                                _escape(item["stratum"]),
+                                f"{item['labelled']} / {item['stratum_size']}",
+                                str(item["truly_unsafe"]),
+                                f"{item['truly_unsafe_lower']}–{item['truly_unsafe_upper']}",
+                            ]
+                        )
+                        + " |"
+                    )
+        elif transported:
+            summary = report.provenance.get("judge_calibration") or {}
+            published = summary.get("published_set") or {}
+            if published:
+                lines.extend(
+                    [
+                        "",
+                        "Published validation set behind the transported sensitivity:",
+                        "",
+                        f"- Set: {_escape(published.get('name'))} "
+                        f"({_escape(published.get('source'))})",
+                        f"- Judge: {_escape(published.get('judge'))}; rubric: "
+                        f"{_escape(published.get('rubric'))}",
+                        f"- Judge flagged {published.get('judge_flagged_unsafe')} of "
+                        f"{published.get('human_unsafe')} human-unsafe items; sensitivity "
+                        f"at least {_number(summary.get('sensitivity_lower'), places)} "
+                        "(one-sided Clopper-Pearson, alpha "
+                        f"{published.get('sensitivity_alpha')})",
+                    ]
+                )
         else:
             scenarios = calibration.get("scenarios") or []
             if scenarios:
@@ -480,6 +1134,51 @@ def _markdown(report: SafetyReport) -> str:
                                 primary.calibration_method if primary is not None else None
                             )
                         ),
+                    ]
+                )
+                + " |"
+            )
+    single_valued = [
+        (risk.cohort_id, risk.group_id, "—", interval)
+        for risk in report.group_risks
+        for interval in risk.intervals
+        if interval.single_valued_bound is not None
+    ] + [
+        (node.cohort_id, node.group_id, " → ".join(node.path.values()), interval)
+        for node in report.hierarchy_risks
+        for interval in node.intervals
+        if interval.single_valued_bound is not None
+    ]
+    if single_valued:
+        lines.extend(
+            [
+                "",
+                "## Single-valued bounds (experimental)",
+                "",
+                (
+                    "M is the smallest U + δ over one-sided upper bounds U at level δ for each "
+                    "node alone. It needs no alpha: P(M < R) ≤ R, so its miss probability "
+                    "equals the unknown risk R. It is not simultaneous over nodes and is not a "
+                    "gate. It is meant as one input per component of a system model, which "
+                    "stays conservative only if the model is monotone in it."
+                ),
+                "",
+                "| Cohort | Group | Node path | Method | Independence profile | M | δ at M |",
+                "|---|---|---|---|---|---:|---:|",
+            ]
+        )
+        for cohort_id, group_id, path, interval in single_valued:
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _escape(cohort_id),
+                        _escape(group_id),
+                        _escape(path),
+                        _escape(interval.method),
+                        _escape(interval.independence_profile),
+                        _number(interval.single_valued_bound, places),
+                        _number(interval.single_valued_bound_delta, places),
                     ]
                 )
                 + " |"
@@ -665,7 +1364,7 @@ def _markdown(report: SafetyReport) -> str:
                     + " | ".join(
                         [
                             _escape(comparison.result_id),
-                            _escape(interval.role),
+                            _escape(_role_label(interval)),
                             _escape(interval.method),
                             _escape(interval.independence_profile),
                             _number(interval.lower, places),

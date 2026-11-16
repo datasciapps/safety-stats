@@ -1,6 +1,6 @@
 # Analysis plan reference
 
-Plans are strict YAML or JSON documents. Unknown fields are errors, and integer fields reject `true` and `false` rather than reading them as 1 and 0. Relative manifest paths resolve against the plan file.
+Plans are strict YAML or JSON documents. Unknown fields are errors, and numeric fields, including the values of a mapping such as `explicit_alpha`, reject `true` and `false` rather than reading them as 1 and 0. Relative manifest paths resolve against the plan file.
 
 ## Schema versions
 
@@ -41,7 +41,9 @@ plan's hash changes with its text. A 2.0 plan keeps its meaning and its hash.
 | `plan_frozen_at` | confirmatory | Timestamp preceding selected evaluations |
 | `registration` | no | External URI and SHA-256 of a preregistered plan |
 
-Exploratory analyses cannot produce `PASS`.
+Exploratory analyses cannot produce `PASS`. Their claims are `INCONCLUSIVE`, and each records
+as `descriptive_status` what a confirmatory analysis of the same bounds would give. See
+[Exploratory analyses](interpretation.md#exploratory-analyses).
 
 ## `inputs`
 
@@ -96,6 +98,36 @@ inputs:
     errors: end_to_end
 ```
 
+`content_filter_stops` (experimental) decides how a rollout counts when a provider's content
+filter stopped its output before it delivered any content, without a sample error. Claude
+5-series models report a safety-classifier decline this way: a normal answer with stop reason
+`refusal`, which Inspect records as `content_filter` with the provider's category. A decline that
+arrives as an API error counts as having delivered nothing, whatever stand-in text Inspect put in
+its place.
+
+- `score`, the default: the rollout's score decides, as for any other rollout, and a missing
+  score follows `missing`.
+- `safe`: the block counts as `target_policy_blocked_safe`, for a harm estimand.
+- `failure`: the block counts as a refusal, for an over-refusal estimand on safe prompts.
+
+With `safe` or `failure`, the plan's choice replaces the score of such a rollout, and each block
+is reported in a `TARGET_POLICY_BLOCKED_SAFE` or `TARGET_POLICY_BLOCKED_REFUSAL` diagnostic with
+the provider's block type and category. Content delivered before a decline mid-answer is scored
+as usual. Both need `estimand: end_to_end_system`, and `failure` cannot be combined with
+`errors: end_to_end`, which counts a policy-blocked sample error as safe. Only Inspect logs report
+stop reasons; with rollout files the option is refused.
+
+```yaml
+inputs:
+  score:
+    name: over_refusal
+    mapping:
+      failure_values: ["FAIL"]
+      safe_values: ["PASS"]
+    errors: conservative_bounds
+    content_filter_stops: failure
+```
+
 `judge_calibration` is optional. It declares assumed conditional judge accuracies and emits
 diagnostic true-risk sensitivity intervals beside the ordinary judge-system intervals:
 
@@ -139,6 +171,71 @@ affects a claim. One calibration is estimated per cohort by
 exact Clopper-Pearson bounds within each judge stratum, and the corrected interval's coverage
 is the union of its own family budget and the judge family budget. The two modes are mutually
 exclusive.
+
+`groups` scopes an `assumed` or `validated` calibration to declared groups, for a cohort that
+holds several benchmarks whose judge accuracies differ:
+
+```yaml
+inputs:
+  judge_calibration:
+    mode: validated
+    validation_manifest: judge-labels.csv
+    family: judge_error
+    groups: [harmbench]
+```
+
+Without `groups` there is one calibration per cohort, and it corrects every row of the
+cohort. With it:
+
+- only rows of the listed groups are corrected. Rows of other groups keep their judge-system
+  intervals, and a claim on such a row in a validated plan is INCONCLUSIVE, with a reason
+  saying that no labels calibrate it;
+- `assumed` mode applies its scenarios unchanged to the listed groups' rows;
+- `validated` mode estimates one calibration per cohort and listed group, from the labels and
+  judge-stratum sizes of that group's rollouts. The judge family budget is split equally over
+  those calibrations (`per_calibration_alpha` in the report, instead of `per_cohort_alpha`),
+  and the report records the label counts per cohort and group. A validated correction then
+  certifies a `weighted_mean` over a whole listed group that weights every classified rollout
+  equally. Labels on rollouts outside every listed group calibrate nothing and raise the
+  warning `JUDGE_VALIDATION_OUT_OF_SCOPE`.
+
+Each listed group must be declared under `groups`, and a scope can be neither empty nor list a
+group twice. A `transported` calibration takes no `groups`. Generative plans have no groups and
+reject the field.
+
+`sampling: stratified_without_replacement` (experimental) reads labels drawn by a stratified
+design, such as one that labels the judges' disagreements more often. It requires
+`validation_strata`, a CSV of `observation_id,stratum` for every classified observation. The
+two fields go together, and both require `mode: validated`. Each declared stratum within a
+judge stratum is bounded exactly with hypergeometric bounds and weighted by its size. Plans
+without the field keep their hash. Generative plans do not offer this design. See
+[Stratified labels](judge-misclassification.md#stratified-labels-experimental).
+
+`mode: transported` (experimental) takes a judge's sensitivity from a published
+human-labelled validation set, and nothing else:
+
+```yaml
+inputs:
+  judge_calibration:
+    mode: transported
+    published_set:
+      name: HarmBench classifier validation set
+      source: https://github.com/centerforaisafety/HarmBench
+      judge: HarmBench-Llama-2-13b-cls
+      rubric: HarmBench behaviour rubric
+      human_unsafe: 120
+      judge_flagged_unsafe: 100
+      sensitivity_alpha: 0.05
+```
+
+`name`, `source`, `judge` and `rubric` are required and must not be empty.
+`judge_flagged_unsafe` cannot exceed `human_unsafe`, which must be at least one.
+`sensitivity_alpha` defaults to 0.05. The mode cannot be combined with `scenarios`,
+`primary`, `validation_manifest` or `family`, and `published_set` is refused in any other
+mode. The specificity is not transported, so each corrected interval runs from zero to the
+judge-system upper bound divided by the sensitivity's lower bound. The intervals are always
+`diagnostic` and never affect a claim. Generative plans do not offer this mode. See
+[Transported mode](judge-misclassification.md#transported-mode-a-published-sensitivity-experimental).
 
 Corrections are applied to `weighted_mean`, `maximum`, `cvar`, and `top_k_mean` measures, to
 every hierarchy node, and to comparisons whose primary interval exposes both arm bounds
@@ -190,6 +287,71 @@ all declare them, the report adds a diagnostic `judge_corrected_panel_derived` i
 composite's box is derived by Fréchet bounds within blocks and products across blocks, and true
 risk is partially identified by inverting Rogan–Gladen over it (the whole unit interval when the
 box admits an uninformative panel). See [Judge misclassification](judge-misclassification.md).
+
+`accuracy.groups` restricts a judge's declared ranges to the rollouts of the listed groups:
+
+```yaml
+    - id: gpt_judge
+      score: {name: harmful_gpt, mapping: {failure_values: [FAIL], safe_values: [PASS]}}
+      accuracy:
+        sensitivity: {lower: 0.85, upper: 0.95}
+        specificity: {lower: 0.90, upper: 0.99}
+        groups: [harmbench]
+```
+
+A box built from several declarations holds only in the groups that every one of them covers,
+so the `judge_corrected_panel_derived` interval is added only to rows of those groups. The
+report records the groups as `groups` under `provenance.judge_panel.derived_correction`. When
+the declarations share no group, no correction is reported, and the warning
+`PANEL_CORRECTION_NO_COMMON_GROUP` says so. With `report.judge_error_stress`, a claim on a group
+that the primary outcome's declared box does not cover is stressed without the box: its tipping
+lines are reported, its stressed verdict is not.
+
+`inputs.panel_groups` breaks the judge panel down by group. A cohort that holds several
+benchmarks otherwise gets one agreement figure across all of them. For example, a benchmark
+whose two judge scores are copies of each other pulls Cohen's kappa up for the cohort.
+
+```yaml
+inputs:
+  panel_groups: [harmbench, xstest]
+```
+
+Every judge, composite and judge pair in `provenance.judge_panel` then carries `groups`, with
+the same counts and agreement figures for each listed group's rollouts, per cohort. `report.md`
+shows them under **Judge panel by group**. The cohort-wide figures are reported as before. The
+field requires `inputs.judges`, and its groups must be declared.
+
+All three scopes are optional. A plan that leaves them out keeps its hash and writes the same
+report bytes as before.
+
+#### Claims by judge (experimental)
+
+The report's claims are decided on the primary outcome alone. To see what each declared judge
+would decide, set `outputs.judge_claims: true`. The analysis then runs the plan again once per
+judge, with that judge's `score` as the primary outcome and without `judges`, `composites` or
+`judge_calibration` (the calibration validates the primary outcome, not the other judges). Every
+run uses the same rollouts, and the logs are read once.
+
+```yaml
+outputs:
+  judge_claims: true
+```
+
+Each judge in `provenance.judge_panel.judges` of `report.json` gains:
+
+- `integrity`: the integrity status of that judge's run.
+- `claims`: one row per claim, with `claim_id`, `status`, `estimate`, `lower`, `upper` and
+  `method`.
+- `configuration`: per cohort, the distinct configurations of the scorer named like the judge's
+  score (`scorer`) and the model roles (`model_roles`) that the cohort's runs record. Inspect
+  logs record them under `eval.scorers` and `eval.model_roles`. Where the runs record none, the
+  value is `null`.
+
+`report.md` shows the same rows under **Claims by judge (experimental)** in the judge panel
+section, without the status column when `report.include_decisions` is false. The rows compare
+judge configurations. They do not enter the decision and are not adjusted for multiplicity
+across judges. The option requires `inputs.judges`. A plan that leaves it off keeps its hash and
+writes the same report bytes as before.
 
 ## `design`
 
@@ -405,6 +567,17 @@ Use `hierarchy_region: none` to retain the unprojected intervals. The `independe
 one primary profile and optional prespecified sensitivity profiles. See
 [Configuring hierarchy and independence](independence-profiles.md).
 
+`single_valued_bound: true` (experimental, default `false`) adds a single number per direct
+interval for system models such as fault trees: M, the smallest value of U_δ + δ over levels
+δ, where U_δ is the interval's own one-sided upper bound at level δ for that node alone. It
+needs no alpha and has P(M < R) ≤ R: its miss probability is the unknown risk R itself. It is not
+simultaneous, does not enter claims, and is usually above a 95% bound. Each interval in
+`report.json` then carries `single_valued_bound`, `single_valued_bound_delta` and
+`single_valued_bound_guarantee`, and `report.md` lists them under "Single-valued bounds
+(experimental)". The option is refused with `PLAN_SINGLE_VALUED_BOUND_UNSUPPORTED` under a
+sampled design and with judge calibration. See
+[Single-valued bound for system models](statistical-methods.md#single-valued-bound-for-system-models-experimental).
+
 ## `comparison_sets`
 
 Use a comparison set for two or more cohorts:
@@ -545,6 +718,7 @@ claims:
 | `include_prompt_text` | false | Reserved; raw content remains omitted in v1 |
 | `include_observations` | true | Write normalized observation CSV |
 | `decimal_places` | 6 | Markdown display precision; JSON retains full precision |
+| `judge_error_stress` | false | Experimental. Add to every claim the judge accuracy at which its verdict would change for true risk, and the verdict over the primary judge's declared accuracy box; diagnostic only. See [Stressing a threshold verdict](judge-misclassification.md#stressing-a-threshold-verdict-experimental) |
 
 ## Generate JSON schemas
 

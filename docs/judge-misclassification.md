@@ -35,6 +35,15 @@ box vertices and interval arithmetic is exact rather than conservative. And the 
 design it implies -- stratify by judge verdict, sample within stratum -- is what an
 evaluator would do operationally anyway.
 
+The correction recommended for jailbreak benchmarks in
+[*How Reliable Is Your Jailbreak Judge?*](https://arxiv.org/abs/2606.25487) (section 5),
+reported attack success rate multiplied by judge precision, is this identity with
+\(\rho_0=0\), because precision is \(\rho_1\). Setting \(\rho_0=0\) assumes the judge has no
+false negatives, and those are the errors that make an unsafe model look safe. A safety gate
+cannot ignore them, because a missed failure produces a false PASS. The paper itself notes that a
+precision correction does not fix the poor recall of LLM judges. Declaring \(\rho_0\) here
+puts that error into the bound.
+
 Because the identity is affine in \(R\) with positive slope \(\rho_1-\rho_0\), it
 applies unchanged to any risk measure that is positively homogeneous and translation
 equivariant: `weighted_mean`, `maximum`, `cvar`, and `top_k_mean`. It does **not** apply to
@@ -45,7 +54,8 @@ whose thresholds would need transforming. Those measures are left uncorrected.
 
 The first implementation declares \(\rho_1\) and \(\rho_0\) as ranges rather than
 estimating them. It produces **no evidence**. Every interval it emits carries
-`eligibility: diagnostic` and `role: sensitivity`, and cannot support a claim.
+`eligibility: diagnostic`, `role: sensitivity` and `varied_assumption: judge_error`, and
+cannot support a claim.
 
 ```yaml
 inputs:
@@ -150,6 +160,16 @@ cohorts (see below); each cohort's share is then split equally between \(\rho_1\
 \(\rho_0\), and each parameter's share again between its two endpoints. A union bound over
 those four endpoints spends no more than the cohort's share.
 
+A stratum with no labelled row is completed conservatively. Its parameter is a probability,
+so \([0, 1]\) contains it with certainty: the calibration uses that range, spends none of the
+budget on it, and warns with `JUDGE_STRATUM_UNLABELLED_COMPLETED`. Such a box is never
+strictly informative, so the informativeness check is skipped for it. The correction stays
+valid but wide. With \(\rho_1\in[0,1]\) and a judge-reported interval \([L, U]\), true
+risk lies in \([(1-U)\rho_{0,L},\; U+(1-U)\rho_{0,U}]\), so it can still support an upper
+claim when the judge rarely reports a failure. Labelling that stratum narrows it. The
+budget split is unchanged, so `family_alpha` overstates what was spent. If neither stratum has
+a label, the calibration is refused.
+
 The corrected interval's simultaneous coverage is therefore
 
 \[
@@ -176,6 +196,76 @@ narrower, but its coverage falls to 90--94% at prevalences of 5% and below with 
 whereas the exact box never falls below its nominal level; at very low prevalence the exact path
 frequently refuses to correct at all because the calibration is uninformative. A narrower
 interval that under-covers where failures are rare is not a better interval for a safety claim.
+
+### Stratified labels (experimental)
+
+A labelling design often wants more than a simple random sample within each judge stratum.
+For example, it may label every rollout on which a second judge disagrees, and only a sample of
+the rest. Read as one simple random sample, such labels are biased: the oversampled
+disagreements count as often as they were labelled, not as often as they occur. The binomial
+bound also gives no credit for labelling a small stratum in full. A census of it still keeps a
+binomial width, as if its rows had been drawn with replacement.
+
+`sampling: stratified_without_replacement` reads the labels as the design drew them:
+
+```yaml
+inputs:
+  judge_calibration:
+    mode: validated
+    validation_manifest: judge-labels.csv
+    sampling: stratified_without_replacement
+    validation_strata: judge-strata.csv
+    family: judge_error
+```
+
+`validation_strata` holds `observation_id,stratum` for **every classified observation** of
+the analysed cohorts, labelled or not, since each stratum's size is part of the design. The
+strata may cut across the judge's verdicts. The analysis nests each declared stratum within
+the cohort's two judge strata, so a *fine stratum* is one declared stratum within one cohort
+and one judge verdict. A file that leaves out a classified observation
+(`JUDGE_VALIDATION_STRATA_INCOMPLETE`), or names one that is absent or unclassified
+(`JUDGE_VALIDATION_STRATA_UNMATCHED`), is an error, and no correction is reported.
+
+**Estimation.** Let fine stratum \(h\) of a judge stratum of size \(N\) hold \(N_h\)
+rollouts, \(K_h\) of them truly unsafe, and let \(n_h\) of them be labelled, \(x_h\) unsafe.
+If the labelled rows are a simple random sample without replacement of the stratum, of a size
+fixed independently of the labels, then \(x_h\) is hypergeometric given \(K_h\). Inverting
+the two one-sided hypergeometric tests gives exact bounds
+
+\[
+K_{h,L}=\min\{K: P(X\ge x_h\mid N_h,K,n_h)>a_h\},\qquad
+K_{h,U}=\max\{K: P(X\le x_h\mid N_h,K,n_h)>a_h\},
+\]
+
+and the judge stratum's parameter, \(\rho=\sum_h K_h/N\), lies in
+\([\sum_h K_{h,L}/N,\ \sum_h K_{h,U}/N]\). Each fine stratum is weighted back by its size,
+whatever share of it was labelled. A census (\(n_h=N_h\)) gives \(K_h=x_h\) exactly. A fine
+stratum without labels is completed as \([0, N_h]\), which holds with certainty, and the
+analysis warns with `JUDGE_FINE_STRATUM_UNLABELLED_COMPLETED`. A judge stratum without any
+label is completed as \([0,1]\) and refused when both are unlabelled, as described above.
+
+**Error budget.** Each of the four endpoints keeps a quarter of the cohort's share, as in the
+binomial case. That quarter is split equally over the fine strata of its judge stratum that
+were sampled but not censused, \(a_h=\alpha_{\text{endpoint}}/H_{\text{sampled}}\). Censused
+and unlabelled strata spend nothing. A union bound over every count bound then gives the same
+guarantee as before: under the design, \(\rho_1\) and \(\rho_0\) lie in their ranges together
+with probability at least \(1-\alpha_{\text{cohort}}\). With a single fine stratum the
+range narrows below the Clopper--Pearson one as the labelled share of the stratum grows. When
+only a few rows of a stratum are labelled, the two nearly agree. Because counts are whole
+numbers, the hypergeometric range can then be slightly wider. A sweep of every stratum of up
+to 60 rollouts found 4 such cases among about 119,000, each wider by less than one
+rollout's share, \(1/N\). With many sampled fine strata, the Bonferroni split widens each one; exact
+joint methods for stratified finite populations exist (Wendell and Schmee, *JASA* 91(434),
+1996) but are not implemented.
+
+**What changes in the report.** Provenance records `validation_strata` and, per cohort,
+`fine_strata`: each fine stratum's counts, its count bounds and the level each bound spent.
+`report.md` lists them. The asymptotic `judge_corrected_validated_delta` reference assumes simple
+random samples within the judge strata, so it is not reported under this design, and an INFO
+diagnostic, `JUDGE_CALIBRATION_STRATIFIED`, says so. With `groups`, each scoped
+calibration counts the declared strata of its group's rollouts. The strata file is still
+checked against every classified observation, before any scope, and `fine_strata` is
+recorded per cohort and group. Generative plans do not offer this design.
 
 ### Unclassified rollouts
 
@@ -224,8 +314,10 @@ binary failures is already `weighted_kl_chernoff`, the recommended path is cover
 
 ### Error budget across cohorts
 
-The judge family alpha is divided equally among the **declared cohorts**. A single risk row
-consumes one share; a comparison consumes the two shares of the cohorts it spans. A union
+The judge family alpha is divided equally among the **declared cohorts**, or, when the
+calibration is [scoped to groups](#scoping-the-calibration-to-groups), among the cohorts
+times the listed groups. A single risk row consumes one share; a comparison consumes the two
+shares of the cohorts it spans. A union
 over every corrected row therefore stays inside the declared family budget, and each interval
 reports the share it actually spent in `family_alpha`.
 
@@ -233,7 +325,10 @@ reports the share it actually spent in `family_alpha`.
 
 - The labelled rows are a **simple random sample within their judge stratum**. This is a
   property of the collection protocol, not of the data, and nothing in the package can check
-  it. It is recorded in the interval's assumption list.
+  it. It is recorded in the interval's assumption list. Under
+  `sampling: stratified_without_replacement`, the requirement is instead that each fine
+  stratum's labelled rows are a simple random sample without replacement of it, of a size
+  fixed independently of the labels.
 - **Human adjudication is ground truth.** Labeller error is not modelled.
 
 ### What it certifies
@@ -251,7 +346,9 @@ rollouts. The two agree exactly only for a row that
   items do not bound the judge's accuracy over the frame.
 
 Equal prompt weights with equal rollout counts satisfy the weighting condition. `nested_equal`
-weights over an unbalanced hierarchy usually do not.
+weights over an unbalanced hierarchy usually do not. A correction also never supports more
+than the row it corrects: the correction of a diagnostic row, such as a `diagnostic_only`
+measure, is diagnostic too.
 
 Every other corrected row is still reported, as a **sensitivity analysis**:
 `eligibility: diagnostic`, no coverage, and a warning that names the reason. A claim that
@@ -268,6 +365,28 @@ although true risk was 0.15. Tail measures (`maximum`, `cvar`, `top_k_mean`) far
 
 Weighting the labels by the design, which would certify more rows, is future work.
 
+### Scoping the calibration to groups
+
+A cohort often holds several benchmarks, and a judge's accuracy can differ between them. The
+labels of one benchmark then say little about another's rows, yet a cohort-wide calibration
+pools them. `judge_calibration.groups` estimates one calibration per cohort and listed group
+instead, from the labels and judge-stratum sizes of that group's rollouts. Each listed group
+is then calibrated the way a cohort is otherwise:
+
+- the conditions above apply with "the cohort" read as "the group". A `weighted_mean` over a
+  whole listed group, in a fixed design, that weights every classified rollout of the group
+  equally, is certified;
+- the judge family alpha is divided equally among all calibrations, cohorts times listed
+  groups, and the report records that share as `per_calibration_alpha`;
+- a comparison arm takes its cohort's calibration for the comparison's group;
+- the noisy-but-valid test uses the truth strata of the row's group.
+
+Rows of groups that are not listed are not corrected. A claim on such a row is INCONCLUSIVE,
+and its reason says that no labels calibrate it. Labels on rollouts outside every listed group
+calibrate nothing, and the warning `JUDGE_VALIDATION_OUT_OF_SCOPE` reports them. In `assumed`
+mode, `groups` limits the declared scenarios to the listed groups' rows. Groups may overlap;
+each listed group is calibrated from its own rollouts.
+
 ### When it refuses
 
 The module produces no correction, and says why, when:
@@ -275,7 +394,7 @@ The module produces no correction, and says why, when:
 - a cohort has an empty judge stratum (`JUDGE_VALIDATION_STRATUM_EMPTY`);
 - the labels do not establish a strictly informative judge -- the \(\rho_1\) lower bound
   fails to exceed the \(\rho_0\) upper bound, meaning more labels or a better judge are
-  needed (`JUDGE_CALIBRATION_UNINFORMATIVE`); or
+  needed -- or neither judge stratum has a label (`JUDGE_CALIBRATION_UNINFORMATIVE`); or
 - a validation row references an observation absent from the analysed logs, or one whose
   outcome was never classified (`JUDGE_VALIDATION_UNMATCHED`, an error).
 
@@ -370,14 +489,109 @@ enriched for exactly those items. Prefer the corrected interval when labels are 
 test when the judge's error rates must be prevalence-free and transportable, or when sensitivity
 can be bounded from seeded known-unsafe items rather than from a random sample.
 
+## Transported mode: a published sensitivity (experimental)
+
+Published human-labelled judge validation sets, such as HarmBench's classifier validation set
+or XSTest's annotated completions, measure a judge on outputs that other models produced.
+`mode: transported` uses such a set without human labels on the run's own outputs. It is a
+**sensitivity analysis**: every interval it emits is `eligibility: diagnostic`,
+`role: sensitivity` and `varied_assumption: judge_error`, and it never decides a claim.
+
+```yaml
+inputs:
+  judge_calibration:
+    mode: transported
+    published_set:
+      name: HarmBench classifier validation set
+      source: https://github.com/centerforaisafety/HarmBench
+      judge: HarmBench-Llama-2-13b-cls
+      rubric: HarmBench behaviour rubric
+      human_unsafe: 120          # items human annotators labelled unsafe
+      judge_flagged_unsafe: 100  # of those, the items the judge flagged
+      sensitivity_alpha: 0.05    # optional, default 0.05
+```
+
+`name`, `source`, `judge` and `rubric` are required. They record the provenance the transport
+assumption rests on, and the report repeats them. The counts above are placeholders: take them
+from the set's own publication for the judge and rubric the run actually used.
+
+### Why \(\rho\) cannot be transported
+
+\(\rho_1\) and \(\rho_0\) are predictive values, so they depend on prevalence. A published set
+chosen to be roughly half unsafe gives a judge a \(\rho_1\) its run will not have. For example,
+with a sensitivity of 0.974 and a specificity of about 0.84 (figures derived for the HarmBench
+classifier in arXiv:2606.25487), \(\rho_1\approx0.83\) on a set that is 45% unsafe. At a true
+prevalence of 1% the same judge has \(\rho_1\approx0.06\): 94% of its unsafe verdicts are false,
+and it reports a rate of about 17%. Only the prevalence-free parameters, sensitivity \(Se\) and
+specificity \(Sp\), can even be assumed to transport.
+
+### Why only the sensitivity is transported
+
+Specificity does not transport well either. The false positives a judge makes depend on what
+the outputs look like, and a published set's safe items are often chosen to be hard. In one
+open-weights evaluation, a judge flagged 4.9% of HarmBench's human-safe validation items, yet
+the run's own judged failure rate had an upper bound of 1.06%. Its false-positive rate on
+those outputs was therefore at most about 1.1%, so the published specificity was far too
+pessimistic. Plugged into the Rogan--Gladen inversion
+\(\pi=(q-(1-Sp))/(Se+Sp-1)\) (Rogan and Gladen, *American Journal of Epidemiology* 107(1),
+71--76, 1978), it would have pushed the corrected rate below zero.
+
+So the mode transports the sensitivity alone, as an exact one-sided Clopper--Pearson lower
+bound \(Se_L\) at `sensitivity_alpha` from `judge_flagged_unsafe` of `human_unsafe`. The run's
+false positives are bounded only by its own judged failures: the judged rate is
+\(q=\pi Se+(1-\pi)FPR\), and \((1-\pi)FPR\le q\). Then
+
+- the **lower bound is zero**, because every judged failure may be a false positive; and
+- the **upper bound** is \(\pi\le q_U/Se_L\), capped at one, where \(q_U\) is the ordinary
+  judge-system upper bound.
+
+The upper bound is the Rogan--Gladen inversion at its maximising corner \(Sp=1\). The inversion
+increases with \(Sp\) whenever \(q\le Se\), so declaring any specificity range that reaches one
+would give the same upper bound. When \(Se_L=0\), a judge that may catch nothing, the bound is
+\([0,1]\). A perfectly sensitive judge leaves the upper bound unchanged. Rollouts the judge
+never classified stay completed as failures. The bound is monotone and positively homogeneous
+in the prompt rates, so it applies to `weighted_mean`, `maximum`, `cvar` and `top_k_mean`, to
+every hierarchy node, but not to `entropic` or the threshold measures. If both bounds hold,
+coverage is at least one minus the sum of the row's own alpha and `sensitivity_alpha`.
+
+### What it assumes
+
+- **Transport.** The same judge and rubric, applied to this run's outputs, is at least as
+  sensitive on every prompt as on the published set. Nothing in the run checks this, and a
+  judge under attack can fail it.
+- Human adjudication on the published set is the ground truth.
+
+Each interval lists these assumptions, together with the published set and the sensitivity
+bound. `report.json` adds a `judge_corrected_transported` interval on every correctable row,
+with `method: transported_judge_sensitivity_correction`. Its provenance records the published
+set and `sensitivity_lower`, and the analysis emits the `INFO` diagnostic
+`JUDGE_CALIBRATION_TRANSPORTED`. `report.md` describes the published set in the judge
+misclassification section.
+
+`mode: transported` takes only `published_set`. It cannot be combined with scenarios, a
+validation manifest or a judge family, and only fixed-design analyses offer it: a generative
+plan that declares it is refused.
+
 ## On the generative path
 
 The same correction is available for
-[generative evaluations](generative-evaluation.md), where it applies to the root, every
-hierarchy node and every cross-cutting slice. Two differences: human labels key on the
-sample identifier materialization wrote rather than an observation id, and comparisons are
-**not** corrected -- doing so would either discard the paired construction that makes them
-tight or assume a prevalence-free judge.
+[generative evaluations](generative-evaluation.md), where it is reported for the root, every
+hierarchy node and every cross-cutting slice. A `validated` calibration certifies only the
+root, and only when every unit carries the same weight in it, for the reason in
+[What it certifies](#what-it-certifies): the labels pool the cohort's classified units with
+equal weight, and \(\rho\) depends on prevalence, so a node or slice where the judge misses
+more failures than average would get a corrected upper bound below its true risk. A root with
+unequal unit weights, for example under `minimum_rewrites_per_stratum`, has the same problem.
+Every other corrected estimate is reported as a sensitivity analysis: `eligibility:
+diagnostic`, with a warning that names the reason.
+
+Units with no judge verdict keep their completion through the correction, as on the
+fixed-design path: each estimate reports the design weight on them as
+`unclassified_share`, and only the classified mass is mapped through \(\rho\).
+
+Two further differences: human labels key on the sample identifier materialization wrote
+rather than an observation id, and comparisons are **not** corrected -- doing so would either
+discard the paired construction that makes them tight or assume a prevalence-free judge.
 
 ## Declaring a judge panel
 
@@ -424,6 +638,103 @@ the identification result of the partial-identification literature made concrete
 dependent judges cannot substitute for calibration. Because declared boxes are assumptions, this
 interval is `diagnostic` and can never move a claim; the certifying route for a panel remains a
 `validated` calibration of the composite's own verdict strata.
+
+A declaration can be scoped with `accuracy.groups` when a judge's ranges are known for some
+benchmarks only. The composite's box then holds only in the groups that every member's
+declaration covers, and only those groups' rows get the derived interval. If the members
+share no group, there is no derived interval, and the warning
+`PANEL_CORRECTION_NO_COMMON_GROUP` says so.
+
+### Agreement per group
+
+Agreement over a cohort that holds several benchmarks mixes them. A benchmark on which two
+judges' scores are copies of each other agrees perfectly and pulls the cohort's kappa up, even
+when the judges disagree on the benchmark that matters. `inputs.panel_groups` adds the same
+counts, agreement, kappa and McNemar figures for each listed group's rollouts, per cohort,
+beside the cohort-wide ones. They are diagnostics like the cohort-wide figures.
+
+## Stressing a threshold verdict (experimental)
+
+Without a validated calibration, a threshold claim is decided on judge-reported risk. Its
+verdict then says nothing about how good the judge must be for the same verdict to hold for
+true risk. A PASS whose upper bound sits just below the threshold may need a nearly perfect
+judge. The opt-in stress analysis reports that requirement beside each claim:
+
+```yaml
+report:
+  include_decisions: true
+  judge_error_stress: true
+```
+
+It is experimental: its fields and wording may change in a minor release. It is diagnostic
+only and never changes a claim's status.
+
+**Tipping lines.** Take the prevalence-free model of the
+[noisy-but-valid test](#certifying-a-threshold-directly-the-noisy-but-valid-test),
+\(q=\pi\,Se+(1-\pi)\,FPR\) with \(FPR=1-Sp\), applied unchanged to every prompt. Like the
+correction, it carries over to `weighted_mean`, `maximum`, `cvar` and `top_k_mean`. Write
+\([L,U]\) for the judge-reported bounds, \(a\) for `acceptable_upper`, \(b\) for
+`unacceptable_lower`, and \(s\) for the share of the row's weight on rollouts the judge never
+classified. The bounds complete those rollouts as judge-safe at the lower end and judge-unsafe
+at the upper. The stress analysis keeps the same completion on the true-risk scale and inverts
+only the classified mass. Then
+
+- the PASS (\(U\le a\)) holds for true risk if and only if \((a-s)\,Se+(1-a)\,FPR\ge U-s\);
+- the FAIL (\(L\ge b\)) holds for true risk if and only if \(b\,Se+(1-s-b)\,FPR\le L\).
+
+Each condition is a line in the \((Se,Sp)\) square. The report gives where each line meets the
+two perfect edges:
+
+| Field | Meaning |
+|---|---|
+| `pass_sensitivity_at_perfect_specificity` | With no false alarms, PASS holds iff \(Se\ge (U-s)/(a-s)\) |
+| `pass_specificity_at_perfect_sensitivity` | With no misses, PASS holds iff \(Sp\le (1-U)/(1-a)\) |
+| `fail_sensitivity_at_perfect_specificity` | With no false alarms, FAIL holds iff \(Se\le L/b\) |
+| `fail_specificity_at_perfect_sensitivity` | With no misses, FAIL holds iff \(Sp\ge 1-(L-b)/(1-s-b)\) |
+
+A value above 1 or below 0 means the condition holds along the whole edge or nowhere on it.
+`null` means the line never meets that edge. For example, a PASS with \(U=4.98\%\) against
+\(a=5\%\) and no unclassified rollouts needs \(Se\ge0.996\) even at perfect specificity. A
+false negative rate above 0.4% is enough to put true risk over the threshold.
+
+The two directions differ. Missed failures (low \(Se\)) undermine a PASS, because true risk is
+higher than reported. False alarms (low \(Sp\)) undermine a FAIL, because part of the reported
+risk is judge noise. A PASS survives any specificity at perfect sensitivity, and a FAIL any
+sensitivity at perfect specificity.
+
+**Declared box.** When the primary outcome's judge declares `accuracy` ranges, the record also
+gives the true-risk bounds over that box, the verdict they give (`stressed_status`), and
+whether it matches the claim's status (`robust`). That judge is either a judge in
+`inputs.judges` whose score is the primary score, or an `any` or `all` composite whose members
+all declare ranges, with its box [derived as above](#deriving-a-panels-accuracy-box).
+`accuracy_source` names it, as `judge:<id>` or `composite:<id>`. Both inversions are separately
+monotone in \(Se\) and \(FPR\), so the bounds over the box are attained at its vertices. When the
+box admits \(Se+Sp\le1\), or no accuracy in it can produce the observed bounds, true risk is not
+identified: the bounds are \([0,1]\), `identified` is false, and the stressed verdict is
+INCONCLUSIVE. Without a declared box these fields are `null`, and the lines are still reported.
+
+**Where it does not apply.** Every claim gets a `judge_error_stress` record. Where the analysis
+does not apply, the record has `applicable: false` and a `reason`. That is the case for:
+
+- comparison claims, because the judge's accuracy may differ between arms;
+- claims without complete bounds;
+- claims not decided on their bounds: non-certifying evidence, an exploratory analysis, or
+  invalid data integrity;
+- `noisy_valid_test` claims, and claims decided on a validated correction, which already
+  account for judge error;
+- claims that a validated calibration leaves INCONCLUSIVE;
+- measures other than `weighted_mean`, `maximum`, `cvar` and `top_k_mean`.
+
+`report.md` gains a **Judge-error stress (experimental)** section after the claims, with one row
+per claim, the declared box of each source, and the reasons for claims that were not stressed.
+When `report.include_decisions` is false, the section only points to `report.json`. With the
+switch off, the field is left out of the plan's dump and of every claim, so plans that do not
+opt in keep their hash and every artifact byte for byte.
+
+Two limits apply, as for the assumed mode. One \((Se,Sp)\) is applied to every prompt, so a
+judge whose accuracy varies with the prompt or with the model under test is not covered. And a
+declared box is an assumption, not evidence. The certifying route remains a `validated`
+calibration.
 
 ## Getting to evidence
 

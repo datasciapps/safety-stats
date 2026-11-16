@@ -354,6 +354,50 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope="outputs.prompt_bounds",
                 )
             )
+    if plan.outputs.direct_mean_intervals.single_valued_bound:
+        unsupported = []
+        if plan.design.type == "sampled":
+            unsupported.append(
+                "a sampled design, whose frame bounds are not a family of node bounds"
+            )
+        if plan.inputs.judge_calibration is not None:
+            unsupported.append(
+                "judge calibration, because the bound would describe the judge's risk, "
+                "not the corrected risk"
+            )
+        if unsupported:
+            diagnostics.append(
+                Diagnostic(
+                    code="PLAN_SINGLE_VALUED_BOUND_UNSUPPORTED",
+                    severity="ERROR",
+                    message=(
+                        "outputs.direct_mean_intervals.single_valued_bound is not supported "
+                        "with " + " or ".join(unsupported) + "; set it to false"
+                    ),
+                    scope="outputs.direct_mean_intervals",
+                )
+            )
+    calibration = plan.inputs.judge_calibration
+    scopes: list[tuple[str, list[str] | None]] = [
+        ("inputs.judge_calibration", calibration.groups if calibration else None),
+        ("inputs.panel_groups", plan.inputs.panel_groups),
+        *(
+            (f"inputs.judges.{judge.id}.accuracy", judge.accuracy.groups)
+            for judge in plan.inputs.judges
+            if judge.accuracy is not None
+        ),
+    ]
+    for location, scoped in scopes:
+        unknown_groups = sorted(set(scoped or []) - groups)
+        if unknown_groups:
+            diagnostics.append(
+                Diagnostic(
+                    code="PLAN_UNKNOWN_REFERENCE",
+                    severity="ERROR",
+                    message=f"{location} references unknown groups: " + ", ".join(unknown_groups),
+                    scope=location,
+                )
+            )
     diagnostics.extend(_worst_of_k_interval_problems(plan))
     if not plan.outputs.risk_measures:
         diagnostics.append(
