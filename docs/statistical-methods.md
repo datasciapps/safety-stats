@@ -804,7 +804,7 @@ variance. Sparse binary safety analyses should generally prespecify weighted KL/
 primary interval and show empirical Bernstein and weighted Hoeffding as references. The package
 does not select whichever interval looks narrowest after seeing the data.
 
-##### Betting interval from a fixed mixture of common bets
+##### Betting interval from a fixed mixture of common bets (experimental)
 
 The three constructions above bound a moment generating function analytically. A fourth,
 `weighted_betting`, tests each candidate mean directly with a nonnegative capital process and
@@ -856,6 +856,10 @@ prompt-level or coarser independence profile, and it is competitive with, though
 than, the exact Bernoulli-KL inversion on sparse binary rollouts with equal weights. As with every
 engine, showing it as a prespecified primary or reference is valid; selecting it after seeing that
 it is narrowest is not [33].
+
+The construction is experimental (CONTRIBUTING, section 3): a plan selects it only by naming
+`weighted_betting`, it is offered for direct means and hierarchy nodes but not for comparisons,
+and its functions are not exported from `inspect_safety_stats.stats`.
 
 ##### Hierarchy nodes and configurable independence profiles
 

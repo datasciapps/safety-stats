@@ -551,11 +551,13 @@ same weights—are aliases and do not spend alpha twice.
 `weighted_kl_chernoff` is a finite-sample Chernoff inversion optimized for sparse binary failures.
 It uses the Bernoulli-KL exponent when atomic weights are equal and a rigorous weighted
 Poisson-Chernoff fallback when they are not. `weighted_empirical_bernstein` is variance-adaptive;
-`weighted_hoeffding` uses only boundedness. `weighted_betting` inverts a fixed mixture of
+`weighted_hoeffding` uses only boundedness. `weighted_betting` (experimental) inverts a fixed mixture of
 common betting fractions; it is variance-adaptive without an estimated variance proxy, so it is
 usually the tightest choice when blocks are fractional rates (a prompt-level or coarser
 independence profile) and is competitive with KL/Chernoff on sparse binary rollouts. Unequal block
 weights enter as exponents `A_g / max A` and widen it much as they widen the KL fallback.
+Comparisons do not accept it. See
+[Betting interval](statistical-methods.md#betting-interval-from-a-fixed-mixture-of-common-bets-experimental).
 `reference_methods` reports prespecified alternatives
 without replacing the primary method. Each method's coverage guarantee is construction-specific;
 the report is not permission to choose the shortest interval after seeing the results.

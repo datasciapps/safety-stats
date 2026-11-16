@@ -24,7 +24,7 @@ The other guides and the examples are listed under [Documentation](#documentatio
 
 - Exact one-sided Clopper–Pearson failure-rate bounds per fixed prompt.
 - Direct finite-sample weighted KL/Chernoff, variance-adaptive empirical-Bernstein,
-  mixture-of-common-bets (betting), and weighted-Hoeffding intervals for fixed-design mean
+  mixture-of-common-bets (betting, experimental), and weighted-Hoeffding intervals for fixed-design mean
   risk, with conservative completion of unclassified outcomes.
 - Simultaneous mean-risk intervals at every declared hierarchy node, with hierarchy-aware
   frontier Šidák calibration, a common linear confidence region, and creator-declared named

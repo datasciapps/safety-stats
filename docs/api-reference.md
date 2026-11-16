@@ -149,6 +149,11 @@ weighted_bounded_hoeffding_mean_bounds(
 )
 weighted_bounded_empirical_bernstein_mean_bounds(...)
 weighted_bounded_kl_chernoff_mean_bounds(...)
+```
+
+```python
+# Experimental; not in inspect_safety_stats.stats.__all__.
+from inspect_safety_stats.stats.direct_mean import weighted_bounded_betting_mean_bounds
 weighted_bounded_betting_mean_bounds(...)
 ```
 
@@ -218,15 +223,16 @@ Each prompt's unbiased U-statistic enters `weighted_bounded_kl_chernoff_mean_bou
 `weighted_kl_chernoff_mean_bounds`. See
 [Worst-of-k interval](statistical-methods.md#worst-of-k-interval-experimental).
 
-`weighted_bounded_betting_mean_bounds` (count form: `weighted_betting_mean_bounds`, same signature
-as the other count wrappers) tests each candidate mean with the capital of a common betting
+Experimental. `weighted_bounded_betting_mean_bounds` (count form: `weighted_betting_mean_bounds`,
+same signature as the other count wrappers) is not exported from `inspect_safety_stats.stats`
+until it graduates; import it from `inspect_safety_stats.stats.direct_mean`. It tests each candidate mean with the capital of a common betting
 fraction applied to every block with exponent `A_g / max A`, mixed over a fixed
 Beta(1/2, 1/2)-quantile prior that places half its mass on the most aggressive bet. Jensen's
 inequality and the weighted AM-GM inequality make the mixture an e-value under
 `sum_g A_g E[Y_g] = m`, so `{m : capital(m) < 1/alpha}` is a confidence set. It reports
 `chernoff_kernel = "common_bet_mixture_jensen_exponent"`. The bet is common to all blocks and fixed
 in advance; a block-adaptive bet would be invalid under heterogeneous block means. See
-[Statistical methods](statistical-methods.md).
+[Betting interval](statistical-methods.md#betting-interval-from-a-fixed-mixture-of-common-bets-experimental).
 
 When hierarchy-region projection is enabled, each reported direct interval also records
 `raw_lower`, `raw_upper`, `projection_method`, and `projection_constraint_count`. The displayed

@@ -1173,9 +1173,10 @@ def _direct_interval_result(
         )
     elif bounds.chernoff_kernel == BETTING_KERNEL:
         assumptions.append(
-            "A common betting fraction, mixed over a prior fixed before any outcome was "
-            "seen, is applied to every block with exponent A_g / max A; validity follows "
-            "from Jensen's and the weighted AM-GM inequalities and needs no variance proxy."
+            "Experimental: a common betting fraction, mixed over a prior fixed before any "
+            "outcome was seen, is applied to every block with exponent A_g / max A; validity "
+            "follows from Jensen's and the weighted AM-GM inequalities and needs no variance "
+            "proxy."
         )
     scope_prefix = "simultaneous" if spec.simultaneous else "pointwise"
     calibration_scope = "_frontier_sidak" if calibration.method == "frontier_sidak" else ""
