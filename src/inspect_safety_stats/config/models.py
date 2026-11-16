@@ -706,6 +706,18 @@ class ReportSpec(StrictModel):
     include_observations: bool = True
     include_decisions: bool = False
     decimal_places: PlanInt = Field(default=6, ge=0, le=15)
+    # Experimental. Left out of the plan dump while off, so a plan that does not opt in keeps
+    # its hash and every artifact it produced before the field existed.
+    judge_error_stress: bool = False
+
+    @model_serializer(mode="wrap")
+    def leave_out_judge_error_stress_when_off(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if not self.judge_error_stress:
+            data.pop("judge_error_stress", None)
+        return data
 
 
 class AnalysisPlan(StrictModel):

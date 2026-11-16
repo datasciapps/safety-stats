@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
@@ -21,6 +22,8 @@ from inspect_safety_stats.config.models import (
     ComparisonSpec,
     DirectMeanIntervalsSpec,
     IndependenceSelectionSpec,
+    JudgeAccuracySpec,
+    JudgeSpec,
     RiskMeasureSpec,
 )
 from inspect_safety_stats.decision.engine import decide_claim, roll_up
@@ -46,6 +49,7 @@ from inspect_safety_stats.schema.reports import (
     GroupRiskResult,
     HierarchyRiskResult,
     IntegritySummary,
+    JudgeErrorStressResult,
     PromptEstimate,
     RiskIntervalResult,
     SafetyReport,
@@ -87,6 +91,7 @@ from inspect_safety_stats.stats.independence import (
     direct_bounded_blocks,
     validate_profile_fields,
 )
+from inspect_safety_stats.stats.judge_stress import stress_verdict
 from inspect_safety_stats.stats.judges import (
     JudgeAccuracyBox,
     compose_verdicts,
@@ -2279,6 +2284,48 @@ def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, 
     }
 
 
+def _declared_box(accuracy: JudgeAccuracySpec) -> JudgeAccuracyBox:
+    return JudgeAccuracyBox(
+        sensitivity_lower=accuracy.sensitivity.lower,
+        sensitivity_upper=accuracy.sensitivity.upper,
+        specificity_lower=accuracy.specificity.lower,
+        specificity_upper=accuracy.specificity.upper,
+    )
+
+
+def _composite_box(
+    members: list[JudgeSpec], accuracies: list[JudgeAccuracySpec], rule: str
+) -> JudgeAccuracyBox:
+    """An ``any`` or ``all`` composite's box from its members' declared boxes and blocks."""
+    return composite_accuracy_box(
+        [_declared_box(accuracy) for accuracy in accuracies],
+        [member.block or member.id for member in members],
+        rule,
+    )
+
+
+def _primary_accuracy_box(plan: AnalysisPlan) -> tuple[JudgeAccuracyBox, str] | None:
+    """The declared accuracy box of the verdict that is the primary outcome, if it has one.
+
+    That is a declared judge whose score is the primary score, or an ``any`` or ``all``
+    composite whose judges all declare accuracy ranges. A ``majority`` composite has none.
+    """
+
+    name = plan.inputs.score.name
+    composite = next((item for item in plan.inputs.composites if item.id == name), None)
+    judges = {judge.id: judge for judge in plan.inputs.judges}
+    if composite is not None:
+        members = [judges[judge_id] for judge_id in composite.judges]
+        accuracies = [member.accuracy for member in members if member.accuracy is not None]
+        if composite.rule == "majority" or len(accuracies) != len(members):
+            return None
+        return _composite_box(members, accuracies, composite.rule), f"composite:{composite.id}"
+    judge = next((item for item in plan.inputs.judges if item.score.name == name), None)
+    if judge is None or judge.accuracy is None:
+        return None
+    return _declared_box(judge.accuracy), f"judge:{judge.id}"
+
+
 def _apply_panel_derived_correction(
     plan: AnalysisPlan,
     risks: list[GroupRiskResult],
@@ -2316,18 +2363,7 @@ def _apply_panel_derived_correction(
             )
         )
         return None
-    boxes = [
-        JudgeAccuracyBox(
-            sensitivity_lower=accuracy.sensitivity.lower,
-            sensitivity_upper=accuracy.sensitivity.upper,
-            specificity_lower=accuracy.specificity.lower,
-            specificity_upper=accuracy.specificity.upper,
-        )
-        for accuracy in accuracies
-    ]
-    box = composite_accuracy_box(
-        boxes, [member.block or member.id for member in members], composite.rule
-    )
+    box = _composite_box(members, accuracies, composite.rule)
     correctable = {
         measure.id
         for measure in plan.outputs.risk_measures
@@ -4511,6 +4547,86 @@ def _noisy_valid_claim(
     )
 
 
+def _claim_judge_error_stress(
+    *,
+    claim: ClaimSpec,
+    evidence: ComparisonResult | GroupRiskResult | None,
+    status: Decision,
+    why_not: str | None,
+    measure_types: Mapping[str, str],
+    population: dict[str, dict[str, _PromptRollouts]],
+    group_weights: dict[str, dict[str, float]],
+    accuracy: tuple[JudgeAccuracyBox, str] | None,
+) -> JudgeErrorStressResult:
+    """Where a claim decided on judge-reported bounds tips, and whether a declared box holds it.
+
+    Diagnostic only: the result is reported beside the claim and never changes its status.
+    """
+
+    def skipped(reason: str) -> JudgeErrorStressResult:
+        return JudgeErrorStressResult(applicable=False, reason=reason)
+
+    if claim.comparison:
+        return skipped(
+            "comparison claims are not stressed: the judge's accuracy may differ between arms"
+        )
+    if (
+        not isinstance(evidence, GroupRiskResult)
+        or evidence.lower is None
+        or evidence.upper is None
+    ):
+        return skipped("the claim has no complete bounds")
+    if why_not is not None:
+        return skipped(why_not)
+    measure_type = measure_types[evidence.measure_id]
+    if measure_type not in _JUDGE_CORRECTABLE_MEASURES:
+        return skipped(
+            f"a {measure_type} measure does not carry the judge's per-prompt error model over "
+            "to the row"
+        )
+    share = _unclassified_share(
+        population.get(evidence.cohort_id, {}), group_weights[evidence.group_id], measure_type
+    )
+    stress = stress_verdict(
+        judge_reported_lower=evidence.lower,
+        judge_reported_upper=evidence.upper,
+        acceptable_upper=claim.acceptable_upper,
+        unacceptable_lower=claim.unacceptable_lower,
+        box=accuracy[0] if accuracy is not None else None,
+        unclassified_share=share,
+    )
+    box, source = accuracy if accuracy is not None else (None, None)
+    stressed = stress.stressed
+    return JudgeErrorStressResult(
+        applicable=True,
+        judge_reported_lower=evidence.lower,
+        judge_reported_upper=evidence.upper,
+        unclassified_share=share,
+        pass_sensitivity_at_perfect_specificity=(
+            stress.pass_line.sensitivity_at_perfect_specificity
+        ),
+        pass_specificity_at_perfect_sensitivity=(
+            stress.pass_line.specificity_at_perfect_sensitivity
+        ),
+        fail_sensitivity_at_perfect_specificity=(
+            stress.fail_line.sensitivity_at_perfect_specificity
+        ),
+        fail_specificity_at_perfect_sensitivity=(
+            stress.fail_line.specificity_at_perfect_sensitivity
+        ),
+        accuracy_source=source,
+        sensitivity_lower=box.sensitivity_lower if box else None,
+        sensitivity_upper=box.sensitivity_upper if box else None,
+        specificity_lower=box.specificity_lower if box else None,
+        specificity_upper=box.specificity_upper if box else None,
+        stressed_status=stressed.verdict if stressed else None,
+        true_risk_lower=stressed.true_risk_lower if stressed else None,
+        true_risk_upper=stressed.true_risk_upper if stressed else None,
+        identified=stressed.identified if stressed else None,
+        robust=stressed.verdict == status if stressed else None,
+    )
+
+
 def _claims(
     plan: AnalysisPlan,
     data: NormalizedData,
@@ -4534,6 +4650,10 @@ def _claims(
     )
     group_weights = {group.id: group.weights for group in data.groups}
     measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
+    stress_population = (
+        population or _labelled_population(plan, data) if plan.report.judge_error_stress else {}
+    )
+    stress_box = _primary_accuracy_box(plan) if plan.report.judge_error_stress else None
     results: list[ClaimResult] = []
     corrected_claims: list[str] = []
     uncorrected_claims: list[str] = []
@@ -4674,6 +4794,31 @@ def _claims(
                 ]
             else:
                 reasons.append("Exploratory analyses cannot produce a safety pass.")
+        stress = None
+        if plan.report.judge_error_stress:
+            stress = _claim_judge_error_stress(
+                claim=claim,
+                evidence=evidence,
+                status=status,
+                why_not=(
+                    "the claim was not decided on its bounds: they are not certifying, the "
+                    "analysis is exploratory, or data integrity is invalid"
+                    if not eligible
+                    else "the noisy-but-valid test already accounts for judge error"
+                    if claim.method == "noisy_valid_test"
+                    else "the claim is decided on a validated judge correction, which already "
+                    "accounts for judge error"
+                    if correction is not None
+                    else "the plan's validated calibration leaves the claim INCONCLUSIVE rather "
+                    "than deciding it on judge-reported risk"
+                    if validated_judge
+                    else None
+                ),
+                measure_types=measure_types,
+                population=stress_population,
+                group_weights=group_weights,
+                accuracy=stress_box,
+            )
         if correction_note is not None:
             reasons.insert(0, correction_note)
             if alpha != family.alpha:
@@ -4700,6 +4845,7 @@ def _claims(
                 evidence_refs=evidence_refs,
                 reasons=reasons,
                 warnings=list(evidence.warnings) if evidence else [],
+                judge_error_stress=stress,
             )
         )
     if corrected_claims:
