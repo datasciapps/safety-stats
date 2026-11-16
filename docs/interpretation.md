@@ -34,6 +34,16 @@ A descriptive status is for reading the bounds. It is not a certification: an ex
 need not precede the evaluation it analyses, so a descriptive `PASS` is not the predeclared
 decision a confirmatory `PASS` is. To certify, freeze a confirmatory plan and evaluate again.
 
+### Verdicts under sensitivity profiles
+
+A claim's status is decided under its evidence's primary independence profile. When the plan
+declares sensitivity profiles, `profile_verdicts` in `report.json`, a table in `report.md` and
+the HTML claim card also give the verdict each sensitivity profile's interval would reach at
+the same thresholds. These verdicts never change the claim's status or the decision. A
+`PASS` that is `INCONCLUSIVE` under a coarser profile, such as `prompt`, rests on the primary
+profile's independence assumption. See
+[Verdicts by profile](independence-profiles.md#verdicts-by-profile).
+
 ## Integrity states
 
 `valid` means every required outcome was classified and no structural integrity error occurred.
