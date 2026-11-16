@@ -1,6 +1,72 @@
 from __future__ import annotations
 
-from inspect_safety_stats.schema.reports import Decision
+from inspect_safety_stats.schema.reports import Decision, VerdictRange
+from inspect_safety_stats.stats.misclassification import NoisyValidCertification
+
+# The thresholds a plan allows a claim (ClaimSpec): acceptable_upper < unacceptable_lower,
+# both in [-1, 1].
+THRESHOLD_MIN = -1.0
+THRESHOLD_MAX = 1.0
+
+
+def claim_verdict_range(
+    *,
+    lower: float | None,
+    upper: float | None,
+    eligible: bool,
+) -> VerdictRange:
+    """Invert ``decide_claim``: the thresholds at which these bounds give PASS or FAIL.
+
+    PASS needs ``upper <= acceptable_upper`` and FAIL ``lower >= unacceptable_lower``, so the
+    boundaries are the bounds themselves. A boundary that leaves no valid threshold pair, such
+    as an upper bound of 1, gives no range.
+    """
+
+    if not eligible or lower is None or upper is None:
+        return VerdictRange()
+    return VerdictRange(
+        pass_acceptable_upper=upper if upper < THRESHOLD_MAX else None,
+        fail_unacceptable_lower=lower if lower > THRESHOLD_MIN else None,
+    )
+
+
+def noisy_valid_verdict_range(result: NoisyValidCertification) -> VerdictRange:
+    """Invert the noisy-but-valid test: the thresholds at which its outcome is PASS or FAIL.
+
+    The test passes when the judge-reported upper bound is below
+    ``c_pass = a * Se_L + (1 - a) * FPR_L``, which rises in ``a`` for an informative judge, so
+    it passes for every ``acceptable_upper`` strictly above
+    ``(judge_upper - FPR_L) / (Se_L - FPR_L)``. FAIL mirrors this with the upper calibration
+    endpoints. The test takes thresholds in [0, 1] only. None of this depends on the
+    thresholds except the critical values, so an unidentified judge gives no range.
+    """
+
+    if not result.identified:
+        return VerdictRange()
+    pass_value: float | None = None
+    pass_strict = False
+    pass_slope = result.sensitivity_lower - result.false_positive_lower
+    if pass_slope > 0:
+        boundary = (result.judge_reported_upper - result.false_positive_lower) / pass_slope
+        if boundary < 0:
+            pass_value = 0.0
+        elif boundary < 1:
+            pass_value, pass_strict = boundary, True
+    fail_value: float | None = None
+    fail_strict = False
+    fail_slope = result.sensitivity_upper - result.false_positive_upper
+    if fail_slope > 0:
+        boundary = (result.judge_reported_lower - result.false_positive_upper) / fail_slope
+        if boundary > 1:
+            fail_value = 1.0
+        elif boundary > 0:
+            fail_value, fail_strict = boundary, True
+    return VerdictRange(
+        pass_acceptable_upper=pass_value,
+        pass_strict=pass_strict,
+        fail_unacceptable_lower=fail_value,
+        fail_strict=fail_strict,
+    )
 
 
 def decide_claim(
