@@ -220,6 +220,130 @@ def fixed_design_detectable_failure_rates(
     )
 
 
+ComparisonPlanningUnit = Literal["rollout", "pair", "prompt_cluster"]
+
+
+@dataclass(frozen=True)
+class ResolvableRiskDifferences:
+    """Risk differences a fixed two-arm design resolves at a margin, with Hoeffding power.
+
+    ``maximum_supportable_difference`` is the largest true candidate-minus-baseline
+    difference at which the upper bound falls at or below ``margin`` with at least
+    ``target_power``; ``minimum_detectable_difference`` is the smallest true difference at
+    which the lower bound reaches ``margin`` with at least that power. ``None`` means no
+    difference in ``[-1, 1]`` attains it.
+    """
+
+    margin: float
+    maximum_supportable_difference: float | None
+    minimum_detectable_difference: float | None
+    support_gap: float | None
+    rejection_gap: float | None
+    target_power: float
+    concentration_variance: float
+    effective_sample_size: float
+    block_count: int
+    independence_unit: ComparisonPlanningUnit
+
+
+def comparison_resolvable_differences(
+    candidate_trials: ArrayLike,
+    baseline_trials: ArrayLike,
+    weights: ArrayLike,
+    *,
+    margin: float,
+    alpha_lower: float,
+    alpha_upper: float,
+    power: float,
+    independence_unit: ComparisonPlanningUnit = "rollout",
+) -> ResolvableRiskDifferences:
+    """Return Hoeffding-guaranteed resolvable risk differences for a two-arm design.
+
+    The guarantee is that of the ``weighted_hoeffding`` risk difference which ``analyze``
+    builds on ``Q = (1 + candidate - baseline) / 2``: with no unclassified outcomes, a true
+    difference at or below ``maximum_supportable_difference`` gives an upper bound at or below
+    ``margin``, and one at or above ``minimum_detectable_difference`` a lower bound at or
+    above ``margin``, each with probability at least ``power`` (Hoeffding, 1963). Prompt
+    probabilities may differ. The independence unit names the blocks of ``Q``:
+
+    - ``rollout``: every rollout of either arm is independent (unpaired arms; an
+      independence profile ``block_by: [rollout]``).
+    - ``pair``: the candidate and baseline rollouts of a prompt with the same repeat index
+      form one block, with arbitrary dependence inside it (``block_by: [prompt_id, repeat]``
+      with ``comparison_coupling: joint``).
+    - ``prompt_cluster``: all rollouts of both arms on a prompt form one block
+      (``block_by: [prompt_id]`` with ``comparison_coupling: joint``).
+
+    The guarantee does not extend to the KL/Chernoff or empirical-Bernstein differences,
+    which are usually, not always, narrower.
+    """
+
+    nc = np.asarray(candidate_trials)
+    nb = np.asarray(baseline_trials)
+    w = np.asarray(weights, dtype=float)
+    if any(array.ndim != 1 for array in (nc, nb, w)) or len(w) == 0:
+        raise ValueError("trials and weights must be nonempty one-dimensional arrays")
+    if len(nc) != len(w) or len(nb) != len(w):
+        raise ValueError("candidate trials, baseline trials and weights must be aligned")
+    if not np.issubdtype(nc.dtype, np.integer) or not np.issubdtype(nb.dtype, np.integer):
+        raise ValueError("trials must contain positive integers")
+    if np.any(nc <= 0) or np.any(nb <= 0):
+        raise ValueError("trials must contain positive integers")
+    if np.any(~np.isfinite(w)) or np.any(w < 0):
+        raise ValueError("weights must be finite and nonnegative")
+    if not math.isclose(float(np.sum(w)), 1.0, rel_tol=1e-10, abs_tol=1e-12):
+        raise ValueError("weights must sum to one")
+    if isinstance(margin, bool) or not -1 < margin < 1:
+        raise ValueError("margin must be in (-1, 1)")
+    if not 0 < alpha_lower < 1 or not 0 < alpha_upper < 1:
+        raise ValueError("alpha_lower and alpha_upper must be in (0, 1)")
+    if not 0 < power < 1:
+        raise ValueError("power must be in (0, 1)")
+    if independence_unit not in {"rollout", "pair", "prompt_cluster"}:
+        raise ValueError("independence_unit must be rollout, pair or prompt_cluster")
+
+    candidate = nc.astype(float)
+    baseline = nb.astype(float)
+    positive = w > 0
+    # c2 is the sum of squared block masses of Q, whose blocks are bounded in [0, 1].
+    if independence_unit == "rollout":
+        c2 = float(np.sum(np.square(w) / 4 * (1 / candidate + 1 / baseline)))
+        blocks = int(np.sum((nc + nb)[positive]))
+    elif independence_unit == "pair":
+        shared = np.minimum(candidate, baseline)
+        longer = np.maximum(candidate, baseline)
+        shared_mass = w / 2 * (1 / candidate + 1 / baseline)
+        unshared_mass = w / (2 * longer)
+        c2 = float(
+            np.sum(shared * np.square(shared_mass) + (longer - shared) * np.square(unshared_mass))
+        )
+        blocks = int(np.sum(np.maximum(nc, nb)[positive]))
+    else:
+        c2 = float(np.sum(np.square(w)))
+        blocks = int(np.sum(positive))
+
+    # D = 2Q - 1, so every radius on Q doubles on D.
+    power_radius = 2 * math.sqrt(0.5 * c2 * math.log(1 / (1 - power)))
+    support_gap = 2 * math.sqrt(0.5 * c2 * math.log(1 / alpha_upper)) + power_radius
+    rejection_gap = 2 * math.sqrt(0.5 * c2 * math.log(1 / alpha_lower)) + power_radius
+    maximum_supportable = margin - support_gap
+    minimum_detectable = margin + rejection_gap
+    return ResolvableRiskDifferences(
+        margin=margin,
+        maximum_supportable_difference=(
+            maximum_supportable if maximum_supportable >= -1 else None
+        ),
+        minimum_detectable_difference=minimum_detectable if minimum_detectable <= 1 else None,
+        support_gap=support_gap if maximum_supportable >= -1 else None,
+        rejection_gap=rejection_gap if minimum_detectable <= 1 else None,
+        target_power=power,
+        concentration_variance=4 * c2,
+        effective_sample_size=1 / c2,
+        block_count=blocks,
+        independence_unit=independence_unit,
+    )
+
+
 def certification_sample_size(
     *,
     true_rate: float,
