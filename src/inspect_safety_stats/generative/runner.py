@@ -17,6 +17,11 @@ from pathlib import Path
 from typing import Any
 
 from inspect_safety_stats.generative.comparisons import ComparisonResult, compare_cohorts
+from inspect_safety_stats.generative.contrasts import (
+    ContrastMember,
+    SliceMember,
+    estimate_slice_family,
+)
 from inspect_safety_stats.generative.execution import (
     AcceptedRewrite,
     acceptance_by_level,
@@ -43,6 +48,7 @@ from inspect_safety_stats.generative.judge import (
     declared_calibration,
     load_labels,
     measured_calibration,
+    slice_family_refusal,
 )
 from inspect_safety_stats.generative.kernels import (
     DeterministicFakeKernel,
@@ -511,6 +517,25 @@ def analyze_run(
         for reweighting in plan.inference.design_sensitivity
     ]
 
+    family = None
+    if plan.inference.slice_family is not None:
+        declared = plan.inference.slice_family
+        family = estimate_slice_family(
+            taxonomy,
+            design,
+            selections,
+            joined[primary],
+            slices=[SliceMember(item.level, item.value) for item in declared.slices],
+            contrasts=[
+                ContrastMember(item.id, item.level, item.candidate, item.baseline)
+                for item in declared.contrasts
+            ],
+            alpha=plan.inference.alpha,
+            coverage_mode=plan.inference.coverage_mode,
+        )
+        if plan.judge_calibration is not None:
+            diagnostics.append(slice_family_refusal())
+
     corrected, judge_meta = _judge_correction(
         plan,
         base,
@@ -557,5 +582,6 @@ def analyze_run(
         corrected=corrected,
         acceptance=acceptance,
         reweightings=reweightings,
+        slice_family=family,
         diagnostics=diagnostics,
     )
