@@ -20,6 +20,53 @@ When a validated judge calibration is declared, these decisions are made against
 risk rather than judge-reported risk, and the claim records both intervals. See
 [Judge misclassification](judge-misclassification.md).
 
+### Exploratory analyses
+
+An analysis with `intent: exploratory` certifies nothing, so every claim and the report's
+decision are `INCONCLUSIVE`. When integrity is valid and a claim's bounds are certifying, the
+claim also has a descriptive status: the status a confirmatory analysis of the same bounds
+would give at the plan's thresholds. `report.json` records it as `descriptive_status`,
+and, with `report.include_decisions: true`, `report.md` shows it beside the status, for example
+`` `INCONCLUSIVE` (descriptive: `PASS`) ``, and `report.html` as a dashed badge. A claim without
+certifying bounds, or a report whose integrity is invalid, has none (`null`).
+
+A descriptive status is for reading the bounds. It is not a certification: an exploratory plan
+need not precede the evaluation it analyses, so a descriptive `PASS` is not the predeclared
+decision a confirmatory `PASS` is. To certify, freeze a confirmatory plan and evaluate again.
+
+### Verdicts at other thresholds
+
+Each claim also records `verdict_range`: the thresholds at which the same bounds would give
+`PASS` or `FAIL`. The claim is `PASS` for every `acceptable_upper` at or above
+`pass_acceptable_upper`, and `FAIL` for every `unacceptable_lower` at or below
+`fail_unacceptable_lower`. When `pass_strict` or `fail_strict` is true, the boundary itself is
+excluded. Every other pair of thresholds gives `INCONCLUSIVE`. A `null` boundary means that no
+threshold the plan allows gives that verdict. For an interval claim the boundaries are the upper
+and lower bounds. For the noisy-but-valid test they are the thresholds at which its critical
+values meet the judge-reported bounds. The report's claims table states the same range, with
+each boundary rounded so that the statement still holds.
+
+In an exploratory analysis the claim is `INCONCLUSIVE` at every threshold. Its range, like its
+descriptive status, is what a confirmatory analysis of the same bounds would give, and it
+certifies nothing.
+
+The range shows how far the verdict is from changing. The error rate of a verdict read off it
+is bounded at any thresholds, because a wrong `PASS` or `FAIL` needs the true risk outside the
+bounds. A threshold chosen after seeing the bounds cannot show, though, that the requirement
+came before the evidence. To decide at revised thresholds and keep that visible, give the
+analysis a [decision policy](decision-policy.md) (experimental): it records each version of the
+thresholds with the time it was set, and leaves the plan and its hash as frozen.
+
+### Verdicts under sensitivity profiles
+
+A claim's status is decided under its evidence's primary independence profile. When the plan
+declares sensitivity profiles, `profile_verdicts` in `report.json`, a table in `report.md` and
+the HTML claim card also give the verdict each sensitivity profile's interval would reach at
+the same thresholds. These verdicts never change the claim's status or the decision. A
+`PASS` that is `INCONCLUSIVE` under a coarser profile, such as `prompt`, rests on the primary
+profile's independence assumption. See
+[Verdicts by profile](independence-profiles.md#verdicts-by-profile).
+
 ## Integrity states
 
 `valid` means every required outcome was classified and no structural integrity error occurred.
@@ -84,6 +131,26 @@ When enabled, **Hierarchy marginal risks** reports the same conditional weighted
 every declared non-prompt node. The original group weights are normalized among the node's fixed
 descendants. These rows describe the fixed design and do not estimate prevalence in a population
 of unseen tasks or questions.
+
+### Where effects sit
+
+A headline row averages over the hierarchy, so an effect concentrated in one node can look
+small there: a few points of difference overall can be a large difference in one category and
+none in the others. When a report has hierarchy rows, `report.md` lists, right after the
+claims:
+
+- every hierarchy node of a comparison whose interval excludes no difference (0 for a risk
+  difference or a relative risk reduction, 1 for a risk ratio), beside the comparison's overall
+  effect;
+- every hierarchy node whose estimate is above the acceptable limit of a claim on the same
+  evidence, with whether the whole interval or only the estimate is above. An aggregate claim
+  reaches the node rows only through a `weighted_mean` measure, the estimand they report; a
+  comparison claim reaches its comparison's node rows. The list is hidden with the decisions.
+
+These rows are pointers into the hierarchy tables, with the same intervals and coverage; they
+are not further claims. A claim decided on a judge-corrected interval is compared with
+judge-reported node rows. A claim that passes on the average while nodes sit above its limit
+passes as declared: the list makes that visible, it does not change the decision.
 
 The HTML report presents these results as a collapsible tree. Choose one **Independence profile**
 for the whole report. Every interval glyph uses the same 0–100% risk axis. The strong blue band is
@@ -172,6 +239,21 @@ every component must pass, but no additional Bonferroni correction is required s
 conjunction. Component intervals are not automatically simultaneous unless a simultaneous interval
 family was also declared.
 
+## Small evaluations and stderr-based intervals
+
+Many evaluation tools report a mean with a standard error and an interval built from the
+central limit theorem. On benchmarks below a few hundred items these intervals are usually much
+too narrow, so they cover the true value far less often than their nominal level
+([Bowyer, Aitchison and Ivanova, 2025](https://arxiv.org/abs/2503.01747)). Safety
+evaluations are often that small and their failure rates close to zero, where the approximation
+is worst. This is why the primary intervals here are exact binomial or finite-sample
+concentration bounds, which hold at any sample size (see
+[Mathematical methods](statistical-methods.md), sections 4.4 and 2.4.10).
+
+Do not compare these intervals with stderr-based intervals from other tools as if both had the
+same coverage. On a small evaluation the stderr interval will usually be narrower; that reflects
+under-coverage, not greater precision.
+
 ## Diagnostic results
 
 Diagnostic outputs help characterize sensitivity but do not have the same simultaneous coverage
@@ -189,3 +271,8 @@ into a population sample.
 ## External validity
 
 No result in version 1 generalizes automatically beyond the fixed design. Statistical precision cannot repair scorer error, under-elicitation, sandbagging, omitted hazards, or deployment shift.
+
+Every bound assumes the evaluated model is not strategically underperforming. Rare harms below
+the rate the rollout budget can reach remain unmeasured residual risk, as validation of automated
+driving found for crashes. See [Mathematical methods](statistical-methods.md), sections 15.2 and
+15.7.

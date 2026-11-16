@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
@@ -29,6 +30,30 @@ app.add_typer(schema_app, name="schema")
 app.add_typer(generative_app, name="generative")
 
 
+DecisionPolicyOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--decision-policy",
+        exists=True,
+        dir_okay=False,
+        help=(
+            "A decision policy whose thresholds replace the plan's for the claims it sets, "
+            "without changing the plan's hash (experimental; docs/decision-policy.md)."
+        ),
+    ),
+]
+ReceiptOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--registration-receipt",
+        exists=True,
+        dir_okay=False,
+        help=(
+            "Receipt written by hash-plan --register: checked against the plan's hash and "
+            "the earliest evaluation start. Experimental: see docs/plan-reference.md."
+        ),
+    ),
+]
 RunsOption = Annotated[
     Path | None,
     typer.Option(
@@ -50,18 +75,6 @@ RolloutsOption = Annotated[
         help=(
             "Rollouts file of a neutral rollout source (JSONL or CSV); requires "
             "--runs. Experimental: see docs/rollout-files.md."
-        ),
-    ),
-]
-ReceiptOption = Annotated[
-    Path | None,
-    typer.Option(
-        "--registration-receipt",
-        exists=True,
-        dir_okay=False,
-        help=(
-            "Receipt written by hash-plan --register: checked against the plan's hash and "
-            "the earliest evaluation start. Experimental: see docs/plan-reference.md."
         ),
     ),
 ]
@@ -98,6 +111,7 @@ def analyze_command(
         bool, typer.Option("--decision-exit-codes/--no-decision-exit-codes")
     ] = False,
     allow_invalid: Annotated[bool, typer.Option("--allow-invalid")] = False,
+    decision_policy: DecisionPolicyOption = None,
     registration_receipt: ReceiptOption = None,
 ) -> None:
     """Analyze completed Inspect logs or rollout files against a plan and write the report."""
@@ -111,6 +125,7 @@ def analyze_command(
             logs=log_input,
             parallel=parallel or False,
             source=source,
+            decision_policy=decision_policy,
             registration_receipt=registration_receipt,
         )
         path = report.write(output, overwrite=overwrite)
@@ -148,6 +163,7 @@ def validate_command(
     runs: RunsOption = None,
     rollouts: RolloutsOption = None,
     parallel: Annotated[int, typer.Option("--parallel", min=0)] = 0,
+    decision_policy: DecisionPolicyOption = None,
     registration_receipt: ReceiptOption = None,
 ) -> None:
     """Check logs or rollout files against a plan (manifest, cohorts, rollouts, scores)."""
@@ -160,6 +176,7 @@ def validate_command(
         logs=log_input,
         parallel=parallel or False,
         source=source,
+        decision_policy=decision_policy,
         registration_receipt=registration_receipt,
     )
     for diagnostic in result.diagnostics:
@@ -346,8 +363,29 @@ class IndependenceUnitOption(str, Enum):
 
 @plan_app.command("fixed-design")
 def fixed_design_planning_command(
-    manifest: Annotated[Path, typer.Option("--manifest", exists=True, dir_okay=False)],
-    threshold: Annotated[float, typer.Option("--threshold", min=0.0, max=1.0)],
+    ctx: typer.Context,
+    manifest: Annotated[
+        Path | None,
+        typer.Option(
+            "--manifest",
+            exists=True,
+            dir_okay=False,
+            help="Design manifest; with --plan, overrides the plan's inputs.design_manifest.",
+        ),
+    ] = None,
+    threshold: Annotated[float | None, typer.Option("--threshold", min=0.0, max=1.0)] = None,
+    plan_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--plan",
+            exists=True,
+            dir_okay=False,
+            help=(
+                "Analysis plan: plan every claim with the plan's groups, weights, hierarchy, "
+                "independence profile, multiplicity family and thresholds."
+            ),
+        ),
+    ] = None,
     alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
     power: Annotated[float, typer.Option("--power", min=0.0, max=1.0)] = 0.9,
     rollouts: Annotated[int | None, typer.Option("--rollouts", min=1)] = None,
@@ -367,7 +405,34 @@ def fixed_design_planning_command(
     expected rollout counts that `analyze` will resolve. Rollout counts come
     from the manifest's `expected_rollouts` column unless `--rollouts` supplies
     a uniform override.
+
+    With --plan, every claim is planned as `analyze` will decide it, and the options the
+    plan supplies are refused rather than overridden.
     """
+
+    if plan_path is not None:
+        supplied = [
+            f"--{name.replace('_', '-')}"
+            for name in (
+                "threshold",
+                "alpha",
+                "weights",
+                "hierarchy",
+                "weight_column",
+                "independence_unit",
+                "family_size",
+            )
+            # typer vendors its own click, so the source is compared by name.
+            if getattr(ctx.get_parameter_source(name), "name", "DEFAULT") != "DEFAULT"
+        ]
+        if supplied:
+            raise typer.BadParameter(
+                f"{', '.join(supplied)} cannot be combined with --plan, which supplies them"
+            )
+        _plan_fixed_design_from_plan(plan_path, manifest, power=power, rollouts=rollouts)
+        return
+    if manifest is None or threshold is None:
+        raise typer.BadParameter("give --manifest and --threshold, or --plan")
 
     from inspect_safety_stats.config.models import WeightSpec
     from inspect_safety_stats.ingest.manifest import load_manifest, resolve_weights
@@ -441,6 +506,82 @@ def fixed_design_planning_command(
     typer.echo(f"One-sided alpha per direction: {local_alpha:g}")
 
 
+def _rate(value: float | None) -> str:
+    return "unattainable" if value is None else f"{value:.8g}"
+
+
+def _plan_fixed_design_from_plan(
+    plan_path: Path, manifest: Path | None, *, power: float, rollouts: int | None
+) -> None:
+    from inspect_safety_stats.claim_planning import PlannedClaim, plan_claims
+    from inspect_safety_stats.config.loader import load_plan
+
+    try:
+        plan = load_plan(plan_path)
+        claims = plan_claims(plan, power=power, manifest=manifest, rollouts=rollouts)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Claims: {len(claims)}")
+    typer.echo(f"Target power: {power:.8g}")
+    for item in claims:
+        typer.echo("")
+        if not isinstance(item, PlannedClaim):
+            typer.echo(f"Claim {item.claim_id}: not planned: {item.reason}")
+            continue
+        typer.echo(
+            f"Claim {item.claim_id}: cohort {item.cohort}, group {item.group}, "
+            f"measure {item.measure}"
+        )
+        typer.echo(f"  Prompts: {item.prompts}")
+        typer.echo(f"  Total rollouts: {item.total_rollouts}")
+        typer.echo(
+            f"  Independence profile: {item.independence_profile}"
+            + (
+                ""
+                if item.independent_blocks is None
+                else f" ({item.independent_blocks} independent blocks)"
+            )
+        )
+        rates = item.support or item.rejection
+        if rates is not None:
+            typer.echo(f"  Effective sample size: {rates.effective_sample_size:.8g}")
+        alpha = item.alpha
+        share = {
+            "pointwise": "pointwise, not simultaneous",
+            "flat_bonferroni": (
+                f"Bonferroni share of {alpha.directional_family_alpha:g} across "
+                f"{alpha.target_count} targets and {alpha.cohort_count} cohorts"
+            ),
+            "frontier_sidak": (
+                f"Bonferroni share of {alpha.directional_family_alpha:g} across "
+                f"{alpha.target_count} targets and {alpha.cohort_count} cohorts; conservative, "
+                "as analyze calibrates frontier_sidak"
+            ),
+        }[alpha.calibration]
+        typer.echo(
+            f"  One-sided alpha per direction: {alpha.endpoint_alpha:.8g} "
+            f"(family {alpha.family_id}, {share})"
+        )
+        typer.echo(
+            "  Interval method: rates guaranteed for weighted_hoeffding; analyze decides on "
+            f"{item.primary_method}"
+        )
+        typer.echo(
+            f"  PASS at acceptable_upper {item.acceptable_upper:.8g}: maximum certifiable "
+            "failure rate at target power "
+            + _rate(item.support.maximum_certifiable_failure_rate if item.support else None)
+        )
+        typer.echo(
+            f"  FAIL at unacceptable_lower {item.unacceptable_lower:.8g}: minimum detectable "
+            "failure rate at target power "
+            + _rate(item.rejection.minimum_detectable_failure_rate if item.rejection else None)
+        )
+    if not any(isinstance(item, PlannedClaim) for item in claims):
+        typer.echo("")
+        typer.echo("No claim of this plan could be planned.", err=True)
+        raise typer.Exit(1)
+
+
 @schema_app.command("plan")
 def plan_schema_command() -> None:
     """Print the JSON schema for analysis plans."""
@@ -459,6 +600,15 @@ def report_schema_command() -> None:
     typer.echo(json.dumps(SafetyReport.model_json_schema(), indent=2, sort_keys=True))
 
 
+@schema_app.command("decision-policy")
+def decision_policy_schema_command() -> None:
+    """Print the JSON schema for decision policies (experimental)."""
+
+    from inspect_safety_stats.config.decision_policy import DecisionPolicy
+
+    typer.echo(json.dumps(DecisionPolicy.model_json_schema(), indent=2, sort_keys=True))
+
+
 @app.command("version")
 def version_command() -> None:
     """Print the package version."""
@@ -469,6 +619,16 @@ def version_command() -> None:
 @app.command("hash-plan")
 def hash_plan_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
+    inference: Annotated[
+        bool,
+        typer.Option(
+            "--inference",
+            help=(
+                "Print the inference hash instead: the plan's hash without the thresholds a "
+                "decision policy may set, which a decision policy names (experimental)."
+            ),
+        ),
+    ] = False,
     register: Annotated[
         Path | None,
         typer.Option(
@@ -486,7 +646,17 @@ def hash_plan_command(
 
     from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
 
-    digest = canonical_plan_hash(load_plan(plan))
+    if inference and register is not None:
+        # A receipt records the canonical hash, which analyze checks; registering the
+        # inference hash would make a receipt no analysis can match.
+        raise typer.BadParameter("--register records the canonical hash; omit --inference")
+    resolved = load_plan(plan)
+    if inference:
+        from inspect_safety_stats.config.decision_policy import inference_plan_hash
+
+        typer.echo(inference_plan_hash(resolved))
+        return
+    digest = canonical_plan_hash(resolved)
     # The hash stays the first line on its own: scripts read it.
     typer.echo(digest)
     if register is None:
@@ -556,6 +726,13 @@ def generative_materialize_command(
     """
 
     from inspect_safety_stats.generative.runner import materialize_run
+
+    # A console script does not put the working directory on sys.path, as `python -m` does,
+    # but someone naming a module on the command line means the one in their project. The
+    # CLI owns the process, so it sets this; the library leaves sys.path to its caller.
+    working = str(Path.cwd())
+    if working not in sys.path:
+        sys.path.insert(0, working)
 
     try:
         run = materialize_run(

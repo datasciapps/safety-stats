@@ -20,7 +20,11 @@ report = analyze(
 
 `plan` accepts an `AnalysisPlan` or a YAML/JSON path. `logs` accepts any local path, sequence of
 paths, or loaded `EvalLog` object accepted by Inspect's dataframe readers. The function returns a
-validated `SafetyReport`. It does not write files until `report.write(...)` is called.
+validated `SafetyReport`. It does not write files until `report.write(...)` is called. When the
+design manifest, logs or rollout files cannot be read, the report's integrity is `invalid`,
+its diagnostics include `INGEST_FAILED` with the reason, it has no estimates, and every claim
+is `INCONCLUSIVE`; `validate` reports the same input the same way. A plan that cannot be
+loaded raises.
 
 Results from another evaluation system are passed as `source` instead of `logs`
 (experimental). `RolloutFiles` reads a runs file and a rollouts file in the neutral format of
@@ -152,6 +156,12 @@ weighted_bounded_empirical_bernstein_mean_bounds(...)
 weighted_bounded_kl_chernoff_mean_bounds(...)
 ```
 
+```python
+# Experimental; not in inspect_safety_stats.stats.__all__.
+from inspect_safety_stats.stats.direct_mean import weighted_bounded_betting_mean_bounds
+weighted_bounded_betting_mean_bounds(...)
+```
+
 Each aligned block value lies in `[0,1]`, block weights are nonnegative and sum to one, and blocks
 are assumed mutually independent. See [Configuring hierarchy and independence](independence-profiles.md).
 The count-based wrappers below remain useful as low-level mathematical conveniences for the two
@@ -204,6 +214,30 @@ This is a sensitivity analysis over the fixed prompts, not population inference.
 equal weight and a rigorous maximum-increment weighted Poisson-Chernoff inversion otherwise. Its
 `chernoff_kernel` result field records which construction was used. It is especially useful for
 sparse failures and does not require equal prompt failure probabilities.
+
+```python
+worst_of_k_kl_chernoff_bounds(
+    failures, unclassified, trials, weights, *, k, alpha_lower, alpha_upper,
+)
+```
+
+Experimental. Bounds the weighted chance that at least one of `k` independent attempts fails.
+Each prompt's unbiased U-statistic enters `weighted_bounded_kl_chernoff_mean_bounds` as
+`trials // k` independent blocks, so rollouts must be independent. Every prompt needs at least
+`k` attempted rollouts. At `k=1` the result equals the rollout-level
+`weighted_kl_chernoff_mean_bounds`. See
+[Worst-of-k interval](statistical-methods.md#worst-of-k-interval-experimental).
+
+Experimental. `weighted_bounded_betting_mean_bounds` (count form: `weighted_betting_mean_bounds`,
+same signature as the other count wrappers) is not exported from `inspect_safety_stats.stats`
+until it graduates; import it from `inspect_safety_stats.stats.direct_mean`. It tests each candidate mean with the capital of a common betting
+fraction applied to every block with exponent `A_g / max A`, mixed over a fixed
+Beta(1/2, 1/2)-quantile prior that places half its mass on the most aggressive bet. Jensen's
+inequality and the weighted AM-GM inequality make the mixture an e-value under
+`sum_g A_g E[Y_g] = m`, so `{m : capital(m) < 1/alpha}` is a confidence set. It reports
+`chernoff_kernel = "common_bet_mixture_jensen_exponent"`. The bet is common to all blocks and fixed
+in advance; a block-adaptive bet would be invalid under heterogeneous block means. See
+[Betting interval](statistical-methods.md#betting-interval-from-a-fixed-mixture-of-common-bets-experimental).
 
 When hierarchy-region projection is enabled, each reported direct interval also records
 `raw_lower`, `raw_upper`, `projection_method`, and `projection_constraint_count`. The displayed
@@ -370,9 +404,11 @@ analysis pipeline; see
 ### Judge misclassification
 
 ```python
-JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source)
+JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source,
+                 alpha=None, completed_strata=())   # strata completed as [0, 1]
 JudgeStratumCounts(labelled, truly_unsafe, stratum_size)
 estimate_judge_calibration(*, scenario_id, unsafe_stratum, safe_stratum, alpha)
+completion_warning(calibration)   # message naming completed strata, or None
 correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration)
 delta_method_corrected_risk(*, observed_estimate, observed_variance, unsafe_stratum,
                             safe_stratum, alpha)   # asymptotic reference, diagnostic
@@ -428,9 +464,11 @@ inspect-safety-stats plan detectable-rate --trials N --threshold P --alpha A --p
 inspect-safety-stats plan fixed-design --manifest DESIGN.csv --threshold P [--alpha A] [--power B]
     [--rollouts N] [--weights STRATEGY] [--hierarchy LEVELS] [--weight-column COLUMN]
     [--independence-unit UNIT] [--family-size M]
-inspect-safety-stats hash-plan --plan PLAN [--register RECEIPT.json]
+inspect-safety-stats plan fixed-design --plan PLAN [--manifest DESIGN.csv] [--power B] [--rollouts N]
+inspect-safety-stats hash-plan --plan PLAN [--inference | --register RECEIPT.json]
 inspect-safety-stats schema plan
 inspect-safety-stats schema report
+inspect-safety-stats schema decision-policy
 inspect-safety-stats version
 ```
 
@@ -443,6 +481,30 @@ follow the declared strategy (`nested_equal` by default, `equal_prompt`, or `exp
 `--rollouts` supplies a uniform override. Its guarantees are the independent-rollout weighted
 Hoeffding construction of `fixed_design_detectable_failure_rates`; pass
 `--independence-unit prompt_cluster` to plan under prompt-level independence instead.
+
+`plan fixed-design --plan PLAN` reads the analysis plan instead of those options, so planning
+cannot drift from the design `analyze` will use, and reports for every claim. A `weighted_mean`
+claim on a group with direct-mean intervals is planned as `analyze` decides it: on the group's
+prompts and weights, with rollout counts from the plan's design manifest (or `--manifest`, or
+`--rollouts`), under the primary independence profile of `outputs.direct_mean_intervals`, at
+the endpoint alpha that interval gets from its multiplicity family. That alpha is the
+directional family alpha divided across the selected groups, their hierarchy nodes, the
+selected groups' direct `worst_of_k` intervals and the cohorts; under `frontier_sidak`
+calibration the analysis spends at least this share, so the plan is conservative. A profile
+blocked by manifest columns treats each block as one independent contribution. The PASS side
+is planned at the claim's `acceptable_upper` and the FAIL side at its `unacceptable_lower`, as
+the plan states them; the planner does not read a decision policy. The planned rates are
+guaranteed for a `weighted_hoeffding` interval, and the output names the plan's primary
+method, on which `analyze` decides; for another method the planner gives no guarantee. Every
+other claim (other risk measures, a direct `worst_of_k` interval, comparisons,
+`noisy_valid_test`, a validated judge calibration) is listed as not planned, with the reason;
+the command exits with status 1 when no claim can be planned, and refuses sampled designs.
+`--threshold`, `--alpha`, `--weights`, `--hierarchy`, `--weight-column`,
+`--independence-unit` and `--family-size` are refused with `--plan`, which supplies them.
+
+`analyze` and `validate` take `--decision-policy POLICY`, a file whose thresholds replace the
+plan's for the claims it sets, and `hash-plan --inference` prints the hash such a policy names
+(experimental; see [Decision policies](decision-policy.md)).
 
 Repeat `--logs` to select multiple files or directories. `--runs` and `--rollouts` name the two
 files of a neutral rollout source instead of Inspect logs, and are given together
@@ -459,20 +521,28 @@ Exit codes of `analyze`:
 | Situation | Default | With `--decision-exit-codes` |
 |---|---|---|
 | Integrity `valid` or `degraded` | `0` | `0` PASS, `1` FAIL, `2` INCONCLUSIVE |
-| Integrity `invalid` (the report is still written) | `3` | `3` |
+| Integrity `invalid`, an unreadable manifest, log or rollout file included (the report is still written) | `3` | `3` |
 | Integrity `invalid` with `--allow-invalid` | `0` | `2`, because an invalid analysis is never PASS |
-| The analysis cannot run, for example an unreadable plan or log | `3` | `3` |
+| The analysis cannot run, for example an unreadable plan | `3` | `3` |
 
 `validate` exits `3` for invalid input and `0` otherwise.
 
 ## Compatibility and stability
 
-The runtime supports Python 3.10 or newer. Reading Inspect logs needs Inspect AI
-`>=0.3.259,<0.4`, which the `inspect` extra installs. Plan and report schema
-version `1.0` are strict. New fields or methods may be added compatibly within the package's
+The runtime supports Python 3.11 or newer. Reading Inspect logs needs Inspect AI
+`>=0.3.259,<0.4`, which the `inspect` extra installs. This release reads analysis plans of
+schema version `2.0` and `3.0` (see [the plan reference](plan-reference.md#schema-versions)) and
+writes reports of schema version `3.0`. Plans and reports are strict: unknown fields are errors,
+and a plan declaring any other version, `1.0` included, is refused. New fields or methods may
+be added compatibly within the package's
 `0.x` development series, but consumers should validate `schema_version` before automated use.
 
+The generative pipeline is experimental: its public surface,
+`inspect_safety_stats.generative.__all__`, may change in any minor release.
+
 ## Generative evaluation
+
+**Experimental.** See [Compatibility and stability](#compatibility-and-stability).
 
 `inspect_safety_stats.generative` carries its own public surface, listed in its `__all__`
 and guarded by a snapshot test. Names outside that list are internal and may change.

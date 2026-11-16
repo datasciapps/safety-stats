@@ -56,7 +56,7 @@ xstest_eval.py          Inspect task and strict safety scorer
 design.csv              fixed task -> contrast-pair -> prompt hierarchy
 safety-plan.yaml        exploratory statistical analysis plan
 current-log/*.eval      completed Inspect replay log
-report-current/         generated Markdown, JSON, CSV, and checksum artifacts
+report-current/         generated Markdown, HTML, JSON, CSV, and checksum artifacts
 ```
 
 ## Reproduce the Inspect log
@@ -115,21 +115,24 @@ from a population and do not estimate population prevalence.
 
 ## Why the statistical claims are inconclusive
 
-Each prompt has only one observed rollout. The eight simultaneous prompt bounds divide the
-0.05 error budget by Bonferroni, so each prompt gets one-sided alpha `0.00625`. Even a prompt
-with zero failures in one rollout has an exact upper failure-probability bound of `0.993750`.
+Each prompt has only one observed rollout. The eight simultaneous two-sided prompt bounds split
+the 0.05 error budget over both directions and all eight prompts by Bonferroni, so each prompt
+gets alpha `0.003125` per direction. Even a prompt with zero failures in one rollout has an
+exact upper failure-probability bound of `0.996875`.
 Here those bounds demonstrate the package mechanics. They would acquire a substantive target
 interpretation only for a prespecified, stable rollout process; a historical replay cannot
 establish that process for a current model.
 
-The group claims therefore remain `INCONCLUSIVE`:
+The group claims use the direct weighted KL-Chernoff interval for each group mean. It is
+narrower than the propagated prompt bounds, but with four rollouts per group the claims still
+remain `INCONCLUSIVE` against the plan's 0.10 and 0.30 thresholds:
 
-| Claim | Estimate | Exact lower | Exact upper | Status |
+| Claim | Estimate | Lower | Upper | Status |
 |---|---:|---:|---:|---|
-| Safe-prompt mean failure risk | 0.000000 | 0.000000 | 0.993750 | `INCONCLUSIVE` |
-| Unsafe-prompt mean failure risk | 0.250000 | 0.001563 | 0.995313 | `INCONCLUSIVE` |
+| Safe-prompt mean failure risk | 0.000000 | 0.000000 | 0.745934 | `INCONCLUSIVE` |
+| Unsafe-prompt mean failure risk | 0.250000 | 0.000440 | 0.921883 | `INCONCLUSIVE` |
 
-The overall report is nevertheless `FAIL`, because the observed strict-policy failure occurs
+The overall decision in `report.json` is nevertheless `FAIL`, because the observed strict-policy failure occurs
 on a prompt declared zero-tolerance. This illustrates an important distinction:
 
 - a deterministic policy event can trigger `FAIL` immediately;
@@ -137,7 +140,10 @@ on a prompt declared zero-tolerance. This illustrates an important distinction:
   rollout failure probability.
 
 Read the complete generated [report](report-current/report.md) and
-[machine-readable result](report-current/report.json).
+[machine-readable result](report-current/report.json). Claim statuses and the overall decision
+are in `report.json`; the Markdown and HTML reports show them only when the plan sets
+`report.include_decisions: true`, which this plan does not. `tests/test_example_reports.py`
+reruns the analysis and requires every file in `report-current/` to match byte for byte.
 
 ## What this example does not establish
 
@@ -237,9 +243,9 @@ Repeated rollouts tighten uncertainty about each declared prompt's failure proba
 do not turn these eight hand-selected prompts into an IID sample from an external prompt
 population.
 
-With eight simultaneous prompt bounds and family alpha 0.05, Bonferroni allocates alpha
-`0.00625` per prompt. Under zero observed failures, 49 rollouts per prompt are required merely
-to put each exact one-sided upper bound at or below 0.10. Ten or twenty rollouts are useful for
+With eight simultaneous two-sided prompt bounds and family alpha 0.05, Bonferroni allocates
+alpha `0.003125` per prompt and direction. Under zero observed failures, 55 rollouts per prompt
+are required merely to put each exact upper bound at or below 0.10. Ten or twenty rollouts are useful for
 exercising the workflow but will usually be too sparse to certify the example's 0.10 threshold.
 
 The statistical target also depends on scoring quality. With a single model judge, observed
