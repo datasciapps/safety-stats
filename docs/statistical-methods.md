@@ -1112,7 +1112,7 @@ Although explicit zero-failure planning is still uncommon in public frontier-mod
 
 ## 6. Stretch goal: Bernoulli confidence sequences
 
-**Release status:** deferred. This section preserves the mathematical design for a later adaptive-evaluation module. It is not required for the core fixed-horizon workflow.
+**Release status:** deferred. This section preserves the mathematical design for a later adaptive-evaluation module. It is not required for the core fixed-horizon workflow. The [phase-0 design](sequential-design.md) defines the stream, the state and the phases of that module.
 
 For a predeclared rollout count and a single final analysis, the exact fixed-sample methods in Sections 4 and 5 are preferred: they are simpler to audit and generally yield tighter bounds. Confidence sequences become worthwhile only when observed outcomes are allowed to determine when sampling stops, which prompt receives the next rollout, or when a continuously extended evaluation is allowed to make a formal decision.
 

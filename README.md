@@ -228,6 +228,7 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Design-based inference for sampled item frames](docs/design-based-sampling.md)
 - [Version 1 engineering design](docs/archive/v1-design.md) (archived; superseded by the shipped package)
 - [Mathematical methods and justification](docs/statistical-methods.md)
+- [Anytime-valid confidence sequences: phase-0 design](docs/sequential-design.md) (design only; not implemented)
 - [Generative evaluation](docs/generative-evaluation.md)
 - [Generative evaluation: design decisions](docs/generative-design-decisions.md)
 - [Generative hierarchy evaluation planner](docs/archive/generative-hierarchy-evaluation-plan.md) (archived; the original proposal, superseded by the two above)
