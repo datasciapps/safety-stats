@@ -19,7 +19,7 @@ from inspect_safety_stats.analysis.report import (
     _resolved_design,
     _unread_input_report,
 )
-from inspect_safety_stats.config.canonicalize import sha256_value
+from inspect_safety_stats.config.canonicalize import canonical_value, sha256_value
 from inspect_safety_stats.config.decision_policy import DecisionPolicy
 from inspect_safety_stats.config.loader import canonical_plan_hash, report_path, report_plan
 from inspect_safety_stats.config.models import AnalysisPlan
@@ -243,6 +243,7 @@ def analyze(
                 {"id": group.id, "title": group.title, "prompt_count": len(group.prompt_ids)}
                 for group in data.groups
             ],
+            "prompts": canonical_value(_resolved_design(data, resolved.design.hierarchy)),
         },
         cohorts=data.cohorts,
         prompt_estimates=sorted(estimates, key=lambda item: (item.cohort_id, item.prompt_id)),

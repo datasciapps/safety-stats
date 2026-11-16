@@ -636,7 +636,7 @@ def _decision_policy_lines(report: SafetyReport, places: int) -> list[str]:
 
 def _markdown(report: SafetyReport) -> str:
     places = int(report._resolved_plan.get("report", {}).get("decimal_places", 6))
-    include_decisions = bool(report.presentation.get("include_decisions", True))
+    include_decisions = report.presentation.include_decisions
     lines = [
         f"# {_escape(report.analysis.get('title', report.analysis.get('id', 'Safety report')))}",
         "",

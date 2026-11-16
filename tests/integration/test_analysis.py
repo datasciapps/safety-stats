@@ -195,7 +195,7 @@ def test_end_to_end_pass_and_report(monkeypatch: pytest.MonkeyPatch, tmp_path: P
         "worst_of_2",
         "excess",
     }
-    assert report.presentation == {"include_decisions": False}
+    assert report.presentation.include_decisions is False
     risk = next(item for item in report.group_risks if item.measure_id == "mean")
     assert risk.coverage_mode == "two_sided"
     assert risk.family_alpha == pytest.approx(0.05)
@@ -231,7 +231,7 @@ def test_end_to_end_pass_and_report(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     assert "## Interval-method comparison" in markdown
     assert "weighted_hoeffding" in markdown
     html = (output / "report.html").read_text(encoding="utf-8")
-    assert '"presentation":{"include_decisions":false}' in html
+    assert "\"include_decisions\":false" in html
     second = report.write(tmp_path / "report-copy")
     assert (output / "report.json").read_bytes() == (second / "report.json").read_bytes()
     assert (output / "report.html").read_bytes() == (second / "report.html").read_bytes()
@@ -1173,7 +1173,7 @@ def test_decision_presentation_is_opt_in(monkeypatch: pytest.MonkeyPatch, tmp_pa
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=plan, logs="ignored")
-    assert report.presentation == {"include_decisions": True}
+    assert report.presentation.include_decisions is True
     output = report.write(tmp_path / "report-with-decisions")
     markdown = (output / "report.md").read_text(encoding="utf-8")
     assert "**Decision:** `PASS`" in markdown
@@ -2693,7 +2693,7 @@ def test_judge_claims_have_a_report_section(
     section = text[text.index("### Claims by judge (experimental)") :]
     (claim,) = report.claims
     # The plan hides decisions, so the rows show no status either.
-    assert report.presentation["include_decisions"] is False
+    assert report.presentation.include_decisions is False
     assert "| Judge | Integrity | Claim | Estimate |" in section
     assert f"| judge_a | `valid` | {claim.claim_id} | 0.250000 |" in section
     assert "| judge_b | `degraded` |" in section
