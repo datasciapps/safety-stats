@@ -210,3 +210,128 @@ def test_a_resumed_conversation_run_rebuilds_the_same_dataset(
         encoding="utf-8"
     ) == dataset
     assert len(read_rewrites(tmp_path / "run" / "rewrites.csv")) == first.selections
+
+
+SYSTEM_TEXTS = {"plain": "You are a helpful assistant.", "roleplay": "Stay in character.",
+                "nested": ""}
+
+
+def system_prompt_plan(tmp_path: Path, output: str = "prompt", **spec: Any) -> Path:
+    plan = base_plan()
+    plan["sampling"] = {"method": "direct", "total_rewrites": 60}
+    plan["rewrite"]["output"] = output
+    plan["rewrite"]["system_prompts"] = {"level": "wrapper", "texts": dict(SYSTEM_TEXTS), **spec}
+    return materialize(tmp_path, plan, SEEDS_WITH_TEXT)
+
+
+def wrapper_of(node_id: str) -> str:
+    return dict(part.split("=", 1) for part in node_id.split("|")[1:])["wrapper"]
+
+
+@pytest.mark.parametrize("output", ["prompt", "conversation"])
+def test_each_arm_value_gets_exactly_its_declared_system_prompt(
+    tmp_path: Path, output: str
+) -> None:
+    plan, selections, fingerprint, texts = prepare(system_prompt_plan(tmp_path, output))
+    kernel = DeterministicFakeKernel() if output == "prompt" else ConversationKernel()
+    result = execute_rewrites(plan, selections, kernel, fingerprint, texts)
+    by_unit = {item.sampling_unit_id: item for item in result.accepted}
+    seen = set()
+    for selection in selections:
+        entry = by_unit[selection.sampling_unit_id]
+        assert entry.messages is not None
+        assert entry.prompt == encode_conversation(entry.messages)
+        wrapper = wrapper_of(selection.node_id)
+        seen.add(wrapper)
+        if SYSTEM_TEXTS[wrapper]:
+            assert entry.messages[0] == ChatTurn("system", SYSTEM_TEXTS[wrapper])
+            assert [turn.role for turn in entry.messages[1:]].count("system") == 0
+        else:
+            assert entry.messages[0].role == "user"
+    assert seen == set(SYSTEM_TEXTS)
+
+
+def test_the_kernel_is_told_the_system_prompt(tmp_path: Path) -> None:
+    plan, selections, fingerprint, texts = prepare(system_prompt_plan(tmp_path))
+    told: dict[str, str | None] = {}
+
+    class Recording(DeterministicFakeKernel):
+        def rewrite(self, request):  # type: ignore[no-untyped-def]
+            told[request.sampling_unit_id] = request.system_prompt
+            return super().rewrite(request)
+
+    execute_rewrites(plan, selections, Recording(), fingerprint, texts)
+    for selection in selections:
+        expected = SYSTEM_TEXTS[wrapper_of(selection.node_id)] or None
+        assert told[selection.sampling_unit_id] == expected
+
+
+def test_a_kernel_writing_its_own_system_turn_stops_the_run(tmp_path: Path) -> None:
+    plan, selections, fingerprint, texts = prepare(
+        system_prompt_plan(tmp_path, "conversation")
+    )
+    with pytest.raises(ValueError, match="attaches the system prompt itself"):
+        execute_rewrites(plan, selections, ConversationKernel(system=True), fingerprint, texts)
+
+
+def test_system_prompts_enter_the_fingerprint(tmp_path: Path) -> None:
+    first = resolve_kernel_fingerprint(
+        load_generative_plan(system_prompt_plan(tmp_path)), base_path=tmp_path
+    )
+    changed = dict(SYSTEM_TEXTS, plain="You are a terse assistant.")
+    second = resolve_kernel_fingerprint(
+        load_generative_plan(system_prompt_plan(tmp_path, texts=changed)), base_path=tmp_path
+    )
+    plain = resolve_kernel_fingerprint(
+        load_generative_plan(materialize(tmp_path, base_plan())), base_path=tmp_path
+    )
+    assert len({first.sha256, second.sha256, plain.sha256}) == 3
+
+
+@pytest.mark.parametrize(
+    ("spec", "message"),
+    [
+        ({"level": "language"}, "no text for language values: english, maltese"),
+        ({"level": "problem_class"}, "is not an arm"),
+        ({"texts": {"plain": "x", "roleplay": "y"}}, "no text for wrapper values: nested"),
+        ({"texts": dict(SYSTEM_TEXTS, extra="z")}, "does not declare: extra"),
+    ],
+)
+def test_system_prompt_arms_must_match_the_taxonomy(
+    tmp_path: Path, spec: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        load_generative_plan(system_prompt_plan(tmp_path, **spec))
+
+
+def test_an_arm_read_from_a_file_is_checked_before_any_rewrite(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = base_plan()
+    plan["taxonomy"]["arms"]["wrapper"] = {"values_from": "wrappers.csv", "weight_column": "w"}
+    plan["rewrite"]["system_prompts"] = {"level": "wrapper", "texts": {"plain": "x"}}
+    path = materialize(tmp_path, plan, SEEDS_WITH_TEXT)
+    (tmp_path / "wrappers.csv").write_text("wrapper,w\nplain,0.5\nroleplay,0.5\n",
+                                           encoding="utf-8")
+
+    def never(spec: str) -> Any:
+        raise AssertionError("no kernel may be resolved before the check")
+
+    monkeypatch.setattr(runner_module, "resolve_kernel", never)
+    with pytest.raises(ValueError, match="no text for wrapper values: roleplay"):
+        materialize_run(path, tmp_path / "run")
+
+
+def test_a_resumed_system_prompt_run_rebuilds_the_same_dataset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = system_prompt_plan(tmp_path)
+    monkeypatch.setattr(runner_module, "resolve_kernel", lambda spec: DeterministicFakeKernel(
+        kernel_id="test-kernel"))
+    first = materialize_run(path, tmp_path / "run")
+    dataset = (tmp_path / "run" / "datasets" / "dataset.jsonl").read_text(encoding="utf-8")
+    resumed = materialize_run(path, tmp_path / "run", resume=True)
+    assert resumed.resumed == first.selections
+    assert (tmp_path / "run" / "datasets" / "dataset.jsonl").read_text(
+        encoding="utf-8"
+    ) == dataset

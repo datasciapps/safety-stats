@@ -117,6 +117,9 @@ class RewriteRequest:
     seed_text: str
     attempt: int
     selection_seed: int
+    # The system prompt the procedure attaches to this rewrite, when the plan declares
+    # rewrite.system_prompts: context for the kernel, which must not write one itself.
+    system_prompt: str | None = None
 
 
 @dataclass(frozen=True)
@@ -199,6 +202,8 @@ def resolve_kernel_fingerprint(
     # uses none of them keeps the fingerprint it had before they existed.
     if spec.output != "prompt":
         payload["output"] = spec.output
+    if spec.system_prompts is not None:
+        payload["system_prompts"] = spec.system_prompts.model_dump(mode="json")
     digest = hashlib.sha256(
         json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     ).hexdigest()

@@ -26,6 +26,7 @@ from inspect_safety_stats.generative.kernels import (
     RewriteOutcome,
     RewriteRequest,
     decode_conversation,
+    encode_conversation,
 )
 from inspect_safety_stats.generative.ledger import (
     IncrementalCsvWriter,
@@ -34,6 +35,7 @@ from inspect_safety_stats.generative.ledger import (
     prompt_sha256,
 )
 from inspect_safety_stats.generative.schema import GenerativePlan
+from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
 
 
 @dataclass(frozen=True)
@@ -172,6 +174,54 @@ def _prompt_id(sampling_unit_id: str) -> str:
     return f"p-{sampling_unit_id}"
 
 
+def check_system_prompts(plan: GenerativePlan, taxonomy: CompiledTaxonomy) -> None:
+    """Refuse a system-prompt arm with a value the taxonomy can draw but no text for.
+
+    Checked before any kernel call, so a gap costs nothing to find. An arm read from a
+    file is only known once the taxonomy is compiled, which is why the plan cannot check
+    this on its own.
+    """
+
+    spec = plan.rewrite.system_prompts
+    if spec is None:
+        return
+    values = {node.value for node in taxonomy.nodes if node.level == spec.level}
+    missing = sorted(values - set(spec.texts))
+    if missing:
+        raise ValueError(
+            f"rewrite.system_prompts.texts has no text for {spec.level} values: "
+            f"{', '.join(missing)}"
+        )
+
+
+def _system_prompt(plan: GenerativePlan, path_values: Mapping[str, str]) -> str | None:
+    spec = plan.rewrite.system_prompts
+    if spec is None:
+        return None
+    value = path_values.get(spec.level)
+    if value is None or value not in spec.texts:
+        raise ValueError(
+            f"rewrite.system_prompts has no text for {spec.level}={value!r}"
+        )
+    return spec.texts[value] or None
+
+
+def _attach_system_prompt(
+    outcome: RewriteOutcome, system_prompt: str | None, unit_id: str
+) -> tuple[ChatTurn, ...]:
+    """The accepted conversation: the kernel's turns behind the arm's system prompt."""
+
+    turns = outcome.messages or (ChatTurn("user", str(outcome.prompt)),)
+    if system_prompt is None:
+        return turns
+    if turns[0].role == "system":
+        raise ValueError(
+            f"the kernel wrote a system turn for unit {unit_id}, but the plan's "
+            "rewrite.system_prompts attaches the system prompt itself"
+        )
+    return (ChatTurn("system", system_prompt), *turns)
+
+
 def _check_output_kind(plan: GenerativePlan, outcome: RewriteOutcome, unit_id: str) -> None:
     """Refuse a valid outcome of the other kind than the plan declares.
 
@@ -244,6 +294,7 @@ def execute_rewrites(
             part.split("=", 1) for part in node_id.split("|")[1:] if "=" in part
         )
         key = _dedup_key(plan, node_id, seed_id)
+        system_prompt = _system_prompt(plan, path_values)
 
         prior = completed.get(unit_id) if completed else None
         if prior is not None:
@@ -281,6 +332,7 @@ def execute_rewrites(
                     seed_text=seed_texts[seed_id],
                     attempt=attempt,
                     selection_seed=salt_seed,
+                    system_prompt=system_prompt,
                 )
             )
             if outcome.status == "error":
@@ -293,7 +345,12 @@ def execute_rewrites(
                     break
                 continue
             _check_output_kind(plan, outcome, unit_id)
-            candidate = outcome.text
+            turns: tuple[ChatTurn, ...] | None = None
+            if plan.rewrite.stores_conversations():
+                turns = _attach_system_prompt(outcome, system_prompt, unit_id)
+                candidate = encode_conversation(turns)
+            else:
+                candidate = outcome.text
             digest = prompt_sha256(candidate)
             if key is not None and digest in seen.get(key, set()):
                 duplicates += 1
@@ -303,7 +360,7 @@ def execute_rewrites(
                 seen.setdefault(key, set()).add(digest)
             status = "valid"
             prompt = candidate
-            messages = outcome.messages
+            messages = turns
             break
 
         if status == "valid" and prompt is not None:

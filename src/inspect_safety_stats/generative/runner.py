@@ -20,6 +20,7 @@ from inspect_safety_stats.generative.comparisons import ComparisonResult, compar
 from inspect_safety_stats.generative.execution import (
     AcceptedRewrite,
     acceptance_by_level,
+    check_system_prompts,
     execute_rewrites,
     load_seed_texts,
     prompt_store_writer,
@@ -233,6 +234,7 @@ def materialize_run(
             (directory / name).unlink(missing_ok=True)
 
     taxonomy = compile_taxonomy(plan, base_path=base)
+    check_system_prompts(plan, taxonomy)
     fingerprint = resolve_kernel_fingerprint(plan, base_path=base)
     design = plan_design(taxonomy, plan)
     rewriter = resolve_kernel(kernel)
@@ -252,7 +254,7 @@ def materialize_run(
 
     completed, accepted_before = (
         _prior_work(
-            directory, selections, conversations=plan.rewrite.output == "conversation"
+            directory, selections, conversations=plan.rewrite.stores_conversations()
         )
         if resume
         else ({}, {})

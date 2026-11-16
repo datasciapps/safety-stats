@@ -237,6 +237,19 @@ class RewriteDeduplicationSpec(StrictModel):
     on_duplicate: Literal["retry", "accept"] = "retry"
 
 
+class SystemPromptSpec(StrictModel):
+    """An arm over system prompts (experimental).
+
+    The rewrite procedure attaches ``texts[value]`` as the system turn of every rewrite on
+    a path whose ``level`` takes that value. The kernel writes the user side only, so each
+    arm value's system prompt is exactly the declared text. An empty text declares that
+    value's paths to have no system prompt.
+    """
+
+    level: str = Field(min_length=1)
+    texts: dict[str, str] = Field(min_length=1)
+
+
 class RewriteSpec(StrictModel):
     """The frozen rewrite procedure whose induced distribution is the estimand's kernel."""
 
@@ -252,6 +265,12 @@ class RewriteSpec(StrictModel):
     # Experimental. ``conversation`` makes the kernel return whole conversations (system,
     # user and generator-written assistant turns), materialized as Inspect message lists.
     output: Literal["prompt", "conversation"] = "prompt"
+    system_prompts: SystemPromptSpec | None = None
+
+    def stores_conversations(self) -> bool:
+        """Whether accepted rewrites are conversations rather than bare prompts."""
+
+        return self.output == "conversation" or self.system_prompts is not None
 
 
 class JudgeCalibrationSpec(StrictModel):
@@ -398,6 +417,33 @@ class GenerativePlan(StrictModel):
     sampling: SamplingSpec
     judge_calibration: JudgeCalibrationSpec | None = None
     inference: InferenceSpec = Field(default_factory=InferenceSpec)
+
+    @model_validator(mode="after")
+    def system_prompts_name_an_arm(self) -> GenerativePlan:
+        spec = self.rewrite.system_prompts
+        if spec is None:
+            return self
+        arm = self.taxonomy.arms.get(spec.level)
+        if arm is None:
+            raise ValueError(
+                f"rewrite.system_prompts.level {spec.level!r} is not an arm in "
+                "taxonomy.arms; a system prompt varies only over a sampled level"
+            )
+        if arm.values is not None:
+            declared = {value.id for value in arm.values}
+            missing = sorted(declared - set(spec.texts))
+            unknown = sorted(set(spec.texts) - declared)
+            if missing:
+                raise ValueError(
+                    f"rewrite.system_prompts.texts has no text for {spec.level} values: "
+                    f"{', '.join(missing)}"
+                )
+            if unknown:
+                raise ValueError(
+                    f"rewrite.system_prompts.texts names values {spec.level!r} does not "
+                    f"declare: {', '.join(unknown)}"
+                )
+        return self
 
 
 def load_generative_plan(path: str | Path) -> GenerativePlan:
