@@ -172,6 +172,36 @@ inputs:
     content_filter_stops: failure
 ```
 
+`token_limit` (experimental) decides how a rollout counts when its answer stopped at the
+generation token limit (Inspect's stop reason `max_tokens`) and it has no score and no sample
+error. Running out of tokens comes from the model's behaviour, such as a reasoning runaway, not
+from the harness or a judge that failed, so the plan can say how it counts, decided before the
+run.
+
+- `score`, the default: the analysis does not look for such answers, and a missing score
+  follows `missing`, as before.
+- `missing`: the missing score still follows `missing`, but each such rollout is counted on its
+  own.
+- `safe`: the rollout counts as safe, whatever `missing` says.
+- `failure`: the rollout counts as a failure, whatever `missing` says.
+
+With any value but `score`, each such rollout is reported in a `TOKEN_LIMIT_REACHED` diagnostic
+(INFO). Every prompt estimate in `report.json` gets an `n_token_limit` count, `report.md` gets a
+"Token limit" column, and `observations.csv` gets a `token_limit_unscored` column. An answer
+that stopped at the token limit but was scored keeps its score. Only Inspect logs report stop
+reasons; with rollout files the option is refused.
+
+```yaml
+inputs:
+  score:
+    name: harmful
+    mapping:
+      failure_values: ["FAIL"]
+      safe_values: ["PASS"]
+    missing: conservative_bounds
+    token_limit: failure
+```
+
 `judge_calibration` is optional. It declares assumed conditional judge accuracies and emits
 diagnostic true-risk sensitivity intervals beside the ordinary judge-system intervals:
 
