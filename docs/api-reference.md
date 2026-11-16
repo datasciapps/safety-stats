@@ -504,6 +504,16 @@ projection.root_upper, projection.levels, projection.expected_unsampled_nodes
 tests; [`examples/generative_live/rewriter.py`](../examples/generative_live/rewriter.py) is a
 provider-backed reference implementation.
 
+**Supplying a validator** (experimental) is needed only when the plan sets
+`rewrite.validation.invoke`. Pass `validator=` to `materialize_run` (or `--validator` on the
+command line), in the same forms as `kernel=`, naming an object implementing
+`RewriteValidator`: `validator_id` and a `validate(request, prompt) -> ValidationVerdict`
+method. `DeterministicFakeValidator` stands in
+for it in tests. Such a run, and one with `rewrite.deduplication.near_duplicate` set, records
+attempts that `read_attempts` reads as `AttemptRecord`s, and its report carries `fidelity`, a
+list of `FidelityRow`s that `fidelity_by_level` computes. See
+[validation and near-duplicates](generative-evaluation.md#validation-and-near-duplicates-experimental).
+
 **Composing a flow by hand** — when the two-phase runner does not fit — is supported through
 `plan_design`, `draw_selections`, `execute_rewrites`, `join_outcomes`, `estimate_tree`,
 `estimate_slice`, `compare_cohorts` and `estimate_reweighted`.

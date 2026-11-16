@@ -7,6 +7,19 @@ described in their pull requests.
 
 ### Added
 
+- **Rewrite validation and near-duplicate detection in the package (experimental).** In a
+  generative plan, `rewrite.validation.invoke: true` makes materialization call the validator
+  the plan names, supplied with `--validator` (or `validator=`), on every rewrite the kernel
+  accepts. Its rejections enter the retry path. `rewrite.deduplication.near_duplicate:
+  normalized_text` also treats rewrites that differ only in case, punctuation, symbols or
+  spacing as duplicates. With either setting, materialization writes `attempts.csv`, one row
+  per kernel call without prompt text. Analysis then writes `fidelity.csv` and a `fidelity`
+  section of `report.json`, which give for each arm why attempts failed. It also adds the
+  diagnostics `GENERATIVE_FIDELITY_UNEVEN`, `GENERATIVE_VALIDATOR_MISMATCH` and
+  `GENERATIVE_RETRY_DEPENDENCE`. Plans that use neither setting keep their fingerprints and
+  outputs. See
+  [Validation and near-duplicates](docs/generative-evaluation.md#validation-and-near-duplicates-experimental).
+
 - **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory
   analysis makes every claim `INCONCLUSIVE`, so a reader had to compare its bounds with the
   thresholds by hand. Each claim in `report.json` now has `descriptive_status`: in an
