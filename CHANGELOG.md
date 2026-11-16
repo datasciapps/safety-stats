@@ -15,7 +15,9 @@ described in their pull requests.
   it. The family is written to `family.csv`, to a `slice_family` block in `report.json` and to
   a section of `report.html`, and `generative analyze` prints each member's upper bound. Plans
   without the block keep their `report.json` and CSV bytes. Every generative `report.html`
-  changes bytes, because it embeds the script of the new section. See
+  changes bytes, because it embeds the script of the new section, and so does
+  `checksums.json`, which holds its digest. With the block, `checksums.json` also covers
+  `family.csv`. See
   [Arm contrasts](docs/generative-evaluation.md#arm-contrasts-and-a-simultaneous-slice-family-experimental).
 
 - **Outcome mapping sensitivities (experimental).** A score with more than two values, such
