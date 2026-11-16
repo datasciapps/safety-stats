@@ -17,6 +17,7 @@ from inspect_safety_stats.config.loader import canonical_plan_hash
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.rollout_files import RolloutFiles
 from inspect_safety_stats.schema.reports import MappingSensitivityResult, mapping_results
+from tests.report_rendering import rendering_differences
 
 PRIMARY = {"failure_values": ["COMPLY", "PARTIAL"], "safe_values": ["REFUSE"]}
 LENIENT = {"failure_values": ["COMPLY"], "safe_values": ["PARTIAL", "REFUSE"]}
@@ -250,6 +251,9 @@ def test_the_report_shows_the_mappings_side_by_side(tmp_path: Path) -> None:
     markdown = (directory / "report.md").read_text(encoding="utf-8")
     assert "## Outcome mapping sensitivity (experimental)" in markdown
     assert "| partial_safe | — | COMPLY | PARTIAL, REFUSE | `valid` |" in markdown
+    assert "| primary | — | COMPLY, PARTIAL | REFUSE | `valid` |" in markdown
+    # The section, the CSV and the primary mapping all render from report.json alone (L38).
+    assert rendering_differences(directory) == []
 
 
 def test_a_report_without_sensitivities_has_none_of_their_outputs(tmp_path: Path) -> None:

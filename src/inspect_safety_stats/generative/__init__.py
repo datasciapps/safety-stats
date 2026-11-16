@@ -6,6 +6,9 @@ with target weights and a frozen stochastic rewrite kernel, and prompts are gene
 sampling that design. Path selection and rewrite generation are then sources of uncertainty
 in their own right.
 
+The generative pipeline is experimental: its public surface,
+``inspect_safety_stats.generative.__all__``, may change in any minor release.
+
 The public surface is organised around what you are trying to do.
 
 **Run an evaluation.** Two phases, because an Inspect run happens between them::

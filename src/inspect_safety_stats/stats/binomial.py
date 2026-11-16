@@ -33,6 +33,15 @@ def _validate(failures: int, trials: int, alpha: float) -> None:
 
 
 def binomial_upper_bound(failures: int, trials: int, *, alpha: float) -> float:
+    """One-sided exact Clopper-Pearson upper bound on a binomial failure rate.
+
+    ``failures`` and ``trials`` are integers with ``0 <= failures <= trials`` and
+    ``trials > 0``. ``alpha`` in ``(0, 1)`` is the one-sided error level: the bound lies at or
+    above the true rate with probability at least ``1 - alpha``. Returns 1 when every trial
+    failed. Assumes independent trials with one common failure probability. Derived in
+    docs/statistical-methods.md, section 4.2.
+    """
+
     _validate(failures, trials, alpha)
     if failures == trials:
         return 1.0
@@ -40,6 +49,13 @@ def binomial_upper_bound(failures: int, trials: int, *, alpha: float) -> float:
 
 
 def binomial_lower_bound(failures: int, trials: int, *, alpha: float) -> float:
+    """One-sided exact Clopper-Pearson lower bound on a binomial failure rate.
+
+    Takes the same arguments as ``binomial_upper_bound``, with ``alpha`` the one-sided error
+    level of this bound alone. Returns 0 when no trial failed. Assumes independent trials with
+    one common failure probability. Derived in docs/statistical-methods.md, section 4.2.
+    """
+
     _validate(failures, trials, alpha)
     if failures == 0:
         return 0.0
@@ -53,6 +69,14 @@ def binomial_bounds(
     alpha_lower: float,
     alpha_upper: float,
 ) -> Bounds:
+    """Both one-sided Clopper-Pearson bounds, each at its own error level.
+
+    ``alpha_lower`` and ``alpha_upper`` are the one-sided error levels of the lower and upper
+    bound. Together they form an interval with coverage at least
+    ``1 - alpha_lower - alpha_upper``. Counts are as in ``binomial_upper_bound``. Derived in
+    docs/statistical-methods.md, section 4.2.
+    """
+
     return Bounds(
         lower=binomial_lower_bound(failures, trials, alpha=alpha_lower),
         upper=binomial_upper_bound(failures, trials, alpha=alpha_upper),

@@ -384,8 +384,7 @@
     "use strict";
     const payload = JSON.parse(document.getElementById("inspect-safety-stats-data").textContent);
     const report = payload.report || {};
-    const designRows = Array.isArray(payload.resolved_design) ? payload.resolved_design : [];
-    const plan = payload.resolved_plan || {};
+    const designRows = Array.isArray(report.design?.prompts) ? report.design.prompts : [];
     const estimates = Array.isArray(report.prompt_estimates) ? report.prompt_estimates : [];
     const risks = Array.isArray(report.group_risks) ? report.group_risks : [];
     const hierarchyRisks = Array.isArray(report.hierarchy_risks) ? report.hierarchy_risks : [];
@@ -405,11 +404,10 @@
       ...hierarchyRisks.flatMap(row => (row.intervals || []).map(interval => interval.independence_profile)),
       ...comparisons.flatMap(row => (row.intervals || []).map(interval => interval.independence_profile))
     ]);
-    const primaryIndependence = plan.outputs?.direct_mean_intervals?.independence?.primary
+    const primaryIndependence = report.presentation?.primary_independence_profile
       || independenceProfiles[0] || "";
     const hierarchy = unique(
       (report.design && report.design.hierarchy) ||
-      (plan.design && plan.design.hierarchy) ||
       ["task_id", "question_id", "prompt_id"]
     );
     const groupTitles = new Map(groups.map(g => [String(g.id), g.title || g.id]));
@@ -455,6 +453,10 @@
     }
     function clamp01(value) { return Math.max(0, Math.min(1, Number(value) || 0)); }
     function statusClass(value) { return String(value || "").toLowerCase(); }
+    function roleLabel(interval) {
+      const role = humanize(interval.role);
+      return interval.varied_assumption ? `${role} (${humanize(interval.varied_assumption).toLowerCase()})` : role;
+    }
     function boundStatus(value) {
       return ({certifying: "Coverage-guaranteed", diagnostic: "Diagnostic", invalid: "Unavailable"})[value] || humanize(value);
     }
@@ -585,6 +587,15 @@
           el("span", "", `Unsafe ≥ ${pct(claim.unacceptable_lower)}`)
         );
         card.append(values);
+        const verdicts = Array.isArray(claim.profile_verdicts) ? claim.profile_verdicts : [];
+        if (verdicts.length > 1) {
+          const profiles = el("div", "claim-values");
+          verdicts.forEach(verdict => profiles.append(el(
+            "span", "",
+            `${verdict.independence_profile}${verdict.role === "primary" ? " (primary)" : ""}: ${verdict.status}, ${pct(verdict.lower)}–${pct(verdict.upper)}`
+          )));
+          card.append(profiles);
+        }
         const reason = [...(claim.reasons || []), ...(claim.warnings || [])].join(" ");
         if (reason) card.append(el("p", "claim-reason", reason));
         const disclosure = document.createElement("details");
@@ -694,7 +705,7 @@
           intervals.filter(interval => !interval.independence_profile || interval.independence_profile === state.independenceProfile).forEach(interval => {
             const intervalRow = document.createElement("tr");
             intervalRow.append(
-              el("td", "", humanize(interval.role)), el("td", "", humanize(interval.method)), el("td", "", humanize(interval.independence_profile)),
+              el("td", "", roleLabel(interval)), el("td", "", humanize(interval.method)), el("td", "", humanize(interval.independence_profile)),
               el("td", "num", pct(interval.lower)), el("td", "num", pct(interval.upper)),
               el("td", "num", interval.completion_estimate_lower === null || interval.completion_estimate_lower === undefined ? "—" : `${pct(interval.completion_estimate_lower)}–${pct(interval.completion_estimate_upper)}`),
               el("td", "num", pct(interval.simultaneous_coverage)), el("td", "", humanize(interval.coverage_scope)),
@@ -1121,7 +1132,7 @@
           const effects = row.effect_summaries || {}; disclosure.append(el("p", "section-note", `Descriptive effects: risk difference ${pct(effects.risk_difference)} · risk ratio ${fmt(effects.risk_ratio)} · relative risk reduction ${pct(effects.relative_risk_reduction)}`));
           if (alternatives.length) {
             const at = el("table", "risk-table"); const ah = document.createElement("thead"); const ahr = document.createElement("tr"); ["Role", "Method", "Independence profile", "Lower", "Upper", "Coverage"].forEach((v, i) => ahr.append(el("th", i >= 3 ? "num" : "", v))); ah.append(ahr); at.append(ah); const ab = document.createElement("tbody");
-            alternatives.forEach(interval => { const ar = document.createElement("tr"); const coverage = interval.simultaneous_coverage === null || interval.simultaneous_coverage === undefined ? "pointwise" : `${pct(interval.simultaneous_coverage)} simultaneous`; ar.append(el("td", "", interval.role), el("td", "", humanize(interval.method)), el("td", "", humanize(interval.independence_profile)), el("td", "num", effectFmt(row, interval.lower)), el("td", "num", effectFmt(row, interval.upper)), el("td", "num", coverage)); ab.append(ar); }); at.append(ab); disclosure.append(at);
+            alternatives.forEach(interval => { const ar = document.createElement("tr"); const coverage = interval.simultaneous_coverage === null || interval.simultaneous_coverage === undefined ? "pointwise" : `${pct(interval.simultaneous_coverage)} simultaneous`; ar.append(el("td", "", roleLabel(interval)), el("td", "", humanize(interval.method)), el("td", "", humanize(interval.independence_profile)), el("td", "num", effectFmt(row, interval.lower)), el("td", "num", effectFmt(row, interval.upper)), el("td", "num", coverage)); ab.append(ar); }); at.append(ab); disclosure.append(at);
           }
           if ((row.warnings || []).length) disclosure.append(el("p", "claim-reason", row.warnings.join(" · ")));
           if (Object.keys(row.diagnostic_outputs || {}).length) { const diagnostics = document.createElement("details"); diagnostics.append(el("summary", "", "Paired diagnostic outputs"), el("pre", "", JSON.stringify({pairs: row.pair_count, discordant_counts: row.discordant_counts, outputs: row.diagnostic_outputs}, null, 2))); disclosure.append(diagnostics); }

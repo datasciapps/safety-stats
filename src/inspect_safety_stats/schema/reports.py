@@ -10,6 +10,7 @@ from pydantic import (
     PrivateAttr,
     SerializerFunctionWrapHandler,
     model_serializer,
+    model_validator,
 )
 
 Decision = Literal["PASS", "FAIL", "INCONCLUSIVE"]
@@ -46,6 +47,10 @@ class PromptEstimate(ResultModel):
     n_error: int
     n_unclassified: int = 0
     n_policy_blocked_safe: int = 0
+    # Rollouts whose answer stopped at the generation token limit without a score or a sample
+    # error, counted as the plan's score.token_limit says; None when it is "score", which does
+    # not look.
+    n_token_limit: int | None = None
     p_hat: float | None = None
     lower: float | None = None
     upper: float | None = None
@@ -56,6 +61,17 @@ class PromptEstimate(ResultModel):
     eligibility: Eligibility = "invalid"
     warnings: list[str] = Field(default_factory=list)
 
+    @model_serializer(mode="wrap")
+    def leave_out_absent_token_limit_count(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        # Left out unless the plan's score.token_limit looks, so a report that does not keeps
+        # the bytes it had before the field existed.
+        data: dict[str, Any] = handler(self)
+        if self.n_token_limit is None:
+            data.pop("n_token_limit", None)
+        return data
+
 
 class RiskIntervalResult(ResultModel):
     interval_id: str
@@ -63,6 +79,10 @@ class RiskIntervalResult(ResultModel):
     upper: float | None = None
     method: str
     role: Literal["primary", "reference", "sensitivity"]
+    # What a sensitivity interval varies: the independence profile its blocks come from, or
+    # the judge's error rates (an assumed calibration scenario or an uncertified correction).
+    # None for primary and reference intervals, and in reports written before the field.
+    varied_assumption: Literal["independence", "judge_error"] | None = None
     coverage_scope: str | None = None
     coverage_mode: Literal["two_sided", "per_direction"] | None = None
     family: str | None = None
@@ -101,6 +121,38 @@ class RiskIntervalResult(ResultModel):
     assumptions: list[str] = Field(default_factory=list)
     eligibility: Eligibility
     warnings: list[str] = Field(default_factory=list)
+    # Experimental (#127), set only when the plan asks for it.
+    single_valued_bound: float | None = None
+    single_valued_bound_delta: float | None = None
+    single_valued_bound_guarantee: str | None = None
+
+    @model_validator(mode="after")
+    def _varied_assumption_only_on_sensitivity(self) -> RiskIntervalResult:
+        if self.varied_assumption is not None and self.role != "sensitivity":
+            raise ValueError(
+                f"interval {self.interval_id!r} has role {self.role!r}; only a sensitivity "
+                "interval names a varied_assumption"
+            )
+        return self
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_single_valued_bound(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        # Left out unless requested, so a report that does not use the experimental bound
+        # keeps the bytes it had before the bound existed.
+        data: dict[str, Any] = handler(self)
+        if self.single_valued_bound is None:
+            for name in _SINGLE_VALUED_FIELDS:
+                data.pop(name, None)
+        return data
+
+
+_SINGLE_VALUED_FIELDS = (
+    "single_valued_bound",
+    "single_valued_bound_delta",
+    "single_valued_bound_guarantee",
+)
 
 
 class GroupRiskResult(ResultModel):
@@ -223,6 +275,68 @@ class ComparisonSetResult(ResultModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class ClaimProfileVerdict(ResultModel):
+    """A claim's verdict under one declared independence profile.
+
+    The primary profile's row repeats the claim's own status. A sensitivity row decides the
+    same thresholds on that profile's interval of the same method; it is shown for
+    robustness and never replaces the primary verdict.
+    """
+
+    independence_profile: str
+    role: Literal["primary", "sensitivity"]
+    status: Decision
+    interval_id: str
+    lower: float | None = None
+    upper: float | None = None
+    independent_block_count: int | None = None
+    effective_sample_size: float | None = None
+
+
+class JudgeErrorStressResult(ResultModel):
+    """How good the judge must be for a threshold claim's verdict to hold on true risk.
+
+    Experimental and diagnostic: it never moves a claim. ``applicable`` is False, with the
+    reason, when the claim was not decided on judge-reported bounds this can stress.
+    """
+
+    applicable: bool
+    reason: str | None = None
+    judge_reported_lower: float | None = None
+    judge_reported_upper: float | None = None
+    unclassified_share: float | None = None
+    pass_sensitivity_at_perfect_specificity: float | None = None
+    pass_specificity_at_perfect_sensitivity: float | None = None
+    fail_sensitivity_at_perfect_specificity: float | None = None
+    fail_specificity_at_perfect_sensitivity: float | None = None
+    accuracy_source: str | None = None
+    sensitivity_lower: float | None = None
+    sensitivity_upper: float | None = None
+    specificity_lower: float | None = None
+    specificity_upper: float | None = None
+    stressed_status: Decision | None = None
+    true_risk_lower: float | None = None
+    true_risk_upper: float | None = None
+    identified: bool | None = None
+    robust: bool | None = None
+
+
+class VerdictRange(ResultModel):
+    """The thresholds at which a claim would PASS or FAIL, read off the bounds it was decided on.
+
+    The claim is PASS for every ``acceptable_upper`` at or above ``pass_acceptable_upper``
+    (strictly above when ``pass_strict``), and FAIL for every ``unacceptable_lower`` at or below
+    ``fail_unacceptable_lower`` (strictly below when ``fail_strict``). Each holds whatever the
+    other threshold of a valid pair is. A ``None`` boundary means that no threshold the plan
+    allows gives that verdict. Every other pair of thresholds gives INCONCLUSIVE.
+    """
+
+    pass_acceptable_upper: float | None = None
+    pass_strict: bool = False
+    fail_unacceptable_lower: float | None = None
+    fail_strict: bool = False
+
+
 class ClaimResult(ResultModel):
     claim_id: str
     title: str
@@ -238,6 +352,9 @@ class ClaimResult(ResultModel):
     upper: float | None = None
     acceptable_upper: float
     unacceptable_lower: float
+    # None when the plan's thresholds are ones its test cannot take, which leaves the range
+    # unknown, and in reports written before verdict ranges were reported.
+    verdict_range: VerdictRange | None = None
     # None when the claim's family is undeclared: such a claim has no error budget.
     alpha: float | None
     multiplicity_family: str
@@ -246,6 +363,122 @@ class ClaimResult(ResultModel):
     evidence_refs: list[str] = Field(default_factory=list)
     reasons: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    profile_verdicts: list[ClaimProfileVerdict] = Field(default_factory=list)
+    # Present only when the plan opts in with report.judge_error_stress.
+    judge_error_stress: JudgeErrorStressResult | None = None
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_judge_error_stress(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if self.judge_error_stress is None:
+            data.pop("judge_error_stress", None)
+        return data
+
+
+class PolicyThresholdsRecord(ResultModel):
+    acceptable_upper: float
+    unacceptable_lower: float
+
+
+class DecisionPolicyVersionRecord(ResultModel):
+    id: str
+    set_at: str
+    reason: str | None = None
+    thresholds: dict[str, PolicyThresholdsRecord]
+    # Whether the version was set after the earliest start time of the selected evaluations;
+    # None when no evaluation reports a start time.
+    set_after_first_evaluation: bool | None = None
+
+
+class ClaimThresholdsRecord(ResultModel):
+    """The thresholds a claim was decided at, and where they came from."""
+
+    claim_id: str
+    acceptable_upper: float
+    unacceptable_lower: float
+    # "plan", or the id of the policy version that set them last.
+    set_by: str
+    plan_acceptable_upper: float
+    plan_unacceptable_lower: float
+
+
+class DecisionPolicyRecord(ResultModel):
+    """The decision policy an analysis applied (experimental).
+
+    Its thresholds replace the plan's for the claims it sets, while ``analysis.plan_sha256``
+    stays the hash of the plan as frozen. ``applied`` is false when the policy failed a check
+    (see the ``DECISION_POLICY_*`` diagnostics); the claims then keep the plan's thresholds.
+    """
+
+    inference_plan_sha256: str
+    policy_inference_plan_sha256: str
+    policy_sha256: str
+    applied: bool
+    first_evaluation_started_at: str | None = None
+    versions: list[DecisionPolicyVersionRecord]
+    claims: list[ClaimThresholdsRecord]
+
+
+class RateRangeRecord(ResultModel):
+    lower: float
+    upper: float
+
+
+class JudgeScenarioRecord(ResultModel):
+    """A declared judge-accuracy scenario: ``rho_1`` is P(truly unsafe | judge said unsafe)
+    and ``rho_0`` is P(truly unsafe | judge said safe)."""
+
+    id: str
+    rho_1: RateRangeRecord
+    rho_0: RateRangeRecord
+
+
+class JudgeCalibrationPresentation(ResultModel):
+    """The plan's judge calibration, as far as the report's text depends on it."""
+
+    mode: Literal["assumed", "validated", "transported"]
+    sampling: str | None = None
+    primary: str | None = None
+    # The groups the calibration is scoped to; None when it applies to every group.
+    groups: list[str] | None = None
+    scenarios: list[JudgeScenarioRecord] = Field(default_factory=list)
+
+
+class ClaimEvidenceRecord(ResultModel):
+    """The result a claim was decided on: a comparison, or a cohort's measure on a group."""
+
+    claim_id: str
+    comparison: str | None = None
+    cohort: str | None = None
+    group: str | None = None
+    measure: str | None = None
+    # The plan's type of that measure, such as ``weighted_mean``.
+    measure_type: str | None = None
+
+
+class ReportPresentation(ResultModel):
+    """What the rendered report (Markdown, HTML, CSV) needs beyond the results.
+
+    A report is rendered from ``report.json`` alone. Fields that are None were not recorded,
+    in reports written before they existed.
+    """
+
+    include_decisions: bool = True
+    decimal_places: int | None = None
+    primary_independence_profile: str | None = None
+    claim_evidence: list[ClaimEvidenceRecord] | None = None
+    judge_calibration: JudgeCalibrationPresentation | None = None
+    # The plan's primary outcome mapping; recorded only when the plan declares outcome mapping
+    # sensitivities (experimental), which show it beside the alternatives.
+    primary_outcome_mapping: dict[str, Any] | None = None
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # A field a report does not record stays out of report.json, rather than null.
+        data: dict[str, Any] = handler(self)
+        return {key: value for key, value in data.items() if value is not None}
 
 
 class MappingSensitivityResult(ResultModel):
@@ -282,12 +515,19 @@ class OutcomeMappingSensitivity(ResultModel):
 
 
 class SafetyReport(ResultModel):
+    """The result of ``analyze``: estimates, bounds, comparisons, claims and the decision.
+
+    Its results apply to the declared fixed evaluation set. ``write`` saves it as a report
+    directory, and ``inspect-safety-stats schema report`` prints the JSON schema of its
+    ``report.json``.
+    """
+
     schema_version: Literal["3.0"] = "3.0"
     package_version: str
     analysis: dict[str, Any]
     provenance: dict[str, Any]
     scope: dict[str, Any]
-    presentation: dict[str, Any] = Field(default_factory=dict)
+    presentation: ReportPresentation = Field(default_factory=ReportPresentation)
     integrity: IntegritySummary
     design: dict[str, Any]
     cohorts: list[dict[str, Any]]
@@ -300,17 +540,25 @@ class SafetyReport(ResultModel):
     claims: list[ClaimResult]
     policy_events: list[dict[str, Any]]
     decision: Decision
+    # Present only when the analysis was given a decision policy.
+    decision_policy: DecisionPolicyRecord | None = None
     # Experimental; left out of report.json when the plan declares no alternative mapping.
     outcome_mapping_sensitivities: list[OutcomeMappingSensitivity] = Field(default_factory=list)
+    # Copies of the analysis input, written beside the report as observations.csv and
+    # plan.resolved.yaml. No rendering reads them: everything report.md, report.html and the
+    # other CSVs show is in the fields above.
     _observations: list[Any] = PrivateAttr(default_factory=list)
-    _resolved_design: list[dict[str, Any]] = PrivateAttr(default_factory=list)
     _resolved_plan: dict[str, Any] = PrivateAttr(default_factory=dict)
 
     @model_serializer(mode="wrap")
-    def leave_out_absent_mapping_sensitivities(
+    def leave_out_absent_optional_sections(
         self, handler: SerializerFunctionWrapHandler
     ) -> dict[str, Any]:
+        # A report of an analysis without a decision policy or outcome mapping sensitivities
+        # keeps the bytes it had before either existed.
         data: dict[str, Any] = handler(self)
+        if self.decision_policy is None:
+            data.pop("decision_policy", None)
         if not self.outcome_mapping_sensitivities:
             data.pop("outcome_mapping_sensitivities", None)
         return data
@@ -320,9 +568,22 @@ class SafetyReport(ResultModel):
 
         return write_report(self, output, overwrite=overwrite)
 
-
 def mapping_results(report: SafetyReport) -> list[MappingSensitivityResult]:
     """The displayed results that outcome mapping sensitivities put side by side."""
+
+    return result_readings(report.group_risks, report.comparisons, report.claims)
+
+
+def result_readings(
+    group_risks: list[GroupRiskResult],
+    comparisons: list[ComparisonResult],
+    claims: list[ClaimResult],
+) -> list[MappingSensitivityResult]:
+    """The rows ``mapping_results`` gives, from an analysis's results before a report holds them.
+
+    Each kind is sorted as ``analyze`` sorts it in the report, so an alternative mapping's rows
+    line up with the primary's.
+    """
 
     rows = [
         MappingSensitivityResult(
@@ -335,7 +596,9 @@ def mapping_results(report: SafetyReport) -> list[MappingSensitivityResult]:
             lower=risk.lower,
             upper=risk.upper,
         )
-        for risk in report.group_risks
+        for risk in sorted(
+            group_risks, key=lambda item: (item.cohort_id, item.group_id, item.measure_id)
+        )
     ]
     rows.extend(
         MappingSensitivityResult(
@@ -347,7 +610,7 @@ def mapping_results(report: SafetyReport) -> list[MappingSensitivityResult]:
             lower=comparison.lower,
             upper=comparison.upper,
         )
-        for comparison in report.comparisons
+        for comparison in sorted(comparisons, key=lambda item: item.comparison_id)
     )
     rows.extend(
         MappingSensitivityResult(
@@ -358,6 +621,6 @@ def mapping_results(report: SafetyReport) -> list[MappingSensitivityResult]:
             upper=claim.upper,
             status=claim.status,
         )
-        for claim in report.claims
+        for claim in sorted(claims, key=lambda item: item.claim_id)
     )
     return rows
