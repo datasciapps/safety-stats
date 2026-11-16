@@ -108,11 +108,11 @@ def _analyze(monkeypatch: pytest.MonkeyPatch, failing_question: str) -> SafetyRe
             )
     sample_frame = pd.DataFrame(rows)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
-        lambda logs, parallel=False: sample_frame,
+        lambda logs, **_: sample_frame,
     )
     return analyze(plan=PLAN, logs="ignored")
 
