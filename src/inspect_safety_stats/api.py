@@ -151,13 +151,46 @@ def _source(
     """The source ``analyze`` and ``validate`` read: ``source``, or else the Inspect logs."""
 
     if source is not None:
-        if logs is not None:
-            raise ValueError("pass either logs or source, not both")
         return source
     # Imported here, so that importing this module does not load Inspect AI.
     from inspect_safety_stats.ingest.inspect_logs import InspectLogs
 
     return InspectLogs(logs, parallel=parallel)
+
+
+def _read_input(
+    plan: AnalysisPlan,
+    logs: LogInput,
+    parallel: bool | int,
+    source: EvaluationSource | None,
+    diagnostics: list[Diagnostic],
+) -> NormalizedData | None:
+    """Read and normalize the analysis input, or record why it cannot be read.
+
+    ``validate`` and ``analyze`` both read their input here, so that bad input gives both the
+    same ``INGEST_FAILED`` error. None when the input cannot be read. Passing both ``logs``
+    and ``source`` is a mistake in the call, not in the input, and raises ``ValueError``.
+    """
+
+    if source is not None and logs is not None:
+        raise ValueError("pass either logs or source, not both")
+    try:
+        data = ingest(plan, _source(logs, parallel, source))
+        validate_profile_fields(plan.design.independence_profiles, data.manifest)
+    except Exception as exc:
+        diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=str(exc)))
+        return None
+    diagnostics.extend(data.diagnostics)
+    return data
+
+
+def _sorted_integrity(diagnostics: list[Diagnostic]) -> IntegritySummary:
+    return IntegritySummary(
+        status=_integrity_status(diagnostics),
+        diagnostics=sorted(
+            diagnostics, key=lambda item: (item.severity, item.code, item.scope or "")
+        ),
+    )
 
 
 def validate(
@@ -169,18 +202,8 @@ def validate(
 ) -> IntegritySummary:
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
-    try:
-        normalized = ingest(resolved, _source(logs, parallel, source))
-        validate_profile_fields(resolved.design.independence_profiles, normalized.manifest)
-        diagnostics.extend(normalized.diagnostics)
-    except Exception as exc:
-        diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=str(exc)))
-    return IntegritySummary(
-        status=_integrity_status(diagnostics),
-        diagnostics=sorted(
-            diagnostics, key=lambda item: (item.severity, item.code, item.scope or "")
-        ),
-    )
+    _read_input(resolved, logs, parallel, source, diagnostics)
+    return _sorted_integrity(diagnostics)
 
 
 def _alpha_by_prompt(
@@ -961,6 +984,7 @@ def _direct_interval_result(
         upper=bounds.upper,
         method=method,
         role=role,
+        varied_assumption="independence" if role == "sensitivity" else None,
         coverage_scope=(
             f"{scope_prefix}{calibration_scope}_{independence_profile}_fixed_design_mean_family"
         ),
@@ -2265,6 +2289,7 @@ def _judge_corrected_interval(
             else "assumed_judge_misclassification_correction"
         ),
         role="reference" if certified else "sensitivity",
+        varied_assumption=None if certified else "judge_error",
         coverage_scope=(
             f"{result.coverage_scope}_judge_corrected"
             if result.coverage_scope
@@ -2461,6 +2486,7 @@ def _apply_panel_derived_correction(
                 upper=identified.upper,
                 method="derived_panel_misclassification_correction",
                 role="sensitivity",
+                varied_assumption="judge_error",
                 coverage_scope=(
                     f"{result.coverage_scope}_panel_derived"
                     if result.coverage_scope
@@ -2585,6 +2611,7 @@ def _delta_reference_interval(
         upper=delta.upper,
         method="delta_method_judge_misclassification_correction",
         role="sensitivity",
+        varied_assumption="judge_error",
         coverage_scope=(
             f"{result.coverage_scope}_judge_corrected_delta"
             if result.coverage_scope
@@ -3377,6 +3404,7 @@ def _comparison_interval(
         upper=upper,
         method=method,
         role=role,
+        varied_assumption="independence" if role == "sensitivity" else None,
         coverage_scope=(scope_prefix + f"_{independence_profile}_fixed_design_comparison_family"),
         coverage_mode=spec.coverage_mode,
         family=spec.family,
@@ -3982,6 +4010,7 @@ def _judge_corrected_comparison_interval(
         upper=upper,
         method="validated_judge_misclassification_correction",
         role="reference" if certified else "sensitivity",
+        varied_assumption=None if certified else "judge_error",
         coverage_scope=(
             f"{primary.coverage_scope}_judge_corrected"
             if primary.coverage_scope
@@ -4893,6 +4922,102 @@ def _resolved_design(data: NormalizedData, hierarchy: list[str]) -> list[dict[st
     return rows
 
 
+def _report_frame(plan: AnalysisPlan) -> dict[str, Any]:
+    """The report fields that come from the plan alone, whether or not its input was read."""
+
+    return {
+        "package_version": __version__,
+        "analysis": {
+            **plan.analysis.model_dump(mode="json"),
+            "plan_sha256": canonical_plan_hash(plan),
+        },
+        "scope": {
+            "design": "fixed",
+            "randomness": "stochastic rollouts within fixed prompts",
+            "estimand": plan.inputs.estimand,
+            "disclaimer": (
+                "Results apply to the declared fixed evaluation set and specified "
+                "stochastic rollout process. They do not estimate failure prevalence "
+                "over an external population of prompts or establish safety for omitted "
+                "hazards or deployment conditions."
+            ),
+        },
+        "presentation": {"include_decisions": plan.report.include_decisions},
+        "multiplicity": [family.model_dump(mode="json") for family in plan.multiplicity.families],
+    }
+
+
+def _design_frame(plan: AnalysisPlan) -> dict[str, Any]:
+    """The report's design fields that come from the plan alone."""
+
+    return {
+        "manifest": report_path(plan.inputs.design_manifest, plan),
+        "hierarchy": plan.design.hierarchy,
+        "independence_profiles": {
+            profile_id: profile.model_dump(mode="json")
+            for profile_id, profile in plan.design.independence_profiles.items()
+        },
+    }
+
+
+def _unread_input_report(plan: AnalysisPlan, diagnostics: list[Diagnostic]) -> SafetyReport:
+    """The report of an analysis whose input could not be read.
+
+    The diagnostics carry the ``INGEST_FAILED`` error, so integrity is invalid. The report has
+    no observations, estimates or comparisons, and every claim is INCONCLUSIVE, so that the
+    failure is written down and audited like any other invalid analysis.
+    """
+
+    families = {family.id: family for family in plan.multiplicity.families}
+    claims = [
+        ClaimResult(
+            claim_id=claim.id,
+            title=claim.title,
+            status="INCONCLUSIVE",
+            statistical_status="INCONCLUSIVE",
+            policy_status="INCONCLUSIVE",
+            acceptable_upper=claim.acceptable_upper,
+            unacceptable_lower=claim.unacceptable_lower,
+            alpha=families[claim.family].alpha if claim.family in families else None,
+            multiplicity_family=claim.family,
+            method="unavailable",
+            mandatory=claim.mandatory,
+            evidence_refs=[
+                f"comparison:{claim.comparison}"
+                if claim.comparison
+                else f"risk:{claim.cohort}:{claim.group}:{claim.measure}"
+            ],
+            reasons=["The analysis input could not be read; see the INGEST_FAILED diagnostic."],
+        )
+        for claim in sorted(plan.claims, key=lambda item: item.id)
+    ]
+    report = SafetyReport(
+        **_report_frame(plan),
+        provenance={"source_format": {}, "sources": []},
+        integrity=_sorted_integrity(diagnostics),
+        design={
+            **_design_frame(plan),
+            "manifest_sha256": None,
+            "prompt_count": None,
+            "groups": [],
+        },
+        cohorts=[],
+        prompt_estimates=[],
+        group_risks=[],
+        comparisons=[],
+        claims=claims,
+        policy_events=[],
+        decision=roll_up(
+            [claim.status for claim in claims if claim.mandatory],
+            integrity_valid=False,
+            zero_tolerance_failure=False,
+            confirmatory=plan.analysis.intent == "confirmatory",
+        ),
+    )
+    report._resolved_plan = report_plan(plan)
+    return report
+
+
 def analyze(
     *,
     plan: AnalysisPlan | str | Path,
@@ -4902,9 +5027,9 @@ def analyze(
 ) -> SafetyReport:
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
-    data = ingest(resolved, _source(logs, parallel, source))
-    validate_profile_fields(resolved.design.independence_profiles, data.manifest)
-    diagnostics.extend(data.diagnostics)
+    data = _read_input(resolved, logs, parallel, source, diagnostics)
+    if data is None:
+        return _unread_input_report(resolved, diagnostics)
     estimates = _prompt_estimates(resolved, data, diagnostics)
     hierarchy_nodes = _hierarchy_nodes(resolved, data)
     direct_context = _direct_mean_context(
@@ -4963,19 +5088,12 @@ def analyze(
         zero_tolerance_failure=bool(events),
         confirmatory=resolved.analysis.intent == "confirmatory",
     )
-    integrity = IntegritySummary(
-        status=integrity_status,
-        diagnostics=sorted(
-            diagnostics, key=lambda item: (item.severity, item.code, item.scope or "")
-        ),
-    )
+    integrity = _sorted_integrity(diagnostics)
     judge_panel = _judge_panel_summary(resolved, data)
     if judge_panel is not None and panel_correction is not None:
         judge_panel["derived_correction"] = panel_correction
-    plan_hash = canonical_plan_hash(resolved)
     report = SafetyReport(
-        package_version=__version__,
-        analysis={**resolved.analysis.model_dump(mode="json"), "plan_sha256": plan_hash},
+        **_report_frame(resolved),
         provenance={
             "source_format": data.source_format,
             "sources": [
@@ -4992,27 +5110,10 @@ def analyze(
             ),
             **({"judge_panel": judge_panel} if judge_panel else {}),
         },
-        scope={
-            "design": "fixed",
-            "randomness": "stochastic rollouts within fixed prompts",
-            "estimand": resolved.inputs.estimand,
-            "disclaimer": (
-                "Results apply to the declared fixed evaluation set and specified "
-                "stochastic rollout process. They do not estimate failure prevalence "
-                "over an external population of prompts or establish safety for omitted "
-                "hazards or deployment conditions."
-            ),
-        },
-        presentation={"include_decisions": resolved.report.include_decisions},
         integrity=integrity,
         design={
-            "manifest": report_path(resolved.inputs.design_manifest, resolved),
+            **_design_frame(resolved),
             "manifest_sha256": sha256_value(data.manifest.to_dict(orient="records")),
-            "hierarchy": resolved.design.hierarchy,
-            "independence_profiles": {
-                profile_id: profile.model_dump(mode="json")
-                for profile_id, profile in resolved.design.independence_profiles.items()
-            },
             "prompt_count": len(data.manifest),
             "groups": [
                 {"id": group.id, "title": group.title, "prompt_count": len(group.prompt_ids)}
@@ -5035,7 +5136,6 @@ def analyze(
         ),
         comparisons=sorted(comparisons, key=lambda item: item.comparison_id),
         comparison_sets=comparison_sets,
-        multiplicity=[family.model_dump(mode="json") for family in resolved.multiplicity.families],
         claims=sorted(claims, key=lambda item: item.claim_id),
         policy_events=events,
         decision=decision,

@@ -310,8 +310,18 @@ def test_empirical_hierarchy_intervals_and_independence_sensitivity(
         )
         sensitivity = [interval for interval in node.intervals if interval.role == "sensitivity"]
         assert {interval.independence_profile for interval in sensitivity} == {"prompt"}
+        # A sensitivity says what it varies, so it cannot be read as a judge-error scenario.
+        assert {interval.varied_assumption for interval in sensitivity} == {"independence"}
+        assert all(
+            interval.varied_assumption is None
+            for interval in node.intervals
+            if interval.role != "sensitivity"
+        )
 
     output = report.write(tmp_path / "hierarchy-report")
+    markdown = (output / "report.md").read_text(encoding="utf-8")
+    assert "| sensitivity (independence) |" in markdown
+    assert "| sensitivity |" not in markdown
     hierarchy_csv = (output / "hierarchy-risks.csv").read_text(encoding="utf-8")
     assert "weighted_empirical_bernstein" in hierarchy_csv
     assert "prompt" in hierarchy_csv
@@ -568,6 +578,7 @@ def test_judge_calibration_emits_assumed_correction_sensitivities(
     # An assumption can never certify.
     assert declared.eligibility == "diagnostic"
     assert declared.role == "sensitivity"
+    assert declared.varied_assumption == "judge_error"
     # The uncorrected bounds are retained for comparison, and the primary is untouched.
     assert declared.raw_lower == pytest.approx(mean.lower)
     assert declared.raw_upper == pytest.approx(mean.upper)
@@ -1269,6 +1280,67 @@ def test_inspect_blank_error_field_is_not_a_sample_error(
     )
     report = analyze(plan=plan_path, logs="ignored")
     assert report.integrity.status == "valid"
+
+
+def _two_sample_errors(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """A plan whose logs have two sample errors in one log, read through stubbed frames."""
+
+    plan_path = _write_inputs(tmp_path)
+    eval_frame, sample_frame = _frames()
+    target = (sample_frame["id"] == "p1") & (sample_frame["epoch"].isin([1, 2]))
+    sample_frame.loc[target, "score_harmful"] = None
+    sample_frame.loc[target, "error"] = "provider error"
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    return plan_path
+
+
+def test_an_unreadable_transcript_is_reported_not_swallowed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _two_sample_errors(monkeypatch, tmp_path)
+    reads: list[str] = []
+
+    def unreadable(path: str) -> None:
+        reads.append(path)
+        raise FileNotFoundError(path)
+
+    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.read_eval_log", unreadable)
+    plan = load_plan(plan_path)
+    plan.inputs.score.errors = "end_to_end"
+    report = analyze(plan=plan, logs="ignored")
+    unread = [item for item in report.integrity.diagnostics if item.code == "TRANSCRIPT_UNREAD"]
+    assert len(unread) == 1
+    assert unread[0].severity == "WARNING"
+    errored = [item for item in report._observations if item.error is not None]
+    assert [item.error_stage for item in errored] == ["unknown", "unknown"]
+    # Named as the report names the log everywhere else, never by its local path.
+    assert unread[0].details == {
+        "source": errored[0].source,
+        "reason": "FileNotFoundError",
+        "sample_errors": 2,
+    }
+    assert reads == ["/not/a/local/log.eval"]
+
+
+def test_a_defect_in_reading_a_transcript_is_not_an_unknown_error_stage(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _two_sample_errors(monkeypatch, tmp_path)
+
+    def broken(path: str) -> None:
+        raise RuntimeError("a defect in the reader")
+
+    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.read_eval_log", broken)
+    report = analyze(plan=plan_path, logs="ignored")
+    assert report.integrity.status == "invalid"
+    failed = [item for item in report.integrity.diagnostics if item.code == "INGEST_FAILED"]
+    assert [item.message for item in failed] == ["a defect in the reader"]
 
 
 def test_plan_load_resolves_manifest_path(tmp_path: Path) -> None:
@@ -2096,6 +2168,7 @@ def test_panel_derived_correction_is_reported_as_a_diagnostic(
     )
     assert derived.eligibility == "diagnostic"
     assert derived.role == "sensitivity"
+    assert derived.varied_assumption == "judge_error"
     assert derived.method == "derived_panel_misclassification_correction"
     assert any("block" in assumption.lower() for assumption in derived.assumptions)
     box = composite_accuracy_box(
@@ -2266,6 +2339,7 @@ def test_validated_correction_reports_directional_coverage_and_a_delta_reference
     )
     assert delta.eligibility == "diagnostic"
     assert delta.role == "sensitivity"
+    assert delta.varied_assumption == "judge_error"
     assert delta.method == "delta_method_judge_misclassification_correction"
     assert delta.lower is not None and delta.upper is not None
     assert exact.lower is not None and exact.upper is not None
