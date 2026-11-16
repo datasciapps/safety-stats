@@ -96,6 +96,8 @@
     .badge.pass { color: var(--safe); background: var(--safe-soft); }
     .badge.fail, .badge.error { color: var(--fail); background: var(--fail-soft); }
     .badge.inconclusive, .badge.warning, .badge.degraded { color: var(--warn); background: var(--warn-soft); }
+    .badge.descriptive { background: transparent; border: 1px dashed currentColor; }
+    .claim-badges { display: flex; gap: 6px; flex-wrap: wrap; justify-content: end; }
     .meta-line { color: var(--muted); font-size: 0.84rem; margin-top: 8px; overflow-wrap: anywhere; }
     .toolbar {
       display: flex;
@@ -557,7 +559,15 @@
         const card = el("article", "card");
         const head = el("div", "claim-title");
         head.append(el("h3", "", claim.title));
-        head.append(el("span", `badge ${statusClass(claim.status)}`, claim.status));
+        const badges = el("div", "claim-badges");
+        badges.append(el("span", `badge ${statusClass(claim.status)}`, claim.status));
+        if (claim.descriptive_status) {
+          // An exploratory claim certifies nothing; this is what the bounds would decide.
+          const descriptive = el("span", `badge descriptive ${statusClass(claim.descriptive_status)}`, `Descriptive: ${claim.descriptive_status}`);
+          descriptive.title = "What a confirmatory analysis of these bounds would give at the plan's thresholds. Not a certification.";
+          badges.append(descriptive);
+        }
+        head.append(badges);
         card.append(head);
         const track = el("div", "claim-track");
         const lower = clamp01(claim.lower), upper = clamp01(claim.upper), estimate = clamp01(claim.estimate);
@@ -583,6 +593,7 @@
           claim_id: claim.claim_id,
           statistical_status: claim.statistical_status,
           policy_status: claim.policy_status,
+          descriptive_status: claim.descriptive_status,
           mandatory: claim.mandatory,
           alpha: claim.alpha,
           multiplicity_family: claim.multiplicity_family,
