@@ -248,9 +248,11 @@ def test_direct_script_invocation_registers_all_commands() -> None:
         text=True,
         check=False,
     )
-    assert result.returncode == 0
+    # A failing script (an import or path problem) is only debuggable from its output.
+    output = f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+    assert result.returncode == 0, output
     for command in ("compile", "materialize", "analyze", "budget"):
-        assert command in result.stdout
+        assert command in result.stdout, output
 
 
 def test_every_command_explains_itself_in_help() -> None:
