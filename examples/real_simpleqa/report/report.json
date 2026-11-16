@@ -43,6 +43,12 @@
       "title": "Equal-weight fixed-design mean failure risk is acceptable",
       "unacceptable_lower": 0.6,
       "upper": 0.9079307072015383,
+      "verdict_range": {
+        "fail_strict": false,
+        "fail_unacceptable_lower": 0.0920692927984616,
+        "pass_acceptable_upper": 0.9079307072015383,
+        "pass_strict": false
+      },
       "warnings": []
     }
   ],

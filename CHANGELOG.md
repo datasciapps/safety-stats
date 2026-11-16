@@ -102,6 +102,13 @@ described in their pull requests.
   in an exploratory analysis now reports the test's bounds and reasons, where it reported
   none.
 
+- **Verdicts at other thresholds (changes report bytes).** Each claim in `report.json` has a
+  `verdict_range`: the `acceptable_upper` values at which it would `PASS` and the
+  `unacceptable_lower` values at which it would `FAIL`, read off the bounds it was decided on.
+  With `include_decisions`, the claims table in `report.md` has a column that states the same
+  range. Verdicts, bounds and error rates are unchanged. See
+  [Verdicts at other thresholds](docs/interpretation.md#verdicts-at-other-thresholds).
+
 - **Rollout files (experimental).** Results from any evaluation system can be analysed from a
   runs file and a rollouts file in JSON Lines or CSV: `analyze` and `validate` take
   `--runs` and `--rollouts` in place of `--logs`, and `source=RolloutFiles(...)` in place of

@@ -8,6 +8,7 @@ from .reports import (
     IntegritySummary,
     PromptEstimate,
     SafetyReport,
+    VerdictRange,
 )
 
 __all__ = [
@@ -20,4 +21,5 @@ __all__ = [
     "Observation",
     "PromptEstimate",
     "SafetyReport",
+    "VerdictRange",
 ]
