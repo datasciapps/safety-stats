@@ -138,6 +138,142 @@ def uneven_acceptance(rows: list[AcceptanceRow], *, tolerance: float = 0.05) -> 
     return uneven
 
 
+@dataclass(frozen=True)
+class FidelityRow:
+    """What became of every rewrite attempt for one value of one hierarchy level.
+
+    Counts are of attempts, not units: a unit retried three times contributes three.
+    ``validator_rejection_rate`` is the share of the rewrites the validator judged that it
+    rejected, and is None where it judged none. ``retried_after_duplicate`` counts units
+    whose kept rewrite came after one of their attempts was rejected as a duplicate: their
+    prompt depends on rewrites accepted for earlier units.
+    """
+
+    level: str
+    value: str
+    units: int
+    attempts: int
+    kernel_invalid: int
+    kernel_errors: int
+    exact_duplicates: int
+    near_duplicates: int
+    validator_judged: int
+    validator_rejected: int
+    validator_errors: int
+    validator_rejection_rate: float | None
+    retried_after_duplicate: int
+
+
+def _path_parts(node_id: str) -> list[tuple[str, str]]:
+    parts = []
+    for part in node_id.split("|")[1:]:
+        if "=" in part:
+            level, value = part.split("=", 1)
+            parts.append((level, value))
+    return parts
+
+
+def units_retried_after_duplicate(attempts: list[AttemptRecord]) -> set[str]:
+    """Units whose kept rewrite followed a duplicate rejection of their own."""
+
+    rejected = {
+        item.sampling_unit_id
+        for item in attempts
+        if item.duplicate != "none" and not item.accepted
+    }
+    kept = {item.sampling_unit_id for item in attempts if item.accepted}
+    return rejected & kept
+
+
+def fidelity_by_level(
+    selections: list[SelectionRecord], attempts: list[AttemptRecord]
+) -> list[FidelityRow]:
+    """Aggregate the attempt ledger across each level of the taxonomy.
+
+    Acceptance by level says how many units ran out of attempts. This says why attempts
+    failed -- the kernel's own rejection, a duplicate, or the validator -- so an arm whose
+    rewrites the validator rejects more often than another's is visible even when retries
+    hide it from acceptance.
+    """
+
+    by_unit: dict[str, list[AttemptRecord]] = {}
+    for item in attempts:
+        by_unit.setdefault(item.sampling_unit_id, []).append(item)
+    dependent = units_retried_after_duplicate(attempts)
+    buckets: dict[tuple[str, str], list[str]] = {}
+    for selection in selections:
+        if selection.sampling_unit_id not in by_unit:
+            continue
+        for part in _path_parts(selection.node_id):
+            buckets.setdefault(part, []).append(selection.sampling_unit_id)
+
+    rows = []
+    for (level, value), units in sorted(buckets.items()):
+        made = [item for unit in units for item in by_unit[unit]]
+        judged = [item for item in made if item.validator_status in {"valid", "invalid"}]
+        rejected = sum(1 for item in judged if item.validator_status == "invalid")
+        rows.append(
+            FidelityRow(
+                level=level,
+                value=value,
+                units=len(units),
+                attempts=len(made),
+                kernel_invalid=sum(1 for item in made if item.kernel_status == "invalid"),
+                kernel_errors=sum(1 for item in made if item.kernel_status == "error"),
+                exact_duplicates=sum(1 for item in made if item.duplicate == "exact"),
+                near_duplicates=sum(1 for item in made if item.duplicate == "near"),
+                validator_judged=len(judged),
+                validator_rejected=rejected,
+                validator_errors=sum(1 for item in made if item.validator_status == "error"),
+                validator_rejection_rate=rejected / len(judged) if judged else None,
+                retried_after_duplicate=sum(1 for unit in units if unit in dependent),
+            )
+        )
+    return rows
+
+
+def uneven_fidelity(rows: list[FidelityRow], *, tolerance: float = 0.05) -> list[str]:
+    """Levels whose values the validator rejects at materially different rates."""
+
+    by_level: dict[str, list[float]] = {}
+    for row in rows:
+        if row.validator_rejection_rate is not None:
+            by_level.setdefault(row.level, []).append(row.validator_rejection_rate)
+    return sorted(
+        level
+        for level, rates in by_level.items()
+        if len(rates) >= 2 and max(rates) - min(rates) > tolerance
+    )
+
+
+def check_attempts(rewrites: list[RewriteRecord], attempts: list[AttemptRecord]) -> None:
+    """Refuse an attempt ledger that does not describe the rewrite ledger beside it."""
+
+    by_unit: dict[str, list[AttemptRecord]] = {}
+    for item in attempts:
+        by_unit.setdefault(item.sampling_unit_id, []).append(item)
+    known = {record.sampling_unit_id for record in rewrites}
+    stray = sorted(set(by_unit) - known)
+    if stray:
+        raise ValueError(
+            f"the attempt ledger records units the rewrite ledger does not: {stray[:3]}"
+        )
+    for record in rewrites:
+        rows = sorted(by_unit.get(record.sampling_unit_id, []), key=lambda item: item.attempt)
+        numbers = [item.attempt for item in rows]
+        kept = [item for item in rows if item.accepted]
+        consistent = numbers == list(range(1, record.rewrite_attempts + 1)) and (
+            [item.prompt_sha256 for item in kept] == [record.prompt_sha256]
+            if record.is_evaluable()
+            else not kept
+        )
+        if not consistent:
+            raise ValueError(
+                f"unit {record.sampling_unit_id}: the attempt ledger and the rewrite ledger "
+                "disagree about its attempts"
+            )
+
+
 def load_seed_texts(plan: GenerativePlan, *, base_path: str | Path = ".") -> dict[str, str]:
     """Read the fixed seed prompts the rewrite kernel transforms."""
 

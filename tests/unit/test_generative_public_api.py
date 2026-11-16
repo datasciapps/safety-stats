@@ -24,11 +24,11 @@ SURFACE = {
     "GenerativeReport", "render_generative_report",
     # Results.
     "TreeEstimate", "NodeEstimate", "ComparisonResult", "ReweightedEstimate",
-    "CorrectedEstimate", "AcceptanceRow",
+    "CorrectedEstimate", "AcceptanceRow", "FidelityRow",
     # Composing a flow by hand.
     "SamplingDesign", "StratumAllocation", "plan_design", "draw_selections",
     "execute_rewrites", "ExecutionResult", "AcceptedRewrite", "load_seed_texts",
-    "acceptance_by_level", "materialize_dataset", "materialize_for_cohorts",
+    "acceptance_by_level", "fidelity_by_level", "materialize_dataset", "materialize_for_cohorts",
     "read_evaluated_samples", "samples_from_observations", "join_outcomes",
     "JoinResult", "EvaluatedSample", "UnitOutcome", "estimate_tree", "estimate_slice",
     "estimate_reweighted", "compare_cohorts",

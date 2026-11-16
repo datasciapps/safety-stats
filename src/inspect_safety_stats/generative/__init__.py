@@ -49,8 +49,10 @@ if TYPE_CHECKING:
         AcceptanceRow,
         AcceptedRewrite,
         ExecutionResult,
+        FidelityRow,
         acceptance_by_level,
         execute_rewrites,
+        fidelity_by_level,
         load_seed_texts,
     )
     from inspect_safety_stats.generative.inference import (
@@ -155,6 +157,7 @@ __all__ = [
     "ReweightedEstimate",
     "CorrectedEstimate",
     "AcceptanceRow",
+    "FidelityRow",
     # Composing a flow by hand.
     "SamplingDesign",
     "StratumAllocation",
@@ -165,6 +168,7 @@ __all__ = [
     "AcceptedRewrite",
     "load_seed_texts",
     "acceptance_by_level",
+    "fidelity_by_level",
     "materialize_dataset",
     "materialize_for_cohorts",
     "read_evaluated_samples",
@@ -199,6 +203,7 @@ _EXPORTS = {
     "DeterministicFakeValidator": "inspect_safety_stats.generative.kernels",
     "EvaluatedSample": "inspect_safety_stats.generative.join",
     "ExecutionResult": "inspect_safety_stats.generative.execution",
+    "FidelityRow": "inspect_safety_stats.generative.execution",
     "GenerativePlan": "inspect_safety_stats.generative.schema",
     "GenerativeReport": "inspect_safety_stats.generative.report",
     "JoinResult": "inspect_safety_stats.generative.join",
@@ -227,6 +232,7 @@ _EXPORTS = {
     "estimate_slice": "inspect_safety_stats.generative.inference",
     "estimate_tree": "inspect_safety_stats.generative.inference",
     "execute_rewrites": "inspect_safety_stats.generative.execution",
+    "fidelity_by_level": "inspect_safety_stats.generative.execution",
     "forecast": "inspect_safety_stats.generative.planning",
     "join_outcomes": "inspect_safety_stats.generative.join",
     "load_seed_texts": "inspect_safety_stats.generative.execution",

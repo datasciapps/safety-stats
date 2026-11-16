@@ -10,14 +10,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 from inspect_safety_stats.generative.comparisons import ComparisonResult
-from inspect_safety_stats.generative.execution import AcceptanceRow
+from inspect_safety_stats.generative.execution import AcceptanceRow, FidelityRow
 from inspect_safety_stats.generative.inference import (
     NodeEstimate,
     ReweightedEstimate,
@@ -38,6 +38,8 @@ ARTIFACTS = (
     "comparisons.csv",
     "acceptance.csv",
 )
+# Written beside those when the plan records rewrite attempts (experimental).
+OPTIONAL_ARTIFACTS = ("fidelity.csv",)
 
 
 def plan_sha256(path: str | Path) -> str:
@@ -56,6 +58,9 @@ class GenerativeReport:
     acceptance: list[AcceptanceRow] = field(default_factory=list)
     reweightings: list[ReweightedEstimate] = field(default_factory=list)
     diagnostics: list[Diagnostic] = field(default_factory=list)
+    # None when the plan does not record rewrite attempts, so its report has no fidelity
+    # section at all rather than an empty one.
+    fidelity: list[FidelityRow] | None = None
 
     @property
     def has_errors(self) -> bool:
@@ -85,7 +90,7 @@ class GenerativeReport:
         return pd.DataFrame(rows)
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        document = {
             "schema": "generative-report/1.0",
             "package_version": __version__,
             "evaluation": self.evaluation,
@@ -117,6 +122,9 @@ class GenerativeReport:
             },
             "diagnostics": [item.model_dump(mode="json") for item in self.diagnostics],
         }
+        if self.fidelity is not None:
+            document["fidelity"] = [asdict(item) for item in self.fidelity]
+        return document
 
     def write(self, output: str | Path, *, overwrite: bool = False) -> Path:
         directory = Path(output)
@@ -144,5 +152,10 @@ class GenerativeReport:
         pd.DataFrame([asdict(item) for item in self.acceptance]).to_csv(
             directory / "acceptance.csv", index=False, lineterminator="\n"
         )
+        if self.fidelity is not None:
+            pd.DataFrame(
+                [asdict(item) for item in self.fidelity],
+                columns=[item.name for item in fields(FidelityRow)],
+            ).to_csv(directory / "fidelity.csv", index=False, lineterminator="\n")
         write_generative_report(self, directory / "report.html")
         return directory

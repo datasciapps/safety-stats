@@ -20,12 +20,17 @@ from typing import Any
 from inspect_safety_stats.generative.comparisons import ComparisonResult, compare_cohorts
 from inspect_safety_stats.generative.execution import (
     AcceptedRewrite,
+    FidelityRow,
     acceptance_by_level,
+    check_attempts,
     execute_rewrites,
+    fidelity_by_level,
     load_seed_texts,
     prompt_store_writer,
     read_prompt_store,
     uneven_acceptance,
+    uneven_fidelity,
+    units_retried_after_duplicate,
 )
 from inspect_safety_stats.generative.inference import (
     NodeEstimate,
@@ -601,6 +606,8 @@ def analyze_run(
             )
         )
 
+    fidelity = _fidelity(plan, ledger_path, selections, rewrites, diagnostics)
+
     reweightings = [
         estimate_reweighted(
             taxonomy,
@@ -664,4 +671,88 @@ def analyze_run(
         acceptance=acceptance,
         reweightings=reweightings,
         diagnostics=diagnostics,
+        fidelity=fidelity,
     )
+
+
+def _fidelity(
+    plan: GenerativePlan,
+    directory: Path,
+    selections: list[SelectionRecord],
+    rewrites: list[RewriteRecord],
+    diagnostics: list[Diagnostic],
+) -> list[FidelityRow] | None:
+    """Fidelity by arm from the attempt ledger, when the plan records one.
+
+    Appends three diagnostics: a validator that judged the rewrites under another identifier
+    than the plan's, a level whose values it rejects at materially different rates, and
+    units whose kept rewrite followed a duplicate rejection, whose prompts therefore
+    depend on the rewrites kept for earlier units.
+    """
+
+    if not plan.rewrite.records_attempts:
+        return None
+    path = directory / ATTEMPT_LEDGER
+    if not path.exists():
+        raise ValueError(
+            f"the plan records rewrite attempts but {path} is missing; materialize the run "
+            "under this plan"
+        )
+    attempts = read_attempts(path)
+    check_attempts(rewrites, attempts)
+    rows = fidelity_by_level(selections, attempts)
+
+    declared = plan.rewrite.validation.validator_id
+    used = sorted({item.validator_id for item in attempts if item.validator_id is not None})
+    if plan.rewrite.validation.invoke and used != [declared]:
+        diagnostics.append(
+            Diagnostic(
+                code="GENERATIVE_VALIDATOR_MISMATCH",
+                severity="WARNING",
+                message=(
+                    f"the plan declares validator {declared!r}, but the attempt ledger "
+                    f"records {', '.join(repr(item) for item in used) or 'none'}"
+                ),
+                scope="rewrite.validation",
+            )
+        )
+
+    for level in uneven_fidelity(rows):
+        spread = [row for row in rows if row.level == level]
+        diagnostics.append(
+            Diagnostic(
+                code="GENERATIVE_FIDELITY_UNEVEN",
+                severity="WARNING",
+                message=(
+                    f"the validator rejects rewrites for values of {level!r} at materially "
+                    "different rates, so arm fidelity differs across that level"
+                ),
+                scope=level,
+                details={
+                    row.value: round(row.validator_rejection_rate, 4)
+                    for row in sorted(
+                        spread, key=lambda item: -(item.validator_rejection_rate or 0.0)
+                    )
+                    if row.validator_rejection_rate is not None
+                },
+            )
+        )
+
+    dependent = units_retried_after_duplicate(attempts)
+    if dependent:
+        diagnostics.append(
+            Diagnostic(
+                code="GENERATIVE_RETRY_DEPENDENCE",
+                severity="INFO",
+                message=(
+                    f"{len(dependent)} unit(s) kept a rewrite only after a duplicate "
+                    "rejection, so their prompts depend on the rewrites accepted for "
+                    "earlier units in selection order"
+                ),
+                scope="rewrite.deduplication",
+                details={"units": len(dependent), "evaluable_units": sum(
+                    1 for record in rewrites if record.is_evaluable()
+                )},
+            )
+        )
+    return rows
