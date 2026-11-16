@@ -243,8 +243,18 @@ class RewriteValidationSpec(StrictModel):
 
 
 class RewriteDeduplicationSpec(StrictModel):
+    """Which rewrites within a scope count as the same prompt.
+
+    By default only an exact repeat of the text does. ``near_duplicate: normalized_text``
+    (experimental) also counts two rewrites that agree after Unicode NFKC normalization,
+    case folding, removal of punctuation and symbols, and whitespace collapsing, and makes
+    materialization record every attempt in ``attempts.csv``. A near duplicate is handled
+    by ``on_duplicate`` like an exact one.
+    """
+
     scope: Literal["semantic_seed_path", "structural_path", "none"] = "semantic_seed_path"
     on_duplicate: Literal["retry", "accept"] = "retry"
+    near_duplicate: Literal["off", "normalized_text"] = "off"
 
 
 class RewriteSpec(StrictModel):
@@ -264,7 +274,7 @@ class RewriteSpec(StrictModel):
     def records_attempts(self) -> bool:
         """Whether materialization writes the per-attempt ledger, ``attempts.csv``."""
 
-        return self.validation.invoke
+        return self.validation.invoke or self.deduplication.near_duplicate != "off"
 
 
 class JudgeCalibrationSpec(StrictModel):

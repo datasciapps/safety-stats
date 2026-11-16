@@ -342,3 +342,110 @@ def test_resume_refuses_a_partial_run_without_an_attempt_ledger(tmp_path: Path) 
     validated = materialize(tmp_path, document, SEEDS_WITH_TEXT)
     with pytest.raises(ValueError, match="no attempts.csv"):
         materialize_run(validated, artifacts, validator="fake", resume=True)
+
+
+# Near duplicates (rewrite.deduplication.near_duplicate).
+
+
+@dataclass
+class Restyling:
+    """One wording per semantic seed, varied only in case and punctuation per unit."""
+
+    kernel_id: str = "restyling"
+
+    def rewrite(self, request: RewriteRequest) -> RewriteOutcome:
+        marks = "!" * (int(request.path_hash[:4], 16) % 7 + request.attempt)
+        text = f"Explain step by step: {request.semantic_seed_id}{marks}"
+        return RewriteOutcome(status="valid", prompt=text.upper() if request.attempt % 2 else text)
+
+
+def near_plan(**deduplication: Any) -> dict[str, Any]:
+    return plan_document(
+        invoke=False, deduplication={"near_duplicate": "normalized_text", **deduplication}
+    )
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("Hello, World!", "hello world"),
+        ("ＦＵＬＬ　width", "full width"),
+        ("tabs\tand\n newlines", "tabs and newlines"),
+        ("Straße", "STRASSE"),
+        ("price: $5 (approx.)", "price 5 approx"),
+    ],
+)
+def test_normalized_text_ignores_case_punctuation_and_spacing(first: str, second: str) -> None:
+    from inspect_safety_stats.generative.execution import normalized_text
+
+    assert normalized_text(first) == normalized_text(second)
+
+
+def test_normalized_text_keeps_wording_and_order() -> None:
+    from inspect_safety_stats.generative.execution import normalized_text
+
+    assert normalized_text("tell me how") != normalized_text("how tell me")
+    assert normalized_text("tell me how") != normalized_text("tell us how")
+
+
+def test_near_duplicates_are_rejected_within_their_scope(tmp_path: Path) -> None:
+    plan, selections, fingerprint, texts = prepare(tmp_path, near_plan())
+    result = execute_rewrites(plan, selections, Restyling(), fingerprint, texts)
+    assert len(result.accepted) == 3, "one per semantic seed"
+    repeats = [item for item in result.attempts if item.duplicate != "none"]
+    assert len(repeats) == result.duplicates_rejected
+    assert any(item.duplicate == "near" for item in repeats), "restyled text is caught"
+    assert {item.validator_status for item in result.attempts} == {"not_run"}
+
+
+def test_without_near_duplicate_detection_restyled_text_is_new(tmp_path: Path) -> None:
+    document = plan_document(invoke=False)
+    plan, selections, fingerprint, texts = prepare(tmp_path, document)
+    result = execute_rewrites(plan, selections, Restyling(), fingerprint, texts)
+    assert len(result.accepted) > 3
+    assert result.attempts == ()
+
+
+def test_accepted_near_duplicates_are_still_recorded(tmp_path: Path) -> None:
+    plan, selections, fingerprint, texts = prepare(tmp_path, near_plan(on_duplicate="accept"))
+    result = execute_rewrites(plan, selections, Restyling(), fingerprint, texts)
+    assert len(result.accepted) == len(selections)
+    repeats = [item for item in result.attempts if item.duplicate != "none"]
+    assert all(item.accepted for item in repeats)
+    assert len(repeats) == result.duplicates_rejected
+    assert any(item.duplicate == "near" for item in repeats)
+
+
+def test_near_duplicate_detection_enters_the_fingerprint(tmp_path: Path) -> None:
+    (tmp_path / "a").mkdir()
+    (tmp_path / "b").mkdir()
+    off = prepare(tmp_path / "a", plan_document(invoke=False))[2]
+    on = prepare(tmp_path / "b", near_plan())[2]
+    assert off.sha256 != on.sha256
+
+
+def test_replayed_units_seed_near_duplicate_state(tmp_path: Path) -> None:
+    plan, selections, fingerprint, texts = prepare(tmp_path, near_plan())
+    straight = execute_rewrites(plan, selections, Restyling(), fingerprint, texts)
+    half = len(selections) // 2
+    done = {record.sampling_unit_id: record for record in straight.rewrites[:half]}
+    accepted = {
+        item.sampling_unit_id: item for item in straight.accepted if item.sampling_unit_id in done
+    }
+    resumed = execute_rewrites(
+        plan,
+        selections,
+        Restyling(),
+        fingerprint,
+        texts,
+        completed=done,
+        already_accepted=accepted,
+    )
+    assert resumed.accepted_by_unit.keys() == straight.accepted_by_unit.keys()
+
+
+def test_materialize_records_attempts_for_near_duplicate_detection(tmp_path: Path) -> None:
+    plan = materialize(tmp_path, near_plan(), SEEDS_WITH_TEXT)
+    materialize_run(plan, tmp_path / "run")
+    attempts = read_attempts(tmp_path / "run" / "attempts.csv")
+    assert attempts and all(item.validator_id is None for item in attempts)

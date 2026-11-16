@@ -13,6 +13,7 @@ to a restricted artifact, and only its hash is recorded for provenance.
 from __future__ import annotations
 
 import hashlib
+import unicodedata
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -165,6 +166,29 @@ def _dedup_key(plan: GenerativePlan, node_id: str, semantic_seed_id: str) -> str
     return semantic_seed_id
 
 
+def normalized_text(prompt: str) -> str:
+    """The form two rewrites are compared in under ``near_duplicate: normalized_text``.
+
+    NFKC folds compatibility forms (full-width letters, ligatures), case folding removes
+    case, and punctuation and symbols are dropped before whitespace is collapsed, so
+    rewrites that differ only in those respects compare equal. Word order, wording and
+    language still distinguish them.
+    """
+
+    folded = unicodedata.normalize("NFKC", prompt).casefold()
+    kept = "".join(
+        " " if unicodedata.category(character)[0] in {"P", "S"} else character
+        for character in folded
+    )
+    return " ".join(kept.split())
+
+
+def _near_digest(plan: GenerativePlan, prompt: str) -> str | None:
+    if plan.rewrite.deduplication.near_duplicate == "off":
+        return None
+    return prompt_sha256(normalized_text(prompt))
+
+
 def _prompt_id(sampling_unit_id: str) -> str:
     return f"p-{sampling_unit_id}"
 
@@ -222,6 +246,9 @@ def execute_rewrites(
     attempt_records: list[AttemptRecord] = []
     deduplication = plan.rewrite.deduplication
     seen: dict[str, set[str]] = {}
+    # Normalized forms of the accepted rewrites, per deduplication key, when near
+    # duplicates are detected.
+    seen_near: dict[str, set[str]] = {}
     records: list[RewriteRecord] = []
     accepted: list[AcceptedRewrite] = []
     duplicates = 0
@@ -268,6 +295,9 @@ def execute_rewrites(
                 accepted.append(carried)
                 if key is not None:
                     seen.setdefault(key, set()).add(carried.prompt_sha256)
+                    near = _near_digest(plan, carried.prompt)
+                    if near is not None:
+                        seen_near.setdefault(key, set()).add(near)
             elif prior.validation_status == "error":
                 errored.append(unit_id)
             else:
@@ -308,10 +338,14 @@ def execute_rewrites(
                 continue
             candidate = str(outcome.prompt)
             digest = prompt_sha256(candidate)
+            near = _near_digest(plan, candidate)
             row["prompt_sha256"] = digest
             if key is not None and digest in seen.get(key, set()):
-                duplicates += 1
                 row["duplicate"] = "exact"
+            elif key is not None and near is not None and near in seen_near.get(key, set()):
+                row["duplicate"] = "near"
+            if row.get("duplicate") is not None:
+                duplicates += 1
                 if deduplication.on_duplicate == "retry":
                     note(row)
                     continue
@@ -332,6 +366,8 @@ def execute_rewrites(
                     continue
             if key is not None:
                 seen.setdefault(key, set()).add(digest)
+                if near is not None:
+                    seen_near.setdefault(key, set()).add(near)
             row["accepted"] = True
             note(row)
             status = "valid"

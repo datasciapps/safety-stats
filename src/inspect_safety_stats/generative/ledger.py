@@ -62,15 +62,15 @@ class RewriteRecord(LedgerModel):
 
 
 AttemptValidatorStatus = Literal["valid", "invalid", "error", "not_run"]
-DuplicateKind = Literal["none", "exact"]
+DuplicateKind = Literal["none", "exact", "near"]
 
 
 class AttemptRecord(LedgerModel):
     """One call of the kernel for one sampling unit, and what became of its rewrite.
 
-    Written only when the plan asks the package to validate rewrites, so that fidelity can
-    be reported per arm: the rewrite ledger keeps one row per unit, which says how many
-    attempts a unit took but not why each one failed.
+    Written only when the plan asks the package to validate rewrites or to detect near
+    duplicates, so that fidelity can be reported per arm: the rewrite ledger keeps one row
+    per unit, which says how many attempts a unit took but not why each one failed.
 
     ``validator_status`` is ``not_run`` when the kernel itself rejected the attempt, or when
     it was rejected as a duplicate first: the validator is the costlier check, so it runs

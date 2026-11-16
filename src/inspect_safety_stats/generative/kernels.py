@@ -102,7 +102,7 @@ def resolve_kernel_fingerprint(
 # Settings added after the fingerprint was defined. Each is hashed only when it differs from
 # its default, so a plan that does not use it keeps the fingerprint it always had, and a
 # plan that does cannot be pooled with one that does not.
-_LATER_SETTINGS: dict[str, object] = {"invoke": False}
+_LATER_SETTINGS: dict[str, object] = {"invoke": False, "near_duplicate": "off"}
 
 
 def _settings(spec: BaseModel) -> dict[str, object]:
