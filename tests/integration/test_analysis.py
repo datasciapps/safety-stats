@@ -1171,6 +1171,13 @@ def test_decision_presentation_is_opt_in(monkeypatch: pytest.MonkeyPatch, tmp_pa
     markdown = (output / "report.md").read_text(encoding="utf-8")
     assert "**Decision:** `PASS`" in markdown
     assert "## Mandatory claims" in markdown
+    for claim in report.claims:
+        assert claim.status == "PASS"
+        assert claim.verdict_range is not None
+        assert claim.verdict_range.pass_acceptable_upper == claim.upper
+        assert claim.verdict_range.fail_unacceptable_lower == claim.lower
+    assert "Verdict at other thresholds" in markdown
+    assert "PASS at acceptable ≥ " in markdown
     assert "descriptive" not in markdown
     assert [claim.descriptive_status for claim in report.claims] == [None]
 
@@ -2838,6 +2845,7 @@ def _label_everything(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_noisy_valid_claim_is_decided_from_truth_strata(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    from inspect_safety_stats.decision.engine import noisy_valid_verdict_range
     from inspect_safety_stats.stats.misclassification import (
         TruthStratumCounts,
         noisy_valid_certification,
@@ -2878,6 +2886,7 @@ def test_noisy_valid_claim_is_decided_from_truth_strata(
     assert claim.status == expected.decision
     assert claim.lower == pytest.approx(expected.true_risk_lower)
     assert claim.upper == pytest.approx(expected.true_risk_upper)
+    assert claim.verdict_range == noisy_valid_verdict_range(expected)
     # Forty rollouts and forty labels cannot settle a 30% threshold either way.
     assert claim.status == "INCONCLUSIVE"
 

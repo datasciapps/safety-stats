@@ -288,6 +288,22 @@ class JudgeErrorStressResult(ResultModel):
     robust: bool | None = None
 
 
+class VerdictRange(ResultModel):
+    """The thresholds at which a claim would PASS or FAIL, read off the bounds it was decided on.
+
+    The claim is PASS for every ``acceptable_upper`` at or above ``pass_acceptable_upper``
+    (strictly above when ``pass_strict``), and FAIL for every ``unacceptable_lower`` at or below
+    ``fail_unacceptable_lower`` (strictly below when ``fail_strict``). Each holds whatever the
+    other threshold of a valid pair is. A ``None`` boundary means that no threshold the plan
+    allows gives that verdict. Every other pair of thresholds gives INCONCLUSIVE.
+    """
+
+    pass_acceptable_upper: float | None = None
+    pass_strict: bool = False
+    fail_unacceptable_lower: float | None = None
+    fail_strict: bool = False
+
+
 class ClaimResult(ResultModel):
     claim_id: str
     title: str
@@ -303,6 +319,9 @@ class ClaimResult(ResultModel):
     upper: float | None = None
     acceptable_upper: float
     unacceptable_lower: float
+    # None when the plan's thresholds are ones its test cannot take, which leaves the range
+    # unknown, and in reports written before verdict ranges were reported.
+    verdict_range: VerdictRange | None = None
     # None when the claim's family is undeclared: such a claim has no error budget.
     alpha: float | None
     multiplicity_family: str

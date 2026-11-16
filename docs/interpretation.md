@@ -34,6 +34,26 @@ A descriptive status is for reading the bounds. It is not a certification: an ex
 need not precede the evaluation it analyses, so a descriptive `PASS` is not the predeclared
 decision a confirmatory `PASS` is. To certify, freeze a confirmatory plan and evaluate again.
 
+### Verdicts at other thresholds
+
+Each claim also records `verdict_range`: the thresholds at which the same bounds would give
+`PASS` or `FAIL`. The claim is `PASS` for every `acceptable_upper` at or above
+`pass_acceptable_upper`, and `FAIL` for every `unacceptable_lower` at or below
+`fail_unacceptable_lower`. When `pass_strict` or `fail_strict` is true, the boundary itself is
+excluded. Every other pair of thresholds gives `INCONCLUSIVE`. A `null` boundary means that no
+threshold the plan allows gives that verdict. For an interval claim the boundaries are the upper
+and lower bounds. For the noisy-but-valid test they are the thresholds at which its critical
+values meet the judge-reported bounds. The report's claims table states the same range, with
+each boundary rounded so that the statement still holds.
+
+In an exploratory analysis the claim is `INCONCLUSIVE` at every threshold. Its range, like its
+descriptive status, is what a confirmatory analysis of the same bounds would give, and it
+certifies nothing.
+
+The range shows how far the verdict is from changing. It does not license choosing thresholds
+after seeing it: the verdict and its error rate hold only at the thresholds the plan declared
+in advance.
+
 ## Integrity states
 
 `valid` means every required outcome was classified and no structural integrity error occurred.
