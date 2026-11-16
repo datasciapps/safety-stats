@@ -383,6 +383,89 @@ enriched for exactly those items. Prefer the corrected interval when labels are 
 test when the judge's error rates must be prevalence-free and transportable, or when sensitivity
 can be bounded from seeded known-unsafe items rather than from a random sample.
 
+## Transported mode: a published sensitivity (experimental)
+
+Published human-labelled judge validation sets, such as HarmBench's classifier validation set
+or XSTest's annotated completions, measure a judge on outputs that other models produced.
+`mode: transported` uses such a set without human labels on the run's own outputs. It is a
+**sensitivity analysis**: every interval it emits is `eligibility: diagnostic`,
+`role: sensitivity` and `varied_assumption: judge_error`, and it never decides a claim.
+
+```yaml
+inputs:
+  judge_calibration:
+    mode: transported
+    published_set:
+      name: HarmBench classifier validation set
+      source: https://github.com/centerforaisafety/HarmBench
+      judge: HarmBench-Llama-2-13b-cls
+      rubric: HarmBench behaviour rubric
+      human_unsafe: 120          # items human annotators labelled unsafe
+      judge_flagged_unsafe: 100  # of those, the items the judge flagged
+      sensitivity_alpha: 0.05    # optional, default 0.05
+```
+
+`name`, `source`, `judge` and `rubric` are required. They record the provenance the transport
+assumption rests on, and the report repeats them. The counts above are placeholders: take them
+from the set's own publication for the judge and rubric the run actually used.
+
+### Why \(\rho\) cannot be transported
+
+\(\rho_1\) and \(\rho_0\) are predictive values, so they depend on prevalence. A published set
+chosen to be roughly half unsafe gives a judge a \(\rho_1\) its run will not have. For example,
+with a sensitivity of 0.974 and a specificity of about 0.84 (figures derived for the HarmBench
+classifier in arXiv:2606.25487), \(\rho_1\approx0.83\) on a set that is 45% unsafe. At a true
+prevalence of 1% the same judge has \(\rho_1\approx0.06\): 94% of its unsafe verdicts are false,
+and it reports a rate of about 17%. Only the prevalence-free parameters, sensitivity \(Se\) and
+specificity \(Sp\), can even be assumed to transport.
+
+### Why only the sensitivity is transported
+
+Specificity does not transport well either. The false positives a judge makes depend on what
+the outputs look like, and a published set's safe items are often chosen to be hard. In one
+open-weights evaluation, a judge flagged 4.9% of HarmBench's human-safe validation items, yet
+the run's own judged failure rate had an upper bound of 1.06%. Its false-positive rate on
+those outputs was therefore at most about 1.1%, so the published specificity was far too
+pessimistic. Plugged into the Rogan--Gladen inversion
+\(\pi=(q-(1-Sp))/(Se+Sp-1)\) (Rogan and Gladen, *American Journal of Epidemiology* 107(1),
+71--76, 1978), it would have pushed the corrected rate below zero.
+
+So the mode transports the sensitivity alone, as an exact one-sided Clopper--Pearson lower
+bound \(Se_L\) at `sensitivity_alpha` from `judge_flagged_unsafe` of `human_unsafe`. The run's
+false positives are bounded only by its own judged failures: the judged rate is
+\(q=\pi Se+(1-\pi)FPR\), and \((1-\pi)FPR\le q\). Then
+
+- the **lower bound is zero**, because every judged failure may be a false positive; and
+- the **upper bound** is \(\pi\le q_U/Se_L\), capped at one, where \(q_U\) is the ordinary
+  judge-system upper bound.
+
+The upper bound is the Rogan--Gladen inversion at its maximising corner \(Sp=1\). The inversion
+increases with \(Sp\) whenever \(q\le Se\), so declaring any specificity range that reaches one
+would give the same upper bound. When \(Se_L=0\), a judge that may catch nothing, the bound is
+\([0,1]\). A perfectly sensitive judge leaves the upper bound unchanged. Rollouts the judge
+never classified stay completed as failures. The bound is monotone and positively homogeneous
+in the prompt rates, so it applies to `weighted_mean`, `maximum`, `cvar` and `top_k_mean`, to
+every hierarchy node, but not to `entropic` or the threshold measures. If both bounds hold,
+coverage is at least one minus the sum of the row's own alpha and `sensitivity_alpha`.
+
+### What it assumes
+
+- **Transport.** The same judge and rubric, applied to this run's outputs, is at least as
+  sensitive on every prompt as on the published set. Nothing in the run checks this, and a
+  judge under attack can fail it.
+- Human adjudication on the published set is the ground truth.
+
+Each interval lists these assumptions, together with the published set and the sensitivity
+bound. `report.json` adds a `judge_corrected_transported` interval on every correctable row,
+with `method: transported_judge_sensitivity_correction`. Its provenance records the published
+set and `sensitivity_lower`, and the analysis emits the `INFO` diagnostic
+`JUDGE_CALIBRATION_TRANSPORTED`. `report.md` describes the published set in the judge
+misclassification section.
+
+`mode: transported` takes only `published_set`. It cannot be combined with scenarios, a
+validation manifest or a judge family, and only fixed-design analyses offer it: a generative
+plan that declares it is refused.
+
 ## On the generative path
 
 The same correction is available for

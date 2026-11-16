@@ -16,6 +16,7 @@ claims:
   id: mean_failure_risk
   mandatory: true
   measure: mean
+  method: corrected_interval
   title: Equal-weight fixed-design mean failure risk is acceptable
   unacceptable_lower: 0.6
 cohorts:
@@ -26,18 +27,27 @@ cohorts:
     - task_version
     - model_generate_config
     - solver
+comparison_sets: []
 comparisons: []
 design:
   hierarchy:
   - task_id
   - question_id
   - prompt_id
+  inclusion_probability_column: null
+  independence_profiles:
+    rollout:
+      block_by:
+      - rollout
+      comparison_coupling: independent
   require_complete_manifest: true
   require_expected_rollouts: true
   rollout_key:
   - eval_id
   - id
   - epoch
+  sampling: poisson
+  stratum_column: null
   type: fixed
   weights:
     column: null
@@ -58,7 +68,11 @@ groups:
     - prompt_id
     strategy: equal_prompt
 inputs:
-  design_manifest: /path/to/safety_stats/examples/real_simpleqa/design.csv
+  composites: []
+  design_manifest: design.csv
+  estimand: end_to_end_system
+  judge_calibration: null
+  judges: []
   sample_join:
     inspect_field: id
     manifest_field: prompt_id
@@ -79,12 +93,34 @@ multiplicity:
     method: bonferroni
     purpose: simultaneous_intervals
   - alpha: 0.05
+    id: displayed_direct_means
+    method: bonferroni
+    purpose: simultaneous_intervals
+  - alpha: 0.05
     id: decision_gate
     method: intersection_union
     purpose: all_mandatory
 outputs:
+  direct_mean_intervals:
+    coverage_mode: two_sided
+    enabled: true
+    family: displayed_direct_means
+    groups:
+    - all-eight
+    hierarchy_calibration: frontier_sidak
+    hierarchy_nodes: true
+    hierarchy_region: linear_program
+    independence:
+      primary: rollout
+      sensitivities: []
+    method: weighted_kl_chernoff
+    reference_methods:
+    - weighted_empirical_bernstein
+    - weighted_hoeffding
+    simultaneous: true
   prompt_bounds:
     alpha_allocation: equal_bonferroni
+    coverage_mode: two_sided
     enabled: true
     explicit_alpha: null
     family: displayed_prompt_bounds
@@ -95,8 +131,6 @@ outputs:
     id: mean
     k: null
     lambda: null
-    order: null
-    spectrum: null
     threshold: null
     threshold_column: null
     type: weighted_mean
@@ -105,8 +139,6 @@ outputs:
     id: cvar_75
     k: null
     lambda: null
-    order: null
-    spectrum: null
     threshold: null
     threshold_column: null
     type: cvar
@@ -115,8 +147,6 @@ outputs:
     id: entropic_5
     k: null
     lambda: 5.0
-    order: null
-    spectrum: null
     threshold: null
     threshold_column: null
     type: entropic
@@ -125,8 +155,6 @@ outputs:
     id: worst
     k: null
     lambda: null
-    order: null
-    spectrum: null
     threshold: null
     threshold_column: null
     type: maximum
@@ -137,6 +165,7 @@ policy:
     manifest_field: zero_tolerance
 report:
   decimal_places: 6
+  include_decisions: false
   include_observations: true
   include_prompt_text: false
-schema_version: '1.0'
+schema_version: '2.0'

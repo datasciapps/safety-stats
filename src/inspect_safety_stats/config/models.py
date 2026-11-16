@@ -155,16 +155,43 @@ class JudgeCalibrationScenarioSpec(StrictModel):
         return self
 
 
-class JudgeCalibrationSpec(StrictModel):
-    """Judge-misclassification calibration, either declared or measured.
+class PublishedValidationSetSpec(StrictModel):
+    """A published human-labelled judge validation set, and the judge's sensitivity on it.
 
-    ``mode: assumed`` carries no evidence: every corrected interval it produces is a
-    diagnostic sensitivity result. ``mode: validated`` estimates the same two
-    conditional accuracies from human labels drawn within each judge stratum, and its
-    corrected intervals are certifying at the combined error budget.
+    Experimental. Only the sensitivity is transported to the analysed run: the judge's
+    false-positive rate on the published set does not carry over to another model's
+    outputs, so it is not declared here at all. ``name``, ``source``, ``judge`` and
+    ``rubric`` are the provenance the transport assumption rests on: the same judge and
+    rubric, applied to outputs of other generators.
     """
 
-    mode: Literal["assumed", "validated"] = "assumed"
+    name: str = Field(min_length=1)
+    source: str = Field(min_length=1)
+    judge: str = Field(min_length=1)
+    rubric: str = Field(min_length=1)
+    human_unsafe: PlanInt = Field(ge=1)
+    judge_flagged_unsafe: PlanInt = Field(ge=0)
+    sensitivity_alpha: PlanFloat = Field(default=0.05, gt=0, lt=1)
+
+    @model_validator(mode="after")
+    def flagged_within_unsafe(self) -> PublishedValidationSetSpec:
+        if self.judge_flagged_unsafe > self.human_unsafe:
+            raise ValueError("judge_flagged_unsafe cannot exceed human_unsafe")
+        return self
+
+
+class JudgeCalibrationSpec(StrictModel):
+    """Judge-misclassification calibration, either declared, transported or measured.
+
+    ``mode: assumed`` carries no evidence: every corrected interval it produces is a
+    diagnostic sensitivity result. ``mode: transported`` (experimental) bounds true risk
+    from the judge's sensitivity on a published human-labelled set and is likewise a
+    diagnostic sensitivity result. ``mode: validated`` estimates the two conditional
+    accuracies from human labels drawn within each judge stratum, and its corrected
+    intervals are certifying at the combined error budget.
+    """
+
+    mode: Literal["assumed", "validated", "transported"] = "assumed"
     scenarios: list[JudgeCalibrationScenarioSpec] = Field(default_factory=list)
     primary: str | None = None
     validation_manifest: Path | None = None
@@ -172,9 +199,37 @@ class JudgeCalibrationSpec(StrictModel):
     sampling: Literal["simple_random_within_judge_stratum", "simple_random"] = (
         "simple_random_within_judge_stratum"
     )
+    # Left out of the serialised plan when absent, so the hash and the resolved plan of a
+    # plan without it are what they were before the field existed.
+    published_set: PublishedValidationSetSpec | None = None
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_published_set(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if self.published_set is None:
+            data.pop("published_set", None)
+        return data
 
     @model_validator(mode="after")
     def validate_mode(self) -> JudgeCalibrationSpec:
+        if self.mode != "transported" and self.published_set is not None:
+            raise ValueError("published_set requires mode: transported")
+        if self.mode == "transported":
+            if self.published_set is None:
+                raise ValueError("transported judge calibration requires a published_set")
+            if (
+                self.scenarios
+                or self.primary is not None
+                or self.validation_manifest is not None
+                or self.family is not None
+            ):
+                raise ValueError(
+                    "transported judge calibration takes only a published_set; remove the "
+                    "scenarios, primary, validation_manifest and family"
+                )
+            return self
         if self.mode == "assumed":
             if not self.scenarios:
                 raise ValueError("assumed judge calibration requires at least one scenario")

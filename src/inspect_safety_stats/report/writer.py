@@ -429,8 +429,19 @@ def _markdown(report: SafetyReport) -> str:
         calibration = report._resolved_plan.get("inputs", {}).get("judge_calibration") or {}
         primary_scenario = str(calibration.get("primary") or "")
         validated = str(calibration.get("mode")) == "validated"
+        transported = str(calibration.get("mode")) == "transported"
         preamble = (
             (
+                "Experimental. Only the judge's sensitivity is taken from a published "
+                "human-labelled set, on the assumption that the same judge and rubric are at "
+                "least as sensitive on this run's outputs as on that set's, which came from "
+                "other generators. The set's false-positive rate is not transported: this "
+                "run's false positives are bounded only by its own judged failures, so the "
+                "lower bound is zero and only the upper bound is informative. The rows below "
+                "carry no coverage guarantee and cannot support a safety claim."
+            )
+            if transported
+            else (
                 "These accuracies are exact Clopper-Pearson bounds from human labels drawn "
                 "within each judge stratum. The labels weight every classified rollout of a "
                 "cohort equally, so they certify only a weighted mean that does the same, over "
@@ -461,8 +472,12 @@ def _markdown(report: SafetyReport) -> str:
                     "Every other interval in this report estimates the risk that the **judge "
                     "reports** a failure. This section maps those intervals onto the underlying "
                     "**true** failure risk using "
-                    + ("measured" if validated else "declared")
-                    + " conditional judge accuracies."
+                    + (
+                        "a judge sensitivity transported from a published validation set."
+                        if transported
+                        else ("measured" if validated else "declared")
+                        + " conditional judge accuracies."
+                    )
                 ),
                 "",
                 preamble,
@@ -529,6 +544,26 @@ def _markdown(report: SafetyReport) -> str:
                         )
                         + " |"
                     )
+        elif transported:
+            summary = report.provenance.get("judge_calibration") or {}
+            published = summary.get("published_set") or {}
+            if published:
+                lines.extend(
+                    [
+                        "",
+                        "Published validation set behind the transported sensitivity:",
+                        "",
+                        f"- Set: {_escape(published.get('name'))} "
+                        f"({_escape(published.get('source'))})",
+                        f"- Judge: {_escape(published.get('judge'))}; rubric: "
+                        f"{_escape(published.get('rubric'))}",
+                        f"- Judge flagged {published.get('judge_flagged_unsafe')} of "
+                        f"{published.get('human_unsafe')} human-unsafe items; sensitivity "
+                        f"at least {_number(summary.get('sensitivity_lower'), places)} "
+                        "(one-sided Clopper-Pearson, alpha "
+                        f"{published.get('sensitivity_alpha')})",
+                    ]
+                )
         else:
             scenarios = calibration.get("scenarios") or []
             if scenarios:

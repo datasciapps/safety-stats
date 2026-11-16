@@ -60,10 +60,9 @@ other harmful content, illegal activity, misinformation/disinformation, and copy
 
 ## Run with OpenAI
 
-Install the optional provider dependency and set your API key:
+From the repository root, install the optional provider dependency and set your API key:
 
 ```bash
-cd /path/to/safety_stats
 python -m pip install -e '.[inspect,openai]'
 export OPENAI_API_KEY="your-api-key"
 ```

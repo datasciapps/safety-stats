@@ -24,6 +24,7 @@ from inspect_safety_stats.config.models import (
     IndependenceSelectionSpec,
     JudgeAccuracySpec,
     JudgeSpec,
+    PublishedValidationSetSpec,
     RiskMeasureSpec,
 )
 from inspect_safety_stats.decision.engine import decide_claim, roll_up
@@ -113,6 +114,8 @@ from inspect_safety_stats.stats.misclassification import (
     correct_judge_risk,
     delta_method_corrected_risk,
     noisy_valid_certification,
+    transport_judge_risk,
+    transported_sensitivity_lower,
 )
 from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
 from inspect_safety_stats.stats.paired import exact_mcnemar, newcombe_paired_interval
@@ -2260,6 +2263,67 @@ def _judge_corrected_interval(
     )
 
 
+def _transported_judge_interval(
+    *,
+    result: GroupRiskResult | HierarchyRiskResult,
+    published: PublishedValidationSetSpec,
+    sensitivity_lower: float,
+) -> RiskIntervalResult | None:
+    """A true-risk sensitivity from a judge sensitivity measured on a published set.
+
+    Experimental. Only the sensitivity is transported; the false-positive rate is bounded
+    by the run's own judged rate, so the interval's lower end is zero.
+    """
+
+    if result.upper is None:
+        return None
+    corrected = transport_judge_risk(
+        observed_upper=result.upper,
+        observed_estimate=result.estimate,
+        sensitivity_lower=sensitivity_lower,
+    )
+    return RiskIntervalResult(
+        interval_id="judge_corrected_transported",
+        lower=corrected.lower,
+        upper=corrected.upper,
+        method="transported_judge_sensitivity_correction",
+        role="sensitivity",
+        varied_assumption="judge_error",
+        coverage_scope=(
+            f"{result.coverage_scope}_judge_corrected"
+            if result.coverage_scope
+            else "judge_corrected"
+        ),
+        completion_estimate_lower=corrected.completion_estimate_lower,
+        completion_estimate_upper=corrected.completion_estimate_upper,
+        raw_lower=result.lower,
+        raw_upper=result.upper,
+        calibration_method="transported_judge_calibration",
+        assumptions=[
+            "The reported estimand is true failure risk, not judge-reported failure risk.",
+            f"The judge's sensitivity is at least {sensitivity_lower:.6g}: the one-sided "
+            f"Clopper-Pearson lower bound at alpha {published.sensitivity_alpha:.6g} from "
+            f"{published.judge_flagged_unsafe} of {published.human_unsafe} human-unsafe items "
+            f"flagged on the published set {published.name!r} ({published.source}).",
+            f"Transport assumption: the same judge ({published.judge}) and rubric "
+            f"({published.rubric}), applied to this run's outputs, is at least as sensitive "
+            "on every prompt as on the published set, whose outputs came from other "
+            "generators. Nothing in this run checks it.",
+            "The published set's false-positive rate is not transported. This run's false "
+            "positives are bounded only by its own judged failures, so every judged failure "
+            "may be a false positive and the lower bound is zero.",
+            "The upper bound is the judge-system upper bound divided by the sensitivity "
+            "bound; unclassified rollouts stay completed as failures.",
+            "Human adjudication on the published set is treated as ground truth.",
+        ],
+        eligibility="diagnostic",
+        warnings=[
+            "Experimental transported judge calibration: a sensitivity analysis with no "
+            "coverage guarantee, which never decides a claim."
+        ],
+    )
+
+
 def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, Any] | None:
     """Describe the declared judge panel: per-judge counts, composites, and agreement.
 
@@ -2667,6 +2731,47 @@ def _apply_judge_correction(
         # Hierarchy nodes are weighted means over their own prompts.
         key = (result.group_id, result.level, tuple(result.path.items()))
         return node_weights[key], "weighted_mean"
+
+    if spec.mode == "transported":
+        published = spec.published_set
+        if published is None:
+            raise ValueError("a transported inputs.judge_calibration requires a published_set")
+        sensitivity_lower = transported_sensitivity_lower(
+            judge_flagged_unsafe=published.judge_flagged_unsafe,
+            human_unsafe=published.human_unsafe,
+            alpha=published.sensitivity_alpha,
+        )
+        for result in targets:
+            interval = _transported_judge_interval(
+                result=result, published=published, sensitivity_lower=sensitivity_lower
+            )
+            if interval is not None:
+                result.intervals.append(interval)
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_CALIBRATION_TRANSPORTED",
+                severity="INFO",
+                message=(
+                    "Experimental: judge-corrected rows use a sensitivity transported from "
+                    f"{published.name!r}; they are sensitivity analyses and decide no claim"
+                ),
+                scope="inputs.judge_calibration",
+            )
+        )
+        return {
+            "mode": "transported",
+            "experimental": True,
+            "published_set": {
+                "name": published.name,
+                "source": published.source,
+                "judge": published.judge,
+                "rubric": published.rubric,
+                "human_unsafe": published.human_unsafe,
+                "judge_flagged_unsafe": published.judge_flagged_unsafe,
+                "sensitivity_alpha": published.sensitivity_alpha,
+            },
+            "sensitivity_lower": sensitivity_lower,
+        }
 
     if spec.mode == "assumed":
         calibrations = _assumed_judge_calibrations(plan)
