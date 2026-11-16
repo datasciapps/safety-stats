@@ -26,8 +26,9 @@ The public surface is organised around what you are trying to do.
     forecast(taxonomy, plan, total_rewrites=1200, assumed_rate=0.03)
 
 **Supply a rewrite kernel.** This is the one piece you must write: any object with a
-``rewrite`` method matching :class:`RewriteKernel`. ``DeterministicFakeKernel`` stands in
-for it in tests and dry runs.
+``rewrite`` method matching :class:`RewriteKernel`. Under ``rewrite.output: conversation``
+(experimental) it returns whole conversations as :class:`ChatTurn` messages.
+``DeterministicFakeKernel`` stands in for it in tests and dry runs.
 
 **Compose your own flow** with the lower-level pieces -- ``plan_design``,
 ``draw_selections``, ``execute_rewrites``, ``join_outcomes``, ``estimate_tree`` -- when the
@@ -74,11 +75,13 @@ if TYPE_CHECKING:
     )
     from inspect_safety_stats.generative.judge import CorrectedEstimate
     from inspect_safety_stats.generative.kernels import (
+        ChatTurn,
         DeterministicFakeKernel,
         KernelFingerprint,
         RewriteKernel,
         RewriteOutcome,
         RewriteRequest,
+        conversation_problem,
         resolve_kernel_fingerprint,
     )
     from inspect_safety_stats.generative.ledger import (
@@ -130,6 +133,8 @@ __all__ = [
     "RewriteKernel",
     "RewriteRequest",
     "RewriteOutcome",
+    "ChatTurn",
+    "conversation_problem",
     "KernelFingerprint",
     "DeterministicFakeKernel",
     "resolve_kernel_fingerprint",
@@ -179,6 +184,7 @@ _EXPORTS = {
     "AcceptanceRow": "inspect_safety_stats.generative.execution",
     "AcceptedRewrite": "inspect_safety_stats.generative.execution",
     "BudgetForecast": "inspect_safety_stats.generative.planning",
+    "ChatTurn": "inspect_safety_stats.generative.kernels",
     "ComparisonResult": "inspect_safety_stats.generative.comparisons",
     "CompiledNode": "inspect_safety_stats.generative.taxonomy",
     "CompiledTaxonomy": "inspect_safety_stats.generative.taxonomy",
@@ -207,6 +213,7 @@ _EXPORTS = {
     "analyze_run": "inspect_safety_stats.generative.runner",
     "compare_cohorts": "inspect_safety_stats.generative.comparisons",
     "compile_taxonomy": "inspect_safety_stats.generative.taxonomy",
+    "conversation_problem": "inspect_safety_stats.generative.kernels",
     "draw_selections": "inspect_safety_stats.generative.sampling",
     "estimate_reweighted": "inspect_safety_stats.generative.inference",
     "estimate_slice": "inspect_safety_stats.generative.inference",

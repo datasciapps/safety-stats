@@ -15,7 +15,8 @@ SURFACE = {
     # Deciding a budget before anything is generated.
     "BudgetForecast", "LevelForecast", "forecast", "rewrites_for_bound",
     # The rewrite kernel, which the caller supplies.
-    "RewriteKernel", "RewriteRequest", "RewriteOutcome", "KernelFingerprint",
+    "RewriteKernel", "RewriteRequest", "RewriteOutcome", "ChatTurn", "conversation_problem",
+    "KernelFingerprint",
     "DeterministicFakeKernel", "resolve_kernel_fingerprint",
     # The two-phase workflow.
     "MaterializedRun", "materialize_run", "analyze_run",

@@ -249,6 +249,9 @@ class RewriteSpec(StrictModel):
     seed_replayable: bool = False
     validation: RewriteValidationSpec
     deduplication: RewriteDeduplicationSpec = Field(default_factory=RewriteDeduplicationSpec)
+    # Experimental. ``conversation`` makes the kernel return whole conversations (system,
+    # user and generator-written assistant turns), materialized as Inspect message lists.
+    output: Literal["prompt", "conversation"] = "prompt"
 
 
 class JudgeCalibrationSpec(StrictModel):

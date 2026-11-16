@@ -157,7 +157,7 @@ def _load(plan_path: str | Path) -> tuple[GenerativePlan, Path]:
 
 
 def _prior_work(
-    directory: Path, selections: list[SelectionRecord]
+    directory: Path, selections: list[SelectionRecord], *, conversations: bool = False
 ) -> tuple[dict[str, RewriteRecord], dict[str, AcceptedRewrite]]:
     """Read what an earlier run finished, and check it describes this same design.
 
@@ -181,7 +181,7 @@ def _prior_work(
         )
 
     store = directory / PROMPT_STORE
-    prompts = read_prompt_store(store) if store.exists() else {}
+    prompts = read_prompt_store(store, conversations=conversations) if store.exists() else {}
     completed: dict[str, RewriteRecord] = {}
     accepted: dict[str, AcceptedRewrite] = {}
     for record in read_rewrites(ledger):
@@ -250,7 +250,13 @@ def materialize_run(
         raise ValueError("stage must be 'pilot' or 'main'")
     selections = draw_selections(taxonomy, design, stage_id=stage)  # type: ignore[arg-type]
 
-    completed, accepted_before = _prior_work(directory, selections) if resume else ({}, {})
+    completed, accepted_before = (
+        _prior_work(
+            directory, selections, conversations=plan.rewrite.output == "conversation"
+        )
+        if resume
+        else ({}, {})
+    )
     resumed = len(completed)
     # Selections are known before any kernel call, so they are persisted first: an
     # interrupted run then still records what it set out to evaluate.

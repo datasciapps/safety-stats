@@ -20,9 +20,12 @@ from pathlib import Path
 import pandas as pd
 
 from inspect_safety_stats.generative.kernels import (
+    ChatTurn,
     KernelFingerprint,
     RewriteKernel,
+    RewriteOutcome,
     RewriteRequest,
+    decode_conversation,
 )
 from inspect_safety_stats.generative.ledger import (
     IncrementalCsvWriter,
@@ -40,6 +43,9 @@ class AcceptedRewrite:
     prompt: str
     prompt_sha256: str
     attempts: int
+    # Set when the plan's rewrite.output is ``conversation``; ``prompt`` then holds the
+    # conversation's canonical encoding, which is what is hashed and stored.
+    messages: tuple[ChatTurn, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -166,6 +172,23 @@ def _prompt_id(sampling_unit_id: str) -> str:
     return f"p-{sampling_unit_id}"
 
 
+def _check_output_kind(plan: GenerativePlan, outcome: RewriteOutcome, unit_id: str) -> None:
+    """Refuse a valid outcome of the other kind than the plan declares.
+
+    A kernel that answers a conversation plan with a bare prompt, or the reverse, does not
+    implement the procedure the fingerprint describes. That is a defect in the kernel, not
+    a property of the accepted distribution, so it stops the run.
+    """
+
+    declared = plan.rewrite.output
+    produced = "conversation" if outcome.messages is not None else "prompt"
+    if produced != declared:
+        raise ValueError(
+            f"the plan declares rewrite.output {declared!r} but the kernel returned a "
+            f"{produced} for unit {unit_id}"
+        )
+
+
 def execute_rewrites(
     plan: GenerativePlan,
     selections: list[SelectionRecord],
@@ -244,6 +267,7 @@ def execute_rewrites(
 
         status = "invalid"
         prompt: str | None = None
+        messages: tuple[ChatTurn, ...] | None = None
         attempts = 0
 
         for attempt in range(1, validation.maximum_attempts + 1):
@@ -268,7 +292,8 @@ def execute_rewrites(
                 if validation.on_invalid == "fail":
                     break
                 continue
-            candidate = str(outcome.prompt)
+            _check_output_kind(plan, outcome, unit_id)
+            candidate = outcome.text
             digest = prompt_sha256(candidate)
             if key is not None and digest in seen.get(key, set()):
                 duplicates += 1
@@ -278,6 +303,7 @@ def execute_rewrites(
                 seen.setdefault(key, set()).add(digest)
             status = "valid"
             prompt = candidate
+            messages = outcome.messages
             break
 
         if status == "valid" and prompt is not None:
@@ -287,6 +313,7 @@ def execute_rewrites(
                 prompt=prompt,
                 prompt_sha256=prompt_sha256(prompt),
                 attempts=attempts,
+                messages=messages,
             )
             accepted.append(entry)
             fresh = RewriteRecord(
@@ -332,12 +359,15 @@ def execute_rewrites(
     )
 
 
-def read_prompt_store(path: str | Path) -> dict[str, AcceptedRewrite]:
+def read_prompt_store(
+    path: str | Path, *, conversations: bool = False
+) -> dict[str, AcceptedRewrite]:
     """Read back the restricted prompt artifact, keyed by sampling unit.
 
     Resumption needs the prompt text of previously accepted rewrites, both to rebuild the
     Inspect dataset and to reconstruct deduplication state. The ledger carries only hashes,
-    so this is the artifact that has to be read.
+    so this is the artifact that has to be read. With ``conversations``, each stored text is
+    a conversation's canonical encoding and is decoded back into its turns.
     """
 
     frame = pd.read_csv(path, dtype=str, keep_default_na=False)
@@ -348,12 +378,18 @@ def read_prompt_store(path: str | Path) -> dict[str, AcceptedRewrite]:
     entries: dict[str, AcceptedRewrite] = {}
     for row in frame.to_dict("records"):
         unit_id = str(row["sampling_unit_id"])
+        text = str(row["prompt"])
+        try:
+            messages = decode_conversation(text) if conversations else None
+        except ValueError as exc:
+            raise ValueError(f"prompt store {path}, unit {unit_id}: {exc}") from exc
         entries[unit_id] = AcceptedRewrite(
             sampling_unit_id=unit_id,
             prompt_id=str(row["prompt_id"]),
-            prompt=str(row["prompt"]),
+            prompt=text,
             prompt_sha256=str(row["prompt_sha256"]),
             attempts=0,
+            messages=messages,
         )
     return entries
 
