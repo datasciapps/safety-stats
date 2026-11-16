@@ -159,6 +159,16 @@ described in their pull requests.
   write the same report bytes as before. See
   [Single-valued bound for system models](docs/statistical-methods.md#single-valued-bound-for-system-models-experimental).
 
+- **Comparison planning (experimental).** `inspect-safety-stats plan comparison` says, before a
+  run, which candidate-minus-baseline risk differences a design resolves at a margin: the
+  largest whose upper bound falls at or below `--margin`, and the smallest whose lower bound
+  reaches it, each at the target power. It reads the design manifest as `plan fixed-design`
+  does, takes rollout counts per arm, and plans unpaired arms, pairs of rollouts with the same
+  prompt and repeat, or prompt clusters. The guarantee is Hoeffding's, for the
+  `weighted_hoeffding` comparison. In Python:
+  `stats.planning.comparison_resolvable_differences`. See
+  [Planning a comparison](docs/model-comparisons.md#planning-a-comparison-experimental).
+
 - **Sensitivity intervals say what they vary (changes report bytes).** The interval role
   `sensitivity` covered both intervals under another independence profile and judge-error
   corrections, so an independence sensitivity could be read as a judge sensitivity. Each
