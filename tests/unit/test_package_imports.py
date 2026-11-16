@@ -22,6 +22,7 @@ def _run(code: str) -> str:
         "inspect_safety_stats.cli",
         "inspect_safety_stats.ingest",
         "inspect_safety_stats.generative",
+        "inspect_safety_stats.stats",
     ],
 )
 def test_importing_the_package_or_cli_loads_no_heavy_dependency(module: str) -> None:
@@ -74,7 +75,12 @@ def test_lazy_exports_are_the_objects_of_their_source_modules() -> None:
 
 
 @pytest.mark.parametrize(
-    "package", ["inspect_safety_stats.ingest", "inspect_safety_stats.generative"]
+    "package",
+    [
+        "inspect_safety_stats.ingest",
+        "inspect_safety_stats.generative",
+        "inspect_safety_stats.stats",
+    ],
 )
 def test_subpackage_lazy_exports_cover_all_and_keep_submodules_reachable(package: str) -> None:
     """Each public name has a source module, and submodules stay attributes of the package."""
