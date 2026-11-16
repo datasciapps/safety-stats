@@ -291,6 +291,7 @@ def test_a_pooled_calibration_never_certifies_a_row_it_does_not_measure(
         interval = _corrected(_risk(report, group, measure))
         assert interval.eligibility == "diagnostic"
         assert interval.role == "sensitivity"
+        assert interval.varied_assumption == "judge_error"
         assert interval.simultaneous_coverage is None
         assert interval.upper_one_sided_coverage is None
         (warning,) = interval.warnings
@@ -324,6 +325,7 @@ def test_a_comparison_over_part_of_a_cohort_is_a_judge_sensitivity(
     corrected = _corrected(comparison)
     assert corrected.eligibility == "diagnostic"
     assert corrected.role == "sensitivity"
+    assert corrected.varied_assumption == "judge_error"
     assert corrected.simultaneous_coverage is None
     (warning,) = corrected.warnings
     # Each arm is corrected with its own cohort's labels, so each arm is checked.

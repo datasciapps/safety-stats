@@ -91,6 +91,9 @@ then analyzes and compares their logs:
 python examples/demo/run_demo.py
 ```
 
+The [quickstart](docs/quickstart.md) analyzes a bundled log of a real evaluation, also offline,
+and shows what a failing validation looks like.
+
 Plan a zero-failure study:
 
 ```bash
@@ -240,6 +243,10 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Generative example: multilingual jailbreak rewrites](examples/generative_multilingual/README.md)
 - [Live generative example: real providers end to end](examples/generative_live/README.md)
 - [Secondary calibration example: XSTest over-refusal](examples/real_xstest/README.md)
+
+## Citing
+
+To cite the package, use the metadata in [CITATION.cff](CITATION.cff).
 
 ## License
 
