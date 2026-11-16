@@ -9,7 +9,7 @@ from typing import Any
 import yaml
 
 from inspect_safety_stats.config.canonicalize import canonical_value
-from inspect_safety_stats.schema.reports import SafetyReport
+from inspect_safety_stats.schema.reports import RiskIntervalResult, SafetyReport
 
 
 def _sha256(path: Path) -> str:
@@ -67,6 +67,14 @@ def _bound_status(eligibility: str) -> str:
         "diagnostic": "diagnostic",
         "invalid": "unavailable",
     }.get(eligibility, eligibility)
+
+
+def _role_label(interval: RiskIntervalResult) -> str:
+    """The interval's role, with what a sensitivity interval varies, so that an independence
+    sensitivity cannot be read as a judge-error one."""
+    if interval.varied_assumption is None:
+        return interval.role
+    return f"{interval.role} ({interval.varied_assumption.replace('_', ' ')})"
 
 
 def _coverage_label(risk: Any) -> str:
@@ -240,7 +248,7 @@ def _markdown(report: SafetyReport) -> str:
                         _escape(risk.cohort_id),
                         _escape(risk.group_id),
                         _escape(risk.measure_id),
-                        _escape(interval.role),
+                        _escape(_role_label(interval)),
                         _escape(interval.method),
                         _escape(interval.independence_profile),
                         _number(interval.lower, places),
@@ -683,7 +691,7 @@ def _markdown(report: SafetyReport) -> str:
                     + " | ".join(
                         [
                             _escape(comparison.result_id),
-                            _escape(interval.role),
+                            _escape(_role_label(interval)),
                             _escape(interval.method),
                             _escape(interval.independence_profile),
                             _number(interval.lower, places),
