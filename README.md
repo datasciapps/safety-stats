@@ -91,6 +91,9 @@ then analyzes and compares their logs:
 python examples/demo/run_demo.py
 ```
 
+The [quickstart](docs/quickstart.md) analyzes a bundled log of a real evaluation, also offline,
+and shows what a failing validation looks like.
+
 Plan a zero-failure study:
 
 ```bash
