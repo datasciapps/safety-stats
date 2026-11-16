@@ -1,7 +1,11 @@
 {
-  "design.resolved.csv": "355f7291e80ab7a7898de7f3c4bb5f461c3891d23ed2fd13599b65fdcd74cd7b",
-  "observations.csv": "29f67f2cef90d4a3f64003d11b428c0f3aed3182d44b0b0f4dd2d5f756ef849c",
-  "plan.resolved.yaml": "db2be01b5c13d053697686ba0b7d6931777c387accf4bad7e0946724a38a309b",
-  "report.json": "c977fae7738ed9f8e11cc252a4c223e58859b8286ada57a33c7d8bb50dc77cad",
-  "report.md": "0488ca6a5bf9d03c73a53fab7d8e466173fff99a313e3d38bfe629468c76c305"
+  "comparison-sets.csv": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "comparisons.csv": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "design.resolved.csv": "25c01c7ebff9e8f9ae64019cecb523929f87b7f6e6dd89048b881bcbcffab2ca",
+  "hierarchy-risks.csv": "d17623de6fd1ec492f6bdaa1265e5d939bd6c922564f998378564c803472132e",
+  "observations.csv": "f14dda54914d4bac2efdb00402e63acabdcc6ab49b57ddf737fb6dd47a4020e0",
+  "plan.resolved.yaml": "6c4d7b40e1167a196d1aa93dfa8c923e45416d80793dcf255fa8ebb1e7911137",
+  "report.html": "4191aac3ae27f6355ff69f58ebdf6c2cacc18550d0fee0396611af5204181fdd",
+  "report.json": "3cd1aed80d78f656929d1b4738fab38a4219eab26b398761736258e1109efd82",
+  "report.md": "f6286d048ae7591b512962577ea2dd5d0c57a67747a2c002684ac9e4c2a686f8"
 }
