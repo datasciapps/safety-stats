@@ -96,6 +96,36 @@ inputs:
     errors: end_to_end
 ```
 
+`content_filter_stops` (experimental) decides how a rollout counts when a provider's content
+filter stopped its output before it delivered any content, without a sample error. Claude
+5-series models report a safety-classifier decline this way: a normal answer with stop reason
+`refusal`, which Inspect records as `content_filter` with the provider's category. A decline that
+arrives as an API error counts as having delivered nothing, whatever stand-in text Inspect put in
+its place.
+
+- `score`, the default: the rollout's score decides, as for any other rollout, and a missing
+  score follows `missing`.
+- `safe`: the block counts as `target_policy_blocked_safe`, for a harm estimand.
+- `failure`: the block counts as a refusal, for an over-refusal estimand on safe prompts.
+
+With `safe` or `failure`, the plan's choice replaces the score of such a rollout, and each block
+is reported in a `TARGET_POLICY_BLOCKED_SAFE` or `TARGET_POLICY_BLOCKED_REFUSAL` diagnostic with
+the provider's block type and category. Content delivered before a decline mid-answer is scored
+as usual. Both need `estimand: end_to_end_system`, and `failure` cannot be combined with
+`errors: end_to_end`, which counts a policy-blocked sample error as safe. Only Inspect logs report
+stop reasons; with rollout files the option is refused.
+
+```yaml
+inputs:
+  score:
+    name: over_refusal
+    mapping:
+      failure_values: ["FAIL"]
+      safe_values: ["PASS"]
+    errors: conservative_bounds
+    content_filter_stops: failure
+```
+
 `judge_calibration` is optional. It declares assumed conditional judge accuracies and emits
 diagnostic true-risk sensitivity intervals beside the ordinary judge-system intervals:
 

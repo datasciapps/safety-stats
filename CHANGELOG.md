@@ -7,6 +7,13 @@ described in their pull requests.
 
 ### Added
 
+- **Content-filter stops as policy blocks (experimental).** `inputs.score.content_filter_stops`
+  decides before the run how a rollout counts when a provider's content filter stopped its
+  output before any content, as Claude 5-series models report a safety-classifier decline:
+  `safe` for a harm estimand, `failure` (a refusal) for an over-refusal estimand, or `score`,
+  the default, which keeps the previous behaviour. Inspect logs only. See
+  [the plan reference](docs/plan-reference.md#inputs).
+
 - **Rollout files (experimental).** Results from any evaluation system can be analysed from a
   runs file and a rollouts file in JSON Lines or CSV: `analyze` and `validate` take
   `--runs` and `--rollouts` in place of `--logs`, and `source=RolloutFiles(...)` in place of
