@@ -919,11 +919,49 @@ thresholds out.
 | `include_observations` | true | Write normalized observation CSV |
 | `decimal_places` | 6 | Markdown display precision; JSON retains full precision |
 | `judge_error_stress` | false | Experimental. Add to every claim the judge accuracy at which its verdict would change for true risk, and the verdict over the primary judge's declared accuracy box; diagnostic only. See [Stressing a threshold verdict](judge-misclassification.md#stressing-a-threshold-verdict-experimental) |
+| `claims_export` | false | Experimental. Write `claims.json`, one record per claim; needs `include_decisions: true`. See [claims.json](#claimsjson-experimental) |
+
+### `claims.json` (experimental)
+
+With `report.claims_export: true`, the report directory also holds `claims.json`, and
+`checksums.json` covers it. It lists every claim of the report as one record, for tools that
+build safety cases or risk registers from benchmark evidence. Nothing in it is computed anew:
+each value is copied from `report.json`, and a saved `report.json` renders the same file.
+
+The plan is refused when `report.include_decisions` is false, because each record carries the
+claim's status.
+
+The document holds, once for all claims, the report's schema and package versions, the
+analysis id, intent, `plan_sha256` and `plan_frozen_at`, the hashed input logs and the design
+manifest's hash, the integrity status and the overall decision. Each claim record holds:
+
+| Part | Fields | Copied from |
+|---|---|---|
+| top level | `claim_id`, `title`, `status`, `descriptive_status`, `mandatory` | the claim in `report.json` |
+| top level | `judge_corrected` | whether the `JUDGE_CORRECTED_CLAIMS` diagnostic names the claim |
+| `estimand` | `cohort`, `group`, `measure`, `measure_type`, `comparison` | the claim's record in `presentation.claim_evidence` |
+| `estimand` | `acceptable_upper`, `unacceptable_lower` | the claim |
+| `bound` | `estimate`, `lower`, `upper`, `alpha`, `method`, `multiplicity_family` | the claim: the bound it was decided on |
+| `evidence` | `refs` | the claim's `evidence_refs` |
+| `evidence` | `eligibility` | the group risk or comparison the claim is about |
+| `evidence` | `interval_id`, `interval_method`, `coverage_mode`, `coverage_scope`, `family_alpha`, `independence_profile`, `assumptions` | the interval the bound comes from: the one an `interval:` evidence ref names, else that result's primary interval |
+| `sources` | `claim`, `estimand`, `evidence`, `evidence_interval` | JSON pointers (RFC 6901) into `report.json` to each of the above |
+
+For a claim decided on a validated judge correction, `bound` holds the corrected bound and
+`alpha` holds the error budget of the claim family and the judge calibration together, and the
+evidence interval is the correction's. In an exploratory analysis, `status` stays
+`INCONCLUSIVE` and `descriptive_status` gives what a confirmatory analysis would decide; it
+certifies nothing. Fields of `evidence` are null when the report holds no such result or
+interval.
+
+The file has its own `schema_version` (now `"1.0"`) and `"experimental": true`.
+`inspect-safety-stats schema claims` prints its JSON schema.
 
 ## Generate JSON schemas
 
 ```bash
 inspect-safety-stats schema plan > plan.schema.json
 inspect-safety-stats schema report > report.schema.json
+inspect-safety-stats schema claims > claims.schema.json
 inspect-safety-stats schema decision-policy > decision-policy.schema.json
 ```

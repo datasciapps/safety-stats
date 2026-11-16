@@ -29,6 +29,7 @@ from inspect_safety_stats.schema.reports import (
     RiskIntervalResult,
     SafetyReport,
 )
+from tests.claims_export import round_trip_differences
 from tests.report_rendering import rendering_differences
 
 
@@ -782,6 +783,22 @@ def test_validated_judge_calibration_produces_certifying_corrections(
     )
     assert "## Judge misclassification correction" in markdown
     assert "Human labels behind each cohort's calibration" in markdown
+
+    # claims.json (#11) exports the corrected bound, the combined error budget and the
+    # correction's interval, each as report.json records it.
+    exporting = report.model_copy(
+        update={"presentation": report.presentation.model_copy(update={"claims_export": True})}
+    )
+    output = exporting.write(tmp_path / "claims-report")
+    assert round_trip_differences(output) == []
+    exported = json.loads((output / "claims.json").read_text(encoding="utf-8"))
+    for record, result in zip(exported["claims"], report.claims, strict=True):
+        assert record["judge_corrected"] is True
+        assert record["bound"]["lower"] == result.lower
+        assert record["bound"]["upper"] == result.upper
+        assert record["bound"]["alpha"] == pytest.approx(0.05 + 0.05, rel=1e-12, abs=0)
+        assert record["evidence"]["interval_id"] == "judge_corrected_validated"
+        assert record["evidence"]["interval_method"] == corrected.method
 
 
 def test_an_unlabelled_judge_stratum_is_completed_conservatively(
