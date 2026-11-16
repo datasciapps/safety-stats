@@ -41,7 +41,9 @@ plan's hash changes with its text. A 2.0 plan keeps its meaning and its hash.
 | `plan_frozen_at` | confirmatory | Timestamp preceding selected evaluations |
 | `registration` | no | External URI and SHA-256 of a preregistered plan |
 
-Exploratory analyses cannot produce `PASS`.
+Exploratory analyses cannot produce `PASS`. Their claims are `INCONCLUSIVE`, and each records
+as `descriptive_status` what a confirmatory analysis of the same bounds would give. See
+[Exploratory analyses](interpretation.md#exploratory-analyses).
 
 ## `inputs`
 
@@ -386,6 +388,17 @@ confidence region, and reports the coordinate projection of that common region f
 Use `hierarchy_region: none` to retain the unprojected intervals. The `independence` selector names
 one primary profile and optional prespecified sensitivity profiles. See
 [Configuring hierarchy and independence](independence-profiles.md).
+
+`single_valued_bound: true` (experimental, default `false`) adds a single number per direct
+interval for system models such as fault trees: M, the smallest value of U_δ + δ over levels
+δ, where U_δ is the interval's own one-sided upper bound at level δ for that node alone. It
+needs no alpha and has P(M < R) ≤ R: its miss probability is the unknown risk R itself. It is not
+simultaneous, does not enter claims, and is usually above a 95% bound. Each interval in
+`report.json` then carries `single_valued_bound`, `single_valued_bound_delta` and
+`single_valued_bound_guarantee`, and `report.md` lists them under "Single-valued bounds
+(experimental)". The option is refused with `PLAN_SINGLE_VALUED_BOUND_UNSUPPORTED` under a
+sampled design and with judge calibration. See
+[Single-valued bound for system models](statistical-methods.md#single-valued-bound-for-system-models-experimental).
 
 ## `comparison_sets`
 

@@ -141,6 +141,34 @@ def test_an_uninformative_label_set_refuses_rather_than_correcting(
     assert report.evaluation["judge_calibration"]["available"] is False
 
 
+def test_an_unlabelled_judge_stratum_is_completed_with_a_warning(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """L49: labels only among judge-safe samples still give a conservative correction."""
+
+    artifacts = tmp_path / "run"
+    plan = with_judge(tmp_path, {"mode": "validated", "validation_manifest": "labels.csv"})
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts, candidate_failures=20)
+    # The first 20 evaluable samples are the judge's failures; label none of them.
+    records = [r for r in read_rewrites(artifacts / "rewrites.csv") if r.is_evaluable()]
+    rows = ["observation_id,human_label"]
+    rows.extend(f"{record.prompt_id},safe" for record in records[20:140])
+    (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    report = analyze_run(plan, artifacts, "logs", cohort="candidate")
+    warnings = [i for i in report.diagnostics if i.code == "JUDGE_STRATUM_UNLABELLED_COMPLETED"]
+    assert len(warnings) == 1 and warnings[0].severity == "WARNING"
+    block = report.evaluation["judge_calibration"]
+    assert block["available"] is True
+    assert block["rho_1"] == [0.0, 1.0]
+    assert block["completed_strata"] == ["judge_unsafe"]
+    assert {item.eligibility for item in report.corrected} == {"certifying"}
+    root = next(i for i in report.corrected if i.node_id == "all")
+    assert root.lower == 0.0
+    assert root.upper >= report.tree.root.upper
+
+
 def test_labels_for_samples_this_run_never_saw_are_an_error(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

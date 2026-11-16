@@ -20,7 +20,11 @@ report = analyze(
 
 `plan` accepts an `AnalysisPlan` or a YAML/JSON path. `logs` accepts any local path, sequence of
 paths, or loaded `EvalLog` object accepted by Inspect's dataframe readers. The function returns a
-validated `SafetyReport`. It does not write files until `report.write(...)` is called.
+validated `SafetyReport`. It does not write files until `report.write(...)` is called. When the
+design manifest, logs or rollout files cannot be read, the report's integrity is `invalid`,
+its diagnostics include `INGEST_FAILED` with the reason, it has no estimates, and every claim
+is `INCONCLUSIVE`; `validate` reports the same input the same way. A plan that cannot be
+loaded raises.
 
 Results from another evaluation system are passed as `source` instead of `logs`
 (experimental). `RolloutFiles` reads a runs file and a rollouts file in the neutral format of
@@ -365,9 +369,11 @@ analysis pipeline; see
 ### Judge misclassification
 
 ```python
-JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source)
+JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source,
+                 alpha=None, completed_strata=())   # strata completed as [0, 1]
 JudgeStratumCounts(labelled, truly_unsafe, stratum_size)
 estimate_judge_calibration(*, scenario_id, unsafe_stratum, safe_stratum, alpha)
+completion_warning(calibration)   # message naming completed strata, or None
 correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration)
 delta_method_corrected_risk(*, observed_estimate, observed_variance, unsafe_stratum,
                             safe_stratum, alpha)   # asymptotic reference, diagnostic
@@ -448,17 +454,20 @@ Exit codes of `analyze`:
 | Situation | Default | With `--decision-exit-codes` |
 |---|---|---|
 | Integrity `valid` or `degraded` | `0` | `0` PASS, `1` FAIL, `2` INCONCLUSIVE |
-| Integrity `invalid` (the report is still written) | `3` | `3` |
+| Integrity `invalid`, an unreadable manifest, log or rollout file included (the report is still written) | `3` | `3` |
 | Integrity `invalid` with `--allow-invalid` | `0` | `2`, because an invalid analysis is never PASS |
-| The analysis cannot run, for example an unreadable plan or log | `3` | `3` |
+| The analysis cannot run, for example an unreadable plan | `3` | `3` |
 
 `validate` exits `3` for invalid input and `0` otherwise.
 
 ## Compatibility and stability
 
 The runtime supports Python 3.11 or newer. Reading Inspect logs needs Inspect AI
-`>=0.3.259,<0.4`, which the `inspect` extra installs. Plan and report schema
-version `1.0` are strict. New fields or methods may be added compatibly within the package's
+`>=0.3.259,<0.4`, which the `inspect` extra installs. This release reads analysis plans of
+schema version `2.0` and `3.0` (see [the plan reference](plan-reference.md#schema-versions)) and
+writes reports of schema version `3.0`. Plans and reports are strict: unknown fields are errors,
+and a plan declaring any other version, `1.0` included, is refused. New fields or methods may
+be added compatibly within the package's
 `0.x` development series, but consumers should validate `schema_version` before automated use.
 
 ## Generative evaluation

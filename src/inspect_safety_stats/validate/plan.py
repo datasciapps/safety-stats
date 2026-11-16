@@ -354,6 +354,29 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope="outputs.prompt_bounds",
                 )
             )
+    if plan.outputs.direct_mean_intervals.single_valued_bound:
+        unsupported = []
+        if plan.design.type == "sampled":
+            unsupported.append(
+                "a sampled design, whose frame bounds are not a family of node bounds"
+            )
+        if plan.inputs.judge_calibration is not None:
+            unsupported.append(
+                "judge calibration, because the bound would describe the judge's risk, "
+                "not the corrected risk"
+            )
+        if unsupported:
+            diagnostics.append(
+                Diagnostic(
+                    code="PLAN_SINGLE_VALUED_BOUND_UNSUPPORTED",
+                    severity="ERROR",
+                    message=(
+                        "outputs.direct_mean_intervals.single_valued_bound is not supported "
+                        "with " + " or ".join(unsupported) + "; set it to false"
+                    ),
+                    scope="outputs.direct_mean_intervals",
+                )
+            )
     if not plan.outputs.risk_measures:
         diagnostics.append(
             Diagnostic(

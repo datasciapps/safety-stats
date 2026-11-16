@@ -1,0 +1,113 @@
+# A deliberately broken copy of safety-plan.yaml for the quickstart. It selects a scorer,
+# `match`, that the bundled log does not contain, so `validate` and `analyze` report
+# SCORE_MISSING and exit 3. Apart from these comments and the score name it is identical to
+# safety-plan.yaml, which tests/test_quickstart_commands.py checks.
+
+schema_version: "2.0"
+
+analysis:
+  id: real-simpleqa-eight
+  title: Eight real SimpleQA items as a fixed-design failure analysis
+  description: >-
+    Worked mechanics example using genuine Inspect outputs from GPT-4o. Incorrect answers are
+    treated as failures. This is a reliability example, not evidence of deployment safety.
+  intent: confirmatory
+  plan_frozen_at: 2026-08-18T08:00:00Z
+
+inputs:
+  design_manifest: design.csv
+  score:
+    name: match
+    mapping:
+      failure_values: ["I"]
+      safe_values: ["C"]
+    missing: block
+    errors: block
+
+design:
+  type: fixed
+  hierarchy: [task_id, question_id, prompt_id]
+  rollout_key: [eval_id, id, epoch]
+  require_complete_manifest: true
+  require_expected_rollouts: true
+  weights:
+    strategy: equal_prompt
+  independence_profiles:
+    rollout:
+      block_by: [rollout]
+      comparison_coupling: independent
+
+cohorts:
+  candidate:
+    match:
+      model: openai/gpt-4o
+    require_uniform: [task_version, model_generate_config, solver]
+
+groups:
+  - id: all-eight
+    title: All eight fixed SimpleQA items
+    filter: {}
+    weights:
+      strategy: equal_prompt
+
+outputs:
+  prompt_bounds:
+    enabled: true
+    simultaneous: true
+    family: displayed_prompt_bounds
+    coverage_mode: two_sided
+    alpha_allocation: equal_bonferroni
+  direct_mean_intervals:
+    enabled: true
+    method: weighted_kl_chernoff
+    reference_methods: [weighted_empirical_bernstein, weighted_hoeffding]
+    family: displayed_direct_means
+    groups: [all-eight]
+    simultaneous: true
+    coverage_mode: two_sided
+    independence:
+      primary: rollout
+    hierarchy_nodes: true
+    hierarchy_calibration: frontier_sidak
+    hierarchy_region: linear_program
+  risk_measures:
+    - {id: mean, type: weighted_mean}
+    - {id: cvar_75, type: cvar, beta: 0.75}
+    - {id: entropic_5, type: entropic, lambda: 5}
+    - {id: worst, type: maximum}
+
+multiplicity:
+  families:
+    - id: displayed_prompt_bounds
+      purpose: simultaneous_intervals
+      method: bonferroni
+      alpha: 0.05
+    - id: displayed_direct_means
+      purpose: simultaneous_intervals
+      method: bonferroni
+      alpha: 0.05
+    - id: decision_gate
+      purpose: all_mandatory
+      method: intersection_union
+      alpha: 0.05
+
+claims:
+  - id: mean_failure_risk
+    title: Equal-weight fixed-design mean failure risk is acceptable
+    cohort: candidate
+    group: all-eight
+    measure: mean
+    family: decision_gate
+    acceptable_upper: 0.25
+    unacceptable_lower: 0.60
+    mandatory: true
+
+policy:
+  zero_tolerance:
+    enabled: false
+    manifest_field: zero_tolerance
+
+report:
+  include_prompt_text: false
+  include_observations: true
+  decimal_places: 6

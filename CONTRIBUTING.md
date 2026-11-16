@@ -93,7 +93,7 @@ removing, and tightening validation so that previously accepted input is rejecte
 - **Internal:** anything not in an `__all__`, or with a leading `_`, is internal. Class A
   pull requests may change it freely, provided report artifacts stay byte-identical.
 
-### 4.2 Analysis plan (YAML/JSON), `schema_version: "2.0"`
+### 4.2 Analysis plan (YAML/JSON), `schema_version: "2.0"` or `"3.0"`
 
 Plans are strict (`extra="forbid"`).
 
@@ -253,8 +253,8 @@ from any directory (#42).
   (coverage and direction), and a reference.
 - **Docs ship with the change.** A user-facing change updates the relevant guide in the same
   pull request, and `docs/plan-reference.md` for new plan fields.
-- **Version.** The version lives in three places: `pyproject.toml`,
-  `src/inspect_safety_stats/version.py`, and `docs/independence-profiles.md`.
+- **Version.** The version lives in four places: `pyproject.toml`,
+  `src/inspect_safety_stats/version.py`, `docs/independence-profiles.md`, and `CITATION.cff`.
   `tests/test_repository_consistency.py` fails if they disagree.
 
 ## 6. Linux, macOS, and Windows
@@ -306,7 +306,10 @@ All three are first-class platforms.
 - **Bug fixes.** Every bug fix comes with a test that fails without it. Check it with
   `python scripts/prove_red.py <tests>`, which runs the tests against the committed source and
   then against your working tree, and paste its verdict in the pull request. Pass
-  `--base <commit>` once the fix is committed. It never modifies the working tree.
+  `--base <commit>` once the fix is committed. It never modifies the working tree. It swaps
+  only `src/` by default; for a fix elsewhere, such as in `examples/` or `scripts/`, pass
+  `--tree`, which runs the tests in a full export of the committed tree with only `tests/`
+  taken from your working tree.
 - **Bounds.** A new bound or estimator needs a seeded Monte Carlo coverage test showing empirical
   coverage at or above nominal, with the simulation error stated. It also needs exact-value
   tests against an independent computation.
