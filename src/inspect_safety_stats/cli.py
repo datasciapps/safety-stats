@@ -11,6 +11,9 @@ import typer
 from inspect_safety_stats.version import __version__
 
 if TYPE_CHECKING:
+    import numpy as np
+    import pandas as pd
+
     from inspect_safety_stats.ingest.records import EvaluationSource
 
 # Each command imports what it needs when it runs, so that `version`, `--help`, `plan` and
@@ -321,6 +324,35 @@ class IndependenceUnitOption(str, Enum):
     prompt_cluster = "prompt_cluster"
 
 
+def _planning_design(
+    manifest: Path,
+    weights: WeightStrategyOption,
+    hierarchy: str,
+    weight_column: str | None,
+) -> tuple[pd.DataFrame, np.ndarray]:
+    """Read a design manifest and resolve its weights as `analyze` would."""
+
+    from inspect_safety_stats.config.models import WeightSpec
+    from inspect_safety_stats.ingest.manifest import load_manifest, resolve_weights
+
+    # resolve_weights only reads the column for explicit weights; ignoring it silently would
+    # plan under a weighting the user did not ask for.
+    if weight_column is not None and weights is not WeightStrategyOption.explicit:
+        raise typer.BadParameter("--weight-column applies only with --weights explicit")
+    try:
+        frame = load_manifest(manifest)
+        spec = WeightSpec.model_validate(
+            {
+                "strategy": weights.value,
+                "hierarchy": [level.strip() for level in hierarchy.split(",") if level.strip()],
+                "column": weight_column,
+            }
+        )
+        return frame, resolve_weights(frame, spec)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
 @plan_app.command("fixed-design")
 def fixed_design_planning_command(
     manifest: Annotated[Path, typer.Option("--manifest", exists=True, dir_okay=False)],
@@ -346,28 +378,14 @@ def fixed_design_planning_command(
     a uniform override.
     """
 
-    from inspect_safety_stats.config.models import WeightSpec
-    from inspect_safety_stats.ingest.manifest import load_manifest, resolve_weights
     from inspect_safety_stats.stats.planning import fixed_design_detectable_failure_rates
 
-    # resolve_weights only reads the column for explicit weights; ignoring it silently would
-    # plan under a weighting the user did not ask for.
-    if weight_column is not None and weights is not WeightStrategyOption.explicit:
-        raise typer.BadParameter("--weight-column applies only with --weights explicit")
     local_alpha = alpha / family_size
     unit: Literal["rollout", "prompt_cluster"] = (
         "rollout" if independence_unit is IndependenceUnitOption.rollout else "prompt_cluster"
     )
+    frame, weight_values = _planning_design(manifest, weights, hierarchy, weight_column)
     try:
-        frame = load_manifest(manifest)
-        spec = WeightSpec.model_validate(
-            {
-                "strategy": weights.value,
-                "hierarchy": [level.strip() for level in hierarchy.split(",") if level.strip()],
-                "column": weight_column,
-            }
-        )
-        weight_values = resolve_weights(frame, spec)
         if rollouts is not None:
             trials = [rollouts] * len(frame)
         elif "expected_rollouts" in frame:
