@@ -306,7 +306,10 @@ All three are first-class platforms.
 - **Bug fixes.** Every bug fix comes with a test that fails without it. Check it with
   `python scripts/prove_red.py <tests>`, which runs the tests against the committed source and
   then against your working tree, and paste its verdict in the pull request. Pass
-  `--base <commit>` once the fix is committed. It never modifies the working tree.
+  `--base <commit>` once the fix is committed. It never modifies the working tree. It swaps
+  only `src/` by default; for a fix elsewhere, such as in `examples/` or `scripts/`, pass
+  `--tree`, which runs the tests in a full export of the committed tree with only `tests/`
+  taken from your working tree.
 - **Bounds.** A new bound or estimator needs a seeded Monte Carlo coverage test showing empirical
   coverage at or above nominal, with the simulation error stated. It also needs exact-value
   tests against an independent computation.

@@ -10,6 +10,7 @@ from pydantic import (
     PrivateAttr,
     SerializerFunctionWrapHandler,
     model_serializer,
+    model_validator,
 )
 
 Decision = Literal["PASS", "FAIL", "INCONCLUSIVE"]
@@ -63,6 +64,10 @@ class RiskIntervalResult(ResultModel):
     upper: float | None = None
     method: str
     role: Literal["primary", "reference", "sensitivity"]
+    # What a sensitivity interval varies: the independence profile its blocks come from, or
+    # the judge's error rates (an assumed calibration scenario or an uncertified correction).
+    # None for primary and reference intervals, and in reports written before the field.
+    varied_assumption: Literal["independence", "judge_error"] | None = None
     coverage_scope: str | None = None
     coverage_mode: Literal["two_sided", "per_direction"] | None = None
     family: str | None = None
@@ -105,6 +110,15 @@ class RiskIntervalResult(ResultModel):
     single_valued_bound: float | None = None
     single_valued_bound_delta: float | None = None
     single_valued_bound_guarantee: str | None = None
+
+    @model_validator(mode="after")
+    def _varied_assumption_only_on_sensitivity(self) -> RiskIntervalResult:
+        if self.varied_assumption is not None and self.role != "sensitivity":
+            raise ValueError(
+                f"interval {self.interval_id!r} has role {self.role!r}; only a sensitivity "
+                "interval names a varied_assumption"
+            )
+        return self
 
     @model_serializer(mode="wrap")
     def leave_out_absent_single_valued_bound(
