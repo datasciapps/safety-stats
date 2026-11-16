@@ -60,8 +60,10 @@ if TYPE_CHECKING:
         CorrectedRisk,
         DeltaCorrectedRisk,
         JudgeCalibration,
+        LangReiczigelCorrectedRisk,
         correct_judge_risk,
         delta_method_corrected_risk,
+        lang_reiczigel_corrected_risk,
     )
     from .multiplicity import bonferroni_allocate
     from .paired import (
@@ -142,6 +144,8 @@ __all__ = [
     "pairwise_agreement",
     "DeltaCorrectedRisk",
     "delta_method_corrected_risk",
+    "LangReiczigelCorrectedRisk",
+    "lang_reiczigel_corrected_risk",
     "calibrate_independent_frontiers",
     "sidak_local_alpha",
 ]
@@ -161,6 +165,7 @@ _EXPORTS = {
     "IndependentFrontier": "inspect_safety_stats.stats.tree_calibration",
     "JudgeAccuracyBox": "inspect_safety_stats.stats.judges",
     "JudgeCalibration": "inspect_safety_stats.stats.misclassification",
+    "LangReiczigelCorrectedRisk": "inspect_safety_stats.stats.misclassification",
     "LinearIntervalConstraint": "inspect_safety_stats.stats.hierarchy_region",
     "RatioComparisonBounds": "inspect_safety_stats.stats.comparisons",
     "RatioHierarchyRegionProjection": "inspect_safety_stats.stats.hierarchy_region",
@@ -180,6 +185,7 @@ _EXPORTS = {
     "exact_mcnemar": "inspect_safety_stats.stats.paired",
     "horvitz_thompson_mean_bounds": "inspect_safety_stats.stats.design_based",
     "identified_risk_set": "inspect_safety_stats.stats.judges",
+    "lang_reiczigel_corrected_risk": "inspect_safety_stats.stats.misclassification",
     "maximum_risk": "inspect_safety_stats.stats.risk",
     "missingness_robust_binomial_bounds": "inspect_safety_stats.stats.binomial",
     "newcombe_paired_interval": "inspect_safety_stats.stats.paired",

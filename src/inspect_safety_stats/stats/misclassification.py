@@ -332,6 +332,114 @@ class TruthStratumCounts:
 
 
 @dataclass(frozen=True)
+class LangReiczigelCorrectedRisk:
+    """Lang-Reiczigel confidence limits for true risk with estimated judge accuracy."""
+
+    estimate: float
+    lower: float
+    upper: float
+    alpha: float
+    sensitivity_estimate: float
+    specificity_estimate: float
+
+
+def lang_reiczigel_corrected_risk(
+    *,
+    apparent_rate: float,
+    apparent_size: float,
+    truly_unsafe: TruthStratumCounts,
+    truly_safe: TruthStratumCounts,
+    alpha: float,
+) -> LangReiczigelCorrectedRisk:
+    """Two-sided limits for true risk adjusted for estimated sensitivity and specificity.
+
+    This is the interval of Lang and Reiczigel (2014, Preventive Veterinary Medicine
+    113:13-22), in the notation of that paper with the judge as the diagnostic test:
+    ``apparent_rate`` is the judge-reported rate ``AP`` over ``apparent_size`` rollouts,
+    sensitivity ``Se`` is estimated from the truly unsafe labelled rollouts and
+    specificity ``Sp`` from the truly safe ones. With ``z`` the normal quantile at
+    ``1 - alpha / 2``, the counts are adjusted in the manner of Agresti and Coull,
+
+        AP' = (n AP + z^2 / 2) / (n + z^2),   Se' = (x_Se + 1) / (n_Se + 2),
+        Sp' = (x_Sp + 1) / (n_Sp + 2),
+
+    the Rogan-Gladen estimate ``P' = (AP' + Sp' - 1) / (Se' + Sp' - 1)`` is shifted by
+    the bias correction
+
+        dP = 2 z^2 (P' Se'(1 - Se') / n_Se' - (1 - P') Sp'(1 - Sp') / n_Sp'),
+
+    and the limits are ``P' + dP -/+ z sqrt(Var)`` with
+
+        Var = (AP'(1 - AP') / n_AP' + P'^2 Se'(1 - Se') / n_Se'
+               + (1 - P')^2 Sp'(1 - Sp') / n_Sp') / (Se' + Sp' - 1)^2,
+
+    ``n_AP' = n + z^2`` and ``n_Se' = n_Se + 2``, ``n_Sp' = n_Sp + 2``. The R package
+    ``asht`` (``prevSeSp``) notes a typo in the paper's equation 4, ``(1 + P')^2`` for
+    ``(1 - P')^2`` in the last term; the latter is the delta-method variance, and both
+    that implementation and this one use it. Limits and the point estimate are clipped
+    to ``[0, 1]``.
+
+    The interval is approximate: its coverage is a simulation result, not a guarantee
+    (``research/judge_correction_widths.py``). Sensitivity and specificity are
+    prevalence-free, so the labels must be a simple random sample of the rollouts or
+    sampled by true class, never within judge strata. A judge the adjusted estimates do
+    not show to be informative (``Se' + Sp' <= 1``) is refused, as is one whose raw
+    estimates leave the Rogan-Gladen estimate undefined.
+    """
+
+    from scipy.stats import norm
+
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0, 1)")
+    if not 0 <= apparent_rate <= 1:
+        raise ValueError("apparent rate must be in [0, 1]")
+    if not apparent_size > 0:
+        raise ValueError("apparent size must be positive")
+    if truly_unsafe.labelled == 0 or truly_safe.labelled == 0:
+        raise ValueError("both truth strata require at least one labelled observation")
+
+    sensitivity = truly_unsafe.judge_positive / truly_unsafe.labelled
+    specificity = 1 - truly_safe.judge_positive / truly_safe.labelled
+    if sensitivity + specificity <= 1:
+        raise ValueError(
+            "the labels do not establish an informative judge: estimated sensitivity "
+            f"({sensitivity:.6g}) plus specificity ({specificity:.6g}) does not exceed 1"
+        )
+    z = float(norm.ppf(1 - alpha / 2))
+    z2 = z * z
+    size_se = truly_unsafe.labelled + 2
+    size_sp = truly_safe.labelled + 2
+    se = (truly_unsafe.judge_positive + 1) / size_se
+    sp = (truly_safe.labelled - truly_safe.judge_positive + 1) / size_sp
+    youden = se + sp - 1
+    if youden <= 0:
+        raise ValueError(
+            "the labels do not establish an informative judge: adjusted sensitivity "
+            f"({se:.6g}) plus specificity ({sp:.6g}) does not exceed 1"
+        )
+    size_ap = apparent_size + z2
+    ap = (apparent_size * apparent_rate + z2 / 2) / size_ap
+    prevalence = (ap + sp - 1) / youden
+    var_se = se * (1 - se) / size_se
+    var_sp = sp * (1 - sp) / size_sp
+    bias = 2 * z2 * (prevalence * var_se - (1 - prevalence) * var_sp)
+    variance = (
+        ap * (1 - ap) / size_ap + prevalence**2 * var_se + (1 - prevalence) ** 2 * var_sp
+    ) / youden**2
+    centre = prevalence + bias
+    half_width = z * variance**0.5
+    estimate = (apparent_rate + specificity - 1) / (sensitivity + specificity - 1)
+    return LangReiczigelCorrectedRisk(
+        estimate=min(1.0, max(0.0, estimate)),
+        lower=min(1.0, max(0.0, centre - half_width)),
+        upper=min(1.0, max(0.0, centre + half_width)),
+        alpha=alpha,
+        sensitivity_estimate=sensitivity,
+        specificity_estimate=specificity,
+    )
+
+
+@dataclass(frozen=True)
 class NoisyValidCertification:
     """Outcome of the finite-sample noisy-but-valid threshold test."""
 
