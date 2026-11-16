@@ -2120,6 +2120,14 @@ A model may possess a dangerous capability that the scaffold, prompt, tools, or 
 
 A model may behave differently when it recognizes an evaluation. Statistical precision around evaluation behavior does not eliminate this external-validity threat. Anthropic's sabotage evaluations include explicit sandbagging and oversight-undermining experiments that illustrate why behavior observed under evaluation can be strategically unrepresentative [15].
 
+Every bound in this document is therefore conditional on the evaluated model not strategically
+underperforming. A model that deliberately fails to show a capability, or behaves more safely
+because it recognizes the evaluation, is measured correctly for the behaviour it chose to show;
+no amount of rollouts makes that behaviour representative [33]. Detecting sandbagging is a
+separate evaluation. One proposed method injects noise into the model's weights: a model that
+is not sandbagging degrades steadily as the noise grows, while a sandbagging model can improve
+anomalously. Its authors implemented it in Inspect [34]. This package does not run such checks.
+
 ### 15.3 Scorer error
 
 If an automated judge has false negatives, the observed binary outcome is a misclassified version of the true event. Let sensitivity be \(s\) and specificity be \(c\). The observed positive rate is
@@ -2141,6 +2149,24 @@ Exposure to benchmark items can change the measured behavior and invalidate the 
 ### 15.6 Severity aggregation
 
 A single binary event rate treats all failures alike. Critical failures should be separate claims or zero-tolerance rules rather than diluted into a broad average.
+
+### 15.7 Residual risk of rare harms
+
+The zero-failure planning in section 5 makes the cost of rare-harm claims explicit: an upper
+bound of \(\theta\) at confidence \(1-\alpha\) needs about \(\ln(1/\alpha)/\theta\) failure-free
+trials, about \(3/\theta\) at 95%, so
+every factor of ten in the rate costs a factor of ten in rollouts. Validation of automated
+driving faced the same arithmetic. Kalra and Paddock showed that demonstrating a fatality rate
+comparable to human drivers by test driving alone would take hundreds of millions to hundreds
+of billions of miles. They concluded that test driving alone cannot provide sufficient
+evidence of safety, that new ways of demonstrating it are needed, that even with them safety may
+not be established with certainty, and that regulation must therefore adapt as the technology
+and the evidence develop [35].
+
+The same holds here. A pre-deployment evaluation can bound rates that its rollout budget can
+reach. Below that, the residual risk is not shown to be small, only not measured. Claims about
+rarer harms need other evidence, such as monitoring in deployment, incident reporting and
+arguments about the system's design.
 
 These limitations belong prominently in every report because safety evidence is only as strong as both its statistical and substantive validity.
 
@@ -2296,6 +2322,13 @@ That is the role this Inspect extension should fill.
 30. H. Föllmer and T. Knispel, “Entropic Risk Measures: Coherence vs. Convexity, Model Ambiguity, and Robust Large Deviations,” *Stochastics and Dynamics* 11(2–3), 333–351, 2011. [doi:10.1142/S0219493711003334](https://doi.org/10.1142/S0219493711003334)
 31. C. Acerbi, “Spectral Measures of Risk: A Coherent Representation of Subjective Risk Aversion,” *Journal of Banking & Finance* 26(7), 1505–1518, 2002. [doi:10.1016/S0378-4266(02)00281-9](https://doi.org/10.1016/S0378-4266(02)00281-9)
 32. W. Hoeffding, “Probability Inequalities for Sums of Bounded Random Variables,” *Journal of the American Statistical Association* 58(301), 13–30, 1963. [doi:10.1080/01621459.1963.10500830](https://doi.org/10.1080/01621459.1963.10500830)
+
+### Threats to validity and small-sample evaluation
+
+33. T. van der Weij, F. Hofstätter, O. Jaffe, S. F. Brown, and F. R. Ward, “AI Sandbagging: Language Models can Strategically Underperform on Evaluations,” 2024. [arXiv:2406.07358](https://arxiv.org/abs/2406.07358)
+34. C. Tice, P. A. Kreer, N. Helm-Burger, P. S. Shahani, F. Ryzhenkov, F. Roger, C. Neo, J. Haimes, F. Hofstätter, and T. van der Weij, “Noise Injection Reveals Hidden Capabilities of Sandbagging Language Models,” NeurIPS 2025. [arXiv:2412.01784](https://arxiv.org/abs/2412.01784)
+35. N. Kalra and S. M. Paddock, “Driving to safety: How many miles of driving would it take to demonstrate autonomous vehicle reliability?,” *Transportation Research Part A: Policy and Practice* 94, 182–193, 2016. [doi:10.1016/j.tra.2016.09.010](https://doi.org/10.1016/j.tra.2016.09.010)
+36. S. Bowyer, L. Aitchison, and D. R. Ivanova, “Position: Don't Use the CLT in LLM Evals With Fewer Than a Few Hundred Datapoints,” ICML 2025. [arXiv:2503.01747](https://arxiv.org/abs/2503.01747)
 
 ---
 

@@ -210,6 +210,10 @@ Every report states:
 
 > Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions.
 
+Every bound also assumes that the evaluated model is not sandbagging, that is, not
+strategically underperforming on the evaluation. The statistics here cannot detect that, and harms rarer than the rollout budget can reach remain unmeasured. See
+[Mathematical methods](docs/statistical-methods.md), sections 15.2 and 15.7.
+
 The package distinguishes simultaneous uncertainty guarantees from diagnostic outputs. Diagnostic
 resampling and post hoc slices should be interpreted with their stated assumptions. Optional threshold decisions can be enabled with
 `report.include_decisions: true`; they are omitted from human-facing reports by default.
