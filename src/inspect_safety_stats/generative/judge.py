@@ -7,9 +7,12 @@ at 1% true prevalence and 95% specificity most of the reported number is judge e
 
 The correction is the same identity the fixed-design engine uses,
 ``R* = R*rho_1 + (1 - R)*rho_0``, which is affine in ``R`` with positive slope. Generative
-root, node and slice estimates are all weighted means, so it applies to each of them
-unchanged. See [judge misclassification](../../../docs/judge-misclassification.md) for the
-derivation and for why this parameterisation is preferred to Rogan--Gladen.
+root, node and slice estimates are all weighted means, so the identity holds for each of
+them, but only with rho weighted the way the estimate weights its units. Measured rho pools
+every classified unit of the cohort with equal weight, so it certifies only the root of a
+design that weights its units equally; every other corrected estimate is a sensitivity. See
+[judge misclassification](../../../docs/judge-misclassification.md) for the derivation and
+for why this parameterisation is preferred to Rogan--Gladen.
 
 Comparisons are deliberately not corrected -- see :func:`comparison_refusal`.
 """
@@ -61,6 +64,41 @@ class CorrectedEstimate:
     estimate_lower: float | None
     estimate_upper: float | None
     alpha: float
+    warnings: tuple[str, ...] = ()
+
+
+def pooled_calibration_gap(estimate: NodeEstimate, *, root_id: str) -> str | None:
+    """Why a cohort's pooled labels do not measure the judge accuracies an estimate needs.
+
+    The labels are drawn uniformly within judge strata over the cohort's classified units,
+    so they estimate P(truly unsafe | verdict) with each of those units weighted equally.
+    ``R* = R rho_1 + (1 - R) rho_0`` needs the accuracies weighted the way the estimate
+    weights its units. rho depends on prevalence, so a node or slice where the judge misses
+    more failures than average would get a corrected upper bound below its true risk. That
+    holds exactly only for the root when every unit carries the same coefficient in it.
+    Returns None for such a root.
+    """
+
+    if estimate.node_id != root_id:
+        kind = "slice" if estimate.node_id.startswith("slice:") else "node"
+        return (
+            f"the {kind} covers only part of the cohort's labelled units, where the judge's "
+            "accuracy can differ from the pooled labels' average"
+        )
+    if not estimate.equal_coefficients:
+        return (
+            f"the root gives some units {estimate.coefficient_ratio:.3g} times the weight of "
+            "others"
+        )
+    return None
+
+
+def uncertified_correction_warning(gap: str) -> str:
+    return (
+        f"Sensitivity analysis, not a certified bound: {gap}. The human labels weight every "
+        "classified unit of the cohort equally, so they measure the judge's accuracy only for "
+        "the root of a design that does the same."
+    )
 
 
 def load_labels(path: str | Path) -> dict[str, bool]:
@@ -84,7 +122,8 @@ def judge_strata(
     ``outcomes`` are ``(sampling_unit_id, trials, failures, unclassified)`` tuples, and
     labels are keyed by the sample id a unit's rewrite was materialized under. A unit with
     an unclassified rollout belongs to neither stratum; see :func:`count_judge_strata`,
-    which does the counting.
+    which does the counting. The labels say nothing about such a unit, so :func:`correct`
+    keeps its conservative completion rather than mapping it through rho.
     """
 
     prompt_of = {
@@ -204,22 +243,31 @@ def correct(
     calibration: JudgeCalibration,
     *,
     interval_alpha: float,
+    root_id: str,
 ) -> list[CorrectedEstimate]:
     """Map estimates onto the true-risk scale.
 
-    The reported ``alpha`` is the union of the interval's own budget and whatever the
+    A measured calibration certifies only the estimates :func:`pooled_calibration_gap`
+    finds no gap for; the rest are sensitivities that say why. The reported ``alpha`` of a
+    certifying estimate is the union of the interval's own budget and whatever the
     calibration spent, because that is the corrected statement's real error probability.
+
+    Units with no judge verdict keep the completion the observed bounds gave them, safe at
+    the lower end and failing at the upper: only the classified mass is mapped through rho.
     """
 
-    certifying = calibration.source == "validated"
+    validated = calibration.source == "validated"
     combined = interval_alpha + (calibration.alpha or 0.0)
     corrected = []
     for estimate in estimates:
+        gap = pooled_calibration_gap(estimate, root_id=root_id) if validated else None
+        certifying = validated and gap is None
         mapped = correct_judge_risk(
             observed_lower=estimate.lower,
             observed_upper=estimate.upper,
             observed_estimate=estimate.estimate,
             calibration=calibration,
+            unclassified_share=estimate.unclassified_share,
         )
         corrected.append(
             CorrectedEstimate(
@@ -235,6 +283,7 @@ def correct(
                 estimate_lower=mapped.completion_estimate_lower,
                 estimate_upper=mapped.completion_estimate_upper,
                 alpha=combined if certifying else interval_alpha,
+                warnings=(uncertified_correction_warning(gap),) if gap is not None else (),
             )
         )
     return corrected
