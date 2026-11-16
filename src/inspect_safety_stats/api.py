@@ -51,6 +51,7 @@ from inspect_safety_stats.ingest.validation import (
 )
 from inspect_safety_stats.schema.observations import Observation, observation_field
 from inspect_safety_stats.schema.reports import (
+    ClaimProfileVerdict,
     ClaimResult,
     ComparisonResult,
     ComparisonSetResult,
@@ -5218,6 +5219,92 @@ def _noisy_valid_claim(
     )
 
 
+def _profile_verdicts(
+    claim: Any,
+    evidence: ComparisonResult | GroupRiskResult | None,
+    *,
+    status: Decision,
+    lower: float | None,
+    upper: float | None,
+    confirmatory_and_valid: bool,
+) -> list[ClaimProfileVerdict]:
+    """Return the claim's verdict under its primary and each sensitivity profile.
+
+    The primary row repeats the claim's decision. Each sensitivity row decides the same
+    thresholds on that profile's interval computed with the primary interval's method.
+    Evidence whose primary interval assumes no independence profile, such as the propagated
+    prompt envelope, has no rows.
+    """
+    if evidence is None:
+        return []
+    primary = next(
+        (item for item in evidence.intervals if item.interval_id == evidence.primary_interval_id),
+        None,
+    )
+    if primary is None or primary.independence_profile is None:
+        return []
+    rows = [
+        ClaimProfileVerdict(
+            independence_profile=primary.independence_profile,
+            role="primary",
+            status=status,
+            interval_id=primary.interval_id,
+            lower=lower,
+            upper=upper,
+            independent_block_count=primary.independent_block_count,
+            effective_sample_size=primary.effective_sample_size,
+        )
+    ]
+    for interval in evidence.intervals:
+        if (
+            interval.role != "sensitivity"
+            or interval.method != primary.method
+            or interval.independence_profile is None
+            or interval.independence_profile == primary.independence_profile
+        ):
+            continue
+        sensitivity_status, _ = decide_claim(
+            lower=interval.lower,
+            upper=interval.upper,
+            acceptable_upper=claim.acceptable_upper,
+            unacceptable_lower=claim.unacceptable_lower,
+            eligible=confirmatory_and_valid and interval.eligibility == "certifying",
+        )
+        rows.append(
+            ClaimProfileVerdict(
+                independence_profile=interval.independence_profile,
+                role="sensitivity",
+                status=sensitivity_status,
+                interval_id=interval.interval_id,
+                lower=interval.lower,
+                upper=interval.upper,
+                independent_block_count=interval.independent_block_count,
+                effective_sample_size=interval.effective_sample_size,
+            )
+        )
+    return rows
+
+
+def _has_sensitivity_profiles(evidence: ComparisonResult | GroupRiskResult | None) -> bool:
+    """Whether the evidence has intervals under a profile other than its primary one."""
+    if evidence is None:
+        return False
+    primary_profile = next(
+        (
+            item.independence_profile
+            for item in evidence.intervals
+            if item.interval_id == evidence.primary_interval_id
+        ),
+        None,
+    )
+    return any(
+        item.role == "sensitivity"
+        and item.independence_profile is not None
+        and item.independence_profile != primary_profile
+        for item in evidence.intervals
+    )
+
+
 def _claim_judge_error_stress(
     *,
     claim: ClaimSpec,
@@ -5383,6 +5470,9 @@ def _claims(
             continue
         alpha = family.alpha
         correction_note: str | None = None
+        # Filled only where the claim is decided directly on the evidence intervals: a
+        # judge-corrected or noisy-valid decision has no per-profile counterpart.
+        profile_verdicts: list[ClaimProfileVerdict] = []
 
         # A validated correction retargets the claim from judge-reported risk onto true
         # risk. The threshold in the plan is about the model, not about the judge.
@@ -5467,6 +5557,16 @@ def _claims(
                 unacceptable_lower=claim.unacceptable_lower,
                 eligible=eligible,
             )
+            profile_verdicts = _profile_verdicts(
+                claim,
+                evidence,
+                status=status,
+                lower=lower,
+                upper=upper,
+                confirmatory_and_valid=bool(
+                    integrity_valid and plan.analysis.intent == "confirmatory"
+                ),
+            )
             verdict_range = claim_verdict_range(lower=lower, upper=upper, eligible=eligible)
         if not integrity_valid and lower is not None and upper is not None:
             reasons = [
@@ -5526,6 +5626,11 @@ def _claims(
                     f"The error budget is the union of the claim family ({family.alpha:.12g}) "
                     f"and the judge calibration, giving {alpha:.12g}."
                 )
+        if not profile_verdicts and _has_sensitivity_profiles(evidence):
+            reasons.append(
+                "Verdicts under the sensitivity independence profiles are not reported, "
+                "because this claim is not decided directly on the profile intervals."
+            )
         results.append(
             ClaimResult(
                 claim_id=claim.id,
@@ -5547,6 +5652,7 @@ def _claims(
                 evidence_refs=evidence_refs,
                 reasons=reasons,
                 warnings=list(evidence.warnings) if evidence else [],
+                profile_verdicts=profile_verdicts,
                 judge_error_stress=stress,
             )
         )
@@ -5619,6 +5725,39 @@ def _resolved_design(data: NormalizedData, hierarchy: list[str]) -> list[dict[st
     return rows
 
 
+def _scope(plan: AnalysisPlan) -> dict[str, Any]:
+    """The report's scope statement, which says what population the results are about."""
+    if plan.design.type == "sampled":
+        # The Horvitz-Thompson intervals are about the whole declared frame, not only the
+        # items that were drawn.
+        return {
+            "design": "sampled",
+            "randomness": (
+                "items drawn from the declared frame with recorded inclusion probabilities, "
+                "and stochastic rollouts within the drawn items"
+            ),
+            "estimand": plan.inputs.estimand,
+            "disclaimer": (
+                "Results apply to the declared item frame, from which the evaluated items "
+                "were drawn with the recorded inclusion probabilities, and to the specified "
+                "stochastic rollout process. They do not estimate failure prevalence over "
+                "prompts outside the frame or establish safety for omitted hazards or "
+                "deployment conditions."
+            ),
+        }
+    return {
+        "design": "fixed",
+        "randomness": "stochastic rollouts within fixed prompts",
+        "estimand": plan.inputs.estimand,
+        "disclaimer": (
+            "Results apply to the declared fixed evaluation set and specified "
+            "stochastic rollout process. They do not estimate failure prevalence "
+            "over an external population of prompts or establish safety for omitted "
+            "hazards or deployment conditions."
+        ),
+    }
+
+
 def _report_frame(plan: AnalysisPlan) -> dict[str, Any]:
     """The report fields that come from the plan alone, whether or not its input was read."""
 
@@ -5628,17 +5767,7 @@ def _report_frame(plan: AnalysisPlan) -> dict[str, Any]:
             **plan.analysis.model_dump(mode="json"),
             "plan_sha256": canonical_plan_hash(plan),
         },
-        "scope": {
-            "design": "fixed",
-            "randomness": "stochastic rollouts within fixed prompts",
-            "estimand": plan.inputs.estimand,
-            "disclaimer": (
-                "Results apply to the declared fixed evaluation set and specified "
-                "stochastic rollout process. They do not estimate failure prevalence "
-                "over an external population of prompts or establish safety for omitted "
-                "hazards or deployment conditions."
-            ),
-        },
+        "scope": _scope(plan),
         "presentation": {"include_decisions": plan.report.include_decisions},
         "multiplicity": [family.model_dump(mode="json") for family in plan.multiplicity.families],
     }

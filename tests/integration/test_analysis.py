@@ -6,7 +6,12 @@ import pandas as pd
 import pytest
 
 from inspect_safety_stats import analyze, load_plan, render_visualization, write_visualization
-from inspect_safety_stats.api import _alpha_by_prompt, _prompt_blocked, _scorer_configurations
+from inspect_safety_stats.api import (
+    _alpha_by_prompt,
+    _profile_verdicts,
+    _prompt_blocked,
+    _scorer_configurations,
+)
 from inspect_safety_stats.config.loader import canonical_plan_hash
 from inspect_safety_stats.config.models import CohortSpec, PromptBoundsSpec, RiskMeasureSpec
 from inspect_safety_stats.ingest.inspect_logs import (
@@ -3219,6 +3224,186 @@ def test_a_report_names_its_inputs_relative_to_the_plan(
     for path in sorted(written.rglob("*")):
         if path.is_file():
             assert tmp_path.name not in path.read_text(encoding="utf-8", errors="replace"), path
+
+
+def _profiled_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sensitivities: list[str]
+) -> SafetyReport:
+    plan = load_plan(_write_inputs(tmp_path))
+    plan.report.include_decisions = True
+    spec = plan.outputs.direct_mean_intervals
+    spec.method = "weighted_kl_chernoff"
+    assert spec.independence is not None
+    spec.independence.sensitivities = sensitivities
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    return analyze(plan=plan, logs="ignored")
+
+
+def test_claims_show_their_verdict_under_every_independence_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = _profiled_report(monkeypatch, tmp_path, ["prompt"])
+
+    claim = report.claims[0]
+    assert claim.status == "PASS"
+    primary, prompt = claim.profile_verdicts
+    assert (primary.independence_profile, primary.role, primary.status) == (
+        "rollout",
+        "primary",
+        "PASS",
+    )
+    assert (primary.lower, primary.upper) == (claim.lower, claim.upper)
+    assert primary.independent_block_count == 40
+    # Two prompts are two independent blocks: the same claim is undecided under them.
+    assert (prompt.independence_profile, prompt.role, prompt.status) == (
+        "prompt",
+        "sensitivity",
+        "INCONCLUSIVE",
+    )
+    assert prompt.interval_id == "direct_weighted_kl_chernoff_prompt"
+    assert prompt.independent_block_count == 2
+    assert prompt.upper is not None and prompt.upper > claim.acceptable_upper
+
+    output = report.write(tmp_path / "profiled-report")
+    markdown = (output / "report.md").read_text(encoding="utf-8")
+    assert "### Verdicts by independence profile" in markdown
+    assert (
+        "| Mean fixed-design risk is acceptable | `prompt` | sensitivity | `INCONCLUSIVE` "
+        in markdown
+    )
+    html = (output / "report.html").read_text(encoding="utf-8")
+    assert "profile_verdicts" in html
+
+
+def test_a_claim_without_sensitivity_profiles_has_only_its_primary_verdict(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = _profiled_report(monkeypatch, tmp_path, [])
+
+    claim = report.claims[0]
+    assert [(v.independence_profile, v.role, v.status) for v in claim.profile_verdicts] == [
+        ("rollout", "primary", "PASS")
+    ]
+    markdown = (report.write(tmp_path / "plain-report") / "report.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Verdicts by independence profile" not in markdown
+
+
+def test_sensitivity_verdicts_certify_only_valid_confirmatory_evidence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = _profiled_report(monkeypatch, tmp_path, ["prompt"])
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    # Thresholds loose enough that the two-block prompt interval passes as well.
+    claim = report.claims[0].model_copy(
+        update={"acceptable_upper": 0.9, "unacceptable_lower": 0.95}
+    )
+
+    def statuses(confirmatory_and_valid: bool) -> list[str]:
+        rows = _profile_verdicts(
+            claim,
+            mean,
+            status="PASS" if confirmatory_and_valid else "INCONCLUSIVE",
+            lower=claim.lower,
+            upper=claim.upper,
+            confirmatory_and_valid=confirmatory_and_valid,
+        )
+        return [row.status for row in rows]
+
+    assert statuses(True) == ["PASS", "PASS"]
+    assert statuses(False) == ["INCONCLUSIVE", "INCONCLUSIVE"]
+
+
+def test_comparison_claims_show_their_verdict_under_every_independence_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "groups:\n",
+        "  baseline:\n"
+        "    match:\n"
+        "      model: model/baseline\n"
+        "    require_uniform: [task_version, model_generate_config]\n"
+        "groups:\n",
+    )
+    plan_text = plan_text.replace(
+        "multiplicity:\n",
+        "comparisons:\n"
+        "  - id: candidate_vs_baseline\n"
+        "    candidate: candidate\n"
+        "    baseline: baseline\n"
+        "    group: cyber\n"
+        "    measure: mean\n"
+        "    estimand: risk_difference\n"
+        "    method: weighted_hoeffding\n"
+        "    family: model_comparisons\n"
+        "    independence:\n"
+        "      primary: rollout\n"
+        "      sensitivities: [prompt]\n"
+        "multiplicity:\n",
+    )
+    plan_text = plan_text.replace(
+        "    - {id: gate,",
+        "    - {id: model_comparisons, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: gate,",
+    )
+    plan_text = plan_text.replace(
+        "policy:\n",
+        "  - id: not_worse\n"
+        "    title: Candidate is not worse than baseline\n"
+        "    comparison: candidate_vs_baseline\n"
+        "    family: gate\n"
+        "    acceptable_upper: 0.35\n"
+        "    unacceptable_lower: 0.60\n"
+        "policy:\n",
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    candidate_eval, candidate_samples = _frames()
+    baseline_eval = candidate_eval.copy()
+    baseline_eval.loc[0, "eval_id"] = "eval-2"
+    baseline_eval.loc[0, "model"] = "model/baseline"
+    baseline_samples = candidate_samples.copy()
+    baseline_samples["eval_id"] = "eval-2"
+    baseline_samples["sample_id"] = "baseline-" + baseline_samples["sample_id"]
+    eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
+    sample_frame = pd.concat([candidate_samples, baseline_samples], ignore_index=True)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    claim = next(item for item in report.claims if item.claim_id == "not_worse")
+    comparison = next(item for item in report.comparisons if item.level is None)
+    sensitivity = next(
+        item
+        for item in comparison.intervals
+        if item.role == "sensitivity" and item.independence_profile == "prompt"
+    )
+    assert [(v.independence_profile, v.role) for v in claim.profile_verdicts] == [
+        ("rollout", "primary"),
+        ("prompt", "sensitivity"),
+    ]
+    assert claim.status == "PASS"
+    assert [v.status for v in claim.profile_verdicts] == ["PASS", "INCONCLUSIVE"]
+    assert (claim.profile_verdicts[1].lower, claim.profile_verdicts[1].upper) == (
+        sensitivity.lower,
+        sensitivity.upper,
+    )
 
 
 def _patch_frames_with_failures(
