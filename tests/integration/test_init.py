@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ from typer.testing import CliRunner
 
 from inspect_safety_stats import analyze
 from inspect_safety_stats.cli import app
+from inspect_safety_stats.registry import ASSUMPTIONS
 from inspect_safety_stats.scaffold import scaffold_plan
 from tests.cli_output import plain
 from tests.mock_inspect_logs import write_mock_logs
@@ -104,3 +106,95 @@ def test_init_command_writes_files_and_refuses_to_overwrite(
     second = CliRunner().invoke(app, arguments)
     assert second.exit_code == 3
     assert "--overwrite" in plain(second.output)
+
+
+def _header_text(plan_path: Path) -> str:
+    """The plan's opening comment as one line of text, with its wrapping undone."""
+
+    lines = plan_path.read_text(encoding="utf-8").splitlines()
+    comment = [line.removeprefix("#").strip() for line in lines if line.startswith("#")]
+    return " ".join(line for line in comment if line)
+
+
+def test_init_notes_every_assumption_it_rests_on_independence_first(
+    mock_logs: Path, tmp_path: Path
+) -> None:
+    result = scaffold_plan(mock_logs, tmp_path, failure_values=["FAIL"])
+    ids = [note.assumption for note in result.assumptions]
+    assert ids[0] == "rollout_independence"
+    assert sorted(ids) == sorted(ASSUMPTIONS)
+    header = _header_text(result.plan_path)
+    for note in result.assumptions:
+        entry = ASSUMPTIONS[note.assumption]
+        assert f"- {note.assumption}: {note.choice}" in header
+        assert f"Assumes: {entry.statement}" in header
+        assert f"If wrong: {entry.if_wrong}" in header
+        assert f"Remedy: {entry.remedy}" in header
+    assert header.index("- rollout_independence:") < header.index("- arm_independence:")
+
+
+def test_init_leaves_out_the_fields_its_notes_say_it_leaves_out(
+    mock_logs: Path, tmp_path: Path
+) -> None:
+    result = scaffold_plan(mock_logs, tmp_path, failure_values=["FAIL"])
+    plan = yaml.safe_load(result.plan_path.read_text(encoding="utf-8"))
+    checked = []
+    for note in result.assumptions:
+        left_out = re.search(r"([a-z_.]+) is left out", note.choice)
+        if left_out is None:
+            continue
+        *parents, leaf = left_out.group(1).split(".")
+        node = plan
+        for key in parents:
+            node = node[key]
+        assert leaf not in node, note
+        checked.append(note.assumption)
+        if "takes its default" in note.choice:
+            assert note.choice.endswith(f", {ASSUMPTIONS[note.assumption].default}.")
+    assert sorted(checked) == [
+        "complete_design",
+        "content_filter_stops",
+        "judge_accuracy",
+        "missing_scores",
+        "sample_errors",
+        "token_limit",
+    ]
+
+
+def test_init_for_one_model_has_no_comparison_note(tmp_path: Path) -> None:
+    logs = write_mock_logs(tmp_path / "logs", models=("mockllm/alpha",), epochs=2)
+    result = scaffold_plan(logs, tmp_path / "out", failure_values=["FAIL"])
+    ids = [note.assumption for note in result.assumptions]
+    assert ids[0] == "rollout_independence"
+    assert sorted(ids) == sorted(set(ASSUMPTIONS) - {"arm_independence"})
+
+
+def test_init_refuses_a_confirmatory_plan_and_points_to_exploratory(
+    mock_logs: Path, tmp_path: Path
+) -> None:
+    with pytest.raises(ValueError, match="cannot be confirmatory") as refused:
+        scaffold_plan(mock_logs, tmp_path, failure_values=["FAIL"], intent="confirmatory")
+    assert "--intent exploratory" in str(refused.value)
+    assert ASSUMPTIONS["plan_fixed_in_advance"].remedy in str(refused.value)
+    assert not (tmp_path / "safety-plan.yaml").exists()
+    assert not (tmp_path / "design.csv").exists()
+    with pytest.raises(ValueError, match="intent must be exploratory"):
+        scaffold_plan(mock_logs, tmp_path, failure_values=["FAIL"], intent="pilot")
+
+
+def test_init_command_lists_the_assumptions_independence_first(
+    mock_logs: Path, tmp_path: Path
+) -> None:
+    arguments = ["init", "--logs", str(mock_logs), "--failure-values", "FAIL",
+                 "--output", str(tmp_path)]
+    result = CliRunner().invoke(app, arguments)
+    assert result.exit_code == 0, result.output
+    output = plain(result.output)
+    heading = "Assumptions (the plan's header says what each means and how to change it):"
+    listed = output[output.index(heading) + len(heading):]
+    positions = {name: listed.find(f" {name}: ") for name in ASSUMPTIONS}
+    assert all(position >= 0 for position in positions.values()), positions
+    assert min(positions, key=positions.__getitem__) == "rollout_independence"
+    refused = CliRunner().invoke(app, [*arguments, "--overwrite", "--intent", "confirmatory"])
+    assert refused.exit_code == 3
+    assert "--intent exploratory" in plain(refused.output)

@@ -167,6 +167,16 @@ def init_command(
     ] = False,
     output: Annotated[Path, typer.Option("--output", file_okay=False)] = Path("."),
     overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
+    intent: Annotated[
+        str,
+        typer.Option(
+            "--intent",
+            help=(
+                "The plan's analysis.intent. Only exploratory: a plan written after the logs "
+                "exist cannot be confirmatory."
+            ),
+        ),
+    ] = "exploratory",
 ) -> None:
     """Write a starter design manifest and plan from completed Inspect logs.
 
@@ -192,6 +202,7 @@ def init_command(
             alpha=alpha,
             weights="nested_equal" if nested_weights else "equal_prompt",
             overwrite=overwrite,
+            intent=intent,
         )
     except Exception as exc:
         typer.echo(f"Init failed: {exc}", err=True)
@@ -211,6 +222,9 @@ def init_command(
         typer.echo(f"Cohort {cohort}: {model}{marker}")
     for note in result.notes:
         typer.echo(f"Note: {note}")
+    typer.echo("Assumptions (the plan's header says what each means and how to change it):")
+    for assumption in result.assumptions:
+        typer.echo(f"  {assumption.assumption}: {assumption.choice}")
     typer.echo(f"Manifest: {result.manifest_path}")
     typer.echo(f"Plan: {result.plan_path}")
     log_args = " ".join(f"--logs {path}" for path in logs)

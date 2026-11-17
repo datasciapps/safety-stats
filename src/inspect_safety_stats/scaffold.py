@@ -12,11 +12,17 @@ the failure values (or a numeric threshold), because ``C``/``I`` or ``1``/``0`` 
 different things for different scorers. And the generated plan is ``exploratory``,
 because it is written after the logs exist; a confirmatory plan has to be frozen before
 the evaluation runs.
+
+Every choice the plan rests on comes with a note, drawn from the registry of reportable
+assumptions (``inspect_safety_stats.registry.ASSUMPTIONS``): what init chose, what that
+assumes, what follows if the assumption is wrong, and what to change. Independence comes
+first. The notes go to the caller and into the plan file's header.
 """
 
 from __future__ import annotations
 
 import re
+import textwrap
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -29,6 +35,7 @@ from inspect_ai.analysis import evals_df, samples_df
 
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.outcomes import is_missing
+from inspect_safety_stats.registry import ASSUMPTIONS, AssumptionEntry
 
 _IDENTIFIER = re.compile(r"[^A-Za-z0-9_.-]+")
 _UNIFORM_FIELDS = ("task_version", "model_generate_config", "solver")
@@ -40,6 +47,18 @@ class _PlainDumper(yaml.SafeDumper):
 
     def ignore_aliases(self, data: Any) -> bool:
         return True
+
+
+@dataclass(frozen=True)
+class AssumptionNote:
+    """One choice init made, and the registry's assumption that the choice rests on."""
+
+    assumption: str
+    choice: str
+
+    @property
+    def entry(self) -> AssumptionEntry:
+        return ASSUMPTIONS[self.assumption]
 
 
 @dataclass
@@ -55,6 +74,7 @@ class ScaffoldResult:
     rollouts_per_prompt: int
     group_by: str | None
     notes: list[str] = field(default_factory=list)
+    assumptions: list[AssumptionNote] = field(default_factory=list)
 
 
 def _native(value: Any) -> Any:
@@ -166,6 +186,135 @@ def _resolve_mapping(
     return mapping, failures, safes, notes
 
 
+def _left_at_default(assumption: str) -> AssumptionNote:
+    """The note for a plan field init leaves out, so that the registry's default applies."""
+
+    entry = ASSUMPTIONS[assumption]
+    return AssumptionNote(
+        assumption,
+        f"{entry.plan_field} is left out, so it takes its default, {entry.default}.",
+    )
+
+
+def _assumption_notes(
+    *,
+    score: str,
+    mapping: dict[str, Any],
+    prompts: int,
+    rollouts: int,
+    comparisons: bool,
+) -> list[AssumptionNote]:
+    """A note for each choice of the plan, drawn from the registry: independence first."""
+
+    if "failure_if" in mapping:
+        rule = f"failure when the score is at least {mapping['failure_if']['value']!r}"
+    else:
+        rule = (
+            f"failure values {mapping['failure_values']!r}, "
+            f"safe values {mapping['safe_values']!r}"
+        )
+    notes = [
+        AssumptionNote(
+            "rollout_independence",
+            "The primary independence profile is rollout, with prompt as a sensitivity: every "
+            "rollout is its own block, and the prompt profile, which blocks the rollouts of a "
+            "prompt together, is reported beside it.",
+        )
+    ]
+    if comparisons:
+        notes.append(
+            AssumptionNote(
+                "arm_independence",
+                "Under the rollout profile the models are compared as independent arms "
+                "(comparison_coupling: independent); the prompt sensitivity couples them "
+                "(comparison_coupling: joint).",
+            )
+        )
+    notes += [
+        AssumptionNote(
+            "plan_fixed_in_advance",
+            "analysis.intent is exploratory, because init writes the plan after the logs "
+            "exist.",
+        ),
+        AssumptionNote(
+            "fixed_design",
+            f"design.type is fixed: the bounds cover the {prompts} prompts of design.csv.",
+        ),
+        AssumptionNote(
+            "run_stability",
+            "Each model is one cohort, which must be uniform in "
+            + ", ".join(_UNIFORM_FIELDS)
+            + " (require_uniform).",
+        ),
+        AssumptionNote(
+            "complete_design",
+            f"Every prompt expects {rollouts} rollouts per model (expected_rollouts), and "
+            "design.require_expected_rollouts is left out, so it takes its default, "
+            f"{ASSUMPTIONS['complete_design'].default}.",
+        ),
+        AssumptionNote(
+            "scorer_validity",
+            f"The score {score!r} is taken as the safety score, with {rule}.",
+        ),
+        AssumptionNote(
+            "judge_accuracy",
+            "inputs.judge_calibration is left out, so the score's verdicts are taken as "
+            "correct, as under its mode's default, "
+            f"{ASSUMPTIONS['judge_accuracy'].default}.",
+        ),
+        _left_at_default("missing_scores"),
+        _left_at_default("sample_errors"),
+        _left_at_default("token_limit"),
+        _left_at_default("content_filter_stops"),
+    ]
+    return notes
+
+
+def _header(stamp: datetime, assumptions: Sequence[AssumptionNote]) -> str:
+    """The comment that opens the plan: how it was made, and the assumptions it rests on."""
+
+    lines = [
+        f"Generated by `inspect-safety-stats init` on {stamp:%Y-%m-%d %H:%M} UTC.",
+        "Review the score mapping, cohorts and weights before running `analyze`.",
+        "Exploratory by construction: a confirmatory plan must be frozen before the",
+        "evaluation runs (set analysis.intent and analysis.plan_frozen_at).",
+        "",
+        "The choices init made, and the assumptions they rest on (from",
+        "inspect_safety_stats.registry):",
+    ]
+    for note in assumptions:
+        entry = note.entry
+        lines.append("")
+        for first, text in (
+            ("- ", f"{note.assumption}: {note.choice}"),
+            ("  ", f"Assumes: {entry.statement}"),
+            ("  ", f"If wrong: {entry.if_wrong}"),
+            ("  ", f"Remedy: {entry.remedy}"),
+        ):
+            lines += textwrap.wrap(
+                text,
+                width=94,
+                initial_indent=first,
+                subsequent_indent="  ",
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+    return "".join(f"# {line}".rstrip() + "\n" for line in lines)
+
+
+def _refuse_confirmatory(intent: str) -> None:
+    if intent == "exploratory":
+        return
+    if intent != "confirmatory":
+        raise ValueError(f"intent must be exploratory, not {intent!r}")
+    raise ValueError(
+        "init writes its plan after the logs exist, so the plan cannot be confirmatory: a "
+        "confirmatory analysis rests on the assumption plan_fixed_in_advance. Use --intent "
+        "exploratory, the default. For a confirmatory analysis, write the plan before the "
+        "runs. " + ASSUMPTIONS["plan_fixed_in_advance"].remedy
+    )
+
+
 def scaffold_plan(
     logs: str | Path | Sequence[str | Path],
     output: str | Path,
@@ -179,9 +328,15 @@ def scaffold_plan(
     alpha: float = 0.05,
     weights: str = "equal_prompt",
     overwrite: bool = False,
+    intent: str = "exploratory",
 ) -> ScaffoldResult:
-    """Write ``design.csv`` and ``safety-plan.yaml`` for the given logs into ``output``."""
+    """Write ``design.csv`` and ``safety-plan.yaml`` for the given logs into ``output``.
 
+    ``intent`` other than ``exploratory`` is refused: a plan written after the logs exist
+    cannot be confirmatory.
+    """
+
+    _refuse_confirmatory(intent)
     if not 0 < alpha < 1:
         raise ValueError("alpha must lie in (0, 1)")
     if weights not in {"equal_prompt", "nested_equal"}:
@@ -443,6 +598,13 @@ def scaffold_plan(
             }
         ]
     AnalysisPlan.model_validate(plan)
+    assumptions = _assumption_notes(
+        score=score,
+        mapping=mapping,
+        prompts=len(manifest),
+        rollouts=rollouts,
+        comparisons=len(cohorts) >= 2,
+    )
 
     directory = Path(output)
     directory.mkdir(parents=True, exist_ok=True)
@@ -455,14 +617,10 @@ def scaffold_plan(
             + "; pass --overwrite"
         )
     manifest.to_csv(manifest_path, index=False, lineterminator="\n")
-    header = (
-        f"# Generated by `inspect-safety-stats init` on {stamp:%Y-%m-%d %H:%M} UTC.\n"
-        "# Review the score mapping, cohorts and weights before running `analyze`.\n"
-        "# Exploratory by construction: a confirmatory plan must be frozen before the\n"
-        "# evaluation runs (set analysis.intent and analysis.plan_frozen_at).\n"
-    )
     plan_path.write_text(
-        header + yaml.dump(plan, Dumper=_PlainDumper, sort_keys=False, allow_unicode=True),
+        _header(stamp, assumptions)
+        + "\n"
+        + yaml.dump(plan, Dumper=_PlainDumper, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
         newline="\n",
     )
@@ -478,4 +636,5 @@ def scaffold_plan(
         rollouts_per_prompt=rollouts,
         group_by=group_by,
         notes=notes,
+        assumptions=assumptions,
     )
