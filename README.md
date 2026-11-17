@@ -254,6 +254,7 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Generative evaluation](docs/generative-evaluation.md). The generative pipeline is experimental: its public surface, `inspect_safety_stats.generative.__all__`, may change in any minor release.
 - [Generative evaluation: design decisions](docs/generative-design-decisions.md) (experimental)
 - [Generative hierarchy evaluation planner](docs/archive/generative-hierarchy-evaluation-plan.md) (archived; the original proposal, superseded by the two above)
+- [Limitations log](docs/limitations.md): limitations found on real evaluations, and what `main` does about each
 - [Multi-model safety comparison: complete JailbreakBench-100 example](examples/real_jailbreakbench/README.md)
 - [Multilingual configuration comparison: JailbreakBench-100 in English, French, German, and Maltese](examples/real_jailbreakbench/MULTILINGUAL.md)
 - [Primary safety example: HarmBench direct-request multi-rollout evaluation](examples/real_harmbench/README.md)
