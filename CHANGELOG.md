@@ -7,6 +7,13 @@ described in their pull requests.
 
 ### Added
 
+- **Catalogue of diagnostic codes and assumptions.** [Diagnostic codes and
+  assumptions](docs/diagnostics.md) lists every diagnostic code a report can carry, with its
+  severities, the assumption it reports on, its effect on the results and the remedy, and every
+  assumption the results rest on, with the plan field that sets it and the codes that check it.
+  `scripts/render_catalogue.py` generates the page from the package's registry, and a test
+  fails when the committed page falls behind it. The package itself is unchanged.
+
 - **Open-weight example and limitations log.** [`examples/open_weights/`](examples/open_weights/README.md) runs an open-weight model on
   HarmBench and XSTest with thinking off and on, many rollouts per prompt, judges them, and
   analyzes the run; it also orders rollouts for human labelling and turns the labels into
