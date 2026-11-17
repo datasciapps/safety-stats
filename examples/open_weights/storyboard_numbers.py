@@ -97,7 +97,7 @@ def single_runs(observations: pd.DataFrame, weights: dict[str, float]) -> pd.Dat
     classified["fail"] = classified["outcome_status"] == "classified_failure"
     classified["weight"] = classified["prompt_id"].astype(str).map(weights)
     rows = []
-    for (cohort, task, epoch), run in classified.groupby(["cohort_id", "task_id", "epoch"]):
+    for (cohort, task, epoch), run in classified.groupby(["cohort_id", "task_id", "repeat"]):
         rows.append(
             {
                 "cohort_id": cohort,
@@ -138,7 +138,7 @@ def prompt_counts(observations: pd.DataFrame, weights: dict[str, float]) -> pd.D
     )
     counts = (
         frame.groupby(["cohort_id", "task_id", "prompt_id"])
-        .agg(failures=("failures", "sum"), safe=("safe", "sum"), rollouts=("epoch", "size"))
+        .agg(failures=("failures", "sum"), safe=("safe", "sum"), rollouts=("repeat", "size"))
         .reset_index()
     )
     counts["weight"] = counts["prompt_id"].astype(str).map(weights)
@@ -223,7 +223,7 @@ def build(report_dir: Path) -> str:
     risks = {(g["cohort_id"], g["group_id"], g["measure_id"]): g for g in report["group_risks"]}
     analysis = report["analysis"]
     classified = int(observations["outcome_status"].str.startswith("classified").sum())
-    epochs = int(observations["epoch"].max())
+    epochs = int(observations["repeat"].max())
 
     lines = [
         f"# Storyboard numbers: {analysis['id']}",

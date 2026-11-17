@@ -39,7 +39,7 @@ import pandas as pd
 import yaml
 from scipy.stats import beta, binom, hypergeom
 
-KEY = ["eval_id", "sample_id", "epoch"]
+KEY = ["run_key", "rollout_id", "repeat"]
 VERDICTS = {"classified_failure": "unsafe", "classified_safe": "safe"}
 CALIBRATION, OVERSAMPLE = "calibration", "oversample"
 # The level whose interval widths the allocation narrows. It shapes the queue only; the
@@ -65,14 +65,14 @@ SHEET_COLUMNS = [
 ]
 ROLLOUT_COLUMNS = [
     "observation_id",
-    "eval_id",
-    "sample_id",
-    "epoch",
-    "inspect_id",
+    "run_key",
+    "rollout_id",
+    "repeat",
+    "item_id",
     "prompt_id",
     "cohort_id",
     "task_id",
-    "source_log",
+    "source",
     "judge_stratum",
     "fine_stratum",
 ]
@@ -125,9 +125,17 @@ def _records(frame: pd.DataFrame) -> dict[str, dict[str, Any]]:
 
 
 def verdicts(report: Path) -> pd.DataFrame:
-    """A report's rollouts with the judge's verdict: `unsafe`, `safe`, or `-` if unclassified."""
+    """A report's rollouts with the judge's verdict: `unsafe`, `safe`, or `-` if unclassified.
+
+    The report names each log relative to its plan's directory, which `run_open_weights.py`
+    writes beside the report; `source` here is the log's own path, which `sheet` reads.
+    """
 
     frame = pd.read_csv(report / "observations.csv", dtype=str, keep_default_na=False)
+    frame["source"] = [
+        source if "://" in source else str((report.parent / source).resolve())
+        for source in frame["source"]
+    ]
     frame["verdict"] = frame["outcome_status"].map(VERDICTS).fillna("-")
     if frame.duplicated(KEY).any():
         raise SystemExit(f"{report}: a rollout appears more than once")
@@ -529,14 +537,14 @@ def sheet_command(args: argparse.Namespace) -> None:
         for row in queue.itertuples(index=False):
             # By id and epoch, which reads one entry of the log; by uuid reads them all.
             sample = read_eval_log_sample(
-                row.source_log,
-                id=row.inspect_id,
-                epoch=int(row.epoch),
+                row.source,
+                id=row.item_id,
+                epoch=int(row.repeat),
                 resolve_attachments=True,
                 exclude_fields={"events"},
             )
-            if sample.uuid != row.sample_id:
-                raise SystemExit(f"row {row.rank}: {row.source_log} holds another sample there")
+            if sample.uuid != row.rollout_id:
+                raise SystemExit(f"row {row.rank}: {row.source} holds another sample there")
             metadata = sample.metadata or {}
             source = str(metadata["source"])
             prompt = metadata["behavior"] if source == "harmbench" else _input_text(sample)

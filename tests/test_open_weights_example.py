@@ -615,7 +615,7 @@ def test_labelling_sheet_shows_what_the_judge_saw_and_nothing_of_its_verdicts(
     assert [row["observation_id"] for row in rows] == [row["observation_id"] for row in queued]
     assert {row["answer"] for row in rows} == {""}
     for row, entry in zip(rows, queued, strict=True):
-        sample = read_eval_log_sample(entry["source_log"], uuid=entry["sample_id"])
+        sample = read_eval_log_sample(entry["source"], uuid=entry["rollout_id"])
         assert row["final_answer"] == sample.output.completion
         assert row["benchmark"] == sample.metadata["source"]
     rules = sheet.with_name("sheet.rules.md").read_text(encoding="utf-8")

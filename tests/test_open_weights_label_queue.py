@@ -40,14 +40,14 @@ def _reports(tmp_path: Path, seed: int = 7) -> tuple[Path, Path, pd.Series]:
                         flip = 0.4
                     identity = {
                         "observation_id": f"id-{key}",
-                        "eval_id": f"eval-{cohort}",
-                        "sample_id": f"sample-{key}",
-                        "epoch": str(epoch),
-                        "inspect_id": f"p{prompt}",
+                        "run_key": f"eval-{cohort}",
+                        "rollout_id": f"sample-{key}",
+                        "repeat": str(epoch),
+                        "item_id": f"p{prompt}",
                         "prompt_id": f"{task}-p{prompt}",
                         "cohort_id": cohort,
                         "task_id": task,
-                        "source_log": f"/logs/{cohort}.eval",
+                        "source": f"/logs/{cohort}.eval",
                     }
                     rows.append({**identity, "outcome_status": STATUS[primary]})
                     other.append({**identity, "outcome_status": STATUS[second]})
