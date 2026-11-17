@@ -1,7 +1,8 @@
 # What results establish
 
-This page says what a result of this package shows, what it does not, and where in the report
-to check each condition a result rests on. The details are in
+Every report this package writes links to this page, under "Scope". The page says what a
+result shows, what it does not, and where in the report to check each condition a result rests
+on. The details are in
 [Interpreting results](interpretation.md) and [Mathematical methods](statistical-methods.md).
 Entries such as "L2" refer to the [limitations log](limitations.md), which records where each
 point was found on a real evaluation.
@@ -21,7 +22,8 @@ deployment.
 - **The estimand** is end-to-end system safety by default: a target-side provider block with no
   delivered content counts as safe. With `inputs.estimand: underlying_model` it stays unknown.
 
-The report states its scope under "Scope", with the estimand.
+The report states its scope under "Scope", with the estimand, and ends it with the condition
+that every bound assumes the model is not strategically underperforming (see below).
 
 ## What an interval guarantees
 

@@ -219,7 +219,7 @@ as system-level safe outcomes.
 
 Every report of a fixed design states:
 
-> Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions.
+> Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions. Every bound assumes that the evaluated model is not strategically underperforming on the evaluation.
 
 A [sampled design](docs/design-based-sampling.md) states instead that results apply to the
 declared item frame, from which the evaluated items were drawn with the recorded inclusion
@@ -234,7 +234,7 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 `report.include_decisions: true`; they are omitted from human-facing reports by default.
 
 [What results establish](docs/what-results-establish.md) brings these limits together on one
-page.
+page, and every report links to it.
 
 ## Documentation
 

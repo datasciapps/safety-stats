@@ -193,6 +193,8 @@ def test_the_report_scope_names_the_frame_rather_than_a_fixed_set(
     assert "fixed evaluation set" not in report.scope["disclaimer"]
     assert "declared item frame" in report.scope["disclaimer"]
     assert "inclusion probabilities" in report.scope["randomness"]
+    assert "not strategically underperforming" in report.scope["disclaimer"]
+    assert report.scope["what_results_establish"].endswith("docs/what-results-establish.md")
 
 
 def test_unsampled_hierarchy_nodes_warn_rather_than_invalidate(
