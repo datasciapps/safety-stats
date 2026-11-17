@@ -57,14 +57,16 @@ def _codes(
     *,
     intent: str = "confirmatory",
     required: str = "[]",
+    schema: str = "2.0",
 ) -> dict[str, dict[str, object]]:
     (tmp_path / "design.csv").write_text(
         "prompt_id,question_id,task_id,expected_rollouts\np1,q1,t1,2\n", encoding="utf-8"
     )
     plan = tmp_path / "plan.yaml"
-    plan.write_text(
-        PLAN.replace("INTENT", intent).replace("REQUIRED", required), encoding="utf-8"
-    )
+    text = PLAN.replace("INTENT", intent).replace("REQUIRED", required)
+    if schema == "3.0":
+        text = text.replace('"2.0"', '"3.0"').replace("{team: red}", "{attributes.team: red}")
+    plan.write_text(text, encoding="utf-8")
     runs = _jsonl(tmp_path / "runs.jsonl", [{"run_key": "r1", "team": "red", **run}])
     rollouts = _jsonl(
         tmp_path / "rollouts.jsonl",
@@ -118,6 +120,17 @@ def test_a_run_that_reports_no_configuration_is_reported(tmp_path: Path) -> None
     assert "CONFIG_UNOBSERVED" not in _codes(
         tmp_path, {**COMPLETE, "model": None, "seed": 3}, required="[seed]"
     )
+
+
+@pytest.mark.parametrize("field", ["model", "run_id"])
+def test_a_schema_3_uniform_field_a_run_does_not_give_is_reported(
+    tmp_path: Path, field: str
+) -> None:
+    """A run without the field read as None, which every such run shares: uniform, unchecked."""
+    codes = _codes(tmp_path, {**COMPLETE, field: None}, required=f"[{field}]", schema="3.0")
+    assert codes["PROVENANCE_UNOBSERVED"]["severity"] == "WARNING"
+    given = _codes(tmp_path, {**COMPLETE, field: "x"}, required=f"[{field}]", schema="3.0")
+    assert "PROVENANCE_UNOBSERVED" not in given
 
 
 @pytest.mark.parametrize(
