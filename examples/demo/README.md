@@ -84,8 +84,10 @@ above the plan's precision target of 0.05, and about 134 rollouts per prompt wou
 get below it. The warning leaves the report valid. It says that these two measures cannot be
 narrow on this design, whatever the models do.
 
-`report.md` and `report.json` also record the plan's SHA-256, the integrity checks, the methods
-used and the assumptions the analysis rests on. `checksums.json` holds the SHA-256 of every
+`report.md` is the one-page summary: the warning comes first, with the assumption it checks,
+and the page ends with the assumptions used. `report-full.md` and `report.json` also record the
+plan's SHA-256, the integrity checks, the methods used and the assumptions the analysis rests
+on. `checksums.json` holds the SHA-256 of every
 other file in the report.
 
 The recordings on this page and in [Getting started](../../docs/getting-started.md) were made with the

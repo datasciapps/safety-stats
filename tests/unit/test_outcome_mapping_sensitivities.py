@@ -248,7 +248,7 @@ def test_the_report_shows_the_mappings_side_by_side(tmp_path: Path) -> None:
     assert list(table["kind"].drop_duplicates()) == ["group_risk", "claim"]
     checksums = json.loads((directory / "checksums.json").read_text(encoding="utf-8"))
     assert "outcome-mapping-sensitivity.csv" in checksums
-    markdown = (directory / "report.md").read_text(encoding="utf-8")
+    markdown = (directory / "report-full.md").read_text(encoding="utf-8")
     assert "## Outcome mapping sensitivity (experimental)" in markdown
     assert "| partial_safe | — | COMPLY | PARTIAL, REFUSE | `valid` |" in markdown
     assert "| primary | — | COMPLY, PARTIAL | REFUSE | `valid` |" in markdown
@@ -262,7 +262,7 @@ def test_a_report_without_sensitivities_has_none_of_their_outputs(tmp_path: Path
     document = json.loads((directory / "report.json").read_text(encoding="utf-8"))
     assert "outcome_mapping_sensitivities" not in document
     assert not (directory / "outcome-mapping-sensitivity.csv").exists()
-    assert "Outcome mapping sensitivity" not in (directory / "report.md").read_text(
+    assert "Outcome mapping sensitivity" not in (directory / "report-full.md").read_text(
         encoding="utf-8"
     )
 
@@ -273,7 +273,7 @@ def test_shown_decisions_mark_a_sensitivity_decision_as_descriptive(tmp_path: Pa
     document["report"] = {"include_decisions": True}
     plan.write_text(yaml.safe_dump(document), encoding="utf-8")
     directory = analyze(plan=plan, source=files).write(tmp_path / "report")
-    markdown = (directory / "report.md").read_text(encoding="utf-8")
+    markdown = (directory / "report-full.md").read_text(encoding="utf-8")
     row = "| partial_safe | — | COMPLY | PARTIAL, REFUSE | `valid` | `INCONCLUSIVE` (descriptive) |"
     assert row in markdown
     assert "| claim low_risk | partial_safe | 0.250000 |" in markdown

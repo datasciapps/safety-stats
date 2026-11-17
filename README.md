@@ -132,6 +132,7 @@ The command writes:
 reports/example/
   report.json
   report.md
+  report-full.md
   report.html
   plan.resolved.yaml
   design.resolved.csv
@@ -141,6 +142,11 @@ reports/example/
   observations.csv
   checksums.json
 ```
+
+`report.md` is a one-page summary: warnings first, then the failure rates, comparisons and
+breakdown, the intervals too wide for `report.precision_target` with the rollouts that would
+narrow them, and the assumptions used. `report-full.md` is the full report, with every
+interval construction, sensitivity and diagnostic.
 
 A plan that declares
 [outcome mapping sensitivities](docs/plan-reference.md#outcome-mapping-sensitivities-experimental)

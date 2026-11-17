@@ -312,7 +312,8 @@ def test_complete_offline_analysis_and_visualizer(
     } == {("prompt", "independence"), ("category", "independence")}
 
     output = report.write(tmp_path / "report")
-    assert "| sensitivity (independence) |" in (output / "report.md").read_text(encoding="utf-8")
+    full = (output / "report-full.md").read_text(encoding="utf-8")
+    assert "| sensitivity (independence) |" in full
     assert (output / "report.html").exists()
     assert (output / "comparisons.csv").exists()
     assert (output / "hierarchy-risks.csv").exists()
@@ -325,7 +326,7 @@ def test_complete_offline_analysis_and_visualizer(
     assert "independence_profile" in html
 
     first_goal = behavior_rows()[0]["Goal"]
-    for name in ("report.html", "report.md", "report.json"):
+    for name in ("report.html", "report.md", "report-full.md", "report.json"):
         assert first_goal not in (output / name).read_text(encoding="utf-8")
 
 
