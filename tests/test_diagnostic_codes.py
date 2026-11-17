@@ -1,7 +1,8 @@
 """Every diagnostic code is triggered by a case that checks its assumption, source and effect.
 
 The cases live in ``tests/diagnostic_codes``, one module per kind of source; what each check
-means is in ``tests/diagnostic_codes/harness.py``.
+means is in ``tests/diagnostic_codes/harness.py``. A registry entry without a case fails
+``test_every_registry_code_has_a_case``.
 """
 
 from __future__ import annotations
@@ -34,6 +35,13 @@ def _cases() -> dict[str, Case]:
 
 
 CASES = _cases()
+
+
+def test_every_registry_code_has_a_case() -> None:
+    # A new code needs a case before it lands; a case for a code the registry no longer
+    # has must go with it.
+    assert sorted(set(CODES) - set(CASES)) == [], "registry codes no case triggers"
+    assert sorted(set(CASES) - set(CODES)) == [], "cases for codes the registry lacks"
 
 
 @pytest.mark.parametrize("code", sorted(CASES))
