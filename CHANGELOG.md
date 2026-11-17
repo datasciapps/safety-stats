@@ -17,6 +17,24 @@ described in their pull requests.
   the plan is written after the logs exist. See
   [Command-line interface](docs/api-reference.md#command-line-interface).
 
+- **A warning when tail measures cannot be informative.** Tail and threshold measures
+  (`maximum`, `cvar`, `top_k_mean`, `entropic`, `threshold_exceedance`, `threshold_excess`, and
+  `worst_of_k` without `direct_interval`) are propagated from simultaneous per-prompt bounds, so
+  their precision is set by the rollouts on each prompt, not the total. When, at the median
+  rollouts per prompt, a prompt with no failures is still bounded above the new
+  `report.precision_target` (default 0.05), `analyze` adds a `TAIL_MEASURES_UNINFORMATIVE`
+  warning with the rollouts per prompt that would be needed. Integrity is unchanged, and plans
+  that leave `precision_target` out keep their hash. Reports of plans that declare such
+  measures on few rollouts per prompt gain the warning. The default direct-mean interval method
+  stays `weighted_empirical_bernstein`.
+
+- **Catalogue of diagnostic codes and assumptions.** [Diagnostic codes and
+  assumptions](docs/diagnostics.md) lists every diagnostic code a report can carry, with its
+  severities, the assumption it reports on, its effect on the results and the remedy, and every
+  assumption the results rest on, with the plan field that sets it and the codes that check it.
+  `scripts/render_catalogue.py` generates the page from the package's registry, and a test
+  fails when the committed page falls behind it. The package itself is unchanged.
+
 - **Open-weight example and limitations log.** [`examples/open_weights/`](examples/open_weights/README.md) runs an open-weight model on
   HarmBench and XSTest with thinking off and on, many rollouts per prompt, judges them, and
   analyzes the run; it also orders rollouts for human labelling and turns the labels into
