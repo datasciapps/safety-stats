@@ -281,8 +281,19 @@ def analyze_command(
             if adaptive.mandatory:
                 typer.echo(f"{adaptive.status}: {adaptive.title} (adaptive attacker, FAIL only)")
         typer.echo(f"Decision: {report.decision}")
-    else:
-        typer.echo(f"Risk measures: {len(report.group_risks)}")
+    # The headline is each weighted-mean failure rate; its result's method names the type.
+    headline = [risk for risk in report.group_risks if risk.method == "finite_design_weighted_mean"]
+    if headline:
+        typer.echo("Failure rate (weighted mean):")
+    for risk in headline:
+        interval = (
+            f"[{100 * risk.lower:.1f}%, {100 * risk.upper:.1f}%]"
+            if risk.lower is not None and risk.upper is not None
+            else "interval unavailable"
+        )
+        estimate = "—" if risk.estimate is None else f"{100 * risk.estimate:.1f}%"
+        typer.echo(f"  {risk.cohort_id} / {risk.group_id}: {estimate} {interval}")
+    typer.echo(f"Summary: {path / 'report.md'}")
     typer.echo(f"Report: {path}")
     # An invalid analysis supports no statistical claim, so it must not pass a CI gate by
     # exiting 0. The report is still written above so that its diagnostics can be audited.
