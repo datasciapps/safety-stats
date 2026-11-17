@@ -2440,3 +2440,70 @@ def test_worst_of_k_is_not_judge_correctable() -> None:
     from inspect_safety_stats.api import _JUDGE_CORRECTABLE_MEASURES
 
     assert "worst_of_k" not in _JUDGE_CORRECTABLE_MEASURES
+
+
+def _two_arm_plan(tmp_path: Path, *, as_set: bool) -> Path:
+    """Candidate against baseline, as a two-arm comparison set or as the same comparison."""
+    plan_path = _write_inputs(tmp_path)
+    text = plan_path.read_text(encoding="utf-8")
+    text = text.replace(
+        "groups:\n",
+        "  baseline:\n"
+        "    match:\n"
+        "      model: model/baseline\n"
+        "    require_uniform: [task_version, model_generate_config]\n"
+        "groups:\n",
+        1,
+    )
+    shared = (
+        "    group: cyber\n"
+        "    measure: mean\n"
+        "    family: model_comparisons\n"
+        "    independence:\n"
+        "      primary: rollout\n"
+    )
+    comparison = (
+        "comparison_sets:\n"
+        "  - id: pair\n"
+        "    cohorts: [candidate, baseline]\n"
+        "    contrasts: {type: versus_reference, reference: baseline}\n" + shared
+        if as_set
+        # The settings a set gives each comparison it expands into.
+        else "comparisons:\n"
+        "  - id: candidate_vs_baseline\n"
+        "    candidate: candidate\n"
+        "    baseline: baseline\n"
+        "    estimand: risk_difference\n"
+        "    method: weighted_kl_chernoff\n"
+        "    hierarchy_nodes: true\n"
+        "    hierarchy_calibration: frontier_sidak\n" + shared
+    )
+    text = text.replace("multiplicity:\n", comparison + "multiplicity:\n", 1).replace(
+        "    - {id: displayed,",
+        "    - {id: model_comparisons, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: displayed,",
+        1,
+    )
+    plan_path.write_text(text, encoding="utf-8")
+    return plan_path
+
+
+def test_a_two_arm_comparison_set_matches_the_hand_written_comparison(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_frames(monkeypatch, _two_cohort_frames())
+    results = {}
+    for as_set in (True, False):
+        directory = tmp_path / ("set" if as_set else "comparison")
+        directory.mkdir()
+        report = analyze(plan=_two_arm_plan(directory, as_set=as_set), logs="ignored")
+        results[as_set] = {
+            (row.level, tuple(row.path.items())): (row.estimate, row.lower, row.upper)
+            for row in report.comparisons
+        }
+    # The root and every hierarchy node, with identical estimates and bounds.
+    assert len(results[True]) > 1
+    _, root_lower, root_upper = results[True][(None, ())]
+    assert root_lower is not None and root_upper is not None
+    assert results[True] == results[False]

@@ -43,7 +43,7 @@ The other guides and the examples are listed under [Documentation](#documentatio
   configurable cross-model coupling and block-overlap-aware tree calibration.
 - Equal-prompt, nested-equal, and explicit policy weights.
 - Weighted mean, worst-item, CVaR, top-k, worst-of-k repeated-attempt, entropic, threshold-exceedance, and threshold-excess risk.
-- First-class fixed-design model/configuration comparison sets for three or more arms, with joint
+- First-class fixed-design model/configuration comparison sets for two or more arms, with joint
   arm-risk regions, risk differences, risk ratios, relative reductions, simultaneous rank sets,
   hierarchy-frontier calibration, and named dependence sensitivities.
 - Exact McNemar, Newcombe paired score-interval, and fixed-cluster bootstrap diagnostics.
