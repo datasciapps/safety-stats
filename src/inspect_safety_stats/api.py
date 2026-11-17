@@ -2078,6 +2078,7 @@ def _judge_corrected_interval(
     judge_alpha: float | None,
     gap: str | None = None,
     unclassified_share: float = 0.0,
+    tail: bool = False,
 ) -> RiskIntervalResult | None:
     if result.lower is None or result.upper is None:
         return None
@@ -2087,6 +2088,7 @@ def _judge_corrected_interval(
         observed_estimate=result.estimate,
         calibration=calibration,
         unclassified_share=unclassified_share,
+        tail=tail,
     )
     validated = calibration.source == "validated"
     # Measured accuracies certify only a row they were measured for; elsewhere the
@@ -2591,6 +2593,7 @@ def _apply_judge_correction(
                     family_id=None,
                     judge_alpha=None,
                     unclassified_share=share,
+                    tail=measure_type != "weighted_mean",
                 )
                 if interval is not None:
                     result.intervals.append(interval)
@@ -2624,6 +2627,7 @@ def _apply_judge_correction(
             judge_alpha=judge_alpha,
             gap=gap,
             unclassified_share=share,
+            tail=measure_type != "weighted_mean",
         )
         if interval is not None:
             result.intervals.append(interval)
@@ -3843,6 +3847,7 @@ def _judge_corrected_comparison_interval(
     gap: str | None = None,
     candidate_share: float = 0.0,
     baseline_share: float = 0.0,
+    tail: bool = False,
 ) -> RiskIntervalResult | None:
     """Correct a comparison by correcting each arm, then recombining.
 
@@ -3871,6 +3876,7 @@ def _judge_corrected_comparison_interval(
         observed_estimate=result.candidate_estimate,
         calibration=candidate_calibration,
         unclassified_share=candidate_share,
+        tail=tail,
     )
     baseline = correct_judge_risk(
         observed_lower=cast(float, primary.baseline_lower),
@@ -3878,6 +3884,7 @@ def _judge_corrected_comparison_interval(
         observed_estimate=result.baseline_estimate,
         calibration=baseline_calibration,
         unclassified_share=baseline_share,
+        tail=tail,
     )
     lower, upper = _multi_arm_effect_interval(
         result.estimand,
@@ -4010,6 +4017,7 @@ def _apply_judge_correction_to_comparisons(
             baseline_share=_unclassified_share(
                 population.get(result.baseline_cohort, {}), weights, measure_type
             ),
+            tail=measure_type != "weighted_mean",
         )
         if interval is None:
             skipped.append(result.result_id or result.comparison_id)

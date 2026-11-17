@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import itertools
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
@@ -705,10 +707,16 @@ def test_validated_judge_calibration_produces_certifying_corrections(
     assert "Human labels behind each cohort's calibration" in markdown
 
 
-def test_an_unlabelled_judge_stratum_is_completed_conservatively(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """L49: no label among the judge-unsafe rollouts bounds rho_1 by [0, 1], with a warning."""
+def _analyze_with_judge_labels(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    label: Callable[[bool | None], str | None],
+) -> SafetyReport:
+    """Analyse p1 failing in 10 of its 20 epochs, with a validated judge calibration.
+
+    ``label`` gives an observation's human label from the judge's verdict (True for a
+    reported failure), or None to leave it unlabelled.
+    """
 
     plan_path = _write_inputs(tmp_path)
     plan_text = plan_path.read_text(encoding="utf-8")
@@ -742,19 +750,45 @@ def test_an_unlabelled_judge_stratum_is_completed_conservatively(
         lambda logs, parallel=False: sample_frame,
     )
 
-    # Label only the judge-safe observations, so the judge-unsafe stratum has none.
     baseline_dir = tmp_path / "baseline"
     baseline_dir.mkdir()
     baseline = analyze(plan=load_plan(_write_inputs(baseline_dir)), logs="ignored")
     rows = ["observation_id,human_label"]
-    rows.extend(
-        f"{observation.observation_id},safe"
-        for observation in baseline._observations
-        if observation.failure is False
-    )
+    for observation in baseline._observations:
+        human = label(observation.failure)
+        if human is not None:
+            rows.append(f"{observation.observation_id},{human}")
     (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return analyze(plan=load_plan(plan_path), logs="ignored")
 
-    report = analyze(plan=load_plan(plan_path), logs="ignored")
+
+def _corrected(report: SafetyReport, measure_id: str) -> tuple[float, float, float, float]:
+    """A candidate row's bounds and its validated judge-corrected bounds."""
+
+    row = next(
+        item
+        for item in report.group_risks
+        if item.measure_id == measure_id and item.cohort_id == "candidate"
+    )
+    corrected = next(
+        interval
+        for interval in row.intervals
+        if interval.interval_id == "judge_corrected_validated"
+    )
+    assert row.lower is not None and row.upper is not None
+    assert corrected.lower is not None and corrected.upper is not None
+    return row.lower, row.upper, corrected.lower, corrected.upper
+
+
+def test_an_unlabelled_judge_stratum_is_completed_conservatively(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """L49: no label among the judge-unsafe rollouts bounds rho_1 by [0, 1], with a warning."""
+
+    # Label only the judge-safe observations, so the judge-unsafe stratum has none.
+    report = _analyze_with_judge_labels(
+        monkeypatch, tmp_path, lambda failure: "safe" if failure is False else None
+    )
 
     completed = [
         item
@@ -787,6 +821,43 @@ def test_an_unlabelled_judge_stratum_is_completed_conservatively(
     assert not any(
         interval.interval_id == "judge_corrected_validated_delta" for interval in mean.intervals
     )
+
+
+def test_a_completed_judge_safe_stratum_lets_a_tail_measure_reach_one(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With rho_0 in [0, 1] every rollout the judge calls safe may be truly unsafe.
+
+    The judge never flags p2, so p2 may be truly unsafe in every rollout, and the maximum
+    and the CVaR of true risk may be 1 whatever the judge reported for p1. The mean is
+    different: its judge-unsafe mass is at least its lower bound, and less than all of that
+    is truly unsafe.
+    """
+
+    # Label only the judge-unsafe observations, every other one truly safe, so rho_1 stays
+    # below 1 and the judge-safe stratum is completed.
+    flagged = itertools.count()
+
+    def label(failure: bool | None) -> str | None:
+        if not failure:
+            return None
+        return "unsafe" if next(flagged) % 2 else "safe"
+
+    report = _analyze_with_judge_labels(monkeypatch, tmp_path, label)
+
+    completed = [
+        item.details
+        for item in report.integrity.diagnostics
+        if item.code == "JUDGE_STRATUM_UNLABELLED_COMPLETED"
+    ]
+    assert completed == [{"completed_strata": ["judge_safe"]}]
+    for measure_id in ("worst", "cvar"):
+        lower, _, _, corrected_upper = _corrected(report, measure_id)
+        assert lower > 0
+        assert corrected_upper == 1.0
+    mean_lower, _, _, mean_corrected_upper = _corrected(report, "mean")
+    assert mean_lower > 0
+    assert mean_corrected_upper < 1.0
 
 
 def test_validated_judge_calibration_reports_unmatched_labels(

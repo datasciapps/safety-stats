@@ -67,6 +67,7 @@ def correct_judge_risk(
     observed_estimate: float | None,
     calibration: JudgeCalibration,
     unclassified_share: float = 0.0,
+    tail: bool = False,
 ) -> CorrectedRisk:
     """Map a judge-system risk interval onto the true-risk scale.
 
@@ -79,10 +80,16 @@ def correct_judge_risk(
     ``(R, rho_1, rho_0)``, so its extrema over the declared box are attained at
     the box vertices and can be enumerated exactly.
 
-    The identity is affine in ``R`` with positive slope ``rho_1 - rho_0``. It
-    therefore applies unchanged to any risk measure that is
-    positively homogeneous and translation equivariant -- weighted mean, maximum,
-    CVaR, and top-k mean -- but not to entropic risk or threshold measures.
+    The identity is affine in ``R`` with slope ``rho_1 - rho_0``, positive for a strictly
+    informative judge. It then keeps the order of prompts, so it applies unchanged to any
+    risk measure that is positively homogeneous and translation equivariant -- weighted
+    mean, maximum, CVaR, and top-k mean -- but not to entropic risk or threshold measures.
+
+    A box with a completed stratum lets ``rho_1`` fall below ``rho_0``, and the map then
+    reverses that order: a tail of true risk can rest on the prompts the judge flags least,
+    which may have no judge-unsafe mass at all. Pass ``tail=True`` for a maximum, CVaR or
+    top-k mean, and the upper end then also takes that mass as 0. A weighted mean needs no
+    such vertex, since it is linear in ``R`` itself.
 
     ``unclassified_share`` is the weight on rollouts with no judge verdict, which the
     observed bounds complete as judge-safe at the lower end and judge-unsafe at the
@@ -116,6 +123,11 @@ def correct_judge_risk(
             (0.0, 1.0),
         )
     ]
+    upper = max(vertices)
+    if tail and calibration.rho_1_lower < calibration.rho_0_upper:
+        # No classified judge-unsafe mass, every judge-safe rollout truly unsafe at rho_0's
+        # upper end, and every unclassified one unsafe as well.
+        upper = max(upper, (1 - share) * calibration.rho_0_upper + share)
     estimate_lower = estimate_upper = None
     if observed_estimate is not None:
         estimate_lower = (
@@ -128,7 +140,7 @@ def correct_judge_risk(
         )
     return CorrectedRisk(
         lower=max(0.0, min(vertices)),
-        upper=min(1.0, max(vertices)),
+        upper=min(1.0, upper),
         completion_estimate_lower=estimate_lower,
         completion_estimate_upper=estimate_upper,
         scenario_id=calibration.scenario_id,

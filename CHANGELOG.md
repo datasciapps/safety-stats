@@ -46,7 +46,9 @@ described in their pull requests.
   completed conservatively: its error rate is bounded by [0, 1], the correction is still
   reported, and a `JUDGE_STRATUM_UNLABELLED_COMPLETED` warning names the stratum. With both
   strata unlabelled the calibration is still refused. `JudgeCalibration` gains
-  `completed_strata`. See
+  `completed_strata`, and `correct_judge_risk` gains `tail`: a completed box lets the judge
+  be worse than chance, so a `maximum`, `cvar` or `top_k_mean` row's corrected upper end
+  also allows a prompt the judge never flags. See
   [Judge misclassification](docs/judge-misclassification.md#estimation-and-error-budget).
 
 - **One grader across the JailbreakBench comparison arms (example).** The plan that

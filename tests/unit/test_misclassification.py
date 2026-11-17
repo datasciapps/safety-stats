@@ -4,6 +4,7 @@ from hypothesis import strategies as st
 
 from inspect_safety_stats.stats import JudgeCalibration, correct_judge_risk
 from inspect_safety_stats.stats.misclassification import (
+    CorrectedRisk,
     JudgeStratumCounts,
     completion_warning,
     estimate_judge_calibration,
@@ -198,6 +199,49 @@ def test_a_completed_unsafe_stratum_bounds_true_risk_by_the_judge_safe_error() -
     assert result.lower == 0.0
     expected = 0.011 + (1 - 0.011) * calibration.rho_0_upper
     assert result.upper == pytest.approx(expected, rel=1e-12, abs=0)
+
+
+def test_a_tail_measure_reaches_rho_0_when_a_completed_box_reverses_the_judge() -> None:
+    """rho_1 below rho_0 reverses the order of prompts, so a tail can rest on an unflagged one.
+
+    Two prompts with judge-reported risk 0.7 and 0: the maximum is 0.7, but with rho_1 = 0.9
+    and rho_0 = 1 their true risks are 0.97 and 1, so the true maximum is 1.
+    """
+
+    calibration = JudgeCalibration(
+        "v", 0.2, 0.9, 0.0, 1.0, source="validated", completed_strata=("judge_safe",)
+    )
+
+    def corrected(*, tail: bool, share: float = 0.0) -> CorrectedRisk:
+        return correct_judge_risk(
+            observed_lower=0.6,
+            observed_upper=0.8,
+            observed_estimate=0.7,
+            calibration=calibration,
+            unclassified_share=share,
+            tail=tail,
+        )
+
+    assert corrected(tail=True).upper == 1.0
+    assert corrected(tail=True, share=0.1).upper == 1.0
+    assert corrected(tail=True).lower == corrected(tail=False).lower
+    # The mean's judge-unsafe mass is at least 0.6, and at most 0.9 of it is truly unsafe.
+    assert corrected(tail=False).upper == pytest.approx(0.6 * 0.9 + 0.4, rel=0, abs=1e-12)
+
+
+@pytest.mark.parametrize("share", [0.0, 0.05])
+def test_tail_changes_nothing_for_a_strictly_informative_judge(share: float) -> None:
+    def corrected(*, tail: bool) -> CorrectedRisk:
+        return correct_judge_risk(
+            observed_lower=0.10,
+            observed_upper=0.20,
+            observed_estimate=0.15,
+            calibration=_calibration(),
+            unclassified_share=share,
+            tail=tail,
+        )
+
+    assert corrected(tail=True) == corrected(tail=False)
 
 
 def test_calibrations_reject_an_unknown_completed_stratum() -> None:

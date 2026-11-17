@@ -156,7 +156,10 @@ budget on it, and warns with `JUDGE_STRATUM_UNLABELLED_COMPLETED`. Such a box is
 strictly informative, so the informativeness check is skipped for it. The correction stays
 valid but wide. With \(\rho_1\in[0,1]\) and a judge-reported interval \([L, U]\), true
 risk lies in \([(1-U)\rho_{0,L},\; U+(1-U)\rho_{0,U}]\), so it can still support an upper
-claim when the judge rarely reports a failure. Labelling that stratum narrows it. The
+claim when the judge rarely reports a failure. Labelling that stratum narrows it. A
+completed box also lets \(\rho_1\) fall below \(\rho_0\), which reverses the order of
+prompts, so for a tail measure (`maximum`, `cvar`, `top_k_mean`) the true-risk tail can rest
+on a prompt the judge never flags: its corrected upper end is at least \(\rho_{0,U}\). The
 budget split is unchanged, so `family_alpha` overstates what was spent. If neither stratum has
 a label, the calibration is refused.
 
