@@ -39,7 +39,9 @@ types. In CSV, every cell is text, read this way:
 | a JSON number, such as `1`, `0.25` or `-3e-2` | that number |
 | anything else | the text itself |
 
-A score written as the text `"1"` can therefore only be expressed in JSON Lines.
+A score written as the text `"1"` can therefore only be expressed in JSON Lines. The fields
+`run_key`, `item_id`, `rollout_id`, `run_id`, `model`, `status` and `provider_error_code` are
+always read as text, so that the item `1.10` stays `1.10` and is not read as the number 1.1.
 
 ## The runs file
 
@@ -71,7 +73,7 @@ One record per rollout: one response of one run to one item.
 | `rollout_id` | no | Identifies the rollout in the source system. Defaults to `run_key:item_id:repeat`. |
 | `scores` | no | JSON Lines only: an object from score name to value. |
 | `score_<name>` | no | The value of score `<name>`. A score is given either here or in `scores`, not both. |
-| `error` | no | The rollout's terminal error, if it ended in one. |
+| `error` | no | The rollout's terminal error, if it ended in one. `false`, like an empty value, means none. |
 | `error_stage` | no | `target_generation`, `post_generation` or `unknown` (the default). |
 | `content_delivered` | no | `true` when the target delivered content before the error. |
 | `provider_error_code` | no | The provider's error code, such as `content_filter`. |

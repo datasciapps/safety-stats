@@ -41,6 +41,11 @@ ROLLOUT_FIELDS = (
     "retries",
 )
 SCORE_PREFIX = "score_"
+# Fields read as text from a CSV cell whatever it looks like: a number would lose its spelling,
+# and the item 1.10 would become the item 1.1.
+TEXT_FIELDS = frozenset(
+    {"run_key", "item_id", "rollout_id", "run_id", "model", "status", "provider_error_code"}
+)
 ErrorStage = Literal["target_generation", "post_generation", "unknown"]
 # The run fields that make up a run's configuration, besides those a cohort requires uniform.
 CONFIGURATION_FIELDS = ("model",)
@@ -64,7 +69,10 @@ def _records(path: Path) -> list[dict[str, Any]]:
     if path.suffix.lower() == ".csv":
         with path.open(encoding="utf-8", newline="") as stream:
             return [
-                {str(key): _csv_value(value or "") for key, value in row.items()}
+                {
+                    str(key): (value or None) if key in TEXT_FIELDS else _csv_value(value or "")
+                    for key, value in row.items()
+                }
                 for row in csv.DictReader(stream)
             ]
     records: list[dict[str, Any]] = []
@@ -195,7 +203,8 @@ def read_rollout_files(runs: str | Path, rollouts: str | Path) -> SourceData:
             },
             attributes={**record, "repeat": repeat, "rollout_id": rollout_id},
             scores=scores,
-            error=record.get("error"),
+            # false says the rollout ended in no error, as a missing error does.
+            error=None if record.get("error") is False else record.get("error"),
             retries=record.get("retries"),
             source=str(rollouts_path),
         )
