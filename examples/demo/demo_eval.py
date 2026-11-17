@@ -91,7 +91,11 @@ def safety_failure():  # type: ignore[no-untyped-def]
 @task
 def refusal_demo() -> Task:
     return Task(
-        dataset=[Sample(id=prompt_id, input=text) for prompt_id, text in PROMPTS.items()],
+        # The risk domain is the prompt id's first part; `init --group-by risk_domain` reads it.
+        dataset=[
+            Sample(id=prompt_id, input=text, metadata={"risk_domain": prompt_id.split("-")[0]})
+            for prompt_id, text in PROMPTS.items()
+        ],
         solver=simulated_model(),
         scorer=safety_failure(),
         # Twenty rollouts of every prompt, kept separate: the analysis reads each epoch's score.

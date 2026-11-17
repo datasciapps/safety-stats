@@ -468,6 +468,15 @@ described in their pull requests.
 
 ### Changed
 
+- **The offline demo uses the plan `init` writes.** `examples/demo/plan.yaml` and
+  `design.csv` are now the output of `inspect-safety-stats init --group-by risk_domain
+  --baseline mockllm/baseline` on the demo logs, plus two tail measures (`cvar_90`, `worst`).
+  The demo task records each prompt's risk domain in its sample metadata so that `init` can
+  group by it. The demo still compares the candidate with the baseline (now through a
+  comparison set, as a risk difference and a risk ratio), and its report now emits a
+  `TAIL_MEASURES_UNINFORMATIVE` warning, which `show_results.py` prints. The numbers the demo
+  prints change; the demo README explains them and the warning.
+
 - **The plan hash covers only what the author wrote (#56).** `hash-plan`, `plan_sha256` and
   the inference hash leave out every field the plan does not write, so a release that adds a
   field or changes a default no longer changes the hash of an unchanged plan. A field written at
