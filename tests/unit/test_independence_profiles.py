@@ -129,6 +129,26 @@ def test_profile_fields_are_checked_against_observations_and_manifest() -> None:
         )
 
 
+@pytest.mark.parametrize(
+    ("field", "old_name"), [("item_id", "inspect_id"), ("source", "source_log")]
+)
+def test_a_renamed_observation_field_that_is_also_a_manifest_column_is_refused(
+    field: str, old_name: str
+) -> None:
+    """Under report schema 2.0 such a name meant the manifest column; the field took its place."""
+    _, manifest = _data()
+    manifest[field] = ["a", "a"]
+    with pytest.raises(ValueError, match=rf"blocks by '{field}', which names both.*'{old_name}'"):
+        validate_profile_fields({"p": IndependenceProfileSpec(block_by=[field])}, manifest)
+    # Either side can still be named without ambiguity.
+    validate_profile_fields({"p": IndependenceProfileSpec(block_by=[old_name])}, manifest)
+    validate_profile_fields(
+        {"p": IndependenceProfileSpec(block_by=[field])}, manifest.drop(columns=[field])
+    )
+    # prompt_id is a manifest column and an observation field with the same values, as before.
+    validate_profile_fields({"p": IndependenceProfileSpec(block_by=["prompt_id"])}, manifest)
+
+
 @pytest.mark.parametrize("value", [1.0, "a"])
 def test_missing_manifest_block_values_are_rejected(value: object) -> None:
     """A missing block value split or merged rollouts depending on the column's dtype."""
