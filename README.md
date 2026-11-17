@@ -261,6 +261,7 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Sampled-frame example: HarmBench from a probability sample](examples/sampled_harmbench/README.md)
 - [Generative example: multilingual jailbreak rewrites](examples/generative_multilingual/README.md) (experimental)
 - [Live generative example: real providers end to end](examples/generative_live/README.md) (experimental)
+- [Open-weight example: thinking off and on, many rollouts per prompt, with human labels for the judge](examples/open_weights/README.md)
 - [Attack example: attack runs scored by a confirmation rollout and an independent judge](examples/attack_confirmation/README.md)
 - [Judge flip example: rescoring judge-positive completions inside content-preserving wrappers](examples/judge_flip/README.md) (experimental)
 - [Secondary calibration example: XSTest over-refusal](examples/real_xstest/README.md)
