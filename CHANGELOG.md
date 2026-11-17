@@ -7,6 +7,21 @@ described in their pull requests.
 
 ### Added
 
+- **Reports state the methods and assumptions they used (#64).** The "Fixed-design risk
+  measures" paragraph of `report.md` no longer names a fixed set of methods and profiles: it
+  lists each method and independence profile the report's intervals used, with the
+  assumptions those intervals record. "Limitations" is generated from the package's registry
+  of assumptions: each assumption that applies, with the plan settings it took, marked as
+  default or written, and what follows if it is wrong. `report.json` gains
+  `assumptions_used` with the same content. See
+  [Assumptions and defaults a report states](docs/interpretation.md#assumptions-and-defaults-a-report-states).
+
+- **Reports record every default the analysis applied.** `report.json` gains `plan_defaults`:
+  each plan field the plan left out, with the value its default gave the analysis. These are
+  the fields the plan hash does not cover. `report.md` gains a "Defaults applied" section that
+  lists the defaults that set a value and counts those that leave a feature off. See
+  [The plan hash](docs/plan-reference.md#the-plan-hash).
+
 - **`init`: a starter plan from completed logs, with its assumptions noted (experimental).**
   `inspect-safety-stats init --logs LOGS --failure-values V` writes `design.csv` and
   `safety-plan.yaml`: one cohort per model, the root failure risk with a prompt-level
@@ -432,6 +447,13 @@ described in their pull requests.
   [Verdicts by profile](docs/independence-profiles.md#verdicts-by-profile).
 
 ### Changed
+
+- **The plan hash covers only what the author wrote (#56).** `hash-plan`, `plan_sha256` and
+  the inference hash leave out every field the plan does not write, so a release that adds a
+  field or changes a default no longer changes the hash of an unchanged plan. A field written at
+  its default value is hashed, and so writing out a default now changes the hash. Every plan's
+  hash changes once with this release: freeze plans, registration receipts and decision
+  policies again with `hash-plan`. See [The plan hash](docs/plan-reference.md#the-plan-hash).
 
 - **The generative commands' help says the pipeline is experimental (#24).** The help of
   `generative` and of each of its commands, and of `schema generative-plan`, ends with the

@@ -30,6 +30,27 @@ fields: `eval_id` to `run_key`, `id` to `item_id`, `epoch` to `repeat`, `sample_
 `rollout_id`, and any other source field `f` to `attributes.f` (`model` keeps its name). The
 plan's hash changes with its text. A 2.0 plan keeps its meaning and its hash.
 
+### The plan hash
+
+`hash-plan` prints, and every report records as `plan_sha256`, the SHA-256 of what the plan's
+author wrote: the fields present in the file, in their validated form, with input paths relative
+to the plan's directory. A field the plan leaves out is not hashed, whatever its default, so a
+release that adds a field or changes a default leaves the hash of an unchanged plan file as it
+was (#56). A field written at its default value is hashed: the plan states it, and its meaning
+does not follow a later default. Writing out a default therefore changes the hash, as any other
+edit does.
+
+What the hash leaves out, the report records. `plan_defaults` in `report.json` lists every field
+the plan left out, with the value its default gave the analysis, as `{"path", "value"}` entries
+such as `{"path": "inputs.score.token_limit", "value": "score"}`. A path writes a list item as
+`[i]` and a mapping entry by its key, and a section left out whole has an entry for each of its
+fields. Experimental
+fields are listed too, although `plan.resolved.yaml` leaves them out while they are at their
+defaults. A field that does not exist in the plan, such as `inputs.sample_join` under schema
+3.0, has no entry. The
+"Defaults applied" section of `report.md` lists the defaults that set a value, and counts those
+that leave an optional feature off or a parameter unused (null, false or empty).
+
 ## `analysis`
 
 | Field | Required | Meaning |
