@@ -1,7 +1,7 @@
 # Published GPT-4 behavior on four XSTest contrast pairs
 
 **Analysis ID:** `real-xstest-published-gpt4-replay`  
-**Plan SHA-256:** `06dc782a929c8418370531899a95ccc7b1cf4c870b33a81f3a938e239f95c8ca`  
+**Plan SHA-256:** `6aa8818abe40e749c05e70868542753f738401ec49f49317fb8bcba8e5e8081c`  
 **Integrity:** `valid`
 
 ## Scope

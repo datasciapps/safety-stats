@@ -4,7 +4,7 @@
     "id": "real-simpleqa-eight",
     "intent": "confirmatory",
     "plan_frozen_at": "2026-08-18T08:00:00Z",
-    "plan_sha256": "e27c60131ebe6bfbe19fa21de11eb03144040a3f75c70e35c9f90692d956ad7c",
+    "plan_sha256": "fd9ee06715157246e1e6d90d86f2cada7d7cffe96ee9fd7e280c8d026a0f654c",
     "registration": null,
     "title": "Eight real SimpleQA items as a fixed-design failure analysis"
   },
