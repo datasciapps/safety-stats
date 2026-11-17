@@ -57,6 +57,9 @@ _ROOT_FILES = {
     # Notes for coding agents. CLAUDE.md only imports AGENTS.md.
     "AGENTS.md",
     "CLAUDE.md",
+    # Consumer-facing agent discovery indexes (llmstxt.org).
+    "llms.txt",
+    "llms-full.txt",
 }
 
 
