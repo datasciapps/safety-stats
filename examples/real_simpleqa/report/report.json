@@ -2371,9 +2371,11 @@
       {
         "code": "PLAN_SELF_DECLARED",
         "details": {},
+        "effect": "recorded",
         "message": "confirmatory timing is self-declared; no external plan registration was supplied",
         "scope": null,
-        "severity": "WARNING"
+        "severity": "WARNING",
+        "source": "registration"
       }
     ],
     "status": "valid"
