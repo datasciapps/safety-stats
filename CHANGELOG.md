@@ -7,6 +7,13 @@ described in their pull requests.
 
 ### Added
 
+- **Each diagnostic in a report points at its item (changes `report.json`).** Every
+  diagnostic in `report.json` gains `item`, a JSON pointer to the record its scope names:
+  `/claims/<i>`, `/comparisons/<i>`, `/prompt_estimates/<i>`, `/group_risks/<i>` and the
+  others listed in `inspect_safety_stats.schema.pointers`. It is null when the report holds no
+  record of the item, such as a plan setting or a run. The report computes it from the scope,
+  also when a saved `report.json` is read back.
+
 - **report.md is a one-page summary; the full report is report-full.md (changes `report.md`).**
   `report.md` now holds one page. It starts with a header line with the prompts, rollouts,
   models and data-integrity status. Then come these sections:

@@ -67,6 +67,14 @@ of where the finding sits: `plan/claims/<claim>` for a place in the plan,
 come in collection/id pairs, and each id has `%` written as `%25` and `/` as `%2F`, so a path
 splits back into its ids. `inspect_safety_stats.schema.scopes` builds and reads them.
 
+In a report, each diagnostic also has `item`: a JSON pointer into `report.json` to the record
+its scope names, such as `/claims/0` for `plan/claims/<claim>`, `/prompt_estimates/12` for
+`cohorts/<cohort>/prompts/<prompt>` or `/group_risks/3` for
+`cohorts/<cohort>/groups/<group>/measures/<measure>`. It is null when the report holds no
+record of the item, as for a plan setting or a run. `inspect_safety_stats.schema.pointers`
+lists every scope that has one. The report computes `item` from the scope, also when a saved
+`report.json` is read back, so it always points into the report that holds the diagnostic.
+
 ### `load_plan`
 
 ```python

@@ -15,6 +15,7 @@ from pydantic import (
 )
 
 from inspect_safety_stats.registry import CODES, Effect, SourceKind
+from inspect_safety_stats.schema.pointers import ItemPointers
 from inspect_safety_stats.schema.scopes import scope_segments
 
 Decision = Literal["PASS", "FAIL", "INCONCLUSIVE"]
@@ -40,6 +41,11 @@ class Diagnostic(ResultModel):
     ``scope`` is a path that says where the finding sits, as ``inspect_safety_stats.schema.scopes``
     describes: ``plan/claims/mean_safe``, ``cohorts/candidate/prompts/p1``. A scope that does
     not follow it is rejected, except when a stored report is read back (``STORED_REPORT``).
+
+    ``item`` is a JSON pointer into ``report.json`` to the record the scope names, such as
+    ``/claims/0`` or ``/prompt_estimates/12``, and null when the report holds no record of it
+    (``inspect_safety_stats.schema.pointers``). The report fills it from the scope, also when
+    it is read back, so it always points into the report that holds the diagnostic.
     """
 
     code: str
@@ -48,6 +54,7 @@ class Diagnostic(ResultModel):
     effect: Effect | None = None
     message: str
     scope: str | None = None
+    item: str | None = None
     details: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -687,6 +694,14 @@ class SafetyReport(ResultModel):
         if not self.adaptive_claims:
             data.pop("adaptive_claims", None)
         return data
+
+    @model_validator(mode="after")
+    def point_each_diagnostic_at_its_item(self) -> SafetyReport:
+        # Derived from the scope and the results, so a stored value is recomputed, not trusted.
+        pointers = ItemPointers(self)
+        for diagnostic in self.integrity.diagnostics:
+            diagnostic.item = pointers.pointer(diagnostic.scope)
+        return self
 
     def write(self, output: str | Path, *, overwrite: bool = False) -> Path:
         from inspect_safety_stats.report.writer import write_report
