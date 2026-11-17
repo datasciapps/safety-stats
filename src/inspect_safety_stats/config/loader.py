@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import BaseModel
+from pydantic_core import to_jsonable_python
 
 from .canonicalize import sha256_value
 from .models import AnalysisPlan
@@ -142,6 +144,51 @@ def report_plan(plan: AnalysisPlan) -> dict[str, Any]:
             calibration.protocol.queue, plan
         )
     return value
+
+
+def plan_defaults(plan: AnalysisPlan) -> list[dict[str, Any]]:
+    """Every plan field the author left out, with the value its default gave it.
+
+    The complement of ``canonical_plan_value``: together they are the plan an analysis ran.
+    Each entry is ``{"path": ..., "value": ...}``. A path joins field names with ``.``, writes
+    a list item's position as ``[i]`` and a mapping entry by its key, as in
+    ``outputs.risk_measures[0].beta`` or ``cohorts.candidate.require_uniform``. A section left
+    out whole has an entry for each of its fields. A field that does not exist in this plan,
+    such as ``inputs.sample_join`` under schema 3.0, has no entry. Entries come in the plan's
+    field order.
+    """
+
+    entries: list[dict[str, Any]] = []
+    _collect_defaults(plan, "", entries)
+    return entries
+
+
+def _collect_defaults(model: BaseModel, prefix: str, entries: list[dict[str, Any]]) -> None:
+    for name, info in type(model).model_fields.items():
+        path = f"{prefix}.{info.alias or name}" if prefix else info.alias or name
+        value = getattr(model, name)
+        if name not in model.model_fields_set and isinstance(value, BaseModel):
+            # A section left out whole: each of its fields is a default. Its dump would leave
+            # out experimental fields, so it is not one entry.
+            _collect_defaults(value, path, entries)
+        elif name not in model.model_fields_set:
+            # A None field named in absent_when_none does not exist in this plan, as
+            # sample_join does not under schema 3.0. Every other field left out is a default
+            # the analysis applied, experimental ones included, even where a model's dump
+            # leaves it out to keep older outputs' bytes.
+            if value is None and name in getattr(model, "absent_when_none", ()):
+                continue
+            entries.append({"path": path, "value": to_jsonable_python(value, by_alias=True)})
+        elif isinstance(value, BaseModel):
+            _collect_defaults(value, path, entries)
+        elif isinstance(value, list):
+            for index, item in enumerate(value):
+                if isinstance(item, BaseModel):
+                    _collect_defaults(item, f"{path}[{index}]", entries)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                if isinstance(item, BaseModel):
+                    _collect_defaults(item, f"{path}.{key}", entries)
 
 
 def canonical_plan_hash(plan: AnalysisPlan) -> str:

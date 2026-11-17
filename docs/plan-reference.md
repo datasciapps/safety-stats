@@ -40,6 +40,17 @@ was (#56). A field written at its default value is hashed: the plan states it, a
 does not follow a later default. Writing out a default therefore changes the hash, as any other
 edit does.
 
+What the hash leaves out, the report records. `plan_defaults` in `report.json` lists every field
+the plan left out, with the value its default gave the analysis, as `{"path", "value"}` entries
+such as `{"path": "inputs.score.token_limit", "value": "score"}`. A path writes a list item as
+`[i]` and a mapping entry by its key, and a section left out whole has an entry for each of its
+fields. Experimental
+fields are listed too, although `plan.resolved.yaml` leaves them out while they are at their
+defaults. A field that does not exist in the plan, such as `inputs.sample_join` under schema
+3.0, has no entry. The
+"Defaults applied" section of `report.md` lists the defaults that set a value, and counts those
+that leave an optional feature off or a parameter unused (null, false or empty).
+
 ## `analysis`
 
 | Field | Required | Meaning |

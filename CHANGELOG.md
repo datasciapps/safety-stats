@@ -7,6 +7,12 @@ described in their pull requests.
 
 ### Added
 
+- **Reports record every default the analysis applied.** `report.json` gains `plan_defaults`:
+  each plan field the plan left out, with the value its default gave the analysis. These are
+  the fields the plan hash does not cover. `report.md` gains a "Defaults applied" section that
+  lists the defaults that set a value and counts those that leave a feature off. See
+  [The plan hash](docs/plan-reference.md#the-plan-hash).
+
 - **Open-weight example and limitations log.** [`examples/open_weights/`](examples/open_weights/README.md) runs an open-weight model on
   HarmBench and XSTest with thinking off and on, many rollouts per prompt, judges them, and
   analyzes the run; it also orders rollouts for human labelling and turns the labels into

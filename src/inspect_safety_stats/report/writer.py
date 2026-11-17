@@ -1609,6 +1609,7 @@ def _markdown(report: SafetyReport) -> str:
             f"- `{_escape(family['id'])}`: {_escape(family['method'])}, "
             f"alpha={_escape(family['alpha'])}, purpose={_escape(family['purpose'])}."
         )
+    lines.extend(_defaults_markdown(report))
     lines.extend(
         [
             "",
@@ -1641,6 +1642,49 @@ def _markdown(report: SafetyReport) -> str:
             f"- `{_escape(source.get('path'))}` — SHA-256 `{_escape(source.get('sha256'))}`"
         )
     return "\n".join(lines) + "\n"
+
+
+def _sets_a_value(value: Any) -> bool:
+    """Whether a default sets something, rather than leaving a feature off or a field unused."""
+
+    return value not in (None, False, [], {})
+
+
+def _defaults_markdown(report: SafetyReport) -> list[str]:
+    """The "Defaults applied" section: the plan fields the analysis filled with defaults.
+
+    It lists the defaults that set a value and counts the rest, which leave an optional
+    feature off or a parameter unused (None, false or empty); report.json lists them all.
+    """
+
+    if not report.plan_defaults:
+        return []
+    setting = [entry for entry in report.plan_defaults if _sets_a_value(entry.value)]
+    lines = [
+        "",
+        "## Defaults applied",
+        "",
+        "The plan left these fields out, and the analysis used their defaults. The plan hash "
+        "covers only what the plan wrote, so a release that changes one of these defaults "
+        "changes the analysis but not the hash; writing a field into the plan fixes its value.",
+        "",
+    ]
+    lines.extend(
+        # Sorted keys, as report.json stores them, so a report re-rendered from it is the same.
+        f"- `{_escape(entry.path)}`: `{_escape(json.dumps(entry.value, sort_keys=True))}`"
+        for entry in setting
+    )
+    rest = len(report.plan_defaults) - len(setting)
+    if rest:
+        lines.extend(
+            [
+                "",
+                f"{rest} further {'default leaves' if rest == 1 else 'defaults leave'} an "
+                "optional feature off or a parameter unused (None, false or empty). "
+                "`plan_defaults` in report.json lists every default.",
+            ]
+        )
+    return lines
 
 
 def _design_rows(report: SafetyReport) -> list[dict[str, Any]]:

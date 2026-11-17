@@ -6,7 +6,12 @@ from typing import Any
 
 from inspect_safety_stats.analysis.adaptive_claims import _unavailable_adaptive_claims
 from inspect_safety_stats.analysis.inputs import _sorted_integrity
-from inspect_safety_stats.config.loader import canonical_plan_hash, report_path, report_plan
+from inspect_safety_stats.config.loader import (
+    canonical_plan_hash,
+    plan_defaults,
+    report_path,
+    report_plan,
+)
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.decision.engine import mandatory_statuses, roll_up
 from inspect_safety_stats.ingest.records import NormalizedData
@@ -154,6 +159,7 @@ def _report_frame(plan: AnalysisPlan) -> dict[str, Any]:
             **plan.analysis.model_dump(mode="json"),
             "plan_sha256": canonical_plan_hash(plan),
         },
+        "plan_defaults": plan_defaults(plan),
         "scope": _scope(plan),
         "presentation": _presentation(plan),
         "multiplicity": [family.model_dump(mode="json") for family in plan.multiplicity.families],

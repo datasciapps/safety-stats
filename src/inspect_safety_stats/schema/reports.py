@@ -546,6 +546,14 @@ class OutcomeMappingSensitivity(ResultModel):
     results: list[MappingSensitivityResult] = Field(default_factory=list)
 
 
+class PlanDefault(ResultModel):
+    """A plan field the author left out, and the value its default gave the analysis."""
+
+    # Dotted field names, ``[i]`` for a list item and the key for a mapping entry.
+    path: str
+    value: Any
+
+
 class SafetyReport(ResultModel):
     """The result of ``analyze``: estimates, bounds, comparisons, claims and the decision.
 
@@ -557,6 +565,9 @@ class SafetyReport(ResultModel):
     schema_version: Literal["3.0"] = "3.0"
     package_version: str
     analysis: dict[str, Any]
+    # Every default the analysis applied: the plan fields its author left out, which
+    # analysis.plan_sha256 does not cover (#56). Empty in a report written before the field.
+    plan_defaults: list[PlanDefault] = Field(default_factory=list)
     provenance: dict[str, Any]
     scope: dict[str, Any]
     presentation: ReportPresentation = Field(default_factory=ReportPresentation)
