@@ -23,10 +23,16 @@ if TYPE_CHECKING:
 app = typer.Typer(help="Fixed-design statistical risk analysis for Inspect AI evaluations.")
 plan_app = typer.Typer(help="Prospective evaluation planning tools.")
 schema_app = typer.Typer(help="Print machine-readable schemas.")
+# The caveat every entry point to the generative surface carries, word for word (#24; the
+# docs' copies are checked by tests/test_repository_consistency.py).
+GENERATIVE_CAVEAT = (
+    "The generative pipeline is experimental: its public surface, "
+    "`inspect_safety_stats.generative.__all__`, may change in any minor release."
+)
 generative_app = typer.Typer(
     help=(
         "Generative-design evaluations, where prompts are sampled from a declared "
-        "taxonomy rather than fixed in advance."
+        "taxonomy rather than fixed in advance. " + GENERATIVE_CAVEAT
     )
 )
 app.add_typer(plan_app, name="plan")
@@ -1016,7 +1022,7 @@ def hash_plan_command(
     )
 
 
-@generative_app.command("compile")
+@generative_app.command("compile", epilog=GENERATIVE_CAVEAT)
 def generative_compile_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
 ) -> None:
@@ -1046,7 +1052,7 @@ def generative_compile_command(
     typer.echo(f"Cohorts: {', '.join(parsed.target.cohorts)}")
 
 
-@generative_app.command("materialize")
+@generative_app.command("materialize", epilog=GENERATIVE_CAVEAT)
 def generative_materialize_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
     output: Annotated[Path, typer.Option("--output")] = Path("generative-run"),
@@ -1135,7 +1141,7 @@ def generative_materialize_command(
         raise typer.Exit(code=ExitCode.ERROR)
 
 
-@generative_app.command("analyze")
+@generative_app.command("analyze", epilog=GENERATIVE_CAVEAT)
 def generative_analyze_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
     artifacts: Annotated[Path, typer.Option("--artifacts", exists=True, file_okay=False)],
@@ -1201,7 +1207,7 @@ def generative_analyze_command(
         raise typer.Exit(code=ExitCode.ERROR)
 
 
-@generative_app.command("budget")
+@generative_app.command("budget", epilog=GENERATIVE_CAVEAT)
 def generative_budget_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
     assumed_rate: Annotated[float, typer.Option("--assumed-rate", min=0.0, max=0.999)] = 0.03,
@@ -1340,7 +1346,7 @@ def generative_budget_command(
             typer.echo(f"! {note}")
 
 
-@schema_app.command("generative-plan")
+@schema_app.command("generative-plan", epilog=GENERATIVE_CAVEAT)
 def generative_plan_schema_command() -> None:
     """Print the JSON schema for a generative evaluation plan."""
 
