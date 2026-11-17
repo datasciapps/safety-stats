@@ -9,7 +9,12 @@ import numpy as np
 import pandas as pd
 
 from inspect_safety_stats.config.canonicalize import sha256_value
-from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
+from inspect_safety_stats.config.loader import (
+    canonical_plan_hash,
+    load_plan,
+    report_path,
+    report_plan,
+)
 from inspect_safety_stats.config.models import (
     AnalysisPlan,
     ClaimSpec,
@@ -4792,7 +4797,10 @@ def analyze(
         provenance={
             "source_logs": [
                 {"path": path, "sha256": digest}
-                for path, digest in sorted(data.source_hashes.items())
+                for path, digest in sorted(
+                    (report_path(path, resolved), digest)
+                    for path, digest in data.source_hashes.items()
+                )
             ],
             "inspect_version_constraint": ">=0.3.259,<0.4",
             **(
@@ -4816,7 +4824,7 @@ def analyze(
         presentation={"include_decisions": resolved.report.include_decisions},
         integrity=integrity,
         design={
-            "manifest": str(resolved.inputs.design_manifest),
+            "manifest": report_path(resolved.inputs.design_manifest, resolved),
             "manifest_sha256": sha256_value(data.manifest.to_dict(orient="records")),
             "hierarchy": resolved.design.hierarchy,
             "independence_profiles": {
@@ -4852,5 +4860,5 @@ def analyze(
     )
     report._observations = data.observations
     report._resolved_design = _resolved_design(data, resolved.design.hierarchy)
-    report._resolved_plan = resolved.model_dump(mode="json", by_alias=True)
+    report._resolved_plan = report_plan(resolved)
     return report

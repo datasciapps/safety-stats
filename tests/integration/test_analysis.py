@@ -2507,3 +2507,27 @@ def test_a_two_arm_comparison_set_matches_the_hand_written_comparison(
     _, root_lower, root_upper = results[True][(None, ())]
     assert root_lower is not None and root_upper is not None
     assert results[True] == results[False]
+
+
+def test_a_report_names_its_inputs_relative_to_the_plan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#63: absolute paths made reports machine-specific and revealed the local layout."""
+    plan_path = _write_inputs(tmp_path)
+    eval_frame, sample_frame = _frames()
+    log = tmp_path / "logs" / "run.eval"
+    eval_frame = eval_frame.assign(log=str(log))
+    sample_frame = sample_frame.assign(log=str(log))
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert [item["path"] for item in report.provenance["source_logs"]] == ["logs/run.eval"]
+    assert {observation.source_log for observation in report._observations} == {"logs/run.eval"}
+    assert report.design["manifest"] == "design.csv"
+    assert report._resolved_plan["inputs"]["design_manifest"] == "design.csv"
+    # No written file names the checkout, in any escaping.
+    written = report.write(tmp_path / "report")
+    for path in sorted(written.rglob("*")):
+        if path.is_file():
+            assert tmp_path.name not in path.read_text(encoding="utf-8", errors="replace"), path
