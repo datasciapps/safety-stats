@@ -871,16 +871,11 @@ def _markdown(report: SafetyReport) -> str:
             "",
             (
                 "Ranges are finite-sample confidence bounds, not standard errors or bootstrap "
-                "intervals. Weighted means may use direct weighted Hoeffding or variance-adaptive "
-                "empirical-Bernstein intervals. Rollout-level intervals assume independent "
-                "attempted rollouts; prompt-cluster sensitivities allow arbitrary dependence "
-                "within a prompt. Other "
-                "measures use propagated simultaneous exact prompt bounds, which do not require "
-                "independence between prompts. Coverage is the conservative floor stated for "
-                "each method. "
+                "intervals. Coverage is the conservative floor stated for each method. "
                 "Where outcomes are unclassified, reported missingness-robust bounds cover "
                 "both the all-safe and all-failure completions."
             ),
+            *_interval_methods_markdown(report),
             "",
             (
                 "| Cohort | Group | Measure | Parameters | Estimate | Lower bound | Upper bound | "
@@ -1610,26 +1605,9 @@ def _markdown(report: SafetyReport) -> str:
             f"alpha={_escape(family['alpha'])}, purpose={_escape(family['purpose'])}."
         )
     lines.extend(_defaults_markdown(report))
+    lines.extend(_limitations_markdown(report))
     lines.extend(
         [
-            "",
-            "## Limitations",
-            "",
-            (
-                "- Prompt, question, task, and group membership are fixed "
-                "creator-declared design elements."
-            ),
-            (
-                "- Statistical bounds quantify rollout randomness only under the "
-                "declared stability and independence assumptions."
-            ),
-            (
-                "- Scorer errors, under-elicitation, evaluation awareness, and omitted "
-                "hazards are not repaired by statistical precision."
-            ),
-            (
-                "- Outputs marked diagnostic cannot independently produce a safety pass."
-            ),
             "",
             "## Provenance",
             "",
@@ -1642,6 +1620,68 @@ def _markdown(report: SafetyReport) -> str:
             f"- `{_escape(source.get('path'))}` — SHA-256 `{_escape(source.get('sha256'))}`"
         )
     return "\n".join(lines) + "\n"
+
+
+def _interval_methods_markdown(report: SafetyReport) -> list[str]:
+    """The methods and independence profiles of the risk intervals, with their assumptions.
+
+    Read from the intervals themselves (#64), in the order they first appear among the group
+    and hierarchy risks, so the text names what this report used and nothing else.
+    """
+
+    used: dict[tuple[str, str | None], list[str]] = {}
+    interval_lists = [risk.intervals for risk in report.group_risks]
+    interval_lists.extend(node.intervals for node in report.hierarchy_risks)
+    for intervals in interval_lists:
+        for interval in intervals:
+            key = (interval.method, interval.independence_profile)
+            used.setdefault(key, interval.assumptions)
+    if not used:
+        return []
+    profiles = report.design.get("independence_profiles") or {}
+    lines = ["", "The intervals rest on these methods and assumptions:", ""]
+    for (method, profile), assumptions in used.items():
+        heading = f"- `{_escape(method)}`"
+        if profile is not None:
+            block_by = (profiles.get(profile) or {}).get("block_by") or []
+            blocks = ", ".join(f"`{_escape(field)}`" for field in block_by)
+            heading += f" under independence profile `{_escape(profile)}`"
+            heading += f", which blocks by {blocks}" if blocks else ""
+        lines.append(heading + (":" if assumptions else ", which records no assumptions."))
+        lines.extend(f"  - {_escape(assumption)}" for assumption in assumptions)
+    return lines
+
+
+def _limitations_markdown(report: SafetyReport) -> list[str]:
+    """The "Limitations" section: the assumptions this analysis used, as report.json lists them.
+
+    Each assumption comes with the plan settings it took, marked as defaults or as written in
+    the plan, and with what follows if it is wrong.
+    """
+
+    lines = ["", "## Limitations", ""]
+    if report.assumptions_used:
+        lines.extend(
+            [
+                "The results rest on these assumptions. Each names the plan fields that set it, "
+                "with the value this analysis used and whether the plan wrote it or left it to "
+                "its default.",
+                "",
+            ]
+        )
+    for assumption in report.assumptions_used:
+        settings = "; ".join(
+            f"`{_escape(setting.path)}`: `{_escape(json.dumps(setting.value, sort_keys=True))}` "
+            f"({'default' if setting.default else 'written in the plan'})"
+            for setting in assumption.settings
+        )
+        lines.append(
+            f"- **{_escape(assumption.id)}.** {_escape(assumption.statement)} "
+            + (f"Set by {settings}. " if settings else "No plan field sets it. ")
+            + f"*If it is wrong:* {_escape(assumption.if_wrong)}"
+        )
+    lines.append("- Outputs marked diagnostic cannot independently produce a safety pass.")
+    return lines
 
 
 def _sets_a_value(value: Any) -> bool:

@@ -268,6 +268,24 @@ largest-to-smallest size ratio, and the largest leave-one-cluster-out estimate s
 sensitivity indicators for imbalance and influence; resampling fixed clusters does not turn them
 into a population sample.
 
+## Assumptions and defaults a report states
+
+Every report lists what its results rest on, built from the analysis rather than from a fixed
+text:
+
+- **The interval methods.** Under "Fixed-design risk measures", `report.md` names each method
+  and independence profile its risk intervals used, what the profile blocks by, and the
+  assumptions recorded on those intervals (`intervals[].assumptions` in `report.json`).
+- **The assumptions.** "Limitations" lists each assumption from the package's registry that
+  applies to the analysis, with the plan fields that set it, the value each had, whether the
+  plan wrote it or left it to its default, and what follows if the assumption is wrong
+  (`assumptions_used` in `report.json`). An assumption the plan does not make is left out: a
+  sampled design is not a fixed one, a plan without comparisons makes no assumption about
+  their arms, and an exploratory analysis does not claim its plan was fixed in advance.
+- **The defaults.** "Defaults applied" lists the plan fields the plan left out that the
+  analysis filled with a default value (`plan_defaults` in `report.json`; see
+  [The plan hash](plan-reference.md#the-plan-hash)).
+
 ## External validity
 
 No result in version 1 generalizes automatically beyond the fixed design. Statistical precision cannot repair scorer error, under-elicitation, sandbagging, omitted hazards, or deployment shift.

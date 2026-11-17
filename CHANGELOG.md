@@ -7,6 +7,15 @@ described in their pull requests.
 
 ### Added
 
+- **Reports state the methods and assumptions they used (#64).** The "Fixed-design risk
+  measures" paragraph of `report.md` no longer names a fixed set of methods and profiles: it
+  lists each method and independence profile the report's intervals used, with the
+  assumptions those intervals record. "Limitations" is generated from the package's registry
+  of assumptions: each assumption that applies, with the plan settings it took, marked as
+  default or written, and what follows if it is wrong. `report.json` gains
+  `assumptions_used` with the same content. See
+  [Assumptions and defaults a report states](docs/interpretation.md#assumptions-and-defaults-a-report-states).
+
 - **Reports record every default the analysis applied.** `report.json` gains `plan_defaults`:
   each plan field the plan left out, with the value its default gave the analysis. These are
   the fields the plan hash does not cover. `report.md` gains a "Defaults applied" section that

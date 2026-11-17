@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from inspect_safety_stats.analysis.adaptive_claims import _unavailable_adaptive_claims
+from inspect_safety_stats.analysis.assumptions import assumptions_used
 from inspect_safety_stats.analysis.inputs import _sorted_integrity
 from inspect_safety_stats.config.loader import (
     canonical_plan_hash,
@@ -160,6 +161,7 @@ def _report_frame(plan: AnalysisPlan) -> dict[str, Any]:
             "plan_sha256": canonical_plan_hash(plan),
         },
         "plan_defaults": plan_defaults(plan),
+        "assumptions_used": assumptions_used(plan),
         "scope": _scope(plan),
         "presentation": _presentation(plan),
         "multiplicity": [family.model_dump(mode="json") for family in plan.multiplicity.families],
