@@ -537,9 +537,14 @@ class ReportPresentation(ResultModel):
 
     A report is rendered from ``report.json`` alone. Fields that are None were not recorded,
     in reports written before they existed.
+
+    ``include_decisions`` hides decisions; it does not withhold them (#58). Every rendering
+    leaves out the overall decision and the claims' statuses when it is false, while
+    ``report.json`` keeps both. A report that does not record it reads as the plan's default,
+    false, here and in ``report.html``.
     """
 
-    include_decisions: bool = True
+    include_decisions: bool = False
     decimal_places: int | None = None
     primary_independence_profile: str | None = None
     claim_evidence: list[ClaimEvidenceRecord] | None = None

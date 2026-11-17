@@ -1087,7 +1087,7 @@ for a claim that can only fail. Plans without `adaptive_claims` keep their hash.
 
 | Field | Default | Meaning |
 |---|---:|---|
-| `include_decisions` | false | Show overall decision, threshold-claim cards, and policy-event roll-up in human-facing reports |
+| `include_decisions` | false | Show overall decision, threshold-claim cards, and policy-event roll-up in human-facing reports. When false they are hidden, not withheld: `report.json` and the data embedded in `report.html` still hold the decision and every claim's status |
 | `include_prompt_text` | false | Reserved; raw content remains omitted in v1 |
 | `include_observations` | true | Write normalized observation CSV |
 | `decimal_places` | 6 | Markdown display precision; JSON retains full precision |

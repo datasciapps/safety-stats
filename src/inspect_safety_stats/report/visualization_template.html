@@ -391,7 +391,7 @@
     const claims = Array.isArray(report.claims) ? report.claims : [];
     // Experimental (#125): claims that can only FAIL, on an attacker that adapts across runs.
     const adaptiveClaims = Array.isArray(report.adaptive_claims) ? report.adaptive_claims : [];
-    const showDecisions = report.presentation?.include_decisions ?? true;
+    const showDecisions = report.presentation?.include_decisions ?? false;
     const comparisons = Array.isArray(report.comparisons) ? report.comparisons : [];
     const comparisonSets = Array.isArray(report.comparison_sets) ? report.comparison_sets : [];
     const groups = (report.design && Array.isArray(report.design.groups)) ? report.design.groups : [];

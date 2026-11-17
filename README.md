@@ -237,7 +237,8 @@ strategically underperforming on the evaluation. The statistics here cannot dete
 
 The package distinguishes simultaneous uncertainty guarantees from diagnostic outputs. Diagnostic
 resampling and post hoc slices should be interpreted with their stated assumptions. Optional threshold decisions can be enabled with
-`report.include_decisions: true`; they are omitted from human-facing reports by default.
+`report.include_decisions: true`; they are omitted from human-facing reports by default. The
+option hides them: `report.json` holds the decision and every claim's status either way.
 
 [What results establish](docs/what-results-establish.md) brings these limits together on one
 page, and every report links to it.
