@@ -95,7 +95,6 @@ def prompt_blocked(diagnostics: list[Diagnostic], cohort: str, prompt: str) -> b
         "INGEST_FAILED",
         "COHORT_OVERLAP",
         "ALPHA_ALLOCATION_INVALID",
-        "METHOD_UNAVAILABLE",
     }
     for diagnostic in diagnostics:
         if diagnostic.severity != "ERROR":
