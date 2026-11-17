@@ -22,6 +22,7 @@ from inspect_safety_stats.analysis.report import (
     _resolved_design,
     _unread_input_report,
 )
+from inspect_safety_stats.analysis.tail_precision import tail_measure_precision
 from inspect_safety_stats.config.canonicalize import canonical_value, sha256_value
 from inspect_safety_stats.config.decision_policy import DecisionPolicy
 from inspect_safety_stats.config.loader import canonical_plan_hash, report_path, report_plan
@@ -276,6 +277,7 @@ def analyze(
     anytime_bound_diagnostics(resolved, data, diagnostics, _order_reader(logs, source))
     core = _analysis_core(resolved, data, diagnostics)
     estimates = core.estimates
+    tail_measure_precision(resolved, estimates, diagnostics)
     risks = core.risks
     hierarchy_risks = core.hierarchy_risks
     comparisons = core.comparisons
