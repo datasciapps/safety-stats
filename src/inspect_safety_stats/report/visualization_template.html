@@ -518,7 +518,13 @@
     function renderHeader() {
       document.title = report.analysis?.title || "Inspect Safety Statistics";
       document.getElementById("title").textContent = report.analysis?.title || report.analysis?.id || "Safety analysis";
-      document.getElementById("subtitle").textContent = report.scope?.disclaimer || "Fixed-design statistical safety analysis.";
+      const subtitle = document.getElementById("subtitle");
+      subtitle.textContent = report.scope?.disclaimer || "Fixed-design statistical safety analysis.";
+      if (report.scope?.what_results_establish) {
+        const link = el("a", "", "What these results establish, and what they do not");
+        link.href = report.scope.what_results_establish;
+        subtitle.append(" ", link);
+      }
       document.getElementById("meta").textContent = [
         `Analysis ${report.analysis?.id || "—"}`,
         `Package ${report.package_version || "—"}`,

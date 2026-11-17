@@ -5252,8 +5252,9 @@
   "schema_version": "3.0",
   "scope": {
     "design": "fixed",
-    "disclaimer": "Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions.",
+    "disclaimer": "Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions. Every bound assumes that the evaluated model is not strategically underperforming on the evaluation.",
     "estimand": "end_to_end_system",
-    "randomness": "stochastic rollouts within fixed prompts"
+    "randomness": "stochastic rollouts within fixed prompts",
+    "what_results_establish": "https://github.com/aduncan001/safety_stats/blob/main/docs/what-results-establish.md"
   }
 }

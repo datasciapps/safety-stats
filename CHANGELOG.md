@@ -7,6 +7,15 @@ described in their pull requests.
 
 ### Added
 
+- **Every report links to a page on what results establish (#12).** `scope` in `report.json`
+  gains `what_results_establish`, the address of
+  [What results establish](docs/what-results-establish.md), a one-page summary of what a
+  result shows and what it does not. `report.md` shows the link under "Scope" and `report.html`
+  beside the scope statement. The scope statement itself now ends with the condition every
+  bound rests on: "Every bound assumes that the evaluated model is not strategically
+  underperforming on the evaluation." Every `report.json`, `report.md` and `report.html`
+  changes bytes; the CSVs do not. A `report.json` written before renders without the link.
+
 - **Diagnostics say what they concern and what they do.** Every diagnostic in `report.json`
   now carries `source`, the kind of input it concerns (`plan`, `registration`, `manifest`,
   `logs`, `judge_labels`, `analysis` or `generation`), and `effect`, what it does to the

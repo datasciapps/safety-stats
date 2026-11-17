@@ -796,6 +796,10 @@ def _markdown(report: SafetyReport) -> str:
         "",
         f"**Safety estimand:** `{_escape(report.scope.get('estimand'))}`",
     ]
+    establish = report.scope.get("what_results_establish")
+    if establish:
+        # Reports written before the link existed have none.
+        lines.extend(["", f"What these results establish, and what they do not: <{establish}>"])
     if include_decisions:
         lines.insert(2, f"**Decision:** `{report.decision}`  ")
         lines.extend(
