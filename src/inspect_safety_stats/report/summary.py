@@ -33,6 +33,7 @@ from inspect_safety_stats.schema.reports import (
     RiskIntervalResult,
     SafetyReport,
 )
+from inspect_safety_stats.schema.summary import is_headline_risk
 from inspect_safety_stats.stats.planning import (
     rollout_scale_for_half_width,
     rollouts_for_half_width,
@@ -190,7 +191,7 @@ def _root_section(
     primary_scenario: str | None,
     flags: list[str],
 ) -> list[str]:
-    risks = [risk for risk in report.group_risks if _measure_type(risk) == "weighted_mean"]
+    risks = [risk for risk in report.group_risks if is_headline_risk(risk)]
     if not risks:
         return []
     with_judge = any(

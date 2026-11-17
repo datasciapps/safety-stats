@@ -7,6 +7,33 @@ described in their pull requests.
 
 ### Added
 
+- **Every report directory has an index for agents: index.json and index.md.** `index.json`
+  lists every file of the report directory with its format, what it holds and, for the CSVs
+  whose rows are items of a `report.json` list, which list that is. It then copies the summary
+  level of `report.json`: headline estimates, decisions when shown, and errors and warnings by
+  code. Each entry has a JSON pointer into `report.json`, and a headline comparison also has
+  its row in `comparisons.csv`. `index.md` holds the same content as Markdown, and
+  `checksums.json` covers both. `analyze` prints the index's path. The
+  [agent guide](docs/agent-guide.md) says how to read them.
+
+- **report.json has a summary level (changes `report.json`).** `report.json` gains
+  `summary`: the integrity status and the count of errors, warnings and notes; the headline
+  estimates (each weighted-mean failure rate and each overall comparison); the errors and
+  warnings grouped by code, with the registry's assumption and consequence and, for each
+  occurrence, a pointer to the diagnostic and to the item it concerns; and the ids of the
+  assumptions used. With `report.include_decisions: true` it also holds the overall decision
+  and each claim's status. Every entry carries a JSON pointer to its full record. The summary
+  copies values from the rest of the report; it is dropped when a saved report is read back.
+  `analyze` and `report.md` pick the headline rates by the same rule
+  (`inspect_safety_stats.schema.summary.is_headline_risk`).
+
+- **Each diagnostic in a report points at its item (changes `report.json`).** Every
+  diagnostic in `report.json` gains `item`, a JSON pointer to the record its scope names:
+  `/claims/<i>`, `/comparisons/<i>`, `/prompt_estimates/<i>`, `/group_risks/<i>` and the
+  others listed in `inspect_safety_stats.schema.pointers`. It is null when the report holds no
+  record of the item, such as a plan setting or a run. The report computes it from the scope,
+  also when a saved `report.json` is read back.
+
 - **report.md is a one-page summary; the full report is report-full.md (changes `report.md`).**
   `report.md` now holds one page. It starts with a header line with the prompts, rollouts,
   models and data-integrity status. Then come these sections:
@@ -500,6 +527,14 @@ described in their pull requests.
   [Verdicts by profile](docs/independence-profiles.md#verdicts-by-profile).
 
 ### Changed
+
+- **`report.include_decisions` hides decisions, and every reader defaults it to false (#58).**
+  The option was read as true by `report.html` and by the Python report model when a report did
+  not record it, and as false by the plan and the CLI. Every reader now reads it as false. The
+  option hides decisions in the renderings; `report.json` and the data embedded in
+  `report.html` still hold the overall decision and every claim's status, and the docs now say
+  so. Reports written by `analyze` always record the option, so only the viewer script in
+  `report.html` changes.
 
 - **The offline demo uses the plan `init` writes.** `examples/demo/plan.yaml` and
   `design.csv` are now the output of `inspect-safety-stats init --group-by risk_domain

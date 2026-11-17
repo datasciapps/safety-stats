@@ -10,11 +10,13 @@ from pydantic import (
     PrivateAttr,
     SerializerFunctionWrapHandler,
     ValidationInfo,
+    computed_field,
     model_serializer,
     model_validator,
 )
 
 from inspect_safety_stats.registry import CODES, Effect, SourceKind
+from inspect_safety_stats.schema.pointers import ItemPointers
 from inspect_safety_stats.schema.scopes import scope_segments
 
 Decision = Literal["PASS", "FAIL", "INCONCLUSIVE"]
@@ -40,6 +42,11 @@ class Diagnostic(ResultModel):
     ``scope`` is a path that says where the finding sits, as ``inspect_safety_stats.schema.scopes``
     describes: ``plan/claims/mean_safe``, ``cohorts/candidate/prompts/p1``. A scope that does
     not follow it is rejected, except when a stored report is read back (``STORED_REPORT``).
+
+    ``item`` is a JSON pointer into ``report.json`` to the record the scope names, such as
+    ``/claims/0`` or ``/prompt_estimates/12``, and null when the report holds no record of it
+    (``inspect_safety_stats.schema.pointers``). The report fills it from the scope, also when
+    it is read back, so it always points into the report that holds the diagnostic.
     """
 
     code: str
@@ -48,6 +55,7 @@ class Diagnostic(ResultModel):
     effect: Effect | None = None
     message: str
     scope: str | None = None
+    item: str | None = None
     details: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -537,9 +545,14 @@ class ReportPresentation(ResultModel):
 
     A report is rendered from ``report.json`` alone. Fields that are None were not recorded,
     in reports written before they existed.
+
+    ``include_decisions`` hides decisions; it does not withhold them (#58). Every rendering
+    leaves out the overall decision and the claims' statuses when it is false, while
+    ``report.json`` keeps both. A report that does not record it reads as the plan's default,
+    false, here and in ``report.html``.
     """
 
-    include_decisions: bool = True
+    include_decisions: bool = False
     decimal_places: int | None = None
     primary_independence_profile: str | None = None
     claim_evidence: list[ClaimEvidenceRecord] | None = None
@@ -668,6 +681,26 @@ class SafetyReport(ResultModel):
     _observations: list[Any] = PrivateAttr(default_factory=list)
     _resolved_plan: dict[str, Any] = PrivateAttr(default_factory=dict)
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def summary(self) -> ReportSummary:
+        """What to read first, with pointers to the rest (``inspect_safety_stats.schema.summary``).
+
+        Written to ``report.json``; derived from the other fields, so it is dropped when a
+        saved report is read back.
+        """
+
+        from inspect_safety_stats.schema.summary import report_summary
+
+        return report_summary(self)
+
+    @model_validator(mode="before")
+    @classmethod
+    def drop_the_derived_summary(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "summary" in data:
+            data = {key: value for key, value in data.items() if key != "summary"}
+        return data
+
     @model_serializer(mode="wrap")
     def leave_out_absent_optional_sections(
         self, handler: SerializerFunctionWrapHandler
@@ -682,6 +715,14 @@ class SafetyReport(ResultModel):
         if not self.adaptive_claims:
             data.pop("adaptive_claims", None)
         return data
+
+    @model_validator(mode="after")
+    def point_each_diagnostic_at_its_item(self) -> SafetyReport:
+        # Derived from the scope and the results, so a stored value is recomputed, not trusted.
+        pointers = ItemPointers(self)
+        for diagnostic in self.integrity.diagnostics:
+            diagnostic.item = pointers.pointer(diagnostic.scope)
+        return self
 
     def write(self, output: str | Path, *, overwrite: bool = False) -> Path:
         from inspect_safety_stats.report.writer import write_report
@@ -744,3 +785,10 @@ def result_readings(
         for claim in sorted(claims, key=lambda item: item.claim_id)
     )
     return rows
+
+
+# ORDER MATTERS: schema/summary.py imports this module's models, so it can only be imported once
+# they exist; SafetyReport.summary's type is resolved by the rebuild that follows.
+from inspect_safety_stats.schema.summary import ReportSummary  # noqa: E402
+
+SafetyReport.model_rebuild()
