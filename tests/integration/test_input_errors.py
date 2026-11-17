@@ -102,6 +102,27 @@ def test_validate_and_analyze_report_bad_input_the_same_way(tmp_path: Path) -> N
     assert [item.code for item in summary.diagnostics] == ["INGEST_FAILED"]
 
 
+def test_unreadable_input_is_named_relative_to_the_plan(tmp_path: Path) -> None:
+    # A report names its inputs relative to the plan's directory, so that it is the same in
+    # any checkout and does not reveal the local directory layout. The error's message too.
+    study = tmp_path / "study"
+    study.mkdir()
+    plan, source = _inputs(study, manifest=False)
+    missing = analyze(plan=plan, source=source)
+    assert "'design.csv'" in missing.integrity.diagnostics[0].message
+    plan, source = _inputs(study)
+    data = tmp_path / "data"
+    data.mkdir()
+    rollouts = data / "rollouts.jsonl"
+    rollouts.write_text("{not json\n", encoding="utf-8", newline="\n")
+    broken = analyze(plan=plan, source=RolloutFiles(runs=source.runs, rollouts=rollouts))
+    assert broken.integrity.diagnostics[0].message.startswith("../data/rollouts.jsonl:1: ")
+    for number, report in enumerate((missing, broken)):
+        written = report.write(tmp_path / f"report-{number}")
+        for name in ("report.json", "report.md"):
+            assert tmp_path.name not in (written / name).read_text(encoding="utf-8")
+
+
 def test_the_cli_writes_the_report_of_unreadable_input_and_exits_3(tmp_path: Path) -> None:
     plan, source = _inputs(tmp_path, manifest=False)
     output = tmp_path / "report"

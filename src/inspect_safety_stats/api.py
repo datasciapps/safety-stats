@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import dataclasses
 import itertools
+import os
+import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
@@ -155,6 +159,47 @@ def _source(
     return InspectLogs(logs, parallel=parallel)
 
 
+def _named_paths(value: object) -> Iterator[str | os.PathLike[str]]:
+    """The paths an input names: a path, a sequence of paths, or a dataclass source's fields."""
+
+    if isinstance(value, str | os.PathLike):
+        yield value
+    elif dataclasses.is_dataclass(value) and not isinstance(value, type):
+        for field in dataclasses.fields(value):
+            yield from _named_paths(getattr(value, field.name))
+    elif isinstance(value, list | tuple):
+        for item in value:
+            yield from _named_paths(item)
+
+
+def _report_message(message: str, plan: AnalysisPlan, inputs: tuple[object, ...]) -> str:
+    """An input error's message with each absolute input path in it as a report records it.
+
+    An exception names the file it failed on as it opened it, often by its absolute path. A
+    report names its inputs relative to the plan's directory (``report_path``), so that the
+    same analysis writes the same bytes in any checkout and a shared report does not reveal
+    the local directory layout; the message follows suit. A directory's form also replaces the
+    start of the paths of the files in it. Paths as given relative to the working directory,
+    and URIs, are left as they are.
+    """
+
+    forms: dict[str, str] = {}
+    for path in _named_paths(inputs):
+        text = os.fspath(path)
+        if "://" in text:
+            continue
+        form = report_path(text, plan)
+        for absolute in (text, str(Path(text).resolve())):
+            if Path(absolute).is_absolute():
+                forms[absolute] = form
+                # OSError messages show the path's repr, which doubles Windows separators.
+                forms[absolute.replace("\\", "\\\\")] = form
+    if not forms:
+        return message
+    pattern = "|".join(re.escape(text) for text in sorted(forms, key=len, reverse=True))
+    return re.sub(pattern, lambda match: forms[match.group(0)], message)
+
+
 def _read_input(
     plan: AnalysisPlan,
     logs: LogInput,
@@ -165,8 +210,9 @@ def _read_input(
     """Read and normalize the analysis input, or record why it cannot be read.
 
     ``validate`` and ``analyze`` both read their input here, so that bad input gives both the
-    same ``INGEST_FAILED`` error. None when the input cannot be read. Passing both ``logs``
-    and ``source`` is a mistake in the call, not in the input, and raises ``ValueError``.
+    same ``INGEST_FAILED`` error, its paths relative to the plan's directory. None when the
+    input cannot be read. Passing both ``logs`` and ``source`` is a mistake in the call, not in
+    the input, and raises ``ValueError``.
     """
 
     if source is not None and logs is not None:
@@ -175,7 +221,15 @@ def _read_input(
         data = ingest(plan, _source(logs, parallel, source))
         validate_profile_fields(plan.design.independence_profiles, data.manifest)
     except Exception as exc:
-        diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=str(exc)))
+        calibration = plan.inputs.judge_calibration
+        inputs = (
+            plan.inputs.design_manifest,
+            None if calibration is None else calibration.validation_manifest,
+            logs,
+            source,
+        )
+        message = _report_message(str(exc), plan, inputs)
+        diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=message))
         return None
     diagnostics.extend(data.diagnostics)
     return data

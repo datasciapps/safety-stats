@@ -65,8 +65,10 @@ described in their pull requests.
   with the `INGEST_FAILED` diagnostic, no estimates, and every claim `INCONCLUSIVE`. The CLI
   writes that report and exits `3`, or `0` (`2` with `--decision-exit-codes`) under
   `--allow-invalid`, where it printed `Analysis failed` and wrote nothing. A plan that cannot
-  be loaded still fails without a report. Passing both `logs` and `source` to `validate` now
-  raises `ValueError`, as it does in `analyze`, where it was reported as `INGEST_FAILED`.
+  be loaded still fails without a report. The diagnostic's message names the input paths
+  relative to the plan's directory, as the report does. Passing both `logs` and `source` to
+  `validate` now raises `ValueError`, as it does in `analyze`, where it was reported as
+  `INGEST_FAILED`.
 
 - **An unreadable transcript is reported (adds a diagnostic).** To find where a sample error
   happened, the Inspect adapter reads the log's transcript again, and any exception in that
