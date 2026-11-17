@@ -133,6 +133,93 @@ def _source_arguments(
     return (str(logs[0]) if len(logs) == 1 else [str(path) for path in logs]), None
 
 
+@app.command("init")
+def init_command(
+    logs: Annotated[list[Path] | None, typer.Option("--logs", exists=True)] = None,
+    failure_values: Annotated[
+        list[str] | None,
+        typer.Option("--failure-values", help="Score values that count as a safety failure."),
+    ] = None,
+    safe_values: Annotated[
+        list[str] | None,
+        typer.Option("--safe-values", help="Score values that count as safe (default: the rest)."),
+    ] = None,
+    failure_threshold: Annotated[
+        float | None,
+        typer.Option("--failure-threshold", help="Numeric scores at or above this are failures."),
+    ] = None,
+    score: Annotated[str | None, typer.Option("--score", help="Scorer name to analyze.")] = None,
+    group_by: Annotated[
+        str | None,
+        typer.Option("--group-by", help="Sample metadata field for a one-level breakdown."),
+    ] = None,
+    baseline: Annotated[
+        str | None,
+        typer.Option("--baseline", help="Model (or cohort id) to compare the others against."),
+    ] = None,
+    alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
+    nested_weights: Annotated[
+        bool,
+        typer.Option(
+            "--nested-weights/--equal-prompt-weights",
+            help="Weight each group equally rather than each prompt.",
+        ),
+    ] = False,
+    output: Annotated[Path, typer.Option("--output", file_okay=False)] = Path("."),
+    overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
+) -> None:
+    """Write a starter design manifest and plan from completed Inspect logs.
+
+    The plan reports the root failure risk per model with a prompt-level sensitivity,
+    an optional one-level breakdown, and a comparison when there are several models.
+    Edit it to add claims, risk measures or judge calibration.
+    """
+
+    if not logs:
+        raise typer.BadParameter("at least one --logs path is required")
+    from inspect_safety_stats.scaffold import scaffold_plan
+
+    try:
+        result = scaffold_plan(
+            [str(path) for path in logs],
+            output,
+            score=score,
+            failure_values=failure_values,
+            safe_values=safe_values,
+            failure_threshold=failure_threshold,
+            group_by=group_by,
+            baseline=baseline,
+            alpha=alpha,
+            weights="nested_equal" if nested_weights else "equal_prompt",
+            overwrite=overwrite,
+        )
+    except Exception as exc:
+        typer.echo(f"Init failed: {exc}", err=True)
+        raise typer.Exit(code=ExitCode.ERROR) from exc
+    typer.echo(f"Score: {result.score}")
+    if result.failure_values is not None:
+        typer.echo(f"  failure values: {result.failure_values!r}")
+        typer.echo(f"  safe values:    {result.safe_values!r}")
+    else:
+        typer.echo(f"  failure if score >= {failure_threshold}")
+    typer.echo(
+        f"Prompts: {result.prompts}, rollouts per prompt: {result.rollouts_per_prompt}"
+        + (f", grouped by {result.group_by!r}" if result.group_by else "")
+    )
+    for cohort, model in result.cohorts.items():
+        marker = " (reference)" if cohort == result.reference else ""
+        typer.echo(f"Cohort {cohort}: {model}{marker}")
+    for note in result.notes:
+        typer.echo(f"Note: {note}")
+    typer.echo(f"Manifest: {result.manifest_path}")
+    typer.echo(f"Plan: {result.plan_path}")
+    log_args = " ".join(f"--logs {path}" for path in logs)
+    typer.echo(
+        f"Next: inspect-safety-stats analyze --plan {result.plan_path} {log_args} "
+        "--output <report-dir>"
+    )
+
+
 @app.command("analyze")
 def analyze_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],

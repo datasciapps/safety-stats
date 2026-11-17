@@ -25,6 +25,8 @@ ADAPTERS = {
         "inspect_safety_stats.ingest.inspect_logs",
         "inspect_safety_stats.generative.logs",
         "inspect_safety_stats.generative.inspect_bridge",
+        # init: reads the structure of Inspect logs to write a starter plan.
+        "inspect_safety_stats.scaffold",
     },
     "rollout_files": {"inspect_safety_stats.ingest.rollout_files"},
 }
