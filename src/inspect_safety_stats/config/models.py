@@ -39,6 +39,9 @@ def _refuse_booleans(kind: str) -> BeforeValidator:
 PlanInt = Annotated[int, _refuse_booleans("an integer")]
 PlanFloat = Annotated[float, _refuse_booleans("a number")]
 
+# report.precision_target when a plan leaves it out.
+DEFAULT_PRECISION_TARGET = 0.05
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True, allow_inf_nan=False)
@@ -1079,6 +1082,9 @@ class ReportSpec(StrictModel):
     # Experimental (#11): write claims.json beside report.json. Left out of the plan dump while
     # off, like judge_error_stress.
     claims_export: bool = False
+    # The widest a bound may lie from its estimate and still count as precise. Left out of
+    # the plan dump at its default, so plans that do not set it keep their hash (#56).
+    precision_target: PlanFloat = Field(default=DEFAULT_PRECISION_TARGET, gt=0, lt=0.5)
 
     @model_validator(mode="after")
     def claims_export_needs_decisions(self) -> ReportSpec:
@@ -1101,6 +1107,8 @@ class ReportSpec(StrictModel):
             data.pop("judge_error_stress", None)
         if not self.claims_export:
             data.pop("claims_export", None)
+        if self.precision_target == DEFAULT_PRECISION_TARGET:
+            data.pop("precision_target", None)
         return data
 
 
