@@ -287,7 +287,7 @@ arm constraints. The ratio function projects from the same kind of two-arm regio
 Charnes--Cooper linear-fractional transformation. Returned objects report feasibility, projected
 intervals, constraint count, and any solver message.
 
-The plan-driven `comparison_sets` compiler applies these primitives to three or more arms. It
+The plan-driven `comparison_sets` compiler applies these primitives to two or more arms. It
 intersects every calibrated constraint for a shared arm, projects that arm hierarchy once, and
 derives all requested differences and ratios from the common arm projections. This orchestration
 is intentionally exposed through `analyze()` rather than a separate low-level convenience
@@ -429,7 +429,7 @@ Exit codes of `analyze`:
 
 ## Compatibility and stability
 
-The runtime supports Python 3.10 or newer and Inspect AI `>=0.3.259,<0.4`. Plan and report schema
+The runtime supports Python 3.11 or newer and Inspect AI `>=0.3.259,<0.4`. Plan and report schema
 version `1.0` are strict. New fields or methods may be added compatibly within the package's
 `0.x` development series, but consumers should validate `schema_version` before automated use.
 

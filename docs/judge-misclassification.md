@@ -251,7 +251,9 @@ rollouts. The two agree exactly only for a row that
   items do not bound the judge's accuracy over the frame.
 
 Equal prompt weights with equal rollout counts satisfy the weighting condition. `nested_equal`
-weights over an unbalanced hierarchy usually do not.
+weights over an unbalanced hierarchy usually do not. A correction also never supports more
+than the row it corrects: the correction of a diagnostic row, such as a `diagnostic_only`
+measure, is diagnostic too.
 
 Every other corrected row is still reported, as a **sensitivity analysis**:
 `eligibility: diagnostic`, no coverage, and a warning that names the reason. A claim that
