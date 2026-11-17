@@ -648,6 +648,14 @@ def summary_markdown(report: SafetyReport) -> str:
             "",
             str(report.scope.get("disclaimer", "")),
             "",
+        ]
+    )
+    establish = report.scope.get("what_results_establish")
+    if establish:
+        # Reports written before the link existed have none.
+        lines.extend([f"What these results establish, and what they do not: <{establish}>", ""])
+    lines.extend(
+        [
             "Every interval, sensitivity, prompt-level bound and diagnostic message is in "
             "`report-full.md`, the interactive `report.html` and the CSV files beside this "
             f"page. Plan SHA-256 `{_escape(report.analysis.get('plan_sha256'))}`; "

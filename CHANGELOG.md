@@ -28,7 +28,17 @@ described in their pull requests.
   weighted-mean failure rate with its interval and the path of the summary, in place of the
   count of risk measures. New planning functions `rollouts_for_half_width` and
   `rollout_scale_for_half_width` in `inspect_safety_stats.stats.planning` give the rollouts
-  that an interval width needs.
+  that an interval width needs. The summary's "Scope" carries the link to
+  [What results establish](docs/what-results-establish.md) as well.
+
+- **Every report links to a page on what results establish (#12).** `scope` in `report.json`
+  gains `what_results_establish`, the address of
+  [What results establish](docs/what-results-establish.md), a one-page summary of what a
+  result shows and what it does not. `report.md` shows the link under "Scope" and `report.html`
+  beside the scope statement. The scope statement itself now ends with the condition every
+  bound rests on: "Every bound assumes that the evaluated model is not strategically
+  underperforming on the evaluation." Every `report.json`, `report.md` and `report.html`
+  changes bytes; the CSVs do not. A `report.json` written before renders without the link.
 
 - **Diagnostics say what they concern and what they do.** Every diagnostic in `report.json`
   now carries `source`, the kind of input it concerns (`plan`, `registration`, `manifest`,

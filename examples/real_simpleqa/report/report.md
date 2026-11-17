@@ -61,6 +61,8 @@ What follows if one is wrong, and the value of each setting, is under Limitation
 
 ## Scope
 
-Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions.
+Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions. Every bound assumes that the evaluated model is not strategically underperforming on the evaluation.
+
+What these results establish, and what they do not: <https://github.com/aduncan001/safety_stats/blob/main/docs/what-results-establish.md>
 
 Every interval, sensitivity, prompt-level bound and diagnostic message is in `report-full.md`, the interactive `report.html` and the CSV files beside this page. Plan SHA-256 `fd9ee06715157246e1e6d90d86f2cada7d7cffe96ee9fd7e280c8d026a0f654c`; inspect-safety-stats 0.15.0.
