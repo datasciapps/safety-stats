@@ -7,6 +7,29 @@ described in their pull requests.
 
 ### Added
 
+- **report.md is a one-page summary; the full report is report-full.md (changes `report.md`).**
+  `report.md` now holds one page. It starts with a header line with the prompts, rollouts,
+  models and data-integrity status. Then come these sections:
+  - a "Warnings" block, with one row per error or warning code giving where it applies, the
+    assumption it checks and its effect;
+  - the claims, when decisions are shown;
+  - the failure rate per model with its prompt-level sensitivity, and judge-corrected risk when
+    calibration is configured;
+  - the comparisons, with a plain reading;
+  - a one-level breakdown, and tail and threshold measures when they are declared;
+  - "Precision": every interval further than `report.precision_target` from its estimate, with
+    the rollouts that would narrow it;
+  - "Assumptions used", naming the settings left at their defaults.
+
+  The previous document is written unchanged as `report-full.md` and is listed in
+  `checksums.json`. A `precision_target` other than the default is recorded in `report.json` as
+  `presentation.precision_target`, so the summary renders from `report.json` alone. Reports of
+  plans that keep the default keep their `report.json` bytes. `analyze` prints each
+  weighted-mean failure rate with its interval and the path of the summary, in place of the
+  count of risk measures. New planning functions `rollouts_for_half_width` and
+  `rollout_scale_for_half_width` in `inspect_safety_stats.stats.planning` give the rollouts
+  that an interval width needs.
+
 - **Diagnostics say what they concern and what they do.** Every diagnostic in `report.json`
   now carries `source`, the kind of input it concerns (`plan`, `registration`, `manifest`,
   `logs`, `judge_labels`, `analysis` or `generation`), and `effect`, what it does to the
