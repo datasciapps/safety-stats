@@ -178,10 +178,12 @@ def init_command(
         ),
     ] = "exploratory",
 ) -> None:
-    """Write a starter design manifest and plan from completed Inspect logs.
+    """Write a starter design manifest and plan from completed Inspect logs (experimental).
 
     The plan reports the root failure risk per model with a prompt-level sensitivity,
     an optional one-level breakdown, and a comparison when there are several models.
+    Its header notes each assumption the plan rests on, rollout independence first,
+    with what goes wrong if it does not hold and how to change it.
     Edit it to add claims, risk measures or judge calibration.
     """
 

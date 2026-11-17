@@ -7,6 +7,16 @@ described in their pull requests.
 
 ### Added
 
+- **`init`: a starter plan from completed logs, with its assumptions noted (experimental).**
+  `inspect-safety-stats init --logs LOGS --failure-values V` writes `design.csv` and
+  `safety-plan.yaml`: one cohort per model, the root failure risk with a prompt-level
+  sensitivity, an optional breakdown and a comparison of several models. The plan's header,
+  and the command's output, list each choice `init` made with the assumption it rests on from
+  `inspect_safety_stats.registry`, rollout independence first, what goes wrong if it does not
+  hold, and the remedy. The plan is exploratory; `--intent confirmatory` is refused, because
+  the plan is written after the logs exist. See
+  [Command-line interface](docs/api-reference.md#command-line-interface).
+
 - **Open-weight example and limitations log.** [`examples/open_weights/`](examples/open_weights/README.md) runs an open-weight model on
   HarmBench and XSTest with thinking off and on, many rollouts per prompt, judges them, and
   analyzes the run; it also orders rollouts for human labelling and turns the labels into
