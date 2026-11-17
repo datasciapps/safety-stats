@@ -110,12 +110,11 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                 comparison_family_modes.setdefault(comparison.family, set()).add(
                     comparison.coverage_mode
                 )
-                assert comparison.independence is not None
+                independence = comparison.independence
+                if independence is None:
+                    raise ValueError("comparisons require an independence selection")
                 comparison_family_profiles.setdefault(comparison.family, set()).add(
-                    (
-                        comparison.independence.primary,
-                        tuple(comparison.independence.sensitivities),
-                    )
+                    (independence.primary, tuple(independence.sensitivities))
                 )
         paired = {
             "exact_mcnemar",
