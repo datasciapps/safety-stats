@@ -210,7 +210,7 @@ def validate(
     ``plan`` is an ``AnalysisPlan`` or the path of a plan file, read with ``load_plan``. The
     data comes from ``source`` when given, or else from the Inspect logs in ``logs``, read with
     ``parallel`` passed to Inspect's log reader. Passing both ``logs`` and ``source`` is an
-    error. Unlike ``analyze``, a failure to read the data does not raise: it is reported as an
+    error. As in ``analyze``, a failure to read the data does not raise: it is reported as an
     ``INGEST_FAILED`` diagnostic. Returns the integrity status (``valid``, ``degraded`` or
     ``invalid``) and the sorted diagnostics.
     """
@@ -4980,8 +4980,9 @@ def analyze(
     error. The report holds the prompt-level estimates, group and hierarchy risk bounds,
     comparisons, claims with their pass, fail or inconclusive status, and the overall
     decision. Its results apply to the declared fixed evaluation set, not to a wider prompt
-    population. Write it to disk with ``SafetyReport.write``. Raises when the data cannot be read;
-    ``validate`` reports that as a diagnostic instead.
+    population. Write it to disk with ``SafetyReport.write``. Data that cannot be read does not
+    raise: the report then carries an ``INGEST_FAILED`` diagnostic, its integrity is invalid,
+    and every claim is INCONCLUSIVE.
     """
 
     resolved = _coerce_plan(plan)
