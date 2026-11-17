@@ -3,17 +3,24 @@ from __future__ import annotations
 import itertools
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, overload
 
 import numpy as np
 import pandas as pd
 
 from inspect_safety_stats.config.canonicalize import sha256_value
-from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
+from inspect_safety_stats.config.loader import (
+    canonical_plan_hash,
+    load_plan,
+    report_path,
+    report_plan,
+)
 from inspect_safety_stats.config.models import (
     AnalysisPlan,
     ClaimSpec,
     ComparisonSpec,
+    DirectMeanIntervalsSpec,
+    IndependenceSelectionSpec,
     RiskMeasureSpec,
 )
 from inspect_safety_stats.decision.engine import decide_claim, roll_up
@@ -353,7 +360,10 @@ def _thresholds(
 ) -> float | np.ndarray:
     if measure.threshold is not None:
         return measure.threshold
-    assert measure.threshold_column is not None
+    if measure.threshold_column is None:
+        raise ValueError(
+            f"risk measure {measure.id!r} ({measure.type}) needs threshold or threshold_column"
+        )
     manifest = data.manifest.set_index("prompt_id")
     if measure.threshold_column not in manifest:
         raise ValueError(f"manifest has no threshold column {measure.threshold_column!r}")
@@ -405,26 +415,36 @@ def _unclipped_risk_value(
     if measure.type == "maximum":
         return maximum_risk(values, weights)
     if measure.type == "cvar":
-        assert measure.beta is not None
-        return weighted_cvar(values, weights, beta=float(measure.beta))
+        return weighted_cvar(values, weights, beta=_parameter(measure, "beta", measure.beta))
     if measure.type == "top_k_mean":
-        assert measure.k is not None
+        k = _parameter(measure, "k", measure.k)
         if not np.allclose(weights, np.full(len(weights), 1 / len(weights))):
             raise ValueError("top_k_mean requires equal prompt weights")
-        return top_k_mean(values, k=int(measure.k))
+        return top_k_mean(values, k=int(k))
     if measure.type == "entropic":
-        assert measure.lambda_ is not None
-        return entropic_risk(values, weights, lambda_=float(measure.lambda_))
+        lambda_ = _parameter(measure, "lambda", measure.lambda_)
+        return entropic_risk(values, weights, lambda_=lambda_)
     if measure.type == "worst_of_k":
-        assert measure.k is not None
-        return worst_of_k_risk(values, weights, k=int(measure.k))
-    if measure.type == "threshold_exceedance":
-        assert threshold is not None
-        return threshold_exceedance(values, weights, threshold=threshold)
-    if measure.type == "threshold_excess":
-        assert threshold is not None
+        return worst_of_k_risk(values, weights, k=int(_parameter(measure, "k", measure.k)))
+    if measure.type in {"threshold_exceedance", "threshold_excess"}:
+        if threshold is None:
+            raise ValueError(
+                f"risk measure {measure.id!r} ({measure.type}) was given no threshold"
+            )
+        if measure.type == "threshold_exceedance":
+            return threshold_exceedance(values, weights, threshold=threshold)
         return threshold_excess(values, weights, threshold=threshold)
     raise ValueError(f"unsupported risk measure {measure.type!r}")
+
+
+def _parameter(measure: RiskMeasureSpec, name: str, value: float | None) -> float:
+    """A parameter the measure's type requires.
+
+    Plan validation guarantees it. Unlike an assert, this check survives python -O.
+    """
+    if value is None:
+        raise ValueError(f"risk measure {measure.id!r} ({measure.type}) requires {name}")
+    return float(value)
 
 
 def _measure_parameters(measure: RiskMeasureSpec) -> dict[str, Any]:
@@ -432,6 +452,34 @@ def _measure_parameters(measure: RiskMeasureSpec) -> dict[str, Any]:
     return {
         key: value for key, value in dumped.items() if key not in {"id", "type", "diagnostic_only"}
     }
+
+
+def _independence(spec: DirectMeanIntervalsSpec | ComparisonSpec) -> IndependenceSelectionSpec:
+    """The independence profiles an interval declares.
+
+    Plan validation requires them wherever they are used. Unlike an assert, this check
+    survives python -O.
+    """
+    if spec.independence is None:
+        where = (
+            f"comparison {spec.id!r}"
+            if isinstance(spec, ComparisonSpec)
+            else "outputs.direct_mean_intervals"
+        )
+        raise ValueError(f"{where} declares no independence profiles")
+    return spec.independence
+
+
+@overload
+def _coverage_floors(
+    family_alpha: float, coverage_mode: Literal["two_sided", "per_direction"]
+) -> tuple[float, float, float]: ...
+
+
+@overload
+def _coverage_floors(
+    family_alpha: float | None, coverage_mode: Literal["two_sided", "per_direction"]
+) -> tuple[float | None, float | None, float | None]: ...
 
 
 def _coverage_floors(
@@ -671,8 +719,8 @@ def _direct_mean_context(
     if directional_family_alpha is None:
         return _DirectMeanContext(selected, family.id, family.alpha, one_sided, joint, {})
     hierarchy_nodes = nodes or []
-    assert spec.independence is not None
-    profile_ids = [spec.independence.primary, *spec.independence.sensitivities]
+    independence = _independence(spec)
+    profile_ids = [independence.primary, *independence.sensitivities]
     target_ids = [
         *[_hierarchy_region_target_id(group_id, None, {}) for group_id in sorted(selected)],
         *[
@@ -837,7 +885,7 @@ def _direct_interval_result(
     interval_coverage: float | None,
 ) -> RiskIntervalResult:
     spec = plan.outputs.direct_mean_intervals
-    assert spec.independence is not None
+    primary_profile = _independence(spec).primary
     profile = plan.design.independence_profiles[independence_profile]
     directional_family_alpha = (
         family_alpha / 2
@@ -881,7 +929,7 @@ def _direct_interval_result(
     return RiskIntervalResult(
         interval_id=(
             f"direct_{method}"
-            if independence_profile == spec.independence.primary
+            if independence_profile == primary_profile
             else f"direct_{method}_{independence_profile}"
         ),
         lower=bounds.lower,
@@ -1077,9 +1125,10 @@ def _direct_intervals(
     estimates: dict[tuple[str, str], PromptEstimate] | None = None,
 ) -> list[RiskIntervalResult]:
     spec = plan.outputs.direct_mean_intervals
-    assert spec.independence is not None
+    independence = _independence(spec)
     if plan.design.type == "sampled":
-        assert estimates is not None
+        if estimates is None:
+            raise RuntimeError("a sampled design's direct-mean intervals need the prompt estimates")
         return _sampled_frame_intervals(
             data=data,
             cohort_id=cohort_id,
@@ -1090,14 +1139,14 @@ def _direct_intervals(
             family_id=family_id,
             family_alpha=family_alpha,
             calibration=calibrations[
-                _calibration_key(cohort_id, target_id, spec.independence.primary)
+                _calibration_key(cohort_id, target_id, independence.primary)
             ],
             one_sided_coverage=one_sided_coverage,
             interval_coverage=interval_coverage,
         )
     methods = [spec.method, *spec.reference_methods]
     results: list[RiskIntervalResult] = []
-    profile_ids = [spec.independence.primary, *spec.independence.sensitivities]
+    profile_ids = [independence.primary, *independence.sensitivities]
     for profile_id in profile_ids:
         profile = plan.design.independence_profiles[profile_id]
         blocks = direct_bounded_blocks(
@@ -1122,7 +1171,7 @@ def _direct_intervals(
                     bounds=bounds,
                     role=(
                         "sensitivity"
-                        if profile_id != spec.independence.primary
+                        if profile_id != independence.primary
                         else "primary"
                         if method == spec.method
                         else "reference"
@@ -1198,8 +1247,8 @@ def _group_risks(
                         uppers = [cast(float, item.upper) for item in prompt_results]
                         lower = _risk_value(lowers, weights, measure, threshold=threshold)
                         upper = _risk_value(uppers, weights, measure, threshold=threshold)
-                        if measure.type == "threshold_exceedance":
-                            assert threshold is not None
+                        # _risk_value has already refused a threshold measure without one.
+                        if measure.type == "threshold_exceedance" and threshold is not None:
                             t = np.asarray(threshold, dtype=float)
                             if t.ndim == 0:
                                 t = np.full(len(prompt_ids), float(t))
@@ -1232,8 +1281,7 @@ def _group_risks(
                 direct_requested = measure.type == "weighted_mean" and group.id in direct.groups
                 if direct_requested:
                     target_id = _hierarchy_region_target_id(group.id, None, {})
-                    independence = plan.outputs.direct_mean_intervals.independence
-                    assert independence is not None
+                    independence = _independence(plan.outputs.direct_mean_intervals)
                     calibration = direct.calibrations.get(
                         _calibration_key(cohort_id, target_id, independence.primary)
                     )
@@ -1401,8 +1449,7 @@ def _hierarchy_risks(
             intervals: list[RiskIntervalResult] = []
             warnings: list[str] = []
             target_id = _hierarchy_region_target_id(node.group_id, node.level, node.path)
-            independence = plan.outputs.direct_mean_intervals.independence
-            assert independence is not None
+            independence = _independence(plan.outputs.direct_mean_intervals)
             calibration = direct_context.calibrations.get(
                 _calibration_key(cohort_id, target_id, independence.primary)
             )
@@ -1825,6 +1872,13 @@ def _unclassified_assumption(share: float) -> str:
     )
 
 
+def _uncertified_base_warning(eligibility: str) -> str:
+    return (
+        f"Sensitivity analysis, not a certified bound: the judge-system interval it corrects "
+        f"is {eligibility}, and a correction cannot support more than its base."
+    )
+
+
 def _uncertified_correction_warning(gap: str) -> str:
     return (
         f"Sensitivity analysis, not a certified bound: {gap}. The human labels weight every "
@@ -1874,7 +1928,8 @@ def _validated_judge_calibrations(
             )
         )
         return {}, {}, None, {}
-    assert spec.validation_manifest is not None
+    if spec.validation_manifest is None:
+        raise ValueError("a validated inputs.judge_calibration requires a validation_manifest")
     try:
         labels = load_validation_manifest(spec.validation_manifest)
     except (OSError, ValueError) as exc:
@@ -1987,9 +2042,10 @@ def _judge_corrected_interval(
         unclassified_share=unclassified_share,
     )
     validated = calibration.source == "validated"
-    # Measured accuracies certify only a row they were measured for; elsewhere the
-    # corrected interval is a sensitivity, as an assumed one always is.
-    certified = validated and gap is None
+    # Measured accuracies certify only a row they were measured for, and never more than
+    # the row's own bounds support. Elsewhere the corrected interval is a sensitivity, as an
+    # assumed one always is.
+    certified = validated and gap is None and result.eligibility == "certifying"
     base = next((item for item in result.intervals if item.role == "primary"), None)
     base_alpha = base.family_alpha if base is not None else None
     spent = calibration.alpha if calibration.alpha is not None else judge_alpha
@@ -2052,6 +2108,8 @@ def _judge_corrected_interval(
     warnings: list[str] = []
     if validated and gap is not None:
         warnings.append(_uncertified_correction_warning(gap))
+    elif validated and not certified:
+        warnings.append(_uncertified_base_warning(result.eligibility))
     if not validated and primary_scenario is not None:
         if calibration.scenario_id != primary_scenario:
             warnings.append(
@@ -2210,7 +2268,8 @@ def _apply_panel_derived_correction(
         return None
     judges = {judge.id: judge for judge in plan.inputs.judges}
     members = [judges[judge_id] for judge_id in composite.judges]
-    if any(member.accuracy is None for member in members):
+    accuracies = [member.accuracy for member in members if member.accuracy is not None]
+    if len(accuracies) != len(members):
         return None
     if composite.rule == "majority":
         diagnostics.append(
@@ -2225,17 +2284,15 @@ def _apply_panel_derived_correction(
             )
         )
         return None
-    boxes = []
-    for member in members:
-        assert member.accuracy is not None
-        boxes.append(
-            JudgeAccuracyBox(
-                sensitivity_lower=member.accuracy.sensitivity.lower,
-                sensitivity_upper=member.accuracy.sensitivity.upper,
-                specificity_lower=member.accuracy.specificity.lower,
-                specificity_upper=member.accuracy.specificity.upper,
-            )
+    boxes = [
+        JudgeAccuracyBox(
+            sensitivity_lower=accuracy.sensitivity.lower,
+            sensitivity_upper=accuracy.sensitivity.upper,
+            specificity_lower=accuracy.specificity.lower,
+            specificity_upper=accuracy.specificity.upper,
         )
+        for accuracy in accuracies
+    ]
     box = composite_accuracy_box(
         boxes, [member.block or member.id for member in members], composite.rule
     )
@@ -2534,7 +2591,7 @@ def _apply_judge_correction(
             if reference is not None:
                 result.intervals.append(reference)
     _apply_judge_correction_to_comparisons(
-        plan, data, population, comparisons, by_cohort, diagnostics
+        plan, data, population, comparisons, by_cohort, spec.family, diagnostics
     )
     return {
         "mode": "validated",
@@ -2674,7 +2731,6 @@ def _comparison_independent_frontiers(
     root = next(target for target in targets if target.level is None)
     levels: list[tuple[str, list[_ComparisonTarget]]] = [("root", [root])]
     for level in dict.fromkeys(target.level for target in targets if target.level is not None):
-        assert level is not None
         levels.append((level, [target for target in targets if target.level == level]))
 
     frontiers: list[IndependentFrontier] = []
@@ -2773,13 +2829,9 @@ def _comparison_calibrations(
         if family is None:
             continue
         directional_alpha, _, _ = _coverage_floors(family.alpha, spec.coverage_mode)
-        assert directional_alpha is not None
-        assert spec.independence is not None
+        independence = _independence(spec)
         if not spec.simultaneous:
-            for profile_id in [
-                spec.independence.primary,
-                *spec.independence.sensitivities,
-            ]:
+            for profile_id in [independence.primary, *independence.sensitivities]:
                 for target in targets.get(spec.id, []):
                     result[_comparison_target_key(spec.id, target.result_id, profile_id)] = (
                         _EndpointCalibration(directional_alpha, "pointwise")
@@ -2790,15 +2842,15 @@ def _comparison_calibrations(
     for family_id, specs in simultaneous_by_family.items():
         family = families[family_id]
         directional_alpha = min(
-            cast(float, _coverage_floors(family.alpha, spec.coverage_mode)[0]) for spec in specs
+            _coverage_floors(family.alpha, spec.coverage_mode)[0] for spec in specs
         )
         profile_ids = sorted(
             {
                 profile_id
                 for spec in specs
                 for profile_id in [
-                    cast(Any, spec.independence).primary,
-                    *cast(Any, spec.independence).sensitivities,
+                    _independence(spec).primary,
+                    *_independence(spec).sensitivities,
                 ]
             }
         )
@@ -2808,11 +2860,8 @@ def _comparison_calibrations(
             frontier_aliases: dict[tuple[tuple[Any, ...], tuple[tuple[str, ...], ...]], int] = {}
             try:
                 for spec in specs:
-                    assert spec.independence is not None
-                    if profile_id not in {
-                        spec.independence.primary,
-                        *spec.independence.sensitivities,
-                    }:
+                    independence = _independence(spec)
+                    if profile_id not in {independence.primary, *independence.sensitivities}:
                         continue
                     compiled = _comparison_independent_frontiers(
                         plan, data, spec, targets.get(spec.id, []), profile_id
@@ -3116,7 +3165,8 @@ def _comparison_interval(
             "of observed outcomes.",
         ]
     if is_ratio:
-        assert isinstance(bounds, RatioComparisonBounds)
+        if not isinstance(bounds, RatioComparisonBounds):
+            raise TypeError(f"comparison {spec.id!r} has a ratio estimand but no ratio bounds")
         assumptions.append(
             "Ratio bounds use a simultaneous rectangular confidence set for the two arm means."
         )
@@ -3134,7 +3184,8 @@ def _comparison_interval(
         baseline_lower = bounds.baseline_bounds.lower
         baseline_upper = bounds.baseline_bounds.upper
     else:
-        assert isinstance(bounds, DirectComparisonBounds)
+        if not isinstance(bounds, DirectComparisonBounds):
+            raise TypeError(f"comparison {spec.id!r} has a difference estimand but ratio bounds")
         interval_warnings = []
         completion_lower = bounds.completion_estimate_lower
         completion_upper = bounds.completion_estimate_upper
@@ -3595,7 +3646,6 @@ def _project_multi_arm_comparison_regions(
             }
         )
         for method, profile_id in interval_keys:
-            assert profile_id is not None
             row_intervals: dict[str, RiskIntervalResult] = {}
             target_by_row: dict[str, _ComparisonTarget] = {}
             prompt_ids: set[str] = set()
@@ -3783,7 +3833,12 @@ def _judge_corrected_comparison_interval(
         item.alpha or 0.0 for item in (candidate_calibration, baseline_calibration)
     )
     base_alpha = primary.family_alpha
-    certified = gap is None
+    certified = gap is None and result.eligibility == "certifying"
+    warnings: list[str] = []
+    if gap is not None:
+        warnings.append(_uncertified_correction_warning(gap))
+    elif not certified:
+        warnings.append(_uncertified_base_warning(result.eligibility))
     return RiskIntervalResult(
         interval_id="judge_corrected_validated",
         lower=lower,
@@ -3842,7 +3897,7 @@ def _judge_corrected_comparison_interval(
             ),
         ],
         eligibility="certifying" if certified else "diagnostic",
-        warnings=[_uncertified_correction_warning(gap)] if gap is not None else [],
+        warnings=warnings,
     )
 
 
@@ -3852,14 +3907,13 @@ def _apply_judge_correction_to_comparisons(
     population: dict[str, dict[str, _PromptRollouts]],
     comparisons: list[ComparisonResult],
     by_cohort: dict[str, JudgeCalibration],
+    family_id: str | None,
     diagnostics: list[Diagnostic],
 ) -> None:
     """Append validated corrections to comparisons that expose both arm bounds."""
 
     if not by_cohort:
         return
-    spec = plan.inputs.judge_calibration
-    assert spec is not None
     target_weights: dict[tuple[str, str], dict[str, float]] = {}
     for comparison in plan.expanded_comparisons():
         try:
@@ -3898,7 +3952,7 @@ def _apply_judge_correction_to_comparisons(
             result=result,
             candidate_calibration=candidate,
             baseline_calibration=baseline,
-            family_id=spec.family,
+            family_id=family_id,
             gap="; ".join(gaps) or None,
             candidate_share=_unclassified_share(
                 population.get(result.candidate_cohort, {}), weights, measure_type
@@ -3951,8 +4005,7 @@ def _comparisons(
         directional_family_alpha, one_sided, joint = _coverage_floors(
             family.alpha, spec.coverage_mode
         )
-        assert directional_family_alpha is not None
-        assert spec.independence is not None
+        independence = _independence(spec)
         for target in target_map[spec.id]:
             candidate_items = [
                 estimate_index[(spec.candidate, prompt_id)] for prompt_id in target.prompt_ids
@@ -4000,8 +4053,8 @@ def _comparisons(
             else:
                 methods = [spec.method, *spec.reference_methods]
                 profile_ids = [
-                    spec.independence.primary,
-                    *spec.independence.sensitivities,
+                    independence.primary,
+                    *independence.sensitivities,
                 ]
                 for profile_id in profile_ids:
                     calibration = comparison_calibrations.get(
@@ -4044,7 +4097,7 @@ def _comparisons(
                     for method_index, method in enumerate(methods):
                         role: Literal["primary", "reference", "sensitivity"] = (
                             "sensitivity"
-                            if profile_id != spec.independence.primary
+                            if profile_id != independence.primary
                             else "primary"
                             if method_index == 0
                             else "reference"
@@ -4159,7 +4212,7 @@ def _comparisons(
                     simultaneous_coverage=(joint if spec.simultaneous else None),
                     lower_one_sided_coverage=one_sided,
                     upper_one_sided_coverage=one_sided,
-                    independence_profile=spec.independence.primary,
+                    independence_profile=independence.primary,
                     prompt_count=len(target.prompt_ids),
                     candidate_rollout_count=sum(item.n_total for item in candidate_items),
                     baseline_rollout_count=sum(item.n_total for item in baseline_items),
@@ -4256,7 +4309,6 @@ def _comparison_set_results(
             # joint coverage to report.
             continue
         _, _, simultaneous_coverage = _coverage_floors(family.alpha, spec.coverage_mode)
-        assert simultaneous_coverage is not None
         results.append(
             ComparisonSetResult(
                 comparison_set_id=spec.id,
@@ -4777,7 +4829,10 @@ def analyze(
         provenance={
             "source_logs": [
                 {"path": path, "sha256": digest}
-                for path, digest in sorted(data.source_hashes.items())
+                for path, digest in sorted(
+                    (report_path(path, resolved), digest)
+                    for path, digest in data.source_hashes.items()
+                )
             ],
             "inspect_version_constraint": ">=0.3.259,<0.4",
             **(
@@ -4801,7 +4856,7 @@ def analyze(
         presentation={"include_decisions": resolved.report.include_decisions},
         integrity=integrity,
         design={
-            "manifest": str(resolved.inputs.design_manifest),
+            "manifest": report_path(resolved.inputs.design_manifest, resolved),
             "manifest_sha256": sha256_value(data.manifest.to_dict(orient="records")),
             "hierarchy": resolved.design.hierarchy,
             "independence_profiles": {
@@ -4837,5 +4892,5 @@ def analyze(
     )
     report._observations = data.observations
     report._resolved_design = _resolved_design(data, resolved.design.hierarchy)
-    report._resolved_plan = resolved.model_dump(mode="json", by_alias=True)
+    report._resolved_plan = report_plan(resolved)
     return report

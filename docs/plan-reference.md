@@ -1,6 +1,6 @@
 # Analysis plan reference
 
-Plans are strict YAML or JSON documents. Unknown fields are errors, and integer fields reject `true` and `false` rather than reading them as 1 and 0. Relative manifest paths resolve against the plan file. `schema_version` is `"2.0"`, and an unquoted `2.0` reads the same. A plan that declares `1.0` is refused with what changed in 2.0 (see [Configuring hierarchy and independence](independence-profiles.md)).
+Plans are strict YAML or JSON documents. Unknown fields are errors, and numeric fields, including the values of a mapping such as `explicit_alpha`, reject `true` and `false` rather than reading them as 1 and 0. Relative manifest paths resolve against the plan file. `schema_version` is `"2.0"`, and an unquoted `2.0` reads the same. A plan that declares `1.0` is refused with what changed in 2.0 (see [Configuring hierarchy and independence](independence-profiles.md)).
 
 ## `analysis`
 
@@ -171,7 +171,7 @@ box admits an uninformative panel). See [Judge misclassification](judge-misclass
 | `hierarchy` | Creator-declared hierarchy ending in `prompt_id` |
 | `rollout_key` | Fields uniquely identifying one terminal rollout |
 | `require_complete_manifest` | Require every fixed prompt in every cohort |
-| `require_expected_rollouts` | Require prospective rollout counts |
+| `require_expected_rollouts` | Require prospective rollout counts, from the manifest's `expected_rollouts` column (on by default) |
 | `weights` | Default group weight strategy |
 | `independence_profiles` | Named independent-block partitions; see [Configuring hierarchy and independence](independence-profiles.md) |
 
@@ -224,7 +224,7 @@ groups:
 
 ## `outputs`
 
-`prompt_bounds` declares the simultaneous-bound family and alpha allocation. `risk_measures` contains named measures.
+`prompt_bounds` declares the simultaneous-bound family and alpha allocation. Prompt bounds are on by default and take their alpha from `family`, simultaneous or not, and `family` has no default: name a declared multiplicity family, or set `enabled: false`. `risk_measures` contains named measures. A plan without one reports no group risk, and the analysis warns (`PLAN_NO_RISK_MEASURES`).
 
 ```yaml
 outputs:
@@ -342,7 +342,7 @@ one primary profile and optional prespecified sensitivity profiles. See
 
 ## `comparison_sets`
 
-Use a comparison set for three or more cohorts:
+Use a comparison set for two or more cohorts:
 
 ```yaml
 comparison_sets:
@@ -366,7 +366,9 @@ comparison_sets:
     hierarchy_region: linear_program
 ```
 
-At least three unique cohort identifiers are required. `contrasts.type` is either
+At least two unique cohort identifiers are required. A two-arm set gives exactly the estimates and
+bounds of the single `weighted_kl_chernoff` comparison with the set's settings, at the root and at
+every node. `contrasts.type` is either
 `versus_reference`, which requires a reference member, or `all_pairs`. Generated comparisons are
 calibrated together and projected from common arm-risk regions. `all_pairs` plus
 `risk_difference` also produces simultaneous rank sets. The remaining interval, hierarchy, and

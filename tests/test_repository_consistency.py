@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+import inspect_safety_stats
 from inspect_safety_stats import __version__
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.generative.schema import GenerativePlan, load_generative_plan
@@ -204,3 +205,16 @@ def test_declared_python_versions_match_the_requirement() -> None:
         "CI must test exactly the Python versions the package advertises: "
         f"declared {sorted(classifiers)}, tested {sorted(tested)}"
     )
+
+
+def test_the_package_has_no_runtime_asserts() -> None:
+    """Python strips asserts under -O, so a runtime check must raise (CONTRIBUTING 5.2)."""
+    # The imported package, not the checkout, so that scripts/prove_red.py can test it.
+    package = Path(inspect_safety_stats.__file__).parent
+    offenders = [
+        f"{path.relative_to(package.parent).as_posix()}:{node.lineno}"
+        for path in sorted(package.rglob("*.py"))
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Assert)
+    ]
+    assert offenders == []

@@ -110,12 +110,11 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                 comparison_family_modes.setdefault(comparison.family, set()).add(
                     comparison.coverage_mode
                 )
-                assert comparison.independence is not None
+                independence = comparison.independence
+                if independence is None:
+                    raise ValueError("comparisons require an independence selection")
                 comparison_family_profiles.setdefault(comparison.family, set()).add(
-                    (
-                        comparison.independence.primary,
-                        tuple(comparison.independence.sensitivities),
-                    )
+                    (independence.primary, tuple(independence.sensitivities))
                 )
         paired = {
             "exact_mcnemar",
@@ -219,17 +218,31 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                         scope=claim.id,
                     )
                 )
-    prompt_family = plan.outputs.prompt_bounds.family
-    if plan.outputs.prompt_bounds.simultaneous and prompt_family not in families:
+    prompt_bounds = plan.outputs.prompt_bounds
+    prompt_family = prompt_bounds.family
+    # Prompt bounds are on by default, and take their alpha from a family, simultaneous or
+    # not. Without one they are silently absent, so a minimal plan analysed nothing (#57).
+    if prompt_bounds.enabled and prompt_family not in families:
         diagnostics.append(
             Diagnostic(
                 code="PLAN_UNKNOWN_REFERENCE",
                 severity="ERROR",
-                message="simultaneous prompt bounds require a valid multiplicity family",
+                message=(
+                    "prompt bounds take their alpha from outputs.prompt_bounds.family, which "
+                    + (
+                        "is not set"
+                        if prompt_family is None
+                        else f"names {prompt_family!r}, not a declared multiplicity family"
+                    )
+                    + ". Declare one under multiplicity.families, for example "
+                    "{id: displayed, purpose: simultaneous_intervals, method: bonferroni, "
+                    "alpha: 0.05}, and set outputs.prompt_bounds.family to its id; or turn "
+                    "prompt bounds off with outputs.prompt_bounds.enabled: false"
+                ),
                 scope="outputs.prompt_bounds",
             )
         )
-    elif plan.outputs.prompt_bounds.simultaneous and prompt_family in families:
+    elif prompt_bounds.enabled and prompt_bounds.simultaneous and prompt_family in families:
         family_method = families[prompt_family].method
         valid_methods = {"bonferroni", "weighted_bonferroni"}
         if family_method not in valid_methods:
@@ -341,4 +354,16 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope="outputs.prompt_bounds",
                 )
             )
+    if not plan.outputs.risk_measures:
+        diagnostics.append(
+            Diagnostic(
+                code="PLAN_NO_RISK_MEASURES",
+                severity="WARNING",
+                message=(
+                    "outputs.risk_measures declares no measure, so no group risk is reported. "
+                    "Add one, for example {id: mean, type: weighted_mean}"
+                ),
+                scope="outputs.risk_measures",
+            )
+        )
     return diagnostics

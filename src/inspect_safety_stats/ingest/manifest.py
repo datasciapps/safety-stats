@@ -106,7 +106,8 @@ def resolve_weights(frame: pd.DataFrame, spec: WeightSpec) -> np.ndarray:
         return np.full(len(frame), 1.0 / len(frame))
     if spec.strategy == "nested_equal":
         return _nested_weights(frame, spec.hierarchy)
-    assert spec.column is not None
+    if spec.column is None:
+        raise ValueError("explicit weights require a manifest column")
     if spec.column not in frame:
         raise ValueError(f"explicit weight column {spec.column!r} is absent")
     values = pd.to_numeric(frame[spec.column], errors="raise").to_numpy(dtype=float)

@@ -8,10 +8,10 @@ import pytest
 from inspect_safety_stats import analyze, load_plan, render_visualization, write_visualization
 from inspect_safety_stats.api import _alpha_by_prompt, _prompt_blocked
 from inspect_safety_stats.config.loader import canonical_plan_hash
-from inspect_safety_stats.config.models import CohortSpec, PromptBoundsSpec
+from inspect_safety_stats.config.models import CohortSpec, PromptBoundsSpec, RiskMeasureSpec
 from inspect_safety_stats.ingest.inspect_logs import ErrorContext, NormalizedData
 from inspect_safety_stats.ingest.manifest import load_manifest
-from inspect_safety_stats.schema.reports import Diagnostic, SafetyReport
+from inspect_safety_stats.schema.reports import Diagnostic, RiskIntervalResult, SafetyReport
 
 
 def _write_inputs(tmp_path: Path) -> Path:
@@ -2387,6 +2387,52 @@ def test_a_refused_judge_calibration_never_lets_a_claim_pass_on_judge_reported_r
     assert any("validated judge calibration" in reason for reason in claim.reasons)
 
 
+def test_a_judge_correction_never_certifies_more_than_its_base_row(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A diagnostic-only mean has a diagnostic base, so its correction is diagnostic too."""
+    _label_everything(tmp_path, monkeypatch)
+    plan = load_plan(
+        _random_sample_validated_plan(
+            tmp_path,
+            claim_method="corrected_interval",
+            sampling="simple_random_within_judge_stratum",
+        )
+    )
+    # Without direct means the propagated envelope is each mean's primary interval, and a
+    # diagnostic-only measure makes it diagnostic.
+    plan.outputs.direct_mean_intervals.enabled = False
+    plan.outputs.risk_measures.append(
+        RiskMeasureSpec(id="mean_diagnostic", type="weighted_mean", diagnostic_only=True)
+    )
+
+    report = analyze(plan=plan, logs="ignored")
+
+    rank = {"invalid": 0, "diagnostic": 1, "certifying": 2}
+    corrected_rows = 0
+    for row in [*report.group_risks, *report.hierarchy_risks]:
+        for interval in row.intervals:
+            if interval.interval_id == "judge_corrected_validated":
+                corrected_rows += 1
+                assert rank[interval.eligibility] <= rank[row.eligibility]
+    assert corrected_rows >= 2
+
+    def corrected(measure_id: str) -> RiskIntervalResult:
+        row = next(item for item in report.group_risks if item.measure_id == measure_id)
+        return next(
+            item for item in row.intervals if item.interval_id == "judge_corrected_validated"
+        )
+
+    diagnostic = corrected("mean_diagnostic")
+    assert diagnostic.eligibility == "diagnostic"
+    assert diagnostic.role == "sensitivity"
+    assert diagnostic.simultaneous_coverage is None
+    (warning,) = diagnostic.warnings
+    assert "the judge-system interval it corrects is diagnostic" in warning
+    # The same mean without the flag is a whole-cohort, self-weighting row, still certified.
+    assert corrected("mean").eligibility == "certifying"
+
+
 def test_worst_of_k_is_not_judge_correctable() -> None:
     # The affine correction R* = R*rho1 + (1-R)*rho0 commutes only with
     # positively homogeneous, translation-equivariant measures; 1-(1-p)^k is
@@ -2394,3 +2440,94 @@ def test_worst_of_k_is_not_judge_correctable() -> None:
     from inspect_safety_stats.api import _JUDGE_CORRECTABLE_MEASURES
 
     assert "worst_of_k" not in _JUDGE_CORRECTABLE_MEASURES
+
+
+def _two_arm_plan(tmp_path: Path, *, as_set: bool) -> Path:
+    """Candidate against baseline, as a two-arm comparison set or as the same comparison."""
+    plan_path = _write_inputs(tmp_path)
+    text = plan_path.read_text(encoding="utf-8")
+    text = text.replace(
+        "groups:\n",
+        "  baseline:\n"
+        "    match:\n"
+        "      model: model/baseline\n"
+        "    require_uniform: [task_version, model_generate_config]\n"
+        "groups:\n",
+        1,
+    )
+    shared = (
+        "    group: cyber\n"
+        "    measure: mean\n"
+        "    family: model_comparisons\n"
+        "    independence:\n"
+        "      primary: rollout\n"
+    )
+    comparison = (
+        "comparison_sets:\n"
+        "  - id: pair\n"
+        "    cohorts: [candidate, baseline]\n"
+        "    contrasts: {type: versus_reference, reference: baseline}\n" + shared
+        if as_set
+        # The settings a set gives each comparison it expands into.
+        else "comparisons:\n"
+        "  - id: candidate_vs_baseline\n"
+        "    candidate: candidate\n"
+        "    baseline: baseline\n"
+        "    estimand: risk_difference\n"
+        "    method: weighted_kl_chernoff\n"
+        "    hierarchy_nodes: true\n"
+        "    hierarchy_calibration: frontier_sidak\n" + shared
+    )
+    text = text.replace("multiplicity:\n", comparison + "multiplicity:\n", 1).replace(
+        "    - {id: displayed,",
+        "    - {id: model_comparisons, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: displayed,",
+        1,
+    )
+    plan_path.write_text(text, encoding="utf-8")
+    return plan_path
+
+
+def test_a_two_arm_comparison_set_matches_the_hand_written_comparison(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_frames(monkeypatch, _two_cohort_frames())
+    results = {}
+    for as_set in (True, False):
+        directory = tmp_path / ("set" if as_set else "comparison")
+        directory.mkdir()
+        report = analyze(plan=_two_arm_plan(directory, as_set=as_set), logs="ignored")
+        results[as_set] = {
+            (row.level, tuple(row.path.items())): (row.estimate, row.lower, row.upper)
+            for row in report.comparisons
+        }
+    # The root and every hierarchy node, with identical estimates and bounds.
+    assert len(results[True]) > 1
+    _, root_lower, root_upper = results[True][(None, ())]
+    assert root_lower is not None and root_upper is not None
+    assert results[True] == results[False]
+
+
+def test_a_report_names_its_inputs_relative_to_the_plan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """#63: absolute paths made reports machine-specific and revealed the local layout."""
+    plan_path = _write_inputs(tmp_path)
+    eval_frame, sample_frame = _frames()
+    log = tmp_path / "logs" / "run.eval"
+    eval_frame = eval_frame.assign(log=str(log))
+    sample_frame = sample_frame.assign(log=str(log))
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert [item["path"] for item in report.provenance["source_logs"]] == ["logs/run.eval"]
+    assert {observation.source_log for observation in report._observations} == {"logs/run.eval"}
+    assert report.design["manifest"] == "design.csv"
+    assert report._resolved_plan["inputs"]["design_manifest"] == "design.csv"
+    # No written file names the checkout, in any escaping.
+    written = report.write(tmp_path / "report")
+    for path in sorted(written.rglob("*")):
+        if path.is_file():
+            assert tmp_path.name not in path.read_text(encoding="utf-8", errors="replace"), path

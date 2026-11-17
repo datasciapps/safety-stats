@@ -15,16 +15,20 @@ from pydantic import (
 )
 
 
-def _reject_boolean(value: object) -> object:
-    # Lax validation would read `true` as 1. A plan is a pre-registered document, so a typo in
-    # an integer field must fail rather than run with a guessed value.
-    if isinstance(value, bool):
-        raise ValueError("must be an integer, not a boolean")
-    return value
+def _refuse_booleans(kind: str) -> BeforeValidator:
+    def refuse(value: object) -> object:
+        # Lax validation would read `true` as 1. A plan is a pre-registered document, so a
+        # typo in a numeric field must fail rather than run with a guessed value.
+        if isinstance(value, bool):
+            raise ValueError(f"must be {kind}, not a boolean")
+        return value
+
+    return BeforeValidator(refuse)
 
 
-# Every integer field in a plan, analysis or generative, uses this type.
-PlanInt = Annotated[int, BeforeValidator(_reject_boolean)]
+# Every integer and every float in a plan, analysis or generative, uses one of these types.
+PlanInt = Annotated[int, _refuse_booleans("an integer")]
+PlanFloat = Annotated[float, _refuse_booleans("a number")]
 
 
 class StrictModel(BaseModel):
@@ -63,7 +67,7 @@ class FailureIfSpec(StrictModel):
         "less_than",
         "less_than_or_equal",
     ]
-    value: float
+    value: PlanFloat
 
 
 class OutcomeMappingSpec(StrictModel):
@@ -96,8 +100,8 @@ class ScoreSpec(StrictModel):
 class JudgeRateRangeSpec(StrictModel):
     """A declared closed range for one conditional judge accuracy."""
 
-    lower: float = Field(ge=0, le=1)
-    upper: float = Field(ge=0, le=1)
+    lower: PlanFloat = Field(ge=0, le=1)
+    upper: PlanFloat = Field(ge=0, le=1)
 
     @model_validator(mode="after")
     def ordered(self) -> JudgeRateRangeSpec:
@@ -356,10 +360,10 @@ class RiskMeasureSpec(StrictModel):
         "threshold_exceedance",
         "threshold_excess",
     ]
-    beta: float | None = None
-    lambda_: float | None = Field(default=None, alias="lambda")
+    beta: PlanFloat | None = None
+    lambda_: PlanFloat | None = Field(default=None, alias="lambda")
     k: PlanInt | None = None
-    threshold: float | None = None
+    threshold: PlanFloat | None = None
     threshold_column: str | None = None
     diagnostic_only: bool = False
 
@@ -387,7 +391,7 @@ class PromptBoundsSpec(StrictModel):
     alpha_allocation: Literal["equal_bonferroni", "weighted_bonferroni", "explicit"] = (
         "equal_bonferroni"
     )
-    explicit_alpha: dict[str, float] | None = None
+    explicit_alpha: dict[str, PlanFloat] | None = None
 
     @model_validator(mode="after")
     def explicit_has_alpha_map(self) -> PromptBoundsSpec:
@@ -480,7 +484,7 @@ class ComparisonSpec(StrictModel):
     hierarchy_nodes: bool = False
     hierarchy_calibration: Literal["flat_bonferroni", "frontier_sidak"] = "flat_bonferroni"
     hierarchy_region: Literal["none", "linear_program"] = "linear_program"
-    allocation_weight: float = Field(default=1.0, gt=0)
+    allocation_weight: PlanFloat = Field(default=1.0, gt=0)
     pair_key: list[str] | None = None
     diagnostic_methods: list[
         Literal["exact_mcnemar", "newcombe_paired", "fixed_cluster_bootstrap"]
@@ -525,10 +529,10 @@ class ComparisonContrastsSpec(StrictModel):
 
 
 class ComparisonSetSpec(StrictModel):
-    """A jointly calibrated comparison family over three or more cohorts."""
+    """A jointly calibrated comparison family over two or more cohorts."""
 
     id: str = Field(min_length=1)
-    cohorts: list[str] = Field(min_length=3)
+    cohorts: list[str] = Field(min_length=2)
     contrasts: ComparisonContrastsSpec
     estimands: list[Literal["risk_difference", "risk_ratio", "relative_risk_reduction"]] = [
         "risk_difference"
@@ -553,7 +557,7 @@ class ComparisonSetSpec(StrictModel):
     hierarchy_nodes: bool = True
     hierarchy_calibration: Literal["flat_bonferroni", "frontier_sidak"] = "frontier_sidak"
     hierarchy_region: Literal["none", "linear_program"] = "linear_program"
-    allocation_weight: float = Field(default=1.0, gt=0)
+    allocation_weight: PlanFloat = Field(default=1.0, gt=0)
 
     @model_validator(mode="after")
     def validate_set(self) -> ComparisonSetSpec:
@@ -577,12 +581,10 @@ class ComparisonSetSpec(StrictModel):
 
     def pairs(self) -> list[tuple[str, str]]:
         if self.contrasts.type == "versus_reference":
-            assert self.contrasts.reference is not None
-            return [
-                (cohort, self.contrasts.reference)
-                for cohort in self.cohorts
-                if cohort != self.contrasts.reference
-            ]
+            reference = self.contrasts.reference
+            if reference is None:
+                raise ValueError("versus_reference contrasts require reference")
+            return [(cohort, reference) for cohort in self.cohorts if cohort != reference]
         return [
             (candidate, baseline)
             for candidate_index, candidate in enumerate(self.cohorts)
@@ -623,7 +625,7 @@ class MultiplicityFamilySpec(StrictModel):
     method: Literal[
         "intersection_union", "bonferroni", "weighted_bonferroni"
     ]
-    alpha: float = Field(gt=0, lt=1)
+    alpha: PlanFloat = Field(gt=0, lt=1)
 
 
 class MultiplicitySpec(StrictModel):
@@ -638,8 +640,8 @@ class ClaimSpec(StrictModel):
     measure: str | None = None
     comparison: str | None = None
     family: str
-    acceptable_upper: float = Field(ge=-1, le=1)
-    unacceptable_lower: float = Field(ge=-1, le=1)
+    acceptable_upper: PlanFloat = Field(ge=-1, le=1)
+    unacceptable_lower: PlanFloat = Field(ge=-1, le=1)
     mandatory: bool = True
     method: Literal["corrected_interval", "noisy_valid_test"] = "corrected_interval"
 

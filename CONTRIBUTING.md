@@ -22,7 +22,7 @@ Contents:
 
 ## 1. Development setup
 
-You need Python 3.10–3.12 on Linux, macOS, or Windows, and nothing else. No compiler, Rust
+You need Python 3.11–3.13 on Linux, macOS, or Windows, and nothing else. No compiler, Rust
 toolchain, GPU, or provider API key is needed to develop, test, or run any part of the package.
 
 ```bash
@@ -124,7 +124,7 @@ from any directory (#42).
   byte-identical artifacts on every supported Python version and operating system.
   - Text artifacts are written with LF line endings (#31).
   - Never let a `set` or emission order decide an output order; sort with an explicit, total key.
-  - **[gap]** Reports still record absolute input paths (#63).
+  - Input paths are recorded relative to the plan's directory, in POSIX form (#63).
 
 ### 4.4 Numerical behaviour
 
@@ -187,13 +187,11 @@ from any directory (#42).
 - **User input errors are diagnostics, never crashes.**
   - An unknown reference in a plan yields `Diagnostic(severity="ERROR", code=…)`, the report is
     written, and `analyze` exits 3.
-  - **[gap]** Two crash paths remain (#59).
 - **Blocking must target the right prompt.** A diagnostic that should withhold a prompt's bounds
   names the cohort and prompt in `details`, as rollout-level ERRORs do (#40). Do not rely on
   prefix-matching free-form `scope` strings.
-  - **[gap]** Some still are (#65).
 - **No `assert` for runtime validation.** Python strips asserts under `-O`; raise a specific
-  exception instead.
+  exception instead. `test_the_package_has_no_runtime_asserts` checks the whole package.
 - **Actionable messages.** Error messages name the plan path or manifest column at fault, and say
   how to fix it. For example, a missing `block_by` value names the column and the prompts (#38).
 - **`validate` and `analyze` agree.** `validate` should accept exactly what `analyze` accepts. If
@@ -216,9 +214,11 @@ from any directory (#42).
 
 - **Measure first.** Profile before optimising. A performance pull request is class A: attach the
   timings and an A/B showing byte-identical artifacts on realistic and stress-sized designs.
-  `python scripts/compare_artifacts.py --prompts 2000` runs the bundled examples and a synthetic
-  design of that size against the committed code. Its timings are single runs, so measure
-  performance separately.
+  `python scripts/compare_artifacts.py --prompts 2000` runs the bundled examples, a synthetic
+  design of that size, and offline cases for the paths the examples do not reach (two cohorts and
+  comparisons, every error stage, judge panels and calibration, sampled designs, an incomplete
+  run, the generative design) against the committed code. Its timings are single runs, so
+  measure performance separately.
 - **Prefer algorithmic fixes in Python and NumPy:**
   - index once;
   - memoise pure functions;
@@ -269,8 +269,8 @@ All three are first-class platforms.
   may need `git checkout -- '*.csv'`.
 - **Paths.**
   - Use `pathlib`; never build paths with string concatenation or a hard-coded separator.
-  - Paths written into outputs are relative to a documented base, in POSIX form.
-    **[gap]** #63.
+  - Paths written into outputs are relative to a documented base, in POSIX form. Reports name
+    their inputs relative to the plan's directory (`report_path` in `config/loader.py`).
 - **Case-insensitive filesystems.** macOS and Windows filesystems are case-insensitive, so no two
   generated file names may differ only in case.
 - **Path length.** Keep generated directory trees shallow: Windows' default path limit is 260
@@ -282,7 +282,7 @@ All three are first-class platforms.
 - **Known upstream issue.** On Windows, inspect-ai cannot read logs that live on a different
   drive from the working directory (#35).
 - **CI coverage:**
-  - Linux runs on Python 3.10–3.12 for every pull request.
+  - Linux runs on Python 3.11–3.13 for every pull request.
   - Windows runs on 3.12 for every pull request.
   - macOS runs on pushes to `main`, weekly, and on demand. For a platform-sensitive branch, run
     `gh workflow run CI --ref <branch>`.
