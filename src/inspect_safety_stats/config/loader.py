@@ -145,15 +145,24 @@ def report_plan(plan: AnalysisPlan) -> dict[str, Any]:
 
 
 def canonical_plan_hash(plan: AnalysisPlan) -> str:
+    """The SHA-256 of what the plan's author wrote, as ``canonical_plan_value`` gives it."""
+
     return sha256_value(canonical_plan_value(plan))
 
 
 def canonical_plan_value(plan: AnalysisPlan) -> dict[str, Any]:
-    """The plan as its hash covers it."""
+    """The plan as its hash covers it: the fields its author wrote, validated and normalized.
+
+    A field the plan leaves out is left out here too, whatever its default, so a release that
+    adds a defaulted field or changes a default leaves the hash of every unchanged plan file
+    as it was (#56). A field written at its default value is kept: the plan says it, and its
+    meaning does not follow a later default. Values are in their validated form, so that, for
+    example, an unquoted ``2.0`` and ``"2.0"`` hash the same.
+    """
 
     # load_plan resolves the plan's input paths against its own directory. Hash them in the
     # plan-relative form the author wrote, so the same plan hashes the same wherever it lives.
-    value = plan.model_dump(mode="json", by_alias=True)
+    value = plan.model_dump(mode="json", by_alias=True, exclude_unset=True)
     source = plan.source_path()
     if source is not None:
         manifest = _plan_relative(plan.inputs.design_manifest, source)

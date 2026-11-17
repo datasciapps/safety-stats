@@ -30,6 +30,16 @@ fields: `eval_id` to `run_key`, `id` to `item_id`, `epoch` to `repeat`, `sample_
 `rollout_id`, and any other source field `f` to `attributes.f` (`model` keeps its name). The
 plan's hash changes with its text. A 2.0 plan keeps its meaning and its hash.
 
+### The plan hash
+
+`hash-plan` prints, and every report records as `plan_sha256`, the SHA-256 of what the plan's
+author wrote: the fields present in the file, in their validated form, with input paths relative
+to the plan's directory. A field the plan leaves out is not hashed, whatever its default, so a
+release that adds a field or changes a default leaves the hash of an unchanged plan file as it
+was (#56). A field written at its default value is hashed: the plan states it, and its meaning
+does not follow a later default. Writing out a default therefore changes the hash, as any other
+edit does.
+
 ## `analysis`
 
 | Field | Required | Meaning |

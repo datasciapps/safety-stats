@@ -405,6 +405,13 @@ described in their pull requests.
 
 ### Changed
 
+- **The plan hash covers only what the author wrote (#56).** `hash-plan`, `plan_sha256` and
+  the inference hash leave out every field the plan does not write, so a release that adds a
+  field or changes a default no longer changes the hash of an unchanged plan. A field written at
+  its default value is hashed, and so writing out a default now changes the hash. Every plan's
+  hash changes once with this release: freeze plans, registration receipts and decision
+  policies again with `hash-plan`. See [The plan hash](docs/plan-reference.md#the-plan-hash).
+
 - **The generative commands' help says the pipeline is experimental (#24).** The help of
   `generative` and of each of its commands, and of `schema generative-plan`, ends with the
   caveat the README and the generative docs already carry: the generative pipeline is
