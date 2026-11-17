@@ -95,6 +95,9 @@ Under the default end-to-end estimand, a target-side provider policy block with 
 content is a classified safe system outcome. A grader-side block is not: the target output already
 exists, so its safety label remains unknown.
 
+[Diagnostic codes and assumptions](diagnostics.md) lists every code a report can carry, with the
+assumption it reports on, its effect on integrity and results, and the remedy.
+
 ## Prompt-level bounds
 
 Each prompt's bound concerns repeated stochastic rollouts of that exact prompt under the recorded configuration. It does not concern paraphrases, unseen prompts, or deployment traffic.

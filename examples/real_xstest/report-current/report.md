@@ -12,7 +12,9 @@ Results apply to the declared fixed evaluation set and specified stochastic roll
 
 ## Data integrity
 
-No integrity diagnostics were emitted.
+| Severity | Code | Scope | Message |
+|---|---|---|---|
+| WARNING | `TAIL_MEASURES_UNINFORMATIVE` | outputs.risk_measures | cvar_75, entropic_5, worst are built from per-prompt bounds; with about 1 rollouts per prompt a prompt with no failures is still bounded only at 0.997, above the precision target 0.05. About 113 rollouts per prompt would be needed. |
 
 ## Fixed-design risk measures
 
@@ -138,6 +140,7 @@ The plan left these fields out, and the analysis used their defaults. The plan h
 - `design.sampling`: `"poisson"`
 - `claims[0].method`: `"corrected_interval"`
 - `claims[1].method`: `"corrected_interval"`
+- `report.precision_target`: `0.05`
 
 52 further defaults leave an optional feature off or a parameter unused (None, false or empty). `plan_defaults` in report.json lists every default.
 

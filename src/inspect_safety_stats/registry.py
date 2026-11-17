@@ -2130,6 +2130,26 @@ _CODES: tuple[CodeEntry, ...] = (
         assumptions=("plan_fixed_in_advance",),
     ),
     CodeEntry(
+        code="TAIL_MEASURES_UNINFORMATIVE",
+        severities=("WARNING",),
+        source="analysis",
+        effect="recorded",
+        assumption=(
+            "Each prompt has enough rollouts that its simultaneous bound can be tighter than "
+            "report.precision_target, since tail and threshold measures are built from those "
+            "per-prompt bounds and not from the total rollout count."
+        ),
+        consequence=(
+            "The tail and threshold measures are reported as computed, but at the median "
+            "rollout count even a prompt with no failures is bounded above the precision "
+            "target, so their intervals can only be wide."
+        ),
+        remedy=(
+            "Run about the rollouts per prompt the diagnostic names, or read the tail "
+            "measures as uninformative at this budget."
+        ),
+    ),
+    CodeEntry(
         code="TARGET_POLICY_BLOCKED_REFUSAL",
         severities=("INFO",),
         source="logs",

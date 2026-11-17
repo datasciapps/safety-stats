@@ -1093,6 +1093,7 @@ for a claim that can only fail. Plans without `adaptive_claims` keep their hash.
 | `decimal_places` | 6 | Markdown display precision; JSON retains full precision |
 | `judge_error_stress` | false | Experimental. Add to every claim the judge accuracy at which its verdict would change for true risk, and the verdict over the primary judge's declared accuracy box; diagnostic only. See [Stressing a threshold verdict](judge-misclassification.md#stressing-a-threshold-verdict-experimental) |
 | `claims_export` | false | Experimental. Write `claims.json`, one record per claim; needs `include_decisions: true`. See [claims.json](#claimsjson-experimental) |
+| `precision_target` | 0.05 | The widest a bound may lie from its estimate and still count as precise, in (0, 0.5). When tail or threshold measures are declared and, at the median rollouts per prompt, a prompt with no failures is still bounded above it, `TAIL_MEASURES_UNINFORMATIVE` warns and names the rollouts per prompt that would be needed. Left out of the resolved plan at its default |
 
 ### `claims.json` (experimental)
 
