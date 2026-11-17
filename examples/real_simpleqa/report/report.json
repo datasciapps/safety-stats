@@ -2506,9 +2506,11 @@
       {
         "code": "PLAN_SELF_DECLARED",
         "details": {},
+        "effect": "recorded",
         "message": "confirmatory timing is self-declared; no external plan registration was supplied",
         "scope": null,
-        "severity": "WARNING"
+        "severity": "WARNING",
+        "source": "registration"
       },
       {
         "code": "TAIL_MEASURES_UNINFORMATIVE",
@@ -2522,9 +2524,11 @@
           "rollouts_per_prompt_needed": 113,
           "zero_failure_prompt_upper": 0.996875
         },
+        "effect": "recorded",
         "message": "cvar_75, entropic_5, worst are built from per-prompt bounds; with about 1 rollouts per prompt a prompt with no failures is still bounded only at 0.997, above the precision target 0.05. About 113 rollouts per prompt would be needed.",
-        "scope": "outputs.risk_measures",
-        "severity": "WARNING"
+        "scope": "plan/outputs/risk_measures",
+        "severity": "WARNING",
+        "source": "analysis"
       }
     ],
     "status": "valid"
