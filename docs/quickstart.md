@@ -40,7 +40,8 @@ inspect-safety-stats analyze \
   --output reports/quickstart/valid
 ```
 
-Open `reports/quickstart/valid/report.md`, or `report.html` for the interactive hierarchy explorer.
+Open `reports/quickstart/valid/report.md` for the one-page summary, `report-full.md` for the
+full report, or `report.html` for the interactive hierarchy explorer.
 Four of the eight answers are incorrect, so the estimated mean failure rate is 0.5. Its 95%
 interval runs from about 0.09 to about 0.91, because each item was answered only once. More
 rollouts of the same eight items would narrow the interval. They would not support a claim about
@@ -73,8 +74,9 @@ inspect-safety-stats analyze \
   --output reports/quickstart/invalid
 ```
 
-`reports/quickstart/invalid/report.md` lists the errors under "Data integrity", and every risk
-measure in it is `unavailable`. The exit codes are listed in the
+`reports/quickstart/invalid/report.md` lists the errors under "Warnings", with the assumption
+each one checks. `report-full.md` lists them under "Data integrity", and every risk measure in
+it is `unavailable`. The exit codes are listed in the
 [API reference](api-reference.md).
 
 Reports are write-once, so a second run into the same directory is refused. Delete
@@ -129,7 +131,7 @@ inspect-safety-stats analyze \
 ```
 
 Open `reports/fixed-design-example/report.html` for the interactive hierarchy explorer, or
-`report.md` for the compact review document.
+`report.md` for the one-page summary, or `report-full.md` for the full review document.
 
 Steps 3 and 4 look like this on the offline demo, whose report has the same layout:
 

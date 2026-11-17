@@ -317,7 +317,7 @@ def test_a_pooled_calibration_never_certifies_a_row_it_does_not_measure(
     assert delta.warnings == corrected.warnings
 
     # The report states the restriction.
-    markdown = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
     assert "so they certify only a weighted mean that does the same" in markdown
 
 
@@ -434,7 +434,7 @@ def test_a_group_scoped_calibration_measures_its_group_and_certifies_its_mean(
     )
     assert outside.message.startswith("1800 validation rows")
 
-    markdown = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
     assert "The calibration is scoped to the groups `hard`" in markdown
     assert "| candidate | hard | 39 / 39 | 36 | 161 / 161 | 24 |" in markdown
 

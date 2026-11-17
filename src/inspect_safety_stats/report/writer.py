@@ -796,6 +796,10 @@ def _markdown(report: SafetyReport) -> str:
         "",
         f"**Safety estimand:** `{_escape(report.scope.get('estimand'))}`",
     ]
+    establish = report.scope.get("what_results_establish")
+    if establish:
+        # Reports written before the link existed have none.
+        lines.extend(["", f"What these results establish, and what they do not: <{establish}>"])
     if include_decisions:
         lines.insert(2, f"**Decision:** `{report.decision}`  ")
         lines.extend(
@@ -1789,10 +1793,12 @@ def _rendered(report: SafetyReport) -> dict[str, str]:
     and observations.csv are not among them: they copy the analysis input.
     """
 
+    from inspect_safety_stats.report.summary import summary_markdown
     from inspect_safety_stats.report.visualization import render_visualization
 
     return {
-        "report.md": _markdown(report),
+        "report.md": summary_markdown(report),
+        "report-full.md": _markdown(report),
         "report.html": render_visualization(report),
         "design.resolved.csv": csv_text(_design_rows(report)),
         "hierarchy-risks.csv": csv_text(_hierarchy_rows(report)),
@@ -1828,7 +1834,7 @@ def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = 
     directory.mkdir(parents=True, exist_ok=True)
     write_json(directory / "report.json", canonical_value(report.model_dump(mode="json")))
     rendered = _rendered(report)
-    for name in ("report.md", "report.html"):
+    for name in ("report.md", "report-full.md", "report.html"):
         write_text(directory / name, rendered[name])
     write_text(
         directory / "plan.resolved.yaml",
@@ -1854,6 +1860,7 @@ def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = 
     generated_names = [
         "report.json",
         "report.md",
+        "report-full.md",
         "report.html",
         "plan.resolved.yaml",
         "design.resolved.csv",

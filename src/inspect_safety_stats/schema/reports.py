@@ -550,6 +550,9 @@ class ReportPresentation(ResultModel):
     # True when the plan asks for claims.json (report.claims_export, experimental); None
     # otherwise, which keeps report.json as it was before the export existed.
     claims_export: bool | None = None
+    # report.precision_target when the plan sets it; None at the default, which keeps
+    # report.json as it was before the summary page read it.
+    precision_target: float | None = None
 
     @model_serializer(mode="wrap")
     def leave_out_absent_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:

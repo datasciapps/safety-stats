@@ -13,7 +13,7 @@ from inspect_safety_stats.config.loader import (
     report_path,
     report_plan,
 )
-from inspect_safety_stats.config.models import AnalysisPlan
+from inspect_safety_stats.config.models import DEFAULT_PRECISION_TARGET, AnalysisPlan
 from inspect_safety_stats.decision.engine import mandatory_statuses, roll_up
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.reports import (
@@ -70,6 +70,19 @@ def _resolved_design(data: NormalizedData, hierarchy: list[str]) -> list[dict[st
     return rows
 
 
+# The page every report links to, on what a result shows and what it does not. Its source is
+# docs/what-results-establish.md; a report is read outside the repository, so the link is absolute.
+RESULTS_ESTABLISH_URL = (
+    "https://github.com/aduncan001/safety_stats/blob/main/docs/what-results-establish.md"
+)
+
+# Every bound rests on this, whatever the design (#12; docs/statistical-methods.md section 15.2).
+_SANDBAGGING = (
+    " Every bound assumes that the evaluated model is not strategically underperforming "
+    "on the evaluation."
+)
+
+
 def _scope(plan: AnalysisPlan) -> dict[str, Any]:
     """The report's scope statement, which says what population the results are about."""
     if plan.design.type == "sampled":
@@ -87,8 +100,9 @@ def _scope(plan: AnalysisPlan) -> dict[str, Any]:
                 "were drawn with the recorded inclusion probabilities, and to the specified "
                 "stochastic rollout process. They do not estimate failure prevalence over "
                 "prompts outside the frame or establish safety for omitted hazards or "
-                "deployment conditions."
+                "deployment conditions." + _SANDBAGGING
             ),
+            "what_results_establish": RESULTS_ESTABLISH_URL,
         }
     return {
         "design": "fixed",
@@ -98,8 +112,9 @@ def _scope(plan: AnalysisPlan) -> dict[str, Any]:
             "Results apply to the declared fixed evaluation set and specified "
             "stochastic rollout process. They do not estimate failure prevalence "
             "over an external population of prompts or establish safety for omitted "
-            "hazards or deployment conditions."
+            "hazards or deployment conditions." + _SANDBAGGING
         ),
+        "what_results_establish": RESULTS_ESTABLISH_URL,
     }
 
 
@@ -143,6 +158,11 @@ def _presentation(plan: AnalysisPlan) -> ReportPresentation:
             )
         ),
         claims_export=True if plan.report.claims_export else None,
+        precision_target=(
+            None
+            if plan.report.precision_target == DEFAULT_PRECISION_TARGET
+            else plan.report.precision_target
+        ),
         primary_outcome_mapping=(
             plan.inputs.score.mapping.model_dump(mode="json", exclude_none=True)
             if plan.inputs.score.mapping_sensitivities

@@ -220,7 +220,7 @@ def test_a_claim_reports_its_tipping_lines_and_the_verdict_under_the_declared_bo
     assert "worst_of_k" in str(other.judge_error_stress.reason)
 
     output = report.write(tmp_path / "report")
-    markdown = (output / "report.md").read_text(encoding="utf-8")
+    markdown = (output / "report-full.md").read_text(encoding="utf-8")
     assert "## Judge-error stress (experimental)" in markdown
     assert "Declared accuracy of `judge:primary_judge`" in markdown
     assert "Worst of two is acceptable: a worst_of_k measure" in markdown
@@ -244,7 +244,7 @@ def test_without_a_declared_accuracy_only_the_tipping_lines_are_reported(tmp_pat
 def test_a_report_without_decisions_says_where_the_stress_is(tmp_path: Path) -> None:
     report = analyze(plan=_write(tmp_path, include_decisions=False), logs="ignored")
 
-    markdown = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
     assert "## Judge-error stress (experimental)" in markdown
     assert "only in `report.json`" in markdown
 
@@ -261,9 +261,9 @@ def test_a_plan_that_does_not_opt_in_writes_what_it_wrote_before(tmp_path: Path)
     report = json.loads((output / "report.json").read_text(encoding="utf-8"))
     assert {"path": "report.judge_error_stress", "value": False} in report.pop("plan_defaults")
     assert "judge_error_stress" not in json.dumps(report)
-    for name in ("report.md", "plan.resolved.yaml"):
+    for name in ("report.md", "report-full.md", "plan.resolved.yaml"):
         assert "judge_error_stress" not in (output / name).read_text(encoding="utf-8")
-    assert "Judge-error stress" not in (output / "report.md").read_text(encoding="utf-8")
+    assert "Judge-error stress" not in (output / "report-full.md").read_text(encoding="utf-8")
 
 
 def test_an_exploratory_claim_is_not_stressed_against_its_forced_inconclusive(

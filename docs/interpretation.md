@@ -1,5 +1,8 @@
 # Interpreting results
 
+[What results establish](what-results-establish.md) is the one-page summary of what a result
+shows and what it does not. This page gives the details.
+
 ## Start with the risk estimates
 
 The default report presents estimates and uncertainty intervals without turning them into a
@@ -26,7 +29,7 @@ An analysis with `intent: exploratory` certifies nothing, so every claim and the
 decision are `INCONCLUSIVE`. When integrity is valid and a claim's bounds are certifying, the
 claim also has a descriptive status: the status a confirmatory analysis of the same bounds
 would give at the plan's thresholds. `report.json` records it as `descriptive_status`,
-and, with `report.include_decisions: true`, `report.md` shows it beside the status, for example
+and, with `report.include_decisions: true`, `report-full.md` shows it beside the status, for example
 `` `INCONCLUSIVE` (descriptive: `PASS`) ``, and `report.html` as a dashed badge. A claim without
 certifying bounds, or a report whose integrity is invalid, has none (`null`).
 
@@ -60,7 +63,7 @@ thresholds with the time it was set, and leaves the plan and its hash as frozen.
 ### Verdicts under sensitivity profiles
 
 A claim's status is decided under its evidence's primary independence profile. When the plan
-declares sensitivity profiles, `profile_verdicts` in `report.json`, a table in `report.md` and
+declares sensitivity profiles, `profile_verdicts` in `report.json`, a table in `report-full.md` and
 the HTML claim card also give the verdict each sensitivity profile's interval would reach at
 the same thresholds. These verdicts never change the claim's status or the decision. A
 `PASS` that is `INCONCLUSIVE` under a coarser profile, such as `prompt`, rests on the primary
@@ -139,7 +142,7 @@ of unseen tasks or questions.
 
 A headline row averages over the hierarchy, so an effect concentrated in one node can look
 small there: a few points of difference overall can be a large difference in one category and
-none in the others. When a report has hierarchy rows, `report.md` lists, right after the
+none in the others. When a report has hierarchy rows, `report-full.md` lists, right after the
 claims:
 
 - every hierarchy node of a comparison whose interval excludes no difference (0 for a risk
@@ -276,7 +279,7 @@ into a population sample.
 Every report lists what its results rest on, built from the analysis rather than from a fixed
 text:
 
-- **The interval methods.** Under "Fixed-design risk measures", `report.md` names each method
+- **The interval methods.** Under "Fixed-design risk measures", `report-full.md` names each method
   and independence profile its risk intervals used, what the profile blocks by, and the
   assumptions recorded on those intervals (`intervals[].assumptions` in `report.json`).
 - **The assumptions.** "Limitations" lists each assumption from the package's registry that

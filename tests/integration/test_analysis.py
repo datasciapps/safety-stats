@@ -221,10 +221,11 @@ def test_end_to_end_pass_and_report(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     output = report.write(tmp_path / "report")
     assert (output / "report.json").exists()
     assert (output / "report.md").exists()
+    assert (output / "report-full.md").exists()
     assert (output / "report.html").exists()
     assert (output / "observations.csv").exists()
     assert (output / "comparisons.csv").exists()
-    markdown = (output / "report.md").read_text(encoding="utf-8")
+    markdown = (output / "report-full.md").read_text(encoding="utf-8")
     assert "fixed evaluation set" in markdown
     assert "**Decision:**" not in markdown
     assert "## Mandatory claims" not in markdown
@@ -319,6 +320,7 @@ def test_text_artifacts_have_the_same_bytes_on_every_platform(
     for path in (
         output / "report.json",
         output / "report.md",
+        output / "report-full.md",
         output / "report.html",
         output / "plan.resolved.yaml",
         output / "checksums.json",
@@ -388,7 +390,7 @@ def test_empirical_hierarchy_intervals_and_independence_sensitivity(
         )
 
     output = report.write(tmp_path / "hierarchy-report")
-    markdown = (output / "report.md").read_text(encoding="utf-8")
+    markdown = (output / "report-full.md").read_text(encoding="utf-8")
     assert "| sensitivity (independence) |" in markdown
     assert "| sensitivity |" not in markdown
     hierarchy_csv = (output / "hierarchy-risks.csv").read_text(encoding="utf-8")
@@ -666,7 +668,9 @@ def test_judge_calibration_emits_assumed_correction_sensitivities(
     entropic = next(row for row in report.group_risks if row.measure_id == "entropic")
     assert not any(i.interval_id.startswith("judge_corrected_") for i in entropic.intervals)
 
-    markdown = (report.write(tmp_path / "judge-report") / "report.md").read_text(encoding="utf-8")
+    markdown = (report.write(tmp_path / "judge-report") / "report-full.md").read_text(
+        encoding="utf-8"
+    )
     assert "## Judge misclassification sensitivity" in markdown
     assert "assumes the judge never errs" in markdown
 
@@ -778,7 +782,7 @@ def test_validated_judge_calibration_produces_certifying_corrections(
         assert result.estimate is None
         assert any("validated judge correction" in reason for reason in result.reasons)
 
-    markdown = (report.write(tmp_path / "validated-report") / "report.md").read_text(
+    markdown = (report.write(tmp_path / "validated-report") / "report-full.md").read_text(
         encoding="utf-8"
     )
     assert "## Judge misclassification correction" in markdown
@@ -1048,7 +1052,9 @@ def test_transported_judge_calibration_bounds_true_risk_by_the_published_sensiti
     assert "JUDGE_CALIBRATION_TRANSPORTED" in codes
     assert "JUDGE_CORRECTED_CLAIMS" not in codes
 
-    markdown = (report.write(tmp_path / "judge-report") / "report.md").read_text(encoding="utf-8")
+    markdown = (report.write(tmp_path / "judge-report") / "report-full.md").read_text(
+        encoding="utf-8"
+    )
     assert "## Judge misclassification sensitivity" in markdown
     assert "Published validation set behind the transported sensitivity" in markdown
     assert "Judge flagged 100 of 120 human-unsafe items" in markdown
@@ -1244,7 +1250,7 @@ def test_decision_presentation_is_opt_in(monkeypatch: pytest.MonkeyPatch, tmp_pa
     report = analyze(plan=plan, logs="ignored")
     assert report.presentation.include_decisions is True
     output = report.write(tmp_path / "report-with-decisions")
-    markdown = (output / "report.md").read_text(encoding="utf-8")
+    markdown = (output / "report-full.md").read_text(encoding="utf-8")
     assert "**Decision:** `PASS`" in markdown
     assert "## Mandatory claims" in markdown
     for claim in report.claims:
@@ -1289,7 +1295,7 @@ def test_exploratory_claims_show_what_the_bounds_would_decide(
         f"the plan's thresholds would give {descriptive}."
     )
     assert claim.reasons[2].startswith("Upper bound" if score == "PASS" else "Lower bound")
-    markdown = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
     assert f"| `INCONCLUSIVE` (descriptive: `{descriptive}`) |" in markdown
     assert "so no claim is certified" in markdown
 
@@ -1688,8 +1694,8 @@ def test_the_token_limit_count_is_written_only_when_the_plan_looks(
 
     assert "n_token_limit" not in first_p1(default_dir)
     assert first_p1(looking_dir)["n_token_limit"] == 1
-    assert "Token limit" not in (default_dir / "report.md").read_text(encoding="utf-8")
-    assert "| Token limit |" in (looking_dir / "report.md").read_text(encoding="utf-8")
+    assert "Token limit" not in (default_dir / "report-full.md").read_text(encoding="utf-8")
+    assert "| Token limit |" in (looking_dir / "report-full.md").read_text(encoding="utf-8")
     default_csv = (default_dir / "observations.csv").read_text(encoding="utf-8")
     looking_csv = (looking_dir / "observations.csv").read_text(encoding="utf-8")
     default_header = default_csv.splitlines()[0]
@@ -2246,7 +2252,7 @@ def test_first_class_direct_comparisons_expand_hierarchy_and_write_artifacts(
     comparisons_csv = (output / "comparisons.csv").read_text(encoding="utf-8")
     assert "candidate_estimate" in comparisons_csv
     assert "candidate_vs_baseline::question_id" in comparisons_csv
-    markdown = (output / "report.md").read_text(encoding="utf-8")
+    markdown = (output / "report-full.md").read_text(encoding="utf-8")
     assert "## Model and configuration comparisons" in markdown
     assert "### Comparison hierarchy" in markdown
     html = (output / "report.html").read_text(encoding="utf-8")
@@ -2657,7 +2663,7 @@ def test_multi_judge_panel_is_reported_beside_the_primary_analysis(
     assert pair["cohorts"]["candidate"]["agreement"] == pytest.approx(34 / 39)
 
     output = report.write(tmp_path / "judge-panel-report")
-    markdown = (output / "report.md").read_text(encoding="utf-8")
+    markdown = (output / "report-full.md").read_text(encoding="utf-8")
     assert "## Judge panel" in markdown
     assert "effective votes" in markdown.lower()
     # Per-judge verdicts live beside the observations, not inside them.
@@ -2710,7 +2716,7 @@ def test_panel_groups_break_the_panel_down_by_group(
     assert (second["compared"], second["disagreements"]) == (19, 0)
     assert second["agreement"] == pytest.approx(1.0, abs=0)
 
-    markdown = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
     assert "### Judge panel by group" in markdown
     assert "| judge_a | first | candidate | 20 | 10 | 0 |" in markdown
     assert "| any_judge | first | candidate | 20 | 10 | 0 |" in markdown
@@ -2735,7 +2741,7 @@ def test_a_panel_without_panel_groups_has_no_group_breakdown(
     assert "groups" not in panel
     for entry in (*panel["judges"], *panel["composites"], *panel["agreement"]):
         assert "groups" not in entry
-    markdown = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
     assert "Judge panel by group" not in markdown
 
 
@@ -2921,7 +2927,7 @@ def test_judge_claims_have_a_report_section(
 ) -> None:
     _patch_frames(monkeypatch, _judge_frames_with_configuration())
     report = analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
-    text = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
     section = text[text.index("### Claims by judge (experimental)") :]
     (claim,) = report.claims
     # The plan hides decisions, so the rows show no status either.
@@ -2944,7 +2950,7 @@ def test_judge_claims_have_a_report_section(
         encoding="utf-8",
     )
     plain_text = (
-        analyze(plan=plain_plan, logs="ignored").write(plain / "report") / "report.md"
+        analyze(plan=plain_plan, logs="ignored").write(plain / "report") / "report-full.md"
     ).read_text(encoding="utf-8")
     assert "## Judge panel" in plain_text
     assert "Claims by judge" not in plain_text
@@ -3045,7 +3051,7 @@ def test_panel_derived_correction_is_reported_as_a_diagnostic(
     for claim in report.claims:
         assert claim.method != "derived_panel_misclassification_correction"
 
-    markdown = (report.write(tmp_path / "panel-corrected") / "report.md").read_text(
+    markdown = (report.write(tmp_path / "panel-corrected") / "report-full.md").read_text(
         encoding="utf-8"
     )
     assert "panel_derived" in markdown
@@ -4014,7 +4020,7 @@ def test_claims_show_their_verdict_under_every_independence_profile(
     assert prompt.upper is not None and prompt.upper > claim.acceptable_upper
 
     output = report.write(tmp_path / "profiled-report")
-    markdown = (output / "report.md").read_text(encoding="utf-8")
+    markdown = (output / "report-full.md").read_text(encoding="utf-8")
     assert "### Verdicts by independence profile" in markdown
     assert (
         "| Mean fixed-design risk is acceptable | `prompt` | sensitivity | `INCONCLUSIVE` "
@@ -4033,7 +4039,7 @@ def test_a_claim_without_sensitivity_profiles_has_only_its_primary_verdict(
     assert [(v.independence_profile, v.role, v.status) for v in claim.profile_verdicts] == [
         ("rollout", "primary", "PASS")
     ]
-    markdown = (report.write(tmp_path / "plain-report") / "report.md").read_text(
+    markdown = (report.write(tmp_path / "plain-report") / "report-full.md").read_text(
         encoding="utf-8"
     )
     assert "Verdicts by independence profile" not in markdown
@@ -4213,7 +4219,7 @@ def test_single_valued_bound_is_reported_per_direct_interval_when_requested(
     )
 
     output = report.write(tmp_path / "report")
-    markdown = (output / "report.md").read_text(encoding="utf-8")
+    markdown = (output / "report-full.md").read_text(encoding="utf-8")
     assert "## Single-valued bounds (experimental)" in markdown
     assert "P(M < R) ≤ R" in markdown
     payload = (output / "report.json").read_text(encoding="utf-8")
@@ -4271,7 +4277,7 @@ def test_reports_without_the_single_valued_bound_leave_its_fields_out(
     defaults = report.pop("plan_defaults")
     assert {"path": "outputs.direct_mean_intervals.single_valued_bound", "value": False} in defaults
     assert "single_valued" not in json.dumps(report)
-    for name in ("report.md", "plan.resolved.yaml", "hierarchy-risks.csv"):
+    for name in ("report.md", "report-full.md", "plan.resolved.yaml", "hierarchy-risks.csv"):
         assert "single_valued" not in (output / name).read_text(encoding="utf-8"), name
     enabled = load_plan(plan_path)
     enabled.outputs.direct_mean_intervals.single_valued_bound = True

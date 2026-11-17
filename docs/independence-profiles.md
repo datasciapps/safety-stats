@@ -61,7 +61,7 @@ outputs:
 ```
 
 Each interval under a sensitivity profile has `role: sensitivity` and
-`varied_assumption: independence` in `report.json`, and `report.md` and `report.html` label it
+`varied_assumption: independence` in `report.json`, and `report-full.md` and `report.html` label it
 `sensitivity (independence)`. A judge-misclassification sensitivity has
 `varied_assumption: judge_error` instead, so the two cannot be mistaken for each other.
 
@@ -79,7 +79,7 @@ Sensitivity verdicts show how far that verdict depends on the primary independen
 they are never selected in its place. A `PASS` under `rollout` that is `INCONCLUSIVE` under
 `prompt` holds only if rollouts of the same prompt are independent.
 
-`report.md` adds a "Verdicts by independence profile" table under the mandatory claims when
+`report-full.md` adds a "Verdicts by independence profile" table under the mandatory claims when
 any of them has a sensitivity profile, and the HTML claim card lists each profile's verdict
 and bounds. Claims decided on a judge-corrected interval or the noisy-valid test have no
 per-profile counterpart and no rows; when their evidence has sensitivity profiles, a reason

@@ -124,6 +124,6 @@ plan's as frozen. The `decision_policy` section of `report.json` holds:
 | `versions` | Every version, with `set_after_first_evaluation` (`null` when no start time is known) |
 | `claims` | For every claim, the thresholds it was decided at, `set_by` (`plan` or a version id) and the plan's thresholds |
 
-`report.md` shows the same in a "Decision policy" section. With
+`report-full.md` shows the same in a "Decision policy" section. With
 [verdict ranges](interpretation.md#verdicts-at-other-thresholds), a reader can also see the
 verdict at any other thresholds without a policy.
