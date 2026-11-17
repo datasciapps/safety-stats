@@ -16,6 +16,7 @@ from inspect_safety_stats.schema.reports import (
     HierarchyRiskResult,
     RiskIntervalResult,
 )
+from inspect_safety_stats.schema.scopes import cohort_scope
 from inspect_safety_stats.stats.hierarchy_region import (
     LinearIntervalConstraint,
     project_hierarchy_confidence_region,
@@ -164,7 +165,9 @@ def _project_onto_regions(
                             "The raw simultaneous node intervals have no common parameter "
                             "vector under the declared fixed-design hierarchy."
                         ),
-                        scope=f"{cohort_id}:{method}:{independence_unit}",
+                        scope=cohort_scope(
+                            cohort_id, "methods", method, "units", independence_unit
+                        ),
                         details={
                             "solver_message": projection.message,
                             "constraint_count": projection.constraint_count,

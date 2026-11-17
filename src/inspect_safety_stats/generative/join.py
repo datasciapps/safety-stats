@@ -14,6 +14,7 @@ from inspect_safety_stats.generative.ledger import RewriteRecord, SelectionRecor
 from inspect_safety_stats.generative.schema import GenerativePlan
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import Diagnostic
+from inspect_safety_stats.schema.scopes import cohort_scope
 
 
 @dataclass(frozen=True)
@@ -111,7 +112,7 @@ def join_outcomes(
                         f"sample {sample.sample_id!r} does not correspond to any accepted "
                         "rewrite; the log and the ledger describe different runs"
                     ),
-                    scope=cohort_id,
+                    scope=cohort_scope(cohort_id),
                 )
             )
             continue
@@ -125,7 +126,7 @@ def join_outcomes(
                         f"sample {sample.sample_id!r} epoch {sample.epoch} appears more than "
                         "once; a retried or re-ingested sample would be counted twice"
                     ),
-                    scope=cohort_id,
+                    scope=cohort_scope(cohort_id),
                 )
             )
             continue
@@ -168,7 +169,7 @@ def join_outcomes(
                     f"target.rollouts_per_rewrite ({rollouts}); the declared design and the "
                     "run disagree"
                 ),
-                scope=cohort_id,
+                scope=cohort_scope(cohort_id),
                 details={"sampling_units": sorted(over_evaluated)[:20]},
             )
         )
@@ -182,7 +183,7 @@ def join_outcomes(
                     f"the model it declares ({plan.target.cohorts[cohort_id].model!r}), so "
                     "every sampling unit is completed as unclassified"
                 ),
-                scope=cohort_id,
+                scope=cohort_scope(cohort_id),
                 details={"declared_model": plan.target.cohorts[cohort_id].model},
             )
         )
@@ -195,7 +196,7 @@ def join_outcomes(
                     f"{len(unevaluated)} of {len(selections)} sampling units produced no "
                     "usable outcome and are completed as unclassified"
                 ),
-                scope=cohort_id,
+                scope=cohort_scope(cohort_id),
                 details={"count": len(unevaluated)},
             )
         )

@@ -7,6 +7,26 @@ described in their pull requests.
 
 ### Added
 
+- **Diagnostics say what they concern and what they do.** Every diagnostic in `report.json`
+  now carries `source`, the kind of input it concerns (`plan`, `registration`, `manifest`,
+  `logs`, `judge_labels`, `analysis` or `generation`), and `effect`, what it does to the
+  results (`invalid`, `degraded`, `withheld`, `adjusted` or `recorded`). Both are filled from
+  the code's entry in `inspect_safety_stats.registry`, which also says what each value means.
+  Every `report.json` and `report.html` with a diagnostic changes bytes; `report.md` and the
+  CSVs do not. A `report.json` written before reads back with both fields filled.
+
+- **A diagnostic's scope is a path.** `scope` names where a finding sits as a `/`-separated
+  path: a root (`plan`, `decision_policy`, `cohorts`, `runs`, `evals`, `logs`, `prompts`,
+  `strata`, `comparisons`, `comparison_sets` or `families`), then collection/id pairs, as in
+  `plan/outputs/direct_mean_intervals`, `cohorts/candidate/prompts/p1` or
+  `cohorts/candidate/groups/g1/measures/worst_of_k`. Ids have `%` and `/` percent-encoded, so
+  any id splits back out. Scopes were free text before (`candidate:p1`,
+  `inputs.judges.j1`), and an error whose scope was a stratum, claim or prompt id equal to a
+  cohort's id withheld that cohort's prompt bounds; an error now withholds a cohort's bounds
+  only when its scope is `cohorts/<id>`. Every `report.json`, `report.md`, `report.html` and
+  diagnostics CSV with a scoped diagnostic changes bytes, and so does the CLI's diagnostic
+  listing. A `report.json` written before still renders with `visualize`.
+
 - **Reports state the methods and assumptions they used (#64).** The "Fixed-design risk
   measures" paragraph of `report.md` no longer names a fixed set of methods and profiles: it
   lists each method and independence profile the report's intervals used, with the

@@ -37,6 +37,7 @@ from inspect_safety_stats.schema.reports import (
     RiskIntervalResult,
     VerdictRange,
 )
+from inspect_safety_stats.schema.scopes import plan_scope
 from inspect_safety_stats.stats.judge_stress import stress_verdict
 from inspect_safety_stats.stats.misclassification import (
     TruthStratumCounts,
@@ -666,7 +667,7 @@ def _claims(
                     "threshold claims were decided on true failure risk using the validated "
                     "judge correction rather than the uncorrected judge-system interval"
                 ),
-                scope="claims",
+                scope=plan_scope("claims"),
                 details={"claim_ids": sorted(corrected_claims)},
             )
         )
@@ -680,7 +681,7 @@ def _claims(
                     "certifying correction for their evidence, so they are INCONCLUSIVE rather "
                     "than decided on judge-reported risk"
                 ),
-                scope="claims",
+                scope=plan_scope("claims"),
                 details={"claim_ids": sorted(uncorrected_claims)},
             )
         )

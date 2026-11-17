@@ -256,7 +256,9 @@ def test_unknown_references_are_plan_errors(tmp_path: Path) -> None:
         _write(tmp_path, adaptive=[{**ADAPTIVE, "cohort": "nobody", "family": "none"}])
     )
     (diagnostic,) = [
-        item for item in validate_plan_references(plan) if item.scope == ADAPTIVE["id"]
+        item
+        for item in validate_plan_references(plan)
+        if item.scope == f"plan/adaptive_claims/{ADAPTIVE['id']}"
     ]
     assert diagnostic.code == "PLAN_UNKNOWN_REFERENCE"
     assert "cohort 'nobody'" in diagnostic.message and "family 'none'" in diagnostic.message

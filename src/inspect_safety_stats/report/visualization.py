@@ -9,7 +9,7 @@ import yaml
 
 from inspect_safety_stats.config.canonicalize import canonical_value
 from inspect_safety_stats.report.artifacts import write_text
-from inspect_safety_stats.schema.reports import SafetyReport
+from inspect_safety_stats.schema.reports import STORED_REPORT, SafetyReport
 
 _TEMPLATE = Path(__file__).with_name("visualization_template.html")
 _DATA_MARKER = "__INSPECT_SAFETY_STATS_DATA__"
@@ -76,7 +76,9 @@ def _report_from_path(source: Path) -> tuple[SafetyReport, Path]:
     report_path = source / "report.json" if source.is_dir() else source
     if not report_path.exists():
         raise FileNotFoundError(f"report JSON does not exist: {report_path}")
-    report = SafetyReport.model_validate_json(report_path.read_text(encoding="utf-8"))
+    report = SafetyReport.model_validate_json(
+        report_path.read_text(encoding="utf-8"), context={STORED_REPORT: True}
+    )
     directory = report_path.parent
     _fill_from_directory(report, directory)
     return report, directory

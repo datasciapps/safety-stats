@@ -84,10 +84,10 @@ def test_a_calibration_is_the_estimators_and_completion_is_reported() -> None:
     assert outcome.calibration == estimate_judge_calibration(
         scenario_id="s", unsafe_stratum=unsafe, safe_stratum=safe, alpha=0.05
     )
-    diagnostic = completion_diagnostic(outcome.calibration, "candidate")
+    diagnostic = completion_diagnostic(outcome.calibration, "cohorts/candidate")
     assert diagnostic is not None
     assert diagnostic.code == "JUDGE_STRATUM_UNLABELLED_COMPLETED"
-    assert diagnostic.scope == "candidate"
+    assert diagnostic.scope == "cohorts/candidate"
     assert diagnostic.details == {"completed_strata": ["judge_safe"]}
 
 

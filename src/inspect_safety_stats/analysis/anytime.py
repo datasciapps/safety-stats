@@ -20,10 +20,9 @@ from inspect_safety_stats.config.models import AnalysisPlan, AnytimeBoundsSpec
 from inspect_safety_stats.ingest.records import NormalizedData, SampleOrder
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import Diagnostic
+from inspect_safety_stats.schema.scopes import cohort_scope
 from inspect_safety_stats.stats.sequential import AnytimeUpperBound, anytime_upper_bound
 from inspect_safety_stats.validate.plan import anytime_bound_problems
-
-SCOPE = "outputs.anytime_bounds"
 
 OrderReader = Callable[[Mapping[str, str]], Mapping[str, SampleOrder]]
 
@@ -216,7 +215,7 @@ def anytime_bound_diagnostics(
             row for row in data.observations if row.cohort_id == cohort and row.score_name == score
         ]
         for group_id in group_ids:
-            scope = f"{SCOPE}:{cohort}:{group_id}"
+            scope = cohort_scope(cohort, "groups", group_id, "outputs", "anytime_bounds")
             try:
                 bound, details = _bound(
                     plan, spec, data, cohort, group_id, observations, read_orders, alpha

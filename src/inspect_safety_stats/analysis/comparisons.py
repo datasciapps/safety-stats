@@ -33,11 +33,20 @@ from inspect_safety_stats.schema.reports import (
     PromptEstimate,
     RiskIntervalResult,
 )
+from inspect_safety_stats.schema.scopes import scope_path
 from inspect_safety_stats.stats.comparisons import DirectComparisonBounds, RatioComparisonBounds
 from inspect_safety_stats.stats.independence import (
     comparison_contrast_blocks,
     direct_bounded_blocks,
 )
+
+
+def _target_scope(comparison_id: str, target: _ComparisonTarget) -> str:
+    """``comparisons/<id>``, or for a hierarchy node ``.../levels/<level>/nodes/<path>``."""
+    if target.level is None:
+        return scope_path("comparisons", comparison_id)
+    node = "/".join(f"{key}={value}" for key, value in target.path.items())
+    return scope_path("comparisons", comparison_id, "levels", target.level, "nodes", node)
 
 
 def _comparisons(
@@ -214,7 +223,7 @@ def _comparisons(
                                     code="COMPARISON_INTERVAL_INVALID",
                                     severity="ERROR",
                                     message=str(exc),
-                                    scope=target.result_id,
+                                    scope=_target_scope(spec.id, target),
                                 )
                             )
             primary = next((item for item in intervals if item.role == "primary"), None)
@@ -244,7 +253,7 @@ def _comparisons(
                                 code="PAIR_UNSCORED_COMPLETED",
                                 severity="WARNING",
                                 message=message,
-                                scope=spec.id,
+                                scope=scope_path("comparisons", spec.id),
                             )
                         )
                         warnings.append(message)
@@ -254,7 +263,7 @@ def _comparisons(
                             code="PAIR_BROKEN",
                             severity="ERROR",
                             message=str(exc),
-                            scope=spec.id,
+                            scope=scope_path("comparisons", spec.id),
                         )
                     )
                     warnings.append(str(exc))

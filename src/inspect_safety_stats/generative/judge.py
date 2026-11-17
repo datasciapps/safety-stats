@@ -29,6 +29,7 @@ from inspect_safety_stats.generative.ledger import RewriteRecord
 from inspect_safety_stats.generative.schema import GenerativePlan
 from inspect_safety_stats.ingest.validation import load_validation_manifest
 from inspect_safety_stats.schema.reports import Diagnostic
+from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope
 from inspect_safety_stats.stats.judge_calibration import (
     NO_STRATA,
     JudgeStrata,
@@ -198,7 +199,7 @@ def measured_calibration(
                     f"{len(unmatched)} human labels reference samples this run did not "
                     f"evaluate, starting with {unmatched[0]!r}"
                 ),
-                scope=cohort_id,
+                scope=cohort_scope(cohort_id),
             )
         )
     outcome = calibrate_cohort(
@@ -214,7 +215,7 @@ def measured_calibration(
                 message=(
                     f"the {outcome.empty_strata[0]} stratum is empty, so rho cannot be estimated"
                 ),
-                scope=cohort_id,
+                scope=cohort_scope(cohort_id),
             )
         )
         return None, diagnostics
@@ -224,7 +225,7 @@ def measured_calibration(
                 code="JUDGE_CALIBRATION_UNINFORMATIVE",
                 severity="WARNING",
                 message=str(outcome.refusal),
-                scope=cohort_id,
+                scope=cohort_scope(cohort_id),
                 details={
                     "judge_unsafe_labelled": unsafe.labelled,
                     "judge_safe_labelled": safe.labelled,
@@ -232,7 +233,7 @@ def measured_calibration(
             )
         )
         return None, diagnostics
-    completed = completion_diagnostic(outcome.calibration, cohort_id)
+    completed = completion_diagnostic(outcome.calibration, cohort_scope(cohort_id))
     if completed is not None:
         diagnostics.append(completed)
     return outcome.calibration, diagnostics
@@ -289,7 +290,7 @@ def correct(
     return corrected
 
 
-def comparison_refusal(cohort_pair: str) -> Diagnostic:
+def comparison_refusal(candidate: str, baseline: str) -> Diagnostic:
     """Comparisons stay on the judge-reported scale, and say so.
 
     Correcting a paired comparison would mean bounding each arm separately and
@@ -303,10 +304,10 @@ def comparison_refusal(cohort_pair: str) -> Diagnostic:
         code="JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON",
         severity="WARNING",
         message=(
-            f"comparison {cohort_pair} stays on the judge-reported scale: correcting it "
+            f"comparison {candidate}:{baseline} stays on the judge-reported scale: correcting it "
             "would either discard the paired construction or assume a prevalence-free judge"
         ),
-        scope=cohort_pair,
+        scope=cohort_scope(candidate, "comparisons", baseline),
     )
 
 
@@ -325,5 +326,5 @@ def slice_family_refusal() -> Diagnostic:
             "the declared slice family stays on the judge-reported scale: its simultaneous "
             "calibration does not include judge correction"
         ),
-        scope="slice_family",
+        scope=plan_scope("inference", "slice_family"),
     )

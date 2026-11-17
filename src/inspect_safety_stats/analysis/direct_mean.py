@@ -15,6 +15,7 @@ from inspect_safety_stats.config.models import AnalysisPlan, RiskMeasureSpec
 from inspect_safety_stats.ingest.manifest import load_inclusion_probabilities
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.reports import Diagnostic, PromptEstimate, RiskIntervalResult
+from inspect_safety_stats.schema.scopes import cohort_scope
 from inspect_safety_stats.stats.design_based import (
     DesignBasedBounds,
     FixedSizeDesign,
@@ -603,7 +604,7 @@ def _worst_of_k_direct_interval(
                 code="DIRECT_MEAN_INTERVAL_INVALID",
                 severity="ERROR",
                 message=str(exc),
-                scope=f"{cohort_id}:{group_id}:{measure.id}",
+                scope=cohort_scope(cohort_id, "groups", group_id, "measures", measure.id),
             )
         )
         return None, [*warnings, str(exc)]

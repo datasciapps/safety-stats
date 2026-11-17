@@ -16,6 +16,7 @@ from inspect_safety_stats.schema.reports import (
     HierarchyRiskResult,
     RiskIntervalResult,
 )
+from inspect_safety_stats.schema.scopes import plan_scope
 from inspect_safety_stats.stats.judges import (
     JudgeAccuracyBox,
     compose_verdicts,
@@ -307,7 +308,7 @@ def _add_panel_derived_correction(
                     "a majority composite has no closed-form accuracy box under partial "
                     "dependence; validate the composite's own verdict instead"
                 ),
-                scope=f"inputs.composites.{composite.id}",
+                scope=plan_scope("inputs", "composites", composite.id),
             )
         )
         return None
@@ -321,7 +322,7 @@ def _add_panel_derived_correction(
                     f"the judges of composite {composite.id!r} declare their accuracies for "
                     "no group in common, so no panel-derived correction is reported"
                 ),
-                scope=f"inputs.composites.{composite.id}",
+                scope=plan_scope("inputs", "composites", composite.id),
             )
         )
         return None
