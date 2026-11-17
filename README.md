@@ -81,11 +81,226 @@ Configuration and block mathematics are documented in
 Comparison estimands, common contrast/two-arm regions, and usage are documented in
 [Fixed-design model and configuration comparisons](docs/model-comparisons.md).
 
+## Walkthrough: the offline demo
+
+This section follows the [offline demo](examples/demo/README.md) from its inputs to the report,
+and reads the one warning the report shows. The model is simulated and every draw is seeded, so
+the numbers below come out the same on every run and every machine. They show how the analysis
+works and say nothing about any real model. Run the commands from the repository root after the
+[installation](#install).
+
+### Inputs
+
+An analysis takes three inputs:
+
+- **Inspect logs.** [demo_eval.py](examples/demo/demo_eval.py) is a 12-prompt refusal task,
+  4 prompts in each of three risk domains (bio, cyber and privacy), each run for 20 epochs. Its
+  scorer `safety_failure` scores each rollout `PASS` or `FAIL`. The name after `mockllm/`
+  selects one of two simulated configurations, a baseline and a candidate:
+
+  ```bash
+  inspect eval examples/demo/demo_eval.py \
+    --model mockllm/baseline,mockllm/candidate --log-dir logs/demo
+  ```
+
+  Start from an empty `logs/demo`: logs left there by an earlier run would be analyzed as extra
+  rollouts.
+- **A design manifest.** [design.csv](examples/demo/design.csv) has one row per prompt: its
+  `prompt_id`, `question_id`, `task_id`, `risk_domain` and `expected_rollouts` (20).
+- **An analysis plan.** [plan.yaml](examples/demo/plan.yaml) says which score values count as
+  failures, which logs belong to which model, how the prompts are grouped and weighted, which
+  intervals and risk measures to report, and which comparisons to make.
+
+The plan and the design are what `init` writes for these logs, with `--failure-values FAIL`
+because the package never guesses which score value means failure:
+
+```bash
+inspect-safety-stats init --logs logs/demo --failure-values FAIL \
+  --group-by risk_domain --baseline mockllm/baseline
+```
+
+`init` writes `safety-plan.yaml` (renamed to `plan.yaml` in the example) and `design.csv`. The
+header of the plan lists each choice `init` made and the assumption behind it. The plan breaks
+the rates down by risk domain and compares the candidate with the baseline as a risk difference
+and a risk ratio. One edit was made after `init`: two tail measures, `cvar_90` (the mean of the
+worst tenth of prompts) and `worst` (the worst prompt). `init` marks the plan exploratory,
+because it was written after the logs existed.
+
+### Command line
+
+Check the logs against the plan and the design, then analyze them:
+
+```bash
+inspect-safety-stats validate --plan examples/demo/plan.yaml --logs logs/demo
+
+inspect-safety-stats analyze --plan examples/demo/plan.yaml \
+  --logs logs/demo --output reports/demo
+```
+
+`validate` prints `Integrity: valid`. `analyze` prints the analysis id, the SHA-256 of the plan,
+the integrity status, the headline failure rates, each with its 95% simultaneous interval, and
+where it wrote the summary, the index and the report (shown here as relative paths):
+
+```text
+Analysis: refusal_demo-20261117T171929Z
+Plan SHA-256: 8f634e7db40e3f538f7262e10b10d53823ba4ef0abc7b98ed091a9693c2e1e6f
+Integrity: valid
+Failure rate (weighted mean):
+  baseline / all: 20.4% [13.0%, 29.5%]
+  candidate / all: 0.8% [0.0%, 4.2%]
+Summary: reports/demo/report.md
+Index: reports/demo/index.json
+Report: reports/demo
+```
+
+`analyze` refuses to write into a directory that is not empty: delete `reports/demo` first or
+choose another output directory. `python examples/demo/run_demo.py` runs the evaluation and the
+analysis in one step and prints the rates per risk domain and the comparison as well.
+
+### Python
+
+The same analysis from Python, reading the headline and the warnings from the summary level of
+the report:
+
+```python
+from inspect_safety_stats import analyze
+
+report = analyze(plan="examples/demo/plan.yaml", logs="logs/demo")
+report.write("reports/demo-python")
+
+summary = report.summary
+print(summary.integrity, summary.warning_count)
+for estimate in summary.headline:
+    print(estimate.cohort, estimate.estimand or estimate.measure,
+          f"{estimate.estimate:.3f} [{estimate.lower:.3f}, {estimate.upper:.3f}]")
+for warning in summary.warnings:
+    print(warning.severity, warning.code, warning.effect)
+```
+
+```text
+valid 1
+baseline mean 0.204 [0.130, 0.295]
+candidate mean 0.008 [0.000, 0.042]
+candidate risk_difference -0.196 [-0.294, -0.088]
+candidate risk_ratio 0.041 [0.001, 0.326]
+WARNING TAIL_MEASURES_UNINFORMATIVE recorded
+```
+
+`report` is a `SafetyReport`. `SafetyReport.model_validate_json` reads a `report.json` written
+earlier, as [show_results.py](examples/demo/show_results.py) does, and the report it returns has
+the same `summary`.
+
+### Outputs
+
+`reports/demo` holds:
+
+| File | What it holds |
+|---|---|
+| `report.md` | The one-page summary for people. Read it first. |
+| `index.json`, `index.md` | The index for agents and tools: every file, the headline estimates and the warnings, with pointers into `report.json`. |
+| `report.json` | Every result, diagnostic and setting. Every other file is derived from it. |
+| `report-full.md` | The full report: every interval, sensitivity and diagnostic message. |
+| `report.html` | The interactive report, self-contained. |
+| `hierarchy-risks.csv`, `comparisons.csv`, `comparison-sets.csv` | The results as tables, one row per item of the matching list in `report.json`. |
+| `plan.resolved.yaml`, `design.resolved.csv`, `observations.csv` | The plan with its defaults filled in, the design and every rollout, as analysed. |
+| `checksums.json` | The SHA-256 of every other file. |
+
+### The summary
+
+`report.md` opens with one line on the design and the integrity status:
+
+```text
+12 fixed prompts · 20 rollouts per prompt (median) · 2 models · data integrity **valid** (1 warning)
+```
+
+Read the integrity status before any number. `degraded` means the results rest on an assumption
+the inputs could not confirm, and `invalid` means no claim can pass. The demo is `valid`: its one
+warning records a fact and changes no result. Then come, in this order:
+
+- **Warnings.** One row per code. The demo has one, read [below](#reading-the-warnings).
+- **Failure risk.** The baseline fails on 20.4% of its rollouts, with an interval from 13.0% to
+  29.5%; the candidate on 0.8%, from 0.0% to 4.2%. The intervals bound the rollout uncertainty on
+  these 12 prompts, with 95% coverage holding for all of them at once. The prompt-level
+  sensitivity beside them (1.1% to 65.3% for the baseline) allows the rollouts of one prompt to
+  depend on each other in any way. It is much wider, because it can rely on little more than the
+  12 prompts being independent of each other.
+- **Comparisons.** Candidate minus baseline is −19.6 percentage points, from −29.4 to −8.8. The
+  whole interval is below zero, so on this design the candidate fails less often. The ratio of
+  the rates is 0.04, from 0.00 to 0.33.
+- **By risk_domain.** The same rates and differences within bio, cyber and privacy. With 80
+  rollouts per domain the intervals are wide: the baseline's bio rate is 5.0%, from 0.4% to
+  18.2%. The candidate never fails on a bio or cyber prompt, and its upper bound there is still
+  7.4%: rollouts without failures bound a rate only from above. In bio the difference runs from
+  −18.2 to +7.0 points, so no difference is established there.
+- **Tail and threshold measures.** `cvar_90` and `worst`, the measures the warning is about.
+- **Precision.** Which intervals are wider than the plan's `report.precision_target` (±5% by
+  default) and about how many rollouts per prompt would narrow them.
+- **Assumptions used.** Every assumption the results rest on, such as rollout independence and
+  the validity of the scorer, and which of them a plan setting left to its default.
+- **Scope.** The results cover these 12 prompts and this rollout process, not a population of
+  prompts, and not hazards the evaluation omits. [What results establish](docs/what-results-establish.md)
+  says more.
+
+### The index
+
+`index.json` is the file for agents and tools to open first; `index.md` holds the same in
+Markdown. Its headline table gives each failure rate and overall comparison with a pointer into
+`report.json`, and for comparisons the matching row of `comparisons.csv`:
+
+| Kind | Model | Estimand | Estimate | Lower | Upper | Pointer | CSV row |
+|---|---|---|---:|---:|---:|---|---|
+| group_risk | baseline | — | 0.2042 | 0.1302 | 0.2946 | `/group_risks/1` | — |
+| group_risk | candidate | — | 0.0083 | 0.0003 | 0.0424 | `/group_risks/4` | — |
+| comparison | candidate | risk_difference | -0.1958 | -0.2944 | -0.0877 | `/comparisons/0` | `comparisons.csv` row 1 |
+| comparison | candidate | risk_ratio | 0.0408 | 0.0009 | 0.3261 | `/comparisons/4` | `comparisons.csv` row 5 |
+
+A pointer is a JSON pointer: `/comparisons/0` is the first entry of `comparisons` in
+`report.json`. Each warning code has the same kind of pointer to its diagnostic. The index also
+says that decisions are hidden (`report.include_decisions` is false by default) and that
+`report.json` still holds them. [Reading a report as an agent](docs/agent-guide.md) describes
+every field.
+
+### Reading the warnings
+
+The demo shows two kinds of warning: a diagnostic code, and the dagger (†) that marks a wide
+interval.
+
+**`TAIL_MEASURES_UNINFORMATIVE` (warning, effect recorded).** The summary's Warnings table gives
+the code, where it applies, the assumption it checks and its effect:
+
+| Column | In the demo | What it tells you |
+|---|---|---|
+| Where | `plan/outputs/risk_measures` | The finding is about the plan's risk measures, not a model, prompt or log. In the index the code's `item` is null, because `report.json` has no record of a plan setting. |
+| Assumption | Each prompt has enough rollouts that its bound can be tighter than `report.precision_target`. | Tail measures such as `cvar_90` and `worst` are built from a bound on each prompt, so their precision depends on the rollouts per prompt, not on the total. |
+| Effect | recorded | Nothing was withheld or recomputed: the measures are reported as computed, and the integrity stays valid. |
+
+The message for this analysis, under Data integrity in `report-full.md` and in `report.json` at
+`/integrity/diagnostics/0`, gives the numbers: with 20 rollouts per prompt, a prompt that never
+fails is still bounded only at 0.291, above the precision target of 0.05, and about 134
+rollouts per prompt would bring it below. So `cvar_90` and `worst` cannot be narrow on this
+design, whatever the models do: the candidate's `worst` is 0.100 with an interval from 0.002 to
+0.446. Read them as uninformative at this budget, or run about 134 rollouts per prompt. The
+mean rates and the comparison are not affected. Every code's meaning and remedy is in
+[Diagnostic codes and assumptions](docs/diagnostics.md#tail_measures_uninformative).
+
+Effects other than recorded change what a report can be used for. `degraded` and `invalid`
+change the integrity status, `withheld` leaves one result out, and `adjusted` computes a result
+differently, for example with a wider bound. The [effects](docs/diagnostics.md#effects) table
+says more.
+
+**The dagger (†).** The summary marks an interval with † when an endpoint lies more than the
+plan's `report.precision_target` (±5% in the demo) from its estimate. It is not a diagnostic
+and does not change the integrity status: the interval keeps its coverage, and it is wide. The
+Precision section names the rollouts that would narrow each marked interval, assuming the
+observed rate holds. The baseline's overall rate, 20.4% from 13.0% to 29.5%, would need about
+61 rollouts per prompt instead of 20. The comparison carries † too. Its interval excludes zero,
+so the direction is established, but the size of the difference is not pinned to within 5
+points.
+
 ## Quick start
 
-To see the workflow end to end without provider credentials, run the
-[offline demo](examples/demo/README.md). It evaluates two simulated configurations in Inspect,
-then analyzes and compares their logs:
+The [walkthrough](#walkthrough-the-offline-demo) above runs the
+[offline demo](examples/demo/README.md) step by step. To run it in one step:
 
 ```bash
 python examples/demo/run_demo.py
