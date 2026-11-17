@@ -148,7 +148,7 @@ def test_many_confirmed_successes_fail_the_gate(
     assert any("this attacker at this budget" in reason for reason in claim.reasons)
 
     output = report.write(tmp_path / "report")
-    markdown = (output / "report.md").read_text(encoding="utf-8")
+    markdown = (output / "report-full.md").read_text(encoding="utf-8")
     assert "## Adaptive-attacker claims (experimental)" in markdown
     assert "this attacker at this budget" in markdown
     written = json.loads((output / "report.json").read_text(encoding="utf-8"))

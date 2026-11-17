@@ -98,7 +98,7 @@ def test_the_report_states_the_methods_it_used_and_the_assumptions_it_rests_on(
     assert [item["id"] for item in data["assumptions_used"]] == [
         item.id for item in report.assumptions_used
     ]
-    markdown = (output / "report.md").read_text(encoding="utf-8")
+    markdown = (output / "report-full.md").read_text(encoding="utf-8")
 
     measures = markdown.split("## Fixed-design risk measures", 1)[1].split("\n| Cohort", 1)[0]
     # The fixed list of methods is gone (#64): every method used is named, with its assumptions.
