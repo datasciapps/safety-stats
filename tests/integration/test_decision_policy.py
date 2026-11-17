@@ -362,6 +362,35 @@ def test_the_cli_passes_a_decision_policy_to_analyze_and_validate(
     assert "DECISION_POLICY_UNKNOWN_CLAIM" in plain(validated.output)
 
 
+@pytest.mark.parametrize(
+    ("name", "content"),
+    [
+        ("policy.json", '{"versions": "not a list"}'),
+        ("policy.txt", "{}"),
+    ],
+)
+def test_validate_exits_3_when_the_decision_policy_cannot_be_read(
+    plan_path: Path, name: str, content: str
+) -> None:
+    # The documented exit status of validate for invalid input is 3, as for analyze.
+    policy = plan_path.parent / name
+    policy.write_text(content, encoding="utf-8")
+    result = CliRunner().invoke(
+        app,
+        [
+            "validate",
+            "--plan",
+            str(plan_path),
+            "--logs",
+            str(plan_path),
+            "--decision-policy",
+            str(policy),
+        ],
+    )
+    assert result.exit_code == 3, plain(result.output)
+    assert "Validation failed" in plain(result.output)
+
+
 def test_the_schema_command_prints_the_decision_policy_schema() -> None:
     result = CliRunner().invoke(app, ["schema", "decision-policy"])
     assert result.exit_code == 0
