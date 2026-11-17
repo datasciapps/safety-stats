@@ -74,11 +74,18 @@ def test_measures_are_coordinatewise_monotone(
     This is what makes endpoint propagation a bound: with each per-prompt interval
     covering its own risk, the measure of the upper endpoints covers the measure of
     the truth from above, and the lower endpoints from below.
+
+    Proved for all inputs, one ``*_mono`` theorem per measure, in
+    ``formal/SafetyStatsFormal/RiskMeasures.lean``. This test checks the implementation.
     """
 
     lower, weights = design
     upper = [min(1.0, value + shifts[index % len(shifts)]) for index, value in enumerate(lower)]
     k = k_seed % len(lower) + 1
+
+    assert worst_of_k_risk(lower, weights, k=k) <= (
+        worst_of_k_risk(upper, weights, k=k) + TOLERANCE
+    )
 
     assert weighted_mean(lower, weights) <= weighted_mean(upper, weights) + TOLERANCE
     assert maximum_risk(lower, weights) <= maximum_risk(upper, weights) + TOLERANCE
@@ -239,3 +246,67 @@ def test_worst_of_k_is_monotone_and_sandwiched(
     # between the single-attempt mean and the k-scaled union bound.
     assert base <= shifted + 1e-12
     assert mean - 1e-12 <= base <= min(1.0, k * mean) + 1e-12
+
+
+@given(
+    p=RISKS,
+    k=st.integers(min_value=1, max_value=60),
+)
+def test_worst_of_k_item_is_sandwiched(p: float, k: int) -> None:
+    """One item lies between a single attempt and the union bound: p <= 1 - (1 - p)^k <= kp.
+
+    Proved for all p in [0, 1] as ``worstOfK_item_sandwich`` in
+    ``formal/SafetyStatsFormal/RiskMeasures.lean``.
+    """
+
+    risk = worst_of_k_risk([p], [1.0], k=k)
+    assert p - TOLERANCE <= risk <= min(1.0, k * p) + TOLERANCE
+
+
+def _rockafellar_uryasev(values: list[float], weights: list[float], beta: float) -> float:
+    """CVaR as the minimum over t of t + E[(X - t)+] / (1 - beta).
+
+    The objective is convex and piecewise linear in t with kinks at the values, so its
+    minimum over the real line is attained at one of them.
+    """
+
+    def objective(t: float) -> float:
+        excess = math.fsum(w * max(x - t, 0.0) for x, w in zip(values, weights, strict=True))
+        return t + excess / (1 - beta)
+
+    return min(objective(t) for t in values)
+
+
+@given(design=designs(), beta=st.floats(min_value=0.0, max_value=0.99, allow_nan=False))
+def test_weighted_cvar_equals_its_rockafellar_uryasev_form(
+    design: tuple[list[float], list[float]], beta: float
+) -> None:
+    """The greedy tail average equals the variational form that the formal proofs use.
+
+    ``weighted_cvar`` takes the worst 1 - beta of the weight. ``cvar`` in
+    ``formal/SafetyStatsFormal/RiskMeasures.lean`` is defined in Rockafellar-Uryasev form,
+    so its monotonicity proof applies to the implementation only through this equality.
+    """
+
+    values, weights = design
+    expected = _rockafellar_uryasev(values, weights, beta)
+    assert weighted_cvar(values, weights, beta=beta) == pytest.approx(
+        expected, rel=1e-9, abs=1e-12
+    )
+
+
+@given(design=designs(), k_seed=st.integers(min_value=0, max_value=11))
+def test_top_k_mean_is_cvar_with_equal_weights(
+    design: tuple[list[float], list[float]], k_seed: int
+) -> None:
+    """The mean of the k largest values is the CVaR at beta = 1 - k / n with equal weights.
+
+    ``topKMean`` in ``formal/SafetyStatsFormal/RiskMeasures.lean`` is defined that way, so its
+    monotonicity proof applies to ``top_k_mean`` only through this equality.
+    """
+
+    values, _ = design
+    n = len(values)
+    k = k_seed % n + 1
+    cvar = weighted_cvar(values, [1 / n] * n, beta=1 - k / n)
+    assert top_k_mean(values, k=k) == pytest.approx(cvar, rel=1e-9, abs=1e-12)
