@@ -7,6 +7,12 @@ described in their pull requests.
 
 ### Added
 
+- **The README walks through the offline demo.** A new section follows the demo from its
+  inputs (logs, design and the plan `init` writes) through the `validate` and `analyze` commands
+  and the Python calls to the report directory. It reads the one-page summary and the index, and
+  explains the warning the demo shows, `TAIL_MEASURES_UNINFORMATIVE`, and the † that marks a
+  wide interval.
+
 - **Every report directory has an index for agents: index.json and index.md.** `index.json`
   lists every file of the report directory with its format, what it holds and, for the CSVs
   whose rows are items of a `report.json` list, which list that is. It then copies the summary
