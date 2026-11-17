@@ -7,6 +7,17 @@ described in their pull requests.
 
 ### Added
 
+- **report.json has a summary level (changes `report.json`).** `report.json` gains
+  `summary`: the integrity status and the count of errors, warnings and notes; the headline
+  estimates (each weighted-mean failure rate and each overall comparison); the errors and
+  warnings grouped by code, with the registry's assumption and consequence and, for each
+  occurrence, a pointer to the diagnostic and to the item it concerns; and the ids of the
+  assumptions used. With `report.include_decisions: true` it also holds the overall decision
+  and each claim's status. Every entry carries a JSON pointer to its full record. The summary
+  copies values from the rest of the report; it is dropped when a saved report is read back.
+  `analyze` and `report.md` pick the headline rates by the same rule
+  (`inspect_safety_stats.schema.summary.is_headline_risk`).
+
 - **Each diagnostic in a report points at its item (changes `report.json`).** Every
   diagnostic in `report.json` gains `item`, a JSON pointer to the record its scope names:
   `/claims/<i>`, `/comparisons/<i>`, `/prompt_estimates/<i>`, `/group_risks/<i>` and the

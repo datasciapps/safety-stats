@@ -10,6 +10,7 @@ from pydantic import (
     PrivateAttr,
     SerializerFunctionWrapHandler,
     ValidationInfo,
+    computed_field,
     model_serializer,
     model_validator,
 )
@@ -680,6 +681,26 @@ class SafetyReport(ResultModel):
     _observations: list[Any] = PrivateAttr(default_factory=list)
     _resolved_plan: dict[str, Any] = PrivateAttr(default_factory=dict)
 
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def summary(self) -> ReportSummary:
+        """What to read first, with pointers to the rest (``inspect_safety_stats.schema.summary``).
+
+        Written to ``report.json``; derived from the other fields, so it is dropped when a
+        saved report is read back.
+        """
+
+        from inspect_safety_stats.schema.summary import report_summary
+
+        return report_summary(self)
+
+    @model_validator(mode="before")
+    @classmethod
+    def drop_the_derived_summary(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "summary" in data:
+            data = {key: value for key, value in data.items() if key != "summary"}
+        return data
+
     @model_serializer(mode="wrap")
     def leave_out_absent_optional_sections(
         self, handler: SerializerFunctionWrapHandler
@@ -764,3 +785,10 @@ def result_readings(
         for claim in sorted(claims, key=lambda item: item.claim_id)
     )
     return rows
+
+
+# ORDER MATTERS: schema/summary.py imports this module's models, so it can only be imported once
+# they exist; SafetyReport.summary's type is resolved by the rebuild that follows.
+from inspect_safety_stats.schema.summary import ReportSummary  # noqa: E402
+
+SafetyReport.model_rebuild()

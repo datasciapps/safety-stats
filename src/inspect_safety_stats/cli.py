@@ -281,8 +281,10 @@ def analyze_command(
             if adaptive.mandatory:
                 typer.echo(f"{adaptive.status}: {adaptive.title} (adaptive attacker, FAIL only)")
         typer.echo(f"Decision: {report.decision}")
-    # The headline is each weighted-mean failure rate; its result's method names the type.
-    headline = [risk for risk in report.group_risks if risk.method == "finite_design_weighted_mean"]
+    from inspect_safety_stats.schema.summary import is_headline_risk
+
+    # The headline is each weighted-mean failure rate, as in report.json's summary.
+    headline = [risk for risk in report.group_risks if is_headline_risk(risk)]
     if headline:
         typer.echo("Failure rate (weighted mean):")
     for risk in headline:
