@@ -14,7 +14,7 @@ import importlib.util
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from inspect_safety_stats.generative.comparisons import ComparisonResult, compare_cohorts
 from inspect_safety_stats.generative.execution import (
@@ -58,12 +58,14 @@ from inspect_safety_stats.generative.ledger import (
     rewrite_ledger_writer,
     write_selections,
 )
-from inspect_safety_stats.generative.logs import LogInput, read_evaluated_samples
 from inspect_safety_stats.generative.report import GenerativeReport, plan_sha256
 from inspect_safety_stats.generative.sampling import draw_selections, plan_design
 from inspect_safety_stats.generative.schema import GenerativePlan, load_generative_plan
 from inspect_safety_stats.generative.taxonomy import compile_taxonomy
 from inspect_safety_stats.schema.reports import Diagnostic
+
+if TYPE_CHECKING:
+    from inspect_safety_stats.generative.logs import LogInput
 
 SELECTION_LEDGER = "selections.csv"
 REWRITE_LEDGER = "rewrites.csv"
@@ -401,6 +403,10 @@ def analyze_run(
             "edited after materialization, so the declared design and the evaluated one "
             "differ"
         )
+
+    # Reading Inspect logs needs the inspect extra; materialization reads none, so the
+    # reader is imported only here.
+    from inspect_safety_stats.generative.logs import read_evaluated_samples
 
     samples, log_diagnostics = read_evaluated_samples(plan, logs, parallel=parallel)
     diagnostics.extend(log_diagnostics)
