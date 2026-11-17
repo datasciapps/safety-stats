@@ -4629,6 +4629,248 @@
     }
   ],
   "package_version": "0.15.0",
+  "plan_defaults": [
+    {
+      "path": "analysis.plan_frozen_at",
+      "value": null
+    },
+    {
+      "path": "analysis.registration",
+      "value": null
+    },
+    {
+      "path": "inputs.estimand",
+      "value": "end_to_end_system"
+    },
+    {
+      "path": "inputs.sample_join.inspect_field",
+      "value": "id"
+    },
+    {
+      "path": "inputs.sample_join.manifest_field",
+      "value": "prompt_id"
+    },
+    {
+      "path": "inputs.score.mapping.failure_if",
+      "value": null
+    },
+    {
+      "path": "inputs.score.content_filter_stops",
+      "value": "score"
+    },
+    {
+      "path": "inputs.score.token_limit",
+      "value": "score"
+    },
+    {
+      "path": "inputs.score.mapping_sensitivities",
+      "value": []
+    },
+    {
+      "path": "inputs.judge_calibration",
+      "value": null
+    },
+    {
+      "path": "inputs.judges",
+      "value": []
+    },
+    {
+      "path": "inputs.composites",
+      "value": []
+    },
+    {
+      "path": "design.sampling",
+      "value": "poisson"
+    },
+    {
+      "path": "design.inclusion_probability_column",
+      "value": null
+    },
+    {
+      "path": "design.stratum_column",
+      "value": null
+    },
+    {
+      "path": "design.weights.column",
+      "value": null
+    },
+    {
+      "path": "groups[0].weights",
+      "value": null
+    },
+    {
+      "path": "groups[1].weights",
+      "value": null
+    },
+    {
+      "path": "groups[2].weights",
+      "value": null
+    },
+    {
+      "path": "outputs.prompt_bounds.explicit_alpha",
+      "value": null
+    },
+    {
+      "path": "outputs.direct_mean_intervals.independence.sensitivities",
+      "value": []
+    },
+    {
+      "path": "outputs.direct_mean_intervals.single_valued_bound",
+      "value": false
+    },
+    {
+      "path": "outputs.risk_measures[0].beta",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[0].lambda",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[0].k",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[0].threshold",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[0].threshold_column",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[0].diagnostic_only",
+      "value": false
+    },
+    {
+      "path": "outputs.risk_measures[0].direct_interval",
+      "value": false
+    },
+    {
+      "path": "outputs.risk_measures[1].lambda",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[1].k",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[1].threshold",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[1].threshold_column",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[1].diagnostic_only",
+      "value": false
+    },
+    {
+      "path": "outputs.risk_measures[1].direct_interval",
+      "value": false
+    },
+    {
+      "path": "outputs.risk_measures[2].beta",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[2].k",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[2].threshold",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[2].threshold_column",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[2].diagnostic_only",
+      "value": false
+    },
+    {
+      "path": "outputs.risk_measures[2].direct_interval",
+      "value": false
+    },
+    {
+      "path": "outputs.risk_measures[3].beta",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[3].lambda",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[3].k",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[3].threshold",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[3].threshold_column",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[3].diagnostic_only",
+      "value": false
+    },
+    {
+      "path": "outputs.risk_measures[3].direct_interval",
+      "value": false
+    },
+    {
+      "path": "outputs.judge_claims",
+      "value": false
+    },
+    {
+      "path": "outputs.anytime_bounds",
+      "value": null
+    },
+    {
+      "path": "comparisons",
+      "value": []
+    },
+    {
+      "path": "comparison_sets",
+      "value": []
+    },
+    {
+      "path": "claims[0].comparison",
+      "value": null
+    },
+    {
+      "path": "claims[0].method",
+      "value": "corrected_interval"
+    },
+    {
+      "path": "claims[1].comparison",
+      "value": null
+    },
+    {
+      "path": "claims[1].method",
+      "value": "corrected_interval"
+    },
+    {
+      "path": "adaptive_claims",
+      "value": []
+    },
+    {
+      "path": "report.include_decisions",
+      "value": false
+    },
+    {
+      "path": "report.judge_error_stress",
+      "value": false
+    },
+    {
+      "path": "report.claims_export",
+      "value": false
+    }
+  ],
   "policy_events": [
     {
       "cohort_id": "published_gpt4_replay",

@@ -75,6 +75,23 @@ The complete normalized table is in `observations.csv`.
 - `displayed_direct_means`: bonferroni, alpha=0.05, purpose=simultaneous_intervals.
 - `decision_gate`: intersection_union, alpha=0.05, purpose=all_mandatory.
 
+## Defaults applied
+
+The plan left these fields out, and the analysis used their defaults. The plan hash covers only what the plan wrote, so a release that changes one of these defaults changes the analysis but not the hash; writing a field into the plan fixes its value.
+
+- `inputs.estimand`: `"end_to_end_system"`
+- `inputs.sample_join.inspect_field`: `"id"`
+- `inputs.sample_join.manifest_field`: `"prompt_id"`
+- `inputs.score.content_filter_stops`: `"score"`
+- `inputs.score.token_limit`: `"score"`
+- `design.sampling`: `"poisson"`
+- `design.weights.hierarchy`: `["task_id", "question_id", "prompt_id"]`
+- `groups[0].weights.hierarchy`: `["task_id", "question_id", "prompt_id"]`
+- `claims[0].method`: `"corrected_interval"`
+- `policy.data_quality_failure`: `"inconclusive"`
+
+48 further defaults leave an optional feature off or a parameter unused (None, false or empty). `plan_defaults` in report.json lists every default.
+
 ## Limitations
 
 - Prompt, question, task, and group membership are fixed creator-declared design elements.
