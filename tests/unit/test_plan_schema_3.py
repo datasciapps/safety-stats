@@ -13,7 +13,7 @@ import yaml
 from pydantic import ValidationError
 
 from inspect_safety_stats import validate
-from inspect_safety_stats.config.loader import canonical_plan_hash
+from inspect_safety_stats.config.loader import canonical_plan_hash, canonical_plan_value
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.rollout_files import RolloutFiles
 
@@ -59,13 +59,17 @@ def _plan(version: str = "3.0", **changes: Any) -> dict[str, Any]:
     return plan
 
 
-def test_a_2_0_plan_keeps_its_defaults_and_its_hash() -> None:
+def test_a_2_0_plan_keeps_its_defaults_and_hashes_only_what_it_wrote() -> None:
     plan = AnalysisPlan.model_validate(_plan("2.0"))
     dumped = plan.model_dump(mode="json", by_alias=True)
     assert dumped["inputs"]["sample_join"] == {"inspect_field": "id", "manifest_field": "prompt_id"}
     assert dumped["design"]["rollout_key"] == ["eval_id", "id", "epoch"]
-    # The hash a 2.0 plan had before schema 3.0 existed.
-    assert canonical_plan_hash(plan) == canonical_plan_hash(
+    # The hash covers what the author wrote (#56): the defaults stay out of it, and writing
+    # them out is a different plan text with a different hash.
+    canonical = canonical_plan_value(plan)
+    assert "sample_join" not in canonical["inputs"]
+    assert "rollout_key" not in canonical.get("design", {})
+    assert canonical_plan_hash(plan) != canonical_plan_hash(
         AnalysisPlan.model_validate(
             _plan(
                 "2.0",
@@ -74,6 +78,16 @@ def test_a_2_0_plan_keeps_its_defaults_and_its_hash() -> None:
             )
         )
     )
+
+
+def test_the_schema_3_0_defaults_stay_out_of_the_plan_hash() -> None:
+    plan = AnalysisPlan.model_validate(_plan())
+    assert plan.design.rollout_key == ["run_key", "item_id", "repeat"]
+    canonical = canonical_plan_value(plan)
+    assert "sample_join" not in canonical["inputs"]
+    assert "rollout_key" not in canonical.get("design", {})
+    # Nothing the author left out is hashed: the value is the plan as written.
+    assert canonical == _plan()
 
 
 def test_a_2_0_plan_cannot_set_sample_join_to_null() -> None:

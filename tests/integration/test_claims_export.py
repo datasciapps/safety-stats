@@ -218,9 +218,19 @@ def test_a_plan_that_does_not_opt_in_writes_what_it_wrote_before(tmp_path: Path)
 
     output = analyze(plan=off, logs="ignored").write(tmp_path / "report")
     assert not (output / "claims.json").exists()
-    for name in ("report.json", "plan.resolved.yaml", "checksums.json"):
-        assert "claims" + "_export" not in (output / name).read_text(encoding="utf-8")
-        assert "claims.json" not in (output / name).read_text(encoding="utf-8")
+    # The report's record of the defaults applied lists the option, and nothing else does.
+    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    assert {"path": "report.claims_export", "value": False} in report.pop("plan_defaults")
+    texts = {
+        "report.json": json.dumps(report),
+        **{
+            name: (output / name).read_text(encoding="utf-8")
+            for name in ("plan.resolved.yaml", "checksums.json")
+        },
+    }
+    for name, text in texts.items():
+        assert "claims" + "_export" not in text, name
+        assert "claims.json" not in text, name
 
 
 def test_rewriting_without_the_export_removes_a_stale_claims_json(tmp_path: Path) -> None:

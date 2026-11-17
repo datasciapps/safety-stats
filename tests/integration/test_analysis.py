@@ -4256,7 +4256,10 @@ def test_single_valued_bound_matches_the_engine_family_on_the_raw_bounds(
 def test_reports_without_the_single_valued_bound_leave_its_fields_out(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Off by default: the plan hash, the resolved plan and the report keep their bytes."""
+    """Off by default: the plan hash, the resolved plan and the results leave it out.
+
+    The report's record of the defaults applied lists it, as it lists every default.
+    """
     plan_path = _write_inputs(tmp_path)
     plan = load_plan(plan_path)
     assert "single_valued_bound" not in plan.model_dump(mode="json")["outputs"][
@@ -4264,7 +4267,11 @@ def test_reports_without_the_single_valued_bound_leave_its_fields_out(
     ]
     _patch_frames_with_failures(monkeypatch)
     output = analyze(plan=plan, logs="ignored").write(tmp_path / "report")
-    for name in ("report.json", "report.md", "plan.resolved.yaml", "hierarchy-risks.csv"):
+    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    defaults = report.pop("plan_defaults")
+    assert {"path": "outputs.direct_mean_intervals.single_valued_bound", "value": False} in defaults
+    assert "single_valued" not in json.dumps(report)
+    for name in ("report.md", "plan.resolved.yaml", "hierarchy-risks.csv"):
         assert "single_valued" not in (output / name).read_text(encoding="utf-8"), name
     enabled = load_plan(plan_path)
     enabled.outputs.direct_mean_intervals.single_valued_bound = True

@@ -591,6 +591,36 @@ class OutcomeMappingSensitivity(ResultModel):
     results: list[MappingSensitivityResult] = Field(default_factory=list)
 
 
+class PlanDefault(ResultModel):
+    """A plan field the author left out, and the value its default gave the analysis."""
+
+    # Dotted field names, ``[i]`` for a list item and the key for a mapping entry.
+    path: str
+    value: Any
+
+
+class PlanSetting(ResultModel):
+    """The value a plan field had in the analysis, and whether it came from a default."""
+
+    path: str
+    value: Any
+    default: bool
+
+
+class AssumptionUse(ResultModel):
+    """An assumption of the registry the results rest on, with the plan settings it took.
+
+    ``id``, ``statement`` and ``if_wrong`` are the registry entry's
+    (``inspect_safety_stats.registry.ASSUMPTIONS``). ``settings`` holds the value of each plan
+    field that sets the assumption, empty when no plan field does.
+    """
+
+    id: str
+    statement: str
+    if_wrong: str
+    settings: list[PlanSetting] = Field(default_factory=list)
+
+
 class SafetyReport(ResultModel):
     """The result of ``analyze``: estimates, bounds, comparisons, claims and the decision.
 
@@ -602,6 +632,12 @@ class SafetyReport(ResultModel):
     schema_version: Literal["3.0"] = "3.0"
     package_version: str
     analysis: dict[str, Any]
+    # Every default the analysis applied: the plan fields its author left out, which
+    # analysis.plan_sha256 does not cover (#56). Empty in a report written before the field.
+    plan_defaults: list[PlanDefault] = Field(default_factory=list)
+    # The registry's assumptions this analysis rests on, in registry order. Empty in a report
+    # written before the field.
+    assumptions_used: list[AssumptionUse] = Field(default_factory=list)
     provenance: dict[str, Any]
     scope: dict[str, Any]
     presentation: ReportPresentation = Field(default_factory=ReportPresentation)

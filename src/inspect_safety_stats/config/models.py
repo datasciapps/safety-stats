@@ -39,6 +39,9 @@ def _refuse_booleans(kind: str) -> BeforeValidator:
 PlanInt = Annotated[int, _refuse_booleans("an integer")]
 PlanFloat = Annotated[float, _refuse_booleans("a number")]
 
+# report.precision_target when a plan leaves it out.
+DEFAULT_PRECISION_TARGET = 0.05
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True, allow_inf_nan=False)
@@ -1079,6 +1082,9 @@ class ReportSpec(StrictModel):
     # Experimental (#11): write claims.json beside report.json. Left out of the plan dump while
     # off, like judge_error_stress.
     claims_export: bool = False
+    # The widest a bound may lie from its estimate and still count as precise. Left out of
+    # the plan dump at its default, so plans that do not set it keep their hash (#56).
+    precision_target: PlanFloat = Field(default=DEFAULT_PRECISION_TARGET, gt=0, lt=0.5)
 
     @model_validator(mode="after")
     def claims_export_needs_decisions(self) -> ReportSpec:
@@ -1101,6 +1107,8 @@ class ReportSpec(StrictModel):
             data.pop("judge_error_stress", None)
         if not self.claims_export:
             data.pop("claims_export", None)
+        if self.precision_target == DEFAULT_PRECISION_TARGET:
+            data.pop("precision_target", None)
         return data
 
 
@@ -1154,29 +1162,40 @@ class AnalysisPlan(StrictModel):
 
     @model_validator(mode="before")
     @classmethod
-    def apply_schema_version_defaults(cls, data: Any) -> Any:
-        """Fill the defaults that differ between schema versions, before validation."""
+    def check_schema_version_fields(cls, data: Any) -> Any:
+        """Refuse a null sample_join, and any sample_join under schema 3.0."""
 
         if not isinstance(data, dict):
             return data
         inputs = data.get("inputs")
-        if data.get("schema_version") != "3.0":
-            if isinstance(inputs, dict) and "sample_join" in inputs:
-                if inputs["sample_join"] is None:
-                    raise ValueError("inputs.sample_join cannot be null")
+        if not isinstance(inputs, dict) or "sample_join" not in inputs:
             return data
-        data = dict(data)
-        if isinstance(inputs, dict):
-            if "sample_join" in inputs:
-                raise ValueError(
-                    "inputs.sample_join was removed in schema 3.0: rollouts join the design "
-                    "manifest's prompt_id by their item_id"
-                )
-            data["inputs"] = {**inputs, "sample_join": None}
-        design = data.get("design", {})
-        if isinstance(design, dict) and "rollout_key" not in design:
-            data["design"] = {**design, "rollout_key": list(NEUTRAL_ROLLOUT_KEY)}
+        if data.get("schema_version") == "3.0":
+            raise ValueError(
+                "inputs.sample_join was removed in schema 3.0: rollouts join the design "
+                "manifest's prompt_id by their item_id"
+            )
+        if inputs["sample_join"] is None:
+            raise ValueError("inputs.sample_join cannot be null")
         return data
+
+    # ORDER MATTERS: this validator comes before neutral_field_names, which reads the
+    # rollout key it fills.
+    @model_validator(mode="after")
+    def apply_schema_version_defaults(self) -> AnalysisPlan:
+        """Fill the defaults that differ between schema versions.
+
+        They are set without marking the fields as written (``model_fields_set``), so the
+        plan's hash, which covers only what the author wrote, leaves them out, and the report
+        lists them among the defaults it applied.
+        """
+
+        if self.schema_version != "3.0":
+            return self
+        object.__setattr__(self.inputs, "sample_join", None)
+        if "rollout_key" not in self.design.model_fields_set:
+            object.__setattr__(self.design, "rollout_key", list(NEUTRAL_ROLLOUT_KEY))
+        return self
 
     @model_validator(mode="after")
     def neutral_field_names(self) -> AnalysisPlan:

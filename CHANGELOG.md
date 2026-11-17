@@ -27,6 +27,49 @@ described in their pull requests.
   diagnostics CSV with a scoped diagnostic changes bytes, and so does the CLI's diagnostic
   listing. A `report.json` written before still renders with `visualize`.
 
+- **Reports state the methods and assumptions they used (#64).** The "Fixed-design risk
+  measures" paragraph of `report.md` no longer names a fixed set of methods and profiles: it
+  lists each method and independence profile the report's intervals used, with the
+  assumptions those intervals record. "Limitations" is generated from the package's registry
+  of assumptions: each assumption that applies, with the plan settings it took, marked as
+  default or written, and what follows if it is wrong. `report.json` gains
+  `assumptions_used` with the same content. See
+  [Assumptions and defaults a report states](docs/interpretation.md#assumptions-and-defaults-a-report-states).
+
+- **Reports record every default the analysis applied.** `report.json` gains `plan_defaults`:
+  each plan field the plan left out, with the value its default gave the analysis. These are
+  the fields the plan hash does not cover. `report.md` gains a "Defaults applied" section that
+  lists the defaults that set a value and counts those that leave a feature off. See
+  [The plan hash](docs/plan-reference.md#the-plan-hash).
+
+- **`init`: a starter plan from completed logs, with its assumptions noted (experimental).**
+  `inspect-safety-stats init --logs LOGS --failure-values V` writes `design.csv` and
+  `safety-plan.yaml`: one cohort per model, the root failure risk with a prompt-level
+  sensitivity, an optional breakdown and a comparison of several models. The plan's header,
+  and the command's output, list each choice `init` made with the assumption it rests on from
+  `inspect_safety_stats.registry`, rollout independence first, what goes wrong if it does not
+  hold, and the remedy. The plan is exploratory; `--intent confirmatory` is refused, because
+  the plan is written after the logs exist. See
+  [Command-line interface](docs/api-reference.md#command-line-interface).
+
+- **A warning when tail measures cannot be informative.** Tail and threshold measures
+  (`maximum`, `cvar`, `top_k_mean`, `entropic`, `threshold_exceedance`, `threshold_excess`, and
+  `worst_of_k` without `direct_interval`) are propagated from simultaneous per-prompt bounds, so
+  their precision is set by the rollouts on each prompt, not the total. When, at the median
+  rollouts per prompt, a prompt with no failures is still bounded above the new
+  `report.precision_target` (default 0.05), `analyze` adds a `TAIL_MEASURES_UNINFORMATIVE`
+  warning with the rollouts per prompt that would be needed. Integrity is unchanged, and plans
+  that leave `precision_target` out keep their hash. Reports of plans that declare such
+  measures on few rollouts per prompt gain the warning. The default direct-mean interval method
+  stays `weighted_empirical_bernstein`.
+
+- **Catalogue of diagnostic codes and assumptions.** [Diagnostic codes and
+  assumptions](docs/diagnostics.md) lists every diagnostic code a report can carry, with its
+  severities, the assumption it reports on, its effect on the results and the remedy, and every
+  assumption the results rest on, with the plan field that sets it and the codes that check it.
+  `scripts/render_catalogue.py` generates the page from the package's registry, and a test
+  fails when the committed page falls behind it. The package itself is unchanged.
+
 - **Open-weight example and limitations log.** [`examples/open_weights/`](examples/open_weights/README.md) runs an open-weight model on
   HarmBench and XSTest with thinking off and on, many rollouts per prompt, judges them, and
   analyzes the run; it also orders rollouts for human labelling and turns the labels into
@@ -424,6 +467,13 @@ described in their pull requests.
   [Verdicts by profile](docs/independence-profiles.md#verdicts-by-profile).
 
 ### Changed
+
+- **The plan hash covers only what the author wrote (#56).** `hash-plan`, `plan_sha256` and
+  the inference hash leave out every field the plan does not write, so a release that adds a
+  field or changes a default no longer changes the hash of an unchanged plan. A field written at
+  its default value is hashed, and so writing out a default now changes the hash. Every plan's
+  hash changes once with this release: freeze plans, registration receipts and decision
+  policies again with `hash-plan`. See [The plan hash](docs/plan-reference.md#the-plan-hash).
 
 - **The generative commands' help says the pipeline is experimental (#24).** The help of
   `generative` and of each of its commands, and of `schema generative-plan`, ends with the

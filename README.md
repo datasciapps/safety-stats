@@ -246,6 +246,7 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Python and command-line API reference](docs/api-reference.md)
 - [Rollout files](docs/rollout-files.md): analysing results from other evaluation systems (experimental)
 - [Interpreting results](docs/interpretation.md)
+- [Diagnostic codes and assumptions](docs/diagnostics.md): what each code in a report means and what to change
 - [Judge misclassification](docs/judge-misclassification.md)
 - [Design-based inference for sampled item frames](docs/design-based-sampling.md)
 - [Version 1 engineering design](docs/archive/v1-design.md) (archived; superseded by the shipped package)
