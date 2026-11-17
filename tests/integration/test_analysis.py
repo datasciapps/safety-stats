@@ -2284,6 +2284,38 @@ def test_worst_of_k_measure_propagates_prompt_envelope(
     assert envelope.upper == pytest.approx(1 - (1 - u) ** 2)
 
 
+def test_worst_of_k_reports_the_unbiased_estimate(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+
+    report = analyze(plan=_write_inputs(tmp_path), logs="ignored")
+
+    worst_of_2 = next(row for row in report.group_risks if row.measure_id == "worst_of_2")
+    # p1 has 10 failures in 20 rollouts and p2 none; each weighs 0.5.
+    assert worst_of_2.estimate == pytest.approx(0.5 * (1 - 45 / 190), rel=1e-12, abs=0)
+    # Plugging in p_hat would give 0.5 * (1 - 0.5 ** 2) = 0.375, which understates it.
+    assert worst_of_2.estimate > 0.375
+
+    # With more attempts than any prompt has rollouts, there is no unbiased estimate.
+    plan_path = tmp_path / "plan.yaml"
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "{id: worst_of_2, type: worst_of_k, k: 2}", "{id: worst_of_2, type: worst_of_k, k: 25}"
+        ),
+        encoding="utf-8",
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+    worst_of_25 = next(row for row in report.group_risks if row.measure_id == "worst_of_2")
+    assert worst_of_25.estimate is None
+    assert "No unbiased estimate of 25 attempts" in " ".join(worst_of_25.warnings)
+    assert worst_of_25.upper is not None
+
+
 def test_a_judge_correction_of_a_projected_base_keeps_its_simultaneous_floor(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
