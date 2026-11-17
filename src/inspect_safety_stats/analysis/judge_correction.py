@@ -33,6 +33,7 @@ from inspect_safety_stats.schema.reports import (
     HierarchyRiskResult,
     RiskIntervalResult,
 )
+from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope
 from inspect_safety_stats.stats.misclassification import (
     JudgeStratumCounts,
     TruthStratumCounts,
@@ -376,7 +377,7 @@ def _add_judge_corrections(
                     "Experimental: judge-corrected rows use a sensitivity transported from "
                     f"{published.name!r}; they are sensitivity analyses and decide no claim"
                 ),
-                scope="inputs.judge_calibration",
+                scope=plan_scope("inputs", "judge_calibration"),
             )
         )
         return {
@@ -499,7 +500,7 @@ def _add_judge_corrections(
                                 f"no Lang-Reiczigel limits for group {result.group_id!r}: "
                                 f"{limits}"
                             ),
-                            scope=result.cohort_id,
+                            scope=cohort_scope(result.cohort_id),
                             details={"group_id": result.group_id},
                         )
                     )

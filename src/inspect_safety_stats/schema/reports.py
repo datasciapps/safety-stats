@@ -9,14 +9,19 @@ from pydantic import (
     Field,
     PrivateAttr,
     SerializerFunctionWrapHandler,
+    ValidationInfo,
     model_serializer,
     model_validator,
 )
 
 from inspect_safety_stats.registry import CODES, Effect, SourceKind
+from inspect_safety_stats.schema.scopes import scope_segments
 
 Decision = Literal["PASS", "FAIL", "INCONCLUSIVE"]
 Eligibility = Literal["certifying", "diagnostic", "invalid"]
+
+# Validation context key: the model is read from a stored report, not built by an analysis.
+STORED_REPORT = "stored_report"
 
 
 class ResultModel(BaseModel):
@@ -31,6 +36,10 @@ class Diagnostic(ResultModel):
     it does to the results. They are filled from the registry, so a reader of ``report.json``
     can act on a diagnostic without looking its code up. A code the registry does not list is
     rejected, and so is a ``source`` or ``effect`` that differs from its entry.
+
+    ``scope`` is a path that says where the finding sits, as ``inspect_safety_stats.schema.scopes``
+    describes: ``plan/claims/mean_safe``, ``cohorts/candidate/prompts/p1``. A scope that does
+    not follow it is rejected, except when a stored report is read back (``STORED_REPORT``).
     """
 
     code: str
@@ -42,7 +51,7 @@ class Diagnostic(ResultModel):
     details: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def fill_source_and_effect_from_the_registry(self) -> Diagnostic:
+    def fill_source_and_effect_from_the_registry(self, info: ValidationInfo) -> Diagnostic:
         entry = CODES.get(self.code)
         if entry is None:
             raise ValueError(
@@ -57,6 +66,11 @@ class Diagnostic(ResultModel):
                     f"diagnostic {self.code} gives {name} {given!r}; the registry says "
                     f"{registered!r}"
                 )
+        # A report written before scopes were paths keeps its free-text scopes; reading it back
+        # (``STORED_REPORT``) must not reject them.
+        stored = bool(info.context and info.context.get(STORED_REPORT))
+        if self.scope is not None and not stored:
+            scope_segments(self.scope)
         return self
 
 

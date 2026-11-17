@@ -33,6 +33,7 @@ from inspect_safety_stats.schema.reports import (
     PromptEstimate,
     RiskIntervalResult,
 )
+from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope
 from inspect_safety_stats.stats.risk import worst_of_k_estimate
 
 
@@ -132,7 +133,9 @@ def _group_risks(
                             code="RISK_MEASURE_INVALID",
                             severity="ERROR",
                             message=str(exc),
-                            scope=f"{cohort_id}:{group.id}:{measure.id}",
+                            scope=cohort_scope(
+                                cohort_id, "groups", group.id, "measures", measure.id
+                            ),
                         )
                     )
                     warnings.append(str(exc))
@@ -187,7 +190,9 @@ def _group_risks(
                                     code="DIRECT_MEAN_INTERVAL_INVALID",
                                     severity="ERROR",
                                     message=str(exc),
-                                    scope=f"{cohort_id}:{group.id}:{measure.id}",
+                                    scope=cohort_scope(
+                                cohort_id, "groups", group.id, "measures", measure.id
+                            ),
                                 )
                             )
 
@@ -377,7 +382,9 @@ def _hierarchy_risks(
                             code="HIERARCHY_MEAN_INTERVAL_INVALID",
                             severity="ERROR",
                             message=str(exc),
-                            scope=f"{cohort_id}:{node.group_id}:{node.level}",
+                            scope=cohort_scope(
+                                cohort_id, "groups", node.group_id, "levels", node.level
+                            ),
                         )
                     )
             primary = next((item for item in intervals if item.role == "primary"), None)
@@ -420,7 +427,7 @@ def _hierarchy_risks(
                     "the sample; their conditional risk is not identified and no interval "
                     "is reported for them"
                 ),
-                scope="hierarchy",
+                scope=plan_scope("design", "hierarchy"),
                 details={"nodes": sorted(unsampled_nodes)[:20], "count": len(unsampled_nodes)},
             )
         )

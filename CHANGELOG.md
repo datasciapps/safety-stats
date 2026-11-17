@@ -15,6 +15,18 @@ described in their pull requests.
   Every `report.json` and `report.html` with a diagnostic changes bytes; `report.md` and the
   CSVs do not. A `report.json` written before reads back with both fields filled.
 
+- **A diagnostic's scope is a path.** `scope` names where a finding sits as a `/`-separated
+  path: a root (`plan`, `decision_policy`, `cohorts`, `runs`, `evals`, `logs`, `prompts`,
+  `strata`, `comparisons`, `comparison_sets` or `families`), then collection/id pairs, as in
+  `plan/outputs/direct_mean_intervals`, `cohorts/candidate/prompts/p1` or
+  `cohorts/candidate/groups/g1/measures/worst_of_k`. Ids have `%` and `/` percent-encoded, so
+  any id splits back out. Scopes were free text before (`candidate:p1`,
+  `inputs.judges.j1`), and an error whose scope was a stratum, claim or prompt id equal to a
+  cohort's id withheld that cohort's prompt bounds; an error now withholds a cohort's bounds
+  only when its scope is `cohorts/<id>`. Every `report.json`, `report.md`, `report.html` and
+  diagnostics CSV with a scoped diagnostic changes bytes, and so does the CLI's diagnostic
+  listing. A `report.json` written before still renders with `visualize`.
+
 - **Open-weight example and limitations log.** [`examples/open_weights/`](examples/open_weights/README.md) runs an open-weight model on
   HarmBench and XSTest with thinking off and on, many rollouts per prompt, judges them, and
   analyzes the run; it also orders rollouts for human labelling and turns the labels into

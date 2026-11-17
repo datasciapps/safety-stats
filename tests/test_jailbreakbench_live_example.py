@@ -359,6 +359,6 @@ def test_an_arm_graded_by_another_model_leaves_its_cohort_empty(
     integrity = validate(plan=tmp_path / "analysis-plan.yaml", logs="ignored")
     assert integrity.status == "invalid"
     assert any(
-        diagnostic.code == "COHORT_EMPTY" and diagnostic.scope == "candidate"
+        diagnostic.code == "COHORT_EMPTY" and diagnostic.scope == "cohorts/candidate"
         for diagnostic in integrity.diagnostics
     )

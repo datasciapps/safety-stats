@@ -20,6 +20,7 @@ from inspect_safety_stats.analysis.judge_calibration import (
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.reports import ComparisonResult, Diagnostic, RiskIntervalResult
+from inspect_safety_stats.schema.scopes import scope_path
 from inspect_safety_stats.stats.misclassification import JudgeCalibration, correct_judge_risk
 
 
@@ -240,7 +241,7 @@ def _apply_judge_correction_to_comparisons(
                     "interval does not expose both arm bounds, or a cohort has no "
                     "calibration; those effects remain on the judge-reported scale"
                 ),
-                scope="comparisons",
+                scope=scope_path("comparisons"),
                 details={"result_ids": sorted(skipped)[:20], "count": len(skipped)},
             )
         )

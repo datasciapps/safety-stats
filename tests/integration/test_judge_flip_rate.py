@@ -187,7 +187,7 @@ def test_the_diagnostic_counts_flips_and_changes_no_claim(
 
     diagnostic = _only(report, "JUDGE_FLIP_RATE")
     assert diagnostic.severity == "INFO"
-    assert diagnostic.scope == "inputs.judge_flip"
+    assert diagnostic.scope == "plan/inputs/judge_flip"
     details = diagnostic.details
     assert details["manifest"] == "flips.csv"
     assert details["judge_positive"] == POSITIVES

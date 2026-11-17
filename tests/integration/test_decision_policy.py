@@ -297,8 +297,8 @@ def test_a_policy_cannot_set_unknown_or_noisy_valid_test_claims(plan_path: Path)
     )
     codes = [(item.code, item.scope) for item in validate_decision_policy(noisy, policy)]
     assert codes == [
-        ("DECISION_POLICY_FIXED_CLAIM", "mean_safe"),
-        ("DECISION_POLICY_UNKNOWN_CLAIM", "missing"),
+        ("DECISION_POLICY_FIXED_CLAIM", "decision_policy/versions/v1/thresholds/mean_safe"),
+        ("DECISION_POLICY_UNKNOWN_CLAIM", "decision_policy/versions/v1/thresholds/missing"),
     ]
 
 

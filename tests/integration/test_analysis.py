@@ -857,7 +857,7 @@ def test_an_unlabelled_judge_stratum_is_completed_conservatively(
         for item in report.integrity.diagnostics
         if item.code == "JUDGE_STRATUM_UNLABELLED_COMPLETED"
     ]
-    assert [item.scope for item in completed] == ["candidate"]
+    assert [item.scope for item in completed] == ["cohorts/candidate"]
     assert completed[0].severity == "WARNING"
     assert completed[0].details == {"completed_strata": ["judge_unsafe"]}
     assert "JUDGE_CALIBRATION_UNINFORMATIVE" not in {
@@ -1528,7 +1528,7 @@ def test_a_content_filter_stop_without_content_counts_as_the_plan_says(
         diagnostic = next(
             item for item in report.integrity.diagnostics if item.code == codes[stops]
         )
-        assert diagnostic.scope == "eval-1:p1:1"
+        assert diagnostic.scope == "runs/eval-1/prompts/p1/repeats/1"
         assert diagnostic.details["block_category"] == "cyber"
 
 
@@ -1652,7 +1652,7 @@ def test_an_unscored_answer_at_the_token_limit_counts_as_the_plan_says(
         assert reached == []
     else:
         assert [(item.scope, item.details["token_limit"]) for item in reached] == [
-            ("eval-1:p1:1", token_limit)
+            ("runs/eval-1/prompts/p1/repeats/1", token_limit)
         ]
 
 
@@ -2576,7 +2576,7 @@ def test_an_error_about_one_prompt_does_not_block_a_prompt_whose_id_prefixes_it(
     report = analyze(plan=plan_path, logs="ignored")
 
     errors = {(item.code, item.scope) for item in report.integrity.diagnostics}
-    assert ("ROLLOUT_SHORTFALL", "candidate:p10") in errors
+    assert ("ROLLOUT_SHORTFALL", "cohorts/candidate/prompts/p10") in errors
     estimates = {item.prompt_id: item for item in report.prompt_estimates}
     assert estimates["p10"].lower is None and estimates["p10"].upper is None
     assert estimates["p1"].lower is not None and estimates["p1"].upper is not None
@@ -2586,17 +2586,17 @@ def test_an_error_about_one_prompt_does_not_block_a_prompt_whose_id_prefixes_it(
     ("diagnostic", "blocked"),
     [
         # A group-level error does not block a prompt that shares the group's id.
-        (Diagnostic(code="RISK_MEASURE_INVALID", severity="ERROR", message="", scope="candidate:g1:mean"), False),  # noqa: E501
-        (Diagnostic(code="DIRECT_MEAN_INTERVAL_INVALID", severity="ERROR", message="", scope="candidate:g1:mean"), False),  # noqa: E501
+        (Diagnostic(code="RISK_MEASURE_INVALID", severity="ERROR", message="", scope="cohorts/candidate/groups/g1/measures/mean"), False),  # noqa: E501
+        (Diagnostic(code="DIRECT_MEAN_INTERVAL_INVALID", severity="ERROR", message="", scope="cohorts/candidate/groups/g1/measures/mean"), False),  # noqa: E501
         # Prompt-level errors block the prompt they name, in their cohort or in all cohorts.
-        (Diagnostic(code="ROLLOUT_SHORTFALL", severity="ERROR", message="", scope="candidate:g1", details={"cohort_id": "candidate", "prompt_id": "g1"}), True),  # noqa: E501
-        (Diagnostic(code="ROLLOUT_SHORTFALL", severity="ERROR", message="", scope="baseline:g1", details={"cohort_id": "baseline", "prompt_id": "g1"}), False),  # noqa: E501
-        (Diagnostic(code="ROLLOUT_DUPLICATE", severity="ERROR", message="", scope="g1", details={"prompt_id": "g1"}), True),  # noqa: E501
-        (Diagnostic(code="ROLLOUT_DUPLICATE", severity="ERROR", message="", scope="g10", details={"prompt_id": "g10"}), False),  # noqa: E501
+        (Diagnostic(code="ROLLOUT_SHORTFALL", severity="ERROR", message="", scope="cohorts/candidate/prompts/g1", details={"cohort_id": "candidate", "prompt_id": "g1"}), True),  # noqa: E501
+        (Diagnostic(code="ROLLOUT_SHORTFALL", severity="ERROR", message="", scope="cohorts/baseline/prompts/g1", details={"cohort_id": "baseline", "prompt_id": "g1"}), False),  # noqa: E501
+        (Diagnostic(code="ROLLOUT_DUPLICATE", severity="ERROR", message="", scope="runs/r1/prompts/g1", details={"prompt_id": "g1"}), True),  # noqa: E501
+        (Diagnostic(code="ROLLOUT_DUPLICATE", severity="ERROR", message="", scope="runs/r1/prompts/g10", details={"prompt_id": "g10"}), False),  # noqa: E501
         # Cohort-level and unscoped errors block every prompt; warnings block nothing.
-        (Diagnostic(code="GENERATIVE_SAMPLE_UNMATCHED", severity="ERROR", message="", scope="candidate"), True),  # noqa: E501
+        (Diagnostic(code="GENERATIVE_SAMPLE_UNMATCHED", severity="ERROR", message="", scope="cohorts/candidate"), True),  # noqa: E501
         (Diagnostic(code="COHORT_EMPTY", severity="ERROR", message=""), True),
-        (Diagnostic(code="ROLLOUT_SHORTFALL", severity="WARNING", message="", scope="candidate"), False),  # noqa: E501
+        (Diagnostic(code="ROLLOUT_SHORTFALL", severity="WARNING", message="", scope="cohorts/candidate"), False),  # noqa: E501
     ],
 )
 def test_prompt_blocking_follows_the_prompt_an_error_names(
@@ -3500,7 +3500,8 @@ def test_noisy_valid_claim_requires_a_random_sample_calibration(tmp_path: Path) 
         tmp_path, claim_method="noisy_valid_test", sampling="simple_random_within_judge_stratum"
     )
     diagnostics = validate_plan_references(load_plan(plan_path))
-    assert ("PLAN_INVALID_CLAIM", "mean_safe") in {(d.code, d.scope) for d in diagnostics}
+    found = {(d.code, d.scope) for d in diagnostics}
+    assert ("PLAN_INVALID_CLAIM", "plan/claims/mean_safe") in found
 
 
 def test_worst_of_k_measure_propagates_prompt_envelope(
