@@ -19,6 +19,7 @@ from inspect_safety_stats.report.artifacts import (
     write_text,
 )
 from inspect_safety_stats.report.claims import CLAIMS_JSON, claims_export
+from inspect_safety_stats.report.index import index_files
 from inspect_safety_stats.schema.reports import (
     ClaimResult,
     ComparisonResult,
@@ -1880,5 +1881,10 @@ def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = 
         generated_names.append(CLAIMS_JSON)
     elif (directory / CLAIMS_JSON).exists():
         (directory / CLAIMS_JSON).unlink()
+    # ORDER MATTERS: the index lists every file written above, so it is written last, just
+    # before the checksums that cover it.
+    for name, text in index_files(report, generated_names).items():
+        write_text(directory / name, text)
+        generated_names.append(name)
     write_checksums(directory, generated_names)
     return directory

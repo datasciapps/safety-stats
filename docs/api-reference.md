@@ -93,9 +93,19 @@ output = report.write("reports/run-001")
 ```
 
 Writes deterministic JSON, Markdown, a self-contained interactive HTML visualization,
-resolved-plan YAML, resolved-design CSV, optional normalized observations, and a checksum
-manifest. A non-empty destination is rejected unless
+resolved-plan YAML, resolved-design CSV, optional normalized observations, an index, and a
+checksum manifest. A non-empty destination is rejected unless
 `overwrite=True`.
+
+`report.json` has a `summary` object: the integrity status, the headline estimates, the errors
+and warnings by code, and the decisions when `report.include_decisions` is true, each with a
+JSON pointer to its full record (`inspect_safety_stats.schema.summary`). `SafetyReport.summary`
+returns it. It is derived from the other fields, so reading a saved `report.json` back drops it
+and computes it again.
+
+`index.json` lists every file the report wrote and copies the summary; `index.md` holds the
+same content as Markdown (`inspect_safety_stats.report.index`). The
+[agent guide](agent-guide.md) says how to read both.
 
 ### Exact threshold planning
 

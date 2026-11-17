@@ -296,6 +296,7 @@ def analyze_command(
         estimate = "—" if risk.estimate is None else f"{100 * risk.estimate:.1f}%"
         typer.echo(f"  {risk.cohort_id} / {risk.group_id}: {estimate} {interval}")
     typer.echo(f"Summary: {path / 'report.md'}")
+    typer.echo(f"Index: {path / 'index.json'}")
     typer.echo(f"Report: {path}")
     # An invalid analysis supports no statistical claim, so it must not pass a CI gate by
     # exiting 0. The report is still written above so that its diagnostics can be audited.

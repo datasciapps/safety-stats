@@ -7,6 +7,15 @@ described in their pull requests.
 
 ### Added
 
+- **Every report directory has an index for agents: index.json and index.md.** `index.json`
+  lists every file of the report directory with its format, what it holds and, for the CSVs
+  whose rows are items of a `report.json` list, which list that is. It then copies the summary
+  level of `report.json`: headline estimates, decisions when shown, and errors and warnings by
+  code. Each entry has a JSON pointer into `report.json`, and a headline comparison also has
+  its row in `comparisons.csv`. `index.md` holds the same content as Markdown, and
+  `checksums.json` covers both. `analyze` prints the index's path. The
+  [agent guide](docs/agent-guide.md) says how to read them.
+
 - **report.json has a summary level (changes `report.json`).** `report.json` gains
   `summary`: the integrity status and the count of errors, warnings and notes; the headline
   estimates (each weighted-mean failure rate and each overall comparison); the errors and
