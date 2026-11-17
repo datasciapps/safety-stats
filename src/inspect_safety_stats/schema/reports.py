@@ -13,6 +13,8 @@ from pydantic import (
     model_validator,
 )
 
+from inspect_safety_stats.registry import CODES, Effect, SourceKind
+
 Decision = Literal["PASS", "FAIL", "INCONCLUSIVE"]
 Eligibility = Literal["certifying", "diagnostic", "invalid"]
 
@@ -22,11 +24,40 @@ class ResultModel(BaseModel):
 
 
 class Diagnostic(ResultModel):
+    """One finding of an analysis.
+
+    ``source`` and ``effect`` are what the registry says of the code
+    (``inspect_safety_stats.registry.CODES``): the kind of input the finding concerns and what
+    it does to the results. They are filled from the registry, so a reader of ``report.json``
+    can act on a diagnostic without looking its code up. A code the registry does not list is
+    rejected, and so is a ``source`` or ``effect`` that differs from its entry.
+    """
+
     code: str
     severity: Literal["ERROR", "WARNING", "INFO"]
+    source: SourceKind | None = None
+    effect: Effect | None = None
     message: str
     scope: str | None = None
     details: dict[str, Any] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def fill_source_and_effect_from_the_registry(self) -> Diagnostic:
+        entry = CODES.get(self.code)
+        if entry is None:
+            raise ValueError(
+                f"diagnostic code {self.code!r} has no entry in inspect_safety_stats.registry"
+            )
+        for name, registered in (("source", entry.source), ("effect", entry.effect)):
+            given = getattr(self, name)
+            if given is None:
+                setattr(self, name, registered)
+            elif given != registered:
+                raise ValueError(
+                    f"diagnostic {self.code} gives {name} {given!r}; the registry says "
+                    f"{registered!r}"
+                )
+        return self
 
 
 class IntegritySummary(ResultModel):

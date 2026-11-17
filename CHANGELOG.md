@@ -7,6 +7,14 @@ described in their pull requests.
 
 ### Added
 
+- **Diagnostics say what they concern and what they do.** Every diagnostic in `report.json`
+  now carries `source`, the kind of input it concerns (`plan`, `registration`, `manifest`,
+  `logs`, `judge_labels`, `analysis` or `generation`), and `effect`, what it does to the
+  results (`invalid`, `degraded`, `withheld`, `adjusted` or `recorded`). Both are filled from
+  the code's entry in `inspect_safety_stats.registry`, which also says what each value means.
+  Every `report.json` and `report.html` with a diagnostic changes bytes; `report.md` and the
+  CSVs do not. A `report.json` written before reads back with both fields filled.
+
 - **Open-weight example and limitations log.** [`examples/open_weights/`](examples/open_weights/README.md) runs an open-weight model on
   HarmBench and XSTest with thinking off and on, many rollouts per prompt, judges them, and
   analyzes the run; it also orders rollouts for human labelling and turns the labels into
