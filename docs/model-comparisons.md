@@ -56,6 +56,34 @@ risk-difference interval lies wholly below zero. If (b_k) arms are definitely be
 Rank one means lowest harmful-compliance risk. Overlapping rank sets honestly retain ordering
 uncertainty; the software does not force a total ranking from point estimates.
 
+## One judge for every arm
+
+When a model judge scores the rollouts, judge every arm with the same judge, rubric and judge
+settings. A judge's sensitivity and specificity depend on the outputs it reads, so they change
+from one judged model to the next. If each model judges itself, or each arm has a different
+judge, a difference between two arms can come mostly from the judges and not from the models.
+The intervals cover rollout uncertainty only, so they cannot show this.
+
+Name the judge in the match of every cohort, so that a run scored by another judge joins no
+cohort and cannot enter the comparison. When the task takes the judge as an argument, a schema
+2.0 plan names it as `task_arg_<name>`, and a schema 3.0 plan names it as
+`attributes.task_arg_<name>`:
+
+```yaml
+cohorts:
+  reference:
+    match: {model: openai/reference-model, task_arg_grader_model: openai/judge-model}
+  candidate_a:
+    match: {model: openai/candidate-a-model, task_arg_grader_model: openai/judge-model}
+```
+
+A cohort that the selected logs do not fill is reported as `COHORT_EMPTY`, and integrity is
+`invalid`. To compare models already judged by different judges, first re-score all of their
+logs with one judge. A shared judge makes its errors the same for every arm, but it does not
+remove them. See [Judge misclassification](judge-misclassification.md).
+The [JailbreakBench comparison](../examples/real_jailbreakbench/README.md) runner writes plans
+of this form.
+
 ## Estimands
 
 For prompt \(j\), let \(p_{Cj}\) and \(p_{Bj}\) be the candidate and baseline harmful-compliance
