@@ -3013,6 +3013,50 @@ def test_judge_claims_record_each_judges_scorer_configuration(
     assert judges["judge_b"]["configuration"]["candidate"]["scorer"] is None
 
 
+def test_judge_claims_keep_only_each_model_roles_name_and_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    eval_frame, sample_frame = _judge_frames_with_configuration()
+    eval_frame = eval_frame.assign(
+        model_roles=json.dumps(
+            {
+                "grader": {
+                    "model": "grader/x",
+                    "config": {"extra_headers": {"X-Api-Key": "header-secret-7f3a"}},
+                    "base_url": "https://endpoint-secret.example.invalid/v1",
+                    "args": {"api_key": "args-secret-91c2"},
+                }
+            }
+        )
+    )
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+    report = analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    assert judges["judge_a"]["configuration"]["candidate"]["model_roles"] == [
+        {"grader": {"model": "grader/x"}}
+    ]
+    out = report.write(tmp_path / "report")
+    written = {path.name: path for path in out.rglob("*") if path.is_file()}
+    assert {"report.json", "report.md", "report-full.md", "report.html"} <= set(written)
+    for path in written.values():
+        text = path.read_bytes().decode("utf-8", errors="replace")
+        for secret in ("header-secret-7f3a", "endpoint-secret", "args-secret-91c2"):
+            assert secret not in text, (path.name, secret)
+    assert '`{"grader":{"model":"grader/x"}}`' in written["report-full.md"].read_text(
+        encoding="utf-8"
+    )
+
+
+def test_judge_claims_reject_a_model_role_without_a_model(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    eval_frame, sample_frame = _judge_frames_with_configuration()
+    eval_frame = eval_frame.assign(model_roles='{"grader": {"base_url": "https://x.invalid"}}')
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+    with pytest.raises(ValueError, match="model role 'grader' without a model id"):
+        analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
+
+
 def test_judge_claims_are_opt_in_and_leave_plan_hashes_alone(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
