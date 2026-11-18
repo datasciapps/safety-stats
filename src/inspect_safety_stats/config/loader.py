@@ -10,14 +10,14 @@ import yaml
 from .canonicalize import sha256_value
 from .models import AnalysisPlan
 
-SCHEMA_VERSION = "2.0"
+SCHEMA_VERSIONS = ("2.0", "3.0")
 
 
 def _check_schema_version(raw: dict[str, Any]) -> None:
-    """Accept an unquoted 2.0, and refuse any other version with an explanation.
+    """Accept an unquoted 2.0 or 3.0, and refuse any other version with an explanation.
 
-    YAML and JSON read an unquoted 2.0 as a number, and the schema field is the string "2.0",
-    so validation used to reject the current version. An older version failed with a list of
+    YAML and JSON read an unquoted 2.0 as a number, and the schema field is a string, so
+    validation used to reject a supported version. An older version failed with a list of
     unknown fields that did not say what had changed.
     """
     if "schema_version" not in raw:
@@ -25,20 +25,21 @@ def _check_schema_version(raw: dict[str, Any]) -> None:
     declared = raw["schema_version"]
     if isinstance(declared, float):
         declared = raw["schema_version"] = str(declared)
-    if declared == SCHEMA_VERSION:
+    if declared in SCHEMA_VERSIONS:
         return
+    supported = " and ".join(repr(version) for version in SCHEMA_VERSIONS)
     if declared == "1.0":
         raise ValueError(
-            f"this plan declares schema_version '1.0', and this release reads "
-            f"{SCHEMA_VERSION!r}. Schema 2.0 replaced independence_unit and "
-            "cluster_sensitivity with named design.independence_profiles, and does not "
-            "translate them, so a plan's independence assumptions cannot change silently "
-            "(docs/independence-profiles.md). Write a 2.0 plan, freeze it again, and rerun "
-            "analyze: the Inspect logs can be reused"
+            f"this plan declares schema_version '1.0', and this release reads {supported}. "
+            "Schema 2.0 replaced independence_unit and cluster_sensitivity with named "
+            "design.independence_profiles, and does not translate them, so a plan's "
+            "independence assumptions cannot change silently (docs/independence-profiles.md). "
+            "Write a 2.0 or 3.0 plan (docs/plan-reference.md#schema-versions), freeze it "
+            "again, and rerun analyze: the Inspect logs can be reused"
         )
     raise ValueError(
-        f"unsupported plan schema_version {declared!r}; this release reads "
-        f'{SCHEMA_VERSION!r} plans, declared as schema_version: "{SCHEMA_VERSION}"'
+        f"unsupported plan schema_version {declared!r}; this release reads {supported} "
+        f'plans, declared as, for example, schema_version: "{SCHEMA_VERSIONS[-1]}"'
     )
 
 

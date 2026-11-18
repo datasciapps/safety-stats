@@ -22,11 +22,11 @@ from inspect_safety_stats.stats.independence import (
 def _observation(cohort: str, prompt: str, epoch: int, failure: bool) -> Observation:
     return Observation(
         observation_id=f"{cohort}-{prompt}-{epoch}",
-        source_log="test.eval",
-        eval_id=f"eval-{cohort}",
-        sample_id=f"{cohort}-{prompt}-{epoch}",
-        inspect_id=prompt,
-        epoch=epoch,
+        source="test.eval",
+        run_key=f"eval-{cohort}",
+        rollout_id=f"{cohort}-{prompt}-{epoch}",
+        item_id=prompt,
+        repeat=epoch,
         prompt_id=prompt,
         question_id=prompt,
         task_id="task",
@@ -127,6 +127,26 @@ def test_profile_fields_are_checked_against_observations_and_manifest() -> None:
         validate_profile_fields(
             {"bad": IndependenceProfileSpec(block_by=["not_a_field"])}, manifest
         )
+
+
+@pytest.mark.parametrize(
+    ("field", "old_name"), [("item_id", "inspect_id"), ("source", "source_log")]
+)
+def test_a_renamed_observation_field_that_is_also_a_manifest_column_is_refused(
+    field: str, old_name: str
+) -> None:
+    """Under report schema 2.0 such a name meant the manifest column; the field took its place."""
+    _, manifest = _data()
+    manifest[field] = ["a", "a"]
+    with pytest.raises(ValueError, match=rf"blocks by '{field}', which names both.*'{old_name}'"):
+        validate_profile_fields({"p": IndependenceProfileSpec(block_by=[field])}, manifest)
+    # Either side can still be named without ambiguity.
+    validate_profile_fields({"p": IndependenceProfileSpec(block_by=[old_name])}, manifest)
+    validate_profile_fields(
+        {"p": IndependenceProfileSpec(block_by=[field])}, manifest.drop(columns=[field])
+    )
+    # prompt_id is a manifest column and an observation field with the same values, as before.
+    validate_profile_fields({"p": IndependenceProfileSpec(block_by=["prompt_id"])}, manifest)
 
 
 @pytest.mark.parametrize("value", [1.0, "a"])
@@ -234,3 +254,23 @@ def test_a_block_index_for_other_observations_is_not_used() -> None:
         direct_bounded_blocks(*inputs, **arguments),
         direct_bounded_blocks(*inputs, index=stale, **arguments),
     )
+
+
+@pytest.mark.parametrize(
+    ("legacy", "neutral"),
+    [("epoch", "repeat"), ("eval_id", "run_key"), ("sample_id", "rollout_id")],
+)
+def test_a_legacy_observation_field_blocks_like_its_neutral_name(
+    legacy: str, neutral: str
+) -> None:
+    observations, manifest = _data()
+    arguments = dict(
+        cohort_id="candidate", prompt_ids=["p1", "p2"], prompt_weights=np.asarray([0.5, 0.5])
+    )
+    blocks = {
+        name: direct_bounded_blocks(
+            observations, manifest, IndependenceProfileSpec(block_by=[name]), **arguments
+        )
+        for name in (legacy, neutral)
+    }
+    assert _same(blocks[legacy], blocks[neutral])

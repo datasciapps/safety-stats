@@ -45,7 +45,7 @@ From the repository root:
 cd /path/to/safety_stats
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -e '.[openai,translation]'
+python -m pip install -e '.[inspect,openai,translation]'
 export OPENAI_API_KEY="your-api-key"
 ```
 

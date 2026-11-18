@@ -18,11 +18,11 @@ def _write(tmp_path: Path, body: str) -> Path:
 def _observation(observation_id: str, cohort: str, failure: bool | None) -> Observation:
     return Observation(
         observation_id=observation_id,
-        source_log="log.eval",
-        eval_id="e1",
-        sample_id=observation_id,
-        inspect_id=observation_id,
-        epoch=1,
+        source="log.eval",
+        run_key="e1",
+        rollout_id=observation_id,
+        item_id=observation_id,
+        repeat=1,
         prompt_id="p1",
         question_id="q1",
         task_id="t1",

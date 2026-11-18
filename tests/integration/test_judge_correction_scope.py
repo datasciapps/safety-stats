@@ -236,7 +236,7 @@ def _analyze(
     for observation in baseline._observations:
         if observation.failure is None:
             continue
-        epoch = int(observation.sample_id.rsplit("-", 1)[1])
+        epoch = int(observation.rollout_id.rsplit("-", 1)[1])
         truth = _truly_unsafe(observation.prompt_id, epoch)
         rows.append(f"{observation.observation_id},{'unsafe' if truth else 'safe'}")
     (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")

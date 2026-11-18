@@ -3,11 +3,14 @@ from __future__ import annotations
 import json
 from enum import Enum
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal
 
 import typer
 
 from inspect_safety_stats.version import __version__
+
+if TYPE_CHECKING:
+    from inspect_safety_stats.ingest.records import EvaluationSource
 
 # Each command imports what it needs when it runs, so that `version`, `--help`, `plan` and
 # `schema` do not load Inspect AI, pandas and the analysis pipeline.
@@ -26,10 +29,56 @@ app.add_typer(schema_app, name="schema")
 app.add_typer(generative_app, name="generative")
 
 
+RunsOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--runs",
+        exists=True,
+        dir_okay=False,
+        help=(
+            "Runs file of a neutral rollout source (JSONL or CSV); requires "
+            "--rollouts. Experimental: see docs/rollout-files.md."
+        ),
+    ),
+]
+RolloutsOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--rollouts",
+        exists=True,
+        dir_okay=False,
+        help=(
+            "Rollouts file of a neutral rollout source (JSONL or CSV); requires "
+            "--runs. Experimental: see docs/rollout-files.md."
+        ),
+    ),
+]
+
+
+def _source_arguments(
+    logs: list[Path] | None, runs: Path | None, rollouts: Path | None
+) -> tuple[str | list[str] | None, EvaluationSource | None]:
+    """What to analyse, as ``logs`` and ``source``: Inspect logs or rollout files."""
+
+    if runs is not None or rollouts is not None:
+        if runs is None or rollouts is None:
+            raise typer.BadParameter("--runs and --rollouts are given together")
+        if logs:
+            raise typer.BadParameter("pass either --logs or --runs and --rollouts, not both")
+        from inspect_safety_stats.ingest.rollout_files import RolloutFiles
+
+        return None, RolloutFiles(runs=runs, rollouts=rollouts)
+    if not logs:
+        raise typer.BadParameter("at least one --logs path is required")
+    return (str(logs[0]) if len(logs) == 1 else [str(path) for path in logs]), None
+
+
 @app.command("analyze")
 def analyze_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
     logs: Annotated[list[Path] | None, typer.Option("--logs", exists=True)] = None,
+    runs: RunsOption = None,
+    rollouts: RolloutsOption = None,
     output: Annotated[Path, typer.Option("--output")] = Path("safety-stats-report"),
     overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
     parallel: Annotated[int, typer.Option("--parallel", min=0)] = 0,
@@ -38,15 +87,15 @@ def analyze_command(
     ] = False,
     allow_invalid: Annotated[bool, typer.Option("--allow-invalid")] = False,
 ) -> None:
-    """Analyze completed Inspect logs against a plan and write the report directory."""
+    """Analyze completed Inspect logs or rollout files against a plan and write the report."""
 
-    if not logs:
-        raise typer.BadParameter("at least one --logs path is required")
-    log_input: str | list[str] = str(logs[0]) if len(logs) == 1 else [str(path) for path in logs]
+    log_input, source = _source_arguments(logs, runs, rollouts)
     from inspect_safety_stats.api import analyze as run_analysis
 
     try:
-        report = run_analysis(plan=plan, logs=log_input, parallel=parallel or False)
+        report = run_analysis(
+            plan=plan, logs=log_input, parallel=parallel or False, source=source
+        )
         path = report.write(output, overwrite=overwrite)
     except Exception as exc:
         typer.echo(f"Analysis failed: {exc}", err=True)
@@ -79,16 +128,16 @@ def analyze_command(
 def validate_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
     logs: Annotated[list[Path] | None, typer.Option("--logs", exists=True)] = None,
+    runs: RunsOption = None,
+    rollouts: RolloutsOption = None,
     parallel: Annotated[int, typer.Option("--parallel", min=0)] = 0,
 ) -> None:
-    """Check logs against a plan (manifest, cohorts, rollouts, scores) without analyzing."""
+    """Check logs or rollout files against a plan (manifest, cohorts, rollouts, scores)."""
 
-    if not logs:
-        raise typer.BadParameter("at least one --logs path is required")
-    log_input: str | list[str] = str(logs[0]) if len(logs) == 1 else [str(path) for path in logs]
+    log_input, source = _source_arguments(logs, runs, rollouts)
     from inspect_safety_stats.api import validate as run_validation
 
-    result = run_validation(plan=plan, logs=log_input, parallel=parallel or False)
+    result = run_validation(plan=plan, logs=log_input, parallel=parallel or False, source=source)
     for diagnostic in result.diagnostics:
         scope = f" [{diagnostic.scope}]" if diagnostic.scope else ""
         typer.echo(f"{diagnostic.severity} {diagnostic.code}{scope}: {diagnostic.message}")

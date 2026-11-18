@@ -132,8 +132,22 @@ jobs:
           assert visualization._TEMPLATE.is_file(), 'report template missing from wheel'
           assert generative._TEMPLATE.is_file(), 'generative template missing from wheel'
           "
-          # Reading Inspect logs must work from a clean install, not only from a dev
-          # environment that happens to have inspect-ai's optional extras.
+          # Without the inspect extra the core installs no Inspect AI, and reading Inspect logs
+          # fails with a message that names the extra.
+          /tmp/check/bin/python -c "
+          import importlib.util
+          assert importlib.util.find_spec('inspect_ai') is None, 'inspect-ai is a core dependency'
+          try:
+              import inspect_safety_stats.ingest.inspect_logs
+          except ImportError as error:
+              assert 'inspect-safety-stats[inspect]' in str(error), error
+          else:
+              raise AssertionError('Inspect logs were readable without the inspect extra')
+          import inspect_safety_stats.ingest.rollout_files
+          "
+          # Reading Inspect logs must work from a clean install with the inspect extra, not only
+          # from a dev environment that happens to have inspect-ai's optional extras.
+          /tmp/check/bin/python -m pip install --quiet "$(ls dist/*.whl)[inspect]"
           /tmp/check/bin/python -c "
           from inspect_ai.analysis import evals_df, samples_df
           import inspect_safety_stats.ingest.inspect_logs

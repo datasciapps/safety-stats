@@ -63,7 +63,7 @@ Anytime-valid confidence sequences, adaptive rollout allocation, live hooks, and
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e .
+python -m pip install -e '.[inspect]'
 ```
 
 For development:
@@ -222,6 +222,7 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Quickstart](docs/quickstart.md)
 - [Analysis plan reference](docs/plan-reference.md)
 - [Python and command-line API reference](docs/api-reference.md)
+- [Rollout files](docs/rollout-files.md): analysing results from other evaluation systems (experimental)
 - [Interpreting results](docs/interpretation.md)
 - [Judge misclassification](docs/judge-misclassification.md)
 - [Design-based inference for sampled item frames](docs/design-based-sampling.md)

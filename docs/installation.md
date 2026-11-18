@@ -4,8 +4,10 @@
 
 - Python 3.11 or newer.
 - Linux, macOS, or Windows. CI runs the test suite on all three.
-- Inspect AI 0.3.259 through the latest compatible 0.3 release.
-- Completed Inspect evaluation logs for analysis.
+- For Inspect AI logs: Inspect AI 0.3.259 through the latest compatible 0.3 release, installed by
+  the `inspect` extra, and completed Inspect evaluation logs.
+- For results from another evaluation system: [rollout files](rollout-files.md), which need no
+  extra.
 
 The analyzer is offline. It does not call model providers or make network requests.
 
@@ -17,8 +19,12 @@ cd inspect-safety-stats
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e .
+python -m pip install -e '.[inspect]'
 ```
+
+The `inspect` extra installs Inspect AI and pyarrow, which reading Inspect logs needs. Leave it
+out to analyse only rollout files: `python -m pip install -e .`. Reading Inspect logs without it
+fails with an error that names the extra. The `dev` extra includes it.
 
 On Windows PowerShell, activate with:
 

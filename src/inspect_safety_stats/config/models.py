@@ -11,6 +11,8 @@ from pydantic import (
     ConfigDict,
     Field,
     PrivateAttr,
+    SerializerFunctionWrapHandler,
+    model_serializer,
     model_validator,
 )
 
@@ -53,6 +55,28 @@ class AnalysisMetadata(StrictModel):
         if self.intent == "confirmatory" and self.plan_frozen_at is None:
             raise ValueError("confirmatory analyses require analysis.plan_frozen_at")
         return self
+
+
+# Schema 3.0 names run and rollout fields neutrally: a few fields every source has, and the
+# source's own fields under ``attributes.``. Schema 2.0 names the fields of the source verbatim.
+RUN_FIELDS = ("run_key", "model", "status", "run_id")
+ROLLOUT_FIELDS = ("run_key", "item_id", "repeat", "rollout_id")
+ATTRIBUTE_PREFIX = "attributes."
+LEGACY_ROLLOUT_KEY = ["eval_id", "id", "epoch"]
+NEUTRAL_ROLLOUT_KEY = ["run_key", "item_id", "repeat"]
+
+
+def neutral_field_error(name: str, reserved: tuple[str, ...]) -> str | None:
+    """Why ``name`` is not a schema 3.0 field name, or None when it is one."""
+
+    if name in reserved:
+        return None
+    if name.startswith(ATTRIBUTE_PREFIX) and len(name) > len(ATTRIBUTE_PREFIX):
+        return None
+    return (
+        f"{name!r} is neither one of {list(reserved)} nor a source field written "
+        f"{ATTRIBUTE_PREFIX}<name>"
+    )
 
 
 class SampleJoinSpec(StrictModel):
@@ -223,11 +247,21 @@ class CompositeJudgeSpec(StrictModel):
 class InputsSpec(StrictModel):
     design_manifest: Path
     estimand: Literal["end_to_end_system", "underlying_model"] = "end_to_end_system"
-    sample_join: SampleJoinSpec = Field(default_factory=SampleJoinSpec)
+    # Schema 2.0 only; None, and left out of the plan, under schema 3.0.
+    sample_join: SampleJoinSpec | None = Field(default_factory=SampleJoinSpec)
     score: ScoreSpec
     judge_calibration: JudgeCalibrationSpec | None = None
     judges: list[JudgeSpec] = Field(default_factory=list)
     composites: list[CompositeJudgeSpec] = Field(default_factory=list)
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_sample_join(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if self.sample_join is None:
+            data.pop("sample_join", None)
+        return data
 
     @model_validator(mode="after")
     def validate_judge_panel(self) -> InputsSpec:
@@ -295,7 +329,8 @@ class DesignSpec(StrictModel):
     inclusion_probability_column: str | None = None
     stratum_column: str | None = None
     hierarchy: list[str] = Field(default_factory=lambda: ["task_id", "question_id", "prompt_id"])
-    rollout_key: list[str] = Field(default_factory=lambda: ["eval_id", "id", "epoch"])
+    # The schema 2.0 default; a schema 3.0 plan defaults to NEUTRAL_ROLLOUT_KEY.
+    rollout_key: list[str] = Field(default_factory=lambda: list(LEGACY_ROLLOUT_KEY))
     require_complete_manifest: bool = True
     require_expected_rollouts: bool = True
     weights: WeightSpec = Field(default_factory=WeightSpec)
@@ -678,7 +713,7 @@ class ReportSpec(StrictModel):
 
 
 class AnalysisPlan(StrictModel):
-    schema_version: Literal["2.0"] = "2.0"
+    schema_version: Literal["2.0", "3.0"] = "2.0"
     analysis: AnalysisMetadata
     inputs: InputsSpec
     design: DesignSpec = Field(default_factory=DesignSpec)
@@ -693,6 +728,55 @@ class AnalysisPlan(StrictModel):
     report: ReportSpec = Field(default_factory=ReportSpec)
 
     _source_path: Path | None = PrivateAttr(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def apply_schema_version_defaults(cls, data: Any) -> Any:
+        """Fill the defaults that differ between schema versions, before validation."""
+
+        if not isinstance(data, dict):
+            return data
+        inputs = data.get("inputs")
+        if data.get("schema_version") != "3.0":
+            if isinstance(inputs, dict) and "sample_join" in inputs:
+                if inputs["sample_join"] is None:
+                    raise ValueError("inputs.sample_join cannot be null")
+            return data
+        data = dict(data)
+        if isinstance(inputs, dict):
+            if "sample_join" in inputs:
+                raise ValueError(
+                    "inputs.sample_join was removed in schema 3.0: rollouts join the design "
+                    "manifest's prompt_id by their item_id"
+                )
+            data["inputs"] = {**inputs, "sample_join": None}
+        design = data.get("design", {})
+        if isinstance(design, dict) and "rollout_key" not in design:
+            data["design"] = {**design, "rollout_key": list(NEUTRAL_ROLLOUT_KEY)}
+        return data
+
+    @model_validator(mode="after")
+    def neutral_field_names(self) -> AnalysisPlan:
+        if self.schema_version != "3.0":
+            return self
+        problems = [
+            f"design.rollout_key: {error}"
+            for name in self.design.rollout_key
+            if (error := neutral_field_error(name, ROLLOUT_FIELDS))
+        ]
+        for cohort_id, cohort in self.cohorts.items():
+            problems += [
+                f"cohorts.{cohort_id}.{where}: {error}"
+                for where, names in (
+                    ("match", list(cohort.match)),
+                    ("require_uniform", cohort.require_uniform),
+                )
+                for name in names
+                if (error := neutral_field_error(name, RUN_FIELDS))
+            ]
+        if problems:
+            raise ValueError("; ".join(problems))
+        return self
 
     @model_validator(mode="after")
     def independence_references_exist(self) -> AnalysisPlan:

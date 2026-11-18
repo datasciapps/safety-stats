@@ -1890,11 +1890,11 @@ def test_plans_without_judges_are_unchanged(
     header = (output / "observations.csv").read_text(encoding="utf-8").splitlines()[0]
     assert header.split(",")[:6] == [
         "observation_id",
-        "source_log",
-        "source_log_sha256",
-        "eval_id",
+        "source",
+        "source_sha256",
+        "run_key",
         "run_id",
-        "sample_id",
+        "rollout_id",
     ]
     assert "judge" not in header
 
@@ -2554,8 +2554,8 @@ def test_a_report_names_its_inputs_relative_to_the_plan(
 
     report = analyze(plan=plan_path, logs="ignored")
 
-    assert [item["path"] for item in report.provenance["source_logs"]] == ["logs/run.eval"]
-    assert {observation.source_log for observation in report._observations} == {"logs/run.eval"}
+    assert [item["path"] for item in report.provenance["sources"]] == ["logs/run.eval"]
+    assert {observation.source for observation in report._observations} == {"logs/run.eval"}
     assert report.design["manifest"] == "design.csv"
     assert report._resolved_plan["inputs"]["design_manifest"] == "design.csv"
     # No written file names the checkout, in any escaping.

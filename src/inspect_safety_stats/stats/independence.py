@@ -9,18 +9,22 @@ import numpy as np
 import pandas as pd
 
 from inspect_safety_stats.config.models import IndependenceProfileSpec
-from inspect_safety_stats.schema.observations import Observation
+from inspect_safety_stats.schema.observations import (
+    LEGACY_FIELD_NAMES,
+    Observation,
+    observation_field,
+)
 
 _BLOCK_OBSERVATION_FIELDS = frozenset(
     {
         "observation_id",
-        "source_log",
-        "source_log_sha256",
-        "eval_id",
+        "source",
+        "source_sha256",
+        "run_key",
         "run_id",
-        "sample_id",
-        "inspect_id",
-        "epoch",
+        "rollout_id",
+        "item_id",
+        "repeat",
         "prompt_id",
         "question_id",
         "task_id",
@@ -29,6 +33,9 @@ _BLOCK_OBSERVATION_FIELDS = frozenset(
         "configuration_fingerprint",
     }
 )
+# The observation fields report schema 3.0 renamed, by their new names, with their old ones.
+_SCHEMA_2_NAMES = {new: old for old, new in LEGACY_FIELD_NAMES.items()}
+_RENAMED_OBSERVATION_FIELDS = frozenset(_SCHEMA_2_NAMES)
 
 
 @dataclass(frozen=True)
@@ -105,7 +112,11 @@ def _current_index(
 def validate_profile_fields(
     profiles: dict[str, IndependenceProfileSpec], manifest: pd.DataFrame
 ) -> None:
-    available = _BLOCK_OBSERVATION_FIELDS | frozenset(str(column) for column in manifest.columns)
+    available = (
+        _BLOCK_OBSERVATION_FIELDS
+        | frozenset(LEGACY_FIELD_NAMES)
+        | frozenset(str(column) for column in manifest.columns)
+    )
     for profile_id, profile in profiles.items():
         unknown = sorted(set(profile.block_by) - available - {"rollout"})
         if unknown:
@@ -113,11 +124,23 @@ def validate_profile_fields(
                 f"independence profile {profile_id!r} references unavailable fields: "
                 + ", ".join(unknown)
             )
+        # Report schema 3.0 gave six observation fields neutral names. A manifest column that
+        # already had one of them was what block_by meant, and the observation field now takes
+        # its place, which would change the blocks without a word. Refuse the ambiguous name.
+        for field in profile.block_by:
+            if field in _RENAMED_OBSERVATION_FIELDS and field in manifest.columns:
+                raise ValueError(
+                    f"independence profile {profile_id!r} blocks by {field!r}, which names both "
+                    "a design manifest column and, since report schema 3.0, the observation "
+                    f"field once called {_SCHEMA_2_NAMES[field]!r}. Rename the manifest column "
+                    f"to block by it, or write {_SCHEMA_2_NAMES[field]!r} to block by the "
+                    "observation field."
+                )
         # A missing manifest value has no block identity: depending on the column's inferred
         # dtype it either split every affected rollout into its own block or merged all of
         # them into one. Neither is a declared partition, so require a value everywhere.
         for field in profile.block_by:
-            if field in _BLOCK_OBSERVATION_FIELDS or field == "rollout":
+            if observation_field(field) in _BLOCK_OBSERVATION_FIELDS or field == "rollout":
                 continue
             missing = manifest[field].isna()
             if missing.any():
@@ -135,8 +158,8 @@ def _value(
     field: str,
     manifest_values: Mapping[str, Mapping[str, Any]],
 ) -> Any:
-    if field in _BLOCK_OBSERVATION_FIELDS:
-        return getattr(observation, field)
+    if observation_field(field) in _BLOCK_OBSERVATION_FIELDS:
+        return getattr(observation, observation_field(field))
     return manifest_values[observation.prompt_id][field]
 
 
