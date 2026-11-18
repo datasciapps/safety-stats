@@ -447,6 +447,25 @@ def _cohort_risk_withheld(triggered: Outcome, control: Outcome) -> None:
     assert before.lower is not None and before.upper is not None
 
 
+# --- tail measures ---------------------------------------------------------------------------
+
+
+def _claim_on_cvar(inputs: Inputs) -> None:
+    inputs.plan["outputs"]["risk_measures"].append({"id": "tail", "type": "cvar", "beta": 0.5})
+    inputs.plan["claims"][0]["measure"] = "tail"
+
+
+def _one_rollout_per_prompt(inputs: Inputs) -> None:
+    inputs.rollouts = [item for item in inputs.rollouts if item["repeat"] == 1]
+    for row in inputs.manifest:
+        row["expected_rollouts"] = 1
+
+
+def _claim_still_evaluated(triggered: Outcome, control: Outcome) -> None:
+    # The claim is evaluated as before; only the integrity status says it is suspect.
+    assert claim(triggered).upper is not None and claim(control).upper is not None
+
+
 # --- stops: a source that reports how each output stopped ------------------------------------
 
 
@@ -856,6 +875,13 @@ CASES = [
         trigger=analysis(_run_without("started_at")),
         control=analysis(),
         effect=_same_estimates,
+    ),
+    Case(
+        code="TAIL_MEASURE_SINGLE_ROLLOUT",
+        # A claim on a cvar measure, with one rollout of each prompt; the control has four.
+        trigger=analysis(_changes(_claim_on_cvar, _one_rollout_per_prompt)),
+        control=analysis(_claim_on_cvar),
+        effect=_claim_still_evaluated,
     ),
     Case(
         code="TARGET_POLICY_BLOCKED_REFUSAL",
