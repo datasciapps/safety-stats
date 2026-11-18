@@ -93,7 +93,7 @@ removing, and tightening validation so that previously accepted input is rejecte
 - **Internal:** anything not in an `__all__`, or with a leading `_`, is internal. Class A
   pull requests may change it freely, provided report artifacts stay byte-identical.
 
-### 4.2 Analysis plan (YAML/JSON), `schema_version: "2.0"`
+### 4.2 Analysis plan (YAML/JSON), `schema_version: "2.0"` or `"3.0"`
 
 Plans are strict (`extra="forbid"`).
 
