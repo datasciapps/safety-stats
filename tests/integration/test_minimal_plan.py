@@ -162,6 +162,34 @@ def test_disabled_prompt_bounds_need_no_family(tmp_path: Path) -> None:
     assert _diagnostics(plan, "plan/outputs/prompt_bounds") == []
 
 
+@pytest.mark.parametrize("simultaneous", ["true", "false"])
+@pytest.mark.parametrize(
+    ("family", "families"),
+    [
+        ("", ""),
+        ("family: undeclared", ""),
+        (
+            "family: mandatory",
+            "{id: mandatory, purpose: all_mandatory, method: intersection_union, alpha: 0.05}",
+        ),
+    ],
+    ids=["unset", "undeclared", "not_bonferroni"],
+)
+def test_disabled_prompt_bounds_ignore_simultaneous(
+    tmp_path: Path, simultaneous: str, family: str, families: str
+) -> None:
+    # Validation used to test simultaneous before enabled, so {enabled: false} alone still
+    # failed with PLAN_UNKNOWN_REFERENCE, or PLAN_INVALID_MULTIPLICITY with a family that is
+    # not bonferroni, unless simultaneous: false was set too.
+    prompt_bounds = ", ".join(
+        part for part in ("enabled: false", f"simultaneous: {simultaneous}", family) if part
+    )
+    plan = _plan(tmp_path, prompt_bounds=prompt_bounds, families=families)
+    # Matched on any scope naming prompt_bounds: that old code scoped it outputs.prompt_bounds.
+    diagnostics = validate_plan_references(load_plan(plan))
+    assert [item for item in diagnostics if "prompt_bounds" in str(item.scope)] == []
+
+
 def test_an_undeclared_family_is_named(tmp_path: Path) -> None:
     plan = _plan(tmp_path, prompt_bounds="family: shown")
     (family,) = _diagnostics(plan, "plan/outputs/prompt_bounds")
