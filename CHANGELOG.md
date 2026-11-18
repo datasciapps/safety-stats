@@ -534,6 +534,16 @@ described in their pull requests.
 
 ### Changed
 
+- **Assumed judge calibration corrects comparisons too (changes `report.json`).** In
+  `judge_calibration.mode: assumed`, each declared scenario corrected the group risks but left
+  every comparison on the judge-reported scale, with no diagnostic, although the docs said
+  comparisons were corrected on both arms. Each scenario now corrects every comparison whose
+  primary interval exposes both arm bounds, with the scenario's box on both arms, adding a
+  `judge_corrected_<scenario>` sensitivity interval with `diagnostic` eligibility. A
+  comparison that cannot be corrected, such as a direct contrast interval, is named in
+  `JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON`. No claim moves: assumed corrections never
+  decide one. See [Comparisons](docs/judge-misclassification.md#comparisons).
+
 - **`report.include_decisions` hides decisions, and every reader defaults it to false (#58).**
   The option was read as true by `report.html` and by the Python report model when a report did
   not record it, and as false by the plan and the CLI. Every reader now reads it as false. The
