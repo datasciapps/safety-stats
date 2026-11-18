@@ -253,8 +253,8 @@ from any directory (#42).
   (coverage and direction), and a reference.
 - **Docs ship with the change.** A user-facing change updates the relevant guide in the same
   pull request, and `docs/plan-reference.md` for new plan fields.
-- **Version.** The version lives in three places: `pyproject.toml`,
-  `src/inspect_safety_stats/version.py`, and `docs/independence-profiles.md`.
+- **Version.** The version lives in four places: `pyproject.toml`,
+  `src/inspect_safety_stats/version.py`, `docs/independence-profiles.md`, and `CITATION.cff`.
   `tests/test_repository_consistency.py` fails if they disagree.
 
 ## 6. Linux, macOS, and Windows
