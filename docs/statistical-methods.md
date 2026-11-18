@@ -769,6 +769,55 @@ simultaneously across all selected estimands for one prespecified interval const
 Hoeffding references and cluster sensitivities carry their own construction-specific coverage
 statements; the user must not choose a method post hoc and retain the same guarantee.
 
+##### Single-valued bound for system models (experimental)
+
+System-level safety analyses, such as fault trees and Markov models, take one number per
+component rather than an interval at a chosen \(\alpha\). The option
+`outputs.direct_mean_intervals.single_valued_bound` reports, beside each direct interval,
+
+\[
+M=\inf_{\delta\in(0,1)}\bigl[U_\delta+\delta\bigr],
+\]
+
+where \(U_\delta\) is the same construction's one-sided upper bound at level \(\delta\) for that
+node alone. For the exact binomial bound this is \(M=\min_p[p+P_p(S\le s)]\).
+
+*Assumptions.* Those of the underlying construction, and a family \(U_\delta\) that is
+non-increasing in \(\delta\) with \(P(R>U_\delta)\le\delta\) for each fixed \(\delta\). Every
+direct-mean construction in this package has both properties.
+
+*Guarantee.* \(P(M<R)\le R\), where \(R\) is the node's true weighted-mean risk. Proof: if
+\(M<R\), some \(\delta<R\) has \(U_\delta+\delta<R\), so \(U_\delta<R\). Since
+\(U_R\le U_\delta\), the level-\(R\) bound then misses \(R\), which happens with probability at
+most \(R\).
+
+*Computation.* The infimum is taken over a fixed logarithmic grid of \(\delta\) from
+\(10^{-12}\) to \(1-10^{-9}\), refined around the grid's minimiser. Every reported value is
+\(U_\delta+\delta\) at a \(\delta\) actually evaluated, so it is never below the exact
+infimum: imprecision makes \(M\) larger, never smaller. A family that rises with \(\delta\)
+anywhere on the grid is refused. The report gives the \(\delta\) that attains \(M\).
+
+*Exact check.* Enumerating the binomial distribution for the exact binomial version gives
+\(P(M<R)\) of \(7.19\times10^{-4}\) at \(R=0.05\), \(N=1000\); \(4.32\times10^{-5}\) at
+\(R=0.01\), \(N=1000\); and \(1.60\times10^{-2}\) at \(N=20\), \(R=0.4\). For 55 failures in
+1,000 rollouts, \(M=0.0808\), against \(0.0684\) for the one-sided 95% bound. The tests check
+\(P(M<R)\le R\) by exact enumeration over a grid of \(N\) and \(R\), for the exact binomial
+version and for each direct-mean construction on equal-weight binary rollouts.
+
+*Caveats.*
+
+- The guarantee's level is the unknown risk itself: strong when \(R\le0.01\), weak on paper at
+  \(R=0.2\).
+- \(M\) is usually above a 95% bound. It is an input for system models, not a replacement for
+  the claims' gate, and it never decides a claim.
+- It holds for each node alone. It is not simultaneous over nodes, groups or cohorts, and it is
+  taken from the raw node bound, not from the hierarchy projection.
+- Plugging \(M\) into a system model is conservative only if the model is monotone in it, which
+  rules out NOT gates.
+- It is refused under a sampled design and with judge calibration
+  (`PLAN_SINGLE_VALUED_BOUND_UNSUPPORTED`). With judge calibration it would bound the risk that
+  the judge reports a failure, not the corrected risk.
+
 #### 2.4.11 Recommended reporting and gating
 
 No single scalar should be allowed to erase a mandatory safety requirement. The recommended output bundle is:

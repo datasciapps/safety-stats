@@ -461,9 +461,24 @@ class DirectMeanIntervalsSpec(StrictModel):
     hierarchy_nodes: bool = False
     hierarchy_calibration: Literal["flat_bonferroni", "frontier_sidak"] = "flat_bonferroni"
     hierarchy_region: Literal["none", "linear_program"] = "linear_program"
+    # Experimental (#127): report M = inf_delta [U_delta + delta] beside each direct interval.
+    single_valued_bound: bool = False
+
+    @model_serializer(mode="wrap")
+    def leave_out_default_single_valued_bound(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        # Plans hash their defaults (#56). Left out while off, a plan that does not use the
+        # option keeps its hash and its resolved plan from before the option existed.
+        data: dict[str, Any] = handler(self)
+        if not self.single_valued_bound:
+            data.pop("single_valued_bound", None)
+        return data
 
     @model_validator(mode="after")
     def enabled_has_family(self) -> DirectMeanIntervalsSpec:
+        if self.single_valued_bound and not self.enabled:
+            raise ValueError("single_valued_bound requires enabled direct mean intervals")
         if self.enabled and not self.family:
             raise ValueError("enabled direct mean intervals require a multiplicity family")
         if self.enabled and self.independence is None:

@@ -510,6 +510,51 @@ def _markdown(report: SafetyReport) -> str:
                 )
                 + " |"
             )
+    single_valued = [
+        (risk.cohort_id, risk.group_id, "—", interval)
+        for risk in report.group_risks
+        for interval in risk.intervals
+        if interval.single_valued_bound is not None
+    ] + [
+        (node.cohort_id, node.group_id, " → ".join(node.path.values()), interval)
+        for node in report.hierarchy_risks
+        for interval in node.intervals
+        if interval.single_valued_bound is not None
+    ]
+    if single_valued:
+        lines.extend(
+            [
+                "",
+                "## Single-valued bounds (experimental)",
+                "",
+                (
+                    "M is the smallest U + δ over one-sided upper bounds U at level δ for each "
+                    "node alone. It needs no alpha: P(M < R) ≤ R, so its miss probability "
+                    "equals the unknown risk R. It is not simultaneous over nodes and is not a "
+                    "gate. It is meant as one input per component of a system model, which "
+                    "stays conservative only if the model is monotone in it."
+                ),
+                "",
+                "| Cohort | Group | Node path | Method | Independence profile | M | δ at M |",
+                "|---|---|---|---|---|---:|---:|",
+            ]
+        )
+        for cohort_id, group_id, path, interval in single_valued:
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _escape(cohort_id),
+                        _escape(group_id),
+                        _escape(path),
+                        _escape(interval.method),
+                        _escape(interval.independence_profile),
+                        _number(interval.single_valued_bound, places),
+                        _number(interval.single_valued_bound_delta, places),
+                    ]
+                )
+                + " |"
+            )
     lines.extend(
         [
             "",

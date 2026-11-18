@@ -7,6 +7,18 @@ described in their pull requests.
 
 ### Added
 
+- **A single-valued risk bound for system models (experimental).** Fault trees and Markov
+  models take one number per component, not an interval at a chosen alpha. With
+  `outputs.direct_mean_intervals.single_valued_bound: true`, every direct-mean interval also
+  reports M, the smallest U_δ + δ over its own one-sided upper bounds U_δ for that node alone.
+  M needs no alpha and has P(M < R) ≤ R. It does not enter claims and is not simultaneous.
+  Each interval in `report.json` gains `single_valued_bound`, `single_valued_bound_delta` and
+  `single_valued_bound_guarantee`, and `report.md` a "Single-valued bounds (experimental)"
+  section. Under a sampled design or with judge calibration the plan is refused with
+  `PLAN_SINGLE_VALUED_BOUND_UNSUPPORTED`. Plans that leave the option off keep their hash and
+  write the same report bytes as before. See
+  [Single-valued bound for system models](docs/statistical-methods.md#single-valued-bound-for-system-models-experimental).
+
 - **Sensitivity intervals say what they vary (changes report bytes).** The interval role
   `sensitivity` covered both intervals under another independence profile and judge-error
   corrections, so an independence sensitivity could be read as a judge sensitivity. Each
