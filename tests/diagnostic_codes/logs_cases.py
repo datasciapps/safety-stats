@@ -98,6 +98,23 @@ def _same_estimates(triggered: Outcome, control: Outcome) -> None:
     assert triggered.report.prompt_estimates == control.report.prompt_estimates
 
 
+def _profile(block_by: list[str]) -> Change:
+    """Declare one independence profile, blocking by ``block_by``."""
+
+    def change(inputs: Inputs) -> None:
+        inputs.plan["design"] = {"independence_profiles": {"blocks": {"block_by": block_by}}}
+
+    return change
+
+
+def _results_unchanged(triggered: Outcome, control: Outcome) -> None:
+    """The design effect is only recorded: estimates, risks and the claim are as before."""
+
+    assert triggered.report.prompt_estimates == control.report.prompt_estimates
+    assert triggered.report.group_risks == control.report.group_risks
+    assert claim(triggered).model_dump() == claim(control).model_dump()
+
+
 # --- rollout-level changes ------------------------------------------------------------------
 
 
@@ -656,6 +673,14 @@ def no_anytime_bound(triggered: Outcome, control: Outcome) -> None:
 
 
 CASES = [
+    Case(
+        code="CLUSTER_DESIGN_EFFECT",
+        # A profile blocks by task_id, which puts the rollouts of p1 and p2 in one block; in
+        # the control it blocks by prompt_id, at the item level.
+        trigger=analysis(_profile(["task_id"])),
+        control=analysis(_profile(["prompt_id"])),
+        effect=_results_unchanged,
+    ),
     Case(
         code="COHORT_EMPTY",
         # Cohort baseline matches a model no run has; in the control run r2 has it.
