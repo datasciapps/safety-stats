@@ -85,6 +85,13 @@ Reports gain a **Judge misclassification sensitivity** section listing, for ever
 row and scenario, the judge-system bounds, the true-risk bounds, and the corrected estimate
 range. The original interval is untouched and remains primary.
 
+Each scenario also corrects every comparison whose primary interval exposes both arm bounds,
+as [Comparisons](#comparisons) describes: both arms take the scenario's box, and the
+comparison gains one interval `judge_corrected_<scenario>` per scenario, with the same
+`diagnostic` eligibility. A comparison that cannot be corrected, such as a direct contrast
+interval, stays on the judge-reported scale and is named in
+`JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON`.
+
 ## Reading the output
 
 Two movements are expected, and they mean different things.
@@ -108,7 +115,9 @@ not a defect.
   cohorts with materially different failure rates is itself an approximation. The report
   states this in the interval's assumption list.
 - A single declared scenario is applied to every cohort, so comparisons corrected in
-  `assumed` mode inherit that approximation on both arms.
+  `assumed` mode inherit that approximation on both arms. Each arm is corrected over the
+  whole box independently of the other, so the corrected comparison covers a judge whose
+  accuracy differs between the arms only as far as both stay inside the box.
 - Nothing here detects a judge whose errors depend on which model produced the output.
   Differential misclassification across arms can manufacture an apparent difference from
   nothing, and no declared scenario will reveal it.
@@ -415,6 +424,11 @@ prevalence-dependent the two arms carry different boxes, and
 is not a function of \(\Delta\) alone. Risk ratios and relative reductions are derived from
 the same two corrected arm intervals. Each arm must be a row its own cohort's labels
 certify, as [below](#what-it-certifies); otherwise the corrected comparison is a sensitivity.
+
+In `assumed` mode the same recombination runs once per declared scenario, with the
+scenario's box on both arms. Each corrected comparison is a sensitivity
+(`eligibility: diagnostic`, `role: sensitivity`, no `family_alpha`), and a scenario other
+than `primary` carries a warning that it is reported for sensitivity only.
 
 This requires a primary interval that exposes both arm bounds -- the two-arm rectangle used
 by `weighted_kl_chernoff` and by every `comparison_sets` entry. A direct contrast

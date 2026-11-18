@@ -318,7 +318,8 @@ def _add_judge_corrections(
     """Map judge-system risk rows onto the true-risk scale, in place: on copied rows only.
 
     Returns a summary of the calibration actually used, for the report provenance
-    block. In ``assumed`` mode every scenario is applied to every cohort. In
+    block. In ``assumed`` mode every scenario is applied to every cohort, and to both arms
+    of every comparison. In
     ``validated`` mode one calibration is estimated per cohort from human labels. A
     calibration scoped to groups corrects only the rows of those groups, and validated mode
     then estimates one calibration per cohort and group.
@@ -416,6 +417,18 @@ def _add_judge_corrections(
                 )
                 if interval is not None:
                     result.intervals.append(interval)
+        # Every scope carries every declared scenario, so both arms of a comparison take
+        # the same declared box.
+        _apply_judge_correction_to_comparisons(
+            plan,
+            data,
+            population,
+            comparisons,
+            {scope: calibrations for scope in _judge_scopes(plan)},
+            None,
+            diagnostics,
+            primary_scenario=spec.primary,
+        )
         return {
             "mode": "assumed",
             "scenarios": [item.scenario_id for item in calibrations],
@@ -507,7 +520,13 @@ def _add_judge_corrections(
                 else:
                     result.intervals.append(limits)
     _apply_judge_correction_to_comparisons(
-        plan, data, population, comparisons, by_scope, spec.family, diagnostics
+        plan,
+        data,
+        population,
+        comparisons,
+        {scope: [calibration] for scope, calibration in by_scope.items()},
+        spec.family,
+        diagnostics,
     )
     per_calibration_alpha = judge_alpha / scope_count if judge_alpha is not None else None
     summary: dict[str, Any]
