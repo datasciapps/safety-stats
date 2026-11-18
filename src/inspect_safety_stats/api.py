@@ -4560,12 +4560,13 @@ def _claims(
         else:
             evidence = risk_index.get((str(claim.cohort), str(claim.group), str(claim.measure)))
             ref = f"risk:{claim.cohort}:{claim.group}:{claim.measure}"
-        eligible = bool(
-            integrity_valid
-            and evidence is not None
-            and evidence.eligibility == "certifying"
-            and plan.analysis.intent == "confirmatory"
-        )
+        certifying = evidence is not None and evidence.eligibility == "certifying"
+        exploratory = plan.analysis.intent == "exploratory"
+        # An exploratory analysis certifies nothing, but its reader still needs what the bounds
+        # say at the plan's thresholds. Such a claim is decided as a confirmatory analysis would
+        # decide it, the result is kept as its descriptive status, and the claim stays
+        # INCONCLUSIVE below.
+        eligible = bool(integrity_valid and certifying)
         lower = evidence.lower if evidence else None
         upper = evidence.upper if evidence else None
         estimate = evidence.estimate if evidence else None
@@ -4681,14 +4682,24 @@ def _claims(
                 "Bounds were computed but are ineligible for certification because data "
                 "integrity is invalid."
             ]
-        if plan.analysis.intent == "exploratory":
-            if evidence is not None and evidence.eligibility == "certifying":
+        descriptive_status: Decision | None = None
+        if exploratory:
+            if certifying:
+                decided = reasons
                 reasons = [
                     "Bounds were computed but this post hoc exploratory analysis is not "
                     "eligible for certification."
                 ]
+                if eligible:
+                    descriptive_status = status
+                    reasons.append(
+                        f"Descriptive only, not a certification: a confirmatory analysis of "
+                        f"these bounds at the plan's thresholds would give {status}."
+                    )
+                    reasons.extend(decided)
             else:
                 reasons.append("Exploratory analyses cannot produce a safety pass.")
+            status = "INCONCLUSIVE"
         if correction_note is not None:
             reasons.insert(0, correction_note)
             if alpha != family.alpha:
@@ -4703,6 +4714,7 @@ def _claims(
                 status=status,
                 statistical_status=status,
                 policy_status=status,
+                descriptive_status=descriptive_status,
                 estimate=estimate,
                 lower=lower,
                 upper=upper,

@@ -7,6 +7,18 @@ described in their pull requests.
 
 ### Added
 
+- **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory
+  analysis makes every claim `INCONCLUSIVE`, so a reader had to compare its bounds with the
+  thresholds by hand. Each claim in `report.json` now has `descriptive_status`: in an
+  exploratory analysis with valid integrity and certifying bounds, the status a confirmatory
+  analysis of the same bounds would give, with a reason that says so and that it certifies
+  nothing; otherwise `null`. The claim's `status` and the report's `decision` are unchanged.
+  When decisions are shown, `report.md` shows it beside the status, as
+  `` `INCONCLUSIVE` (descriptive: `PASS`) ``, with a note under the claims table, and
+  `report.html` as a dashed badge. A `noisy_valid_test` claim
+  in an exploratory analysis now reports the test's bounds and reasons, where it reported
+  none.
+
 - **Rollout files (experimental).** Results from any evaluation system can be analysed from a
   runs file and a rollouts file in JSON Lines or CSV: `analyze` and `validate` take
   `--runs` and `--rollouts` in place of `--logs`, and `source=RolloutFiles(...)` in place of

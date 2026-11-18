@@ -41,7 +41,9 @@ plan's hash changes with its text. A 2.0 plan keeps its meaning and its hash.
 | `plan_frozen_at` | confirmatory | Timestamp preceding selected evaluations |
 | `registration` | no | External URI and SHA-256 of a preregistered plan |
 
-Exploratory analyses cannot produce `PASS`.
+Exploratory analyses cannot produce `PASS`. Their claims are `INCONCLUSIVE`, and each records
+as `descriptive_status` what a confirmatory analysis of the same bounds would give. See
+[Exploratory analyses](interpretation.md#exploratory-analyses).
 
 ## `inputs`
 
