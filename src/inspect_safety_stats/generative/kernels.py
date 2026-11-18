@@ -22,6 +22,13 @@ ValidationStatus = Literal["valid", "invalid", "error"]
 
 @dataclass(frozen=True)
 class KernelFingerprint:
+    """The identity of a rewrite kernel's resolved configuration.
+
+    Built by :func:`resolve_kernel_fingerprint`. ``sha256`` hashes the provider, model,
+    sampling, validation and deduplication settings together with the prompt template's
+    hash, which is also kept separately as ``prompt_template_sha256``.
+    """
+
     kernel_id: str
     sha256: str
     prompt_template_sha256: str
@@ -30,6 +37,13 @@ class KernelFingerprint:
 
 @dataclass(frozen=True)
 class RewriteRequest:
+    """One call to a :class:`RewriteKernel`: a seed prompt and the path to rewrite it for.
+
+    ``path_values`` maps each level of the selected path to its value. ``attempt`` counts
+    from 1 within a sampling unit, and ``selection_seed`` is the plan's selection seed, or a
+    value derived from it and the rewrite salt when one is given.
+    """
+
     sampling_unit_id: str
     path_hash: str
     path_values: Mapping[str, str]
@@ -41,6 +55,13 @@ class RewriteRequest:
 
 @dataclass(frozen=True)
 class RewriteOutcome:
+    """What a kernel returns for one attempt.
+
+    A ``valid`` outcome must carry non-empty ``prompt`` text and no other status may carry
+    any. ``invalid`` may be retried as the plan's validation settings allow; ``error`` ends
+    the unit's attempts.
+    """
+
     status: ValidationStatus
     prompt: str | None = None
     detail: str | None = None

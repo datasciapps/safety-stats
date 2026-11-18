@@ -286,6 +286,13 @@ class ClaimResult(ResultModel):
 
 
 class SafetyReport(ResultModel):
+    """The result of ``analyze``: estimates, bounds, comparisons, claims and the decision.
+
+    Its results apply to the declared fixed evaluation set. ``write`` saves it as a report
+    directory, and ``inspect-safety-stats schema report`` prints the JSON schema of its
+    ``report.json``.
+    """
+
     schema_version: Literal["3.0"] = "3.0"
     package_version: str
     analysis: dict[str, Any]

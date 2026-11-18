@@ -391,6 +391,12 @@ class InferenceSpec(StrictModel):
 
 
 class GenerativePlan(StrictModel):
+    """A parsed and strictly validated generative evaluation plan.
+
+    Built by :func:`load_generative_plan`. Unknown keys are rejected, and ``inference``
+    falls back to its defaults when the plan omits it.
+    """
+
     schema_version: Literal["1.0"]
     evaluation: GenerativeMetadata
     taxonomy: TaxonomySpec

@@ -74,6 +74,13 @@ PROMPT_STORE = "prompts.restricted.csv"
 
 @dataclass(frozen=True)
 class MaterializedRun:
+    """A summary of what :func:`materialize_run` wrote.
+
+    The counts are of sampling units. ``dataset`` is the first cohort's dataset path.
+    ``kernel_mismatch`` is None when the running kernel's id matches the plan's, and
+    otherwise says how they differ. ``resumed`` counts units replayed from an earlier run.
+    """
+
     output: Path
     dataset: Path
     selections: int
