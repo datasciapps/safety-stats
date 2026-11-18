@@ -7,6 +7,15 @@ described in their pull requests.
 
 ### Added
 
+- **`validate` and `analyze` report how much a grouping column shrinks the evidence
+  (changes `report.json`).** For each independence profile whose blocks hold rollouts of more
+  than one prompt, such as `block_by: [conversation]`, a new `CLUSTER_DESIGN_EFFECT` diagnostic
+  gives each cohort's empirical intra-cluster correlation of the scored outcomes within the
+  blocks, the design effect and the effective number of rollouts. It is a warning when the
+  design effect reaches 2 and a primary profile, such as one at the item level, splits the
+  profile's blocks. Otherwise it is informational. No bound changes. See
+  [How much the grouping matters](docs/independence-profiles.md#how-much-the-grouping-matters-cluster_design_effect).
+
 - **Assumed judge scenarios can give each cohort its own box.** A scenario under
   `inputs.judge_calibration` with `mode: assumed` takes an optional `cohorts` map from declared
   cohorts to `(rho_1, rho_0)` boxes. A listed cohort's group risks, hierarchy rows and

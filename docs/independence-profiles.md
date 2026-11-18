@@ -206,6 +206,54 @@ When a design asks one base prompt in several wordings, a `block_by: [question_i
 treats all wordings of a base prompt as one block. See
 [Prompt variants in fixed designs](plan-reference.md#prompt-variants-in-fixed-designs).
 
+### How much the grouping matters: `CLUSTER_DESIGN_EFFECT`
+
+Many benchmarks put many items into a few shared contexts: hundreds of questions asked inside ten
+conversations, or several secrets graded in one response. Items in one context can fail together.
+A profile at the item level (`[rollout]` or `[prompt_id]`) then counts every item as independent
+evidence. A profile that blocks by the context column counts only the contexts, and with very few
+blocks its bounds can be close to vacuous. `validate` and `analyze` both report how far apart
+these two choices are in the data.
+
+For every profile whose blocks hold rollouts of more than one prompt, the diagnostic
+`CLUSTER_DESIGN_EFFECT` gives, for each cohort:
+
+- the scored rollouts (failure or safe) and the number of blocks they fall in;
+- the one-way ANOVA estimate of the intra-cluster correlation $\rho$ of their outcomes within
+  the blocks;
+- the design effect $1 + (m - 1)\max(\rho, 0)$, where $m = \sum_g m_g^2 / N$ is the size of
+  the block an outcome sits in, averaged over the $N$ outcomes;
+- the effective number of rollouts, $N$ divided by the design effect.
+
+To get it for a column, declare a profile that blocks by that column, for example as a
+sensitivity of the item-level primary:
+
+```yaml
+design:
+  independence_profiles:
+    item: {block_by: [prompt_id]}
+    conversation: {block_by: [conversation]}
+outputs:
+  direct_mean_intervals:
+    independence: {primary: item, sensitivities: [conversation]}
+```
+
+The diagnostic is a warning when, in some cohort, the design effect is at least 2 and a primary
+profile of the plan puts rollouts of one block in different blocks of its own. It is
+informational otherwise, for example when the grouping profile is itself the primary. Profiles
+whose blocks never hold more than one prompt get no diagnostic. It changes no bound: it is a
+measure of how much the independence choice matters, to read beside the sensitivity bounds.
+
+The figures describe the data, and they have limits:
+
+- Under a fixed design, the correlation also includes fixed differences in failure rates between
+  the prompts of different blocks. It can therefore overstate the dependence between rollouts.
+  A near-zero correlation is still a sign that the grouping matters little.
+- The correlation is undefined when every rollout falls in one block, when no block holds two
+  rollouts, or when all rollouts have the same outcome. The diagnostic then says so, and gives no
+  design effect.
+- The estimate counts rollouts equally, whatever the plan's prompt weights.
+
 The HTML report has one global independence-profile selector. It displays only the selected
 profile's intervals in risk charts, hierarchy trees, and comparison summaries. JSON and CSV retain
 all prespecified profiles, their independent-block counts, effective sample sizes, calibration
