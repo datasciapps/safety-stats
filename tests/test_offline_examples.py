@@ -326,3 +326,61 @@ def test_the_multilingual_coverage_check_runs(tmp_path: Path) -> None:
         _run_script(MULTILINGUAL / "validate_coverage.py", "--replicates", "3", cwd=tmp_path)
     )
     assert "empirical coverage" in stdout
+
+
+# README.md, "What it is for" -----------------------------------------------------------------
+
+
+def _what_it_is_for() -> str:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    return readme.split("## What it is for\n", 1)[1].split("\n## ", 1)[0]
+
+
+def _risk(report: dict[str, object], cohort: str) -> str:
+    risks = report["group_risks"]
+    assert isinstance(risks, list)
+    (risk,) = [r for r in risks if r["cohort_id"] == cohort and r["measure_id"] == "mean"]
+    return f"{risk['estimate']:.3f} [{risk['lower']:.3f}, {risk['upper']:.3f}]"
+
+
+def _difference(report: dict[str, object]) -> str:
+    comparisons = report["comparisons"]
+    assert isinstance(comparisons, list)
+    (item,) = [c for c in comparisons if not c["path"] and c["estimand"] == "risk_difference"]
+    return f"{item['estimate']:+.3f} [{item['lower']:+.3f}, {item['upper']:+.3f}]"
+
+
+def test_what_it_is_for_quotes_the_harness_and_demo_numbers(
+    harness_run: tuple[Path, str], demo_run: tuple[Path, str]
+) -> None:
+    section = " ".join(_what_it_is_for().split())
+    harness = _report(harness_run[0] / "reports" / "harness-versions")
+    assert f"{_risk(harness, 'v1')} and {_risk(harness, 'v2')}" in section
+    assert f"v2 minus v1 is {_difference(harness)}" in section
+    demo = _report(demo_run[0] / "reports" / "demo")
+    assert f"baseline fails at {_risk(demo, 'baseline')}" in section
+    assert f"candidate at {_risk(demo, 'candidate')}" in section
+    assert f"Candidate minus baseline is {_difference(demo).replace('+', '')}" in section
+
+
+def test_what_it_is_for_runs_the_threshold_command_as_written(tmp_path: Path) -> None:
+    """The SimpleQA command of the section, from a directory standing in for the root."""
+    section = _what_it_is_for()
+    command = section.split("### Does one system meet a threshold?", 1)[1]
+    command = command.split("```bash\n", 1)[1].split("```", 1)[0]
+    arguments = command.replace("\\\n", " ").split()
+    assert arguments[:2] == ["inspect-safety-stats", "analyze"]
+    arguments = [
+        str(ROOT / argument) if argument.startswith("examples/") else argument
+        for argument in arguments[1:]
+    ]
+    output = tmp_path / "reports" / "simpleqa"
+    arguments[arguments.index("reports/simpleqa")] = str(output)
+    result = CliRunner().invoke(app, arguments)
+    # 2 is ExitCode.INCONCLUSIVE in inspect_safety_stats.cli, and also Click's code for a usage
+    # error, so the report's headline is required as well.
+    assert result.exit_code == 2, plain(result.output)
+    assert "Integrity: valid" in plain(result.output)
+    report = _report(output)
+    assert report["decision"] == "INCONCLUSIVE"
+    assert f"the mean is {_risk(report, 'candidate')}" in " ".join(section.split())

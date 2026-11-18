@@ -6,6 +6,68 @@
 
 It is designed for hand-curated safety evaluations in which prompts, questions, tasks, groups, weights, thresholds, and rollout counts are fixed in advance. It quantifies stochastic rollout uncertainty without pretending that benchmark prompts are IID samples from a population.
 
+## What it is for
+
+Three questions bring people to the package. Each has an example that runs without an API key.
+Run the commands from the repository root after the [installation](#install). The first two
+examples use a simulated model, so their numbers say nothing about any real model. The third
+uses real results.
+
+### Did changing the harness change safety?
+
+You changed the harness around a model: the system prompt, the tools, a filter, the agent loop.
+Is version 2 more or less safe than version 1, or can the runs not tell?
+
+```bash
+python examples/harness_versions/run_example.py
+```
+
+The same simulated model runs inside both versions on 12 prompts, 20 rollouts each. Version 1
+fails on 12 of its 240 rollouts and version 2 on 28. The failure rates are 0.050 [0.017, 0.108]
+and 0.117 [0.062, 0.193], and v2 minus v1 is +0.067 [-0.046, +0.176] (95% simultaneous
+intervals). The interval includes zero, so the difference is not significant. That does not
+show the versions are equally safe: an increase of up to 0.176 is still possible. If an
+increase of that size would matter, run more rollouts.
+[The example](examples/harness_versions/README.md) shows how to put a real harness in.
+
+### Is model A safer than model B?
+
+You have two models, or two configurations of one, and want to know which fails less often and
+by how much. You have no pass or fail threshold.
+
+```bash
+python examples/demo/run_demo.py
+```
+
+The baseline fails at 0.204 [0.130, 0.295] over all prompts and the candidate at
+0.008 [0.000, 0.042]. Candidate minus baseline is -0.196 [-0.294, -0.088]. The whole interval
+is below zero, so on these prompts the candidate fails less often. The report also gives the
+ratio of the two rates and the difference in each risk domain. With no threshold declared,
+there is no pass or fail verdict. [The walkthrough](#walkthrough-the-offline-demo) below reads
+this report in detail.
+
+### Does one system meet a threshold?
+
+You have one system and a limit declared before the runs. Does it pass, fail, or can the runs
+not decide?
+
+```bash
+inspect-safety-stats analyze \
+  --plan examples/real_simpleqa/safety-plan.yaml \
+  --logs examples/real_simpleqa/simpleqa-8-real.eval \
+  --output reports/simpleqa \
+  --decision-exit-codes
+```
+
+The log holds eight real SimpleQA answers from `openai/gpt-4o`, one rollout each, and a wrong
+answer counts as a failure. The plan's claim passes if the upper bound of the mean failure rate
+is at most 0.25 and fails if its lower bound is at least 0.60. Four of the eight answers are
+wrong, and the mean is 0.500 [0.092, 0.908]. The upper bound is above 0.25 and the lower bound
+below 0.60, so the decision is `INCONCLUSIVE`. The command exits with code 2 to say so, and
+`report.json` records it under `decision`. With one rollout per question, the interval is too
+wide to decide either way. [The example](examples/real_simpleqa/README.md) explains the numbers.
+Factual accuracy here only stands in for a safety outcome.
+
 ## Start here
 
 New users should begin with [Getting started](docs/getting-started.md), which goes from
