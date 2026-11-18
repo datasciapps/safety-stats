@@ -91,6 +91,12 @@ from inspect_safety_stats.stats.independence import (
     direct_bounded_blocks,
     validate_profile_fields,
 )
+from inspect_safety_stats.stats.judge_calibration import (
+    NO_STRATA,
+    calibrate_cohort,
+    cohort_alpha_share,
+    completion_diagnostic,
+)
 from inspect_safety_stats.stats.judges import (
     JudgeAccuracyBox,
     compose_verdicts,
@@ -103,10 +109,8 @@ from inspect_safety_stats.stats.misclassification import (
     JudgeCalibration,
     JudgeStratumCounts,
     TruthStratumCounts,
-    completion_warning,
     correct_judge_risk,
     delta_method_corrected_risk,
-    estimate_judge_calibration,
     noisy_valid_certification,
 )
 from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
@@ -2121,14 +2125,14 @@ def _validated_judge_calibrations(
     # Every declared cohort gets an equal share of the judge family budget. A single
     # risk row consumes one share; a comparison consumes the two cohorts it spans. A
     # union over all of them therefore never exceeds the declared family alpha.
-    per_cohort_alpha = family.alpha / len(plan.cohorts)
+    per_cohort_alpha = cohort_alpha_share(family.alpha, len(plan.cohorts))
     calibrations: dict[str, JudgeCalibration] = {}
     summaries: dict[str, dict[str, Any]] = {}
     for cohort_id in sorted(plan.cohorts):
-        strata = counts.get(cohort_id, {})
-        unsafe = strata.get("judge_unsafe")
-        safe = strata.get("judge_safe")
-        if unsafe is None or safe is None:
+        outcome = calibrate_cohort(
+            counts.get(cohort_id, NO_STRATA), scenario_id="validated", alpha=per_cohort_alpha
+        )
+        if outcome.empty_strata:
             diagnostics.append(
                 Diagnostic(
                     code="JUDGE_VALIDATION_STRATUM_EMPTY",
@@ -2141,46 +2145,21 @@ def _validated_judge_calibrations(
                 )
             )
             continue
-        try:
-            calibrations[cohort_id] = estimate_judge_calibration(
-                scenario_id="validated",
-                unsafe_stratum=unsafe,
-                safe_stratum=safe,
-                alpha=per_cohort_alpha,
-            )
-        except ValueError as exc:
+        if outcome.calibration is None:
             diagnostics.append(
                 Diagnostic(
                     code="JUDGE_CALIBRATION_UNINFORMATIVE",
                     severity="WARNING",
-                    message=str(exc),
+                    message=str(outcome.refusal),
                     scope=cohort_id,
                 )
             )
             continue
-        warning = completion_warning(calibrations[cohort_id])
-        if warning is not None:
-            diagnostics.append(
-                Diagnostic(
-                    code="JUDGE_STRATUM_UNLABELLED_COMPLETED",
-                    severity="WARNING",
-                    message=warning,
-                    scope=cohort_id,
-                    details={"completed_strata": list(calibrations[cohort_id].completed_strata)},
-                )
-            )
-        summaries[cohort_id] = {
-            "judge_unsafe": {
-                "labelled": unsafe.labelled,
-                "truly_unsafe": unsafe.truly_unsafe,
-                "stratum_size": unsafe.stratum_size,
-            },
-            "judge_safe": {
-                "labelled": safe.labelled,
-                "truly_unsafe": safe.truly_unsafe,
-                "stratum_size": safe.stratum_size,
-            },
-        }
+        calibrations[cohort_id] = outcome.calibration
+        completed = completion_diagnostic(outcome.calibration, cohort_id)
+        if completed is not None:
+            diagnostics.append(completed)
+        summaries[cohort_id] = outcome.strata.summary()
     return calibrations, summaries, family.alpha, truth_strata
 
 
