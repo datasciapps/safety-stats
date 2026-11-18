@@ -99,6 +99,7 @@ from inspect_safety_stats.stats.misclassification import (
     JudgeCalibration,
     JudgeStratumCounts,
     TruthStratumCounts,
+    completion_warning,
     correct_judge_risk,
     delta_method_corrected_risk,
     estimate_judge_calibration,
@@ -2049,6 +2050,17 @@ def _validated_judge_calibrations(
                 )
             )
             continue
+        warning = completion_warning(calibrations[cohort_id])
+        if warning is not None:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_STRATUM_UNLABELLED_COMPLETED",
+                    severity="WARNING",
+                    message=warning,
+                    scope=cohort_id,
+                    details={"completed_strata": list(calibrations[cohort_id].completed_strata)},
+                )
+            )
         summaries[cohort_id] = {
             "judge_unsafe": {
                 "labelled": unsafe.labelled,
@@ -2073,6 +2085,7 @@ def _judge_corrected_interval(
     judge_alpha: float | None,
     gap: str | None = None,
     unclassified_share: float = 0.0,
+    tail: bool = False,
 ) -> RiskIntervalResult | None:
     if result.lower is None or result.upper is None:
         return None
@@ -2082,6 +2095,7 @@ def _judge_corrected_interval(
         observed_estimate=result.estimate,
         calibration=calibration,
         unclassified_share=unclassified_share,
+        tail=tail,
     )
     validated = calibration.source == "validated"
     # Measured accuracies certify only a row they were measured for, and never more than
@@ -2117,10 +2131,21 @@ def _judge_corrected_interval(
         f"[{calibration.rho_0_lower:.6g}, {calibration.rho_0_upper:.6g}].",
     ]
     if validated:
+        if calibration.completed_strata:
+            assumptions.append(
+                "The "
+                + " and ".join(calibration.completed_strata)
+                + " judge stratum has no human label, so its range is [0, 1], which holds "
+                "with certainty; any other range is an exact Clopper-Pearson bound from "
+                "human labels drawn within its judge stratum."
+            )
+        else:
+            assumptions.append(
+                "Those two ranges are exact Clopper-Pearson bounds from human labels drawn "
+                "within each judge stratum."
+            )
         assumptions.extend(
             [
-                "Those two ranges are exact Clopper-Pearson bounds from human labels drawn "
-                "within each judge stratum.",
                 "The labelled rows are a simple random sample within their judge stratum; "
                 "this is a property of the declared collection protocol, not of the data.",
                 "Human adjudication is treated as ground truth.",
@@ -2578,6 +2603,7 @@ def _apply_judge_correction(
                     family_id=None,
                     judge_alpha=None,
                     unclassified_share=share,
+                    tail=measure_type != "weighted_mean",
                 )
                 if interval is not None:
                     result.intervals.append(interval)
@@ -2611,6 +2637,7 @@ def _apply_judge_correction(
             judge_alpha=judge_alpha,
             gap=gap,
             unclassified_share=share,
+            tail=measure_type != "weighted_mean",
         )
         if interval is not None:
             result.intervals.append(interval)
@@ -3830,6 +3857,7 @@ def _judge_corrected_comparison_interval(
     gap: str | None = None,
     candidate_share: float = 0.0,
     baseline_share: float = 0.0,
+    tail: bool = False,
 ) -> RiskIntervalResult | None:
     """Correct a comparison by correcting each arm, then recombining.
 
@@ -3858,6 +3886,7 @@ def _judge_corrected_comparison_interval(
         observed_estimate=result.candidate_estimate,
         calibration=candidate_calibration,
         unclassified_share=candidate_share,
+        tail=tail,
     )
     baseline = correct_judge_risk(
         observed_lower=cast(float, primary.baseline_lower),
@@ -3865,6 +3894,7 @@ def _judge_corrected_comparison_interval(
         observed_estimate=result.baseline_estimate,
         calibration=baseline_calibration,
         unclassified_share=baseline_share,
+        tail=tail,
     )
     lower, upper = _multi_arm_effect_interval(
         result.estimand,
@@ -4002,6 +4032,7 @@ def _apply_judge_correction_to_comparisons(
             baseline_share=_unclassified_share(
                 population.get(result.baseline_cohort, {}), weights, measure_type
             ),
+            tail=measure_type != "weighted_mean",
         )
         if interval is None:
             skipped.append(result.result_id or result.comparison_id)
