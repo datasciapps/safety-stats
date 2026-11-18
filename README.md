@@ -138,8 +138,10 @@ inspect-safety-stats analyze --plan examples/demo/plan.yaml \
 ```
 
 `validate` prints `Integrity: valid`. `analyze` prints the analysis id, the SHA-256 of the plan,
-the integrity status, the headline failure rates, each with its 95% simultaneous interval, and
-where it wrote the summary, the index and the report (shown here as relative paths):
+the integrity status, the headline failure rates, each with its 95% simultaneous interval, the
+errors and warnings by code, and where it wrote the summary, the index and the report (shown
+here as relative paths). Each code comes with its count and the assumption it rests on; these
+lines go to standard error, so that they show even when standard output is piped:
 
 ```text
 Analysis: refusal_demo-20261117T171929Z
@@ -148,6 +150,8 @@ Integrity: valid
 Failure rate (weighted mean):
   baseline / all: 20.4% [13.0%, 29.5%]
   candidate / all: 0.8% [0.0%, 4.2%]
+Warnings by code, each explained in reports/demo/index.md under "Errors and warnings by code":
+  WARNING TAIL_MEASURES_UNINFORMATIVE (1 occurrence): Each prompt has enough rollouts that its simultaneous bound can be tighter than report.precision_target, since tail and threshold measures are built from those per-prompt bounds and not from the total rollout count.
 Summary: reports/demo/report.md
 Index: reports/demo/index.json
 Report: reports/demo

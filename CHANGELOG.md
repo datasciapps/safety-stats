@@ -7,6 +7,13 @@ described in their pull requests.
 
 ### Added
 
+- **`analyze` prints the errors and warnings in the terminal.** After the headline failure
+  rates, `analyze` prints each error and warning code of the report on standard error, one line
+  per code: its severity, how often it occurred and the assumption it rests on, under a line
+  that names the report's `index.md` and its section "Errors and warnings by code". A user or a
+  coding agent that reads only the command's output now sees what qualifies the headline.
+  Report files are unchanged.
+
 - **`validate` and `analyze` report how much a grouping column shrinks the evidence
   (changes `report.json`).** For each independence profile whose blocks hold rollouts of more
   than one prompt, such as `block_by: [conversation]`, a new `CLUSTER_DESIGN_EFFECT` diagnostic
