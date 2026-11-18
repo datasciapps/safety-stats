@@ -436,28 +436,45 @@ policy:
 
 ### Commands
 
+Commands marked experimental may change between releases. `--help` on any command is the
+authoritative option list.
+
+- `inspect-safety-stats init --logs <path> [--logs <path> ...] [--failure-values <value> ... | --failure-threshold <float>] [--safe-values <value> ...] [--score <scorer>] [--group-by <metadata_field>] [--baseline <model>] [--alpha 0.05] [--nested-weights|--equal-prompt-weights] [--output <dir>] [--overwrite] [--intent exploratory]` (experimental): writes a starter `design.csv` and plan from completed Inspect logs.
 - `inspect-safety-stats plan zero-failure --threshold <float> [--alpha 0.05] [--family-size 1]`
 - `inspect-safety-stats plan certification --threshold <float> --anticipated-rate <float> [--alpha 0.05] [--power 0.9] [--family-size 1]`
 - `inspect-safety-stats plan detectable-rate --trials <int> --threshold <float> [--alpha 0.05] [--power 0.9] [--family-size 1]`
-- `inspect-safety-stats plan fixed-design --manifest <csv> --threshold <float> [--rollouts <int>] [--weights equal_prompt|nested_equal|explicit] [--independence-unit rollout|prompt_cluster]`
-- `inspect-safety-stats validate --plan <yaml|json> --logs <path> [--logs <path> ...] [--parallel <int>]`
-- `inspect-safety-stats analyze --plan <yaml|json> --logs <path> [--output <dir>] [--overwrite] [--decision-exit-codes] [--allow-invalid]`
+- `inspect-safety-stats plan fixed-design (--manifest <csv> --threshold <float> | --plan <yaml|json> [--manifest <csv>]) [--alpha 0.05] [--power 0.9] [--rollouts <int>] [--weights equal_prompt|nested_equal|explicit] [--hierarchy task_id,question_id,prompt_id] [--weight-column <column>] [--independence-unit rollout|prompt_cluster] [--family-size 1]`: with `--plan`, every claim is planned as `analyze` will decide it, and options the plan supplies are refused; `--weight-column` applies only with `--weights explicit`.
+- `inspect-safety-stats plan pilot --manifest <csv> --per-stratum <int> --seed <int> --output <csv> [--strata task_id]` (experimental): draws a random pilot within strata of a design manifest.
+- `inspect-safety-stats plan comparison --manifest <csv> --margin <float> [--alpha 0.05] [--power 0.9] [--candidate-rollouts <int>] [--baseline-rollouts <int>] [--weights equal_prompt|nested_equal|explicit] [--hierarchy task_id,question_id,prompt_id] [--weight-column <column>] [--independence-unit rollout|pair|prompt_cluster] [--coverage-mode two_sided|per_direction] [--family-size 1]` (experimental): risk differences a two-arm design resolves at a margin.
+- `inspect-safety-stats validate --plan <yaml|json> (--logs <path> [--logs <path> ...] | --runs <file> --rollouts <file>) [--parallel <int>] [--decision-policy <file>] [--registration-receipt <file>]`
+- `inspect-safety-stats analyze --plan <yaml|json> (--logs <path> [--logs <path> ...] | --runs <file> --rollouts <file>) [--output <dir>] [--overwrite] [--parallel <int>] [--decision-exit-codes] [--allow-invalid] [--decision-policy <file>] [--registration-receipt <file>]`
+  - `--runs` / `--rollouts` (experimental, [docs/rollout-files.md](docs/rollout-files.md)) read results from any harness as two JSONL or CSV files instead of Inspect logs; give both, and not together with `--logs`.
+  - `--decision-policy` (experimental, [docs/decision-policy.md](docs/decision-policy.md)) replaces the plan's thresholds for the claims it sets without changing the plan's hash.
+  - `--registration-receipt` (experimental) checks a receipt written by `hash-plan --register` against the plan's hash and the earliest evaluation start.
 - `inspect-safety-stats visualize --report <dir|report.json> [--output <html_path>] [--overwrite]`
-- `inspect-safety-stats schema plan` and `inspect-safety-stats schema report`
-- `inspect-safety-stats hash-plan --plan <yaml|json>`
+- `inspect-safety-stats schema plan|report|claims|decision-policy|generative-plan` (`claims` and `decision-policy` are experimental)
+- `inspect-safety-stats hash-plan --plan <yaml|json> [--inference | --register <new_file>]`: prints the plan's canonical SHA-256. `--inference` prints the inference hash instead (the hash without the thresholds a decision policy may set; experimental). `--register` also writes a registration receipt to a new file for `analyze --registration-receipt` (experimental); it is never overwritten.
 - `inspect-safety-stats version`
-- `inspect-safety-stats generative ...` (experimental taxonomy-sampled evaluation workflow)
+- `inspect-safety-stats generative compile|materialize|analyze|budget ...` (experimental taxonomy-sampled evaluation workflow)
 
 ### Exit-code contract
 
+Every command draws its exit status from `ExitCode` in `src/inspect_safety_stats/cli.py`
+([docs/api-reference.md](docs/api-reference.md#exit-codes)).
+
 | Command | Exit code | Meaning |
 |---|---:|---|
-| Any CLI command | `2` | Invalid or missing CLI options/arguments (Typer usage error). |
+| Any CLI command | `0` | The command completed. |
+| Any CLI command | `2` | Invalid or missing CLI options/arguments (Typer usage error), before the command runs. |
+| Any CLI command | `3` | The command could not run, or its result supports no claim (for example an unreadable plan). |
 | `validate` | `0` | Integrity is `valid` or `degraded` (inspect printed warnings). |
 | `validate` | `3` | Integrity is `invalid`. |
 | `analyze` (default) | `0` | Analysis completed and integrity is `valid` or `degraded`. |
 | `analyze` (default) | `3` | Integrity is `invalid` (`report.json` is still written; pass `--allow-invalid` to exit `0` instead), or an execution error prevented report creation. |
-| `analyze --decision-exit-codes` | `0` / `1` / `2` / `3` | `0` = `PASS`, `1` = `FAIL`, `2` = `INCONCLUSIVE`, `3` = `invalid` integrity or execution failure. |
+| `analyze --decision-exit-codes` | `0` / `1` / `2` / `3` | `0` = `PASS`, `1` = `FAIL`, `2` = `INCONCLUSIVE`, `3` = `invalid` integrity or execution failure. With `--allow-invalid`, an `invalid` integrity exits `2`, because an invalid analysis is never `PASS`. |
+| `plan fixed-design --plan` | `1` | No claim of the plan could be planned (`ExitCode.NOTHING_PLANNED`). |
+| `hash-plan` | `3` | The plan cannot be read or validated, or the `--register` file already exists. |
+| `generative analyze` | `3` | The report carries an `ERROR` diagnostic (the report is still written). |
 
 ### Report directory contents (`SafetyReport.write(output)`)
 
