@@ -62,6 +62,64 @@ def test_analyze_prints_the_headline_rates_and_the_summary_path(tmp_path: Path) 
     assert f"Summary: {tmp_path / 'report' / 'report.md'}" in lines
 
 
+def _invoke_analyze(plan: Path, output: Path) -> Any:
+    return runner.invoke(
+        app,
+        [
+            "analyze",
+            "--plan",
+            str(plan),
+            "--logs",
+            str(SIMPLEQA / "simpleqa-8-real.eval"),
+            "--output",
+            str(output),
+        ],
+    )
+
+
+def test_analyze_prints_each_warning_code_on_stderr_after_the_headline(tmp_path: Path) -> None:
+    from inspect_safety_stats.registry import CODES
+
+    output = tmp_path / "report"
+    result = _invoke_analyze(_simpleqa_plan(tmp_path), output)
+    assert result.exit_code == 0
+    index_md = output / "index.md"
+    header = (
+        f"Warnings by code, each explained in {index_md} under "
+        '"Errors and warnings by code":'
+    )
+    # Plain typer.echo lines, uncoloured; plain() would join them into one.
+    stderr = result.stderr.splitlines()
+    assert stderr[0] == header
+    codes = ("PLAN_SELF_DECLARED", "TAIL_MEASURES_UNINFORMATIVE")
+    assert stderr[1:] == [
+        f"  WARNING {code} (1 occurrence): {CODES[code].assumption}" for code in codes
+    ]
+    assert header not in result.stdout
+    # After the headline, before the paths; index.md has the section the header names.
+    lines = result.output.splitlines()
+    assert (
+        lines.index("Failure rate (weighted mean):")
+        < lines.index(header)
+        < lines.index(f"Summary: {output / 'report.md'}")
+    )
+    index_text = index_md.read_text(encoding="utf-8")
+    assert "\n## Errors and warnings by code\n" in index_text
+    assert all(f"| `{code}` | warning | 1 |" in index_text for code in codes)
+
+
+def test_analyze_prints_errors_by_code_when_integrity_is_invalid(tmp_path: Path) -> None:
+    output = tmp_path / "report"
+    result = _invoke_analyze(_simpleqa_plan(tmp_path, score_name="nonexistent_scorer"), output)
+    assert result.exit_code == 3
+    stderr = result.stderr.splitlines()
+    assert stderr[0] == (
+        f"Errors and warnings by code, each explained in {output / 'index.md'} under "
+        '"Errors and warnings by code":'
+    )
+    assert any(line.startswith("  ERROR SCORE_MISSING (") for line in stderr)
+
+
 def test_analyze_exits_three_but_writes_the_report_when_integrity_is_invalid(
     tmp_path: Path,
 ) -> None:

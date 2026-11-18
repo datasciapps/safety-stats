@@ -25,6 +25,8 @@ INDEX_VERSION = "1"
 # Absolute, as the report is read outside the repository; source docs/agent-guide.md.
 AGENT_GUIDE_URL = "https://github.com/aduncan001/safety_stats/blob/main/docs/agent-guide.md"
 SUMMARY_PAGE = "report.md"
+# The section of index.md that lists the errors and warnings; analyze points to it by name.
+WARNINGS_HEADING = "Errors and warnings by code"
 
 # What each file holds, and the report.json list whose items its data rows are, in order.
 _ARTIFACTS: dict[str, tuple[str, str, str | None]] = {
@@ -181,7 +183,7 @@ def index_markdown(document: dict[str, Any]) -> str:
             lines.append("| " + " | ".join(cells) + " |")
     else:
         lines.append("No headline estimates.")
-    lines.extend(["", "## Errors and warnings by code", ""])
+    lines.extend(["", f"## {WARNINGS_HEADING}", ""])
     if summary["warnings"]:
         lines.extend(
             [

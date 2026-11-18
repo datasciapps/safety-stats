@@ -7,6 +7,13 @@ described in their pull requests.
 
 ### Added
 
+- **`analyze` prints the errors and warnings in the terminal.** After the headline failure
+  rates, `analyze` prints each error and warning code of the report on standard error, one line
+  per code: its severity, how often it occurred and the assumption it rests on, under a line
+  that names the report's `index.md` and its section "Errors and warnings by code". A user or a
+  coding agent that reads only the command's output now sees what qualifies the headline.
+  Report files are unchanged.
+
 - **Assumed judge scenarios can give each cohort its own box.** A scenario under
   `inputs.judge_calibration` with `mode: assumed` takes an optional `cohorts` map from declared
   cohorts to `(rho_1, rho_0)` boxes. A listed cohort's group risks, hierarchy rows and

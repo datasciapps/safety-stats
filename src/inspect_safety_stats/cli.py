@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 
     from inspect_safety_stats.claim_planning import EndpointAlpha
     from inspect_safety_stats.ingest.records import EvaluationSource
+    from inspect_safety_stats.schema.summary import SummaryWarning
 
 # Each command imports what it needs when it runs, so that `version`, `--help`, `plan` and
 # `schema` do not load Inspect AI, pandas and the analysis pipeline.
@@ -236,6 +237,35 @@ def init_command(
     )
 
 
+def _echo_warnings(warnings: list[SummaryWarning], index_md: Path) -> None:
+    """Print the report's errors and warnings by code on stderr, as index.md lists them.
+
+    Each code gets one line: its severity, how often it occurred and the assumption it rests
+    on, so that a reader of the command's output alone sees what qualifies the headline.
+    """
+
+    from inspect_safety_stats.report.index import WARNINGS_HEADING
+
+    if not warnings:
+        return
+    kinds = (
+        "Errors and warnings"
+        if any(warning.severity == "ERROR" for warning in warnings)
+        else "Warnings"
+    )
+    typer.echo(
+        f'{kinds} by code, each explained in {index_md} under "{WARNINGS_HEADING}":',
+        err=True,
+    )
+    for warning in warnings:
+        times = "occurrence" if warning.count == 1 else "occurrences"
+        assumption = warning.assumption or "no registry entry gives its assumption"
+        typer.echo(
+            f"  {warning.severity} {warning.code} ({warning.count} {times}): {assumption}",
+            err=True,
+        )
+
+
 @app.command("analyze")
 def analyze_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
@@ -295,6 +325,7 @@ def analyze_command(
         )
         estimate = "—" if risk.estimate is None else f"{100 * risk.estimate:.1f}%"
         typer.echo(f"  {risk.cohort_id} / {risk.group_id}: {estimate} {interval}")
+    _echo_warnings(report.summary.warnings, path / "index.md")
     typer.echo(f"Summary: {path / 'report.md'}")
     typer.echo(f"Index: {path / 'index.json'}")
     typer.echo(f"Report: {path}")
