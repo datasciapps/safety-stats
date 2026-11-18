@@ -478,14 +478,21 @@ Every command draws its exit status from `ExitCode` in `src/inspect_safety_stats
 
 ### Report directory contents (`SafetyReport.write(output)`)
 
-Output directories are write-once unless `overwrite=True` / `--overwrite`:
+Output directories are write-once unless `overwrite=True` / `--overwrite`.
 
-- `report.json`: Canonical machine-readable `SafetyReport` (`schema_version: "2.0"`). Inspect `integrity`, `group_risks`, `hierarchy_risks`, `comparisons`, `comparison_sets`, `prompt_estimates`, `claims`, and `decision`.
-- `report.md`: Human-readable Markdown summary (metrics-first unless `report.include_decisions: true`).
+**Agents: open `index.json` first**, as [docs/agent-guide.md](docs/agent-guide.md) ("Reading a report as an agent") describes. Read `summary.integrity` (`valid`, `degraded` or `invalid`) before any number, then `summary.warnings`: one entry per error or warning code, with its effect, the assumption it checks, and JSON pointers into `report.json` for each occurrence.
+
+- `index.json` and `index.md`: The index of the directory, in JSON and Markdown: every file with what it holds (`artifacts`), the analysis id and `plan_sha256` (`analysis`), the `summary` of `report.json` (integrity, diagnostic counts, headline estimates, warnings by code, assumptions used), and `guide`, the address of `docs/agent-guide.md`.
+- `report.json`: Canonical machine-readable `SafetyReport` (`schema_version: "3.0"`), the source of every other file. Inspect `summary`, `integrity`, `group_risks`, `hierarchy_risks`, `comparisons`, `comparison_sets`, `prompt_estimates`, `claims`, and `decision`.
+- `report.md`: One-page Markdown summary for people.
+- `report-full.md`: The full Markdown report: every interval, sensitivity and diagnostic message.
 - `report.html`: Self-contained interactive HTML explorer (no server or network access required).
 - `plan.resolved.yaml` and `design.resolved.csv`: Resolved configuration and prompt weights.
-- `hierarchy-risks.csv`, `comparisons.csv`, `comparison-sets.csv`, `observations.csv`: Flat tabular exports.
-- `checksums.json`: SHA-256 manifest over written artifacts.
+- `hierarchy-risks.csv`, `comparisons.csv`, `comparison-sets.csv`, `observations.csv`: Flat tabular exports (`observations.csv` is left out when `report.include_observations: false`). `index.json` names the `report.json` list whose items a CSV's rows are.
+- `outcome-mapping-sensitivity.csv` and `claims.json`: Written only when the plan asks for outcome-mapping sensitivities or a claims export.
+- `checksums.json`: SHA-256 manifest over every other file, the index included.
+
+With `report.include_decisions: false` (the default), the summary, the index and the Markdown and HTML renderings leave out the overall decision and the claims' statuses; `report.json` still holds them at `/decision` and `/claims`. Do not report a hidden decision as the analysis's verdict.
 
 ---
 
@@ -494,6 +501,7 @@ Output directories are write-once unless `overwrite=True` / `--overwrite`:
 - Root index: [llms.txt](llms.txt)
 - Installable Agent Skill: [skills/inspect-safety-stats/SKILL.md](skills/inspect-safety-stats/SKILL.md)
 - Getting started tutorial: [docs/getting-started.md](docs/getting-started.md)
+- Reading a report directory as an agent: [docs/agent-guide.md](docs/agent-guide.md)
 - Complete YAML plan reference: [docs/plan-reference.md](docs/plan-reference.md)
 - Judge misclassification guide: [docs/judge-misclassification.md](docs/judge-misclassification.md)
 - Multi-model comparison guide: [docs/model-comparisons.md](docs/model-comparisons.md)
