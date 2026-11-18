@@ -86,18 +86,26 @@ Never guess YAML field names—every plan model sets Pydantic `extra="forbid"` a
    inspect-safety-stats validate --plan plan.yaml --logs logs/
    inspect-safety-stats analyze --plan plan.yaml --logs logs/ --output reports/run-001
    ```
-   - Exit `0`: `valid` or `degraded` integrity (inspect warnings in `report.json`).
+   - Exit `0`: `valid` or `degraded` integrity (read the warnings in `index.json`, step 4).
    - Exit `2`: invalid or missing CLI arguments.
-   - Exit `3`: `invalid` integrity (`analyze` writes `report.json` first so diagnostics can be audited), or an execution error before report generation.
+   - Exit `3`: `invalid` integrity (`analyze` still writes the report directory, `index.json` included, so diagnostics can be audited), or an execution error before report generation.
    - With `--decision-exit-codes`: `0` = `PASS`, `1` = `FAIL`, `2` = `INCONCLUSIVE`, `3` = `invalid` or execution error.
 
 ## 4. Reporting discipline
+
+Open `index.json` in the report directory first, as [docs/agent-guide.md](../../docs/agent-guide.md) describes, not `report.json`:
+
+- Read `summary.integrity` (`valid`, `degraded` or `invalid`) before any number, and report it with the numbers.
+- `summary.warnings` lists each error and warning code with its effect, the assumption it checks, and JSON pointers into `report.json` for each occurrence; `artifacts` says what every other file holds.
+- `report.md` is the one-page summary for people; `report-full.md` has every interval, sensitivity and message.
+- With `report.include_decisions: false` (the default) the decision and claim statuses are hidden from the summary; do not report them as the analysis's verdict.
 
 Always preserve the fixed-design scope boundary and declared independence assumptions when summarizing outputs: rollout-level intervals assume generations are independent conditional on the prompt, cover stochastic rollout uncertainty on the declared prompts and weights (unless `design.type: sampled` with valid inclusion probabilities was used), and do not estimate failure prevalence over unseen prompts or deployment traffic.
 
 ## 5. Deeper references
 
 - Complete single-file API map, minimal `v2.0` YAML, and external `EvalLog` adapter: [llms-full.txt](../../llms-full.txt)
+- Reading a report directory as an agent: [docs/agent-guide.md](../../docs/agent-guide.md)
 - Plan schema guide: [docs/plan-reference.md](../../docs/plan-reference.md)
 - API and CLI contract: [docs/api-reference.md](../../docs/api-reference.md)
 - Judge misclassification math and config: [docs/judge-misclassification.md](../../docs/judge-misclassification.md)
