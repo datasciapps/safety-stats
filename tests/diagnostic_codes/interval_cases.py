@@ -138,6 +138,29 @@ def _comparison(p3_weight: float) -> Callable[[Inputs], None]:
     return change
 
 
+def _frontier_direct_means(p3_weight: float) -> Callable[[Inputs], None]:
+    """frontier_sidak direct means over task nodes, p3 (task t2) weighted ``p3_weight``."""
+
+    def change(inputs: Inputs) -> None:
+        for row in inputs.manifest:
+            row["weight"] = 1
+        _prompt(inputs, "p3", "t2", True, weight=p3_weight)
+        inputs.plan["design"] = {"weights": {"strategy": "explicit", "column": "weight"}}
+        _direct_means(inputs, hierarchy_nodes=True, hierarchy_calibration="frontier_sidak")
+
+    return change
+
+
+def _no_calibrated_interval(triggered: Outcome, control: Outcome) -> None:
+    # Invalid: no target is calibrated, so the group keeps only the propagated envelope and
+    # the remaining task node has no interval.
+    assert _group(triggered, "all").primary_interval_id == "propagated_prompt_envelope"
+    assert _group(control, "all").primary_interval_id != "propagated_prompt_envelope"
+    node = _node(triggered, "task_id", "t1")
+    assert (node.lower, node.eligibility) == (None, "invalid")
+    assert _node(control, "task_id", "t1").lower is not None
+
+
 def _comparison_root(outcome: Outcome) -> Any:
     (found,) = [item for item in outcome.report.comparisons if item.level is None]
     return found
@@ -293,6 +316,13 @@ CASES = [
         trigger=analysis(_sampled(p3_drawn=False, domain_group=True)),
         control=analysis(_sampled(p3_drawn=True, domain_group=True)),
         effect=_no_direct_interval,
+    ),
+    Case(
+        # Task t2 has weight zero, so the task level does not partition the group.
+        code="DIRECT_MEAN_CALIBRATION_INVALID",
+        trigger=analysis(_frontier_direct_means(p3_weight=0)),
+        control=analysis(_frontier_direct_means(p3_weight=1)),
+        effect=_no_calibrated_interval,
     ),
     Case(
         # Task t2 has weight zero, so the task level does not partition the group.
