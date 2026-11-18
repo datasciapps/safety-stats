@@ -86,7 +86,10 @@ described in their pull requests.
   `inspect_version_constraint` with `sources` and `source_format`, which names the format read
   and, for Inspect logs, the supported Inspect versions. Observation ids, and so every estimate,
   are unchanged. Plans may still name the old observation fields in `block_by`, `pair_key` and
-  `cluster_key`. Update any script that reads these columns or keys.
+  `cluster_key`. An independence profile that blocks by one of the six new names, where the
+  design manifest has a column of that name, is refused: that name used to mean the column.
+  Update any script that reads these columns or keys. `visualize` reads schema 3.0 reports only;
+  to visualize an earlier report, run its analysis again.
 
 - **Unchecked safeguards are reported.** A run without a status was silently counted as
   complete, and a confirmatory plan whose runs had no start time skipped the post hoc check

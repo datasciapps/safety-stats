@@ -707,6 +707,31 @@ Taking both proxies from each endpoint's own completion is not monotone. Complet
 as a failure lowers (Q_-), and with skewed weights the width can then shrink by more than the
 estimate rises.
 
+**Fixed variance centers.** For any constant (c), (\operatorname{Var}(Y)\le\mathbb E(Y-c)^2),
+with slack ((\mathbb E Y-c)^2). A caller may therefore fix (K) centerings in advance, from the
+design and never from the data, each a center (c_i^{(k)}\in[0,1]) per contribution, and use
+
+\[
+Q_{c^{(k)}}=\sum_i a_i^2\bigl(Y_i-c_i^{(k)}\bigr)^2,\qquad
+\overline V=\min\left\{\frac{C_2}{4},\;\min_{k}\Bigl(Q_{c^{(k)}}
++\sqrt{\tfrac12 C_4^{(k)}\log\tfrac1{\delta_v}}\Bigr)\right\},
+\]
+
+with (delta_v=\alpha_d/(2K)), so the (K) variance proxies share half the endpoint budget. Each
+term of (Q_{c^{(k)}}) lies in ([0,a_i^2r_i^{(k)}]) with
+(r_i^{(k)}=\max\{(c_i^{(k)})^2,(1-c_i^{(k)})^2\}), so Hoeffding's padding uses the range-squared
+sum (C_4^{(k)}=\sum_i a_i^4(r_i^{(k)})^2). For centers 0 or 1, (r=1) and (C_4^{(k)}=C_4); about
+(1/2), (r=1/4) and the padding is a quarter as large. An unknown outcome contributes its larger
+completion, (r_i^{(k)}) on the rollout unit; on the prompt-cluster unit the squared deviation is
+convex in the completed rate, so its maximum lies at one of the two extreme completions. The
+default, (K=2) with (c\equiv0) and (c\equiv1), is exactly (Q_+) and (Q_-) above.
+
+Validity: let (V_0=\min\{C_2/4,\min_k\mathbb E Q_{c^{(k)}}\}), which is deterministic and at least
+(V). On the event that all (K) Hoeffding bounds hold (probability at least (1-\alpha_d/2)),
+(\overline V\ge V_0), and the Bernstein width is increasing in the variance, so a miss requires
+the Bernstein tail at (V_0) (probability at most (\alpha_d/2)). This needs the centers to be
+fixed: a center chosen from the data would make (V_0) random.
+
 This is a finite-sample, heterogeneous-Bernoulli empirical-Bernstein construction, not a normal
 approximation and not a plug-in standard error. It can be materially narrower than Hoeffding, but
 it can remain loose near zero failures because it spends part of the error budget estimating
@@ -1361,6 +1386,22 @@ Bernoulli-KL bound on \(Q\) is inefficient for sparse safety risk because \(Q\) 
 The weighted KL/Chernoff primary instead builds a jointly calibrated rectangle for the two sparse
 arm means and reports \([L_C-U_B,U_C-L_B]\). Empirical Bernstein and Hoeffding remain direct
 contrast references.
+
+For empirical Bernstein, the variance proxies of \(Q\) are centered by arm. On the rollout unit
+\(Q_++Q_-=C_2\) exactly, because every rollout counts in one of them, so in a balanced design
+\(\min(Q_+,Q_-)=\tfrac{C_2}{2}(1-|\hat\pi_C-\hat\pi_B|)\), where \(\hat\pi\) are the arms' weighted
+observed failure rates. Both uncentered proxies therefore lose to the cap \(C_2/4\) unless the
+arms' rates differ by more than \(1/2\), however sparse the arms are, and at the cap the
+interval is wider than Hoeffding's by a factor of at least
+\(\sqrt{\log(2/\alpha)/\log(1/\alpha)}\). The rollout unit therefore uses the four arm-wise
+centerings: candidate rollouts at \(0\) or \(1\), and baseline rollouts at \(0\) or \(1\). Candidate
+\(0\) with baseline \(1\) counts both arms' failures,
+\(\tfrac{C_2}{2}(\hat\pi_C+\hat\pi_B)\), which serves two sparse arms; the other three serve arms
+that fail often, and two of them are \(Q_+\) and \(Q_-\). The smallest of the four is close to
+\(\tfrac{C_2}{2}\bigl(\min(\hat\pi_C,1-\hat\pi_C)+\min(\hat\pi_B,1-\hat\pi_B)\bigr)\), adapting to
+each arm separately. In the prompt-cluster encoding, each \(q_j=(1+p_{C,j}-p_{B,j})/2\) is
+centered at \(1/2\), with range-aware padding, and the centerings \(0\) and \(1\) are kept for arms
+far apart.
 
 If candidate and baseline have unclassified attempted outcomes, the lower endpoint completes
 candidate unknowns as safe and baseline unknowns as failures. The upper endpoint does the reverse.

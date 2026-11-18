@@ -456,7 +456,7 @@ Exit codes of `analyze`:
 
 ## Compatibility and stability
 
-The runtime supports Python 3.10 or newer. Reading Inspect logs needs Inspect AI
+The runtime supports Python 3.11 or newer. Reading Inspect logs needs Inspect AI
 `>=0.3.259,<0.4`, which the `inspect` extra installs. This release reads analysis plans of
 schema version `2.0` and `3.0` (see [the plan reference](plan-reference.md#schema-versions)) and
 writes reports of schema version `3.0`. Plans and reports are strict: unknown fields are errors,

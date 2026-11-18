@@ -104,6 +104,44 @@ def test_csv_cells_are_typed_explicitly(tmp_path: Path) -> None:
     assert data.error_context(second).content_delivered is True
 
 
+def test_csv_identity_cells_keep_their_spelling(tmp_path: Path) -> None:
+    """Read as numbers, the items 1.10 and 1.1 were one item, and the run 2.50 the run 2.5."""
+    runs = tmp_path / "runs.csv"
+    runs.write_text("run_key,model,run_id\n2.50,1.0,07.0\n", encoding="utf-8")
+    rollouts = tmp_path / "rollouts.csv"
+    rollouts.write_text(
+        "run_key,item_id,rollout_id,score_harmful\n2.50,1.10,1e3,1\n2.50,1.1,,0\n",
+        encoding="utf-8",
+    )
+    data = read_rollout_files(runs, rollouts)
+    (run,) = data.runs
+    assert (run.run_key, run.model, run.run_id) == ("2.50", "1.0", "07.0")
+    first, second = data.rollouts
+    assert (first.run_key, first.item_id, first.sample_id) == ("2.50", "1.10", "1e3")
+    assert (second.item_id, second.sample_id) == ("1.1", "2.50:1.1:1")
+    # Scores are still typed.
+    assert (first.scores["harmful"], second.scores["harmful"]) == (1, 0)
+
+
+def test_an_error_of_false_is_no_error(tmp_path: Path) -> None:
+    """A rollout that says it ended in no error was counted as an errored rollout."""
+    runs = _runs(tmp_path)
+    rollouts = _jsonl(
+        tmp_path / "rollouts.jsonl",
+        [
+            {"run_key": "r1", "item_id": "p1", "error": False},
+            {"run_key": "r1", "item_id": "p2", "error": True},
+        ],
+    )
+    first, second = read_rollout_files(runs, rollouts).rollouts
+    assert first.error is None
+    assert second.error is True
+    csv_rollouts = tmp_path / "rollouts.csv"
+    csv_rollouts.write_text("run_key,item_id,error\nr1,p1,false\n", encoding="utf-8")
+    (row,) = read_rollout_files(runs, csv_rollouts).rollouts
+    assert row.error is None
+
+
 @pytest.mark.parametrize(
     ("runs", "rollouts", "message"),
     [

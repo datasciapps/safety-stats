@@ -16,7 +16,7 @@ set -euo pipefail
 REF="${1:-main}"
 WORK="${2:-$(mktemp -d)}"
 REPO="$(git rev-parse --show-toplevel)"
-PYTHONS=(3.10 3.11 3.12)
+PYTHONS=(3.11 3.12 3.13)
 WARNINGS=()
 SRC="$WORK/src"
 DIST="$WORK/dist"

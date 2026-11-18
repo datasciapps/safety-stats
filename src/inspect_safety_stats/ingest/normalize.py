@@ -96,7 +96,9 @@ def _run_field(plan: AnalysisPlan, run: RunRecord, name: str) -> Any:
         "status": run.status,
         "run_id": run.run_id,
     }
-    return neutral.get(name, _ABSENT)
+    # A neutral field the source did not give is None; it is absent, not a shared value.
+    value = neutral.get(name)
+    return _ABSENT if value is None else value
 
 
 def _rollout_field(
