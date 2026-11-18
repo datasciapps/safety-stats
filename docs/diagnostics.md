@@ -1195,6 +1195,19 @@ cannot be computed, or a result it qualifies.
 - **Remedy:** Correct the input the message names, or choose another comparisons[].method or
   comparisons[].reference_methods entry.
 
+#### `DIRECT_MEAN_CALIBRATION_INVALID`
+
+- **Severity:** ERROR
+- **Effect:** [invalid](#effects)
+- **Assumption:** The direct-mean intervals of a multiplicity family can be calibrated together:
+  under frontier_sidak, every hierarchy level partitions each selected group into non-overlapping
+  nodes.
+- **Consequence:** No direct-mean interval of the family is calibrated: group rows keep only the
+  propagated prompt envelope, hierarchy-node rows have no interval, and the error makes the
+  integrity status invalid.
+- **Remedy:** Give every hierarchy node of the group a positive weight, so that each level
+  partitions it, or set outputs.direct_mean_intervals.hierarchy_calibration to flat_bonferroni.
+
 #### `DIRECT_MEAN_INTERVAL_INVALID`
 
 - **Severity:** ERROR

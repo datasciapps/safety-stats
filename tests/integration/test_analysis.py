@@ -1099,13 +1099,19 @@ def _two_cohort_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def _comparison_judge_plan(
-    tmp_path: Path, *, method: str, calibrated: bool, assumed: bool = False
+    tmp_path: Path,
+    *,
+    method: str,
+    calibrated: bool,
+    assumed: bool = False,
+    cohort_boxes: bool = False,
 ) -> Path:
     """Two-cohort comparison plan, with or without the judge calibration block.
 
     Labels are keyed by observation_id, so they must be generated from a run over the
     same cohorts and logs. The uncalibrated variant produces that ledger. ``assumed``
-    declares two scenarios instead of a validated calibration.
+    declares two scenarios instead of a validated calibration, and ``cohort_boxes`` gives
+    the candidate cohort a box of its own in the ``declared`` scenario.
     """
     plan_path = _write_inputs(tmp_path)
     text = plan_path.read_text(encoding="utf-8")
@@ -1126,7 +1132,14 @@ def _comparison_judge_plan(
             "    primary: declared\n"
             "    scenarios:\n"
             "      - {id: declared, rho_1: {lower: 0.9, upper: 1.0}, "
-            "rho_0: {lower: 0.0, upper: 0.02}}\n"
+            "rho_0: {lower: 0.0, upper: 0.02}"
+            + (
+                ", cohorts: {candidate: {rho_1: {lower: 0.6, upper: 0.8}, "
+                "rho_0: {lower: 0.01, upper: 0.1}}}"
+                if cohort_boxes
+                else ""
+            )
+            + "}\n"
             "      - {id: pessimistic, rho_1: {lower: 0.7, upper: 1.0}, "
             "rho_0: {lower: 0.0, upper: 0.05}}\n"
             "design:\n",
@@ -1309,6 +1322,101 @@ def test_two_arm_comparisons_are_judge_corrected_per_assumed_scenario(
     assert "JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON" not in codes
     # Declared accuracies never move a comparison claim's evidence either.
     assert all(item.eligibility != "certifying" for item in row.intervals if item.role != "primary")
+
+
+def test_assumed_scenarios_correct_each_cohort_and_arm_with_its_own_box(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A scenario's cohort box replaces its default box there, on rows and comparison arms."""
+    from inspect_safety_stats.stats.misclassification import JudgeCalibration, correct_judge_risk
+
+    plan_path = _comparison_judge_plan(
+        tmp_path, method="weighted_kl_chernoff", calibrated=False, assumed=True, cohort_boxes=True
+    )
+    _patch_two_cohort_frames(monkeypatch)
+
+    report = analyze(plan=load_plan(plan_path), logs="ignored")
+
+    boxes = {
+        ("declared", "candidate"): JudgeCalibration("declared", 0.6, 0.8, 0.01, 0.1),
+        ("declared", "baseline"): JudgeCalibration("declared", 0.9, 1.0, 0.0, 0.02),
+        ("pessimistic", "candidate"): JudgeCalibration("pessimistic", 0.7, 1.0, 0.0, 0.05),
+        ("pessimistic", "baseline"): JudgeCalibration("pessimistic", 0.7, 1.0, 0.0, 0.05),
+    }
+    rows = [item for item in report.group_risks if item.measure_id == "mean"]
+    assert {item.cohort_id for item in rows} == {"candidate", "baseline"}
+    for risk in rows:
+        for scenario in ("declared", "pessimistic"):
+            corrected = next(
+                item for item in risk.intervals if item.interval_id == f"judge_corrected_{scenario}"
+            )
+            expected = correct_judge_risk(
+                observed_lower=risk.lower,
+                observed_upper=risk.upper,
+                observed_estimate=risk.estimate,
+                calibration=boxes[(scenario, risk.cohort_id)],
+            )
+            assert corrected.lower == pytest.approx(expected.lower, abs=1e-12)
+            assert corrected.upper == pytest.approx(expected.upper, abs=1e-12)
+            assert corrected.eligibility == "diagnostic"
+            # Only a scenario that declares boxes by cohort says so.
+            per_cohort = (
+                "The declared accuracies are prevalence-dependent; the scenario declares this "
+                f"box for cohort {risk.cohort_id!r}."
+            )
+            assert (per_cohort in corrected.assumptions) == (scenario == "declared")
+
+    row = next(item for item in report.comparisons if item.level is None)
+    primary = next(item for item in row.intervals if item.role == "primary")
+    for scenario in ("declared", "pessimistic"):
+        corrected = next(
+            item for item in row.intervals if item.interval_id == f"judge_corrected_{scenario}"
+        )
+        for arm, cohort, estimate in (
+            ("candidate", row.candidate_cohort, row.candidate_estimate),
+            ("baseline", row.baseline_cohort, row.baseline_estimate),
+        ):
+            expected = correct_judge_risk(
+                observed_lower=getattr(primary, f"{arm}_lower"),
+                observed_upper=getattr(primary, f"{arm}_upper"),
+                observed_estimate=estimate,
+                calibration=boxes[(scenario, cohort)],
+            )
+            assert getattr(corrected, f"{arm}_lower") == pytest.approx(expected.lower, abs=1e-12)
+            assert getattr(corrected, f"{arm}_upper") == pytest.approx(expected.upper, abs=1e-12)
+        assert corrected.candidate_lower is not None and corrected.baseline_upper is not None
+        assert corrected.lower == pytest.approx(
+            max(-1.0, corrected.candidate_lower - corrected.baseline_upper), abs=1e-12
+        )
+        assert corrected.eligibility == "diagnostic" and corrected.role == "sensitivity"
+    declared = next(
+        item for item in row.intervals if item.interval_id == "judge_corrected_declared"
+    )
+    assert declared.assumptions[1:3] == [
+        "Candidate P(truly unsafe | judge said unsafe) lies in [0.6, 0.8]; "
+        "P(truly unsafe | judge said safe) in [0.01, 0.1].",
+        "Baseline P(truly unsafe | judge said unsafe) lies in [0.9, 1]; "
+        "P(truly unsafe | judge said safe) in [0, 0.02].",
+    ]
+    pessimistic = next(
+        item for item in row.intervals if item.interval_id == "judge_corrected_pessimistic"
+    )
+    assert pessimistic.assumptions[1].startswith("On both arms P(truly unsafe")
+
+    # The report records each cohort box and lists it under its scenario.
+    presentation = report.presentation.judge_calibration
+    assert presentation is not None
+    records = {item.id: item.model_dump(mode="json") for item in presentation.scenarios}
+    assert records["declared"]["cohorts"] == {
+        "candidate": {"rho_1": {"lower": 0.6, "upper": 0.8}, "rho_0": {"lower": 0.01, "upper": 0.1}}
+    }
+    assert "cohorts" not in records["pessimistic"]
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    assert (
+        "P(truly unsafe | judge said safe) in [0.0, 0.02], for every cohort not listed below\n"
+        "  - cohort `candidate`: P(truly unsafe | judge said unsafe) in [0.6, 0.8]; "
+        "P(truly unsafe | judge said safe) in [0.01, 0.1]"
+    ) in markdown
 
 
 def test_contrast_only_comparisons_say_the_assumed_correction_is_unavailable(

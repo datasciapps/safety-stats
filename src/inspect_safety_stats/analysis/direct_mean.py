@@ -15,7 +15,7 @@ from inspect_safety_stats.config.models import AnalysisPlan, RiskMeasureSpec
 from inspect_safety_stats.ingest.manifest import load_inclusion_probabilities
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.reports import Diagnostic, PromptEstimate, RiskIntervalResult
-from inspect_safety_stats.schema.scopes import cohort_scope
+from inspect_safety_stats.schema.scopes import cohort_scope, scope_path
 from inspect_safety_stats.stats.design_based import (
     DesignBasedBounds,
     FixedSizeDesign,
@@ -247,7 +247,13 @@ def _direct_mean_context(
     data: NormalizedData,
     *,
     nodes: list[_HierarchyNode] | None = None,
+    diagnostics: list[Diagnostic] | None = None,
 ) -> _DirectMeanContext:
+    """The calibrated alpha of every direct-mean target.
+
+    A hierarchy that cannot be calibrated is reported in ``diagnostics`` and leaves every target
+    uncalibrated; without ``diagnostics`` it raises ValueError.
+    """
     spec = plan.outputs.direct_mean_intervals
     if not spec.enabled:
         return _DirectMeanContext(set(), None, None, None, None, {})
@@ -290,7 +296,22 @@ def _direct_mean_context(
                         )
                     )
     elif spec.hierarchy_calibration == "frontier_sidak" and spec.hierarchy_nodes:
-        base_frontiers = _group_independent_frontiers(plan, data, hierarchy_nodes)
+        try:
+            base_frontiers = _group_independent_frontiers(plan, data, hierarchy_nodes)
+        except ValueError as exc:
+            if diagnostics is None:
+                raise
+            # A level that does not partition its group, such as one whose zero-weight node
+            # _hierarchy_nodes left out, has no frontier, so no direct interval is calibrated.
+            diagnostics.append(
+                Diagnostic(
+                    code="DIRECT_MEAN_CALIBRATION_INVALID",
+                    severity="ERROR",
+                    message=str(exc),
+                    scope=scope_path("families", family.id),
+                )
+            )
+            return _DirectMeanContext(selected, family.id, family.alpha, one_sided, joint, {})
         target_details: dict[str, tuple[tuple[str, ...], np.ndarray]] = {}
         for group in data.groups:
             if group.id in selected:

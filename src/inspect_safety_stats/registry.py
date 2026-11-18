@@ -655,6 +655,27 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
     ),
     CodeEntry(
+        code="DIRECT_MEAN_CALIBRATION_INVALID",
+        severities=("ERROR",),
+        source="analysis",
+        effect="invalid",
+        assumption=(
+            "The direct-mean intervals of a multiplicity family can be calibrated together: "
+            "under frontier_sidak, every hierarchy level partitions each selected group into "
+            "non-overlapping nodes."
+        ),
+        consequence=(
+            "No direct-mean interval of the family is calibrated: group rows keep only the "
+            "propagated prompt envelope, hierarchy-node rows have no interval, and the error "
+            "makes the integrity status invalid."
+        ),
+        remedy=(
+            "Give every hierarchy node of the group a positive weight, so that each level "
+            "partitions it, or set outputs.direct_mean_intervals.hierarchy_calibration to "
+            "flat_bonferroni."
+        ),
+    ),
+    CodeEntry(
         code="DIRECT_MEAN_INTERVAL_INVALID",
         severities=("ERROR",),
         source="analysis",

@@ -244,6 +244,23 @@ inputs:
 safe). Every scenario must satisfy `rho_1.lower > rho_0.upper`. In `assumed` mode the
 resulting intervals are always `diagnostic`: a declaration carries no coverage guarantee.
 
+A scenario's optional `cohorts` maps declared cohorts to boxes of their own, for a judge whose
+accuracy depends on the model under test:
+
+```yaml
+      - id: worse_on_candidate
+        rho_1: {lower: 0.85, upper: 1.0}
+        rho_0: {lower: 0.0, upper: 0.02}
+        cohorts:
+          candidate: {rho_1: {lower: 0.60, upper: 0.85}, rho_0: {lower: 0.0, upper: 0.08}}
+```
+
+A listed cohort's rows, and a comparison arm on that cohort, are corrected with its box;
+every other cohort takes the scenario's `rho_1` and `rho_0`. Each cohort box must also satisfy
+`rho_1.lower > rho_0.upper`, `cohorts` cannot be empty, and an undeclared cohort is
+`PLAN_UNKNOWN_REFERENCE`. Generative plans reject the field. See
+[Per-cohort boxes](judge-misclassification.md#per-cohort-boxes).
+
 `mode: validated` estimates the same two parameters from human labels instead, and its
 intervals are `certifying`:
 
