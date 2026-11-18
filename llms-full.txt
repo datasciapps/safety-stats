@@ -18,7 +18,7 @@
 |---|---|---|
 | You have counts, per-item failure rates, paired pass/fail lists, or LLM-judge accuracy numbers from any evaluation script | `inspect_safety_stats.stats` (and submodules `planning`, `misclassification`) | None |
 | You have completed Inspect AI `.eval` logs | CLI (`inspect-safety-stats validate` then `analyze`) or Python `analyze(plan=..., logs=...)` | `.eval` log(s), `design.csv`, `plan.yaml` (`schema_version: "2.0"`) |
-| You have JSONL/CSV logs from another evaluation harness and want the full hierarchy report, HTML dashboard, and audit sidecars | Build in-memory `inspect_ai.log.EvalLog` objects and pass `logs=[...]` to `validate()` / `analyze()` | Custom logs, `design.csv`, `plan.yaml` (`schema_version: "2.0"`) |
+| You have JSONL/CSV results from another evaluation harness and want the full hierarchy report, HTML dashboard, and audit sidecars | Write them as [rollout files](docs/rollout-files.md) and run the CLI with `--runs runs.jsonl --rollouts rollouts.jsonl` in place of `--logs`, or Python `analyze(plan=..., source=RolloutFiles(runs=..., rollouts=...))`; no Inspect AI install needed (recipe 3) | `runs.jsonl`, `rollouts.jsonl` (or `.csv`), `design.csv`, `plan.yaml` (`schema_version: "3.0"`) |
 
 ---
 
@@ -303,58 +303,49 @@ inspect-safety-stats analyze \
 
 ---
 
-## Executable recipe 3: adapting external JSONL/CSV logs and comparing cohorts
+## Executable recipe 3: analyzing results from another harness as rollout files
 
-`validate()` and `analyze()` accept in-memory `inspect_ai.log.EvalLog` objects while reading `design.csv` and `plan.yaml` from disk. Preserve each run's actual creation timestamp and use `intent: exploratory` whenever the plan was not frozen before running the evaluation:
+Results from any evaluation harness can be analyzed without Inspect AI: write them as two plain files, a runs file (one record per run) and a rollouts file (one record per rollout), and pass them in place of the logs. Neither the CLI nor the Python API needs the optional `inspect` extra for this. [Rollout files](docs/rollout-files.md) specifies both formats (JSON Lines or CSV), the required and optional fields, and how errors and provider blocks are read.
+
+On the command line, pass `--runs runs.jsonl --rollouts rollouts.jsonl` in place of `--logs`, as in `inspect-safety-stats analyze --plan plan.yaml --runs runs.jsonl --rollouts rollouts.jsonl --output report/`; `validate` takes the same options. In Python, pass `source=RolloutFiles(...)` to `validate()` and `analyze()`. Each rollout's `item_id` is matched to `prompt_id` in `design.csv`, and `repeat` numbers its rollouts. Write the plan in `schema_version: "3.0"`, whose default `rollout_key` identifies a rollout by `[run_key, item_id, repeat]`; cohorts match any field of the run. Record each run's actual start time in `started_at`, and use `intent: exploratory` whenever the plan was not frozen before running the evaluation:
 
 ```python
-from pathlib import Path
+import json
 import tempfile
-
-from inspect_ai.log import EvalConfig, EvalDataset, EvalLog, EvalSample, EvalSpec
-from inspect_ai.scorer import Score
+from pathlib import Path
 
 from inspect_safety_stats import analyze, validate
+from inspect_safety_stats.ingest import RolloutFiles
 
 
-def build_eval_log(eval_id: str, model: str, rows: list[tuple[str, int, str]]) -> EvalLog:
-    return EvalLog(
-        status="success",
-        eval=EvalSpec(
-            eval_id=eval_id,
-            run_id=eval_id,
-            created="2026-09-01T12:00:00+00:00",  # preserve actual run creation timestamp
-            task="custom_harness",
-            model=model,
-            dataset=EvalDataset(name="custom_suite"),
-            config=EvalConfig(epochs=2),
-        ),
-        samples=[
-            EvalSample(
-                id=prompt_id,
-                epoch=epoch,
-                input="",
-                target="",
-                scores={"judge_verdict": Score(value=verdict)},
-            )
-            for prompt_id, epoch, verdict in rows
-        ],
-    )
+def write_jsonl(path: Path, records: list[dict]) -> None:
+    with path.open("w", encoding="utf-8", newline="\n") as stream:
+        for record in records:
+            stream.write(json.dumps(record) + "\n")
 
 
-candidate_log = build_eval_log(
-    "cand-001",
-    "custom/candidate-v2",
-    [("p1", 1, "PASS"), ("p1", 2, "PASS"), ("p2", 1, "PASS"), ("p2", 2, "FAIL")],
-)
-baseline_log = build_eval_log(
-    "base-001",
-    "custom/baseline-v1",
-    [("p1", 1, "FAIL"), ("p1", 2, "PASS"), ("p2", 1, "FAIL"), ("p2", 2, "FAIL")],
-)
+runs = [
+    # preserve each run's actual start time
+    {"run_key": "cand-001", "model": "custom/candidate-v2", "status": "success",
+     "started_at": "2026-09-01T12:00:00+00:00"},
+    {"run_key": "base-001", "model": "custom/baseline-v1", "status": "success",
+     "started_at": "2026-09-01T12:00:00+00:00"},
+]
+verdicts = {
+    "cand-001": [("p1", 1, "PASS"), ("p1", 2, "PASS"), ("p2", 1, "PASS"), ("p2", 2, "FAIL")],
+    "base-001": [("p1", 1, "FAIL"), ("p1", 2, "PASS"), ("p2", 1, "FAIL"), ("p2", 2, "FAIL")],
+}
+rollouts = [
+    {"run_key": run_key, "item_id": item_id, "repeat": repeat,
+     "scores": {"judge_verdict": verdict}}
+    for run_key, rows in verdicts.items()
+    for item_id, repeat, verdict in rows
+]
 
 with tempfile.TemporaryDirectory() as tmp:
     root = Path(tmp)
+    write_jsonl(root / "runs.jsonl", runs)
+    write_jsonl(root / "rollouts.jsonl", rollouts)
     (root / "design.csv").write_text(
         "prompt_id,question_id,task_id,expected_rollouts\n"
         "p1,q1,coding,2\n"
@@ -363,7 +354,7 @@ with tempfile.TemporaryDirectory() as tmp:
         newline="\n",
     )
     (root / "plan.yaml").write_text(
-        """schema_version: "2.0"
+        """schema_version: "3.0"
 analysis:
   id: external-comparison-demo
   title: External harness cohort comparison
@@ -390,8 +381,6 @@ cohorts:
     match: {model: custom/baseline-v1}
 groups:
   - id: all
-    filter: {}
-    weights: {strategy: equal_prompt}
 outputs:
   prompt_bounds: {enabled: false}
   direct_mean_intervals:
@@ -423,9 +412,10 @@ policy:
         encoding="utf-8",
         newline="\n",
     )
-    integrity = validate(plan=root / "plan.yaml", logs=[candidate_log, baseline_log])
+    source = RolloutFiles(runs=root / "runs.jsonl", rollouts=root / "rollouts.jsonl")
+    integrity = validate(plan=root / "plan.yaml", source=source)
     assert integrity.status == "valid"
-    report = analyze(plan=root / "plan.yaml", logs=[candidate_log, baseline_log])
+    report = analyze(plan=root / "plan.yaml", source=source)
     comp_ci = report.comparisons[0].intervals[0]
     assert comp_ci.lower < comp_ci.upper
 ```
