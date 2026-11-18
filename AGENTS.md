@@ -20,7 +20,8 @@ applies to people too.
   Run `ruff check` only. `ruff format` rewrites hundreds of untouched lines.
 - **Evidence.** Paste the verdict into the pull request.
   - Bug fix: `python scripts/prove_red.py <tests>` must report `PROVEN`. A test that passes
-    without the fix proves nothing.
+    without the fix proves nothing. For a fix outside `src/`, such as in `examples/` or
+    `scripts/`, add `--tree`.
   - Class A: `python scripts/compare_artifacts.py` must report `IDENTICAL`.
   - Both scripts compare against `HEAD` by default. Once the change is committed, pass
     `--base <commit>`.
