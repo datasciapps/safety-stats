@@ -7,6 +7,15 @@ described in their pull requests.
 
 ### Added
 
+- **`validate` and `analyze` report how much a grouping column shrinks the evidence
+  (changes `report.json`).** For each independence profile whose blocks hold rollouts of more
+  than one prompt, such as `block_by: [conversation]`, a new `CLUSTER_DESIGN_EFFECT` diagnostic
+  gives each cohort's empirical intra-cluster correlation of the scored outcomes within the
+  blocks, the design effect and the effective number of rollouts. It is a warning when the
+  design effect reaches 2 and a primary profile, such as one at the item level, splits the
+  profile's blocks. Otherwise it is informational. No bound changes. See
+  [How much the grouping matters](docs/independence-profiles.md#how-much-the-grouping-matters-cluster_design_effect).
+
 - **The README walks through the offline demo.** A new section follows the demo from its
   inputs (logs, design and the plan `init` writes) through the `validate` and `analyze` commands
   and the Python calls to the report directory. It reads the one-page summary and the index, and

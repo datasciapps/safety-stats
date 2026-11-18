@@ -431,6 +431,33 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
     ),
     CodeEntry(
+        code="CLUSTER_DESIGN_EFFECT",
+        severities=("WARNING", "INFO"),
+        source="logs",
+        effect="recorded",
+        assumption=(
+            "Rollouts that an independence profile puts in different blocks do not tend to "
+            "fail together. For a profile whose blocks group rollouts of several prompts, the "
+            "one-way ANOVA intra-cluster correlation of the scored outcomes within its blocks "
+            "gives the design effect 1 + (m-1)*max(rho, 0), with m the size of the block "
+            "an outcome sits in averaged over outcomes, and about N / design effect effective "
+            "rollouts. It is a warning when the design effect reaches 2 in a cohort and a "
+            "primary profile of the plan splits that profile's blocks."
+        ),
+        consequence=(
+            "Nothing is computed differently: the diagnostic records how much the rollouts' "
+            "grouping shrinks their evidence, so a reader can judge results that rest on a "
+            "finer profile. Under a fixed design the correlation also includes fixed "
+            "differences in failure rates between the blocks' prompts, so it can overstate the "
+            "dependence between rollouts."
+        ),
+        remedy=(
+            "Add the grouping profile as an independence sensitivity of the results, or make "
+            "it their primary profile, and read the bounds under it beside the primary ones."
+        ),
+        assumptions=("rollout_independence",),
+    ),
+    CodeEntry(
         code="COHORT_EMPTY",
         severities=("ERROR",),
         source="logs",

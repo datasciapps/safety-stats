@@ -11,6 +11,7 @@ from inspect_safety_stats.analysis.core import (
     _add_judge_configurations,
     _analysis_core,
 )
+from inspect_safety_stats.analysis.design_effect import cluster_design_effects
 from inspect_safety_stats.analysis.inputs import _coerce_plan, _JudgeInputs, _sorted_integrity
 from inspect_safety_stats.analysis.judge_flip import judge_flip_diagnostic
 from inspect_safety_stats.analysis.judge_panel import _judge_panel_summary
@@ -123,6 +124,7 @@ def _read_input(
         diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=str(exc)))
         return None
     diagnostics.extend(data.diagnostics)
+    cluster_design_effects(plan, data, diagnostics)
     return data, judge_inputs
 
 

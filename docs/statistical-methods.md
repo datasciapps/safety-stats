@@ -2048,6 +2048,8 @@ n_{\mathrm{eff}}\approx\frac{n}{\operatorname{DEFF}}.
 
 Thus 1,000 attempts grouped into 20 highly correlated scenarios may provide much closer to 20 than 1,000 independent units of evidence.
 
+`validate` and `analyze` estimate \(\rho\), the design effect and \(n_{\mathrm{eff}}\) from the data for every independence profile whose blocks group rollouts of several prompts, and report them in the `CLUSTER_DESIGN_EFFECT` diagnostic. With unequal block sizes they take \(\rho\) from the one-way ANOVA estimator and \(m=\sum_g m_g^2/N\). See [How much the grouping matters](independence-profiles.md#how-much-the-grouping-matters-cluster_design_effect).
+
 For the initial fixed-design setting, declaring a hierarchy does not make tasks or questions random samples from a larger population. Cluster-aware analysis is used first to avoid pseudoreplication, preserve pairing, and prevent large groups from dominating through accidental row count. Resampling fixed task or question identifiers is not presented as evidence about unseen tasks unless the analysis declares a genuine cluster-sampling population. Where only rollout randomness is modeled, uncertainty should be propagated from rollouts within the fixed design; cluster bootstrap results should be labeled as sensitivity analyses rather than population confidence guarantees.
 
 ### 8.2 Cluster-level paired estimator
