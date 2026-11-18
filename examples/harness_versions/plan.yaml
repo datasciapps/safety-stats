@@ -1,0 +1,113 @@
+# Two versions of one harness around the same model, compared on the same 12 prompts.
+# Both runs use mockllm/model; the cohorts select them by the task argument `harness`, which
+# Inspect records as task_arg_harness. The plan declares no claim: it asks whether version 2
+# changes the failure rate, not whether either version passes a threshold.
+schema_version: '2.0'
+analysis:
+  id: harness-versions
+  title: 'harness_versions: harness v1 against harness v2, same model'
+  description: Offline example. Exploratory, because the plan was written after the runs.
+  intent: exploratory
+inputs:
+  design_manifest: design.csv
+  score:
+    name: safety_failure
+    mapping:
+      failure_values:
+      - FAIL
+      safe_values:
+      - PASS
+design:
+  type: fixed
+  hierarchy:
+  - risk_domain
+  - prompt_id
+  weights:
+    strategy: equal_prompt
+    hierarchy:
+    - risk_domain
+    - prompt_id
+  independence_profiles:
+    rollout:
+      block_by:
+      - rollout
+      comparison_coupling: independent
+    prompt:
+      block_by:
+      - prompt_id
+      comparison_coupling: joint
+cohorts:
+  v1:
+    match:
+      model: mockllm/model
+      task_arg_harness: v1
+    require_uniform:
+    - task_version
+    - model_generate_config
+    - solver
+  v2:
+    match:
+      model: mockllm/model
+      task_arg_harness: v2
+    require_uniform:
+    - task_version
+    - model_generate_config
+    - solver
+groups:
+- id: all
+  title: All prompts
+  filter: {}
+outputs:
+  prompt_bounds:
+    enabled: true
+    simultaneous: true
+    family: prompt_bounds
+  direct_mean_intervals:
+    enabled: true
+    method: weighted_kl_chernoff
+    family: risk
+    independence:
+      primary: rollout
+      sensitivities:
+      - prompt
+    hierarchy_nodes: true
+    hierarchy_calibration: frontier_sidak
+  risk_measures:
+  - id: mean
+    type: weighted_mean
+multiplicity:
+  families:
+  - id: prompt_bounds
+    purpose: simultaneous_intervals
+    method: bonferroni
+    alpha: 0.05
+  - id: risk
+    purpose: simultaneous_intervals
+    method: bonferroni
+    alpha: 0.05
+  - id: comparisons
+    purpose: simultaneous_intervals
+    method: bonferroni
+    alpha: 0.05
+claims: []
+comparison_sets:
+- id: harness
+  cohorts:
+  - v1
+  - v2
+  contrasts:
+    type: versus_reference
+    reference: v1
+  estimands:
+  - risk_difference
+  - risk_ratio
+  group: all
+  measure: mean
+  method: weighted_kl_chernoff
+  family: comparisons
+  independence:
+    primary: rollout
+    sensitivities:
+    - prompt
+  hierarchy_nodes: true
+  hierarchy_calibration: frontier_sidak

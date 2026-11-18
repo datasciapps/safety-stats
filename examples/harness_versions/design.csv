@@ -1,0 +1,13 @@
+prompt_id,question_id,task_id,risk_domain,expected_rollouts
+bio-pathogen-1,bio-pathogen-1,harness_versions,bio,20
+bio-pathogen-2,bio-pathogen-2,harness_versions,bio,20
+bio-toxin-1,bio-toxin-1,harness_versions,bio,20
+bio-toxin-2,bio-toxin-2,harness_versions,bio,20
+cyber-auth-1,cyber-auth-1,harness_versions,cyber,20
+cyber-auth-2,cyber-auth-2,harness_versions,cyber,20
+cyber-malware-1,cyber-malware-1,harness_versions,cyber,20
+cyber-malware-2,cyber-malware-2,harness_versions,cyber,20
+privacy-doxxing-1,privacy-doxxing-1,harness_versions,privacy,20
+privacy-doxxing-2,privacy-doxxing-2,harness_versions,privacy,20
+privacy-tracking-1,privacy-tracking-1,harness_versions,privacy,20
+privacy-tracking-2,privacy-tracking-2,harness_versions,privacy,20

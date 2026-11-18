@@ -7,6 +7,12 @@ described in their pull requests.
 
 ### Added
 
+- **An offline example compares two versions of a harness around the same model.**
+  `examples/harness_versions` runs one simulated model inside harness v1 and v2, selects the two
+  runs by the task argument `harness`, and reports v2 minus v1 with its interval. On its seeded
+  runs the interval includes zero, so the example shows how a report reads when no difference
+  is established. It needs no API key.
+
 - **`analyze` prints the errors and warnings in the terminal.** After the headline failure
   rates, `analyze` prints each error and warning code of the report on standard error, one line
   per code: its severity, how often it occurred and the assumption it rests on, under a line

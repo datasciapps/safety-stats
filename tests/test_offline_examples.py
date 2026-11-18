@@ -1,7 +1,8 @@
 """Every example that runs without a provider runs end to end here, as its README tells a reader to.
 
-Three examples need no API key: the simulated demo (``examples/demo``), the eight-sample SimpleQA
-log (``examples/real_simpleqa``) and the simulated multilingual generative example
+Four examples need no API key: the simulated demo (``examples/demo``), the simulated harness
+comparison (``examples/harness_versions``), the eight-sample SimpleQA log
+(``examples/real_simpleqa``) and the simulated multilingual generative example
 (``examples/generative_multilingual``). The scripts run as a reader runs them, in a fresh
 interpreter from a scratch directory, so a broken import, a path that only resolves from the
 repository root or a script that no longer matches the package fails here and not on a reader's
@@ -30,6 +31,7 @@ from tests.cli_output import plain
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMO = ROOT / "examples" / "demo"
+HARNESS = ROOT / "examples" / "harness_versions"
 SIMPLEQA = ROOT / "examples" / "real_simpleqa"
 MULTILINGUAL = ROOT / "examples" / "generative_multilingual"
 
@@ -182,6 +184,52 @@ def test_the_demo_steps_one_at_a_time_agree_with_the_script(
     # The script ends with show(), so its last lines are what show_results.py prints, apart
     # from the report directory it names.
     assert shown.replace(output.as_posix(), "reports/demo") in stdout
+
+
+# The harness-versions example ----------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def harness_run(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, str]:
+    """Run ``python examples/harness_versions/run_example.py`` once, from a scratch directory."""
+    workspace = tmp_path_factory.mktemp("harness-versions")
+    stdout = _completed(_run_script(HARNESS / "run_example.py", cwd=workspace))
+    return workspace, stdout
+
+
+def test_the_harness_example_prints_the_numbers_its_readme_quotes(
+    harness_run: tuple[Path, str],
+) -> None:
+    workspace, stdout = harness_run
+    report = _report(workspace / "reports" / "harness-versions")
+    assert _integrity_status(report) == "valid"
+    # examples/harness_versions/README.md, "Run it": the block it shows is printed verbatim.
+    readme = (HARNESS / "README.md").read_text(encoding="utf-8")
+    quoted = readme.split("```text\n", 1)[1].split("```", 1)[0]
+    assert quoted in stdout
+    assert "v2 minus v1, all prompts: +0.067 [-0.046, +0.176]" in quoted
+
+
+def test_the_harness_example_steps_one_at_a_time_agree_with_the_script(
+    harness_run: tuple[Path, str], tmp_path: Path
+) -> None:
+    """The README's analyze command, on the logs the script wrote, gives the same report."""
+    workspace, _ = harness_run
+    output = tmp_path / "harness-versions"
+    result = CliRunner().invoke(
+        app,
+        [
+            "analyze",
+            "--plan",
+            str(HARNESS / "plan.yaml"),
+            "--logs",
+            str(workspace / "logs" / "harness-versions"),
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0, plain(result.output)
+    assert _report(output) == _report(workspace / "reports" / "harness-versions")
 
 
 # The SimpleQA log ---------------------------------------------------------------------------
