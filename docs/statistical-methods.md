@@ -320,7 +320,7 @@ These nonlinear measures are defined on the latent prompt-level probabilities \(
 R(\widehat p;w)
 \]
 
-is a plug-in estimate and need not be unbiased for \(R(p;w)\); applying CVaR, a maximum, or entropic risk directly to one rollout per prompt can be especially misleading. The certified output must therefore emphasize uncertainty bounds, and the package should normally require repeated rollouts per item before allowing a nonlinear aggregate to drive a safety decision. A point estimate alone is descriptive.
+is a plug-in estimate and need not be unbiased for \(R(p;w)\); applying CVaR, a maximum, or entropic risk directly to one rollout per prompt can be especially misleading. The certified output must therefore emphasize uncertainty bounds, and the package should normally require repeated rollouts per item before allowing a nonlinear aggregate to drive a safety decision. A point estimate alone is descriptive. The package does not block such a claim, but `validate` and `analyze` degrade integrity with a `TAIL_MEASURE_SINGLE_ROLLOUT` warning when a claim on a CVaR, maximum or entropic measure has one classified rollout for the median prompt of its cohort and group.
 
 Suppose simultaneous prompt-level bounds satisfy
 

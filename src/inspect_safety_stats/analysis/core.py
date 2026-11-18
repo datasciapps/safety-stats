@@ -20,6 +20,7 @@ from inspect_safety_stats.analysis.judge_panel import apply_panel_derived_correc
 from inspect_safety_stats.analysis.regions import project_hierarchy_regions
 from inspect_safety_stats.analysis.results import RiskRows
 from inspect_safety_stats.analysis.risks import _group_risks, _hierarchy_risks
+from inspect_safety_stats.analysis.tail_precision import single_rollout_tail_claims
 from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.models import AnalysisPlan, JudgeSpec
 from inspect_safety_stats.decision.engine import mandatory_statuses
@@ -162,6 +163,7 @@ def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeI
             inputs.receipt,
         )
         diagnostics.extend(data.diagnostics)
+        diagnostics.extend(single_rollout_tail_claims(judge_plan, data))
         core = _analysis_core(judge_plan, data, diagnostics)
         entry["integrity"] = core.integrity_status
         entry["claims"] = [
