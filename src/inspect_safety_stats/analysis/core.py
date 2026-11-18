@@ -70,6 +70,7 @@ def _analysis_core(
         plan,
         data,
         nodes=hierarchy_nodes,
+        diagnostics=diagnostics,
     )
     risks = _group_risks(
         plan,
