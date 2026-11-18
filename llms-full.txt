@@ -1,0 +1,500 @@
+# inspect-safety-stats: complete agent reference
+
+`inspect-safety-stats` provides finite-sample statistical risk analysis for binary LLM evaluations across safety, reliability, capability, and LLM-as-a-judge benchmarks.
+
+## Scope and core assumptions
+
+- **Fixed-design default**: Prompts, hierarchy levels (`task_id`, `question_id`, `prompt_id`), prompt weights, and planned repetitions per prompt (`expected_rollouts`, where a rollout is one model generation / epoch for a prompt) are fixed before inspecting outcomes. Rollout-level intervals assume generations are independent; select a coarser `independence_profiles` `block_by` key when items or generations share context. Intervals do not treat curated prompts as IID draws from an external population.
+- **Sampled-frame option (`design.type: sampled`)**: When prompts are drawn by a known probability mechanism from a larger frame, Horvitz-Thompson estimators extend inference to the frame mean using declared inclusion probabilities.
+- **Conservative unknown handling**: Under the default `missing: conservative_bounds` policy, unclassified rollouts (grader failures, unparseable outputs, timeouts) are completed as non-failures for lower bounds and as failures for upper bounds. Other explicit policies (`block`, `exclude`, `as_failure`) can be declared in `inputs.score`.
+- **Default estimand (`end_to_end_system`)**: Explicit target-generation provider content-policy blocks with no delivered content are counted as non-failures (`failure = False`), matching end-to-end safety red-teaming. For capability, factuality, or QA benchmarks—or whenever provider blocks should remain unclassified rather than counted as passes—set `inputs.estimand: underlying_model`.
+- **Offline execution**: Neither `inspect_safety_stats.stats` nor `analyze()` / `validate()` calls model providers or makes network requests.
+
+---
+
+## Choosing an entry point
+
+| Situation | Entry point | Files needed |
+|---|---|---|
+| You have counts, per-item failure rates, paired pass/fail lists, or LLM-judge accuracy numbers from any evaluation script | `inspect_safety_stats.stats` (and submodules `planning`, `misclassification`) | None |
+| You have completed Inspect AI `.eval` logs | CLI (`inspect-safety-stats validate` then `analyze`) or Python `analyze(plan=..., logs=...)` | `.eval` log(s), `design.csv`, `plan.yaml` (`schema_version: "2.0"`) |
+| You have JSONL/CSV logs from another evaluation harness and want the full hierarchy report, HTML dashboard, and audit sidecars | Build in-memory `inspect_ai.log.EvalLog` objects and pass `logs=[...]` to `validate()` / `analyze()` | Custom logs, `design.csv`, `plan.yaml` (`schema_version: "2.0"`) |
+
+---
+
+## Problem-to-function map (`inspect_safety_stats.stats`)
+
+All functions in `inspect_safety_stats.stats` are pure and take Python numbers, lists, or 1D NumPy arrays.
+
+### 1. Prospective rollout sample-size and power planning
+
+Import `zero_failure_sample_size` from `inspect_safety_stats.stats`. Import the remaining planning helpers from `inspect_safety_stats.stats.planning`:
+
+- `zero_failure_sample_size(*, threshold, alpha) -> int`: Minimum rollouts `n` so `0` observed failures certifies failure rate `<= threshold` at one-sided level `1 - alpha` (`1 - alpha**(1/n) <= threshold`). For `threshold=0.01, alpha=0.05`, returns `299`.
+- `certification_sample_size(*, true_rate, threshold, alpha, power, max_trials=1_000_000) -> int`: Minimum rollouts to certify `rate < threshold` with target `power` when `0 <= true_rate < threshold`.
+- `maximum_certifying_failures(*, trials, threshold, alpha) -> int`: Largest failure count rejecting `H0: p >= threshold` at one-sided `alpha` (`-1` if impossible).
+- `maximum_certifiable_failure_rate(*, trials, threshold, alpha, power) -> float | None`: Largest true rate below `threshold` certifiable with `power` (`None` if unattainable).
+- `minimum_detectable_failure_rate(*, trials, threshold, alpha, power) -> float | None`: Smallest true rate above `threshold` rejected with `power` (`None` if unattainable).
+- `rejection_sample_size(*, true_rate, threshold, alpha, power, max_trials=1_000_000) -> int`: Minimum rollouts to reject `H0: p <= threshold` when `true_rate > threshold`.
+- `fixed_design_detectable_failure_rates(trials, weights, *, threshold, support_alpha, rejection_alpha, power, independence_unit="rollout") -> FixedDesignDetectableRates`: Hoeffding-guaranteed detectable rates across heterogeneous weighted prompts (`weights` must sum to `1.0`).
+
+### 2. Per-prompt exact binomial bounds
+
+Import from `inspect_safety_stats.stats`:
+
+- `binomial_upper_bound(failures, trials, *, alpha) -> float`: One-sided `1 - alpha` Clopper-Pearson upper bound (`failures` and `trials` must be Python `int`, never `bool`).
+- `binomial_lower_bound(failures, trials, *, alpha) -> float`: One-sided `1 - alpha` Clopper-Pearson lower bound.
+- `binomial_bounds(failures, trials, *, alpha_lower, alpha_upper) -> Bounds`: Returns `.lower`, `.upper` (for a 95% two-sided interval, pass `alpha_lower=0.025, alpha_upper=0.025`).
+- `missingness_robust_binomial_bounds(failures, classified, total, *, alpha_lower, alpha_upper) -> Bounds`: Exact Clopper-Pearson bounds completing `total - classified` unclassified trials conservatively (`0` at the lower end, `1` at the upper end).
+
+### 3. Fixed-design weighted mean risk intervals
+
+Import from `inspect_safety_stats.stats`:
+
+- `weighted_kl_chernoff_mean_bounds(failures, unclassified, trials, weights, *, alpha_lower, alpha_upper, independence_unit="rollout") -> DirectMeanBounds`: Sharpest under sparse or zero failures; uses exact Bernoulli-KL inversion for equal atomic weights and weighted Poisson-Chernoff otherwise.
+- `weighted_empirical_bernstein_mean_bounds(failures, unclassified, trials, weights, *, alpha_lower, alpha_upper, independence_unit="rollout") -> DirectMeanBounds`: Variance-adaptive concentration bound for heterogeneous prompt rates.
+- `weighted_hoeffding_mean_bounds(failures, unclassified, trials, weights, *, alpha_lower, alpha_upper, independence_unit="rollout") -> DirectMeanBounds`: Distribution-free worst-case-variance reference bound.
+
+Invariants: `failures`, `unclassified`, `trials` are aligned 1D integer arrays with `failures + unclassified <= trials` and `trials > 0`; `weights` is a nonnegative 1D float array summing to `1.0`; `independence_unit` is `"rollout"` or `"prompt_cluster"`.
+
+### 4. Risk functionals over per-prompt rates
+
+Import from `inspect_safety_stats.stats` (`weights` must be nonnegative and sum to `1.0`):
+
+- `weighted_mean(values, weights) -> float`
+- `weighted_cvar(values, weights, *, beta) -> float`: Conditional Value-at-Risk over the worst `1 - beta` weight fraction (`0 <= beta < 1`).
+- `entropic_risk(values, weights, *, lambda_) -> float`: Exponentially tilted tail risk (`lambda_ > 0`; note trailing underscore in Python, `lambda` in YAML).
+- `maximum_risk(values, weights=None) -> float`: Worst-prompt rate.
+- `top_k_mean(values, *, k) -> float`: Unweighted mean of the `k` largest values (`1 <= k <= len(values)`).
+- `worst_of_k_estimate(failures, rollouts, weights, *, k) -> float`: Unbiased U-statistic estimate from rollout counts of the weighted probability that at least one of `k >= 1` attempts fails (`rollouts >= k` per prompt).
+- `worst_of_k_risk(values, weights, *, k) -> float`: Exact transform `sum_i w_i * (1 - (1 - p_i)**k)` over probabilities or prompt bounds `values` in `[0, 1]`.
+- `threshold_exceedance(values, weights, *, threshold) -> float`: Total weight where `values > threshold`.
+- `threshold_excess(values, weights, *, threshold) -> float`: Weighted mean of `max(values - threshold, 0)`.
+
+### 5. Two-model comparisons (paired and multi-rollout)
+
+Import from `inspect_safety_stats.stats`:
+
+- `newcombe_paired_interval(candidate, baseline, *, alpha_lower=0.05, alpha_upper=0.05) -> PairedDifferenceInterval`: Paired score interval for `candidate - baseline` where `True` means failure (negative `.estimate` and `.upper < 0` mean `candidate` failed less often). **Inputs must be `list[bool]` of Python `bool` values** (`[bool(x) for x in ...]`, not `0`/`1` ints or `np.bool_`).
+- `exact_mcnemar(candidate, baseline) -> McNemarResult`: Exact binomial test on discordant pairs; returns `.estimate`, `.discordant`, `.p_value_two_sided`, `.p_value_candidate_worse`, `.p_value_candidate_better`. Requires `list[bool]`.
+- `direct_risk_difference_bounds(candidate_failures, candidate_unclassified, candidate_trials, baseline_failures, baseline_unclassified, baseline_trials, weights, *, alpha_lower, alpha_upper, method="weighted_empirical_bernstein", independence_unit="rollout") -> DirectComparisonBounds`: Finite-sample multi-rollout difference bounds (`candidate - baseline`), with `method` in `{"weighted_empirical_bernstein", "weighted_kl_chernoff", "weighted_hoeffding"}`.
+- `direct_ratio_bounds(candidate_failures, candidate_unclassified, candidate_trials, baseline_failures, baseline_unclassified, baseline_trials, weights, *, alpha_lower, alpha_upper, method="weighted_empirical_bernstein", independence_unit="rollout", estimand="risk_ratio") -> RatioComparisonBounds`: Finite-sample ratio (`R_cand / R_base`) or relative reduction (`1 - R_cand / R_base`, via `estimand="relative_risk_reduction"`) bounds.
+
+### 6. LLM-judge misclassification correction and judge panels
+
+Single-judge bias correction uses **predictive values conditioned on the judge verdict** (not sensitivity/specificity):
+
+- `rho_1 = P(true failure | judge flagged failure)`
+- `rho_0 = P(true failure | judge cleared as pass)`
+- Strict informativeness requirement: `rho_1_lower > rho_0_upper`.
+- Distribution dependence: `rho_1` and `rho_0` depend on the evaluated output distribution and prompt weights. Calibration estimated on a pooled cohort does not generally certify arbitrary subgroups or nonlinear tail measures, and validated bounds must account for both rollout-interval and calibration error budgets.
+
+Functions:
+
+- `JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source="assumed", alpha=None)` (in `inspect_safety_stats.stats`)
+- `correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration, unclassified_share=0.0) -> CorrectedRisk` (in `inspect_safety_stats.stats`): Propagates `[observed_lower, observed_upper]` onto true risk `R* = R * rho_1 + (1 - R) * rho_0` over the calibration box. Valid for positively homogeneous, translation-equivariant measures (mean, max, CVaR, top-k), not entropic or threshold measures.
+- `JudgeStratumCounts(labelled, truly_unsafe, stratum_size)` and `estimate_judge_calibration(*, scenario_id, unsafe_stratum, safe_stratum, alpha) -> JudgeCalibration` (import from `inspect_safety_stats.stats.misclassification`): Builds a validated Clopper-Pearson `JudgeCalibration` box from human audit labels sampled within the judge-flagged (`unsafe_stratum`) and judge-cleared (`safe_stratum`) strata, where `truly_unsafe` counts true failures.
+- Multi-judge panels (in `inspect_safety_stats.stats`): `compose_verdicts(verdicts, rule)` (`"any"`, `"all"`, `"majority"`), `effective_votes(blocks)`, `pairwise_agreement(first, second)`, `JudgeAccuracyBox(sensitivity_lower, sensitivity_upper, specificity_lower, specificity_upper)` (prevalence-free sensitivity/specificity), and `composite_accuracy_box(judges, blocks, rule)`.
+
+---
+
+## Executable recipe 1: standalone Python (`inspect_safety_stats.stats`)
+
+```python
+from inspect_safety_stats.stats import (
+    JudgeCalibration,
+    binomial_bounds,
+    correct_judge_risk,
+    newcombe_paired_interval,
+    weighted_cvar,
+    weighted_kl_chernoff_mean_bounds,
+    zero_failure_sample_size,
+)
+from inspect_safety_stats.stats.misclassification import (
+    JudgeStratumCounts,
+    estimate_judge_calibration,
+)
+
+# 1. Zero-failure rollout planning: certify < 1% failure rate at 95% one-sided confidence
+n_required = zero_failure_sample_size(threshold=0.01, alpha=0.05)
+assert n_required == 299
+
+# 2. Exact 95% two-sided Clopper-Pearson interval for one prompt (0 failures in 50 rollouts)
+prompt_ci = binomial_bounds(0, 50, alpha_lower=0.025, alpha_upper=0.025)
+
+# 3. Weighted fixed-design mean interval across 3 prompts (with 1 unclassified rollout)
+mean_ci = weighted_kl_chernoff_mean_bounds(
+    failures=[0, 1, 3],
+    unclassified=[0, 1, 0],
+    trials=[20, 20, 20],
+    weights=[0.5, 0.3, 0.2],
+    alpha_lower=0.025,
+    alpha_upper=0.025,
+)
+cvar_80 = weighted_cvar([0.0, 0.05, 0.15], [0.5, 0.3, 0.2], beta=0.8)
+
+# 4. Judge misclassification correction: assumed box vs. human-audited validation strata
+cal_assumed = JudgeCalibration(
+    scenario_id="assumed_judge",
+    rho_1_lower=0.85,
+    rho_1_upper=1.0,
+    rho_0_lower=0.0,
+    rho_0_upper=0.02,
+)
+true_risk_assumed = correct_judge_risk(
+    observed_lower=mean_ci.lower,
+    observed_upper=mean_ci.upper,
+    observed_estimate=mean_ci.completion_estimate_lower,
+    calibration=cal_assumed,
+    unclassified_share=0.3 * (1 / 20),  # weighted unclassified share: sum(w_i * u_i / n_i)
+)
+
+cal_validated = estimate_judge_calibration(
+    scenario_id="human_audit",
+    unsafe_stratum=JudgeStratumCounts(labelled=40, truly_unsafe=37, stratum_size=80),
+    safe_stratum=JudgeStratumCounts(labelled=100, truly_unsafe=1, stratum_size=520),
+    alpha=0.025,
+)
+true_risk_validated = correct_judge_risk(
+    observed_lower=mean_ci.lower,
+    observed_upper=mean_ci.upper,
+    observed_estimate=mean_ci.completion_estimate_lower,
+    calibration=cal_validated,
+    unclassified_share=0.3 * (1 / 20),
+)
+
+# 5. Paired candidate-minus-baseline comparison (Python bool lists; True = failure)
+paired = newcombe_paired_interval(
+    candidate=[False, False, False, True, False, False],
+    baseline=[False, True, False, True, True, False],
+    alpha_lower=0.025,
+    alpha_upper=0.025,
+)
+assert paired.estimate < 0
+```
+
+---
+
+## `schema_version: "2.0"` YAML plan rules
+
+Before writing a custom YAML plan, run `inspect-safety-stats schema plan` to inspect the JSON Schema. Every model uses Pydantic `extra="forbid"`.
+
+1. **No unknown keys**: Any undeclared field raises a validation error immediately.
+2. **No booleans in numeric fields**: `true` and `false` are rejected in every integer and float field (`PlanInt`, `PlanFloat`).
+3. **Top-level sections**: `schema_version: "2.0"`, `analysis`, `inputs`, `cohorts`, `groups`, `outputs`, `multiplicity`, and `claims` are required (`claims: []` when making no threshold decisions). Optional `comparisons` and `comparison_sets` are also **top-level** keys—not nested inside `outputs`.
+4. **Prompt-bound family**: `outputs.prompt_bounds.enabled` defaults to `true` with `family: null`. Either set `outputs.prompt_bounds.family` to an entry in `multiplicity.families`, or set `outputs.prompt_bounds: {enabled: false}`; otherwise `validate` and `analyze` report `PLAN_UNKNOWN_REFERENCE` (`Integrity: invalid`, exit code `3`).
+5. **Zero-tolerance column**: `policy.zero_tolerance.enabled` defaults to `true` and expects a boolean `zero_tolerance` column in `design.csv`. Set `policy: {zero_tolerance: {enabled: false}}` if your manifest omits that column.
+6. **Non-empty risk measures**: `outputs.risk_measures` defaults to `[]`; declare at least `{id: mean, type: weighted_mean}` so `report.group_risks` is populated.
+7. **Confirmatory timestamp**: `analysis.intent: confirmatory` requires `analysis.plan_frozen_at` (ISO-8601 UTC) no later than the earliest matched evaluation's creation time; a later freeze time emits `PLAN_POSTHOC` (`Integrity: invalid`). Use `analysis.intent: exploratory` for post hoc analysis (exploratory analyses never return `PASS`).
+8. **Type-exact score mapping**: `inputs.score.mapping` compares values with exact types (`"1"` != `1` != `1.0` != `true`). Categorical mappings must supply both `failure_values` and `safe_values`.
+9. **Claim source exclusivity**: Use `claims: []` when making no threshold decisions. Each populated claim requires `id`, `title`, `family` (in `multiplicity.families`), and `acceptable_upper < unacceptable_lower`, plus **either** all three of `cohort`, `group`, and `measure` (aggregate claim) **or** `comparison` alone (comparison claim)—never both.
+
+---
+
+## Executable recipe 2: minimal valid `v2.0` Inspect pipeline
+
+Given `design.csv` with one row per prompt and required columns `prompt_id,question_id,task_id` (plus integer `expected_rollouts` giving the planned epochs/repetitions for each prompt when `design.require_expected_rollouts: true`):
+
+```yaml
+schema_version: "2.0"
+
+analysis:
+  id: minimal-fixed-design
+  title: Minimal fixed-design failure analysis
+  intent: confirmatory
+  plan_frozen_at: 2026-08-01T00:00:00Z
+
+inputs:
+  design_manifest: design.csv
+  estimand: underlying_model
+  score:
+    name: model_graded_qa
+    mapping:
+      failure_values: ["I"]
+      safe_values: ["C"]
+    missing: conservative_bounds
+    errors: end_to_end
+
+design:
+  type: fixed
+  hierarchy: [task_id, question_id, prompt_id]
+  weights:
+    strategy: equal_prompt
+  independence_profiles:
+    rollout:
+      block_by: [rollout]
+      comparison_coupling: independent
+
+cohorts:
+  candidate:
+    match:
+      model: openai/gpt-4o
+
+groups:
+  - id: all
+    title: All declared prompts
+    filter: {}
+    weights:
+      strategy: equal_prompt
+
+outputs:
+  prompt_bounds:
+    enabled: true
+    simultaneous: true
+    family: prompt_family
+    coverage_mode: two_sided
+  direct_mean_intervals:
+    enabled: true
+    method: weighted_kl_chernoff
+    family: mean_family
+    groups: [all]
+    simultaneous: true
+    coverage_mode: two_sided
+    independence:
+      primary: rollout
+  risk_measures:
+    - {id: mean, type: weighted_mean}
+    - {id: cvar_75, type: cvar, beta: 0.75}
+
+multiplicity:
+  families:
+    - id: prompt_family
+      purpose: simultaneous_intervals
+      method: bonferroni
+      alpha: 0.05
+    - id: mean_family
+      purpose: simultaneous_intervals
+      method: bonferroni
+      alpha: 0.05
+    - id: decision_gate
+      purpose: all_mandatory
+      method: intersection_union
+      alpha: 0.05
+
+claims:
+  - id: mean_failure_gate
+    title: Weighted mean failure rate stays within threshold
+    cohort: candidate
+    group: all
+    measure: mean
+    family: decision_gate
+    acceptable_upper: 0.25
+    unacceptable_lower: 0.60
+    mandatory: true
+
+policy:
+  zero_tolerance:
+    enabled: false
+```
+
+Run the CLI against the repository's bundled offline SimpleQA example (`examples/real_simpleqa/`):
+
+```bash
+inspect-safety-stats validate \
+  --plan examples/real_simpleqa/safety-plan.yaml \
+  --logs examples/real_simpleqa/simpleqa-8-real.eval
+
+inspect-safety-stats analyze \
+  --plan examples/real_simpleqa/safety-plan.yaml \
+  --logs examples/real_simpleqa/simpleqa-8-real.eval \
+  --output /tmp/simpleqa-report \
+  --overwrite
+```
+
+---
+
+## Executable recipe 3: adapting external JSONL/CSV logs and comparing cohorts
+
+`validate()` and `analyze()` accept in-memory `inspect_ai.log.EvalLog` objects while reading `design.csv` and `plan.yaml` from disk. Preserve each run's actual creation timestamp and use `intent: exploratory` whenever the plan was not frozen before running the evaluation:
+
+```python
+from pathlib import Path
+import tempfile
+
+from inspect_ai.log import EvalConfig, EvalDataset, EvalLog, EvalSample, EvalSpec
+from inspect_ai.scorer import Score
+
+from inspect_safety_stats import analyze, validate
+
+
+def build_eval_log(eval_id: str, model: str, rows: list[tuple[str, int, str]]) -> EvalLog:
+    return EvalLog(
+        status="success",
+        eval=EvalSpec(
+            eval_id=eval_id,
+            run_id=eval_id,
+            created="2026-09-01T12:00:00+00:00",  # preserve actual run creation timestamp
+            task="custom_harness",
+            model=model,
+            dataset=EvalDataset(name="custom_suite"),
+            config=EvalConfig(epochs=2),
+        ),
+        samples=[
+            EvalSample(
+                id=prompt_id,
+                epoch=epoch,
+                input="",
+                target="",
+                scores={"judge_verdict": Score(value=verdict)},
+            )
+            for prompt_id, epoch, verdict in rows
+        ],
+    )
+
+
+candidate_log = build_eval_log(
+    "cand-001",
+    "custom/candidate-v2",
+    [("p1", 1, "PASS"), ("p1", 2, "PASS"), ("p2", 1, "PASS"), ("p2", 2, "FAIL")],
+)
+baseline_log = build_eval_log(
+    "base-001",
+    "custom/baseline-v1",
+    [("p1", 1, "FAIL"), ("p1", 2, "PASS"), ("p2", 1, "FAIL"), ("p2", 2, "FAIL")],
+)
+
+with tempfile.TemporaryDirectory() as tmp:
+    root = Path(tmp)
+    (root / "design.csv").write_text(
+        "prompt_id,question_id,task_id,expected_rollouts\n"
+        "p1,q1,coding,2\n"
+        "p2,q2,reasoning,2\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    (root / "plan.yaml").write_text(
+        """schema_version: "2.0"
+analysis:
+  id: external-comparison-demo
+  title: External harness cohort comparison
+  intent: exploratory
+inputs:
+  design_manifest: design.csv
+  estimand: underlying_model
+  score:
+    name: judge_verdict
+    mapping:
+      failure_values: ["FAIL"]
+      safe_values: ["PASS"]
+design:
+  type: fixed
+  weights:
+    strategy: equal_prompt
+  independence_profiles:
+    rollout:
+      block_by: [rollout]
+cohorts:
+  candidate:
+    match: {model: custom/candidate-v2}
+  baseline:
+    match: {model: custom/baseline-v1}
+groups:
+  - id: all
+    filter: {}
+    weights: {strategy: equal_prompt}
+outputs:
+  prompt_bounds: {enabled: false}
+  direct_mean_intervals:
+    enabled: true
+    method: weighted_kl_chernoff
+    family: direct_means
+    groups: [all]
+    independence: {primary: rollout}
+  risk_measures:
+    - {id: mean, type: weighted_mean}
+comparisons:
+  - id: cand_vs_base
+    candidate: candidate
+    baseline: baseline
+    group: all
+    measure: mean
+    estimand: risk_difference
+    method: weighted_kl_chernoff
+    family: comparison_family
+    independence: {primary: rollout}
+multiplicity:
+  families:
+    - {id: direct_means, purpose: simultaneous_intervals, method: bonferroni, alpha: 0.05}
+    - {id: comparison_family, purpose: simultaneous_intervals, method: bonferroni, alpha: 0.05}
+claims: []
+policy:
+  zero_tolerance: {enabled: false}
+""",
+        encoding="utf-8",
+        newline="\n",
+    )
+    integrity = validate(plan=root / "plan.yaml", logs=[candidate_log, baseline_log])
+    assert integrity.status == "valid"
+    report = analyze(plan=root / "plan.yaml", logs=[candidate_log, baseline_log])
+    comp_ci = report.comparisons[0].intervals[0]
+    assert comp_ci.lower < comp_ci.upper
+```
+
+---
+
+## CLI commands, exit codes, and report artifacts
+
+### Commands
+
+Commands marked experimental may change between releases. `--help` on any command is the
+authoritative option list.
+
+- `inspect-safety-stats init --logs <path> [--logs <path> ...] [--failure-values <value> ... | --failure-threshold <float>] [--safe-values <value> ...] [--score <scorer>] [--group-by <metadata_field>] [--baseline <model>] [--alpha 0.05] [--nested-weights|--equal-prompt-weights] [--output <dir>] [--overwrite] [--intent exploratory]` (experimental): writes a starter `design.csv` and plan from completed Inspect logs.
+- `inspect-safety-stats plan zero-failure --threshold <float> [--alpha 0.05] [--family-size 1]`
+- `inspect-safety-stats plan certification --threshold <float> --anticipated-rate <float> [--alpha 0.05] [--power 0.9] [--family-size 1]`
+- `inspect-safety-stats plan detectable-rate --trials <int> --threshold <float> [--alpha 0.05] [--power 0.9] [--family-size 1]`
+- `inspect-safety-stats plan fixed-design (--manifest <csv> --threshold <float> | --plan <yaml|json> [--manifest <csv>]) [--alpha 0.05] [--power 0.9] [--rollouts <int>] [--weights equal_prompt|nested_equal|explicit] [--hierarchy task_id,question_id,prompt_id] [--weight-column <column>] [--independence-unit rollout|prompt_cluster] [--family-size 1]`: with `--plan`, every claim is planned as `analyze` will decide it, and options the plan supplies are refused; `--weight-column` applies only with `--weights explicit`.
+- `inspect-safety-stats plan pilot --manifest <csv> --per-stratum <int> --seed <int> --output <csv> [--strata task_id]` (experimental): draws a random pilot within strata of a design manifest.
+- `inspect-safety-stats plan comparison --manifest <csv> --margin <float> [--alpha 0.05] [--power 0.9] [--candidate-rollouts <int>] [--baseline-rollouts <int>] [--weights equal_prompt|nested_equal|explicit] [--hierarchy task_id,question_id,prompt_id] [--weight-column <column>] [--independence-unit rollout|pair|prompt_cluster] [--coverage-mode two_sided|per_direction] [--family-size 1]` (experimental): risk differences a two-arm design resolves at a margin.
+- `inspect-safety-stats validate --plan <yaml|json> (--logs <path> [--logs <path> ...] | --runs <file> --rollouts <file>) [--parallel <int>] [--decision-policy <file>] [--registration-receipt <file>]`
+- `inspect-safety-stats analyze --plan <yaml|json> (--logs <path> [--logs <path> ...] | --runs <file> --rollouts <file>) [--output <dir>] [--overwrite] [--parallel <int>] [--decision-exit-codes] [--allow-invalid] [--decision-policy <file>] [--registration-receipt <file>]`
+  - `--runs` / `--rollouts` (experimental, [docs/rollout-files.md](docs/rollout-files.md)) read results from any harness as two JSONL or CSV files instead of Inspect logs; give both, and not together with `--logs`.
+  - `--decision-policy` (experimental, [docs/decision-policy.md](docs/decision-policy.md)) replaces the plan's thresholds for the claims it sets without changing the plan's hash.
+  - `--registration-receipt` (experimental) checks a receipt written by `hash-plan --register` against the plan's hash and the earliest evaluation start.
+- `inspect-safety-stats visualize --report <dir|report.json> [--output <html_path>] [--overwrite]`
+- `inspect-safety-stats schema plan|report|claims|decision-policy|generative-plan` (`claims` and `decision-policy` are experimental)
+- `inspect-safety-stats hash-plan --plan <yaml|json> [--inference | --register <new_file>]`: prints the plan's canonical SHA-256. `--inference` prints the inference hash instead (the hash without the thresholds a decision policy may set; experimental). `--register` also writes a registration receipt to a new file for `analyze --registration-receipt` (experimental); it is never overwritten.
+- `inspect-safety-stats version`
+- `inspect-safety-stats generative compile|materialize|analyze|budget ...` (experimental taxonomy-sampled evaluation workflow)
+
+### Exit-code contract
+
+Every command draws its exit status from `ExitCode` in `src/inspect_safety_stats/cli.py`
+([docs/api-reference.md](docs/api-reference.md#exit-codes)).
+
+| Command | Exit code | Meaning |
+|---|---:|---|
+| Any CLI command | `0` | The command completed. |
+| Any CLI command | `2` | Invalid or missing CLI options/arguments (Typer usage error), before the command runs. |
+| Any CLI command | `3` | The command could not run, or its result supports no claim (for example an unreadable plan). |
+| `validate` | `0` | Integrity is `valid` or `degraded` (inspect printed warnings). |
+| `validate` | `3` | Integrity is `invalid`. |
+| `analyze` (default) | `0` | Analysis completed and integrity is `valid` or `degraded`. |
+| `analyze` (default) | `3` | Integrity is `invalid` (`report.json` is still written; pass `--allow-invalid` to exit `0` instead), or an execution error prevented report creation. |
+| `analyze --decision-exit-codes` | `0` / `1` / `2` / `3` | `0` = `PASS`, `1` = `FAIL`, `2` = `INCONCLUSIVE`, `3` = `invalid` integrity or execution failure. With `--allow-invalid`, an `invalid` integrity exits `2`, because an invalid analysis is never `PASS`. |
+| `plan fixed-design --plan` | `1` | No claim of the plan could be planned (`ExitCode.NOTHING_PLANNED`). |
+| `hash-plan` | `3` | The plan cannot be read or validated, or the `--register` file already exists. |
+| `generative analyze` | `3` | The report carries an `ERROR` diagnostic (the report is still written). |
+
+### Report directory contents (`SafetyReport.write(output)`)
+
+Output directories are write-once unless `overwrite=True` / `--overwrite`:
+
+- `report.json`: Canonical machine-readable `SafetyReport` (`schema_version: "2.0"`). Inspect `integrity`, `group_risks`, `hierarchy_risks`, `comparisons`, `comparison_sets`, `prompt_estimates`, `claims`, and `decision`.
+- `report.md`: Human-readable Markdown summary (metrics-first unless `report.include_decisions: true`).
+- `report.html`: Self-contained interactive HTML explorer (no server or network access required).
+- `plan.resolved.yaml` and `design.resolved.csv`: Resolved configuration and prompt weights.
+- `hierarchy-risks.csv`, `comparisons.csv`, `comparison-sets.csv`, `observations.csv`: Flat tabular exports.
+- `checksums.json`: SHA-256 manifest over written artifacts.
+
+---
+
+## Further documentation
+
+- Root index: [llms.txt](llms.txt)
+- Installable Agent Skill: [skills/inspect-safety-stats/SKILL.md](skills/inspect-safety-stats/SKILL.md)
+- Getting started tutorial: [docs/getting-started.md](docs/getting-started.md)
+- Complete YAML plan reference: [docs/plan-reference.md](docs/plan-reference.md)
+- Judge misclassification guide: [docs/judge-misclassification.md](docs/judge-misclassification.md)
+- Multi-model comparison guide: [docs/model-comparisons.md](docs/model-comparisons.md)
+- Offline real-log example: [examples/real_simpleqa/README.md](examples/real_simpleqa/README.md)
