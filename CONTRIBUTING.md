@@ -284,8 +284,12 @@ All three are first-class platforms.
 - **CI coverage:**
   - Linux runs on Python 3.11–3.13 for every pull request.
   - Windows runs on 3.12 for every pull request.
-  - macOS runs on pushes to `main`, weekly, and on demand. For a platform-sensitive branch, run
+  - A push to `main` runs lint, types, the build and one Linux test job: the pull request
+    already ran the full matrix on the merged tree.
+  - macOS, and the full matrix, run weekly and on demand. For a platform-sensitive branch, run
     `gh workflow run CI --ref <branch>`.
+  - Runner minutes on this private repository are billed to its owner. Push a branch when it is
+    ready for review, not after every commit.
 
 ## 7. Tests
 
