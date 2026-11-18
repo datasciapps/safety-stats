@@ -427,6 +427,20 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope=location_scope,
                 )
             )
+    for scenario in calibration.scenarios if calibration else []:
+        unknown_cohorts = sorted(set(scenario.cohorts or {}) - set(plan.cohorts))
+        if unknown_cohorts:
+            diagnostics.append(
+                Diagnostic(
+                    code="PLAN_UNKNOWN_REFERENCE",
+                    severity="ERROR",
+                    message=(
+                        f"inputs.judge_calibration scenario {scenario.id!r} references unknown "
+                        "cohorts: " + ", ".join(unknown_cohorts)
+                    ),
+                    scope=plan_scope("inputs", "judge_calibration"),
+                )
+            )
     diagnostics.extend(_worst_of_k_interval_problems(plan))
     diagnostics.extend(anytime_bound_problems(plan))
     if not plan.outputs.risk_measures:

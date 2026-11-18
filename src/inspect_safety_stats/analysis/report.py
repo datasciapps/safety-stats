@@ -22,6 +22,7 @@ from inspect_safety_stats.schema.reports import (
     DecisionPolicyRecord,
     Diagnostic,
     JudgeCalibrationPresentation,
+    JudgeCohortBoxRecord,
     JudgeScenarioRecord,
     RateRangeRecord,
     ReportPresentation,
@@ -152,6 +153,21 @@ def _presentation(plan: AnalysisPlan) -> ReportPresentation:
                         id=item.id,
                         rho_1=RateRangeRecord(lower=item.rho_1.lower, upper=item.rho_1.upper),
                         rho_0=RateRangeRecord(lower=item.rho_0.lower, upper=item.rho_0.upper),
+                        cohorts=(
+                            None
+                            if item.cohorts is None
+                            else {
+                                cohort_id: JudgeCohortBoxRecord(
+                                    rho_1=RateRangeRecord(
+                                        lower=box.rho_1.lower, upper=box.rho_1.upper
+                                    ),
+                                    rho_0=RateRangeRecord(
+                                        lower=box.rho_0.lower, upper=box.rho_0.upper
+                                    ),
+                                )
+                                for cohort_id, box in sorted(item.cohorts.items())
+                            }
+                        ),
                     )
                     for item in calibration.scenarios
                 ],

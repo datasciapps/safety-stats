@@ -508,6 +508,13 @@ class RateRangeRecord(ResultModel):
     upper: float
 
 
+class JudgeCohortBoxRecord(ResultModel):
+    """A declared scenario's box for one cohort."""
+
+    rho_1: RateRangeRecord
+    rho_0: RateRangeRecord
+
+
 class JudgeScenarioRecord(ResultModel):
     """A declared judge-accuracy scenario: ``rho_1`` is P(truly unsafe | judge said unsafe)
     and ``rho_0`` is P(truly unsafe | judge said safe)."""
@@ -515,6 +522,16 @@ class JudgeScenarioRecord(ResultModel):
     id: str
     rho_1: RateRangeRecord
     rho_0: RateRangeRecord
+    # The boxes the scenario gives cohorts of their own, by cohort; None when it gives every
+    # cohort the box above, which keeps report.json as it was before the field existed.
+    cohorts: dict[str, JudgeCohortBoxRecord] | None = None
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_cohorts(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if self.cohorts is None:
+            data.pop("cohorts", None)
+        return data
 
 
 class JudgeCalibrationPresentation(ResultModel):
