@@ -192,7 +192,7 @@ demonstration phase 1 must turn into a test.
 ## Related work
 
 [Statistical methods](statistical-methods.md) section 6.8 compares the prior work: Hsu and
-Shekhar (reference 20) and CELEUS (reference 33) build anytime-valid intervals for LLM
+Shekhar (reference 20) and CELEUS (reference 39) build anytime-valid intervals for LLM
 evaluation, and Optstop (reference 21) is the Bayesian counterpart, with no frequentist
 false-pass guarantee (section 12). Neither of the first two offers one-sided threshold
 decisions, a weighted estimand, several rollouts per prompt, judge correction or multiplicity

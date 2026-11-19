@@ -1510,7 +1510,7 @@ Updating a Bernoulli confidence sequence after every correlated epoch is invalid
 
 ### 6.8 AI-evaluation precedent
 
-Sequential inference is emerging explicitly in AI evaluation. *Efficient Sequential Evaluation of Large Language Models* constructs confidence sequences by inverting test supermartingales and studies adaptive question selection [20]. CELEUS builds anytime-valid confidence intervals from e-processes and combines uncertainty-guided sample selection with a surrogate for the items not yet evaluated [37]. Both papers target the unweighted mean score of one model over a pool of items, with one outcome per item. Neither offers one-sided threshold decisions, a declared weighted estimand, several rollouts per prompt, correction for judge error, or multiplicity across claims. Both use non-uniform selection with inverse-probability weighting, but only as a sampling device, not as a weighted target. Optstop implements Bayesian adaptive stopping for Inspect AI, but its posterior-width criterion is not the same as an anytime-valid frequentist confidence sequence [21]. This remains a useful future integration point if users later require a frequentist false-pass guarantee after adaptive stopping; it does not justify adding sequential complexity to the fixed-horizon core.
+Sequential inference is emerging explicitly in AI evaluation. *Efficient Sequential Evaluation of Large Language Models* constructs confidence sequences by inverting test supermartingales and studies adaptive question selection [20]. CELEUS builds anytime-valid confidence intervals from e-processes and combines uncertainty-guided sample selection with a surrogate for the items not yet evaluated [39]. Both papers target the unweighted mean score of one model over a pool of items, with one outcome per item. Neither offers one-sided threshold decisions, a declared weighted estimand, several rollouts per prompt, correction for judge error, or multiplicity across claims. Both use non-uniform selection with inverse-probability weighting, but only as a sampling device, not as a weighted target. Optstop implements Bayesian adaptive stopping for Inspect AI, but its posterior-width criterion is not the same as an anytime-valid frequentist confidence sequence [21]. This remains a useful future integration point if users later require a frequentist false-pass guarantee after adaptive stopping; it does not justify adding sequential complexity to the fixed-horizon core.
 
 ### 6.9 Implemented: human labels for a judge calibration (experimental)
 
@@ -1524,7 +1524,7 @@ One confidence sequence is implemented: for the human labels of a validated judg
 \frac{\pi_n(K)}{\pi_0(K)}=(n+1)\,h_n(K).
 \]
 
-At the true \(K^\ast\), the prior-posterior ratio \(\pi_0(K^\ast)/\pi_n(K^\ast)\) is a nonnegative martingale with initial value one (Waudby-Smith and Ramdas [39], Proposition 1). Ville's inequality gives \(\Pr(\exists n:\pi_0(K^\ast)/\pi_n(K^\ast)\ge 1/a)\le a\), so
+At the true \(K^\ast\), the prior-posterior ratio \(\pi_0(K^\ast)/\pi_n(K^\ast)\) is a nonnegative martingale with initial value one (Waudby-Smith and Ramdas [41], Proposition 1). Ville's inequality gives \(\Pr(\exists n:\pi_0(K^\ast)/\pi_n(K^\ast)\ge 1/a)\le a\), so
 
 \[
 C_n=\{K:(n+1)\,h_n(K)>a\}
@@ -2481,7 +2481,7 @@ is a nonnegative martingale with \(N_0=1\). \(\psi_\lambda\) is concave, so by J
 G_t(\lambda)=\exp\bigl(\lambda S_t-t\,\psi_\lambda(\bar m_t)\bigr)\le N_t(\lambda).
 \]
 
-For weights \(w_j>0\) summing to one on values \(\lambda_j>0\), all fixed before the data, \(N_t=\sum_j w_j N_t(\lambda_j)\) is again a nonnegative martingale with \(N_0=1\), and \(G_t=\sum_j w_j G_t(\lambda_j)\le N_t\). Ville's inequality [40] gives \(\Pr(\exists t:N_t\ge 1/\alpha)\le\alpha\). Define
+For weights \(w_j>0\) summing to one on values \(\lambda_j>0\), all fixed before the data, \(N_t=\sum_j w_j N_t(\lambda_j)\) is again a nonnegative martingale with \(N_0=1\), and \(G_t=\sum_j w_j G_t(\lambda_j)\le N_t\). Ville's inequality [42] gives \(\Pr(\exists t:N_t\ge 1/\alpha)\le\alpha\). Define
 
 \[
 L_t=\inf\Bigl\{m\in[0,1]:\sum_j w_j\exp\bigl(\lambda_j S_t-t\,\psi_{\lambda_j}(m)\bigr)<1/\alpha\Bigr\}.
@@ -2605,10 +2605,10 @@ A model may behave differently when it recognizes an evaluation. Statistical pre
 Every bound in this document is therefore conditional on the evaluated model not strategically
 underperforming. A model that deliberately fails to show a capability, or behaves more safely
 because it recognizes the evaluation, is measured correctly for the behaviour it chose to show;
-no amount of rollouts makes that behaviour representative [33]. Detecting sandbagging is a
+no amount of rollouts makes that behaviour representative [35]. Detecting sandbagging is a
 separate evaluation. One proposed method injects noise into the model's weights: a model that
 is not sandbagging degrades steadily as the noise grows, while a sandbagging model can improve
-anomalously. Its authors implemented it in Inspect [34]. This package does not run such checks.
+anomalously. Its authors implemented it in Inspect [36]. This package does not run such checks.
 
 ### 15.3 Scorer error
 
@@ -2658,7 +2658,7 @@ and \(U=1\) when \(Se_L=0\). By the union bound, \(\Pr(R(\pi;w)\le U)\ge 1-\alph
 
 **Lower bound.** Without a bound on \(FPR_j\), every judged failure may be a false positive: \(\pi_j=0\) with \(FPR_j=q_j\) reproduces any \(q_j\). The lower end is therefore zero, also for a perfectly sensitive judge.
 
-**Relation to Rogan--Gladen.** With a declared specificity \(Sp=1-FPR\) and \(Se+Sp>1\), the inversion \(\pi=(q-1+Sp)/(Se+Sp-1)\) [41] has
+**Relation to Rogan--Gladen.** With a declared specificity \(Sp=1-FPR\) and \(Se+Sp>1\), the inversion \(\pi=(q-1+Sp)/(Se+Sp-1)\) [43] has
 
 \[
 \frac{\partial\pi}{\partial Sp}=\frac{Se-q}{(Se+Sp-1)^2}\ge 0\quad\text{when } q\le Se ,
@@ -2693,7 +2693,7 @@ comparable to human drivers by test driving alone would take hundreds of million
 of billions of miles. They concluded that test driving alone cannot provide sufficient
 evidence of safety, that new ways of demonstrating it are needed, that even with them safety may
 not be established with certainty, and that regulation must therefore adapt as the technology
-and the evidence develop [35].
+and the evidence develop [37].
 
 The same holds here. A pre-deployment evaluation can bound rates that its rollout budget can
 reach. Below that, the residual risk is not shown to be small, only not measured. Claims about
@@ -2859,18 +2859,18 @@ That is the role this Inspect extension should fill.
 
 ### Threats to validity and small-sample evaluation
 
-33. T. van der Weij, F. Hofstätter, O. Jaffe, S. F. Brown, and F. R. Ward, “AI Sandbagging: Language Models can Strategically Underperform on Evaluations,” 2024. [arXiv:2406.07358](https://arxiv.org/abs/2406.07358)
-34. C. Tice, P. A. Kreer, N. Helm-Burger, P. S. Shahani, F. Ryzhenkov, F. Roger, C. Neo, J. Haimes, F. Hofstätter, and T. van der Weij, “Noise Injection Reveals Hidden Capabilities of Sandbagging Language Models,” NeurIPS 2025. [arXiv:2412.01784](https://arxiv.org/abs/2412.01784)
-35. N. Kalra and S. M. Paddock, “Driving to safety: How many miles of driving would it take to demonstrate autonomous vehicle reliability?,” *Transportation Research Part A: Policy and Practice* 94, 182–193, 2016. [doi:10.1016/j.tra.2016.09.010](https://doi.org/10.1016/j.tra.2016.09.010)
-36. S. Bowyer, L. Aitchison, and D. R. Ivanova, “Position: Don't Use the CLT in LLM Evals With Fewer Than a Few Hundred Datapoints,” ICML 2025. [arXiv:2503.01747](https://arxiv.org/abs/2503.01747)
+35. T. van der Weij, F. Hofstätter, O. Jaffe, S. F. Brown, and F. R. Ward, “AI Sandbagging: Language Models can Strategically Underperform on Evaluations,” 2024. [arXiv:2406.07358](https://arxiv.org/abs/2406.07358)
+36. C. Tice, P. A. Kreer, N. Helm-Burger, P. S. Shahani, F. Ryzhenkov, F. Roger, C. Neo, J. Haimes, F. Hofstätter, and T. van der Weij, “Noise Injection Reveals Hidden Capabilities of Sandbagging Language Models,” NeurIPS 2025. [arXiv:2412.01784](https://arxiv.org/abs/2412.01784)
+37. N. Kalra and S. M. Paddock, “Driving to safety: How many miles of driving would it take to demonstrate autonomous vehicle reliability?,” *Transportation Research Part A: Policy and Practice* 94, 182–193, 2016. [doi:10.1016/j.tra.2016.09.010](https://doi.org/10.1016/j.tra.2016.09.010)
+38. S. Bowyer, L. Aitchison, and D. R. Ivanova, “Position: Don't Use the CLT in LLM Evals With Fewer Than a Few Hundred Datapoints,” ICML 2025. [arXiv:2503.01747](https://arxiv.org/abs/2503.01747)
 
 ### Sequential evaluation and judge reliability
 
-37. Z. Zhou, Z. Ye, Z. Chen, B. Li, and F. Liu, “CELEUS: Certifiable and Efficient LLM Evaluation via E-Processes,” 2026. [arXiv:2606.20820](https://arxiv.org/abs/2606.20820)
-38. Y. Gao, “How Reliable Is Your Jailbreak Judge? Calibration and Adversarial Robustness of Automated ASR Scoring,” 2026. [arXiv:2606.25487](https://arxiv.org/abs/2606.25487)
-39. I. Waudby-Smith and A. Ramdas, “Confidence sequences for sampling without replacement,” *Advances in Neural Information Processing Systems* 33, 2020. [arXiv:2006.04347](https://arxiv.org/abs/2006.04347)
-40. J. Ville, *Étude critique de la notion de collectif*, Gauthier-Villars, Paris, 1939.
-41. W. J. Rogan and B. Gladen, “Estimating prevalence from the results of a screening test,” *American Journal of Epidemiology* 107(1), 71–76, 1978. [doi:10.1093/oxfordjournals.aje.a112510](https://doi.org/10.1093/oxfordjournals.aje.a112510)
+39. Z. Zhou, Z. Ye, Z. Chen, B. Li, and F. Liu, “CELEUS: Certifiable and Efficient LLM Evaluation via E-Processes,” 2026. [arXiv:2606.20820](https://arxiv.org/abs/2606.20820)
+40. Y. Gao, “How Reliable Is Your Jailbreak Judge? Calibration and Adversarial Robustness of Automated ASR Scoring,” 2026. [arXiv:2606.25487](https://arxiv.org/abs/2606.25487)
+41. I. Waudby-Smith and A. Ramdas, “Confidence sequences for sampling without replacement,” *Advances in Neural Information Processing Systems* 33, 2020. [arXiv:2006.04347](https://arxiv.org/abs/2006.04347)
+42. J. Ville, *Étude critique de la notion de collectif*, Gauthier-Villars, Paris, 1939.
+43. W. J. Rogan and B. Gladen, “Estimating prevalence from the results of a screening test,” *American Journal of Epidemiology* 107(1), 71–76, 1978. [doi:10.1093/oxfordjournals.aje.a112510](https://doi.org/10.1093/oxfordjournals.aje.a112510)
 
 ---
 
