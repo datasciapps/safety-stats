@@ -372,9 +372,10 @@ the difference directly, and the output's `Interval method` line says so. They d
 for:
 
 - **A `comparison_sets` entry, whatever its method.** A comparison set bounds each arm at half
-  the alpha and subtracts the arms' endpoints, which is wider. In the example above, a true
-  difference of −0.059 then gives an upper bound at or below the margin in about 77% of runs
-  when the baseline fails on 30% of rollouts, and in about 76% at 50%, not the planned 90%.
+  the alpha and subtracts the arms' endpoints, which is wider. In the example above, with
+  `method: weighted_hoeffding`, a true difference of −0.059 then gives an upper bound at or
+  below the margin in about 77% of runs when the baseline fails on 30% of rollouts, and in
+  about 76% at 50%, not the planned 90%.
 - **The other methods.** `weighted_kl_chernoff`, the recommended method, bounds each arm
   separately as a comparison set does, and `weighted_empirical_bernstein` adapts to the
   observed variance. Both are narrower than `weighted_hoeffding` when failures are sparse, and

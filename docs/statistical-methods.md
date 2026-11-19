@@ -1947,14 +1947,15 @@ rectangle under `weighted_hoeffding` is \(s_C(\alpha_U/2)+s_B(\alpha_U/2)\) rath
 \(\alpha_U=0.025\), and \(g_U\) no longer suffices. In the example of
 [Planning a comparison](model-comparisons.md#planning-a-comparison-experimental) (100 equally
 weighted prompts, 10 unpaired rollouts per arm, \(\delta=0.05\), \(\alpha_U=0.025\),
-\(1-\beta=0.9\)), a seeded simulation of 10,000 runs at the planned
-\(\Delta=\delta-g_U\approx-0.059\) gives \(U_\Delta\le\delta\) in 0.773 of them for the
-`weighted_hoeffding` rectangle at a baseline rate of 0.3, and in 0.755 at 0.5 (standard error
-at most 0.005). The `weighted_kl_chernoff` and `weighted_empirical_bernstein` differences are
-narrower than the Hoeffding difference on sparse failures and can be wider at moderate rates.
-In the same example, KL/Chernoff's upper half-width with both arms failing at rate 0.5 is about
-0.093 against Hoeffding's 0.061, and at a baseline rate of 0.5 the planned difference gives
-\(U_\Delta\le\delta\) in 0.756 of the runs. The planner states no guarantee for these methods,
+\(1-\beta=0.9\)), `research/comparison_planning_scope.py` simulates 10,000 runs at the
+planned \(\Delta=\delta-g_U\approx-0.059\). \(U_\Delta\le\delta\) holds in 0.773 of them for
+the `weighted_hoeffding` rectangle at a baseline rate of 0.3, and in 0.755 at 0.5 (standard
+error at most 0.005); for the `weighted_empirical_bernstein` rectangle, in 0.582 at either
+rate. The `weighted_kl_chernoff` and `weighted_empirical_bernstein` differences are narrower
+than the Hoeffding difference on sparse failures and can be wider at moderate rates. In the
+same example, KL/Chernoff's upper half-width equals Hoeffding's 0.061 when both arms observe
+a failure rate of 0.12 and is 0.093 at 0.5, and at a baseline rate of 0.5 the planned
+difference gives \(U_\Delta\le\delta\) in 0.756 of the runs. The planner states no guarantee for these methods,
 in either direction. Unclassified outcomes widen the analysis bounds and are not planned for.
 
 ### 7.8 Arm contrasts on a generative design (experimental)
