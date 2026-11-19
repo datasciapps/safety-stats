@@ -14,18 +14,14 @@ from inspect_safety_stats.analysis.direct_mean import (
 )
 from inspect_safety_stats.analysis.estimates import _block_index
 from inspect_safety_stats.analysis.measures import _coverage_floors, _independence
+from inspect_safety_stats.config.methods import ComparisonMethod
 from inspect_safety_stats.config.models import AnalysisPlan, ComparisonSpec
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.observations import Observation, observation_field
 from inspect_safety_stats.schema.reports import Diagnostic, Eligibility, RiskIntervalResult
 from inspect_safety_stats.stats.clusters import paired_cluster_bootstrap
 from inspect_safety_stats.stats.comparisons import DirectComparisonBounds, RatioComparisonBounds
-from inspect_safety_stats.stats.direct_mean import (
-    DirectMeanBounds,
-    weighted_bounded_empirical_bernstein_mean_bounds,
-    weighted_bounded_hoeffding_mean_bounds,
-    weighted_bounded_kl_chernoff_mean_bounds,
-)
+from inspect_safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES, DirectMeanBounds
 from inspect_safety_stats.stats.independence import BoundedBlocks, comparison_contrast_blocks
 from inspect_safety_stats.stats.paired import exact_mcnemar, newcombe_paired_interval
 from inspect_safety_stats.stats.tree_calibration import (
@@ -379,18 +375,14 @@ def _comparison_calibrations(
 
 
 def _bounded_comparison_mean(
-    method: str,
+    method: ComparisonMethod,
     blocks: BoundedBlocks,
     *,
     alpha_lower: float,
     alpha_upper: float,
     profile_id: str,
 ) -> DirectMeanBounds:
-    function = {
-        "weighted_hoeffding": weighted_bounded_hoeffding_mean_bounds,
-        "weighted_empirical_bernstein": weighted_bounded_empirical_bernstein_mean_bounds,
-        "weighted_kl_chernoff": weighted_bounded_kl_chernoff_mean_bounds,
-    }[method]
+    function = DIRECT_MEAN_ENGINES[method].bounded
     return function(
         blocks.lower,
         blocks.upper,
@@ -402,7 +394,7 @@ def _bounded_comparison_mean(
 
 
 def _difference_from_blocks(
-    method: str,
+    method: ComparisonMethod,
     blocks: BoundedBlocks,
     *,
     alpha: float,
@@ -442,7 +434,7 @@ def _difference_from_blocks(
 
 
 def _difference_rectangle_from_blocks(
-    method: str,
+    method: ComparisonMethod,
     candidate_blocks: BoundedBlocks,
     baseline_blocks: BoundedBlocks,
     *,
@@ -496,7 +488,7 @@ def _difference_rectangle_from_blocks(
 
 
 def _ratio_from_blocks(
-    method: str,
+    method: ComparisonMethod,
     candidate_blocks: BoundedBlocks,
     baseline_blocks: BoundedBlocks,
     *,

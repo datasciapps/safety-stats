@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from typing import Literal
+from types import MappingProxyType
+from typing import Final, Literal
 
 import numpy as np
 from numpy.typing import ArrayLike
+
+from inspect_safety_stats.config.methods import DirectMeanMethod
 
 from .risk import worst_of_k_shares
 
@@ -914,3 +917,38 @@ def weighted_betting_mean_bounds(
         alpha_upper=alpha_upper,
         independence_profile=independence_unit,
     )
+
+
+@dataclass(frozen=True)
+class DirectMeanEngine:
+    """The two forms of one direct-mean method.
+
+    ``bounded`` takes per-block completion bounds in [0, 1] and an independence profile;
+    ``counts`` takes failure, unclassified and trial counts and an independence unit.
+    """
+
+    bounded: Callable[..., DirectMeanBounds]
+    counts: Callable[..., DirectMeanBounds]
+
+
+DIRECT_MEAN_ENGINES: Final[Mapping[DirectMeanMethod, DirectMeanEngine]] = MappingProxyType(
+    {
+        "weighted_hoeffding": DirectMeanEngine(
+            bounded=weighted_bounded_hoeffding_mean_bounds,
+            counts=weighted_hoeffding_mean_bounds,
+        ),
+        "weighted_empirical_bernstein": DirectMeanEngine(
+            bounded=weighted_bounded_empirical_bernstein_mean_bounds,
+            counts=weighted_empirical_bernstein_mean_bounds,
+        ),
+        "weighted_kl_chernoff": DirectMeanEngine(
+            bounded=weighted_bounded_kl_chernoff_mean_bounds,
+            counts=weighted_kl_chernoff_mean_bounds,
+        ),
+        "weighted_betting": DirectMeanEngine(
+            bounded=weighted_bounded_betting_mean_bounds,
+            counts=weighted_betting_mean_bounds,
+        ),
+    }
+)
+"""The one dispatch table: the functions of each method in ``config.methods``."""

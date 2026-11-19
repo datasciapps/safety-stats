@@ -2,31 +2,14 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Literal
 
 import numpy as np
 from numpy.typing import ArrayLike
 
-from inspect_safety_stats.stats.direct_mean import (
-    weighted_bounded_betting_mean_bounds,
-    weighted_bounded_empirical_bernstein_mean_bounds,
-    weighted_bounded_hoeffding_mean_bounds,
-    weighted_bounded_kl_chernoff_mean_bounds,
-)
+from inspect_safety_stats.config.methods import DEFAULT_STATS_FUNCTION_METHOD, DirectMeanMethod
+from inspect_safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES
 
-DesignBasedMethod = Literal[
-    "weighted_hoeffding",
-    "weighted_empirical_bernstein",
-    "weighted_kl_chernoff",
-    "weighted_betting",
-]
-
-_ENGINES = {
-    "weighted_hoeffding": weighted_bounded_hoeffding_mean_bounds,
-    "weighted_empirical_bernstein": weighted_bounded_empirical_bernstein_mean_bounds,
-    "weighted_kl_chernoff": weighted_bounded_kl_chernoff_mean_bounds,
-    "weighted_betting": weighted_bounded_betting_mean_bounds,
-}
+DesignBasedMethod = DirectMeanMethod
 
 
 @dataclass(frozen=True)
@@ -98,7 +81,7 @@ def horvitz_thompson_mean_bounds(
     *,
     alpha_lower: float,
     alpha_upper: float,
-    method: DesignBasedMethod = "weighted_empirical_bernstein",
+    method: DesignBasedMethod = DEFAULT_STATS_FUNCTION_METHOD,
 ) -> DesignBasedBounds:
     """Bound a frame-wide weighted mean from an item sample with known inclusion probabilities.
 
@@ -124,9 +107,10 @@ def horvitz_thompson_mean_bounds(
     randomness in the bound, not by outcome completion.
     """
 
-    engine = _ENGINES.get(method)
-    if engine is None:
+    engines = DIRECT_MEAN_ENGINES.get(method)
+    if engines is None:
         raise ValueError(f"unsupported design-based method {method!r}")
+    engine = engines.bounded
     if not 0 < alpha_lower < 1 or not 0 < alpha_upper < 1:
         raise ValueError("alpha levels must be in (0, 1)")
 
@@ -236,7 +220,7 @@ def fixed_size_mean_bounds(
     *,
     alpha_lower: float,
     alpha_upper: float,
-    method: DesignBasedMethod = "weighted_empirical_bernstein",
+    method: DesignBasedMethod = DEFAULT_STATS_FUNCTION_METHOD,
 ) -> DesignBasedBounds:
     """Bound a frame mean estimated by stratified sampling without replacement.
 
@@ -257,9 +241,10 @@ def fixed_size_mean_bounds(
     since sampling without replacement has strictly smaller variance.
     """
 
-    engine = _ENGINES.get(method)
-    if engine is None:
+    engines = DIRECT_MEAN_ENGINES.get(method)
+    if engines is None:
         raise ValueError(f"unsupported design-based method {method!r}")
+    engine = engines.bounded
     if not 0 < alpha_lower < 1 or not 0 < alpha_upper < 1:
         raise ValueError("alpha levels must be in (0, 1)")
 
