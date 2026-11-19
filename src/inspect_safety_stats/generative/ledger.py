@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import csv
 import hashlib
-from collections.abc import Hashable, Mapping, Sequence
+import os
+from collections.abc import Hashable, Iterable, Mapping, Sequence
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal
@@ -92,6 +93,13 @@ REWRITE_COLUMNS = tuple(RewriteRecord.model_fields)
 ATTEMPT_COLUMNS = tuple(AttemptRecord.model_fields)
 
 
+# The csv module's own line ending. The rewrite ledger and the prompt store have always been
+# written with it, and a resumed run appends to the files an earlier version wrote, so a
+# change would leave those files with mixed line endings. It is the same on every platform:
+# the files are opened with newline="", so nothing translates it.
+CSV_MODULE_LINE_ENDING = "\r\n"
+
+
 class IncrementalCsvWriter:
     """Append rows as they are produced, flushing each one.
 
@@ -99,11 +107,15 @@ class IncrementalCsvWriter:
     killed partway -- by a rate limit, a dropped connection, a spend cap -- then leaves a
     usable record of the units it did complete, which is what makes resumption possible at
     all. Writing only on success loses every completed unit.
+
+    ``lineterminator`` ends every row. A file this writer appends to is rewritten only
+    through :meth:`replace`, so its rows never mix two line endings.
     """
 
-    def __init__(self, path: str | Path, columns: Sequence[str]) -> None:
+    def __init__(self, path: str | Path, columns: Sequence[str], *, lineterminator: str) -> None:
         self._path = Path(path)
         self._columns = list(columns)
+        self._lineterminator = lineterminator
         self._handle: Any = None
         self._writer: Any = None
 
@@ -111,7 +123,9 @@ class IncrementalCsvWriter:
         existing = self._path.exists() and self._path.stat().st_size > 0
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._handle = self._path.open("a", newline="", encoding="utf-8")
-        self._writer = csv.DictWriter(self._handle, fieldnames=self._columns)
+        self._writer = csv.DictWriter(
+            self._handle, fieldnames=self._columns, lineterminator=self._lineterminator
+        )
         if not existing:
             self._writer.writeheader()
             self._handle.flush()
@@ -120,6 +134,24 @@ class IncrementalCsvWriter:
     def append(self, row: Mapping[str, object]) -> None:
         self._writer.writerow({key: row.get(key) for key in self._columns})
         self._handle.flush()
+
+    def replace(self, rows: Iterable[Mapping[str, object]]) -> None:
+        """Rewrite the file to hold only ``rows``, as :meth:`append` would have written them.
+
+        The rows go to a sibling file first, which then takes the ledger's place in one
+        step, so an interruption leaves the old ledger or the new one, never a truncated
+        one. Call it while the writer is closed: Windows cannot replace an open file.
+        """
+
+        partial = self._path.with_name(self._path.name + ".partial")
+        with partial.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.DictWriter(
+                handle, fieldnames=self._columns, lineterminator=self._lineterminator
+            )
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({key: row.get(key) for key in self._columns})
+        os.replace(partial, self._path)
 
     def __exit__(
         self,
@@ -133,11 +165,13 @@ class IncrementalCsvWriter:
 
 
 def rewrite_ledger_writer(path: str | Path) -> IncrementalCsvWriter:
-    return IncrementalCsvWriter(path, REWRITE_COLUMNS)
+    return IncrementalCsvWriter(path, REWRITE_COLUMNS, lineterminator=CSV_MODULE_LINE_ENDING)
 
 
 def attempt_ledger_writer(path: str | Path) -> IncrementalCsvWriter:
-    return IncrementalCsvWriter(path, ATTEMPT_COLUMNS)
+    """The writer of ``attempts.csv``, which ends its rows with LF as text artifacts do."""
+
+    return IncrementalCsvWriter(path, ATTEMPT_COLUMNS, lineterminator="\n")
 
 
 def write_attempts(records: list[AttemptRecord], path: str | Path) -> None:

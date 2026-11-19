@@ -334,6 +334,47 @@ def test_resume_drops_the_attempts_of_unfinished_units(tmp_path: Path) -> None:
     assert len(attempts) == sum(record.rewrite_attempts for record in rewrites)
 
 
+class ValidatorStopped(RuntimeError):
+    """Stands in for a validator whose provider stopped responding."""
+
+
+@dataclass
+class StoppingValidator:
+    """Rejects every odd call and accepts every even one, until it stops after ``survive``."""
+
+    survive: int = 10**6
+    validator_id: str = "fake-validator"
+    calls: int = 0
+
+    def validate(self, request: RewriteRequest, prompt: str) -> ValidationVerdict:
+        self.calls += 1
+        if self.calls > self.survive:
+            raise ValidatorStopped
+        return ValidationVerdict(status="invalid" if self.calls % 2 else "valid")
+
+
+def test_the_attempt_ledger_ends_every_line_with_lf_through_a_resume(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The rows a resume keeps and the rows it appends must not mix line endings (#31)."""
+
+    import inspect_safety_stats.generative.runner as runner_module
+
+    plan = write_run_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    monkeypatch.setattr(runner_module, "resolve_validator", lambda spec: StoppingValidator(41))
+    with pytest.raises(ValidatorStopped):
+        materialize_run(plan, artifacts, validator="stopping")
+    assert b"\r" not in (artifacts / "attempts.csv").read_bytes(), "a fresh ledger"
+
+    monkeypatch.setattr(runner_module, "resolve_validator", lambda spec: StoppingValidator())
+    materialize_run(plan, artifacts, validator="stopping", resume=True)
+    written = (artifacts / "attempts.csv").read_bytes()
+    assert b"\r" not in written, "a resumed ledger"
+    rewrites = read_rewrites(artifacts / "rewrites.csv")
+    assert written.count(b"\n") == 1 + sum(record.rewrite_attempts for record in rewrites)
+
+
 def test_resume_refuses_a_partial_run_without_an_attempt_ledger(tmp_path: Path) -> None:
     unvalidated = write_run_plan(tmp_path, invoke=False)
     artifacts = tmp_path / "run"

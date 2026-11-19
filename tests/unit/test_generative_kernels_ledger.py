@@ -18,11 +18,14 @@ from inspect_safety_stats.generative.kernels import (
 from inspect_safety_stats.generative.ledger import (
     REWRITE_COLUMNS,
     SELECTION_COLUMNS,
+    AttemptRecord,
     RewriteRecord,
     SelectionRecord,
+    attempt_ledger_writer,
     prompt_sha256,
     read_rewrites,
     read_selections,
+    rewrite_ledger_writer,
     write_rewrites,
     write_selections,
 )
@@ -187,3 +190,25 @@ def test_selection_requires_a_positive_known_probability() -> None:
             proposal_id="target-direct",
             selection_seed=1,
         )
+
+
+@pytest.mark.parametrize("writer", [rewrite_ledger_writer, attempt_ledger_writer])
+def test_replacing_a_ledger_writes_what_appending_would(tmp_path: Path, writer) -> None:
+    """A resume rewrites a ledger it then appends to, so both must write the same bytes."""
+
+    if writer is rewrite_ledger_writer:
+        rows = [rewrite(f"u-{index}").model_dump(mode="json") for index in range(3)]
+    else:
+        rows = [
+            AttemptRecord(sampling_unit_id=f"u-{index}", attempt=1, kernel_status="valid")
+            .model_dump(mode="json")
+            for index in range(3)
+        ]
+    appended, replaced = tmp_path / "appended.csv", tmp_path / "replaced.csv"
+    with writer(appended) as ledger:
+        for row in rows:
+            ledger.append(row)
+    replaced.write_bytes(b"stale rows\n" * 5)
+    writer(replaced).replace(iter(rows))
+    assert replaced.read_bytes() == appended.read_bytes()
+    assert sorted(item.name for item in tmp_path.iterdir()) == ["appended.csv", "replaced.csv"]

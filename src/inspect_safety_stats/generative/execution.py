@@ -32,6 +32,7 @@ from inspect_safety_stats.generative.kernels import (
     user_turns,
 )
 from inspect_safety_stats.generative.ledger import (
+    CSV_MODULE_LINE_ENDING,
     AttemptRecord,
     IncrementalCsvWriter,
     RewriteRecord,
@@ -732,7 +733,9 @@ PROMPT_STORE_COLUMNS = ("sampling_unit_id", "prompt_id", "prompt", "prompt_sha25
 
 
 def prompt_store_writer(path: str | Path) -> IncrementalCsvWriter:
-    return IncrementalCsvWriter(path, PROMPT_STORE_COLUMNS)
+    return IncrementalCsvWriter(
+        path, PROMPT_STORE_COLUMNS, lineterminator=CSV_MODULE_LINE_ENDING
+    )
 
 
 def write_prompt_store(accepted: tuple[AcceptedRewrite, ...], path: str | Path) -> None:

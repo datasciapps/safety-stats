@@ -74,7 +74,6 @@ from inspect_safety_stats.generative.ledger import (
     read_rewrites,
     read_selections,
     rewrite_ledger_writer,
-    write_attempts,
     write_selections,
 )
 from inspect_safety_stats.generative.logs import LogInput, read_evaluated_samples
@@ -439,6 +438,9 @@ def _keep_finished_attempts(path: Path, completed: dict[str, RewriteRecord]) -> 
     ledger, so an interrupted run can leave attempts of a unit that is not finished. That
     unit runs again from its first attempt, and its stale rows would collide with the new
     ones. A unit that errored runs again for the same reason.
+
+    The kept rows are written by the ledger's own writer, so the rows the resumed run
+    appends end their lines as they do.
     """
 
     if not completed:
@@ -450,7 +452,7 @@ def _keep_finished_attempts(path: Path, completed: dict[str, RewriteRecord]) -> 
             f"{ATTEMPT_LEDGER}; it was materialized under different rewrite settings"
         )
     kept = [record for record in read_attempts(path) if record.sampling_unit_id in completed]
-    write_attempts(kept, path)
+    attempt_ledger_writer(path).replace(record.model_dump(mode="json") for record in kept)
 
 
 
