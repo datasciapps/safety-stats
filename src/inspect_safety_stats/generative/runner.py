@@ -376,9 +376,10 @@ def materialize_run(
     )
     resumed = len(completed)
     attempts_path = directory / ATTEMPT_LEDGER
-    # ORDER MATTERS: the ledgers are pruned after _prior_work has read them and before the
-    # writers below open them. Pruned once rows were appended, those rows would be lost
-    # with the stale ones, and Windows cannot replace a file that is open.
+    # ORDER MATTERS: the ledgers are replaced after _prior_work has read them and before the
+    # writers below open them. A writer opened first would keep appending to the file the
+    # replace unlinks, so on POSIX every row of the resumed run would be lost with it; on
+    # Windows the replace would fail, because an open file cannot be replaced.
     if resume:
         _keep_finished_rewrites(directory / REWRITE_LEDGER, completed)
         _keep_accepted_prompts(directory / PROMPT_STORE, accepted_before)
