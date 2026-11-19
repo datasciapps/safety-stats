@@ -374,3 +374,19 @@ def test_each_number_the_walkthrough_quotes_is_in_the_summary(
     assert phrase in _prose(_section()), f"the README no longer says {phrase!r}"
     (line,) = [line for line in walkthrough.file("report.md").splitlines() if mark in line]
     assert reported in line, f"report.md says {line!r}, the README says {phrase!r}"
+
+
+def test_the_comparison_sensitivity_the_walkthrough_quotes_is_in_the_full_report(
+    walkthrough: Walkthrough,
+) -> None:
+    """The prompt-level sensitivity of the difference is only in report-full.md."""
+    (row,) = [
+        line
+        for line in walkthrough.file("report-full.md").splitlines()
+        if line.startswith("| models::candidate_vs_baseline::risk_difference | sensitivity")
+    ]
+    lower, upper = (float(cell) for cell in row.split("|")[5:7])
+    points = [f"{100 * value:+.1f}".replace("-", "\u2212") for value in (lower, upper)]
+    assert lower < 0 < upper
+    phrase = f"runs from {points[0]} to {points[1]} points and does not rule out"
+    assert phrase in _prose(_section()), f"report-full.md gives [{lower}, {upper}]"
