@@ -466,14 +466,19 @@ described in their pull requests.
   show the role as `sensitivity (independence)` or `sensitivity (judge error)`. The role values
   are unchanged, and reports written before the field still load.
 
-- **Where effects sit (changes `report.md`).** When a report has hierarchy rows, `report.md`
-  gains a section after the claims that lists the hierarchy nodes whose comparison interval
-  excludes no difference, with the comparison's overall effect beside them, and the nodes
-  whose estimate is above a claim's acceptable limit, saying whether the whole interval or only
-  the estimate is above. An effect concentrated in one category was visible only by reading
-  every hierarchy row. `report.json`, the CSV files and `report.html` are unchanged, and so
-  is `report.md` when there are no hierarchy comparisons and no shown claim reaches
-  hierarchy rows. See
+- **Where effects sit (changes `report-full.md`).** When a comparison has hierarchy rows, or
+  decisions are shown and a claim's evidence has hierarchy rows, `report-full.md` gains a
+  section after the claims. It lists the hierarchy nodes whose comparison interval excludes
+  zero difference (a ratio of 1), with the comparison's overall effect beside them, and the
+  nodes whose interval or estimate is above a claim's acceptable limit, saying whether the
+  whole interval or only the estimate is above. A node without an estimate, because one of its
+  prompts has no classified rollout, is still listed when its interval is above the limit;
+  nodes that neither their interval nor their estimate can place, and comparison nodes with no
+  interval, are counted. Values are compared as printed. Rows listed on pointwise intervals are
+  flagged, and under a validated judge calibration, whose claims are about true failure risk,
+  the rows say that they are judge-reported. An effect concentrated in one category was
+  visible only by reading every hierarchy row. `report.json`, the CSV files, `report.md` and
+  `report.html` are unchanged, and so is `report-full.md` when no section is due. See
   [Where effects sit](docs/interpretation.md#where-effects-sit).
 
 - **The fixed-design planner reads the plan.** `plan fixed-design --plan PLAN` takes groups,

@@ -89,7 +89,7 @@ reports it**. An interval covers that rate, not the true failure rate.
   contradicts the other. The comparison is the reading the plan declared, and the report does
   not yet say which reading is stronger.
 - A headline average can hide a large effect in one category. "Where effects sit" in
-  `report.md` points to the hierarchy rows that matter.
+  `report-full.md` points to the hierarchy rows that matter.
 
 ## What no result establishes
 
