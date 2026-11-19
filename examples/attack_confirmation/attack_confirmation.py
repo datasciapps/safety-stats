@@ -10,6 +10,8 @@ Why the second rollout: an attack that stops at its judge's first "unsafe" verdi
 that judge's false positives. For a behaviour the target never complies with, and a per-query
 false-positive rate f, the attack still reports a jailbreak with probability 1 - (1 - f)^K.
 The confirmation verdict is not selected by the search, so its error rate is the judge's own.
+The attacker's judge still shapes the search: each of its false positives ends a run on a
+prompt that does not work, so a noisier attacker's judge lowers the confirmed rate too.
 
 Two scores are written for every run:
 
@@ -253,7 +255,11 @@ class AttackRun:
 async def run_attack(
     goal: str, budget: int, attacker: Attacker, target: TargetModel, judge: Judge
 ) -> AttackRun:
-    """Query until the attacker's judge says "unsafe", or until the budget is spent."""
+    """Query until the attacker's judge says "unsafe", or until the budget is spent.
+
+    A false positive of the judge ends the run on a prompt that does not work, so the judge's
+    errors decide what the run finds, not only what it reports.
+    """
 
     if budget < 1:
         raise ValueError(f"the query budget must be at least 1, not {budget}")

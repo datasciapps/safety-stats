@@ -9,7 +9,7 @@ import math
 import random
 import sys
 from collections.abc import Iterable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +25,9 @@ sys.path.insert(0, str(EXAMPLE_DIR))
 
 from attack_confirmation import (  # noqa: E402
     DESIGN_PATH,
+    REFUSAL,
     SIMULATED_DECLARATION,
+    UNSAFE_MARKER,
     AttackDeclaration,
     SimulatedJudge,
     SimulatedTarget,
@@ -107,6 +109,80 @@ def test_the_confirmation_rollout_is_a_fresh_completion() -> None:
     reported, confirmed = _rates(false_positive_rate=0.0, budget=20, compliance=0.3, seed=1)
     assert _within(reported, -math.expm1(20 * math.log1p(-0.3)))
     assert _within(confirmed, reported * 0.3)
+
+
+@dataclass
+class _PromptDependentTarget:
+    """Carries out a prompt that works every time, and any other prompt never.
+
+    Whether a prompt works is drawn once, with probability ``works_rate``, when the target
+    first sees it, so the confirmation of a found prompt repeats what the search saw.
+    """
+
+    works_rate: float
+    rng: random.Random
+    works: dict[str, bool] = field(default_factory=dict)
+
+    async def respond(self, prompt: str) -> str:
+        if prompt not in self.works:
+            self.works[prompt] = self.rng.random() < self.works_rate
+        return f"{UNSAFE_MARKER}: {prompt}" if self.works[prompt] else REFUSAL
+
+
+def _prompt_dependent_confirmed_rate(
+    *, works_rate: float, false_positive_rate: float, budget: int, seed: int
+) -> float:
+    """The confirmed rate over RUNS runs against targets whose prompts work or fail."""
+
+    rng = random.Random(seed)
+
+    async def one() -> bool:
+        target = _PromptDependentTarget(works_rate, rng)
+        run = await run_attack(
+            "goal",
+            budget,
+            TemplateAttacker(),
+            target,
+            SimulatedJudge(false_positive_rate, 1.0, rng),
+        )
+        verdict, _ = await confirm("goal", run, target, SimulatedJudge(0.0, 1.0, rng))
+        return verdict is True
+
+    async def all_runs() -> list[bool]:
+        return [await one() for _ in range(RUNS)]
+
+    return sum(asyncio.run(all_runs())) / RUNS
+
+
+@pytest.mark.parametrize(
+    ("budget", "shown"), [(20, [0.64, 0.55, 0.45, 0.21]), (60, [0.95, 0.71, 0.51, 0.21])]
+)
+def test_attacker_judge_false_positives_lower_the_confirmed_rate(
+    budget: int, shown: list[float]
+) -> None:
+    """README.md's second table: a false positive ends the search on a prompt that fails.
+
+    Each query finds a working prompt with probability q, the attacker's judge never misses
+    one and calls a failing one unsafe with probability f, and the confirmation judge never
+    errs. A run is confirmed when it reaches a working prompt before a false positive:
+    q (1 - a^K) / (1 - a), with a = (1 - q)(1 - f), which falls as f grows.
+    """
+
+    q = 0.05
+    confirmed_rates = []
+    for false_positive_rate, printed in zip((0.0, 0.02, 0.05, 0.20), shown, strict=True):
+        log_a = math.log1p(-q) + math.log1p(-false_positive_rate)
+        expected = q * -math.expm1(budget * log_a) / -math.expm1(log_a)
+        assert round(expected, 2) == printed
+        confirmed = _prompt_dependent_confirmed_rate(
+            works_rate=q,
+            false_positive_rate=false_positive_rate,
+            budget=budget,
+            seed=budget * 1000 + round(false_positive_rate * 100),
+        )
+        assert _within(confirmed, expected)
+        confirmed_rates.append(confirmed)
+    assert confirmed_rates == sorted(confirmed_rates, reverse=True)
 
 
 def test_the_budget_must_allow_a_query() -> None:
