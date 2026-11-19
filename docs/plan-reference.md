@@ -648,10 +648,10 @@ breaks the `rollout` profile:
   fixed design each wording's risk is a fixed quantity of the estimand, so similar risks do not
   make rollouts dependent, and the `rollout` profile stays valid.
 - **Coupled outcomes.** Rollouts of different wordings are dependent when they share randomness
-  or state: a sampling seed shared by the same epoch of each wording, a response cache, a
-  sandbox or tool state, or a batch that fails as a whole. The `rollout` and `prompt` profiles
-  then count dependent rollouts as independent ones, and their bounds miss the risk more often
-  than alpha allows. In a simulation of 4 base prompts with 10 wordings each, 20 epochs and
+  or state: a sampling seed shared by the same epoch of each wording, a sandbox or tool state,
+  or a batch that fails as a whole. The `rollout` and `prompt` profiles then count dependent
+  rollouts as independent ones, and their bounds can miss the risk more often than alpha
+  allows. In a simulation of 4 base prompts with 10 wordings each, 20 epochs and
   risk 0.12, in which the wordings of a base prompt shared each epoch's outcome, the `rollout`
   upper bound at one-sided level 0.025 fell below the risk in about 7% (Hoeffding), 14%
   (empirical Bernstein) and 24% (KL/Chernoff) of runs, so a claim could pass on a risk above
@@ -670,12 +670,28 @@ can share the coupling in one block:
 
 - `[question_id, repeat]` when the coupling stays within one epoch. The same epoch of every
   wording of a base prompt forms one block, and the epochs stay independent of each other. In
-  the simulation above its upper bounds fell below the risk in at most 0.2% of runs.
-- `[question_id]` when the coupling can reach across epochs, for example through a cache or a
-  sandbox that persists between them. Every rollout of every wording of a base prompt forms one
-  block, so the block count is the number of base prompts.
+  the simulation above its upper bounds never fell below the risk under Hoeffding or empirical
+  Bernstein, and did so in about 0.25% of runs under KL/Chernoff.
+- `[question_id]` when the coupling can reach across epochs, for example through a sandbox or
+  tool state that persists between them. Every rollout of every wording of a base prompt forms
+  one block, so the block count is the number of base prompts.
 - A coarser key when the coupling reaches beyond one base prompt, such as `[repeat]` for a seed
   shared by the same epoch of every prompt.
+
+The primary profile sets the blocks of the direct-mean intervals only. The prompt bounds treat
+the epochs of each wording as independent draws whatever the primary, and so does every interval
+built from them: the propagated envelope of every risk measure, which is the only interval of
+`maximum`, `cvar`, `top_k_mean`, `entropic`, the threshold measures and a `worst_of_k` without
+`direct_interval`. Coupling across the epochs of one wording therefore breaks the prompt bounds
+and these measures under any profile, and claims should then rest on the direct `weighted_mean`
+interval. This includes coupling confined to one wording's epochs, such as a response cache
+keyed on the exact input. For the direct mean that needs only `[prompt_id]` as the primary, which
+already puts each wording's epochs in one block, but the prompt bounds stay invalid. Coupling
+within one epoch across wordings, such as the shared seed above, leaves the prompt bounds and
+the measures built from them valid: each prompt bound needs independence only within its prompt,
+and the Bonferroni allocation across prompts holds under any dependence between them. A
+`worst_of_k` measure with `direct_interval: true` needs a primary that blocks by rollout, so
+making another profile primary makes such a plan invalid (`PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED`).
 
 ```yaml
 design:
@@ -687,7 +703,7 @@ design:
 outputs:
   direct_mean_intervals:
     independence:
-      primary: rollout  # question_repeat or question when the wordings can be coupled
+      primary: rollout  # question_repeat, question or coarser when wordings can be coupled
       sensitivities: [prompt, question_repeat, question]
 ```
 
@@ -711,11 +727,16 @@ Two measures count wordings instead:
 - `maximum` ignores weights: it is the largest risk of any wording, not of any base prompt.
   Its bounds come from the prompt bounds, and `alpha_allocation: equal_bonferroni` divides the
   family alpha equally over every wording of every cohort. Each added wording therefore widens
-  every prompt bound, and with them the maximum's upper bound.
+  every prompt bound, and with them the maximum's upper bound. With `nested_equal` as
+  `design.weights`, `alpha_allocation: weighted_bonferroni` instead gives each base prompt a
+  fixed share of the alpha, which its wordings split, so an added wording widens only the bounds
+  of its own base prompt's wordings.
 - `top_k_mean` needs equal prompt weights. On a group where `nested_equal` gives the wordings
   unequal weights it is refused with `RISK_MEASURE_INVALID`, which makes integrity invalid.
-  Under `equal_prompt` it averages the `k` riskiest wordings, so a base prompt with three
-  wordings can fill three of the `k` places.
+  Where it is accepted, under `equal_prompt` or under `nested_equal` on a group whose tasks all
+  have the same number of base prompts and whose base prompts all have the same number of
+  wordings, it averages the `k` riskiest wordings, so a base prompt with three wordings can fill
+  three of the `k` places.
 
 **Hierarchy nodes.** Set `hierarchy_nodes: true` under `direct_mean_intervals` to report an
 interval for each base prompt as well as each task. The nodes have two costs:
