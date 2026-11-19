@@ -7,7 +7,8 @@ independence blocks all come from the plan and the design manifest. The planner 
 recompute them: it gives analyze's own functions the rollouts the manifest declares, as if
 already observed, and reads the calibration and the blocks off the result. The interval
 method is the plan's, and the detectable rates invert that method's interval. Claims decided
-any other way are reported as not planned, with the reason. A plan with the errors ``validate``
+any other way are reported as not planned, with the reason, and so is every claim of an
+exploratory plan, which ``analyze`` reports INCONCLUSIVE. A plan with the errors ``validate``
 reports is refused: ``analyze`` finds it invalid and decides none of its claims.
 """
 
@@ -142,6 +143,12 @@ def _unplanned_reason(plan: AnalysisPlan, claim: ClaimSpec) -> str | None:
     ``plan`` has passed ``validate_plan_references``, so every reference resolves.
     """
 
+    if plan.analysis.intent == "exploratory":
+        return (
+            "analysis.intent is exploratory, so analyze reports the claim INCONCLUSIVE whatever "
+            "the rollouts show; set analysis.intent: confirmatory, with "
+            "analysis.plan_frozen_at, to plan it"
+        )
     if claim.comparison is not None:
         return f"comparison claim on {claim.comparison!r}; the planner covers aggregate claims"
     if claim.method == "noisy_valid_test":

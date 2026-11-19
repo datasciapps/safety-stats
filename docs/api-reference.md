@@ -616,7 +616,9 @@ planned, and refuses sampled designs. `--threshold`, `--alpha`, `--weights`, `--
 which supplies them.
 
 A plan with errors, the ones `validate` reports, is refused with them: `analyze` would find it
-invalid and report every claim INCONCLUSIVE, so no rate would describe what it decides.
+invalid and report every claim INCONCLUSIVE, so no rate would describe what it decides. Every
+claim of an exploratory plan (`analysis.intent: exploratory`) is listed as not planned, for the
+same reason: `analyze` reports each one INCONCLUSIVE, whatever the rollouts show.
 
 `analyze` and `validate` take `--decision-policy POLICY`, a file whose thresholds replace the
 plan's for the claims it sets, and `hash-plan --inference` prints the hash such a policy names

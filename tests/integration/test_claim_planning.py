@@ -432,6 +432,33 @@ def test_claims_decided_otherwise_are_reported_with_the_reason(tmp_path: Path) -
     assert "'worst' is maximum" in unplanned["all_worst"]
 
 
+def test_claims_of_an_exploratory_plan_are_not_planned(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """analyze reports every claim of an exploratory analysis INCONCLUSIVE, so none is planned."""
+    assert PLAN.count("intent: confirmatory") == 1
+    plan_path = _write(tmp_path, plan=PLAN.replace("intent: confirmatory", "intent: exploratory"))
+    _patch_logs(monkeypatch, all_safe=True)
+    report = analyze(plan=plan_path, logs="ignored")
+    statuses = {claim.claim_id: claim.status for claim in report.claims}
+    assert set(statuses.values()) == {"INCONCLUSIVE"}
+    # A confirmatory analysis of these rollouts would pass all_mean: the claim is planned
+    # there, and only the intent keeps analyze from deciding it.
+    assert {claim.claim_id: claim.descriptive_status for claim in report.claims}["all_mean"] == (
+        "PASS"
+    )
+    claims = plan_claims(load_plan(plan_path), power=0.9)
+    assert {item.claim_id for item in claims} == set(statuses)
+    for item in claims:
+        assert isinstance(item, UnplannedClaim)
+        assert item.reason.startswith("analysis.intent is exploratory")
+    result = runner.invoke(app, ["plan", "fixed-design", "--plan", str(plan_path)])
+    output = plain(result.output)
+    assert result.exit_code == 1, output
+    assert "Claim all_mean: not planned: analysis.intent is exploratory" in output
+    assert "No claim of this plan could be planned." in output
+
+
 @pytest.mark.parametrize(
     ("old", "new", "code"),
     [
