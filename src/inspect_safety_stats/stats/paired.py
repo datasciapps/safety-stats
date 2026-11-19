@@ -309,9 +309,9 @@ def _newcombe_bounds_from_counts(
     """Vectorised newcombe_paired_interval over arrays of the four cell counts."""
 
     # Float counts: products of counts overflow an integer array, int64 from about 110,000
-    # pairs, and NumPy's default integer, in which the completions are enumerated, is int32 on
-    # Windows with NumPy 1. Every count, and every product of two, is exact as a float under
-    # about 1.9e8 pairs, so each result below is rounded as in the scalar interval.
+    # pairs and a narrower integer much sooner. Every count, and every product of two, is
+    # exact as a float under about 1.9e8 pairs, so each result below is rounded as in the
+    # scalar interval.
     both_failure, candidate_only, baseline_only, both_safe = (
         np.asarray(counts, dtype=float)
         for counts in (both_failure, candidate_only, baseline_only, both_safe)

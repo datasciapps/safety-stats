@@ -432,9 +432,9 @@ def test_partial_newcombe_bounds_hold_over_many_large_tables() -> None:
 def test_vectorised_newcombe_does_not_depend_on_the_integer_type_of_the_counts(
     cells: tuple[int, int, int, int],
 ) -> None:
-    # The completions enumerate the counts in NumPy's default integer, which is int32 on
-    # Windows with NumPy 1. There the product of the four margins overflows once they reach
-    # 216 each, and the Wilson term's 4 * trials ** 2 from 23,171 pairs.
+    # The counts used to arrive in NumPy's default integer, int32 on Windows with NumPy 1, and
+    # may in any integer type. In int32 the product of the four margins overflows once they
+    # reach 216 each, and the Wilson term's 4 * trials ** 2 from 23,171 pairs.
     expected_lower, expected_upper = _reference_newcombe(
         *cells, alpha_lower=0.05, alpha_upper=0.05
     )
