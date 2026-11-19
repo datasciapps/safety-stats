@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from fractions import Fraction
 
 import numpy as np
 import pytest
@@ -48,6 +49,125 @@ def test_a_complete_order_bounds_the_realized_mean_exactly() -> None:
     expected, _ = bounded_kl_chernoff_upper_bound(bound.realized_upper, weights, alpha=0.025)
     assert bound.upper == expected
     assert bound.draws == bound.population == 30
+
+
+def _prior_by_definition() -> tuple[list[Fraction], list[Fraction]]:
+    """The betting bounds' fixed prior, from its definition rather than the library's code.
+
+    Sixteen bet fractions sin^2(pi q / 2) at the Beta(1/2, 1/2) quantiles q = (2j - 1) / 32,
+    each with prior weight 1/32, and half the mass besides on the largest.
+    """
+
+    fractions = [
+        Fraction(math.sin(math.pi * (2 * j - 1) / 32 / 2) ** 2) for j in range(1, 17)
+    ]
+    weights = [Fraction(1, 32)] * 16
+    weights[-1] += Fraction(1, 2)
+    return fractions, weights
+
+
+def _rejected_exactly(
+    values: list[Fraction], population: int, mean: Fraction, alpha: Fraction
+) -> bool:
+    """Whether the capital against ``mean`` reaches ``1 / alpha`` at some prefix, in exact
+    rational arithmetic (given the prior's fractions as floats), from the capital's definition:
+    the product over draws of ``1 - f + f (1 - z_t) / (1 - m_t)``, with
+    ``m_t = (N mean - sum_{s<t} z_s) / (N - t + 1)``, mixed over the prior.
+    """
+
+    fractions, weights = _prior_by_definition()
+    capitals = [Fraction(1)] * len(fractions)
+    seen = Fraction(0)
+    for step, value in enumerate(values, start=1):
+        conditional = (population * mean - seen) / (population - step + 1)
+        if value == 1:
+            ratio = Fraction(0)
+        elif conditional >= 1:
+            # The unseen values would all have to be one: a smaller draw rules the mean out.
+            return True
+        else:
+            ratio = (1 - value) / (1 - conditional)
+        capitals = [
+            capital * (1 - fraction + fraction * ratio)
+            for capital, fraction in zip(capitals, fractions, strict=True)
+        ]
+        if sum(w * c for w, c in zip(weights, capitals, strict=True)) >= 1 / alpha:
+            return True
+        seen += value
+    return False
+
+
+def _reference_upper(values: list[Fraction], population: int, alpha: Fraction) -> Fraction:
+    """The least rejected mean by exact bisection, or the largest possible mean if none is."""
+
+    cap = min(Fraction(1), (sum(values, Fraction(0)) + population - len(values)) / population)
+    if not _rejected_exactly(values, population, cap, alpha):
+        return cap
+    inside, outside = Fraction(0), cap
+    for _ in range(50):
+        midpoint = (inside + outside) / 2
+        if _rejected_exactly(values, population, midpoint, alpha):
+            outside = midpoint
+        else:
+            inside = midpoint
+    return outside
+
+
+SEQUENCES = {
+    # Failures (z = 1) and partial shares early in a prefix of 15 of 40.
+    "mixed": ("0 0 1 0 1/2 0 0 1/4 0 0 1 0 0 0 3/4", 40, Fraction(1, 40)),
+    "safe": (" ".join(["0"] * 30), 200, Fraction(1, 40)),
+    # Too few draws to reject the largest mean the draws allow: the bound is that mean.
+    "capped": ("1 0 0 0 0 1/3 0 0 0 0 0", 12, Fraction(1, 20)),
+}
+
+
+@pytest.mark.parametrize("case", list(SEQUENCES), ids=list(SEQUENCES))
+def test_the_sequence_bound_before_the_end_matches_an_exact_reference(case: str) -> None:
+    """Pins step 1 at t < N, where nothing else determines it, to the definition: the
+    threshold 1 / alpha, the factor 1 - f of a draw of one, the prior, the running
+    intersection and the cap."""
+
+    text, population, alpha = SEQUENCES[case]
+    values = [Fraction(item) for item in text.split()]
+    bound = without_replacement_upper_bound(
+        np.array([float(item) for item in values]), population, alpha=float(alpha)
+    )
+    reference = _reference_upper(values, population, alpha)
+    assert bound == pytest.approx(float(reference), abs=1e-12)
+    cap = min(1, (sum(values) + population - len(values)) / population)
+    if case == "capped":
+        assert reference == cap
+    else:
+        assert reference < cap
+        # The bound is a rejected candidate, never the last one the bisection kept.
+        log_capital = _log_capital_path(
+            np.array([float(item) for item in values]), population, bound
+        )
+        assert np.max(log_capital) >= math.log(1 / float(alpha))
+
+
+def test_the_anytime_bound_before_the_end_matches_the_reference_at_half_alpha() -> None:
+    """Uneven weights, two independent rollouts per item, 12 of 30 items drawn: step 1 at
+    alpha / 2 on the scaled outcomes, rescaled by N max w, and step 2 at alpha / 2 on N r
+    blocks."""
+
+    weights = np.linspace(1, 2, 30)
+    weights /= weights.sum()
+    order = np.array([29, 3, 17, 8, 22, 0, 11, 26, 5, 14, 19, 1])
+    outcomes = np.array([0, 0.5, 0, 1, 0, 0, 0.5, 0, 0, 1, 0, 0])
+
+    bound = anytime_upper_bound(outcomes, order, weights, alpha=0.05, independent_rollouts=2)
+
+    scaled = [Fraction(float(item)) for item in weights[order] * outcomes / weights.max()]
+    realized = float(_reference_upper(scaled, 30, Fraction(0.025))) * 30 * float(weights.max())
+    assert realized < 1
+    assert bound.realized_upper == pytest.approx(realized, abs=1e-12)
+    expected, _ = bounded_kl_chernoff_upper_bound(
+        realized, np.repeat(weights / 2, 2), alpha=0.025
+    )
+    assert bound.upper == pytest.approx(expected, abs=1e-12)
+    assert (bound.alpha_sequence, bound.alpha_population) == (0.025, 0.025)
 
 
 def test_no_draws_bound_nothing() -> None:
