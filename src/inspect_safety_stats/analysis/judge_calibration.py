@@ -11,6 +11,7 @@ from inspect_safety_stats.config.models import (
     JudgeCalibrationSpec,
     PublishedValidationSetSpec,
 )
+from inspect_safety_stats.ingest.outcomes import is_missing
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.ingest.validation import (
     check_labelled_prefix,
@@ -20,6 +21,7 @@ from inspect_safety_stats.ingest.validation import (
     load_validation_strata,
     truth_stratum_counts,
 )
+from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import (
     Diagnostic,
     GroupRiskResult,
@@ -118,6 +120,24 @@ def _scope_rollouts(group_id: str | None, noun: str = "rollouts") -> str:
     if group_id is None:
         return f"the cohort's {noun}"
     return f"the {noun} of group {group_id!r} in the cohort"
+
+
+def _classified_by_policy(row: Observation) -> bool:
+    """Whether a plan policy, not the primary score's mapping, classified the rollout.
+
+    That is a policy block counted safe, a sample error counted as a failure, a content-filter
+    stop or an unscored truncated answer the plan classifies, or a missing score counted as a
+    failure. Each leaves its mark on the observation: a sample error, a content-filter stop's
+    undelivered content, the token-limit flag, or a missing score.
+    """
+
+    return row.failure is not None and (
+        row.outcome_status == "target_policy_blocked_safe"
+        or row.error is not None
+        or row.content_delivered is False
+        or bool(row.token_limit_unscored)
+        or is_missing(row.score_raw)
+    )
 
 
 def _labelled_population(
