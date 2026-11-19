@@ -132,9 +132,12 @@ blank or holds, ignoring surrounding spaces, a marker that R, spreadsheets, data
 pandas write for a missing value: `NA`, `N/A`, `n/a`, `None`, `null`, `NULL`, `nan`, `NaN`,
 `-nan`, `-NaN`, `<NA>`, `#N/A`, `#N/A N/A`, `#NA`, `1.#IND`, `-1.#IND`, `1.#QNAN` or
 `-1.#QNAN`. Such a cell stops the analysis with an error that names the column and the rows.
-Recode a label meant literally, such as `NA` for "not applicable", for example as `none`. The
-other columns keep the types pandas infers: a weight `column`, the `inclusion_probability_column`, a
-`threshold_column` and `expected_rollouts` are numbers, and `mandatory` and the zero-tolerance
+Recode a label meant literally, such as `NA` for "not applicable", for example as `none`.
+
+The other columns keep the types pandas infers, and so do the columns the plan reads as numbers
+or booleans even when it also groups prompts by them: a weight `column`, the
+`inclusion_probability_column`, a `threshold_column`, an adaptive claim's `order_field` and
+`expected_rollouts` are numbers, and the `selection_column`, `mandatory` and the zero-tolerance
 field are booleans.
 
 When `policy.zero_tolerance.manifest_field` is set in the plan and zero tolerance is enabled, the

@@ -135,16 +135,19 @@ def plan_grouping_columns(plan: AnalysisPlan) -> tuple[str, ...]:
     They are the levels of ``design.hierarchy`` and of every ``nested_equal`` weight
     hierarchy, the columns of a group ``filter``, the manifest columns of an independence
     profile's ``block_by`` and ``design.stratum_column``. A column the plan or the loader reads
-    as a number or a boolean is not one: an inclusion probability, a weight or threshold
-    column, the zero-tolerance field, ``expected_rollouts`` or ``mandatory``. The identifier
+    as a number or a boolean is not one, even when the plan also groups by it: an inclusion
+    probability, the selection column, a weight or threshold column, an adaptive claim's order
+    field, the zero-tolerance field, ``expected_rollouts`` or ``mandatory``. The identifier
     columns of ``REQUIRED_COLUMNS`` are labels whether or not the plan names them.
     """
 
     named: set[str] = set(plan.design.hierarchy)
     numeric: set[str | None] = {
         plan.design.inclusion_probability_column,
+        plan.design.selection_column,
         plan.policy.zero_tolerance.manifest_field,
         *(measure.threshold_column for measure in plan.outputs.risk_measures),
+        *(claim.order_field for claim in plan.adaptive_claims),
     }
     for spec in [plan.design.weights, *(group.weights for group in plan.groups)]:
         if spec is None:

@@ -8,6 +8,7 @@ from inspect_safety_stats.ingest.manifest import (
     check_zero_tolerance_field,
     load_manifest,
     plan_manifest_columns,
+    resolve_groups,
     resolve_weights,
 )
 from inspect_safety_stats.ingest.normalize import read_inputs
@@ -221,6 +222,51 @@ def test_a_plan_groups_by_its_hierarchy_filters_and_blocks_but_not_its_numbers()
         "task_id",
         "tier",
     )
+
+
+def test_the_selection_and_order_columns_stay_typed_when_a_group_filters_on_them(
+    tmp_path: Path,
+) -> None:
+    """Taken for labels, they were read as text: a filter on the drawn items was refused as not
+    text, and an adaptive claim found no integer order."""
+
+    from inspect_safety_stats.ingest.manifest import plan_grouping_columns
+
+    data = yaml.safe_load(_PLAN)
+    data["design"] = {
+        "type": "sampled",
+        "inclusion_probability_column": "pi",
+        "selection_column": "drawn",
+        "hierarchy": ["task_id", "prompt_id"],
+        "weights": {"strategy": "equal_prompt"},
+    }
+    data["groups"] = [
+        {"id": "drawn", "filter": {"drawn": True}},
+        {"id": "first", "filter": {"rank": 1}},
+    ]
+    data["adaptive_claims"] = [
+        {
+            "id": "a",
+            "title": "A",
+            "cohort": "candidate",
+            "group": "drawn",
+            "order_field": "rank",
+            "family": "f",
+            "unacceptable_lower": 0.2,
+        }
+    ]
+    plan = AnalysisPlan.model_validate(data)
+    path = tmp_path / "design.csv"
+    path.write_text(
+        "prompt_id,task_id,pi,drawn,rank\np1,t,0.5,True,1\np2,t,0.5,False,2\n",
+        encoding="utf-8",
+    )
+    manifest = load_manifest(path, plan_manifest_columns(plan), plan_grouping_columns(plan))
+    assert manifest["drawn"].tolist() == [True, False]
+    assert manifest["rank"].tolist() == [1, 2]
+    groups = {group.id: group.prompt_ids for group in resolve_groups(plan, manifest)}
+    assert groups == {"drawn": ("p1",), "first": ("p1",)}
+    assert plan_grouping_columns(plan) == ("prompt_id", "task_id")
 
 
 def test_numeric_columns_stay_numbers_beside_text_labels(tmp_path: Path) -> None:

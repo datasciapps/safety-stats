@@ -30,7 +30,8 @@ described in their pull requests.
   `nan`, `#N/A` and the rest of pandas' default list, fixed so that it does not change with
   the pandas version), is an `INGEST_FAILED` error that names the column and the rows: recode
   a label meant literally, for example as `none`. Weights, inclusion probabilities, thresholds,
-  `expected_rollouts` and the other numeric or boolean columns keep their types. A group
+  the selection column, adaptive claims' order fields, `expected_rollouts` and the other
+  numeric or boolean columns keep their types, even when the plan also groups by them. A group
   `filter` on a label column takes a quoted value: an unquoted YAML `1`, `01`, `1.0` or `true`
   is an error that says to quote it. Reports of manifests without such labels, every bundled
   example among them, keep their bytes. A manifest that zero-pads identifiers that the logs
