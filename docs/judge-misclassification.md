@@ -804,6 +804,13 @@ coverage is at least one minus the sum of the row's own alpha and `sensitivity_a
 - **Transport.** The same judge and rubric, applied to this run's outputs, is at least as
   sensitive on every prompt as on the published set. Nothing in the run checks this, and a
   judge under attack can fail it.
+- **Independent items.** The Clopper--Pearson bound treats the published set's `human_unsafe`
+  items as independent draws that share one sensitivity, and the coverage stated above rests
+  on it. A set with several completions of each behaviour, such as HarmBench's classifier
+  validation set, does not meet it: completions of one behaviour tend to be caught or missed
+  together, so counts over all of them overstate the bound's precision. Enter counts over
+  independent items instead, for example one human-unsafe completion per behaviour, chosen
+  without looking at the judge's verdict.
 - Human adjudication on the published set is the ground truth.
 
 Each interval lists these assumptions, together with the published set and the sensitivity
@@ -813,9 +820,41 @@ set and `sensitivity_lower`, and the analysis emits the `INFO` diagnostic
 `JUDGE_CALIBRATION_TRANSPORTED`. `report-full.md` describes the published set in the judge
 misclassification section.
 
+Comparisons are not corrected. With a lower end of zero on each arm, a corrected effect would
+run from minus the baseline's corrected upper bound to the candidate's, so it would say little
+about the difference. Every comparison stays on the judge-reported scale, and the analysis
+names them in the warning `JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON`.
+
 `mode: transported` takes only `published_set`. It cannot be combined with scenarios, a
-validation manifest or a judge family, and only fixed-design analyses offer it: a generative
-plan that declares it is refused.
+validation manifest or a judge family. Fixed and sampled designs run it. Under a sampled design
+the interval bounds the frame mean, so the transport assumption must hold on every prompt of
+the frame, drawn or not. The generative path does not offer it: a generative plan that declares
+it is refused.
+
+### How it differs from issue #123
+
+Issue #123 proposed a transported mode that declares ranges for both sensitivity and
+specificity and inverts Rogan--Gladen over that box. This mode departs from that proposal in
+four ways, for the reasons above:
+
+- **No specificity is declared.** A published set's specificity does not carry over to
+  another model's outputs, so the plan gives none. There is therefore no informativeness
+  condition \(Se+Sp>1\) to check, and no plan is refused for failing it.
+- **The lower end is always zero.** Without a specificity, every judged failure may be a false
+  positive. The interval is \([0,U]\) even for a perfectly sensitive judge, where #123 asked for
+  the uncorrected interval \([L,U]\) when both accuracies are one. Only the upper end keeps that
+  identity.
+- **The sensitivity comes from counts.** The plan gives the published set's counts, not a
+  declared range, and the mode turns them into a one-sided Clopper--Pearson lower bound at
+  `sensitivity_alpha`. The interval's coverage therefore spends `sensitivity_alpha` on top of
+  the row's own alpha.
+- **Transport is one-sided.** The judge need only be at least as sensitive on this run's
+  outputs as on the published set, not equally accurate.
+
+With the same lower end on sensitivity, the upper end is what #123's correction gives for any
+declared specificity range that reaches one, because Rogan--Gladen's maximum lies at \(Sp=1\).
+The derivation is in
+[Statistical methods, section 15.3.1](statistical-methods.md#1531-transported-sensitivity-experimental).
 
 ## On the generative path
 

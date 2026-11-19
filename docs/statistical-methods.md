@@ -2585,7 +2585,57 @@ If an automated judge has false negatives, the observed binary outcome is a misc
 p_{\mathrm{obs}}=s p_{\mathrm{true}}+(1-c)(1-p_{\mathrm{true}}).
 \]
 
-Without knowledge or bounds on \(s\) and \(c\), \(p_{\mathrm{true}}\) is not identified from \(p_{\mathrm{obs}}\). [Judge misclassification](judge-misclassification.md) describes the corrections built on this identity: declared accuracy scenarios as a sensitivity analysis, validated corrections from human labels (with an experimental stratified variant that bounds each declared stratum's truly unsafe count with exact hypergeometric bounds, and the judge's accuracy at the summed counts with Clopper--Pearson bounds), the noisy-but-valid threshold test, and an experimental stress analysis. The stress analysis reports, for a threshold verdict reached on \(p_{\mathrm{obs}}\), the line in \((s,c)\) beyond which the same verdict no longer holds for \(p_{\mathrm{true}}\).
+Without knowledge or bounds on \(s\) and \(c\), \(p_{\mathrm{true}}\) is not identified from \(p_{\mathrm{obs}}\). [Judge misclassification](judge-misclassification.md) describes the corrections built on this identity: declared accuracy scenarios as a sensitivity analysis, validated corrections from human labels (with an experimental stratified variant that bounds each declared stratum's truly unsafe count with exact hypergeometric bounds, and the judge's accuracy at the summed counts with Clopper--Pearson bounds), the noisy-but-valid threshold test, an experimental transported sensitivity (15.3.1), and an experimental stress analysis. The stress analysis reports, for a threshold verdict reached on \(p_{\mathrm{obs}}\), the line in \((s,c)\) beyond which the same verdict no longer holds for \(p_{\mathrm{true}}\).
+
+#### 15.3.1 Transported sensitivity (experimental)
+
+`inputs.judge_calibration.mode: transported` bounds true risk from a judge sensitivity measured on a published human-labelled set, such as HarmBench's classifier validation set, with no labels on the run's own outputs. The user-level description is in [Judge misclassification](judge-misclassification.md#transported-mode-a-published-sensitivity-experimental).
+
+**Estimand.** The row's design risk measure \(R(\pi;w)\) (section 2.4) of the prompts' true failure probabilities \(\pi=(\pi_j)\), where \(R\) is a `weighted_mean`, `maximum`, `cvar` or `top_k_mean`, or a hierarchy node's weighted mean. Under a sampled design it is the frame's measure, over every frame prompt.
+
+**Model.** On prompt \(j\) the judge has sensitivity \(Se_j\) and false-positive rate \(FPR_j\), so the probability that it reports a failure is
+
+\[
+q_j=\pi_j Se_j+(1-\pi_j)FPR_j .
+\]
+
+The published set has \(n\) items that human annotators labelled unsafe, of which the judge flagged \(k\).
+
+**Assumptions.**
+
+1. *Transport.* \(Se_j\ge Se\) on every prompt \(j\) of the estimand, where \(Se\) is the same judge's sensitivity, under the same rubric, on the population the published set's unsafe items were drawn from. Nothing in the run checks this.
+2. *Independent items.* The \(n\) unsafe items are independent Bernoulli\((Se)\) draws for the judge's verdict. Several completions of one behaviour violate this, and counts over them overstate the precision of the bound below.
+3. Human labels on the published set are ground truth.
+
+Nothing is assumed about \(FPR_j\), and in particular nothing is taken from the published set's safe items: a judge's false positives depend on the outputs it sees.
+
+**Upper bound.** Since \((1-\pi_j)FPR_j\ge 0\), assumption 1 gives \(q_j\ge\pi_j Se_j\ge\pi_j Se\), so \(\pi_j\le q_j/Se\) for every \(j\). The measures above are monotone and positively homogeneous, so
+
+\[
+R(\pi;w)\le R(q/Se;w)=R(q;w)/Se .
+\]
+
+Let \(q_U\) be the row's judge-system upper bound, with \(\Pr(R(q;w)\le q_U)\ge 1-\alpha\), and \(Se_L\) the one-sided Clopper--Pearson lower bound on \(Se\) from \(k\) of \(n\) at `sensitivity_alpha` \(=\alpha_s\) (section 4.2), with \(\Pr(Se\ge Se_L)\ge 1-\alpha_s\) under assumption 2. On the intersection of the two events,
+
+\[
+R(\pi;w)\le U=\min\{1,\ q_U/Se_L\},
+\]
+
+and \(U=1\) when \(Se_L=0\). By the union bound, \(\Pr(R(\pi;w)\le U)\ge 1-\alpha-\alpha_s\). Entropic and threshold measures are not positively homogeneous, so the step \(R(q/Se;w)=R(q;w)/Se\) fails for them and they are not corrected.
+
+**Lower bound.** Without a bound on \(FPR_j\), every judged failure may be a false positive: \(\pi_j=0\) with \(FPR_j=q_j\) reproduces any \(q_j\). The lower end is therefore zero, also for a perfectly sensitive judge.
+
+**Relation to Rogan--Gladen.** With a declared specificity \(Sp=1-FPR\) and \(Se+Sp>1\), the inversion \(\pi=(q-1+Sp)/(Se+Sp-1)\) [41] has
+
+\[
+\frac{\partial\pi}{\partial Sp}=\frac{Se-q}{(Se+Sp-1)^2}\ge 0\quad\text{when } q\le Se ,
+\]
+
+so over any box \(Se\in[Se_L,1]\), \(Sp\in[Sp_L,1]\) its maximum is \(q/Se_L\), at the corner \(Sp=1\). The upper end above is therefore what a Rogan--Gladen correction gives for any declared specificity range that reaches one; leaving the specificity undeclared loses only the lower end. This differs from issue #123, which proposed declared ranges for both accuracies, refusal when \(Se+Sp\le1\), and the uncorrected interval \([L,U]\) when both are one; the transported interval is \([0,U]\) then.
+
+**Scope.** The intervals are `diagnostic` sensitivity results and never decide a claim, because assumption 1 is untestable from the run and fails, for example, for a judge under attack. Comparisons are not corrected: with a lower end of zero on each arm, a recombined effect would span \([-U_b, U_c]\), which says little, so they stay on the judge-reported scale and the analysis names them.
+
+**Validation.** `tests/unit/test_misclassification.py` checks \(Se_L\) against SciPy's beta quantile, checks by property test that the upper end equals the Rogan--Gladen maximum of `identified_risk_set` over random boxes, and runs a seeded Monte Carlo at the bound's worst case, \(FPR_j=0\), with \(Se\in[0.60,0.65]\) and \(\pi\) up to 0.5, in two regimes: a small published set with a large run, where the sensitivity's uncertainty dominates, and the reverse. Coverage must reach \(1-\alpha-\alpha_s=0.90\) less three Monte Carlo standard errors. The same check must fail for the uncorrected judge-system bound and, in the first regime, for division by the point estimate \(k/n\), and, in the second, for division of the judged estimate rather than its upper bound.
 
 ### 15.4 Distribution shift
 
@@ -2787,6 +2837,7 @@ That is the role this Inspect extension should fill.
 38. Y. Gao, “How Reliable Is Your Jailbreak Judge? Calibration and Adversarial Robustness of Automated ASR Scoring,” 2026. [arXiv:2606.25487](https://arxiv.org/abs/2606.25487)
 39. I. Waudby-Smith and A. Ramdas, “Confidence sequences for sampling without replacement,” *Advances in Neural Information Processing Systems* 33, 2020. [arXiv:2006.04347](https://arxiv.org/abs/2006.04347)
 40. J. Ville, *Étude critique de la notion de collectif*, Gauthier-Villars, Paris, 1939.
+41. W. J. Rogan and B. Gladen, “Estimating prevalence from the results of a screening test,” *American Journal of Epidemiology* 107(1), 71–76, 1978. [doi:10.1093/oxfordjournals.aje.a112510](https://doi.org/10.1093/oxfordjournals.aje.a112510)
 
 ---
 

@@ -439,10 +439,15 @@ described in their pull requests.
   outputs. The run's false positives are therefore bounded only by its own judged failures.
   Each correctable row gains a `judge_corrected_transported` interval from zero to the
   judge-system upper bound divided by the one-sided Clopper-Pearson lower bound on
-  sensitivity. These intervals are diagnostic sensitivities and never decide a claim. The
-  analysis emits `JUDGE_CALIBRATION_TRANSPORTED`, and `report.md` names the published set.
-  Fixed-design analyses only. Plans without the mode keep their hash and write the same
-  report bytes as before. See
+  sensitivity. Each interval states the transport assumption, and that the bound treats the
+  published set's human-unsafe items as independent draws, which several completions of one
+  behaviour are not. These intervals are diagnostic sensitivities and never decide a claim. The
+  analysis emits `JUDGE_CALIBRATION_TRANSPORTED`, and `report-full.md` names the published set
+  in its judge misclassification section, also when no group-risk row is corrected.
+  Comparisons are not corrected: the warning `JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON`
+  names them. Fixed and sampled designs run it; under a sampled design the interval bounds the
+  frame mean when transport holds on every prompt of the frame. Generative plans do not offer
+  it. Plans without the mode keep their hash and write the same report bytes as before. See
   [Transported mode](docs/judge-misclassification.md#transported-mode-a-published-sensitivity-experimental).
 
 - **A single-valued risk bound for system models (experimental).** Fault trees and Markov

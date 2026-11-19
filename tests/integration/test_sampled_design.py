@@ -253,6 +253,55 @@ def test_a_truncated_run_is_caught_rather_than_silently_biasing(
     assert report.integrity.status == "invalid"
 
 
+def test_a_transported_judge_calibration_bounds_the_frame_mean(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Transported mode runs on a sampled design, and bounds the frame mean.
+
+    The frame mean is a weighted mean of every frame prompt's risk, so dividing its upper
+    bound by the published sensitivity bounds its true risk when transport holds on every
+    frame prompt.
+    """
+    from scipy.stats import beta
+
+    plan_path, evals, samples = _write_frame(tmp_path)
+    text = plan_path.read_text(encoding="utf-8")
+    plan_path.write_text(
+        text.replace(
+            "inputs:\n",
+            "inputs:\n"
+            "  judge_calibration:\n"
+            "    mode: transported\n"
+            "    published_set:\n"
+            "      name: Published judge validation set\n"
+            "      source: https://example.org/judge-validation\n"
+            "      judge: judge-model-v1\n"
+            "      rubric: harmful-behaviour rubric v2\n"
+            "      human_unsafe: 120\n"
+            "      judge_flagged_unsafe: 100\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    _patch(monkeypatch, evals, samples)
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert report.integrity.status == "valid"
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    primary = next(item for item in mean.intervals if item.role == "primary")
+    assert primary.interval_id == "horvitz_thompson_weighted_kl_chernoff"
+    (interval,) = [
+        item for item in mean.intervals if item.interval_id == "judge_corrected_transported"
+    ]
+    sensitivity_lower = float(beta.ppf(0.05, 100, 120 - 100 + 1))
+    assert mean.upper is not None
+    assert (interval.lower, interval.eligibility) == (0.0, "diagnostic")
+    assert interval.upper == pytest.approx(
+        min(1.0, mean.upper / sensitivity_lower), rel=1e-12, abs=0
+    )
+
+
 def test_fixed_designs_are_unaffected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A fixed design must still refuse a manifest prompt with no observations."""
     plan_path, evals, samples = _write_frame(tmp_path)

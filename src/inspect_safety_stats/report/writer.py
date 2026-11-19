@@ -45,6 +45,27 @@ def _number(value: float | None, places: int) -> str:
     return f"{value:.{places}f}"
 
 
+def _published_set_lines(report: SafetyReport, places: int) -> list[str]:
+    """The published validation set behind a transported sensitivity, as report lines."""
+
+    summary = report.provenance.get("judge_calibration") or {}
+    published = summary.get("published_set") or {}
+    if not published:
+        return []
+    return [
+        "",
+        "Published validation set behind the transported sensitivity:",
+        "",
+        f"- Set: {_escape(published.get('name'))} ({_escape(published.get('source'))})",
+        f"- Judge: {_escape(published.get('judge'))}; rubric: "
+        f"{_escape(published.get('rubric'))}",
+        f"- Judge flagged {published.get('judge_flagged_unsafe')} of "
+        f"{published.get('human_unsafe')} human-unsafe items; sensitivity at least "
+        f"{_number(summary.get('sensitivity_lower'), places)} (one-sided Clopper-Pearson, "
+        f"alpha {_number(published.get('sensitivity_alpha'), places)})",
+    ]
+
+
 def _verdict_range(verdict_range: VerdictRange | None, places: int) -> str:
     """State a claim's verdict range, with each boundary rounded so that the statement holds.
 
@@ -1260,25 +1281,7 @@ def _markdown(report: SafetyReport) -> str:
                         + " |"
                     )
         elif transported:
-            summary = report.provenance.get("judge_calibration") or {}
-            published = summary.get("published_set") or {}
-            if published:
-                lines.extend(
-                    [
-                        "",
-                        "Published validation set behind the transported sensitivity:",
-                        "",
-                        f"- Set: {_escape(published.get('name'))} "
-                        f"({_escape(published.get('source'))})",
-                        f"- Judge: {_escape(published.get('judge'))}; rubric: "
-                        f"{_escape(published.get('rubric'))}",
-                        f"- Judge flagged {published.get('judge_flagged_unsafe')} of "
-                        f"{published.get('human_unsafe')} human-unsafe items; sensitivity "
-                        f"at least {_number(summary.get('sensitivity_lower'), places)} "
-                        "(one-sided Clopper-Pearson, alpha "
-                        f"{published.get('sensitivity_alpha')})",
-                    ]
-                )
+            lines.extend(_published_set_lines(report, places))
         else:
             scenarios = calibration.scenarios if calibration else []
             if scenarios:
@@ -1300,6 +1303,29 @@ def _markdown(report: SafetyReport) -> str:
                             f"P(truly unsafe | judge said safe) in "
                             f"[{box.rho_0.lower}, {box.rho_0.upper}]"
                         )
+    elif (
+        report.presentation.judge_calibration is not None
+        and report.presentation.judge_calibration.mode == "transported"
+    ):
+        # No group-risk row carries a transported interval, yet the plan declared one: say
+        # so, and name the published set, rather than leave only the diagnostic.
+        lines.extend(
+            [
+                "",
+                "## Judge misclassification sensitivity",
+                "",
+                "Experimental. The plan transports a judge sensitivity from a published "
+                "validation set, but no group-risk row in this report carries a corrected "
+                "interval: the correction applies only to rows of `weighted_mean`, `maximum`, "
+                "`cvar` and `top_k_mean` measures that have a judge-system upper bound."
+                + (
+                    " The corrected hierarchy nodes are in `report.json`."
+                    if report.hierarchy_risks
+                    else ""
+                ),
+                *_published_set_lines(report, places),
+            ]
+        )
     if report.hierarchy_risks:
         lines.extend(
             [

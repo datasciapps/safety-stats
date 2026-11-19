@@ -431,12 +431,31 @@ def test_transported_upper_never_falls_below_the_judge_system_upper(
     assert weaker.upper >= result.upper
 
 
-def test_transported_upper_bound_covers_true_risk_when_sensitivity_transports() -> None:
-    """Seeded Monte Carlo: the bound covers at the union of its two budgets, or better.
+@pytest.mark.parametrize(
+    ("published_unsafe", "rollouts", "sharp_against"),
+    [
+        # A small published set and a large run: the sensitivity's uncertainty dominates, so
+        # dividing by its point estimate under-covers.
+        pytest.param(40, 5000, "point_estimate", id="sensitivity-limited"),
+        # A large published set and a small run: the run's uncertainty dominates, so dividing
+        # the judged rate's estimate rather than its upper bound under-covers.
+        pytest.param(2000, 300, "judged_estimate", id="run-limited"),
+    ],
+)
+def test_transported_upper_bound_covers_true_risk_when_sensitivity_transports(
+    published_unsafe: int, rollouts: int, sharp_against: str
+) -> None:
+    """Seeded Monte Carlo at the bound's worst case, where a wrong correction shows.
 
-    The published set and the run share one judge sensitivity; the run's false-positive
-    rate is unrelated to anything on the published set. Coverage must reach
-    1 - (run alpha + sensitivity alpha) = 0.90.
+    The published set and the run share one judge sensitivity, drawn low and narrow, and
+    the run has no false positives. Its judged rate is then exactly true risk times
+    sensitivity, so the inequality the bound rests on, ``q >= pi * Se``, holds with
+    equality, and with true risk up to 0.5 no false-positive slack can hide a wrong
+    sensitivity correction. Coverage must reach 1 - (run alpha + sensitivity alpha) = 0.90.
+
+    The same check must fail for the uncorrected judge-system upper bound, and for the
+    mistake each regime is built to expose. Against the old design (false-positive rate up
+    to 0.02, true risk up to 0.08) a bound that did not divide at all still passed.
     """
     import numpy as np
 
@@ -446,30 +465,44 @@ def test_transported_upper_bound_covers_true_risk_when_sensitivity_transports() 
         transported_sensitivity_lower,
     )
 
-    rng = np.random.default_rng(20261116)
+    rng = np.random.default_rng(20261119)
     run_alpha = sensitivity_alpha = 0.05
-    replications = 4000
-    published_unsafe, rollouts = 80, 600
-    misses = 0
+    replications = 10000
+    misses = dict.fromkeys(("transported", "uncorrected", "point_estimate", "judged_estimate"), 0)
     for _ in range(replications):
-        sensitivity = rng.uniform(0.6, 0.98)
-        true_risk = rng.uniform(0.0, 0.08)
-        false_positive = rng.uniform(0.0, 0.02)
+        sensitivity = rng.uniform(0.60, 0.65)
+        true_risk = rng.uniform(0.0, 0.5)
         flagged = int(rng.binomial(published_unsafe, sensitivity))
-        judged = int(
-            rng.binomial(rollouts, true_risk * sensitivity + (1 - true_risk) * false_positive)
+        judged = int(rng.binomial(rollouts, true_risk * sensitivity))
+        judge_system_upper = binomial_upper_bound(judged, rollouts, alpha=run_alpha)
+        sensitivity_lower = transported_sensitivity_lower(
+            judge_flagged_unsafe=flagged, human_unsafe=published_unsafe, alpha=sensitivity_alpha
         )
         bound = transport_judge_risk(
-            observed_upper=binomial_upper_bound(judged, rollouts, alpha=run_alpha),
-            observed_estimate=None,
-            sensitivity_lower=transported_sensitivity_lower(
-                judge_flagged_unsafe=flagged, human_unsafe=published_unsafe, alpha=sensitivity_alpha
-            ),
+            observed_upper=judge_system_upper,
+            observed_estimate=judged / rollouts,
+            sensitivity_lower=sensitivity_lower,
         )
-        misses += true_risk > bound.upper
-    coverage = 1 - misses / replications
-    # Monte Carlo standard error at the nominal 0.90 is sqrt(0.9 * 0.1 / 4000) < 0.005.
-    assert coverage >= 0.90 - 3 * 0.005
+        uppers = {
+            "transported": bound.upper,
+            "uncorrected": judge_system_upper,
+            "point_estimate": (
+                min(1.0, judge_system_upper * published_unsafe / flagged) if flagged else 1.0
+            ),
+            "judged_estimate": (
+                min(1.0, judged / rollouts / sensitivity_lower) if sensitivity_lower else 1.0
+            ),
+        }
+        for name, upper in uppers.items():
+            misses[name] += true_risk > upper
+    coverage = {name: 1 - count / replications for name, count in misses.items()}
+    nominal = 1 - run_alpha - sensitivity_alpha
+    # Three Monte Carlo standard errors at the nominal coverage: 0.009 below it.
+    floor = nominal - 3 * (nominal * (1 - nominal) / replications) ** 0.5
+    assert coverage["transported"] >= floor, coverage
+    # Negative controls: the simulation can tell a wrong correction from a right one.
+    assert coverage["uncorrected"] < floor, coverage
+    assert coverage[sharp_against] < floor, coverage
 
 
 def test_a_transported_calibration_needs_its_published_set_and_nothing_else() -> None:
@@ -513,8 +546,14 @@ def test_plans_without_a_published_set_serialise_as_before() -> None:
     assert "published_set" not in spec.model_dump(mode="json", by_alias=True)
 
 
-def test_a_perfectly_sensitive_judge_leaves_the_upper_bound_unchanged() -> None:
-    """#123's identity check: with sensitivity one nothing is inflated."""
+def test_a_perfectly_sensitive_judge_keeps_the_upper_bound_but_not_the_lower() -> None:
+    """With sensitivity one the interval is ``[0, U]``, not the judge-system ``[L, U]``.
+
+    #123 asked for the uncorrected interval when sensitivity and specificity are both one.
+    Only the upper end keeps that identity here: no specificity is declared, so every judged
+    failure may be a false positive and the lower end is zero whatever the judge-system
+    lower bound and estimate were.
+    """
     from inspect_safety_stats.stats.misclassification import transport_judge_risk
 
     for upper in (0.0, 3e-17, 0.0106, 0.5, 1.0):
@@ -523,6 +562,8 @@ def test_a_perfectly_sensitive_judge_leaves_the_upper_bound_unchanged() -> None:
         )
         assert result.upper == upper
         assert result.completion_estimate_upper == upper
+        assert result.lower == 0.0
+        assert result.completion_estimate_lower == 0.0
 
 
 @settings(max_examples=300, deadline=None)
