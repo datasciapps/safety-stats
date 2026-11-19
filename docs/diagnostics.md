@@ -478,7 +478,8 @@ The analysis plan: its fields, references and their combinations.
 - **Assumption:** A direct worst_of_k interval is requested under a fixed design, with direct mean
   intervals enabled without frontier_sidak calibration and a primary independence profile that
   blocks by rollout.
-- **Consequence:** The integrity status is invalid, so no claim can pass.
+- **Consequence:** The integrity status is invalid, so no claim can pass. The measure's group rows
+  get no direct interval: they keep the propagated prompt envelope as primary and warn why.
 - **Remedy:** Set design.type: fixed, outputs.direct_mean_intervals.enabled: true with
   hierarchy_calibration: flat_bonferroni and a primary profile blocking by rollout; or drop
   direct_interval from the worst_of_k measure in outputs.risk_measures.

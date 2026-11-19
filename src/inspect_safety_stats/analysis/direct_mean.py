@@ -43,6 +43,7 @@ from inspect_safety_stats.stats.tree_calibration import (
     any_overlap,
     calibrate_independent_frontiers,
 )
+from inspect_safety_stats.validate.plan import worst_of_k_interval_problems
 
 _BETTING_ASSUMPTION = (
     "Experimental: a common betting fraction, mixed over a prior fixed before any "
@@ -571,12 +572,18 @@ def _worst_of_k_direct_interval(
     """Experimental direct interval of a worst_of_k row, and the row's warnings about it.
 
     Each prompt's unbiased share enters the KL-Chernoff bound as floor(n / k) blocks, which
-    needs independent rollouts; plan validation refuses any other primary profile.
+    needs a fixed design and independent rollouts. A plan that plan validation refuses, such as
+    one whose primary profile does not block by rollout, gets no interval and a warning per
+    reason on the row.
     """
 
     spec = plan.outputs.direct_mean_intervals
-    independence = _independence(spec)
     k = int(_parameter(measure, "k", measure.k))
+    problems = worst_of_k_interval_problems(plan)
+    if problems:
+        # validate_plan_references reports each as a PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED error.
+        return None, [f"No direct interval of {k} attempts: {problem}." for problem in problems]
+    independence = _independence(spec)
     target_id = _worst_of_k_target_id(group_id, measure.id)
     calibration = direct.calibrations.get(
         _calibration_key(cohort_id, target_id, independence.primary)
@@ -651,7 +658,7 @@ def _worst_of_k_direct_interval(
     if bounds.chernoff_kernel == "bernoulli_kl_equal_atomic_weights":
         assumptions.append(
             "Equal block weights permit inversion of the Bernoulli-KL Chernoff exponent; "
-            "identical failure probabilities are not required."
+            "identical failure probabilities across prompts are not required."
         )
     elif bounds.chernoff_kernel == "weighted_poisson_chernoff_max_increment":
         assumptions.append(

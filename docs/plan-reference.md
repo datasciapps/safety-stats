@@ -759,9 +759,10 @@ The interval shares the alpha of `outputs.direct_mean_intervals`, so that sectio
 enabled. Each opted-in measure is one more target in the family on every selected group. The
 plan is refused (`PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED`) when the design is sampled, when
 `hierarchy_calibration` is `frontier_sidak`, or when the primary independence profile does not
-block by rollout. Other measure types reject the field. If a prompt has fewer than `k` attempted
-rollouts, the row keeps the envelope and warns. Leaving the field out, or setting it to `false`,
-keeps the plan hash unchanged.
+block by rollout. `analyze` then gives the rows no direct interval: they keep the envelope as
+primary and warn why. Other measure types reject the field. If a prompt has fewer than `k`
+attempted rollouts, the row keeps the envelope and warns. Leaving the field out, or setting it
+to `false`, keeps the plan hash unchanged.
 
 `coverage_mode: two_sided` is the default. It interprets the multiplicity-family alpha as the
 total error budget for the displayed lower-to-upper range and divides it equally between tails.
@@ -865,11 +866,12 @@ one primary profile and optional prespecified sensitivity profiles. See
 [Configuring hierarchy and independence](independence-profiles.md).
 
 `single_valued_bound: true` (experimental, default `false`) adds a single number per direct
-interval for system models such as fault trees: M, the smallest value of U_δ + δ over levels
-δ, where U_δ is the interval's own one-sided upper bound at level δ for that node alone. It
-needs no alpha and has P(M < R) ≤ R: its miss probability is the unknown risk R itself. It is not
-simultaneous, does not enter claims, and is usually above a 95% bound. Each interval in
-`report.json` then carries `single_valued_bound`, `single_valued_bound_delta` and
+weighted-mean interval for system models such as fault trees: M, the smallest value of U_δ + δ
+over levels δ, where U_δ is the interval's own one-sided upper bound at level δ for that node
+alone. It needs no alpha and has P(M < R) ≤ R: its miss probability is the unknown risk R itself.
+It is not simultaneous, does not enter claims, and is usually above a 95% bound. A direct
+`worst_of_k` interval gets no such number. Each direct weighted-mean interval in `report.json`
+then carries `single_valued_bound`, `single_valued_bound_delta` and
 `single_valued_bound_guarantee`, and `report-full.md` lists them under "Single-valued bounds
 (experimental)". The option is refused with `PLAN_SINGLE_VALUED_BOUND_UNSUPPORTED` under a
 sampled design and with judge calibration. See

@@ -1874,7 +1874,11 @@ _CODES: tuple[CodeEntry, ...] = (
             "intervals enabled without frontier_sidak calibration and a primary independence "
             "profile that blocks by rollout."
         ),
-        consequence="The integrity status is invalid, so no claim can pass.",
+        consequence=(
+            "The integrity status is invalid, so no claim can pass. The measure's group rows "
+            "get no direct interval: they keep the propagated prompt envelope as primary and "
+            "warn why."
+        ),
         remedy=(
             "Set design.type: fixed, outputs.direct_mean_intervals.enabled: true with "
             "hierarchy_calibration: flat_bonferroni and a primary profile blocking by rollout; "
