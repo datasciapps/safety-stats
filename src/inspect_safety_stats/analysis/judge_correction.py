@@ -565,7 +565,10 @@ def _add_judge_corrections(
             "family_alpha": judge_alpha,
             "per_cohort_alpha": per_calibration_alpha,
             "sampling": spec.sampling,
-            "validation_manifest": str(spec.validation_manifest),
+            # As the report names every input: relative to the plan, never by its absolute path.
+            "validation_manifest": None
+            if spec.validation_manifest is None
+            else report_path(spec.validation_manifest, plan),
             "cohorts": {cohort_id: item for (cohort_id, _), item in summaries.items()},
             "truth_strata": {cohort_id: item for (cohort_id, _), item in truth_strata.items()},
         }
@@ -584,7 +587,10 @@ def _add_judge_corrections(
             "groups": list(spec.groups),
             "per_calibration_alpha": per_calibration_alpha,
             "sampling": spec.sampling,
-            "validation_manifest": str(spec.validation_manifest),
+            # As the report names every input: relative to the plan, never by its absolute path.
+            "validation_manifest": None
+            if spec.validation_manifest is None
+            else report_path(spec.validation_manifest, plan),
             "cohorts": nested(summaries),
             "truth_strata": nested(truth_strata),
         }

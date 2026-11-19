@@ -7,6 +7,16 @@ described in their pull requests.
 
 ### Fixed
 
+- **A judge's input files are named relative to the plan (changes report bytes).** With
+  validated judge calibration, `report.json` recorded the labels file under
+  `provenance.judge_calibration.validation_manifest` by the absolute path the plan loader
+  resolved it to. A labels, strata, labelling queue or `judge_flip` manifest file that could
+  not be read gave a `JUDGE_VALIDATION_INVALID`, `JUDGE_LABELLING_PROTOCOL_VIOLATED` or
+  `JUDGE_FLIP_INVALID` message with that path. Reports name every other input relative to the
+  plan's directory, so the same analysis wrote different bytes in different checkouts and a
+  shared report revealed the local directory layout. Each now gives the path relative to the
+  plan.
+
 - **A zero-tolerance column that the manifest lacks is an error.** When a plan sets
   `policy.zero_tolerance.manifest_field` and the manifest has no such column, the analysis
   silently held no prompt to zero tolerance. It now stops with an error that names the column.

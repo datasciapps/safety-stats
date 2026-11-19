@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import re
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -121,6 +123,37 @@ def report_path(path: str | Path, plan: AnalysisPlan) -> str:
     except ValueError:
         return absolute.as_posix()
 
+
+
+def report_message(
+    message: str, plan: AnalysisPlan, paths: Iterable[str | os.PathLike[str] | None]
+) -> str:
+    """An input error's message with each of ``paths`` in it as a report records it.
+
+    An exception names the file it failed on as it opened it, usually by the absolute path the
+    plan loader resolved it to. A report names its inputs with ``report_path``, so the message
+    follows suit: the same analysis then writes the same bytes in any checkout, and a shared
+    report does not reveal the local directory layout. A URI, and a path given relative to the
+    working directory, are left as they are.
+    """
+
+    forms: dict[str, str] = {}
+    for path in paths:
+        if path is None:
+            continue
+        text = os.fspath(path)
+        if "://" in text:
+            continue
+        form = report_path(text, plan)
+        for absolute in (text, str(Path(text).resolve())):
+            if Path(absolute).is_absolute():
+                forms[absolute] = form
+                # OSError messages show the path's repr, which doubles Windows separators.
+                forms[absolute.replace("\\", "\\\\")] = form
+    if not forms:
+        return message
+    pattern = "|".join(re.escape(text) for text in sorted(forms, key=len, reverse=True))
+    return re.sub(pattern, lambda match: forms[match.group(0)], message)
 
 def report_plan(plan: AnalysisPlan) -> dict[str, Any]:
     """The resolved plan as a report records it, with input paths in their report form."""

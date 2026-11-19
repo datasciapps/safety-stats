@@ -3,7 +3,6 @@ from __future__ import annotations
 import copy
 import dataclasses
 import os
-import re
 from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -38,7 +37,12 @@ from inspect_safety_stats.analysis.tail_precision import (
 )
 from inspect_safety_stats.config.canonicalize import canonical_value, sha256_value
 from inspect_safety_stats.config.decision_policy import DecisionPolicy
-from inspect_safety_stats.config.loader import canonical_plan_hash, report_path, report_plan
+from inspect_safety_stats.config.loader import (
+    canonical_plan_hash,
+    report_message,
+    report_path,
+    report_plan,
+)
 from inspect_safety_stats.config.models import AnalysisPlan, OutcomeMappingSensitivitySpec
 from inspect_safety_stats.config.registration import RegistrationReceipt, load_receipt
 from inspect_safety_stats.decision.engine import roll_up
@@ -95,21 +99,7 @@ def _report_message(message: str, plan: AnalysisPlan, inputs: tuple[object, ...]
     and URIs, are left as they are.
     """
 
-    forms: dict[str, str] = {}
-    for path in _named_paths(inputs):
-        text = os.fspath(path)
-        if "://" in text:
-            continue
-        form = report_path(text, plan)
-        for absolute in (text, str(Path(text).resolve())):
-            if Path(absolute).is_absolute():
-                forms[absolute] = form
-                # OSError messages show the path's repr, which doubles Windows separators.
-                forms[absolute.replace("\\", "\\\\")] = form
-    if not forms:
-        return message
-    pattern = "|".join(re.escape(text) for text in sorted(forms, key=len, reverse=True))
-    return re.sub(pattern, lambda match: forms[match.group(0)], message)
+    return report_message(message, plan, _named_paths(inputs))
 
 
 def _matched_receipt(
