@@ -2627,6 +2627,102 @@ def test_a_pair_missing_from_one_arm_still_breaks_the_pairing(
     assert report.comparisons[0].pair_count is None
 
 
+def test_too_many_unscored_pairs_withhold_only_the_newcombe_diagnostic(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # 670 of 690 pairs are unscored in both arms, so their completions produce C(673, 3) =
+    # 50,577,296 tables, more than newcombe_paired evaluates. That used to be PAIR_BROKEN, an
+    # error that made the report invalid and dropped exact_mcnemar as well.
+    plan_path = _write_inputs(tmp_path)
+    design = tmp_path / "design.csv"
+    design.write_text(
+        design.read_text(encoding="utf-8").replace(",20,", ",345,"), encoding="utf-8"
+    )
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "groups:\n",
+        "  baseline:\n"
+        "    match:\n"
+        "      model: model/baseline\n"
+        "    require_uniform: [task_version, model_generate_config]\n"
+        "groups:\n",
+    )
+    plan_text = plan_text.replace(
+        "multiplicity:\n",
+        "comparisons:\n"
+        "  - id: candidate_vs_baseline\n"
+        "    candidate: candidate\n"
+        "    baseline: baseline\n"
+        "    group: cyber\n"
+        "    measure: mean\n"
+        "    method: weighted_empirical_bernstein\n"
+        "    family: direct_means\n"
+        "    independence:\n"
+        "      primary: rollout\n"
+        "    pair_key: [prompt_id, epoch]\n"
+        "    diagnostic_methods: [exact_mcnemar, newcombe_paired, fixed_cluster_bootstrap]\n"
+        "    cluster_key: question_id\n"
+        "    bootstrap_replicates: 100\n"
+        "    bootstrap_seed: 7\n"
+        "multiplicity:\n",
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    plan = load_plan(plan_path)
+    plan.inputs.score.missing = "conservative_bounds"
+
+    candidate_eval, _ = _frames()
+    candidate_eval.loc[0, "epochs"] = 345
+    baseline_eval = candidate_eval.copy()
+    baseline_eval.loc[0, "eval_id"] = "eval-2"
+    baseline_eval.loc[0, "model"] = "model/baseline"
+    samples = [
+        {
+            "sample_id": f"{arm}-{prompt_id}-{epoch}",
+            "eval_id": eval_id,
+            "log": "/not/a/local/log.eval",
+            "id": prompt_id,
+            "epoch": epoch,
+            "score_harmful": None if epoch <= 335 else "PASS",
+            "error": None,
+            "retries": 0,
+        }
+        for arm, eval_id in (("candidate", "eval-1"), ("baseline", "eval-2"))
+        for prompt_id in ("p1", "p2")
+        for epoch in range(1, 346)
+    ]
+    eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
+    sample_frame = pd.DataFrame(samples)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan, logs="ignored")
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "PAIR_BROKEN" not in codes
+    assert {"PAIR_UNSCORED_COMPLETED", "PAIR_NEWCOMBE_UNAVAILABLE"} <= codes
+    (withheld,) = [
+        item for item in report.integrity.diagnostics if item.code == "PAIR_NEWCOMBE_UNAVAILABLE"
+    ]
+    assert withheld.severity == "WARNING"
+    assert withheld.scope == "comparisons/candidate_vs_baseline"
+    assert "the 670 pairs with an unscored arm" in withheld.message
+    assert "more than 50000000 distinct 2x2 tables" in withheld.message
+    assert report.integrity.status == "degraded"
+    comparison = report.comparisons[0]
+    assert comparison.pair_count == 690
+    assert set(comparison.diagnostic_outputs) == {
+        "partial_pairing",
+        "exact_mcnemar",
+        "fixed_cluster_bootstrap",
+    }
+    assert comparison.diagnostic_outputs["partial_pairing"]["both_unscored_pair_count"] == 670
+    assert withheld.message in comparison.warnings
+
+
 def test_first_class_direct_comparisons_expand_hierarchy_and_write_artifacts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

@@ -240,6 +240,7 @@ def _comparisons(
                         p_value,
                         cluster_count,
                         diagnostic_outputs,
+                        newcombe_withheld,
                     ) = _paired_comparison_diagnostics(spec, data, set(target.prompt_ids))
                     partial = diagnostic_outputs.get("partial_pairing")
                     if partial is not None:
@@ -257,6 +258,16 @@ def _comparisons(
                             )
                         )
                         warnings.append(message)
+                    if newcombe_withheld is not None:
+                        diagnostics.append(
+                            Diagnostic(
+                                code="PAIR_NEWCOMBE_UNAVAILABLE",
+                                severity="WARNING",
+                                message=newcombe_withheld,
+                                scope=scope_path("comparisons", spec.id),
+                            )
+                        )
+                        warnings.append(newcombe_withheld)
                 except ValueError as exc:
                     diagnostics.append(
                         Diagnostic(

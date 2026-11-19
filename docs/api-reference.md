@@ -433,7 +433,9 @@ p-values over the completions, `estimate_lower` and `estimate_upper`, and the Mc
 the fully scored pairs as `scored`, or `None` when there are none.
 `newcombe_paired_interval_partial` returns the lowest lower bound and the highest upper bound
 over the completions, the range of the estimate, and `completion_count`, the number of distinct
-2×2 tables the completions produce.
+2×2 tables the completions produce. It evaluates its bound on every one of them, and raises
+`ValueError` before evaluating any when there are more than 50 million, as from 668 pairs
+unscored in both arms.
 
 `paired_cluster_bootstrap` is available from
 `inspect_safety_stats.stats.clusters`. It resamples whole creator-declared clusters while
