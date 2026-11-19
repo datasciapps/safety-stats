@@ -250,7 +250,9 @@ described in their pull requests.
   `token_limit` or `content_filter_stops: failure`) counts as no success, and the claim's
   reasons say how many there were. Each claim takes its multiplicity family's whole alpha,
   and a plan that puts two adaptive claims in one family is invalid
-  (`PLAN_INVALID_MULTIPLICITY`). Mandatory adaptive claims enter the decision. `report.json`
+  (`PLAN_INVALID_MULTIPLICITY`). Mandatory adaptive claims enter the decision, which they can
+  make `FAIL` but, never being `PASS`, otherwise hold at `INCONCLUSIVE`; with
+  `mandatory: false` a claim neither fails nor holds the decision. `report.json`
   and `report.md` show them in their own section, `report.html` beside the cohort's claims.
   Plans without them keep their hash and their `report.json` and `report.md` bytes; every
   `report.html` changes bytes, because it embeds the script that renders them. See
