@@ -1,0 +1,95 @@
+name: Release
+
+# Publishes the package when a version tag is pushed. docs/releasing.md has the steps and the
+# one-time setup.
+#   v0.16.0     must equal the package version; published to PyPI.
+#   v0.16.0rc1  a release candidate of the package version, built as 0.16.0rc1 from the same
+#               commit and published to TestPyPI only.
+# A tag must point at a commit on main. Publishing uses PyPI trusted publishing (OpenID
+# Connect): no API token is stored in the repository.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build and check
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      index: ${{ steps.release.outputs.index }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check that the tagged commit is on main
+        run: |
+          git fetch --quiet origin main
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "tag ${GITHUB_REF_NAME} points at a commit that is not on main" >&2
+            exit 1
+          fi
+      - name: Check the tag against the package version
+        id: release
+        run: python scripts/release_version.py "$GITHUB_REF_NAME" --apply >> "$GITHUB_OUTPUT"
+      - run: python -m pip install build twine
+      - run: python -m build
+      - run: python -m twine check --strict dist/*
+      - name: The distributions carry the tag's version
+        run: |
+          ls dist/
+          test -f "dist/inspect_safety_stats-${{ steps.release.outputs.version }}-py3-none-any.whl"
+          test -f "dist/inspect_safety_stats-${{ steps.release.outputs.version }}.tar.gz"
+      - name: Install the built wheel into a clean environment
+        run: bash scripts/check_wheel.sh "$(ls dist/*.whl)" /tmp/check
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+
+  testpypi:
+    name: publish a release candidate to TestPyPI
+    needs: build
+    if: needs.build.outputs.index == 'testpypi'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/inspect-safety-stats/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  pypi:
+    name: publish the release to PyPI
+    needs: build
+    if: needs.build.outputs.index == 'pypi'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/inspect-safety-stats/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: distributions
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

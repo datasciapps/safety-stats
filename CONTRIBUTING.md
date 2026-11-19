@@ -381,8 +381,9 @@ All three are first-class platforms.
 
 - **Versioning.** Bump the minor version for class B and C changes, and the patch version for
   class A changes and fixes that do not change output.
-- **What a release includes.** A git tag, a changelog section, and a GitHub release. It is
-  published to PyPI through trusted publishing once that exists (#20).
+- **What a release includes.** A git tag, a changelog section, and a GitHub release. A version
+  tag publishes it to PyPI through trusted publishing (#20); [docs/releasing.md](docs/releasing.md)
+  has the steps and the one-time setup.
 - **Deprecation.** Removing or renaming a protected interface takes at least one minor release.
   During it, the old interface keeps working and warns with a `DeprecationWarning` or a plan
   diagnostic that names the replacement. The migration is documented in the changelog.
