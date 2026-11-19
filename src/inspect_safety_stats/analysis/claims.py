@@ -561,7 +561,9 @@ def _claims(
                 unacceptable_lower=claim.unacceptable_lower,
                 eligible=eligible,
             )
-            decided_on_evidence = True
+            # A validated correction decides the claim on true risk; the profile intervals
+            # are judge-reported, so they have no verdict on the claim's thresholds.
+            decided_on_evidence = correction is None
             verdict_range = claim_verdict_range(lower=lower, upper=upper, eligible=eligible)
         if not integrity_valid and lower is not None and upper is not None:
             reasons = [

@@ -4458,6 +4458,78 @@ def test_comparison_claims_show_their_verdict_under_every_independence_profile(
     )
 
 
+def _validated_judge_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sensitivities: list[str]
+) -> SafetyReport:
+    """The integration plan under a validated judge calibration whose labels agree with it."""
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "design:\n",
+        "  judge_calibration:\n"
+        "    mode: validated\n"
+        "    validation_manifest: labels.csv\n"
+        "    family: judge_error\n"
+        "design:\n",
+        1,
+    )
+    plan_text = plan_text.replace(
+        "    - {id: displayed,",
+        "    - {id: judge_error, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: displayed,",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    baseline_dir = tmp_path / "baseline"
+    baseline_dir.mkdir()
+    baseline = analyze(plan=load_plan(_write_inputs(baseline_dir)), logs="ignored")
+    rows = ["observation_id,human_label"]
+    for observation in baseline._observations:
+        if observation.failure is not None:
+            label = "unsafe" if observation.failure else "safe"
+            rows.append(f"{observation.observation_id},{label}")
+    (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    plan = load_plan(plan_path)
+    independence = plan.outputs.direct_mean_intervals.independence
+    assert independence is not None
+    independence.sensitivities = sensitivities
+    return analyze(plan=plan, logs="ignored")
+
+
+@pytest.mark.parametrize("sensitivities", [["prompt"], []])
+def test_a_judge_corrected_claim_has_no_profile_verdicts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sensitivities: list[str]
+) -> None:
+    """A claim decided on true risk has no verdict on judge-reported profile intervals.
+
+    The rows were built for it all the same: the primary row joined the corrected bounds to the
+    judge-reported interval's id, and each sensitivity row decided the thresholds, which are
+    about true risk, on a judge-reported interval no correction had touched.
+    """
+    report = _validated_judge_report(monkeypatch, tmp_path, sensitivities)
+
+    claim = report.claims[0]
+    assert any(ref.startswith("interval:judge_corrected_") for ref in claim.evidence_refs)
+    assert claim.profile_verdicts == []
+    not_reported = (
+        "Verdicts under the sensitivity independence profiles are not reported, because this "
+        "claim is not decided directly on the profile intervals."
+    )
+    assert (not_reported in claim.reasons) == bool(sensitivities)
+
+
 def _patch_frames_with_failures(
     monkeypatch: pytest.MonkeyPatch, failing_epochs: int = 0
 ) -> None:
