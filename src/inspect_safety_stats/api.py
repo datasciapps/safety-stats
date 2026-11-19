@@ -291,7 +291,9 @@ def analyze(
         )
     data, judge_inputs = read
     # ORDER MATTERS: the record adds its diagnostic before the analysis reads integrity.
-    policy_record = _decision_policy_record(application, data.first_started_at, diagnostics)
+    policy_record = _decision_policy_record(
+        application, data.first_started_at, diagnostics, start_unrecorded=data.start_unrecorded
+    )
     # ORDER MATTERS too: an invalid flip manifest must be an error before integrity is read.
     judge_flip_diagnostic(resolved, data, diagnostics)
     # ORDER MATTERS as well: a run without a recorded order must be an error before integrity

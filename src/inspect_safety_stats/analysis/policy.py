@@ -145,12 +145,36 @@ def _policy_roll_up(
     return "INCONCLUSIVE" if decision == "PASS" else decision
 
 
+def _set_after_first_evaluation(
+    set_at: datetime, first_started_at: datetime | None, start_unrecorded: bool
+) -> bool | None:
+    """Whether a version was set after the first evaluation started; None when unknown.
+
+    A version set after the earliest recorded start was set after the first evaluation
+    started, whatever the others' starts. One set at or before it is known to precede every
+    evaluation only when every evaluation records its start: one that records none may have
+    started earlier.
+    """
+
+    if first_started_at is None:
+        return None
+    if set_at > first_started_at:
+        return True
+    return None if start_unrecorded else False
+
+
 def _decision_policy_record(
     application: _PolicyApplication | None,
     first_started_at: datetime | None,
     diagnostics: list[Diagnostic],
+    *,
+    start_unrecorded: bool = False,
 ) -> DecisionPolicyRecord | None:
-    """The report's record of a decision policy, and a note when it was set after the run."""
+    """The report's record of a decision policy, and a note when it was set after the run.
+
+    ``first_started_at`` is the earliest start the selected evaluations record, and
+    ``start_unrecorded`` whether some of them record none.
+    """
 
     if application is None:
         return None
@@ -168,8 +192,8 @@ def _decision_policy_record(
                 )
                 for claim_id, item in sorted(version.thresholds.items())
             },
-            set_after_first_evaluation=(
-                None if first_started_at is None else version.set_at > first_started_at
+            set_after_first_evaluation=_set_after_first_evaluation(
+                version.set_at, first_started_at, start_unrecorded
             ),
         )
         for version in policy.versions

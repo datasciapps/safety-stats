@@ -357,7 +357,8 @@ described in their pull requests.
   thresholds of `corrected_interval` claims (`hash-plan --inference`); it cannot set
   `noisy_valid_test` claims, whose test uses their thresholds. `report.json` gains a
   `decision_policy` section with every version, its time and whether it came after the first
-  evaluation started, and the thresholds each claim was decided at; `report.md` shows the same.
+  evaluation started (`null` when that cannot be told, as when a run reports no start time),
+  and the thresholds each claim was decided at; `report.md` shows the same.
   New diagnostics: `DECISION_POLICY_MISMATCH`, `DECISION_POLICY_UNKNOWN_CLAIM`,
   `DECISION_POLICY_FIXED_CLAIM` (errors), `DECISION_POLICY_OVERALL_UNCERTIFIED` (warning) and
   `DECISION_POLICY_AFTER_GENERATION` (info).

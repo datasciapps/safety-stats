@@ -702,3 +702,49 @@ def test_outcome_mapping_sensitivities_are_held_to_the_same_overall_decision(
     (sensitivity,) = report.outcome_mapping_sensitivities
     assert sensitivity.decision == "INCONCLUSIVE"
     assert sensitivity.diagnostic_counts["DECISION_POLICY_OVERALL_UNCERTIFIED"] == 1
+
+
+def test_a_version_is_not_reported_before_the_run_when_a_start_is_unknown(
+    tmp_path: Path,
+) -> None:
+    groups = ["g1"]
+    plan_path = _gate_inputs(tmp_path, _gate_plan(groups, direct=None), groups)
+    # Half the rollouts come from a second run of the same model that reports no start time,
+    # so it may have started before r1.
+    unstarted = {key: value for key, value in _RUN.items() if key != "started_at"}
+    (tmp_path / "runs.jsonl").write_text(
+        json.dumps(_RUN) + "\n" + json.dumps({**unstarted, "run_key": "r2"}) + "\n",
+        encoding="utf-8",
+    )
+    rollouts = tmp_path / "rollouts.jsonl"
+    records = [json.loads(line) for line in rollouts.read_text(encoding="utf-8").splitlines()]
+    for record in records:
+        if record["repeat"] > 20:
+            record["run_key"] = "r2"
+    rollouts.write_text("".join(json.dumps(item) + "\n" for item in records), encoding="utf-8")
+    thresholds = {"g1_mean": {"acceptable_upper": 0.5, "unacceptable_lower": 0.9}}
+    policy = tmp_path / "policy.json"
+    policy.write_text(
+        json.dumps(
+            {
+                "inference_plan_sha256": inference_plan_hash(load_plan(plan_path)),
+                "versions": [
+                    {"id": "early", "set_at": "2026-01-15T00:00:00Z", "thresholds": thresholds},
+                    {"id": "late", "set_at": "2026-03-01T00:00:00Z", "thresholds": thresholds},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = _gate_analysis(plan_path, policy)
+
+    record = report.decision_policy
+    assert record is not None and record.applied
+    assert record.first_evaluation_started_at == "2026-02-01T00:00:00+00:00"
+    # "late" follows the earliest recorded start, so it follows the first evaluation's start.
+    # "early" precedes r1's, but r2 may have started before it: that cannot be told.
+    assert [(item.id, item.set_after_first_evaluation) for item in record.versions] == [
+        ("early", None),
+        ("late", True),
+    ]

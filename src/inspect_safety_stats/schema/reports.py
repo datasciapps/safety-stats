@@ -469,8 +469,10 @@ class DecisionPolicyVersionRecord(ResultModel):
     set_at: str
     reason: str | None = None
     thresholds: dict[str, PolicyThresholdsRecord]
-    # Whether the version was set after the earliest start time of the selected evaluations;
-    # None when no evaluation reports a start time.
+    # Whether the version was set after the earliest start time of the selected evaluations,
+    # as its set_at states; None when that cannot be told: no evaluation reports a start
+    # time, or the version is set at or before the earliest reported one while some
+    # evaluation reports none.
     set_after_first_evaluation: bool | None = None
 
 

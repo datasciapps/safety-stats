@@ -167,8 +167,8 @@ plan's as frozen. The `decision_policy` section of `report.json` holds:
 | `policy_inference_plan_sha256` | The hash the policy names |
 | `policy_sha256` | The canonical hash of the policy |
 | `applied` | Whether the policy passed its checks and set the thresholds |
-| `first_evaluation_started_at` | The earliest start time of the selected evaluations, or `null` |
-| `versions` | Every version, with `set_after_first_evaluation` (`null` when no start time is known) |
+| `first_evaluation_started_at` | The earliest start time the selected evaluations report, or `null` when none reports one |
+| `versions` | Every version, with `set_after_first_evaluation`: `null` when it cannot be told, because no evaluation reports a start time, or because the version is set at or before the earliest reported start while some evaluation reports none |
 | `claims` | For every claim, the thresholds it was decided at, `set_by` (`plan` or a version id) and the plan's thresholds |
 
 `report-full.md` shows the same in a "Decision policy" section. With

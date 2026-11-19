@@ -308,6 +308,7 @@ def normalize(
         (_utc(run.started_at) for run in run_records.values() if run.started_at is not None),
         default=None,
     )
+    start_unrecorded = any(run.started_at is None for run in run_records.values())
     if plan.analysis.intent == "confirmatory" and plan.analysis.plan_frozen_at is not None:
         observed = [
             run.started_at for run in run_records.values() if run.started_at is not None
@@ -869,6 +870,7 @@ def normalize(
                 judge_verdicts=judge_verdicts,
                 source_format=dict(source.source_format),
                 first_started_at=first_started_at,
+                start_unrecorded=start_unrecorded,
             )
         for cohort_id in plan.cohorts:
             realized = sum(
@@ -918,6 +920,7 @@ def normalize(
         judge_verdicts=judge_verdicts,
         source_format=dict(source.source_format),
         first_started_at=first_started_at,
+        start_unrecorded=start_unrecorded,
     )
 
 
