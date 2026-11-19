@@ -644,6 +644,12 @@ described in their pull requests.
   `ExitCode` in `cli.py`, and no other exit status changes. See
   [Exit codes](docs/api-reference.md#exit-codes).
 
+- **`hash-plan` reports a plan it cannot read or validate on one line, and exits `3`.** It
+  prints `Plan invalid:` followed by each failing field as `field: message`, or the reading
+  error, on one line on stderr, where it printed a traceback and exited `1`. stdout still
+  carries only the hash, so a script that reads it is unaffected; one that tested for exit `1`
+  should test for a nonzero status.
+
 - **The generative report writes `checksums.json`.** It holds the SHA-256 of every other file
   the report writes, as the fixed-design report's does. The other files keep their bytes.
   Both reports now write their files through one module, `inspect_safety_stats.report.artifacts`.
