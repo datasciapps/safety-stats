@@ -598,8 +598,9 @@ described in their pull requests.
   policy fills in with no score to confirm it (`errors` or `missing: count_as_failure`,
   `token_limit` or `content_filter_stops: failure`) counts as no success, and the claim's
   reasons say how many there were. Each claim takes its multiplicity family's whole alpha,
-  and a plan that puts two adaptive claims in one family is invalid
-  (`PLAN_INVALID_MULTIPLICITY`). Mandatory adaptive claims enter the decision, which they can
+  and a plan that puts two adaptive claims in one family, or one in a family whose alpha prompt
+  bounds, direct-mean intervals, anytime bounds, a judge calibration or comparisons draw on, is
+  invalid (`PLAN_INVALID_MULTIPLICITY`). Mandatory adaptive claims enter the decision, which they can
   make `FAIL` but, never being `PASS`, otherwise hold at `INCONCLUSIVE`; with
   `mandatory: false` a claim neither fails nor holds the decision. `report.json`
   and `report-full.md` show them in their own section, `report.md` among its claims, marked

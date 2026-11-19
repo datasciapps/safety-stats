@@ -268,6 +268,42 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope=plan_scope("multiplicity", "families", family_id),
                 )
             )
+    # The other bounds a family serves draw on its alpha too, and the adaptive bound, a test of
+    # its own rather than one of them, would spend it again. Claims under `claims` each take
+    # the family's whole alpha, as the adaptive bound does, so sharing with them is allowed.
+    spenders: dict[str, list[str]] = {}
+    sections: list[tuple[str | None, str]] = []
+    if plan.outputs.prompt_bounds.enabled:
+        sections.append((plan.outputs.prompt_bounds.family, "outputs.prompt_bounds"))
+    if plan.outputs.direct_mean_intervals.enabled:
+        sections.append(
+            (plan.outputs.direct_mean_intervals.family, "outputs.direct_mean_intervals")
+        )
+    if plan.outputs.anytime_bounds is not None:
+        sections.append((plan.outputs.anytime_bounds.family, "outputs.anytime_bounds"))
+    if plan.inputs.judge_calibration is not None:
+        sections.append((plan.inputs.judge_calibration.family, "inputs.judge_calibration"))
+    sections += [(item.family, f"comparison {item.id!r}") for item in plan.comparisons]
+    sections += [(item.family, f"comparison set {item.id!r}") for item in plan.comparison_sets]
+    for named, section in sections:
+        if named is not None:
+            spenders.setdefault(named, []).append(section)
+    for family_id, adaptive_ids in sorted(adaptive_families.items()):
+        if family_id in families and family_id in spenders:
+            diagnostics.append(
+                Diagnostic(
+                    code="PLAN_INVALID_MULTIPLICITY",
+                    severity="ERROR",
+                    message=(
+                        f"adaptive claims {adaptive_ids!r} take the whole alpha of the "
+                        f"multiplicity family {family_id!r}, which "
+                        f"{', '.join(spenders[family_id])} also draw on. The adaptive bound is "
+                        "a test of its own, so it would spend that alpha again; give each "
+                        "adaptive claim a family of its own"
+                    ),
+                    scope=plan_scope("multiplicity", "families", family_id),
+                )
+            )
     prompt_bounds = plan.outputs.prompt_bounds
     prompt_family = prompt_bounds.family
     # Prompt bounds are on by default, and take their alpha from a family, simultaneous or
