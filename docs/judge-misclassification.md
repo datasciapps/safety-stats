@@ -460,7 +460,8 @@ reference assumes simple random samples within the judge strata, so it is not re
 this design, and an INFO diagnostic, `JUDGE_CALIBRATION_STRATIFIED`, says so. With `groups`, each scoped
 calibration counts the declared strata of its group's rollouts. The strata file is still
 checked against every classified observation, before any scope, and `fine_strata` is
-recorded per cohort and group. Generative plans do not offer this design.
+recorded per cohort and group. A corrected comparison states the design's assumptions as a
+corrected row does. Generative plans do not offer this design.
 
 ### Unclassified rollouts
 

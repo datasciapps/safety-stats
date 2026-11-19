@@ -13,6 +13,7 @@ and every tenth is labelled.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -29,6 +30,13 @@ from inspect_safety_stats.schema.reports import RiskIntervalResult, SafetyReport
 from inspect_safety_stats.stats.misclassification import (
     JudgeStratumCounts,
     estimate_stratified_judge_calibration,
+)
+from tests.diagnostic_codes.judge_analysis_cases import (
+    census,
+    comparison,
+    judged,
+    stratified,
+    with_labels,
 )
 
 ROLLOUTS = 1000
@@ -487,3 +495,43 @@ def test_a_group_scoped_calibration_counts_only_the_group_s_fine_strata(
     assert _codes(scoped)["JUDGE_VALIDATION_OUT_OF_SCOPE"] == "WARNING"
     markdown = (scoped.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
     assert "| candidate | all | judge_safe | disagree | 30 / 30 | 10 | 10–10 |" in markdown
+
+
+def _comparison_correction(outcome: Any) -> RiskIntervalResult:
+    (row,) = [item for item in outcome.report.comparisons if item.level is None]
+    (found,) = [item for item in row.intervals if item.interval_id == "judge_corrected_validated"]
+    return found
+
+
+def test_a_comparison_corrected_with_stratified_labels_states_their_design(
+    tmp_path: Path,
+) -> None:
+    # Two cohorts of two prompts, every classified rollout labelled, each prompt a stratum.
+    method = comparison("weighted_kl_chernoff")
+    outcome = judged(stratified(), method)(tmp_path / "stratified")
+    default = judged(with_labels(census), method)(tmp_path / "default")
+
+    corrected = _comparison_correction(outcome)
+    assert corrected.eligibility == "certifying"
+    experimental = [text for text in corrected.assumptions if text.startswith("Experimental")]
+    assert len(experimental) == 1
+    assert "hypergeometric" in experimental[0]
+    assert any("is binomial" in text for text in corrected.assumptions)
+    assert any("simple random sample without replacement" in text for text in corrected.assumptions)
+    assert (
+        "The declared validation strata place every classified rollout of each cohort."
+        in corrected.assumptions
+    )
+    assert any(
+        text.startswith(
+            "Each cohort's fine strata weight back to its classified rollouts equally"
+        )
+        for text in corrected.assumptions
+    )
+    # The default design's comparison keeps its own text.
+    plain = _comparison_correction(default)
+    assert not any("Experimental" in text for text in plain.assumptions)
+    assert any(
+        text.startswith("Each cohort's labels weight its classified rollouts equally")
+        for text in plain.assumptions
+    )

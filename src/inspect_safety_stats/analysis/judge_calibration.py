@@ -230,6 +230,35 @@ def _unclassified_assumption(share: float) -> str:
     )
 
 
+def _stratified_assumptions(cohort: str = "the cohort") -> list[str]:
+    """The stratified calibration's method and design, as risk rows and comparisons state it.
+
+    ``cohort`` names the cohorts whose classified rollouts the strata must place.
+    """
+
+    return [
+        "Experimental: each judge stratum's truly unsafe count is bounded by the sum "
+        "of exact hypergeometric bounds over its declared fine strata, so each fine "
+        "stratum counts by its size; a census gives its count exactly and a fine "
+        "stratum without labels counts from none to all of its rollouts.",
+        "Each range is the exact Clopper-Pearson bound on the conditional probability "
+        "at the lower and at the upper count, out of the judge stratum's size: the "
+        "stratum's rollouts only sample that probability, so even a census leaves it "
+        "uncertain.",
+        "Each endpoint's budget is halved: one half for its Clopper-Pearson bound, the "
+        "other split equally over the count bounds of the fine strata that were "
+        "sampled but not censused.",
+        "Given a judge stratum's size, its rollouts are independent and each is truly "
+        "unsafe with the stratum's conditional probability, so its truly unsafe count "
+        "is binomial.",
+        "The labelled rows of each fine stratum are a simple random sample without "
+        "replacement of it, of a size fixed independently of the labels; this is a "
+        "property of the declared collection protocol, not of the data.",
+        f"The declared validation strata place every classified rollout of {cohort}.",
+        "Human adjudication is treated as ground truth.",
+    ]
+
+
 def _uncertified_base_warning(eligibility: str) -> str:
     return (
         f"Sensitivity analysis, not a certified bound: the judge-system interval it corrects "
@@ -638,29 +667,7 @@ def _judge_corrected_interval(
                 + " judge stratum has no human label, so its range is [0, 1], which holds "
                 "with certainty."
             )
-        assumptions.extend(
-            [
-                "Experimental: each judge stratum's truly unsafe count is bounded by the sum "
-                "of exact hypergeometric bounds over its declared fine strata, so each fine "
-                "stratum counts by its size; a census gives its count exactly and a fine "
-                "stratum without labels counts from none to all of its rollouts.",
-                "Each range is the exact Clopper-Pearson bound on the conditional probability "
-                "at the lower and at the upper count, out of the judge stratum's size: the "
-                "stratum's rollouts only sample that probability, so even a census leaves it "
-                "uncertain.",
-                "Each endpoint's budget is halved: one half for its Clopper-Pearson bound, the "
-                "other split equally over the count bounds of the fine strata that were "
-                "sampled but not censused.",
-                "Given a judge stratum's size, its rollouts are independent and each is truly "
-                "unsafe with the stratum's conditional probability, so its truly unsafe count "
-                "is binomial.",
-                "The labelled rows of each fine stratum are a simple random sample without "
-                "replacement of it, of a size fixed independently of the labels; this is a "
-                "property of the declared collection protocol, not of the data.",
-                "The declared validation strata place every classified rollout of the cohort.",
-                "Human adjudication is treated as ground truth.",
-            ]
-        )
+        assumptions.extend(_stratified_assumptions())
         if scoped_group is not None:
             assumptions.append(
                 f"The calibration is scoped to group {scoped_group!r}: its fine strata are the "

@@ -533,6 +533,7 @@ def _add_judge_corrections(
         {scope: [calibration] for scope, calibration in by_scope.items()},
         spec.family,
         diagnostics,
+        stratified=stratified,
     )
     per_calibration_alpha = judge_alpha / scope_count if judge_alpha is not None else None
     summary: dict[str, Any]
