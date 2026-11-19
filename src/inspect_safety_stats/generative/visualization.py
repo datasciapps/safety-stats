@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from inspect_safety_stats.report.artifacts import write_text
 from inspect_safety_stats.report.visualization import _safe_json
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters to type checkers
@@ -36,7 +37,5 @@ def render_generative_report(report: GenerativeReport) -> str:
 def write_generative_report(report: GenerativeReport, path: str | Path) -> Path:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
-    destination.write_text(
-        render_generative_report(report), encoding="utf-8", newline="\n"
-    )
+    write_text(destination, render_generative_report(report))
     return destination
