@@ -314,6 +314,8 @@ described in their pull requests.
   analysis plan and reports detectable rates for every claim, at the endpoint alpha `analyze`
   will use. Before, they had to be repeated on the command line, and the default hierarchy
   could silently plan a different design. Claims it cannot plan are listed with the reason.
+  A plan with the errors `validate` reports is refused with them, since `analyze` decides
+  none of its claims.
   See [Command-line interface](docs/api-reference.md#command-line-interface).
 
 - **Plan registration receipts (experimental).** `hash-plan --register RECEIPT.json` writes the

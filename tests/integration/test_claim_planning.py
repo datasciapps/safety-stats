@@ -432,6 +432,41 @@ def test_claims_decided_otherwise_are_reported_with_the_reason(tmp_path: Path) -
     assert "'worst' is maximum" in unplanned["all_worst"]
 
 
+@pytest.mark.parametrize(
+    ("old", "new", "code"),
+    [
+        (
+            "{id: direct_means, purpose: simultaneous_intervals, method: bonferroni",
+            "{id: direct_means, purpose: simultaneous_intervals, method: weighted_bonferroni",
+            "PLAN_INVALID_MULTIPLICITY",
+        ),
+        (
+            "{id: mean, type: weighted_mean}",
+            "{id: mean, type: weighted_mean, diagnostic_only: true}",
+            "PLAN_DIAGNOSTIC_GATE",
+        ),
+    ],
+    ids=["weighted_bonferroni_direct_family", "diagnostic_only_measure"],
+)
+def test_a_plan_analyze_finds_invalid_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, old: str, new: str, code: str
+) -> None:
+    """analyze decides no claim of a plan with errors, so the planner plans none either."""
+    assert PLAN.count(old) == 1
+    plan_path = _write(tmp_path, plan=PLAN.replace(old, new))
+    _patch_logs(monkeypatch)
+    report = analyze(plan=plan_path, logs="ignored")
+    assert code in {item.code for item in report.integrity.diagnostics}
+    assert {claim.status for claim in report.claims} == {"INCONCLUSIVE"}
+    with pytest.raises(ValueError, match=f"report every claim INCONCLUSIVE.*{code}"):
+        plan_claims(load_plan(plan_path), power=0.9)
+    result = runner.invoke(app, ["plan", "fixed-design", "--plan", str(plan_path)])
+    output = plain(result.output)
+    assert result.exit_code == 2, output
+    assert code in output
+    assert "PASS at acceptable_upper" not in output
+
+
 def test_blocks_must_be_manifest_columns(tmp_path: Path) -> None:
     plan_path = _write(
         tmp_path,

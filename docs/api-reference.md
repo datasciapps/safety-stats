@@ -615,6 +615,9 @@ planned, and refuses sampled designs. `--threshold`, `--alpha`, `--weights`, `--
 `--weight-column`, `--independence-unit` and `--family-size` are refused with `--plan`,
 which supplies them.
 
+A plan with errors, the ones `validate` reports, is refused with them: `analyze` would find it
+invalid and report every claim INCONCLUSIVE, so no rate would describe what it decides.
+
 `analyze` and `validate` take `--decision-policy POLICY`, a file whose thresholds replace the
 plan's for the claims it sets, and `hash-plan --inference` prints the hash such a policy names
 (experimental; see [Decision policies](decision-policy.md)).
