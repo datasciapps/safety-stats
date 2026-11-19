@@ -223,10 +223,12 @@ described in their pull requests.
   cohorts to `(rho_1, rho_0)` boxes. A listed cohort's group risks, hierarchy rows and
   comparison arms are corrected with its box, and every other cohort with the scenario's own
   box, so a judge whose accuracy depends on the model under test can be stress-tested without
-  human labels. The corrected intervals stay diagnostic sensitivities. An undeclared cohort is
-  `PLAN_UNKNOWN_REFERENCE`, and generative plans reject the field. The report records the boxes
-  under `presentation.judge_calibration.scenarios[].cohorts` and lists them in its text. Plans
-  that do not use the field keep their hash and report bytes.
+  human labels. The corrected intervals stay diagnostic sensitivities. The assumptions of each
+  corrected row, and of each arm of a corrected comparison, say whether it used its cohort's
+  own box or the scenario's default box. An undeclared cohort is `PLAN_UNKNOWN_REFERENCE`, and
+  generative plans reject the field. The report records the boxes under
+  `presentation.judge_calibration.scenarios[].cohorts` and lists them in its text. Plans that
+  do not use the field keep their hash and report bytes.
 
 - **The README walks through the offline demo.** A new section follows the demo from its
   inputs (logs, design and the plan `init` writes) through the `validate` and `analyze` commands
@@ -1056,7 +1058,11 @@ described in their pull requests.
   `judge_corrected_<scenario>` sensitivity interval with `diagnostic` eligibility. A
   comparison that cannot be corrected, such as a direct contrast interval, is named in
   `JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON`. No claim moves: assumed corrections never
-  decide one. See [Comparisons](docs/judge-misclassification.md#comparisons).
+  decide one. The "Comparison interval sensitivity" table of `report-full.md` gains a Scenario
+  column that names each corrected row's scenario and marks the primary one, and the interval
+  tables of `report.html`, for comparisons and for risk rows, do the same. Reports without
+  assumed scenarios show the same tables as before. See
+  [Comparisons](docs/judge-misclassification.md#comparisons).
 
 - **Judge corrections no longer read rollouts a plan policy classified as judge verdicts
   (changes `report.json`).** A target-side policy block counted safe under

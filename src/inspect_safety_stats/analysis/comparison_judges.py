@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import cast
 
 from inspect_safety_stats.analysis.comparison_intervals import _comparison_targets
@@ -46,7 +47,7 @@ def _judge_corrected_comparison_interval(
     scoped_group: str | None = None,
     primary_scenario: str | None = None,
     scoped_groups: list[str] | None = None,
-    per_cohort: bool = False,
+    cohort_boxes: frozenset[str] = frozenset(),
     stratified: bool = False,
     candidate_policy: tuple[int, int] = (0, 0),
     baseline_policy: tuple[int, int] = (0, 0),
@@ -61,9 +62,10 @@ def _judge_corrected_comparison_interval(
 
     A validated calibration gives each arm its own cohort's measured box; ``stratified``
     says it was measured from labels of the experimental stratified design. An assumed
-    scenario gives both arms the same declared box, or with ``per_cohort`` each arm the box
-    it declares for that arm's cohort; each arm is free within its box independently of the
-    other, and the result is a sensitivity analysis like every assumed correction.
+    scenario gives each arm the box it declares for that arm's cohort, which is its default
+    box unless the cohort is one of ``cohort_boxes``, the cohorts it gives a box of their
+    own; each arm is free within its box independently of the other, and the result is a
+    sensitivity analysis like every assumed correction.
 
     rho is prevalence-dependent, so the two arms carry different calibrations and the
     effect cannot be corrected from the contrast alone: rescaling a difference by a
@@ -141,7 +143,7 @@ def _judge_corrected_comparison_interval(
             arm_notes=arm_notes,
             primary_scenario=primary_scenario,
             scoped_groups=scoped_groups,
-            per_cohort=per_cohort,
+            cohort_boxes=cohort_boxes,
         )
     spent = sum(
         item.alpha or 0.0 for item in (candidate_calibration, baseline_calibration)
@@ -292,12 +294,13 @@ def _assumed_comparison_interval(
     arm_notes: list[str],
     primary_scenario: str | None,
     scoped_groups: list[str] | None,
-    per_cohort: bool,
+    cohort_boxes: frozenset[str],
 ) -> RiskIntervalResult:
     """One declared scenario's correction of a comparison, applied to both arms.
 
-    ``calibrations`` are the candidate's and the baseline's boxes, which differ only when
-    the scenario declares boxes by cohort (``per_cohort``)."""
+    ``calibrations`` are the candidate's and the baseline's boxes. They differ only when the
+    scenario gives an arm's cohort a box of its own, that is when the cohort is one of
+    ``cohort_boxes``; an arm whose cohort it does not list takes its default box."""
 
     calibration, baseline_calibration = calibrations
     scope = (
@@ -306,6 +309,10 @@ def _assumed_comparison_interval(
         else ", on the rows of groups " + ", ".join(repr(item) for item in scoped_groups)
         + " only"
     )
+    arm_cohorts = (("candidate", result.candidate_cohort), ("baseline", result.baseline_cohort))
+    listed = [(arm, cohort) for arm, cohort in arm_cohorts if cohort in cohort_boxes]
+    # Only an arm whose cohort the scenario lists can take a box other than the default.
+    per_arm = bool(listed)
     boxes = (
         [
             f"{arm.capitalize()} P(truly unsafe | judge said unsafe) lies in "
@@ -313,7 +320,7 @@ def _assumed_comparison_interval(
             f"safe) in [{box.rho_0_lower:.6g}, {box.rho_0_upper:.6g}]."
             for arm, box in (("candidate", calibration), ("baseline", baseline_calibration))
         ]
-        if per_cohort
+        if per_arm
         else [
             f"On both arms P(truly unsafe | judge said unsafe) lies in "
             f"[{calibration.rho_1_lower:.6g}, {calibration.rho_1_upper:.6g}] and "
@@ -350,18 +357,12 @@ def _assumed_comparison_interval(
             *boxes,
             "These conditional accuracies are declared assumptions, not measurements; "
             "the interval inherits no coverage guarantee from them.",
-            (
-                "The declared accuracies are prevalence-dependent; the scenario declares "
-                f"each arm's box for that arm's cohort{scope}."
-                if per_cohort
-                else "The declared accuracies are prevalence-dependent and are applied "
-                f"unchanged to both arms' cohorts{scope}."
-            ),
+            _assumed_arm_boxes_assumption(arm_cohorts, listed, cohort_boxes, scope),
             (
                 "Each arm is corrected over its own declared box independently of the other, "
                 "so a judge whose accuracy on each arm stays within that arm's box is covered; "
                 "one whose accuracy leaves its box on either arm is not."
-                if per_cohort
+                if per_arm
                 else "Each arm is corrected over the whole declared box independently of the "
                 "other, so a judge whose accuracy differs between the arms within that box is "
                 "covered; one whose accuracy leaves the box on either arm is not."
@@ -377,6 +378,44 @@ def _assumed_comparison_interval(
     )
 
 
+def _assumed_arm_boxes_assumption(
+    arm_cohorts: tuple[tuple[str, str], tuple[str, str]],
+    listed: list[tuple[str, str]],
+    cohort_boxes: frozenset[str],
+    scope: str,
+) -> str:
+    """Which of an assumed scenario's boxes each arm of a comparison was corrected with.
+
+    ``listed`` holds the arms, with their cohorts, whose cohort the scenario gives a box of
+    its own; every other arm takes the scenario's default box, also when the scenario lists
+    some other cohort."""
+
+    if len(listed) == len(arm_cohorts):
+        return (
+            "The declared accuracies are prevalence-dependent; the scenario declares each "
+            f"arm's box for that arm's cohort{scope}."
+        )
+    if listed:
+        ((arm, cohort),) = listed
+        other = next(item for item, _ in arm_cohorts if item != arm)
+        return (
+            f"The declared accuracies are prevalence-dependent; the scenario declares the "
+            f"{arm} arm's box for cohort {cohort!r}, and the {other} arm takes the scenario's "
+            "default box, which is applied unchanged to every cohort the scenario does not "
+            f"list{scope}."
+        )
+    if cohort_boxes:
+        return (
+            "The declared accuracies are prevalence-dependent; both arms take the scenario's "
+            "default box, which is applied unchanged to every cohort the scenario does not "
+            f"list{scope}."
+        )
+    return (
+        "The declared accuracies are prevalence-dependent and are applied unchanged to both "
+        f"arms' cohorts{scope}."
+    )
+
+
 def _apply_judge_correction_to_comparisons(
     plan: AnalysisPlan,
     data: NormalizedData,
@@ -386,7 +425,7 @@ def _apply_judge_correction_to_comparisons(
     family_id: str | None,
     diagnostics: list[Diagnostic],
     primary_scenario: str | None = None,
-    per_cohort: set[str] | frozenset[str] = frozenset(),
+    cohort_boxes: Mapping[str, frozenset[str]] | None = None,
     stratified: bool = False,
     policy_rows: dict[str, set[str]] | None = None,
 ) -> None:
@@ -398,9 +437,9 @@ def _apply_judge_correction_to_comparisons(
     ``by_scope`` gives each calibration scope its calibrations: one measured box in validated
     mode, every declared scenario in assumed mode, with the box it declares for the scope's
     cohort. A comparison gets one corrected interval per scenario both its arms carry, each
-    arm corrected with its own scope's box. ``per_cohort`` names the assumed scenarios that
-    declare boxes by cohort, and ``stratified`` says the measured boxes come from labels of
-    the experimental stratified design.
+    arm corrected with its own scope's box. ``cohort_boxes`` gives, for each assumed
+    scenario, the cohorts it gives a box of their own, and ``stratified`` says the measured
+    boxes come from labels of the experimental stratified design.
 
     A comparison of a group the calibration is not scoped to stays uncorrected, silently:
     the plan scoped the calibration away from it. Any other comparison left uncorrected is
@@ -500,7 +539,7 @@ def _apply_judge_correction_to_comparisons(
                 scoped_group=candidate_scope[1],
                 primary_scenario=primary_scenario,
                 scoped_groups=scoped_groups,
-                per_cohort=candidate.scenario_id in per_cohort,
+                cohort_boxes=(cohort_boxes or {}).get(candidate.scenario_id, frozenset()),
                 stratified=stratified,
                 candidate_policy=candidate_policy,
                 baseline_policy=baseline_policy,

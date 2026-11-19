@@ -112,7 +112,9 @@ applies to the listed groups' rows of that cohort, like the default box.
 A plan with no `cohorts` in any scenario gives the same results, report bytes and plan hash as
 before the field existed. The report records each scenario's cohort boxes under
 `presentation.judge_calibration.scenarios[].cohorts` and lists them in the report's text.
-Generative plans reject the field.
+Each corrected row's assumption list says which box it used: the one the scenario declares
+for its cohort, or the scenario's default box. A corrected comparison says the same for each
+arm. Generative plans reject the field.
 
 Reports gain a **Judge misclassification sensitivity** section listing, for every corrected
 row and scenario, the judge-system bounds, the true-risk bounds, and the corrected estimate
@@ -675,7 +677,9 @@ In `assumed` mode the same recombination runs once per declared scenario, with t
 scenario declares for each arm's cohort: the same box on both arms unless the scenario gives
 one of the cohorts a box of its own. Each corrected comparison is a sensitivity
 (`eligibility: diagnostic`, `role: sensitivity`, no `family_alpha`), and a scenario other
-than `primary` carries a warning that it is reported for sensitivity only.
+than `primary` carries a warning that it is reported for sensitivity only. The comparison
+sensitivity table of `report-full.md` and the interval tables of `report.html` name each
+corrected row's scenario and mark the primary one.
 
 This requires a primary interval that exposes both arm bounds -- the two-arm rectangle used
 by `weighted_kl_chernoff` and by every `comparison_sets` entry. A direct contrast

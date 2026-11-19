@@ -408,6 +408,7 @@
     ]);
     const primaryIndependence = report.presentation?.primary_independence_profile
       || independenceProfiles[0] || "";
+    const judgePrimaryScenario = report.presentation?.judge_calibration?.primary ?? null;
     const hierarchy = unique(
       (report.design && report.design.hierarchy) ||
       ["task_id", "question_id", "prompt_id"]
@@ -458,6 +459,14 @@
     function roleLabel(interval) {
       const role = humanize(interval.role);
       return interval.varied_assumption ? `${role} (${humanize(interval.varied_assumption).toLowerCase()})` : role;
+    }
+    // The declared scenario an assumed judge correction applies, marked when it is the plan's
+    // primary scenario, as report-full.md labels it; null for any other interval. Each scenario
+    // adds a row that differs from the others only in its bounds.
+    function judgeScenarioLabel(interval, primaryScenario) {
+      if (!interval || interval.calibration_method !== "assumed_judge_calibration") return null;
+      const scenario = String(interval.interval_id || "").replace(/^judge_corrected_/, "");
+      return scenario === primaryScenario ? `${scenario} (primary)` : scenario;
     }
     // A claim's verdicts by independence profile, labelled by role, with the note report.md
     // prints above them: a sensitivity row is never the claim's decision. Null when the claim
@@ -764,13 +773,19 @@
           comparison.append(el("summary", "", "Compare interval methods"));
           const comparisonTable = el("table", "risk-table");
           const comparisonHead = document.createElement("thead"); const comparisonRow = document.createElement("tr");
-          ["Role", "Method", "Independence profile", "Lower bound", "Upper bound", "Completion estimate range", "Coverage floor", "Scope", "Bound status"].forEach((value, index) => comparisonRow.append(el("th", index >= 3 && index <= 6 ? "num" : "", value)));
+          const shownIntervals = intervals.filter(interval => !interval.independence_profile || interval.independence_profile === state.independenceProfile);
+          const scenarioLabels = shownIntervals.map(interval => judgeScenarioLabel(interval, judgePrimaryScenario));
+          const scenarioColumn = scenarioLabels.some(label => label !== null);
+          const numericHeadings = ["Lower bound", "Upper bound", "Completion estimate range", "Coverage floor"];
+          ["Role", "Method", ...(scenarioColumn ? ["Scenario"] : []), "Independence profile", ...numericHeadings, "Scope", "Bound status"].forEach(value => comparisonRow.append(el("th", numericHeadings.includes(value) ? "num" : "", value)));
           comparisonHead.append(comparisonRow); comparisonTable.append(comparisonHead);
           const comparisonBody = document.createElement("tbody");
-          intervals.filter(interval => !interval.independence_profile || interval.independence_profile === state.independenceProfile).forEach(interval => {
+          shownIntervals.forEach((interval, index) => {
             const intervalRow = document.createElement("tr");
             intervalRow.append(
-              el("td", "", roleLabel(interval)), el("td", "", humanize(interval.method)), el("td", "", humanize(interval.independence_profile)),
+              el("td", "", roleLabel(interval)), el("td", "", humanize(interval.method)),
+              ...(scenarioColumn ? [el("td", "", scenarioLabels[index] ?? "—")] : []),
+              el("td", "", humanize(interval.independence_profile)),
               el("td", "num", pct(interval.lower)), el("td", "num", pct(interval.upper)),
               el("td", "num", interval.completion_estimate_lower === null || interval.completion_estimate_lower === undefined ? "—" : `${pct(interval.completion_estimate_lower)}–${pct(interval.completion_estimate_upper)}`),
               el("td", "num", pct(interval.simultaneous_coverage)), el("td", "", humanize(interval.coverage_scope)),
@@ -1199,8 +1214,11 @@
           const disclosure = document.createElement("details"); disclosure.append(el("summary", "", `${row.comparison_id} sensitivity and diagnostics`));
           const effects = row.effect_summaries || {}; disclosure.append(el("p", "section-note", `Descriptive effects: risk difference ${pct(effects.risk_difference)} · risk ratio ${fmt(effects.risk_ratio)} · relative risk reduction ${pct(effects.relative_risk_reduction)}`));
           if (alternatives.length) {
-            const at = el("table", "risk-table"); const ah = document.createElement("thead"); const ahr = document.createElement("tr"); ["Role", "Method", "Independence profile", "Lower", "Upper", "Coverage"].forEach((v, i) => ahr.append(el("th", i >= 3 ? "num" : "", v))); ah.append(ahr); at.append(ah); const ab = document.createElement("tbody");
-            alternatives.forEach(interval => { const ar = document.createElement("tr"); const coverage = interval.simultaneous_coverage === null || interval.simultaneous_coverage === undefined ? "pointwise" : `${pct(interval.simultaneous_coverage)} simultaneous`; ar.append(el("td", "", roleLabel(interval)), el("td", "", humanize(interval.method)), el("td", "", humanize(interval.independence_profile)), el("td", "num", effectFmt(row, interval.lower)), el("td", "num", effectFmt(row, interval.upper)), el("td", "num", coverage)); ab.append(ar); }); at.append(ab); disclosure.append(at);
+            const scenarioLabels = alternatives.map(interval => judgeScenarioLabel(interval, judgePrimaryScenario));
+            const scenarioColumn = scenarioLabels.some(label => label !== null);
+            const headings = ["Role", "Method", ...(scenarioColumn ? ["Scenario"] : []), "Independence profile", "Lower", "Upper", "Coverage"];
+            const at = el("table", "risk-table"); const ah = document.createElement("thead"); const ahr = document.createElement("tr"); headings.forEach((v, i) => ahr.append(el("th", i >= headings.length - 3 ? "num" : "", v))); ah.append(ahr); at.append(ah); const ab = document.createElement("tbody");
+            alternatives.forEach((interval, index) => { const ar = document.createElement("tr"); const coverage = interval.simultaneous_coverage === null || interval.simultaneous_coverage === undefined ? "pointwise" : `${pct(interval.simultaneous_coverage)} simultaneous`; ar.append(el("td", "", roleLabel(interval)), el("td", "", humanize(interval.method)), ...(scenarioColumn ? [el("td", "", scenarioLabels[index] ?? "—")] : []), el("td", "", humanize(interval.independence_profile)), el("td", "num", effectFmt(row, interval.lower)), el("td", "num", effectFmt(row, interval.upper)), el("td", "num", coverage)); ab.append(ar); }); at.append(ab); disclosure.append(at);
           }
           if ((row.warnings || []).length) disclosure.append(el("p", "claim-reason", row.warnings.join(" · ")));
           if (Object.keys(row.diagnostic_outputs || {}).length) { const diagnostics = document.createElement("details"); diagnostics.append(el("summary", "", "Paired diagnostic outputs"), el("pre", "", JSON.stringify({pairs: row.pair_count, discordant_counts: row.discordant_counts, outputs: row.diagnostic_outputs}, null, 2))); disclosure.append(diagnostics); }
