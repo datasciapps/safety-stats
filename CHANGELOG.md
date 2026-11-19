@@ -7,6 +7,23 @@ described in their pull requests.
 
 ### Fixed
 
+- **The summary's headline gives the true risk where a judge correction applies (changes
+  `report.json`, `index.json`, `index.md` and `analyze`'s output for such plans).** A
+  headline's bounds are those of the rate the judge reports, and the headline gave nothing
+  else: with a judge that misses 40% of one prompt's failures, `index.json` gave the candidate's
+  rate an upper bound of 2.9%, marked `certifying`, below a true risk of 3.0%, while the claim
+  was decided on the validated correction, 1.6% to 4.7%, which `report.md` showed. Each headline
+  rate and overall comparison with a judge correction now holds `judge_corrected`: its bounds,
+  its eligibility, whether the calibration was `validated` or `assumed`, its simultaneous
+  coverage and a pointer to the interval. `index.md` adds true risk columns to its headline
+  table, and `analyze` prints the true risk after each such rate. All of them, and `report.md`,
+  pick the interval by one rule (`inspect_safety_stats.schema.summary.judge_interval`): the
+  validated correction or, under an assumed calibration, its primary scenario's, so a
+  non-primary scenario that happens to be named `validated` is no longer shown in `report.md`
+  as the true risk. Reports without a judge correction keep their bytes. The
+  [agent guide](docs/agent-guide.md#judge-reported-and-true-risk) says which bound describes
+  the true risk.
+
 - **A rollout that an `exclude` score policy leaves out of the bounds is reported, and integrity
   is degraded (changes report bytes).** Under `inputs.score.missing: exclude` or
   `inputs.score.errors: exclude` an unscored or errored rollout was dropped with no diagnostic,

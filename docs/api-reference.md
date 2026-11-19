@@ -115,8 +115,10 @@ checksum manifest. A non-empty destination is rejected unless
 
 `report.json` has a `summary` object: the integrity status, the headline estimates, the errors
 and warnings by code, and the decisions when `report.include_decisions` is true, each with a
-JSON pointer to its full record (`inspect_safety_stats.schema.summary`). `SafetyReport.summary`
-returns it. It is derived from the other fields, so reading a saved `report.json` back drops it
+JSON pointer to its full record (`inspect_safety_stats.schema.summary`). Where a judge correction
+applies, a headline estimate also gives the interval of the true failure risk
+(`judge_corrected`), which its own bounds, of the judge-reported rate, are not.
+`SafetyReport.summary` returns it. It is derived from the other fields, so reading a saved `report.json` back drops it
 and computes it again.
 
 `index.json` lists every file the report wrote and copies the summary; `index.md` holds the

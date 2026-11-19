@@ -7,6 +7,10 @@ assumptions the results rest on. With ``report.include_decisions`` it also holds
 decision and each claim's status; without it they are left out, as in every rendering, while
 ``/decision`` and ``/claims`` still hold them (#58).
 
+A headline's ``lower`` and ``upper`` bound the rate the scorer reports. Where a judge correction
+applies, the headline also holds ``judge_corrected``: the interval that bounds the true failure
+risk, picked by :func:`judge_interval`, the rule ``report.md`` and ``analyze``'s output use too.
+
 Nothing in it is computed anew: each value is copied from the report, so the summary is a
 function of the rest of ``report.json``. The report writes it and drops it when it is read
 back, which keeps a saved report and the model it reads back to the same.
@@ -31,7 +35,8 @@ if TYPE_CHECKING:
     )
 
 HEADLINE_METHOD = "finite_design_weighted_mean"
-_JUDGE_PREFIX = "judge_corrected_"
+JUDGE_PREFIX = "judge_corrected_"
+VALIDATED_CORRECTION = "validated_judge_misclassification_correction"
 SHOWN_SEVERITIES = ("ERROR", "WARNING")
 
 
@@ -44,22 +49,37 @@ def is_headline_risk(risk: GroupRiskResult) -> bool:
 def judge_interval(
     intervals: Iterable[RiskIntervalResult], primary_scenario: str | None
 ) -> RiskIntervalResult | None:
-    corrected = [item for item in intervals if item.interval_id.startswith(_JUDGE_PREFIX)]
-    validated = next(
-        (item for item in corrected if item.interval_id == f"{_JUDGE_PREFIX}validated"), None
-    )
-    if validated is not None:
-        return validated
-    if primary_scenario:
-        return next(
-            (
-                item
-                for item in corrected
-                if item.interval_id == f"{_JUDGE_PREFIX}{primary_scenario}"
-            ),
-            None,
-        )
-    return None
+    """The interval of a row that bounds its true failure risk; None when no correction applies.
+
+    It is the one rule for every rendering that shows the true risk beside the judge-reported
+    one: ``report.md``, the summary's headline (``index.json`` and ``index.md``) and
+    ``analyze``'s output. Under an assumed calibration it is the primary scenario's correction
+    (``judge_corrected_<primary>``), and otherwise the validated correction
+    (``judge_corrected_validated``). ``primary_scenario`` is the plan's
+    ``inputs.judge_calibration.primary``, which only an assumed calibration has. A transported
+    or panel-derived correction is never picked: each is a sensitivity, kept in ``report.json``.
+
+    The interval picked may be a sensitivity: only a ``certifying`` one, which only a
+    validated calibration gives, bounds the true risk with the coverage it states.
+    """
+
+    wanted = f"{JUDGE_PREFIX}{primary_scenario or 'validated'}"
+    return next((item for item in intervals if item.interval_id == wanted), None)
+
+
+class SummaryJudgeCorrection(ResultModel):
+    """The interval that bounds a headline's true failure risk (``judge_interval``)."""
+
+    # How the judge's accuracy entered: measured from labels, or declared by the plan.
+    calibration: Literal["validated", "assumed"]
+    lower: float | None = None
+    upper: float | None = None
+    # Only a certifying interval supports a claim about true risk.
+    eligibility: Eligibility
+    # The coverage the interval holds jointly with its family; None for a sensitivity.
+    simultaneous_coverage: float | None = None
+    # The interval's record: /group_risks/<i>/intervals/<j> or /comparisons/<i>/intervals/<j>.
+    item: str
 
 
 class SummaryEstimate(ResultModel):
@@ -78,6 +98,19 @@ class SummaryEstimate(ResultModel):
     upper: float | None = None
     eligibility: Eligibility
     item: str
+    # Where a judge correction applies: the interval of the true failure risk, which lower
+    # and upper, the judge-reported rate's bounds, are not. Left out when none applies.
+    judge_corrected: SummaryJudgeCorrection | None = None
+
+    @model_serializer(mode="wrap")
+    def leave_out_an_absent_correction(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, object]:
+        # A report without a judge correction keeps the bytes it had before the field.
+        data: dict[str, object] = handler(self)
+        if self.judge_corrected is None:
+            data.pop("judge_corrected", None)
+        return data
 
 
 class SummaryOccurrence(ResultModel):
@@ -133,6 +166,25 @@ class ReportSummary(ResultModel):
         return data
 
 
+def _judge_corrected(
+    item: str, intervals: list[RiskIntervalResult], primary_scenario: str | None
+) -> SummaryJudgeCorrection | None:
+    """The true-risk interval of the row at ``item``, by ``judge_interval``."""
+
+    interval = judge_interval(intervals, primary_scenario)
+    if interval is None:
+        return None
+    position = next(index for index, other in enumerate(intervals) if other is interval)
+    return SummaryJudgeCorrection(
+        calibration="validated" if interval.method == VALIDATED_CORRECTION else "assumed",
+        lower=interval.lower,
+        upper=interval.upper,
+        eligibility=interval.eligibility,
+        simultaneous_coverage=interval.simultaneous_coverage,
+        item=f"{item}/intervals/{position}",
+    )
+
+
 def _warnings(diagnostics: list[Diagnostic]) -> list[SummaryWarning]:
     grouped: dict[tuple[str, str], list[tuple[int, Diagnostic]]] = {}
     for index, item in enumerate(diagnostics):
@@ -172,6 +224,8 @@ def report_summary(report: SafetyReport) -> ReportSummary:
 
     diagnostics = report.integrity.diagnostics
     shown = report.presentation.include_decisions
+    calibration = report.presentation.judge_calibration
+    primary_scenario = calibration.primary if calibration is not None else None
     headline = [
         SummaryEstimate(
             kind="group_risk",
@@ -183,6 +237,9 @@ def report_summary(report: SafetyReport) -> ReportSummary:
             upper=risk.upper,
             eligibility=risk.eligibility,
             item=f"/group_risks/{index}",
+            judge_corrected=_judge_corrected(
+                f"/group_risks/{index}", risk.intervals, primary_scenario
+            ),
         )
         for index, risk in enumerate(report.group_risks)
         if is_headline_risk(risk)
@@ -200,6 +257,9 @@ def report_summary(report: SafetyReport) -> ReportSummary:
             upper=comparison.upper,
             eligibility=comparison.eligibility,
             item=f"/comparisons/{index}",
+            judge_corrected=_judge_corrected(
+                f"/comparisons/{index}", comparison.intervals, primary_scenario
+            ),
         )
         for index, comparison in enumerate(report.comparisons)
         if comparison.level is None

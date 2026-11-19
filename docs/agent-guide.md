@@ -37,7 +37,7 @@ same directory, and only that one.
 |---|---|
 | `integrity` | `valid`, `degraded` or `invalid`. Read it before any number. |
 | `error_count`, `warning_count`, `info_count` | Diagnostics by severity. |
-| `headline` | Each weighted-mean failure rate (`kind: group_risk`) and each overall comparison (`kind: comparison`), with estimate, bounds, `eligibility` and `item`. |
+| `headline` | Each weighted-mean failure rate (`kind: group_risk`) and each overall comparison (`kind: comparison`), with estimate, bounds, `eligibility` and `item`, and `judge_corrected` where a judge correction applies (see [below](#judge-reported-and-true-risk)). |
 | `warnings` | The errors, then the warnings, one entry per code. |
 | `assumptions` | The ids of the assumptions the results rest on; each is at `/assumptions_used/<i>` with what follows if it is wrong. |
 | `decisions_shown` | Whether the plan shows decisions (`report.include_decisions`). |
@@ -52,6 +52,31 @@ description, and an `invalid` one has no usable bound. Bounds are null when none
 computed. `index.md` and `report.md` round each lower bound down and each upper bound up, so
 that none reads tighter than the analysis gives; `index.json` and `report.json` hold the exact
 values.
+
+A headline's coverage is in the record its `item` points at: `simultaneous_coverage`, the
+coverage its interval holds jointly with the rest of its family, and `coverage_mode`,
+`two_sided` or `per_direction`.
+
+## Judge-reported and true risk
+
+A headline's `lower` and `upper` bound the failure rate the scorer reports. When the scorer is
+a judge and the plan corrects for its errors (`inputs.judge_calibration`), the true failure
+rate can lie outside them: a judge that misses failures reports a rate below the true one. Such
+a headline also has `judge_corrected`, the interval of the **true** failure risk, which is
+the one to read for the true risk:
+
+| Field | What it holds |
+|---|---|
+| `lower`, `upper` | The bounds on the true failure rate, or on the true difference of a comparison. |
+| `eligibility` | `certifying` when the interval supports a claim about true risk, which a claim is then decided on; `diagnostic` when it is a sensitivity. |
+| `calibration` | `validated` when the judge's accuracy was measured from human labels, `assumed` when the plan declared it. An assumed correction is always a sensitivity, with no coverage guarantee. |
+| `simultaneous_coverage` | The coverage of a certifying interval, jointly with its family and the judge's accuracy bounds; null for a sensitivity. |
+| `item` | The pointer to the interval, such as `/group_risks/0/intervals/2`; its `warnings` say why a validated correction does not certify. |
+
+The interval is the validated correction, or under an assumed calibration its primary
+scenario's; `report.md` and `analyze`'s output show the same one. `index.md` shows it in the
+true risk columns of the headline table. A transported or panel-derived correction is a
+sensitivity and stays in `report.json`, among the record's `intervals`.
 
 ## Warnings
 

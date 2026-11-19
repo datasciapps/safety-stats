@@ -41,7 +41,7 @@ from inspect_safety_stats.schema.reports import (
     RiskIntervalResult,
     SafetyReport,
 )
-from inspect_safety_stats.schema.summary import is_headline_risk, judge_interval
+from inspect_safety_stats.schema.summary import JUDGE_PREFIX, is_headline_risk, judge_interval
 from inspect_safety_stats.stats.planning import (
     rollout_scale_for_half_width,
     rollouts_for_half_width,
@@ -62,7 +62,6 @@ _MAX_WARNING_SCOPES = 3
 _MAX_POLICY_PROMPTS = 5
 # The effects of the info codes the summary names (registry.Effect).
 _NOTED_EFFECTS = ("adjusted", "withheld")
-_JUDGE_PREFIX = "judge_corrected_"
 _MEASURE_PREFIX = "finite_design_"
 
 
@@ -165,7 +164,7 @@ def _sensitivity(
             and item.varied_assumption != "judge_error"
             and item.independence_profile in profiles
             and item.method == method
-            and not item.interval_id.startswith(_JUDGE_PREFIX)
+            and not item.interval_id.startswith(JUDGE_PREFIX)
         ),
         None,
     )

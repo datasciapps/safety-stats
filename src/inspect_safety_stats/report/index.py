@@ -170,11 +170,21 @@ def index_markdown(document: dict[str, Any]) -> str:
         )
     lines.extend(["## Headline estimates", ""])
     if summary["headline"]:
+        # The true-risk columns only where a judge correction applies, so that a report
+        # without one keeps its bytes.
+        judged = any("judge_corrected" in item for item in summary["headline"])
         lines.extend(
             [
                 "| Kind | Model | Baseline | Group | Measure | Estimand | Estimate | Lower "
-                "| Upper | Eligibility | Pointer | CSV row |",
-                "|---|---|---|---|---|---|---:|---:|---:|---|---|---|",
+                "| Upper | Eligibility | Pointer | CSV row |"
+                + (
+                    " True risk lower | True risk upper | True risk coverage "
+                    "| True risk eligibility | Judge calibration | True risk pointer |"
+                    if judged
+                    else ""
+                ),
+                "|---|---|---|---|---|---|---:|---:|---:|---|---|---|"
+                + ("---:|---:|---:|---|---|---|" if judged else ""),
             ]
         )
         for item in summary["headline"]:
@@ -193,7 +203,33 @@ def index_markdown(document: dict[str, Any]) -> str:
                 f"`{item['item']}`",
                 f"`{csv['file']}` row {csv['row']}" if csv else "—",
             ]
+            if judged:
+                corrected = item.get("judge_corrected")
+                cells.extend(
+                    [
+                        _bound(corrected["lower"], upper=False),
+                        _bound(corrected["upper"], upper=True),
+                        # Rounded down, so that it never reads as more coverage.
+                        _bound(corrected["simultaneous_coverage"], upper=False),
+                        corrected["eligibility"],
+                        corrected["calibration"],
+                        f"`{corrected['item']}`",
+                    ]
+                    if corrected
+                    else ["—"] * 6
+                )
             lines.append("| " + " | ".join(cells) + " |")
+        if judged:
+            lines.extend(
+                [
+                    "",
+                    "Lower and Upper bound the failure rate the judge reports. The true risk "
+                    "columns bound the true failure rate, corrected for the judge's errors: "
+                    "read those for the true risk. Only a certifying one supports a claim; an "
+                    "assumed calibration's is a sensitivity, resting on declared rather than "
+                    "measured judge accuracy.",
+                ]
+            )
     else:
         lines.append("No headline estimates.")
     lines.extend(["", f"## {WARNINGS_HEADING}", ""])

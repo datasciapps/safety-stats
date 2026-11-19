@@ -9,12 +9,16 @@ from inspect_safety_stats.schema.reports import (
     AdaptiveClaimResult,
     ClaimResult,
     ComparisonResult,
+    Eligibility,
     GroupRiskResult,
     IntegritySummary,
+    JudgeCalibrationPresentation,
     ReportPresentation,
+    RiskIntervalResult,
     SafetyReport,
 )
 from inspect_safety_stats.schema.scopes import plan_scope
+from inspect_safety_stats.schema.summary import judge_interval
 
 
 def _resolve(document: Any, pointer: str) -> Any:
@@ -207,3 +211,67 @@ def test_a_saved_report_reads_back_to_the_same_model_and_summary() -> None:
 
     assert again == report
     assert json.loads(again.model_dump_json())["summary"] == json.loads(text)["summary"]
+
+
+def _interval(interval_id: str, calibration: str, eligibility: Eligibility) -> RiskIntervalResult:
+    return RiskIntervalResult(
+        interval_id=interval_id,
+        lower=0.07,
+        upper=0.3,
+        method=f"{calibration}_judge_misclassification_correction",
+        role="reference" if eligibility == "certifying" else "sensitivity",
+        simultaneous_coverage=0.9 if eligibility == "certifying" else None,
+        eligibility=eligibility,
+    )
+
+
+def test_the_true_risk_is_the_validated_correction_or_the_primary_scenarios() -> None:
+    validated = _interval("judge_corrected_validated", "validated", "certifying")
+    delta = _interval("judge_corrected_validated_delta", "validated", "diagnostic")
+    assert judge_interval([delta, validated], None) is validated
+
+    # Under an assumed calibration only the primary scenario's, even beside a scenario that
+    # happens to be named "validated".
+    primary = _interval("judge_corrected_declared", "assumed", "diagnostic")
+    named = _interval("judge_corrected_validated", "assumed", "diagnostic")
+    assert judge_interval([named, primary], "declared") is primary
+    assert judge_interval([named], "declared") is None
+
+    # A transported or panel-derived correction is a sensitivity, never the headline's.
+    sensitivities = [
+        _interval("judge_corrected_transported", "transported", "diagnostic"),
+        _interval("judge_corrected_panel_derived", "panel", "diagnostic"),
+    ]
+    assert judge_interval(sensitivities, None) is None
+    assert judge_interval([], None) is None
+
+
+def test_a_headline_with_a_judge_correction_gives_its_true_risk_interval() -> None:
+    report = _report(include_decisions=False)
+    report.presentation.judge_calibration = JudgeCalibrationPresentation(
+        mode="assumed", primary="declared"
+    )
+    other = _interval("judge_corrected_optimistic", "assumed", "diagnostic")
+    primary = _interval("judge_corrected_declared", "assumed", "diagnostic")
+    report.group_risks[2].intervals.extend([other, primary])
+    report.comparisons[1].intervals.append(primary)
+    document = report.model_dump(mode="json")
+    headline = document["summary"]["headline"]
+
+    # A headline that no correction applies to leaves the field out, as before it existed.
+    assert "judge_corrected" not in headline[0]
+    for item, pointer in [
+        (headline[1], "/group_risks/2/intervals/1"),
+        (headline[2], "/comparisons/1/intervals/0"),
+    ]:
+        assert item["judge_corrected"] == {
+            "calibration": "assumed",
+            "lower": 0.07,
+            "upper": 0.3,
+            "eligibility": "diagnostic",
+            "simultaneous_coverage": None,
+            "item": pointer,
+        }
+        assert _resolve(document, pointer)["interval_id"] == "judge_corrected_declared"
+    again = SafetyReport.model_validate_json(json.dumps(document))
+    assert json.loads(again.model_dump_json())["summary"] == document["summary"]

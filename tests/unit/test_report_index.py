@@ -18,7 +18,13 @@ from inspect_safety_stats.report.index import (
     index_document,
     index_files,
 )
-from inspect_safety_stats.schema.reports import STORED_REPORT, SafetyReport
+from inspect_safety_stats.schema.reports import (
+    STORED_REPORT,
+    JudgeCalibrationPresentation,
+    RiskIntervalResult,
+    SafetyReport,
+)
+from tests.summary_fixtures import section, table
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "real_simpleqa" / "report"
 
@@ -86,6 +92,60 @@ def test_every_pointer_in_the_index_resolves_in_report_json(tmp_path: Path) -> N
             assert _resolve(report, occurrence["diagnostic"])["code"] == warning["code"]
             if occurrence["item"] is not None:
                 _resolve(report, occurrence["item"])
+
+
+def _judged_report() -> SafetyReport:
+    """The example with a validated correction of its headline rate and comparison."""
+
+    report = _report()
+    report.presentation.judge_calibration = JudgeCalibrationPresentation(mode="validated")
+    for row in (report.group_risks[2], report.comparisons[1]):
+        row.intervals.append(
+            RiskIntervalResult(
+                interval_id="judge_corrected_validated",
+                lower=0.123456,
+                upper=0.654321,
+                method="validated_judge_misclassification_correction",
+                role="reference",
+                simultaneous_coverage=0.93,
+                eligibility="certifying",
+            )
+        )
+    return report
+
+
+def test_a_judge_corrected_headline_gives_the_true_risk_in_both_files(tmp_path: Path) -> None:
+    directory = _judged_report().write(tmp_path / "report")
+    index = json.loads((directory / INDEX_JSON).read_text(encoding="utf-8"))
+    report = json.loads((directory / "report.json").read_text(encoding="utf-8"))
+    rows = table(section((directory / INDEX_MD).read_text(encoding="utf-8"), "Headline estimates"))
+
+    headline = index["summary"]["headline"]
+    assert len(rows) == len(headline) == 2
+    for item, row in zip(headline, rows, strict=True):
+        corrected = item["judge_corrected"]
+        assert corrected["calibration"] == "validated"
+        interval = _resolve(report, corrected["item"])
+        assert interval["interval_id"] == "judge_corrected_validated"
+        assert (corrected["lower"], corrected["upper"]) == (interval["lower"], interval["upper"])
+        assert row["Pointer"] == f"`{item['item']}`"
+        # Rounded outward, and the coverage down.
+        assert (row["True risk lower"], row["True risk upper"]) == ("0.1234", "0.6544")
+        assert row["True risk coverage"] == "0.9300"
+        assert (row["True risk eligibility"], row["Judge calibration"]) == (
+            "certifying",
+            "validated",
+        )
+        assert row["True risk pointer"] == f"`{corrected['item']}`"
+
+
+def test_an_index_without_a_judge_correction_has_no_true_risk_columns() -> None:
+    files = index_files(_report(), ["report.json", "comparisons.csv"])
+
+    headline = json.loads(files[INDEX_JSON])["summary"]["headline"]
+    assert headline
+    assert all("judge_corrected" not in item for item in headline)
+    assert "True risk" not in files[INDEX_MD]
 
 
 def test_a_headline_comparison_gives_its_csv_row(tmp_path: Path) -> None:
