@@ -44,6 +44,10 @@ app.add_typer(generative_app, name="generative")
 class ExitCode(IntEnum):
     """Every exit status a command chooses, in one table (docs/api-reference.md#exit-codes).
 
+    ERROR is guaranteed only by analyze, hash-plan, init, visualize and the generative commands,
+    and by validate for an invalid integrity. A plan that validate or plan fixed-design --plan
+    cannot load is not routed here (a traceback exiting 1, or a usage error exiting 2).
+
     typer itself exits 2 on a usage error, such as a missing option, before any command runs.
     """
 
