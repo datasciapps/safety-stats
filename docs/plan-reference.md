@@ -581,7 +581,7 @@ for what the rate shows.
 | `sampling` | `poisson` (independent inclusion, default) or `fixed_size` (exact draws per stratum, without replacement) |
 | `stratum_column` | Optional with `sampling: fixed_size`; names the manifest column defining sampling strata |
 | `hierarchy` | Creator-declared hierarchy ending in `prompt_id` |
-| `rollout_key` | Fields uniquely identifying one terminal rollout; see [Schema versions](#schema-versions) for the names and default |
+| `rollout_key` | Fields uniquely identifying one terminal rollout; see [Schema versions](#schema-versions) for the names and default. A field the rollout does not record is read from its run. A run's fields hold its configuration, so a `ROLLOUT_DUPLICATE` message names such a field, as `<model_base_url of the run>`, instead of showing its value |
 | `require_complete_manifest` | Require every fixed prompt in every cohort |
 | `require_expected_rollouts` | Require prospective rollout counts, from the manifest's `expected_rollouts` column (on by default) |
 | `weights` | Default group weight strategy |

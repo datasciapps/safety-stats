@@ -568,6 +568,15 @@ described in their pull requests.
 
 ### Changed
 
+- **A duplicate rollout key no longer shows a run's configuration (changes `report.json`).** A
+  field of `design.rollout_key` that a rollout does not record is read from its run, and the
+  `ROLLOUT_DUPLICATE` message showed its value. A key that named a run field such as
+  `model_generate_config` or `model_base_url` therefore copied request headers and endpoints
+  into `report.json`, `report-full.md`, `report.html` and the output of `validate`. The message
+  now names such a field, as `<model_base_url of the run>`, instead of showing its value. The
+  diagnostic's scope still names the run. Keys made of rollout fields only, such as the
+  default, give the same message as before.
+
 - **A claim on cvar, maximum or entropic risk over one rollout per prompt degrades integrity
   (changes `report.json`).** At one rollout per prompt every per-prompt rate is 0 or 1, and
   [the statistical methods](docs/statistical-methods.md#249-statistical-uncertainty) call these

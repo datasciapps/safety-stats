@@ -186,6 +186,30 @@ def test_a_drifting_cohort_shows_fingerprints_and_no_planted_secret(
     ]
 
 
+def _key_rollouts_by_run_fields(plan: dict[str, Any]) -> None:
+    # Without the epoch the key repeats in beta, whose evaluation has two. The rollout does not
+    # record the last two fields, so they are read from its run.
+    plan["design"]["rollout_key"] = ["eval_id", "id", "model_base_url", "model_generate_config"]
+
+
+def test_a_duplicate_rollout_key_names_the_run_fields_it_does_not_show(
+    planted_logs: PlantedLogs, tmp_path: Path
+) -> None:
+    analyzed = _analyze(planted_logs, tmp_path, _key_rollouts_by_run_fields)
+
+    assert leaks(analyzed.texts, planted_logs.secrets) == []
+    messages = _messages(analyzed, "ROLLOUT_DUPLICATE")
+    assert messages
+    assert all(
+        message.startswith("duplicate rollout key ('")
+        and message.endswith(
+            "', <model_base_url of the run>, <model_generate_config of the run>)"
+        )
+        for message in messages
+    ), messages
+    assert "ROLLOUT_DUPLICATE" in analyzed.texts["validate output"]
+
+
 def test_init_copies_no_planted_secret_into_the_plan_or_the_terminal(
     planted_logs: PlantedLogs, tmp_path: Path
 ) -> None:
