@@ -111,9 +111,17 @@ outcomes tend to arrive first, and a sequence fed in completion order would look
 system is. At each look the analysis uses one of:
 
 - the longest prefix of draws that are all complete; or
-- every draw issued so far, with unfinished draws counted as failures. This is valid for the
-  upper bound only, by the same argument as the conservative completion of unclassified rollouts
-  in section 4.5.
+- every draw issued so far, with unfinished draws counted as failures, for the upper bound only.
+
+The second option rests on the argument of section 4.5 for unclassified rollouts: a bound that
+never falls when one observation rises stays valid when unknown outcomes are set to their
+largest value. The Hoeffding-spending reference sequence has that property, and so does a
+betting mixture over fractions fixed in advance, such as the bound of #126: a larger outcome
+lowers its own factor of the capital and raises none of the others. A sequence that fits its
+bets or its variance estimate to earlier outcomes, as a betting sequence with predictable
+plug-in bets or an empirical-Bernstein sequence does, need not have it. A larger early outcome
+changes every later bet, and the bound can fall. Phase 1 offers the second option only for a
+sequence that has the property, and uses the longest complete prefix for any other.
 
 ## Several claims
 
