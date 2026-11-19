@@ -355,6 +355,14 @@ sample and the limits in 86--88%, nearly all for want of a truly unsafe label. F
 judge at 2% prevalence with 100 labels it is the other way round: the box refuses in 27 of 2,000
 samples and the limits in 350.
 
+These counts compare labelling designs: the box from labels drawn within judge strata, the limits
+from a simple random sample. In an analysis the limits come with the box computed from the same
+simple random labels, and only where that box is computed: where its calibration is uninformative
+(`JUDGE_CALIBRATION_UNINFORMATIVE`), a row gets neither interval, and no
+`JUDGE_LANG_REICZIGEL_UNAVAILABLE` is emitted. From a simple random sample the box refuses far
+more often (the simulation's `box_srs` column), so the limits never add a corrected interval
+where the box has none.
+
 When the judge reports far fewer failures than its estimated false-positive rate implies, the
 whole interval falls below zero and is clipped to the single point 0. The interval then warns
 that the data contradict the estimated accuracies.
@@ -363,9 +371,9 @@ Labels drawn within judge strata (`simple_random_within_judge_stratum`) estimate
 \(\rho_0\), not \(Se\) and \(Sp\), and get no such interval. In that parameterisation the identity
 \(R^*=R\rho_1+(1-R)\rho_0\) is affine, so the Lang--Reiczigel bias term vanishes. What remains
 is an Agresti--Coull-adjusted Wald interval, which is what the delta reference already is.
-Stratified labels (`stratified_within_judge_stratum`, below) get no such interval either. Where
-the limits cannot be computed, for example when no labelled rollout is truly unsafe, the analysis
-emits `JUDGE_LANG_REICZIGEL_UNAVAILABLE` with the reason.
+Stratified labels (`stratified_within_judge_stratum`, below) get no such interval either. For a
+row whose box is computed, where the limits cannot be, for example when no labelled rollout is
+truly unsafe, the analysis emits `JUDGE_LANG_REICZIGEL_UNAVAILABLE` with the reason.
 
 ### Stratified labels (experimental)
 
