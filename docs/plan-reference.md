@@ -1149,32 +1149,51 @@ manifest's hash, the integrity status and the overall decision. Each claim recor
 | `estimand` | `acceptable_upper`, `unacceptable_lower` | the claim |
 | `bound` | `estimate`, `lower`, `upper`, `alpha`, `method`, `multiplicity_family` | the claim: the bound it was decided on, or the bound it has when it was not decided on one (below) |
 | `evidence` | `refs` | the claim's `evidence_refs` |
-| `evidence` | `test` | the test the claim was decided by, as a `test:` evidence ref names it; null for a claim decided on an interval |
+| `evidence` | `test` | the test the claim was decided by, or was to be decided by when the test cannot run, as a `test:` evidence ref names it; null for a claim decided on an interval |
 | `evidence` | `eligibility` | the group risk or comparison the claim is about |
 | `evidence` | `interval_id`, `interval_method`, `coverage_mode`, `coverage_scope`, `family_alpha`, `independence_profile`, `assumptions` | the interval the bound comes from: for a claim decided by a test, that result's primary interval, which the test was applied to; otherwise the one an `interval:` evidence ref names, else that result's primary interval |
 | `sources` | `claim`, `estimand`, `evidence`, `evidence_interval` | JSON pointers (RFC 6901) into `report.json` to each of the above |
 
-For a claim decided on a validated judge correction, `bound` holds the corrected bound and
-`alpha` holds the error budget of the claim family and the judge calibration together, and the
-evidence interval is the correction's. For a claim decided by the noisy-but-valid test, `bound`
-holds the test's set of true risks with the same combined `alpha`, `evidence.test` is
-`noisy_valid_certification`, and the evidence interval is the judge-reported primary interval
-the test was applied to, although the claim's refs also name the validated correction. Its
-`assumptions` are then the interval's own, and the record's `reasons` state the test's. In an
-exploratory analysis, `status` stays `INCONCLUSIVE` and `descriptive_status` gives what a
+For a claim decided on a validated judge correction, `bound` holds the corrected bound,
+`alpha` is the claim family's alpha plus the correction's `evidence.family_alpha`, and the
+evidence interval is the correction's.
+
+A `method: noisy_valid_test` claim in a declared family has `evidence.test` set to
+`noisy_valid_certification`, and its evidence interval is the judge-reported primary interval
+the test is applied to, even when the claim's refs also name the validated correction. When
+the test runs, `bound` holds the test's set of true risks, and `alpha` is the claim family's
+alpha plus the judge family's whole alpha. When the test cannot run, `bound.lower` and
+`bound.upper` are null, `alpha` is the claim family's alone, and `evidence.test` still names
+the test, as the one the claim was to be decided by. The record's `reasons` describe the test
+and its calibration when it runs, and say why it did not when it cannot. Either way the
+evidence `assumptions` are the interval's own, and `claims.json` does not list the test's
+assumptions; see
+[the noisy-but-valid test](judge-misclassification.md#certifying-a-threshold-directly-the-noisy-but-valid-test).
+
+In an exploratory analysis, `status` stays `INCONCLUSIVE` and `descriptive_status` gives what a
 confirmatory analysis would decide; it certifies nothing. Fields of `evidence` are null when
 the report holds no such result or interval.
 
 `evidence.family_alpha` is the interval's own: the budget of the multiplicity family it was
-computed in, not the claim's error budget, which is `bound.alpha`. For a judge-corrected claim
-it is the judge calibration's budget, and `bound.alpha` is the claim family's alpha plus it.
+computed in, not the claim's error budget, which is `bound.alpha`. For a judge correction it is
+the share of the judge family's alpha that the correction spends. The calibration divides that
+alpha equally over its scopes, one per declared cohort, or per cohort and group when it is
+scoped to groups, so with several scopes a correction's `family_alpha` is a share, not the
+whole budget. A comparison's correction spends the shares of the two scopes it spans. A
+judge-corrected claim's `bound.alpha` is the claim family's alpha plus its `family_alpha`.
 
 A claim can be `INCONCLUSIVE` without a decision on its bound, and its record still carries the
-bound `report.json` gives it. That happens when its multiplicity family is undeclared (`alpha`
-is null), and when the plan declares a validated judge calibration but the claim's evidence has
-no certifying correction. Then `judge_correction_unavailable` is true and the bound is the
-uncorrected judge-reported one: it is not a bound on the true risk the claim is about, so do
-not read it as one. `reasons` says why each claim has its status.
+bound `report.json` gives it. Two such cases, among others:
+
+- Its multiplicity family is undeclared, and `alpha` is null.
+- The plan declares a validated judge calibration, but the claim's evidence has no certifying
+  correction. Then `judge_correction_unavailable` is true and the bound is the uncorrected
+  judge-reported one: it is not a bound on the true risk the claim is about, so do not read it
+  as one.
+
+A claim whose family is undeclared also carries the uncorrected judge-reported bound under a
+validated calibration, but `judge_correction_unavailable` stays false; its null `alpha` shows
+that the claim was not decided. `reasons` says why each claim has its status.
 
 The file has its own `schema_version` (now `"1.0"`) and `"experimental": true`.
 `inspect-safety-stats schema claims` prints its JSON schema.
