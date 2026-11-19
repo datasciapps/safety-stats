@@ -4126,6 +4126,11 @@ def test_a_judges_run_counts_truncated_answers_as_the_primary_does_unless_it_say
     # Judge b's own choice counts the truncated answer as a failure.
     (row_b,) = judges["judge_b"]["claims"]
     assert row_b["estimate"] > primary.estimate  # type: ignore[operator]
+    # The report says so, and names no judge's own content_filter_stops, which is refused.
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert "unless the judge's score sets its own `token_limit`." in section
+    assert "`content_filter_stops`" not in section
 
 
 def test_judge_claims_reject_a_judge_whose_inherited_content_filter_stops_misfit_its_errors(
