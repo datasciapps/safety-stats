@@ -16,8 +16,8 @@ What a diagnostic code does to the results, given as each code's effect.
 |---|---|
 | invalid | The integrity status is invalid: no claim can pass, and the results the error concerns are not reported. A generative report has no integrity status: it is still written in full, and the error makes `generative analyze` exit with an error code. |
 | degraded | The integrity status is degraded: the results are reported, marked as resting on an assumption the inputs could not confirm. |
-| withheld | One result, such as a correction, bound or region, is not reported; the rest of the analysis and its integrity status are unaffected. |
-| adjusted | The analysis changes how it computes a result, for example by widening a bound or taking a different method, and reports it. |
+| withheld | One result, such as a correction, bound or region, is not reported, and the integrity status is unaffected. A claim that rests on the result is not decided on it, so it can lose a PASS, and the overall decision with it; the rest of the analysis is reported as usual. |
+| adjusted | The analysis changes how it computes a result, for example by widening a bound or taking a different method, and reports it; the integrity status is unaffected. A wider bound or a decision rule can withhold a claim's PASS or the overall decision's. |
 | recorded | Nothing is computed differently: the diagnostic records a fact a reader needs to interpret the results. |
 
 ## Input kinds

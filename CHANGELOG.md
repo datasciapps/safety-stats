@@ -159,7 +159,9 @@ described in their pull requests.
   now carries `source`, the kind of input it concerns (`plan`, `registration`, `manifest`,
   `logs`, `judge_labels`, `analysis` or `generation`), and `effect`, what it does to the
   results (`invalid`, `degraded`, `withheld`, `adjusted` or `recorded`). Both are filled from
-  the code's entry in `inspect_safety_stats.registry`, which also says what each value means.
+  the code's entry in `inspect_safety_stats.registry`, which also says what each value means;
+  a `withheld` or `adjusted` diagnostic leaves integrity alone but can withhold a claim's PASS
+  or the overall decision's.
   Every `report.json` and `report.html` with a diagnostic changes bytes; `report.md` and the
   CSVs do not. A `report.json` written before reads back with both fields filled. Read back as
   a stored report (`context={STORED_REPORT: True}`, as `visualize` and
