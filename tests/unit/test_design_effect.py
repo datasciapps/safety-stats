@@ -112,9 +112,21 @@ def test_the_design_effect_on_units_is_the_variance_ratio_of_block_sums() -> Non
     assert checked > 100
 
 
-def test_units_of_one_rollout_give_the_binary_estimate_to_the_bit() -> None:
-    blocks = [[(1, 1), (1, 1), (1, 1), (1, 0)], [(1, 0), (1, 1), (1, 0), (1, 0)], [(1, 0), (1, 0)]]
-    assert unit_intracluster_correlation(blocks) == intracluster_correlation([4, 4, 2], [3, 1, 0])
+@pytest.mark.parametrize(
+    "failed",
+    [
+        [[1, 1, 1, 0], [0, 1, 0, 0], [0, 0]],
+        # Without the branch to the binary estimate, the pairwise one gives -0.0556 here. Even
+        # the one-way ANOVA estimate on the rates, which are the outcomes, differs from the
+        # binary one in the last bits for this layout: -0.06449938355719945 against ...938.
+        [[1, 0, 1, 0, 0], [0, 0, 1, 0, 0], [0, 0, 1], [0] * 7, [0, 0, 0, 0, 1, 0, 1], [1, 0]],
+    ],
+)
+def test_units_of_one_rollout_give_the_binary_estimate_to_the_bit(failed: list[list[int]]) -> None:
+    blocks = [[(1, outcome) for outcome in block] for block in failed]
+    assert unit_intracluster_correlation(blocks) == intracluster_correlation(
+        [len(block) for block in failed], [sum(block) for block in failed]
+    )
 
 
 @pytest.mark.parametrize(
@@ -123,12 +135,17 @@ def test_units_of_one_rollout_give_the_binary_estimate_to_the_bit() -> None:
         [[(10, 3), (10, 5)]],  # one block
         [[(10, 3)], [(10, 5)]],  # no block with two units
         [[(10, 5), (4, 2)], [(2, 1), (6, 3)]],  # every unit fails half its rollouts
+        # Every unit fails a third of its rollouts. The rates are one float, but their mean is
+        # one bit below it, so every deviation is that bit: computed in floats, the
+        # correlation would be 1 and the design effect 5, a ratio of rounding errors.
+        [[(3, 1), (6, 2), (9, 3), (12, 4), (15, 5)]] * 4 + [[(3, 1)] * 5],
     ],
 )
 def test_unit_correlation_is_undefined_without_the_variation_it_compares(
     blocks: list[list[tuple[int, int]]],
 ) -> None:
     assert unit_intracluster_correlation(blocks) is None
+    assert unit_design_effect(blocks) == (None, None)
 
 
 def test_inconsistent_units_are_rejected() -> None:
