@@ -193,10 +193,18 @@ def _geometry(taxonomy: CompiledTaxonomy, level: str) -> _Geometry:
 
 
 def _cells(geometry: _Geometry, level: str, value: str) -> dict[str, float]:
-    cells = geometry.by_value.get(value)
+    # ORDER MATTERS: zero weights are dropped before the emptiness check, as estimate_slice
+    # checks the slice's total weight. A terminal path's weight can underflow to 0 under tiny
+    # declared weights, and a value whose paths all weigh 0 would otherwise pass the check
+    # and be refused later for want of a draw or of a shared seed, which misstates why.
+    cells = {
+        seed: weight
+        for seed, weight in geometry.by_value.get(value, {}).items()
+        if weight > 0.0
+    }
     if not cells:
         raise ValueError(f"no terminal path carries {level}={value}")
-    return {seed: weight for seed, weight in cells.items() if weight > 0.0}
+    return cells
 
 
 def _unevaluated(unit_id: str) -> UnitOutcome:

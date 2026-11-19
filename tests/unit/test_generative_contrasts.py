@@ -400,3 +400,31 @@ def test_a_contrast_without_shared_seeds_is_refused(tmp_path: Path) -> None:
             taxonomy, design, selections, outcomes(selections, np.random.default_rng(10)),
             contrasts=[ContrastMember("c", "wrapper", "nested", "plain")],
         )
+
+
+@pytest.mark.parametrize(
+    ("slices", "contrasts"),
+    [
+        ([SliceMember("wrapper", "rare")], []),
+        ([], [ContrastMember("c", "wrapper", "rare", "plain")]),
+    ],
+)
+def test_a_value_whose_paths_all_weigh_zero_is_refused_as_absent(
+    tmp_path: Path, slices: list[SliceMember], contrasts: list[ContrastMember]
+) -> None:
+    plan = base_plan()
+    # The smallest positive double: compilation keeps the value, since its declared weight
+    # is positive, but every path carrying it underflows to a weight of 0.
+    plan["taxonomy"]["arms"]["wrapper"]["values"].append({"id": "rare", "weight": 5e-324})
+    parsed = load_generative_plan(materialize(tmp_path, plan, SEEDS))
+    taxonomy = compile_taxonomy(parsed, base_path=tmp_path)
+    rare = [node for node in taxonomy.terminal_paths if "wrapper=rare" in node.node_id]
+    assert rare
+    assert all(node.target_path_weight == 0.0 for node in rare)
+    design = plan_design(taxonomy, parsed)
+    selections = draw_selections(taxonomy, design)
+    # Not "no draw landed" or "no semantic seed holds both": the value has no mass at all.
+    with pytest.raises(ValueError, match="no terminal path carries wrapper=rare"):
+        estimate_slice_family(
+            taxonomy, design, selections, [], slices=slices, contrasts=contrasts
+        )
