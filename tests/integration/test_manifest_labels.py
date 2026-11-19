@@ -256,6 +256,17 @@ def test_identifiers_padded_in_the_manifest_are_named_to_the_logs(tmp_path: Path
     )
 
 
+def test_an_identifier_beyond_the_decimal_range_is_compared_as_written(tmp_path: Path) -> None:
+    """Looking for another spelling of the same number, analyze stopped with InvalidOperation."""
+
+    huge = "1e999999999999999999999"
+    manifest = f"prompt_id,question_id,task_id\n{huge},q,t\n1e5,q,t\n"
+    plan, source = _write(tmp_path, manifest, [huge, "1e5"], design=_FIXED)
+    report = analyze(plan=plan, source=source)
+    assert report.integrity.status == "valid", report.integrity.diagnostics
+    assert sorted(row.prompt_id for row in report.prompt_estimates) == ["1e5", huge]
+
+
 def test_identifiers_that_read_as_one_number_are_two_prompts(tmp_path: Path) -> None:
     """`1` and `01` were one duplicated prompt_id."""
 

@@ -16,7 +16,7 @@ from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 import numpy as np
@@ -214,6 +214,21 @@ def _listing(counts: Counter[str], unit: str) -> str:
 _NUMBER = re.compile(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
 
 
+def _number(text: str) -> Decimal | None:
+    """The number ``text`` spells, or None when it spells none that a Decimal can hold.
+
+    An exponent beyond the Decimal range, as in `1e999999999999999999999`, is no number here:
+    such an identifier is compared as written, with no hint.
+    """
+
+    if not _NUMBER.fullmatch(text):
+        return None
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        return None
+
+
 def _by_number(identifiers: Iterable[Any]) -> dict[Decimal, list[str]]:
     """The identifiers that spell a number, by that number, so that `0001` and `1` meet.
 
@@ -225,16 +240,17 @@ def _by_number(identifiers: Iterable[Any]) -> dict[Decimal, list[str]]:
     numbers: dict[Decimal, list[str]] = {}
     for identifier in identifiers:
         text = str(identifier)
-        if _NUMBER.fullmatch(text):
-            numbers.setdefault(Decimal(text), []).append(text)
+        number = _number(text)
+        if number is not None:
+            numbers.setdefault(number, []).append(text)
     return numbers
 
 
 def _written_as(identifier: str, numbers: dict[Decimal, list[str]], where: str) -> str:
     """The sentence that names the other spellings of ``identifier`` in ``where``, if any."""
 
-    text = str(identifier)
-    others = numbers.get(Decimal(text), []) if _NUMBER.fullmatch(text) else []
+    number = _number(str(identifier))
+    others = [] if number is None else numbers.get(number, [])
     if not others:
         return ""
     shown = ", ".join(repr(other) for other in sorted(others)[:3])
