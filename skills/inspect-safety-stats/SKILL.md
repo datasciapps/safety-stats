@@ -16,7 +16,7 @@ description: >
   Call `inspect_safety_stats.stats` directly in Python—no log files, YAML plans, or [Inspect AI](https://inspect.aisi.org.uk/) harness required.
 - **Completed Inspect AI `.eval` logs:**
   Run `inspect-safety-stats validate` then `inspect-safety-stats analyze` with a `design.csv` manifest and a strict `schema_version: "2.0"` YAML plan.
-- **Results from another evaluation harness needing full hierarchy reports and `report.html`:**
+- **Results from another evaluation harness needing full hierarchy reports and `report.html` (experimental):**
   Write them as a runs file and a rollouts file ([rollout files](../../docs/rollout-files.md), JSON Lines or CSV) and run `inspect-safety-stats validate` / `analyze` with `--runs runs.jsonl --rollouts rollouts.jsonl` in place of `--logs`, or pass `source=RolloutFiles(runs=..., rollouts=...)` (from `inspect_safety_stats.ingest`) to `validate()` and `analyze()`. Use a `schema_version: "3.0"` plan and a `design.csv` whose `prompt_id` matches each rollout's `item_id` (no Inspect AI install needed).
 
 ## 2. Input requirements in `inspect_safety_stats.stats`
@@ -87,6 +87,7 @@ Never guess YAML field names—every plan model sets Pydantic `extra="forbid"` a
    inspect-safety-stats analyze --plan plan.yaml --logs logs/ --output reports/run-001
    ```
    - Exit `0`: `valid` or `degraded` integrity (read the warnings in `index.json`, step 4).
+   - Exit `1` from `validate`: the plan cannot be loaded (malformed YAML or a schema failure), and a traceback is printed. `analyze` exits `3` for the same plan.
    - Exit `2`: invalid or missing CLI arguments.
    - Exit `3`: `invalid` integrity (`analyze` still writes the report directory, `index.json` included, so diagnostics can be audited), or an execution error before report generation.
    - With `--decision-exit-codes`: `0` = `PASS`, `1` = `FAIL`, `2` = `INCONCLUSIVE`, `3` = `invalid` or execution error.
