@@ -6,6 +6,9 @@ observations.csv, ``CONFIG_DRIFT``) and copies none of it. These tests plant a d
 in every configuration field of real logs written offline (tests/planted_configuration.py), run
 each command that reads them, and look for the secrets in every file it writes and every line
 it prints. The generative workflow's test is in test_generative_real_logs.py.
+
+Scorer options and metadata (``eval.scorers``) are not planted: with ``outputs.judge_claims``
+on, a report still records them as the logs give them, which docs/running-inspect.md says.
 """
 
 from __future__ import annotations
