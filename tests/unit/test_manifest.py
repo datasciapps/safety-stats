@@ -194,7 +194,7 @@ def test_identifiers_are_read_as_written(tmp_path: Path) -> None:
     assert manifest["task_id"].tolist() == ["01", "true"]
 
 
-def _labelled_plan() -> AnalysisPlan:
+def _labelled_plan(*groups: dict[str, object]) -> AnalysisPlan:
     data = yaml.safe_load(_PLAN)
     data["design"]["weights"] = {"strategy": "explicit", "column": "w"}
     data["design"]["independence_profiles"] = {
@@ -204,6 +204,7 @@ def _labelled_plan() -> AnalysisPlan:
     data["groups"] = [
         {"id": "tier", "filter": {"tier": "01"}},
         {"id": "domain", "filter": {}, "weights": {"hierarchy": ["domain", "prompt_id"]}},
+        *groups,
     ]
     data["outputs"]["risk_measures"] = [
         {"id": "over", "type": "threshold_exceedance", "threshold_column": "limit"}
@@ -288,6 +289,30 @@ def test_numeric_columns_stay_numbers_beside_text_labels(tmp_path: Path) -> None
     assert manifest["limit"].dtype == "float64"
     assert manifest["expected_rollouts"].tolist() == [2, 2]
     assert manifest["mandatory"].tolist() == [True, False]
+    weights = resolve_weights(manifest, plan.design.weights)
+    assert weights.tolist() == pytest.approx([0.25, 0.75], rel=1e-12, abs=0)
+
+
+def test_a_group_filter_on_a_weight_or_threshold_column_takes_a_number(tmp_path: Path) -> None:
+    """A filter makes its column a grouping column, but a weight or threshold column stays a
+    number, so an unquoted number still selects its prompts and the weights still resolve."""
+
+    from inspect_safety_stats.ingest.manifest import plan_grouping_columns
+
+    plan = _labelled_plan(
+        {"id": "light", "filter": {"w": 0.25}}, {"id": "loose", "filter": {"limit": 1}}
+    )
+    path = tmp_path / "design.csv"
+    path.write_text(
+        "prompt_id,task_id,cluster,tier,domain,w,limit\n"
+        "p1,t,c,01,d,0.25,0.5\n"
+        "p2,t,c,01,d,0.75,1\n",
+        encoding="utf-8",
+    )
+    manifest = load_manifest(path, plan_manifest_columns(plan), plan_grouping_columns(plan))
+    groups = {group.id: group.prompt_ids for group in resolve_groups(plan, manifest)}
+    assert groups["light"] == ("p1",)
+    assert groups["loose"] == ("p2",)
     weights = resolve_weights(manifest, plan.design.weights)
     assert weights.tolist() == pytest.approx([0.25, 0.75], rel=1e-12, abs=0)
 

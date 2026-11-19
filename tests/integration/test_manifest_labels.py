@@ -339,6 +339,66 @@ def test_planning_weights_hierarchy_levels_as_analyze_reads_them(tmp_path: Path)
     assert "Effective sample size: 30 " in plain(result.output)
 
 
+_PLANNED = """
+schema_version: "3.0"
+analysis:
+  id: planning
+  title: Planning
+  intent: confirmatory
+  plan_frozen_at: 2025-01-01T00:00:00Z
+inputs:
+  design_manifest: design.csv
+  score:
+    name: harmful
+    mapping: {failure_values: ["FAIL"], safe_values: ["PASS"]}
+design:
+  type: fixed
+  hierarchy: [task_id, question_id, prompt_id]
+  weights: {strategy: nested_equal, hierarchy: [category, prompt_id]}
+  independence_profiles:
+""" + _ROLLOUT + """
+cohorts:
+  candidate: {match: {model: m}}
+groups:
+  - {id: all}
+outputs:
+  prompt_bounds: {enabled: false}
+  direct_mean_intervals:
+    enabled: true
+    method: weighted_hoeffding
+    family: means
+    independence: {primary: rollout}
+  risk_measures:
+    - {id: mean, type: weighted_mean}
+multiplicity:
+  families:
+    - {id: means, purpose: simultaneous_intervals, method: bonferroni, alpha: 0.05}
+    - {id: gate, purpose: all_mandatory, method: intersection_union, alpha: 0.05}
+claims:
+  - {id: all_mean, title: All, cohort: candidate, group: all, measure: mean, family: gate,
+     acceptable_upper: 0.3, unacceptable_lower: 0.6}
+"""
+
+
+def test_planning_from_a_plan_weights_hierarchy_levels_as_analyze_reads_them(
+    tmp_path: Path,
+) -> None:
+    """`plan fixed-design --plan` gave categories `1` and `01` one share, as analyze did."""
+
+    (tmp_path / "design.csv").write_text(
+        "prompt_id,question_id,task_id,category,expected_rollouts\n"
+        "p1,q1,t,1,10\np2,q2,t,01,10\np3,q3,t,01,10\np4,q4,t,01,10\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    plan = tmp_path / "plan.yaml"
+    plan.write_text(_PLANNED, encoding="utf-8", newline="\n")
+    result = CliRunner().invoke(app, ["plan", "fixed-design", "--plan", str(plan)])
+    assert result.exit_code == 0, plain(result.output)
+    # Weights 1/2, 1/6, 1/6 and 1/6 over ten rollouts each; one category of four gives 40.
+    assert "Effective sample size: 30 " in plain(result.output)
+
+
 _TIERS = "prompt_id,question_id,task_id,tier\np1,q1,t,1\np2,q2,t,1\np3,q3,t,01\np4,q4,t,01\n"
 
 
