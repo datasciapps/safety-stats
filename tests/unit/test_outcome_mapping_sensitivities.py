@@ -350,11 +350,17 @@ def test_the_report_shows_the_mappings_side_by_side(tmp_path: Path) -> None:
         "lower",
         "upper",
         "status",
+        "descriptive",
     ]
     mean = table[table["result_id"] == "candidate:all:mean"]
     assert list(mean["mapping_id"]) == ["primary", "partial_safe"]
     assert list(mean["estimate"]) == pytest.approx([0.5, 0.25], abs=1e-12)
     assert list(table["kind"].drop_duplicates()) == ["group_risk", "claim"]
+    # An alternative's rows, its claim's status among them, never enter the decision.
+    assert list(zip(table["mapping_id"], table["descriptive"], strict=True)) == [
+        ("primary", False),
+        ("partial_safe", True),
+    ] * 2
     checksums = json.loads((directory / "checksums.json").read_text(encoding="utf-8"))
     assert "outcome-mapping-sensitivity.csv" in checksums
     markdown = (directory / "report-full.md").read_text(encoding="utf-8")
@@ -385,4 +391,7 @@ def test_shown_decisions_mark_a_sensitivity_decision_as_descriptive(tmp_path: Pa
     markdown = (directory / "report-full.md").read_text(encoding="utf-8")
     row = "| partial_safe | — | COMPLY | PARTIAL, REFUSE | `valid` | `INCONCLUSIVE` (descriptive) |"
     assert row in markdown
-    assert "| claim low_risk | partial_safe | 0.250000 |" in markdown
+    claim_rows = [line for line in markdown.splitlines() if line.startswith("| claim low_risk |")]
+    assert [line.split(" | ")[1] for line in claim_rows] == ["primary", "partial_safe"]
+    assert claim_rows[0].endswith(" | INCONCLUSIVE |")
+    assert claim_rows[1].endswith(" | INCONCLUSIVE (descriptive) |")

@@ -293,6 +293,8 @@ def _mapping_sensitivity_rows(report: SafetyReport) -> list[dict[str, Any]]:
     """Every displayed result under each outcome mapping, the primary one first.
 
     Rows of one result are adjacent, in the primary mapping's then the plan's declared order.
+    ``descriptive`` is true on an alternative's rows: their intervals and claim statuses never
+    enter a claim's status or the decision.
     """
 
     readings = [(PRIMARY_MAPPING_ID, mapping_results(report))]
@@ -315,6 +317,7 @@ def _mapping_sensitivity_rows(report: SafetyReport) -> list[dict[str, Any]]:
                         "lower": result.lower,
                         "upper": result.upper,
                         "status": result.status,
+                        "descriptive": mapping_id != PRIMARY_MAPPING_ID,
                     },
                 )
             )
@@ -385,7 +388,8 @@ def _mapping_sensitivity_markdown(
             _number(row["upper"], places),
         ]
         if include_decisions:
-            cells.append(_escape(row["status"]) if row["status"] is not None else "")
+            status = "" if row["status"] is None else _escape(row["status"])
+            cells.append(f"{status} (descriptive)" if status and row["descriptive"] else status)
         lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
     lines.append(
