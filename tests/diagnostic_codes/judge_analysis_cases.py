@@ -480,7 +480,9 @@ def _tail_recorded(triggered: Outcome, control: Outcome) -> None:
     assert triggered.report.claims == control.report.claims
 
 
-def panel(rule: str, groups_a: list[str] | None, groups_b: list[str] | None) -> Run:
+def composite_primary(
+    rule: str, groups_a: list[str] | None, groups_b: list[str] | None
+) -> Callable[[Inputs], None]:
     """A composite primary of judges a and b, each with declared, optionally scoped, accuracy."""
 
     def change(inputs: Inputs) -> None:
@@ -511,6 +513,14 @@ def panel(rule: str, groups_a: list[str] | None, groups_b: list[str] | None) -> 
         spec["composites"] = [{"id": "panel", "rule": rule, "judges": ["judge_a", "judge_b"]}]
         for item in inputs.rollouts:
             item["score_harmful_a"] = item["score_harmful_b"] = item.pop("score_harmful")
+
+    return change
+
+
+def panel(rule: str, groups_a: list[str] | None, groups_b: list[str] | None) -> Run:
+    """The main analysis with the composite of ``composite_primary`` as its primary outcome."""
+
+    change = composite_primary(rule, groups_a, groups_b)
 
     def run(directory: Path) -> Outcome:
         inputs = base_inputs()
