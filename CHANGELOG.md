@@ -514,7 +514,8 @@ described in their pull requests.
   contains a smaller one. The output is the whole manifest with `pilot_stratum`,
   `pilot_inclusion_probability` and `pilot_selected`, which is the frame of a fixed-size
   sampled design as it stands. `draw_pilot` in `inspect_safety_stats.ingest.pilot` does the
-  same in Python. See
+  same in Python, on a manifest read as text (`dtype=str, keep_default_na=False`); it refuses
+  a `prompt_id` that is not text, which would hash differently from the command's. See
   [Drawing a random pilot](docs/design-based-sampling.md#drawing-a-random-pilot).
 
 - **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory

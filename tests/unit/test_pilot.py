@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -181,6 +183,29 @@ def test_a_pilot_frame_cannot_be_drawn_from_again() -> None:
     frame = draw_pilot(_manifest({"a": 3}), per_stratum=1, strata=["category"], seed=1)
     with pytest.raises(ValueError, match="pilot_selected"):
         draw_pilot(frame, per_stratum=1, strata=["category"], seed=1)
+
+
+def test_prompt_ids_must_be_text_as_written(tmp_path: Path) -> None:
+    """Read with pandas' defaults, 0001 becomes 1 and would draw other prompts than the CLI."""
+    path = tmp_path / "design.csv"
+    path.write_text(
+        "prompt_id,category\n" + "".join(f"{index:04d},a\n" for index in range(1, 9)),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"not text: \[1, 2, 3"):
+        draw_pilot(pd.read_csv(path), per_stratum=2, strata=["category"], seed=1)
+    as_written = pd.read_csv(path, dtype=str, keep_default_na=False)
+    frame = draw_pilot(as_written, per_stratum=2, strata=["category"], seed=1)
+    assert _drawn(frame) <= {f"{index:04d}" for index in range(1, 9)}
+
+
+@pytest.mark.parametrize("missing", [None, float("nan"), "", " "])
+def test_missing_prompt_ids_are_rejected(missing: object) -> None:
+    manifest = _manifest({"a": 4})
+    manifest["prompt_id"] = manifest["prompt_id"].astype(object)
+    manifest.loc[2, "prompt_id"] = missing
+    with pytest.raises(ValueError, match="not text|missing prompt_id"):
+        draw_pilot(manifest, per_stratum=1, strata=["category"], seed=1)
 
 
 def test_duplicate_prompts_are_rejected() -> None:

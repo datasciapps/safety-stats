@@ -512,6 +512,43 @@ def test_pilot_cli_writes_the_frame_with_the_draw(tmp_path: Path) -> None:
     assert {line.split(",")[-2] for line in lines[1:]} == {"0.3333333333333333"}
 
 
+def test_pilot_cli_and_python_draw_the_same_prompts(tmp_path: Path) -> None:
+    """draw_pilot on the manifest read as its docs say draws what the command draws."""
+    import pandas as pd
+
+    from inspect_safety_stats.ingest.pilot import draw_pilot
+
+    manifest = tmp_path / "design.csv"
+    manifest.write_text(
+        "prompt_id,question_id,task_id\n"
+        + "".join(f"{index:04d},q{index},t{index % 2}\n" for index in range(1, 21)),
+        encoding="utf-8",
+    )
+    output = tmp_path / "frame.csv"
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--per-stratum",
+            "3",
+            "--seed",
+            "5",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    written = pd.read_csv(output, dtype=str, keep_default_na=False)
+    by_command = set(written.loc[written["pilot_selected"] == "True", "prompt_id"])
+    as_written = pd.read_csv(manifest, dtype=str, keep_default_na=False)
+    frame = draw_pilot(as_written, per_stratum=3, strata=["task_id"], seed=5)
+    assert set(frame.loc[frame["pilot_selected"], "prompt_id"]) == by_command
+    assert len(by_command) == 6
+
+
 def test_pilot_cli_rejects_a_stratum_smaller_than_the_draw(tmp_path: Path) -> None:
     manifest = _pilot_manifest(tmp_path)
     output = tmp_path / "frame.csv"

@@ -52,8 +52,14 @@ def draw_pilot(
     `pilot_stratum` (the stratum's values joined by "/"), `pilot_inclusion_probability`
     (draws over stratum size) and `pilot_selected`.
 
-    Raises ValueError when a stratum holds fewer than `per_stratum` prompts, when a strata
-    column is absent or has missing values, or when the manifest already has an added column.
+    The draw hashes each `prompt_id` as written, so `prompt_id` must hold text: read the
+    manifest with `pd.read_csv(path, dtype=str, keep_default_na=False)`, as `plan pilot`
+    does. Read with pandas' defaults, an identifier such as `0001` would become the number 1
+    and draw different prompts from the command's.
+
+    Raises ValueError when a `prompt_id` is not text or is blank, when a stratum holds fewer
+    than `per_stratum` prompts, when a strata column is absent or has missing values, or when
+    the manifest already has an added column.
     """
 
     if isinstance(per_stratum, bool) or per_stratum < 1:
@@ -64,7 +70,16 @@ def draw_pilot(
         raise ValueError("design manifest has no prompt_id column")
     if manifest.empty:
         raise ValueError("design manifest has no prompts")
-    prompt_ids = manifest["prompt_id"].astype(str)
+    prompt_ids = manifest["prompt_id"]
+    not_text = [value for value in prompt_ids if not isinstance(value, str)]
+    if not_text:
+        raise ValueError(
+            f"design manifest has prompt_id values that are not text: {not_text[:10]!r}; "
+            "read it with pd.read_csv(path, dtype=str, keep_default_na=False), so that each "
+            "identifier is hashed as written"
+        )
+    if (prompt_ids.str.strip() == "").any():
+        raise ValueError("design manifest has missing prompt_id values")
     if prompt_ids.duplicated().any():
         duplicates = sorted(prompt_ids[prompt_ids.duplicated()].unique())
         raise ValueError(f"design manifest has duplicate prompt_id values: {duplicates[:10]}")
