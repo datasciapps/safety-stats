@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, cast
 
 from inspect_safety_stats.analysis.judge_calibration import (
@@ -70,6 +71,21 @@ def _certifying_judge_correction(
     )
 
 
+@dataclass(frozen=True)
+class _NoisyValidOutcome:
+    """A noisy-but-valid claim's decision, with the bounds and budget it was decided on."""
+
+    status: Decision
+    reasons: list[str]
+    lower: float | None
+    upper: float | None
+    method: str
+    alpha: float
+    # None when the test could not run at the plan's thresholds, which leaves the thresholds
+    # at which it would decide unknown.
+    verdict_range: VerdictRange | None
+
+
 def _noisy_valid_claim(
     *,
     claim: ClaimSpec,
@@ -79,45 +95,42 @@ def _noisy_valid_claim(
     judge_summary: dict[str, Any] | None,
     gap: str | None,
     scope: _JudgeScope | None = None,
-) -> tuple[Decision, list[str], float | None, float | None, str, float, VerdictRange | None]:
+) -> _NoisyValidOutcome:
     """Decide an aggregate claim with the finite-sample noisy-but-valid test.
 
     ``scope`` is the calibration the claim's row is corrected with; None when the
     calibration is scoped to groups that leave the row out.
-
-    The verdict range is None when the test could not run at the plan's thresholds, which
-    leaves the thresholds at which it would decide unknown.
     """
 
     method = "noisy_valid_certification_test"
     if not isinstance(evidence, GroupRiskResult) or not eligible:
-        return (
-            "INCONCLUSIVE",
-            [
+        return _NoisyValidOutcome(
+            status="INCONCLUSIVE",
+            reasons=[
                 "No complete certifying judge-reported bound is available for the "
                 "noisy-but-valid test."
             ],
-            None,
-            None,
-            method,
-            family_alpha,
-            VerdictRange(),
+            lower=None,
+            upper=None,
+            method=method,
+            alpha=family_alpha,
+            verdict_range=VerdictRange(),
         )
     if scope is None:
-        return (
-            "INCONCLUSIVE",
-            [_out_of_scope_reason(evidence.group_id)],
-            None,
-            None,
-            method,
-            family_alpha,
-            VerdictRange(),
+        return _NoisyValidOutcome(
+            status="INCONCLUSIVE",
+            reasons=[_out_of_scope_reason(evidence.group_id)],
+            lower=None,
+            upper=None,
+            method=method,
+            alpha=family_alpha,
+            verdict_range=VerdictRange(),
         )
     if gap is not None:
         # The truth strata pool the cohort's labels exactly as the judge strata do.
-        return (
-            "INCONCLUSIVE",
-            [
+        return _NoisyValidOutcome(
+            status="INCONCLUSIVE",
+            reasons=[
                 f"The noisy-but-valid test cannot certify this row: {gap}. Its labels are a "
                 f"simple random sample of {_scope_rollouts(scope[1], 'classified rollouts')}, "
                 "so they measure "
@@ -126,11 +139,11 @@ def _noisy_valid_claim(
                 + ("cohort" if scope[1] is None else "group")
                 + " in a fixed design."
             ],
-            None,
-            None,
-            method,
-            family_alpha,
-            VerdictRange(),
+            lower=None,
+            upper=None,
+            method=method,
+            alpha=family_alpha,
+            verdict_range=VerdictRange(),
         )
     summary = judge_summary or {}
     strata = (summary.get("truth_strata") or {}).get(evidence.cohort_id) or {}
@@ -153,17 +166,17 @@ def _noisy_valid_claim(
         or evidence.lower is None
         or evidence.upper is None
     ):
-        return (
-            "INCONCLUSIVE",
-            [
+        return _NoisyValidOutcome(
+            status="INCONCLUSIVE",
+            reasons=[
                 "The noisy-but-valid test requires a validated judge calibration from a simple "
                 "random sample of labelled rollouts with both true classes represented."
             ],
-            None,
-            None,
-            method,
-            family_alpha,
-            VerdictRange(),
+            lower=None,
+            upper=None,
+            method=method,
+            alpha=family_alpha,
+            verdict_range=VerdictRange(),
         )
     try:
         # A projected upper endpoint misses whenever the joint event fails, so its error is the
@@ -184,7 +197,15 @@ def _noisy_valid_claim(
             unacceptable_lower=claim.unacceptable_lower,
         )
     except ValueError as exc:
-        return "INCONCLUSIVE", [str(exc)], None, None, method, family_alpha, None
+        return _NoisyValidOutcome(
+            status="INCONCLUSIVE",
+            reasons=[str(exc)],
+            lower=None,
+            upper=None,
+            method=method,
+            alpha=family_alpha,
+            verdict_range=None,
+        )
     reasons = [
         "Noisy-but-valid certification on true failure risk: judge-reported interval "
         f"[{result.judge_reported_lower:.12g}, {result.judge_reported_upper:.12g}]; PASS "
@@ -210,14 +231,14 @@ def _noisy_valid_claim(
             "The calibration does not establish an informative judge (sensitivity plus "
             "specificity may not exceed one), so nothing identifies true risk."
         )
-    return (
-        result.decision,
-        reasons,
-        result.true_risk_lower,
-        result.true_risk_upper,
-        method,
-        family_alpha + float(judge_alpha),
-        noisy_valid_verdict_range(result),
+    return _NoisyValidOutcome(
+        status=result.decision,
+        reasons=reasons,
+        lower=result.true_risk_lower,
+        upper=result.true_risk_upper,
+        method=method,
+        alpha=family_alpha + float(judge_alpha),
+        verdict_range=noisy_valid_verdict_range(result),
     )
 
 
@@ -518,7 +539,7 @@ def _claims(
                 if isinstance(evidence, GroupRiskResult) and scope is not None
                 else None
             )
-            status, reasons, lower, upper, method, alpha, verdict_range = _noisy_valid_claim(
+            outcome = _noisy_valid_claim(
                 claim=claim,
                 evidence=evidence,
                 eligible=eligible,
@@ -527,6 +548,9 @@ def _claims(
                 gap=gap,
                 scope=scope,
             )
+            status, reasons, method = outcome.status, outcome.reasons, outcome.method
+            lower, upper, alpha = outcome.lower, outcome.upper, outcome.alpha
+            verdict_range = outcome.verdict_range
             estimate = None
             correction_note = None
             evidence_refs.append("test:noisy_valid_certification")
