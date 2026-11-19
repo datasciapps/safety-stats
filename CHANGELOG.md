@@ -437,7 +437,9 @@ described in their pull requests.
   An invalid report never shows a judge's run as anything but `invalid`, nor a row as anything
   but `INCONCLUSIVE`. A judge's run takes the primary score's `content_filter_stops` and
   `token_limit` where the judge leaves them at `score`, so it counts the rollouts the target's
-  provider stopped as the primary analysis does; a plan whose judges' resulting
+  provider stopped as the primary analysis does (an inherited `token_limit` also covers a
+  truncated rollout the judge left unscored for another reason, which can narrow its row;
+  `token_limit: missing` on the judge opts out); a plan whose judges' resulting
   `content_filter_stops` misfit their `errors` or the estimand is refused when it is loaded.
   A judge whose own `score` asks for what the source cannot give, such as the stop reasons
   `token_limit` needs, gets an `invalid` run with `INGEST_FAILED` and rows that decide nothing,

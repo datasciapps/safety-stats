@@ -530,7 +530,9 @@ either at its default, `score`, takes the primary outcome's value in its run, so
 content-filter stop or an unscored answer cut at the token limit as the primary analysis does.
 A judge that sets its own value keeps it; there is no way to ask a judge's run not to look when
 the primary does, short of `token_limit: missing`, which leaves such answers to the judge's
-`missing`. With `outputs.judge_claims`, each judge's resulting `content_filter_stops` must fit
+`missing`. An inherited `token_limit` applies to every truncated rollout the judge left
+unscored, whatever the judge's reason, so it can make a judge's row narrower than its own
+`missing` would; `token_limit: missing` on the judge is the way out. With `outputs.judge_claims`, each judge's resulting `content_filter_stops` must fit
 the estimand and that judge's `errors` as the primary's must: a primary
 `content_filter_stops: failure` needs every judge that inherits it to set `errors` to something
 other than `end_to_end`, or the plan is refused when it is loaded.
