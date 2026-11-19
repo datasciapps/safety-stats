@@ -535,6 +535,36 @@ def _joined(parts: list[str]) -> str:
     return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
 
 
+def _pointwise_lines(rows: list[_Node]) -> list[str]:
+    """A note when rows were listed on pointwise intervals.
+
+    A pointwise interval covers its own node at the stated level, not every node at once, so
+    among many nodes some exclude zero difference or clear a limit by chance.
+    """
+
+    pointwise = sum(1 for row in rows if (row.coverage_scope or "").startswith("pointwise"))
+    if not pointwise:
+        return []
+    if pointwise == len(rows):
+        subject = (
+            "The row listed on its interval rests"
+            if pointwise == 1
+            else f"All {pointwise} rows listed on their intervals rest"
+        )
+    else:
+        subject = f"{pointwise} of the {len(rows)} rows listed on their intervals " + (
+            "rests" if pointwise == 1 else "rest"
+        )
+    return [
+        "",
+        (
+            f"{subject} on {'a pointwise interval' if pointwise == 1 else 'pointwise intervals'} "
+            "(the plan sets `simultaneous: false`). A pointwise interval covers its own node, "
+            "not every node at once, so among many nodes some are listed by chance."
+        ),
+    ]
+
+
 def _about_true_risk(report: SafetyReport, claim: ClaimResult) -> bool:
     """Whether a claim's limits are about true failure risk rather than judge-reported risk.
 
@@ -665,6 +695,7 @@ def _effect_lines(
                 ),
             ]
         )
+    lines.extend(_pointwise_lines(list(effects)))
     return lines
 
 
@@ -755,6 +786,7 @@ def _exceedance_lines(
                 ),
             ]
         )
+    lines.extend(_pointwise_lines([node for _, _, node, basis in rows if basis == "interval"]))
     lines.extend(_true_risk_lines(report, claim_nodes, listed=bool(rows)))
     return lines
 

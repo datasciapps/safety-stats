@@ -309,6 +309,20 @@ def test_comparison_nodes_without_an_interval_are_counted() -> None:
     ) in section
 
 
+def test_effects_listed_on_pointwise_intervals_are_flagged() -> None:
+    pointwise = _effects_report(
+        [
+            _comparison(*MISINFORMATION_EFFECT, coverage_scope=POINTWISE),
+            _comparison({"domain": "fraud"}, 0.1, 0.02, 0.2),
+        ]
+    )
+    simultaneous = _effects_report([_comparison(*MISINFORMATION_EFFECT)])
+    assert (
+        "1 of the 2 rows listed on their intervals rests on a pointwise interval (the plan sets "
+        "`simultaneous: false`)"
+    ) in _section(_markdown(pointwise))
+    assert "pointwise" not in _section(_markdown(simultaneous))
+
 
 def test_nodes_above_a_claims_limit_say_whether_the_interval_or_the_estimate_is_above() -> None:
     report = _limit_report(
@@ -385,6 +399,17 @@ def test_a_node_within_rounding_of_the_limit_is_not_called_above_it() -> None:
         "estimate above the limit |"
     ) in section
 
+
+def test_rows_listed_on_pointwise_intervals_are_flagged() -> None:
+    report = _limit_report(
+        [
+            _node("misinformation", 0.152, 0.116, 0.194, coverage_scope=POINTWISE),
+            _node("cybercrime", 0.074, 0.049, 0.116, coverage_scope=POINTWISE),
+        ]
+    )
+    section = _section(_markdown(report))
+    # The estimate-above row does not rest on its interval, so only one row counts.
+    assert "The row listed on its interval rests on a pointwise interval" in section
 
 
 def test_only_the_claims_cohort_and_group_reach_its_limit() -> None:
