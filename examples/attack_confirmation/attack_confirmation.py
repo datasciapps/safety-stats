@@ -572,7 +572,7 @@ def given_path(argument: str, value: str | None, default: Path) -> Path:
     if not path.is_absolute():
         raise ValueError(
             f"the {argument} path {value!r} is relative; pass an absolute path, such as "
-            f"-T {argument}=$PWD/{value}. inspect eval creates this task in the task file's "
+            f'-T {argument}="$PWD/{value}". inspect eval creates this task in the task file\'s '
             "directory, so a relative path would not be read from where you typed it"
         )
     return path

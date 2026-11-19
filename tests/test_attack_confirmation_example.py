@@ -326,7 +326,13 @@ def test_the_task_refuses_relative_paths_to_its_files(
         )
 
     for argument in ("design", "behaviours"):
-        with pytest.raises(ValueError, match=f"the {argument} path '{argument}.csv' is relative"):
+        with pytest.raises(
+            ValueError,
+            match=(
+                f"the {argument} path '{argument}.csv' is relative; .* "
+                rf'-T {argument}="\$PWD/{argument}\.csv"\. '
+            ),
+        ):
             evaluate(**{argument: f"{argument}.csv"})
     [log] = evaluate(design=str(design), behaviours=str(behaviours))
     assert log.status == "success"

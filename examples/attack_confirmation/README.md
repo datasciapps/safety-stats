@@ -163,8 +163,8 @@ directory, so a relative path would be read from there, and the task refuses one
 ```bash
 inspect eval examples/attack_confirmation/attack_confirmation.py \
   --model <provider/target-model> --log-dir run/attack/logs \
-  -T mode=live -T design=$PWD/run/attack/design.csv \
-  -T behaviours=$PWD/run/attack/behaviours.csv \
+  -T mode=live -T design="$PWD/run/attack/design.csv" \
+  -T behaviours="$PWD/run/attack/behaviours.csv" \
   -T attack_id=pair -T budget_k=20 \
   -T attacker_model=<provider/attacker-model> \
   -T attacker_judge=<provider/attacker-judge> \
