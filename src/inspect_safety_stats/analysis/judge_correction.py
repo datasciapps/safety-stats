@@ -581,6 +581,7 @@ def _add_judge_corrections(
             stratified=stratified,
             policy_classified=by_policy,
             policy_possible=result.cohort_id in policy_cohorts,
+            labelling_queue=protocol is not None,
         )
         if interval is not None:
             result.intervals.append(interval)

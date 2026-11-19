@@ -429,17 +429,23 @@ class LabellingProtocolSpec(StrictModel):
     """Experimental: how the human labels of a validated calibration were collected.
 
     ``queue`` is a CSV whose ``observation_id`` column lists the rollouts in the order they
-    are to be labelled; a queue that orders each judge stratum by a seeded random
-    permutation makes every prefix a simple random sample within each stratum. ``tier``
-    keeps only the queue rows whose ``tier`` column has that value, for a queue that also
-    holds rows the calibration does not use. ``seed`` records the permutation's seed for an
-    audit; the package cannot recompute the queue from it.
+    are to be labelled. A queue that lists, within each of the calibration's judge strata (per
+    cohort, and per group when it is scoped to groups), all of its classified rollouts or a
+    simple random sample of them, in a seeded random order, makes every prefix a simple random
+    sample within each stratum. A queue ordered within finer strata, interleaved in shares
+    other than their sizes, is such a queue only for a calibration of those strata, and the
+    analysis cannot tell. ``tier`` keeps only the queue rows whose ``tier`` column has that
+    value, for a queue that also holds rows the calibration does not use. ``seed`` records the
+    permutation's seed for an audit; the package cannot recompute the queue from it.
 
-    The analysis checks that the validation manifest labels exactly the first rows of the
-    queue. ``stopping`` declares why labelling stopped there: ``fixed_size`` at ``size`` rows,
-    which the analysis checks; ``label_independent`` at a point chosen without looking at the
-    labels, such as when time ran out; ``data_dependent`` possibly because of the labels,
-    which only anytime-valid bounds allow, so the calibration then uses confidence sequences.
+    The analysis checks that the queue lists only classified rollouts of the analysed run and
+    that the validation manifest labels exactly its first rows, and warns when the queue lists
+    only part of a labelled judge stratum (of a labelled declared fine stratum in a stratified
+    design), whose draw it cannot check. ``stopping`` declares why labelling stopped there:
+    ``fixed_size`` at ``size`` rows, which the analysis checks; ``label_independent`` at a
+    point chosen without looking at the labels, such as when time ran out; ``data_dependent``
+    possibly because of the labels, which only anytime-valid bounds allow, so the calibration
+    then uses confidence sequences.
     """
 
     queue: Path
@@ -454,6 +460,17 @@ class LabellingProtocolSpec(StrictModel):
             raise ValueError("labelling protocol stopping: fixed_size requires a size")
         if self.stopping != "fixed_size" and self.size is not None:
             raise ValueError("labelling protocol size applies only to stopping: fixed_size")
+        return self
+
+    @model_validator(mode="after")
+    def tier_without_padding(self) -> LabellingProtocolSpec:
+        # The queue's tier cells are read without surrounding whitespace, so a padded tier
+        # would select no row, and every label would read as outside the queue.
+        if self.tier is not None and self.tier != self.tier.strip():
+            raise ValueError(
+                f"labelling protocol tier {self.tier!r} begins or ends with whitespace; "
+                "write the tier name without it"
+            )
         return self
 
 

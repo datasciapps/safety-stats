@@ -356,6 +356,33 @@ def protocol(skip_first: bool) -> Callable[..., None]:
     return change
 
 
+def partial_queue(partial: bool) -> Callable[..., None]:
+    """Every classified rollout but one judge-safe one labelled, from a queue that lists the
+    labelled rollouts only, or all of them with the unlabelled one last."""
+
+    def change(inputs: Inputs, observations: list[Any]) -> None:
+        queue = census(observations)
+        omitted = next(item for item in reversed(queue) if item[1] == "safe")
+        labelled = [item for item in queue if item != omitted]
+        validated(
+            inputs, labelled, protocol={"queue": "queue.csv", "stopping": "label_independent"}
+        )
+        listed = labelled if partial else [*labelled, omitted]
+        inputs.files["queue.csv"] = _csv("observation_id", [(key,) for key, _ in listed])
+
+    return change
+
+
+def _queue_recorded(triggered: Outcome, control: Outcome) -> None:
+    # Recorded: the same labels give the same rows and claims, and the warning names the
+    # judge stratum the queue lists only part of.
+    (found,) = triggered.with_code("JUDGE_LABELLING_QUEUE_PARTIAL")
+    assert [item["judge_stratum"] for item in found.details["judge_strata"]] == ["judge_safe"]
+    assert _interval(triggered, CORRECTED) is not None
+    assert triggered.report.group_risks == control.report.group_risks
+    assert triggered.report.claims == control.report.claims
+
+
 def _p3(classified: int) -> Callable[[Inputs], None]:
     """A third prompt whose rollouts have no score, but for the first ``classified``."""
 
@@ -821,6 +848,14 @@ CASES = [
         trigger=judged(protocol(skip_first=True)),
         control=judged(protocol(skip_first=False)),
         effect=_no_correction,
+    ),
+    Case(
+        # The queue leaves out a judge-safe rollout, so it lists only part of that stratum.
+        code="JUDGE_LABELLING_QUEUE_PARTIAL",
+        shows="recorded",
+        trigger=judged(partial_queue(partial=True)),
+        control=judged(partial_queue(partial=False)),
+        effect=_queue_recorded,
     ),
     Case(
         # Prompt p3 of the row has no classified rollout.

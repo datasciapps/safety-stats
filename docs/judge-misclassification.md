@@ -225,16 +225,46 @@ inputs:
       stopping: label_independent
 ```
 
-The queue lists rollouts in the order people label them. Ordering each judge stratum by a
-seeded random permutation, and interleaving the strata on a pattern fixed in advance, makes
-every prefix of the queue a simple random sample within each stratum. `tier` is for a queue
-that also holds rows the calibration does not use, such as rows oversampled to study where
-the judge goes wrong; the manifest then holds the calibration tier's labels only.
+The queue lists rollouts in the order people label them. Within each of the calibration's
+judge strata (a cohort's judge-unsafe and judge-safe rollouts, or those of one listed group
+when the calibration is scoped by `groups`), it lists all of the stratum's classified
+rollouts, or a simple random sample of them drawn before labelling, in a seeded random order.
+With the strata interleaved on a pattern fixed in advance, every prefix of the queue is then a
+simple random sample within each stratum.
+
+The order must be random over each of those strata as a whole. A queue that shuffles finer
+strata, such as each task's rollouts, separately and interleaves them in shares other than
+their sizes, as an allocation by expected precision does, labels some of them sooner than
+others: its prefixes are simple random samples of each finer stratum, not of the judge
+stratum, even when it lists every rollout. Such a queue is valid only for a calibration at the
+finer level: scoped by `groups` to those strata, one plan for each, or a
+[stratified design](#stratified-labels-experimental) that declares them. The analysis cannot
+tell it from a valid queue, and gives no warning. The calibration tier of
+[`examples/open_weights/label_queue.py`](../examples/open_weights/README.md#human-labels) is
+such a queue, by cohort, task and verdict.
+
+`tier` is for a queue that also holds rows the calibration does not use, such as rows
+oversampled to study where the judge goes wrong; the manifest then holds the calibration
+tier's labels only.
 
 The analysis checks that the manifest labels exactly the first rows of the queue (or of its
-tier). A skipped row, or a label for a rollout outside the queue, is an error,
-`JUDGE_LABELLING_PROTOCOL_VIOLATED`, and no correction is reported. `stopping` says why
-labelling stopped where it did:
+tier), and that every row of the queue (or of its tier) names a classified rollout of the
+analysed run. A skipped row, a label for a rollout outside the queue, or a queue row that
+names a rollout the run does not have or did not classify is an error,
+`JUDGE_LABELLING_PROTOCOL_VIOLATED`, and no correction is reported. Every label is then on a
+classified rollout, so `size` below counts only labels the calibration uses.
+
+A queue that lists every classified rollout of a stratum leaves only its order to chance. One
+that lists part of a stratum is a random sample of it only if it was drawn as one: a queue
+written from hand-picked rollouts would pass every check above. When the queue (or its tier)
+lists only part of a judge stratum that has labels, the report carries the warning
+`JUDGE_LABELLING_QUEUE_PARTIAL`, which names the stratum and how many of its rollouts the
+queue lists; the correction is reported as computed, and how the queue's rows were drawn is
+declared, not checked. In a [stratified design](#stratified-labels-experimental) the labels are
+a sample of each declared fine stratum, so the warning counts the queue per fine stratum that
+has labels; a fine stratum without labels is completed with certainty, so its queue rows do
+not matter. A queue that permutes every classified rollout of each stratum avoids the warning.
+`stopping` says why labelling stopped where it did:
 
 | `stopping` | Meaning | What the analysis does |
 |---|---|---|
@@ -256,11 +286,15 @@ neither the noisy-but-valid test nor the stratified design's bounds have an anyt
 yet. With `groups`, the prefix check covers the whole manifest, and each calibration of a
 cohort and group bounds its own strata.
 
-The report's `provenance.judge_calibration.protocol` records the queue's SHA-256, its number
-of rows, the labelled prefix, the seed, the stopping rule and the bound used. The package
-cannot recompute the queue from the seed: that the queue's order is random is declared, and
-the hash lets an auditor check the queue against the one the labelling used. The protocol is
-available in fixed-design plans; a generative plan does not accept it yet.
+The report's `provenance.judge_calibration.protocol` records the SHA-256 of the queue file's
+bytes as read, its number of rows, the labelled prefix, the seed, the stopping rule and the
+bound used. The analysis reads the file once, so the rows it checks are the bytes it hashes.
+The hash is of the file's bytes, not of its rows, so a copy whose line endings were converted,
+as a Windows checkout can do, hashes differently; hash and audit the file as the labelling
+used it. The package cannot recompute the queue from the seed: that the queue's order is
+random is declared, and the hash lets an auditor check the queue against the one the
+labelling used. The protocol is available in fixed-design plans; a generative plan does not
+accept it yet.
 
 ### Estimation and error budget
 
