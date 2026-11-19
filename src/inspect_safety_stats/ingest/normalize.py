@@ -37,6 +37,7 @@ from inspect_safety_stats.ingest.records import (
 )
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import Diagnostic
+from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope, prompt_scope, scope_path
 from inspect_safety_stats.stats.judges import compose_verdicts
 
 POLICY_BLOCK_CODES = frozenset(
@@ -198,7 +199,7 @@ def normalize(
                     code="COHORT_OVERLAP",
                     severity="ERROR",
                     message=f"evaluation {run_key!r} matches multiple cohorts: {matches}",
-                    scope=run_key,
+                    scope=scope_path("runs", run_key),
                 )
             )
         elif len(matches) == 1:
@@ -213,7 +214,7 @@ def normalize(
                             f"evaluation {run_key!r} reports no status, so it cannot be "
                             "checked for completion and is assumed complete"
                         ),
-                        scope=run_key,
+                        scope=scope_path("runs", run_key),
                         details={"integrity_degraded": True},
                     )
                 )
@@ -223,7 +224,7 @@ def normalize(
                         code="LOG_INCOMPLETE",
                         severity="ERROR",
                         message=f"evaluation {run_key!r} has status {run.status!r}",
-                        scope=run_key,
+                        scope=scope_path("runs", run_key),
                     )
                 )
 
@@ -244,7 +245,7 @@ def normalize(
                     code="COHORT_EMPTY",
                     severity="ERROR",
                     message=f"cohort {cohort_id!r} contains no evaluations",
-                    scope=cohort_id,
+                    scope=cohort_scope(cohort_id),
                 )
             )
             continue
@@ -259,7 +260,7 @@ def normalize(
                     code="PROVENANCE_UNOBSERVED",
                     severity="WARNING",
                     message=f"cohort {cohort_id!r} cannot verify uniform field {field!r}",
-                    scope=cohort_id,
+                    scope=cohort_scope(cohort_id),
                 )
             )
         configs = [
@@ -281,7 +282,7 @@ def normalize(
                         "report no configuration, so configuration drift cannot be checked "
                         "for them"
                     ),
-                    scope=cohort_id,
+                    scope=cohort_scope(cohort_id),
                     details={"integrity_degraded": True, "evaluations": unconfigured},
                 )
             )
@@ -292,7 +293,7 @@ def normalize(
                     code="CONFIG_DRIFT",
                     severity="ERROR",
                     message=f"cohort {cohort_id!r} contains incompatible evaluation configurations",
-                    scope=cohort_id,
+                    scope=cohort_scope(cohort_id),
                 )
             )
         cohort_summaries.append(
@@ -376,7 +377,7 @@ def normalize(
                     message=(
                         f"judge {judge.id!r} score column {column!r} is absent from selected logs"
                     ),
-                    scope=f"inputs.judges.{judge.id}",
+                    scope=plan_scope("inputs", "judges", judge.id),
                 )
             )
             judge_series[judge.id] = {id(rollout): None for _, rollout in selected}
@@ -395,7 +396,7 @@ def normalize(
                         code="JUDGE_SCORE_UNMAPPED",
                         severity="ERROR",
                         message=f"judge {judge.id!r}: {exc}",
-                        scope=f"inputs.judges.{judge.id}:{rollout.record_id}",
+                        scope=scope_path("runs", rollout.run_key, "records", rollout.record_id),
                     )
                 )
                 verdicts[id(rollout)] = None
@@ -426,7 +427,7 @@ def normalize(
                 code="PROMPT_UNEXPECTED",
                 severity="ERROR",
                 message=f"observed prompt {prompt_id!r} is absent from the design manifest",
-                scope=prompt_id,
+                scope=scope_path("prompts", prompt_id),
                 details={"prompt_id": prompt_id},
             )
         )
@@ -460,12 +461,12 @@ def normalize(
                     code="ROLLOUT_DUPLICATE",
                     severity="ERROR",
                     message=f"duplicate rollout key {rollout_key!r}",
-                    scope=prompt_id,
+                    scope=scope_path("runs", run_key, "prompts", prompt_id),
                     details={"prompt_id": prompt_id},
                 )
             )
         rollout_keys.add(rollout_key)
-        scope = f"{run_key}:{prompt_id}:{rollout.repeat}"
+        scope = scope_path("runs", run_key, "prompts", prompt_id, "repeats", rollout.repeat)
         raw_error = _native(rollout.error)
         if isinstance(raw_error, str) and not raw_error.strip():
             raw_error = None
@@ -712,7 +713,7 @@ def normalize(
                     f"the transcript of {name} could not be read ({reason}), so the stage of "
                     f"its {count} sample error(s) is unknown and none counts as a policy block"
                 ),
-                scope=name,
+                scope=scope_path("logs", name),
                 details={"source": name, "reason": reason, "sample_errors": count},
             )
         )
@@ -736,7 +737,7 @@ def normalize(
                         code="PROMPT_MISSING",
                         severity="ERROR",
                         message=f"prompt {prompt_id!r} has no observations in cohort {cohort_id!r}",
-                        scope=f"{cohort_id}:{prompt_id}",
+                        scope=prompt_scope(cohort_id, prompt_id),
                         details={"cohort_id": cohort_id, "prompt_id": prompt_id},
                     )
                 )
@@ -752,7 +753,7 @@ def normalize(
                                 f"{count} rollouts; "
                                 f"expected {expected}"
                             ),
-                            scope=f"{cohort_id}:{prompt_id}",
+                            scope=prompt_scope(cohort_id, prompt_id),
                             details={"cohort_id": cohort_id, "prompt_id": prompt_id},
                         )
                     )
@@ -766,7 +767,7 @@ def normalize(
                                 f"{count} rollouts; "
                                 f"expected {expected}"
                             ),
-                            scope=f"{cohort_id}:{prompt_id}",
+                            scope=prompt_scope(cohort_id, prompt_id),
                             details={"cohort_id": cohort_id, "prompt_id": prompt_id},
                         )
                     )
@@ -814,7 +815,7 @@ def normalize(
                                 "probabilities; a fixed-size design draws a fixed count "
                                 "from each stratum, so pi must equal draws/size within it"
                             ),
-                            scope=stratum,
+                            scope=scope_path("strata", stratum),
                         )
                     )
                     continue
@@ -829,7 +830,7 @@ def normalize(
                                 f"{len(members)} frame items; a fixed-size design needs an "
                                 "integer draw count"
                             ),
-                            scope=stratum,
+                            scope=scope_path("strata", stratum),
                         )
                     )
                     continue
@@ -853,7 +854,7 @@ def normalize(
                                     "fixed-size design must realize its plan exactly or the "
                                     "declared probabilities misstate the sample"
                                 ),
-                                scope=f"{cohort_id}:{stratum}",
+                                scope=cohort_scope(cohort_id, "strata", stratum),
                                 details={
                                     "planned_draws": count,
                                     "realized_draws": realized_stratum,
@@ -889,7 +890,7 @@ def normalize(
                         code="SAMPLE_EMPTY",
                         severity="ERROR",
                         message=f"cohort {cohort_id!r} has no sampled frame items",
-                        scope=cohort_id,
+                        scope=cohort_scope(cohort_id),
                         details=details,
                     )
                 )
@@ -904,7 +905,7 @@ def normalize(
                             "declared inclusion probabilities do not describe this run, "
                             "which would bias the estimate"
                         ),
-                        scope=cohort_id,
+                        scope=cohort_scope(cohort_id),
                         details=details,
                     )
                 )

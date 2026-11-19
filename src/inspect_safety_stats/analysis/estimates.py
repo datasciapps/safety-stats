@@ -7,6 +7,7 @@ from inspect_safety_stats.ingest.manifest import resolve_weights
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import Diagnostic, Eligibility, PromptEstimate
+from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope
 from inspect_safety_stats.stats.binomial import binomial_bounds, missingness_robust_binomial_bounds
 from inspect_safety_stats.stats.independence import BlockIndex, block_index
 from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
@@ -45,7 +46,7 @@ def alpha_by_prompt(
                     code="ALPHA_ALLOCATION_INVALID",
                     severity="ERROR",
                     message=str(exc),
-                    scope=family_id,
+                    scope=plan_scope("multiplicity", "families", family_id),
                 )
             )
             return {}
@@ -61,7 +62,7 @@ def alpha_by_prompt(
                         "explicit_alpha must contain every manifest prompt exactly once "
                         "and its values must sum to no more than the family alpha"
                     ),
-                    scope=family_id,
+                    scope=plan_scope("multiplicity", "families", family_id),
                 )
             )
             return {}
@@ -109,7 +110,9 @@ def prompt_blocked(diagnostics: list[Diagnostic], cohort: str, prompt: str) -> b
             if details["prompt_id"] == prompt and details.get("cohort_id") in (None, cohort):
                 return True
             continue
-        if diagnostic.scope == cohort:
+        # An error about the whole cohort is scoped `cohorts/<id>`; scopes are paths, so a
+        # stratum, claim or prompt that shares the cohort's id no longer matches it.
+        if diagnostic.scope == cohort_scope(cohort):
             return True
     return False
 

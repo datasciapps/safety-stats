@@ -3,6 +3,7 @@ from __future__ import annotations
 from inspect_safety_stats.config.decision_policy import DecisionPolicy, inference_plan_hash
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.schema.reports import Diagnostic
+from inspect_safety_stats.schema.scopes import DECISION_POLICY_ROOT, scope_path
 
 
 def validate_decision_policy(plan: AnalysisPlan, policy: DecisionPolicy) -> list[Diagnostic]:
@@ -45,7 +46,9 @@ def validate_decision_policy(plan: AnalysisPlan, policy: DecisionPolicy) -> list
                             f"decision policy version {version.id!r} sets thresholds for "
                             f"claim {claim_id!r}, which the plan does not declare"
                         ),
-                        scope=claim_id,
+                        scope=scope_path(
+                            DECISION_POLICY_ROOT, "versions", version.id, "thresholds", claim_id
+                        ),
                     )
                 )
             elif claim.method == "noisy_valid_test":
@@ -58,7 +61,9 @@ def validate_decision_policy(plan: AnalysisPlan, policy: DecisionPolicy) -> list
                             f"claim {claim_id!r}, a noisy_valid_test claim, whose test uses its "
                             "thresholds; they can be set only in the plan, before the run"
                         ),
-                        scope=claim_id,
+                        scope=scope_path(
+                            DECISION_POLICY_ROOT, "versions", version.id, "thresholds", claim_id
+                        ),
                     )
                 )
     return diagnostics

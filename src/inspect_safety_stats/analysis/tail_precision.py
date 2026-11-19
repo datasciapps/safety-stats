@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from inspect_safety_stats.config.models import AnalysisPlan, RiskMeasureSpec
 from inspect_safety_stats.schema.reports import Diagnostic, PromptEstimate
+from inspect_safety_stats.schema.scopes import plan_scope
 from inspect_safety_stats.stats.binomial import binomial_upper_bound
 from inspect_safety_stats.stats.planning import zero_failure_sample_size
 
@@ -59,7 +60,7 @@ def tail_measure_precision(
                 f"only at {zero_failure_upper:.3f}, above the precision target {target:g}. "
                 f"About {needed} rollouts per prompt would be needed."
             ),
-            scope="outputs.risk_measures",
+            scope=plan_scope("outputs", "risk_measures"),
             details={
                 "measures": requested,
                 "median_rollouts_per_prompt": rollouts,

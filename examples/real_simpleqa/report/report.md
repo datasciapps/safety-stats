@@ -15,7 +15,7 @@ Results apply to the declared fixed evaluation set and specified stochastic roll
 | Severity | Code | Scope | Message |
 |---|---|---|---|
 | WARNING | `PLAN_SELF_DECLARED` | — | confirmatory timing is self-declared; no external plan registration was supplied |
-| WARNING | `TAIL_MEASURES_UNINFORMATIVE` | outputs.risk_measures | cvar_75, entropic_5, worst are built from per-prompt bounds; with about 1 rollouts per prompt a prompt with no failures is still bounded only at 0.997, above the precision target 0.05. About 113 rollouts per prompt would be needed. |
+| WARNING | `TAIL_MEASURES_UNINFORMATIVE` | plan/outputs/risk_measures | cvar_75, entropic_5, worst are built from per-prompt bounds; with about 1 rollouts per prompt a prompt with no failures is still bounded only at 0.997, above the precision target 0.05. About 113 rollouts per prompt would be needed. |
 
 ## Fixed-design risk measures
 

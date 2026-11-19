@@ -82,6 +82,7 @@ from inspect_safety_stats.generative.sampling import draw_selections, plan_desig
 from inspect_safety_stats.generative.schema import GenerativePlan, load_generative_plan
 from inspect_safety_stats.generative.taxonomy import compile_taxonomy
 from inspect_safety_stats.schema.reports import Diagnostic
+from inspect_safety_stats.schema.scopes import plan_scope
 
 if TYPE_CHECKING:
     from inspect_safety_stats.generative.logs import LogInput
@@ -532,9 +533,7 @@ def _judge_correction(
 
     for comparison in comparisons:
         diagnostics.append(
-            comparison_refusal(
-                f"{comparison.candidate_cohort}:{comparison.baseline_cohort}"
-            )
+            comparison_refusal(comparison.candidate_cohort, comparison.baseline_cohort)
         )
     return corrected, meta
 
@@ -655,7 +654,7 @@ def analyze_run(
                     "different rates, so the accepted prompt distribution is shaped "
                     "differently across that level"
                 ),
-                scope=level,
+                scope=plan_scope("taxonomy", "hierarchy", level),
                 details={
                     row.value: round(row.exhaustion_rate, 4)
                     for row in sorted(spread, key=lambda item: -item.exhaustion_rate)
@@ -790,7 +789,7 @@ def _fidelity(
                     f"the plan declares validator {declared!r}, but the attempt ledger "
                     f"records {', '.join(repr(item) for item in used) or 'none'}"
                 ),
-                scope="rewrite.validation",
+                scope=plan_scope("rewrite", "validation"),
             )
         )
 
@@ -804,7 +803,7 @@ def _fidelity(
                     f"the validator rejects rewrites for values of {level!r} at materially "
                     "different rates, so arm fidelity differs across that level"
                 ),
-                scope=level,
+                scope=plan_scope("taxonomy", "hierarchy", level),
                 details={
                     row.value: round(row.validator_rejection_rate, 4)
                     for row in sorted(
@@ -826,7 +825,7 @@ def _fidelity(
                     "rejection, so their prompts depend on the rewrites accepted for "
                     "earlier units in selection order"
                 ),
-                scope="rewrite.deduplication",
+                scope=plan_scope("rewrite", "deduplication"),
                 details={"units": len(dependent), "evaluable_units": sum(
                     1 for record in rewrites if record.is_evaluable()
                 )},

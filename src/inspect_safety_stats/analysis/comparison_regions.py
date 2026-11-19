@@ -13,6 +13,7 @@ from inspect_safety_stats.analysis.regions import (
 )
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.schema.reports import ComparisonResult, Diagnostic, RiskIntervalResult
+from inspect_safety_stats.schema.scopes import scope_path
 from inspect_safety_stats.stats.hierarchy_region import (
     LinearIntervalConstraint,
     project_contrast_hierarchy_confidence_region,
@@ -192,7 +193,14 @@ def _project_comparison_hierarchy_regions(
                             "The raw simultaneous comparison intervals have no common "
                             "parameter vector under the declared hierarchy."
                         ),
-                        scope=f"{comparison_id}:{method}:{independence_unit}",
+                        scope=scope_path(
+                            "comparisons",
+                            comparison_id,
+                            "methods",
+                            method,
+                            "units",
+                            independence_unit,
+                        ),
                         details={
                             "solver_message": projection_message,
                             "constraint_count": projection_constraint_count,
@@ -376,7 +384,16 @@ def _project_multi_arm_comparison_regions(
                                 "The jointly calibrated arm constraints have no common "
                                 "parameter vector under the declared hierarchy."
                             ),
-                            scope=f"{set_spec.id}:{arm}:{method}:{profile_id}",
+                            scope=scope_path(
+                                "comparison_sets",
+                                set_spec.id,
+                                "arms",
+                                arm,
+                                "methods",
+                                method,
+                                "profiles",
+                                profile_id,
+                            ),
                             details={
                                 "solver_message": projection.message,
                                 "constraint_count": projection.constraint_count,

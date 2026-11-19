@@ -288,7 +288,7 @@ def test_an_unlabelled_fine_stratum_is_completed_with_a_warning(
         if item.code == "JUDGE_FINE_STRATUM_UNLABELLED_COMPLETED"
     )
     assert warning.severity == "WARNING"
-    assert warning.scope == "candidate"
+    assert warning.scope == "cohorts/candidate"
     assert warning.details == {
         "fine_strata": [{"judge_stratum": "judge_unsafe", "stratum": "agree", "stratum_size": 80}]
     }

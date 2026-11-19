@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.schema.reports import Diagnostic
+from inspect_safety_stats.schema.scopes import plan_scope
 
 
 def _duplicates(values: list[str]) -> set[str]:
@@ -16,12 +17,12 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
     family_ids = [family.id for family in plan.multiplicity.families]
     comparison_ids = [comparison.id for comparison in expanded_comparisons]
     claim_ids = [claim.id for claim in plan.claims] + [item.id for item in plan.adaptive_claims]
-    for kind, values in (
-        ("group", group_ids),
-        ("measure", measure_ids),
-        ("family", family_ids),
-        ("comparison", comparison_ids),
-        ("claim", claim_ids),
+    for kind, collection, values in (
+        ("group", ("groups",), group_ids),
+        ("measure", ("outputs", "risk_measures"), measure_ids),
+        ("family", ("multiplicity", "families"), family_ids),
+        ("comparison", ("comparisons",), comparison_ids),
+        ("claim", ("claims",), claim_ids),
     ):
         for value in sorted(_duplicates(values)):
             diagnostics.append(
@@ -29,7 +30,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     code="PLAN_DUPLICATE_ID",
                     severity="ERROR",
                     message=f"duplicate {kind} identifier {value!r}",
-                    scope=value,
+                    scope=plan_scope(*collection, value),
                 )
             )
     groups = set(group_ids)
@@ -46,7 +47,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     code="PLAN_UNKNOWN_REFERENCE",
                     severity="ERROR",
                     message=f"comparison {comparison.id!r} references an unknown cohort",
-                    scope=comparison.id,
+                    scope=plan_scope("comparisons", comparison.id),
                 )
             )
         if comparison.candidate == comparison.baseline:
@@ -55,7 +56,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     code="PLAN_INVALID_COMPARISON",
                     severity="ERROR",
                     message=f"comparison {comparison.id!r} uses the same cohort in both arms",
-                    scope=comparison.id,
+                    scope=plan_scope("comparisons", comparison.id),
                 )
             )
         if comparison.group not in groups or comparison.measure not in measures:
@@ -64,7 +65,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     code="PLAN_UNKNOWN_REFERENCE",
                     severity="ERROR",
                     message=f"comparison {comparison.id!r} references an unknown group or measure",
-                    scope=comparison.id,
+                    scope=plan_scope("comparisons", comparison.id),
                 )
             )
         else:
@@ -76,7 +77,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                         message=(
                             f"comparison {comparison.id!r} requires a weighted_mean measure"
                         ),
-                        scope=comparison.id,
+                        scope=plan_scope("comparisons", comparison.id),
                     )
                 )
             if comparison.family not in families:
@@ -88,7 +89,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                             f"direct comparison {comparison.id!r} requires a valid "
                             "multiplicity family"
                         ),
-                        scope=comparison.id,
+                        scope=plan_scope("comparisons", comparison.id),
                     )
                 )
             elif comparison.simultaneous and families[comparison.family].method not in {
@@ -103,7 +104,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                             "simultaneous direct comparisons require a bonferroni or "
                             "weighted_bonferroni family"
                         ),
-                        scope=comparison.id,
+                        scope=plan_scope("comparisons", comparison.id),
                     )
                 )
             if comparison.family:
@@ -127,7 +128,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     code="PLAN_INVALID_COMPARISON",
                     severity="ERROR",
                     message=f"paired diagnostics for {comparison.id!r} require pair_key",
-                    scope=comparison.id,
+                    scope=plan_scope("comparisons", comparison.id),
                 )
             )
     for family_id, modes in comparison_family_modes.items():
@@ -140,7 +141,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                         "all direct comparisons sharing a multiplicity family must use the "
                         "same coverage_mode"
                     ),
-                    scope=family_id,
+                    scope=plan_scope("multiplicity", "families", family_id),
                 )
             )
         if len(comparison_family_profiles.get(family_id, set())) > 1:
@@ -152,7 +153,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                         "all direct comparisons sharing a multiplicity family must use the "
                         "same primary and sensitivity independence profiles"
                     ),
-                    scope=family_id,
+                    scope=plan_scope("multiplicity", "families", family_id),
                 )
             )
     for claim in plan.claims:
@@ -171,7 +172,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                             f"claim {claim.id!r} uses noisy_valid_test, which requires "
                             "judge_calibration.mode: validated with sampling: simple_random"
                         ),
-                        scope=claim.id,
+                        scope=plan_scope("claims", claim.id),
                     )
                 )
         if claim.family not in families:
@@ -180,7 +181,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     code="PLAN_UNKNOWN_REFERENCE",
                     severity="ERROR",
                     message=f"claim {claim.id!r} references unknown family {claim.family!r}",
-                    scope=claim.id,
+                    scope=plan_scope("claims", claim.id),
                 )
             )
         if claim.comparison:
@@ -190,7 +191,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                         code="PLAN_UNKNOWN_REFERENCE",
                         severity="ERROR",
                         message=f"claim {claim.id!r} references unknown comparison",
-                        scope=claim.id,
+                        scope=plan_scope("claims", claim.id),
                     )
                 )
         else:
@@ -204,7 +205,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                         code="PLAN_UNKNOWN_REFERENCE",
                         severity="ERROR",
                         message=f"claim {claim.id!r} has an unknown cohort, group, or measure",
-                        scope=claim.id,
+                        scope=plan_scope("claims", claim.id),
                     )
                 )
             elif measures[claim.measure].diagnostic_only:
@@ -215,7 +216,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                         message=(
                             f"claim {claim.id!r} uses diagnostic-only measure {claim.measure!r}"
                         ),
-                        scope=claim.id,
+                        scope=plan_scope("claims", claim.id),
                     )
                 )
     for adaptive in plan.adaptive_claims:
@@ -235,7 +236,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     severity="ERROR",
                     message=f"adaptive claim {adaptive.id!r} references unknown "
                     + ", ".join(unknown),
-                    scope=adaptive.id,
+                    scope=plan_scope("adaptive_claims", adaptive.id),
                 )
             )
     prompt_bounds = plan.outputs.prompt_bounds
@@ -259,7 +260,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     "alpha: 0.05}, and set outputs.prompt_bounds.family to its id; or turn "
                     "prompt bounds off with outputs.prompt_bounds.enabled: false"
                 ),
-                scope="outputs.prompt_bounds",
+                scope=plan_scope("outputs", "prompt_bounds"),
             )
         )
     elif prompt_bounds.enabled and prompt_bounds.simultaneous and prompt_family in families:
@@ -274,7 +275,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                         "simultaneous prompt bounds require a bonferroni or "
                         "weighted_bonferroni family"
                     ),
-                    scope="outputs.prompt_bounds",
+                    scope=plan_scope("outputs", "prompt_bounds"),
                 )
             )
     direct = plan.outputs.direct_mean_intervals
@@ -285,7 +286,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     code="PLAN_UNKNOWN_REFERENCE",
                     severity="ERROR",
                     message="direct mean intervals require a valid multiplicity family",
-                    scope="outputs.direct_mean_intervals",
+                    scope=plan_scope("outputs", "direct_mean_intervals"),
                 )
             )
         elif direct.simultaneous and families[direct.family].method != "bonferroni":
@@ -294,7 +295,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     code="PLAN_INVALID_MULTIPLICITY",
                     severity="ERROR",
                     message="simultaneous direct mean intervals require a bonferroni family",
-                    scope="outputs.direct_mean_intervals",
+                    scope=plan_scope("outputs", "direct_mean_intervals"),
                 )
             )
         unknown_groups = sorted(set(direct.groups or []) - groups)
@@ -307,7 +308,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                         "direct mean intervals reference unknown groups: "
                         + ", ".join(unknown_groups)
                     ),
-                    scope="outputs.direct_mean_intervals",
+                    scope=plan_scope("outputs", "direct_mean_intervals"),
                 )
             )
         if not any(measure.type == "weighted_mean" for measure in measures.values()):
@@ -316,7 +317,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     code="PLAN_METHOD_UNUSED",
                     severity="WARNING",
                     message="direct mean intervals are enabled but no weighted mean is requested",
-                    scope="outputs.direct_mean_intervals",
+                    scope=plan_scope("outputs", "direct_mean_intervals"),
                 )
             )
     if plan.design.type == "sampled":
@@ -335,7 +336,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                         "measure is a nonlinear functional of the whole frame's risk vector "
                         "and cannot be evaluated from a sample: " + ", ".join(nonlinear)
                     ),
-                    scope="outputs.risk_measures",
+                    scope=plan_scope("outputs", "risk_measures"),
                 )
             )
         if plan.expanded_comparisons():
@@ -347,7 +348,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                         "comparisons are not yet supported under a sampled design; the arm "
                         "constructions assume every declared prompt was evaluated"
                     ),
-                    scope="comparisons",
+                    scope=plan_scope("comparisons"),
                 )
             )
         if not plan.outputs.direct_mean_intervals.enabled:
@@ -359,7 +360,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                         "a sampled design requires outputs.direct_mean_intervals.enabled; the "
                         "propagated prompt envelope has no bound for unsampled frame items"
                     ),
-                    scope="outputs.direct_mean_intervals",
+                    scope=plan_scope("outputs", "direct_mean_intervals"),
                 )
             )
         if plan.outputs.prompt_bounds.enabled and plan.outputs.prompt_bounds.simultaneous:
@@ -371,7 +372,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                         "simultaneous prompt bounds under a sampled design cover only the "
                         "sampled frame items, not the frame"
                     ),
-                    scope="outputs.prompt_bounds",
+                    scope=plan_scope("outputs", "prompt_bounds"),
                 )
             )
     if plan.outputs.direct_mean_intervals.single_valued_bound:
@@ -394,20 +395,28 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                         "outputs.direct_mean_intervals.single_valued_bound is not supported "
                         "with " + " or ".join(unsupported) + "; set it to false"
                     ),
-                    scope="outputs.direct_mean_intervals",
+                    scope=plan_scope("outputs", "direct_mean_intervals"),
                 )
             )
     calibration = plan.inputs.judge_calibration
-    scopes: list[tuple[str, list[str] | None]] = [
-        ("inputs.judge_calibration", calibration.groups if calibration else None),
-        ("inputs.panel_groups", plan.inputs.panel_groups),
+    scopes: list[tuple[str, str, list[str] | None]] = [
+        (
+            "inputs.judge_calibration",
+            plan_scope("inputs", "judge_calibration"),
+            calibration.groups if calibration else None,
+        ),
+        ("inputs.panel_groups", plan_scope("inputs", "panel_groups"), plan.inputs.panel_groups),
         *(
-            (f"inputs.judges.{judge.id}.accuracy", judge.accuracy.groups)
+            (
+                f"inputs.judges.{judge.id}.accuracy",
+                plan_scope("inputs", "judges", judge.id, "accuracy"),
+                judge.accuracy.groups,
+            )
             for judge in plan.inputs.judges
             if judge.accuracy is not None
         ),
     ]
-    for location, scoped in scopes:
+    for location, location_scope, scoped in scopes:
         unknown_groups = sorted(set(scoped or []) - groups)
         if unknown_groups:
             diagnostics.append(
@@ -415,7 +424,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     code="PLAN_UNKNOWN_REFERENCE",
                     severity="ERROR",
                     message=f"{location} references unknown groups: " + ", ".join(unknown_groups),
-                    scope=location,
+                    scope=location_scope,
                 )
             )
     diagnostics.extend(_worst_of_k_interval_problems(plan))
@@ -429,7 +438,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     "outputs.risk_measures declares no measure, so no group risk is reported. "
                     "Add one, for example {id: mean, type: weighted_mean}"
                 ),
-                scope="outputs.risk_measures",
+                scope=plan_scope("outputs", "risk_measures"),
             )
         )
     return diagnostics
@@ -473,7 +482,7 @@ def _worst_of_k_interval_problems(plan: AnalysisPlan) -> list[Diagnostic]:
             code="PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED",
             severity="ERROR",
             message=f"the direct worst_of_k interval of {', '.join(requested)}: {problem}",
-            scope="outputs.risk_measures",
+            scope=plan_scope("outputs", "risk_measures"),
         )
         for problem in problems
     ]
@@ -513,7 +522,7 @@ def anytime_bound_problems(plan: AnalysisPlan) -> list[Diagnostic]:
             code="PLAN_ANYTIME_BOUNDS_INVALID",
             severity="ERROR",
             message=f"outputs.anytime_bounds: {problem}",
-            scope="outputs.anytime_bounds",
+            scope=plan_scope("outputs", "anytime_bounds"),
         )
         for problem in problems
     ]

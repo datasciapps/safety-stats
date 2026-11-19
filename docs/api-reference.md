@@ -59,7 +59,13 @@ integrity = validate(plan="safety-plan.yaml", logs="logs/")
 
 Runs plan-reference, manifest, provenance, cohort, rollout, and score-mapping checks without
 making a deployment decision. `integrity.status` is `valid`, `degraded`, or `invalid`; individual diagnostics
-carry a severity, stable code, message, and optional scope.
+carry a severity, stable code, `source` and `effect` (from the code's entry in
+`inspect_safety_stats.registry`), message, and optional scope. The scope is a `/`-separated path
+of where the finding sits: `plan/claims/<claim>` for a place in the plan,
+`cohorts/<cohort>/prompts/<prompt>` or `runs/<run key>` for the data,
+`comparisons/<comparison>/methods/<method>/units/<unit>` for a result. After the root, segments
+come in collection/id pairs, and each id has `%` written as `%25` and `/` as `%2F`, so a path
+splits back into its ids. `inspect_safety_stats.schema.scopes` builds and reads them.
 
 ### `load_plan`
 

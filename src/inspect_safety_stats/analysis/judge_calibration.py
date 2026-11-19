@@ -26,6 +26,7 @@ from inspect_safety_stats.schema.reports import (
     HierarchyRiskResult,
     RiskIntervalResult,
 )
+from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope
 from inspect_safety_stats.stats.judge_calibration import (
     NO_STRATA,
     FineStrata,
@@ -297,7 +298,7 @@ def _validated_judge_calibrations(
                 code="PLAN_UNKNOWN_REFERENCE",
                 severity="ERROR",
                 message="validated judge calibration requires a valid multiplicity family",
-                scope="inputs.judge_calibration",
+                scope=plan_scope("inputs", "judge_calibration"),
             )
         )
         return {}, {}, None, {}, None
@@ -311,7 +312,7 @@ def _validated_judge_calibrations(
                 code="JUDGE_VALIDATION_INVALID",
                 severity="ERROR",
                 message=str(exc),
-                scope="inputs.judge_calibration",
+                scope=plan_scope("inputs", "judge_calibration"),
             )
         )
         return {}, {}, None, {}, None
@@ -337,7 +338,7 @@ def _validated_judge_calibrations(
                     code="JUDGE_VALIDATION_INVALID",
                     severity="ERROR",
                     message=str(exc),
-                    scope="inputs.judge_calibration",
+                    scope=plan_scope("inputs", "judge_calibration"),
                 )
             )
             return {}, {}, None, {}, None
@@ -363,7 +364,7 @@ def _validated_judge_calibrations(
                         code=code,
                         severity="ERROR",
                         message=f"{len(keys)} {what}; no judge correction is reported",
-                        scope="inputs.judge_calibration",
+                        scope=plan_scope("inputs", "judge_calibration"),
                         details={"observation_ids": keys[:20]},
                     )
                 )
@@ -411,7 +412,7 @@ def _validated_judge_calibrations(
                         f"{len(outside)} validation rows label rollouts outside the groups the "
                         "calibration is scoped to; they calibrate nothing"
                     ),
-                    scope="inputs.judge_calibration",
+                    scope=plan_scope("inputs", "judge_calibration"),
                     details={"observation_ids": outside[:20]},
                 )
             )
@@ -424,7 +425,7 @@ def _validated_judge_calibrations(
                     f"{len(unmatched)} validation rows reference observations absent from the "
                     "analysed logs or with unclassified outcomes"
                 ),
-                scope="inputs.judge_calibration",
+                scope=plan_scope("inputs", "judge_calibration"),
                 details={"observation_ids": unmatched[:20]},
             )
         )
@@ -438,7 +439,11 @@ def _validated_judge_calibrations(
     summaries: dict[_JudgeScope, dict[str, Any]] = {}
     for scope in scopes:
         cohort_id, group_id = scope
-        where = cohort_id if group_id is None else f"{cohort_id}/{group_id}"
+        where = (
+            cohort_scope(cohort_id)
+            if group_id is None
+            else cohort_scope(cohort_id, "groups", group_id)
+        )
         outcome = calibrate_cohort(
             counts.get(scope, NO_STRATA),
             scenario_id="validated",
@@ -458,7 +463,7 @@ def _validated_judge_calibrations(
                         else f"group {group_id!r} of cohort {cohort_id!r} has no observations "
                         "in one judge stratum; no judge correction is reported for it"
                     ),
-                    scope=cohort_id,
+                    scope=where,
                 )
             )
             continue
@@ -468,7 +473,7 @@ def _validated_judge_calibrations(
                     code="JUDGE_CALIBRATION_UNINFORMATIVE",
                     severity="WARNING",
                     message=str(outcome.refusal),
-                    scope=cohort_id,
+                    scope=where,
                 )
             )
             continue
@@ -494,7 +499,7 @@ def _validated_judge_calibrations(
                     "hypergeometric bounds; the asymptotic delta-method reference, which "
                     "assumes simple random samples within the judge strata, is not reported"
                 ),
-                scope="inputs.judge_calibration",
+                scope=plan_scope("inputs", "judge_calibration"),
             )
         )
     return calibrations, summaries, family.alpha, truth_strata, protocol
@@ -527,7 +532,7 @@ def _labelling_protocol(
                 code="JUDGE_LABELLING_PROTOCOL_VIOLATED",
                 severity="ERROR",
                 message=str(exc),
-                scope="inputs.judge_calibration.protocol",
+                scope=plan_scope("inputs", "judge_calibration", "protocol"),
             )
         )
         return None

@@ -19,6 +19,7 @@ from inspect_safety_stats.config.models import AnalysisPlan, ComparisonSpec
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.observations import Observation, observation_field
 from inspect_safety_stats.schema.reports import Diagnostic, Eligibility, RiskIntervalResult
+from inspect_safety_stats.schema.scopes import scope_path
 from inspect_safety_stats.stats.clusters import paired_cluster_bootstrap
 from inspect_safety_stats.stats.comparisons import DirectComparisonBounds, RatioComparisonBounds
 from inspect_safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES, DirectMeanBounds
@@ -362,7 +363,9 @@ def _comparison_calibrations(
                         code="COMPARISON_CALIBRATION_INVALID",
                         severity="ERROR",
                         message=str(exc),
-                        scope=f"{family_id}:{profile_id}",
+                        scope=scope_path(
+                            "families", family_id, "profiles", profile_id
+                        ),
                     )
                 )
                 continue

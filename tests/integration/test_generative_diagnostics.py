@@ -100,7 +100,7 @@ def test_uneven_acceptance_is_reported_in_the_analysis(
     diagnostic = next(
         item for item in report.diagnostics if item.code == "GENERATIVE_ACCEPTANCE_UNEVEN"
     )
-    assert diagnostic.scope == "language"
+    assert diagnostic.scope == "plan/taxonomy/hierarchy/language"
     assert diagnostic.details["maltese"] == 1.0
     assert report.acceptance
 

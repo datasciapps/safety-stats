@@ -66,12 +66,12 @@ def _diagnostics(plan: Path, scope: str) -> list[Diagnostic]:
 
 
 def test_a_minimal_plan_says_exactly_what_it_is_missing(tmp_path: Path) -> None:
-    (family,) = _diagnostics(_plan(tmp_path), "outputs.prompt_bounds")
+    (family,) = _diagnostics(_plan(tmp_path), "plan/outputs/prompt_bounds")
     assert (family.code, family.severity) == ("PLAN_UNKNOWN_REFERENCE", "ERROR")
     assert "outputs.prompt_bounds.family, which is not set" in family.message
     assert "{id: displayed, purpose: simultaneous_intervals" in family.message
     assert "outputs.prompt_bounds.enabled: false" in family.message
-    (measures,) = _diagnostics(_plan(tmp_path), "outputs.risk_measures")
+    (measures,) = _diagnostics(_plan(tmp_path), "plan/outputs/risk_measures")
     assert (measures.code, measures.severity) == ("PLAN_NO_RISK_MEASURES", "WARNING")
     assert "{id: mean, type: weighted_mean}" in measures.message
 
@@ -153,16 +153,16 @@ def test_following_the_guidance_gives_a_working_analysis(
 def test_pointwise_prompt_bounds_need_a_family_too(tmp_path: Path) -> None:
     # Without one they used to be silently absent, with no diagnostic at all.
     plan = _plan(tmp_path, prompt_bounds="simultaneous: false")
-    (family,) = _diagnostics(plan, "outputs.prompt_bounds")
+    (family,) = _diagnostics(plan, "plan/outputs/prompt_bounds")
     assert family.code == "PLAN_UNKNOWN_REFERENCE"
 
 
 def test_disabled_prompt_bounds_need_no_family(tmp_path: Path) -> None:
     plan = _plan(tmp_path, prompt_bounds="enabled: false")
-    assert _diagnostics(plan, "outputs.prompt_bounds") == []
+    assert _diagnostics(plan, "plan/outputs/prompt_bounds") == []
 
 
 def test_an_undeclared_family_is_named(tmp_path: Path) -> None:
     plan = _plan(tmp_path, prompt_bounds="family: shown")
-    (family,) = _diagnostics(plan, "outputs.prompt_bounds")
+    (family,) = _diagnostics(plan, "plan/outputs/prompt_bounds")
     assert "names 'shown', not a declared multiplicity family" in family.message
