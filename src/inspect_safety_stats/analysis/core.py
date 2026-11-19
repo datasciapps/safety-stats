@@ -175,17 +175,21 @@ def _judge_claim_row(
 
     A judge's run has no calibration, so its bounds are on judge-reported risk. Under a
     validated calibration the plan's thresholds are about true risk, where the primary refuses
-    to decide on judge-reported bounds; so does the row, which stays INCONCLUSIVE.
+    to decide on judge-reported bounds; so does the row, which stays INCONCLUSIVE, and so does
+    its descriptive status under an exploratory intent, as the primary's would be.
     """
 
-    status, reasons = claim.status, list(claim.reasons)
+    status, descriptive = claim.status, claim.descriptive_status
+    reasons = list(claim.reasons)
     if validated_calibration:
         status, reasons = "INCONCLUSIVE", [_UNCALIBRATED_JUDGE_REASON]
+        descriptive = None if descriptive is None else "INCONCLUSIVE"
         if noisy_valid_test:
             reasons.append(_NOISY_VALID_TEST_REASON)
     return {
         "claim_id": claim.claim_id,
         "status": status,
+        "descriptive_status": descriptive,
         "estimate": claim.estimate,
         "lower": claim.lower,
         "upper": claim.upper,

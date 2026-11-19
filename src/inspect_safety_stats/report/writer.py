@@ -252,9 +252,13 @@ def _judge_error_stress_lines(
 
 
 def _claim_status(claim: Any) -> str:
-    if claim.descriptive_status is None:
-        return f"`{claim.status}`"
-    return f"`{claim.status}` (descriptive: `{claim.descriptive_status}`)"
+    return _status_text(claim.status, claim.descriptive_status)
+
+
+def _status_text(status: str, descriptive_status: str | None) -> str:
+    if descriptive_status is None:
+        return f"`{status}`"
+    return f"`{status}` (descriptive: `{descriptive_status}`)"
 
 
 _MAPPING_KIND_ORDER = {"group_risk": 0, "comparison": 1, "claim": 2}
@@ -465,7 +469,11 @@ def _judge_claim_lines(
     ]
     for judge in judges:
         for claim in judge["claims"]:
-            status = f"`{claim['status']}` | " if include_decisions else ""
+            status = (
+                f"{_status_text(claim['status'], claim['descriptive_status'])} | "
+                if include_decisions
+                else ""
+            )
             lines.append(
                 f"| {_escape(judge['id'])} | `{judge['integrity']}` | "
                 f"{_escape(claim['claim_id'])} | {status}"

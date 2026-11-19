@@ -3088,6 +3088,7 @@ def test_judge_claims_decide_each_claim_on_each_judge_as_its_own_plan_would(
         assert row == {
             "claim_id": expected.claim_id,
             "status": expected.status,
+            "descriptive_status": expected.descriptive_status,
             "estimate": expected.estimate,
             "lower": expected.lower,
             "upper": expected.upper,
@@ -3500,6 +3501,85 @@ def test_a_judges_run_keeps_the_primarys_noisy_valid_test_error(
     text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
     section = text[text.index("### Claims by judge (experimental)") :]
     assert "`PLAN_INVALID_CLAIM` (1)" in section
+
+
+def test_exploratory_judge_claims_keep_their_descriptive_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8")
+        .replace("intent: confirmatory", "intent: exploratory", 1)
+        .replace("report:\n", "report:\n  include_decisions: true\n", 1),
+        encoding="utf-8",
+    )
+    _patch_frames(monkeypatch, _judge_frames_with_configuration())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    # Judge b is silent once and its rows are judge a's otherwise, so each judge's descriptive
+    # status is the one its run's claim records; an exploratory claim's status is INCONCLUSIVE.
+    (primary,) = report.claims
+    assert primary.status == "INCONCLUSIVE" and primary.descriptive_status == "PASS"
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    descriptive = {}
+    for judge_id, judge in judges.items():
+        (row,) = judge["claims"]
+        assert row["status"] == "INCONCLUSIVE"
+        assert row["descriptive_status"] in {"PASS", "FAIL", "INCONCLUSIVE"}
+        descriptive[judge_id] = row["descriptive_status"]
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert "| Judge | Integrity | Claim | Status | Estimate |" in section
+    assert (
+        f"| judge_a | `valid` | {primary.claim_id} | "
+        f"`INCONCLUSIVE` (descriptive: `{descriptive['judge_a']}`) | 0.250000 |"
+    ) in section
+
+
+def test_exploratory_judge_claims_under_a_validated_calibration_describe_nothing_either(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _validated_judge_claims_plan(tmp_path, monkeypatch)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "intent: confirmatory", "intent: exploratory", 1
+        ),
+        encoding="utf-8",
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    # The primary describes what it would decide, which is nothing on judge-reported risk; the
+    # judge's run, which has no calibration, would describe a PASS, and must not.
+    (primary,) = report.claims
+    assert (primary.status, primary.descriptive_status) == ("INCONCLUSIVE", "INCONCLUSIVE")
+    (judge,) = report.provenance["judge_panel"]["judges"]
+    (row,) = judge["claims"]
+    assert (row["status"], row["descriptive_status"]) == ("INCONCLUSIVE", "INCONCLUSIVE")
+
+
+def test_confirmatory_judge_claims_show_their_status_when_decisions_are_shown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "report:\n", "report:\n  include_decisions: true\n", 1
+        ),
+        encoding="utf-8",
+    )
+    _patch_frames(monkeypatch, _judge_frames_with_configuration())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    (row,) = judges["judge_a"]["claims"]
+    assert row["descriptive_status"] is None
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert "| Judge | Integrity | Claim | Status | Estimate |" in section
+    assert f"| judge_a | `valid` | {row['claim_id']} | `{row['status']}` | 0.250000 |" in section
 
 
 def test_inspect_runs_carry_the_scorers_their_log_records() -> None:
