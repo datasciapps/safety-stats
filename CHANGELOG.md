@@ -436,10 +436,11 @@ described in their pull requests.
   plan, its decision policy and its registration receipt were checked for, so a receipt for
   another plan or a failed decision policy makes it `invalid` as it does the primary analysis,
   and counts the diagnostics that describe its own outcomes, such as
-  `TAIL_MEASURES_UNINFORMATIVE` and `CLUSTER_DESIGN_EFFECT`. An alternative that classifies
-  every value as the primary mapping does is refused as a repeat, whatever the order or
-  repeats of its values. Opt-in: plans without the field keep their hash and their report
-  bytes. See
+  `TAIL_MEASURES_UNINFORMATIVE` and `CLUSTER_DESIGN_EFFECT`. An invalid report never shows an
+  alternative as anything but `invalid`, nor any of its claims as decided. An alternative that
+  classifies every value as the primary mapping does is refused as a repeat, whatever the
+  order or repeats of its values. Opt-in: plans without the field keep their hash and their
+  report bytes. See
   [Outcome mapping sensitivities](docs/plan-reference.md#outcome-mapping-sensitivities-experimental).
 
 - **The fixed-design planner uses the analysis method.** `plan fixed-design --plan PLAN`
@@ -831,6 +832,17 @@ described in their pull requests.
   [Verdicts by profile](docs/independence-profiles.md#verdicts-by-profile).
 
 ### Changed
+
+- **A mapping value that no score can match is refused when the plan loads.** An outcome
+  mapping's `failure_values` and `safe_values`, in `inputs.score`, a judge's score or an
+  outcome mapping sensitivity, now list text, numbers and booleans only. A list or an object
+  among them made reading the scores fail with a bare `unhashable type` message
+  (`INGEST_FAILED`), and in an outcome mapping sensitivity it stopped `analyze` with a
+  `TypeError` although `validate` passed the plan. A missing value (`null`, `.nan`), which
+  never reaches the mapping, and a date, which YAML reads from an unquoted `2024-01-01` and
+  no score value equals, were accepted and matched nothing. Each is now an error that names
+  the field and the value and says what a mapping can list. Plans that loaded before and list
+  none of these values are unchanged, and so are their hashes and reports.
 
 - **Errors about a plan that does not fit the logs say what the logs hold (changes
   diagnostics).** These errors named only what the plan asked for, so a user had to open the

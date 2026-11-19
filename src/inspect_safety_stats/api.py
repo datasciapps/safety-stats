@@ -203,16 +203,24 @@ def _outcome_mapping_sensitivity(
     spec: OutcomeMappingSensitivitySpec,
     plan_diagnostics: Sequence[Diagnostic],
     application: _PolicyApplication | None = None,
+    *,
+    report_valid: bool,
 ) -> OutcomeMappingSensitivity:
     """The analysis repeated under one alternative outcome mapping, on the same rollouts.
 
     It carries the primary run's ``plan_diagnostics`` (``_derived_run_diagnostics``), so a
     registration receipt for another plan or a failed decision policy makes it invalid too.
-    ``application`` is the decision policy the primary analysis applied, if any: ``plan``
-    already carries its thresholds, and its overall decision is held to the same roll-up.
-    It describes its own outcomes as the primary run describes the primary's: single-rollout
-    tail claims, the design effects of grouped profiles and the precision of tail measures.
-    The anytime-valid bounds and the judge flip rate are the primary mapping's only.
+    An invalid report never shows an alternative as anything but ``invalid``, nor a claim of
+    it as decided, whatever made the report invalid: ``report_valid`` is false when the
+    primary analysis is invalid, for an error of its own outcome too. The alternative then
+    gives the decision an invalid analysis gives, ``INCONCLUSIVE`` unless a zero-tolerance
+    prompt failed under its mapping, and each of its claims is ``INCONCLUSIVE``; its intervals
+    and its diagnostic counts stay its own. ``application`` is the decision policy the primary
+    analysis applied, if any: ``plan`` already carries its thresholds, and its overall
+    decision is held to the same roll-up. It describes its own outcomes as the primary run
+    describes the primary's: single-rollout tail claims, the design effects of grouped
+    profiles and the precision of tail measures. The anytime-valid bounds and the judge flip
+    rate are the primary mapping's only.
     """
 
     alternative = _mapping_plan(plan, spec)
@@ -234,7 +242,7 @@ def _outcome_mapping_sensitivity(
     tail_measure_precision(alternative, data, core.estimates, diagnostics)
     decision = roll_up(
         core.mandatory_statuses(),
-        integrity_valid=core.integrity_status != "invalid",
+        integrity_valid=report_valid and core.integrity_status != "invalid",
         zero_tolerance_failure=bool(_policy_events(alternative, data)),
         confirmatory=alternative.analysis.intent == "confirmatory",
     )
@@ -244,14 +252,21 @@ def _outcome_mapping_sensitivity(
     counts: dict[str, int] = {}
     for item in integrity.diagnostics:
         counts[item.code] = counts.get(item.code, 0) + 1
+    results = result_readings(core.risks, core.comparisons, core.claims)
+    if not report_valid:
+        # The claims of an invalid analysis decide nothing; the counts stay this run's own.
+        results = [
+            row.model_copy(update={"status": "INCONCLUSIVE"}) if row.kind == "claim" else row
+            for row in results
+        ]
     return OutcomeMappingSensitivity(
         id=spec.id,
         title=spec.title,
         mapping=spec.mapping.model_dump(mode="json", exclude_none=True),
-        integrity_status=integrity.status,
+        integrity_status=integrity.status if report_valid else "invalid",
         diagnostic_counts=dict(sorted(counts.items())),
         decision=decision,
-        results=result_readings(core.risks, core.comparisons, core.claims),
+        results=results,
     )
 
 
@@ -464,9 +479,16 @@ def analyze(
         decision_policy=policy_record,
     )
     if judge_inputs is not None:
+        # `integrity` is the report's, summarised after every stage that can add an error to
+        # it: an invalid report leaves every alternative undecided.
         report.outcome_mapping_sensitivities = [
             _outcome_mapping_sensitivity(
-                resolved, judge_inputs, spec, plan_diagnostics, application
+                resolved,
+                judge_inputs,
+                spec,
+                plan_diagnostics,
+                application,
+                report_valid=integrity.status != "invalid",
             )
             for spec in resolved.inputs.score.mapping_sensitivities
         ]

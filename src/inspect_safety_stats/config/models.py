@@ -156,6 +156,37 @@ class OutcomeMappingSpec(StrictModel):
             raise ValueError("categorical mapping requires both failure_values and safe_values")
         return self
 
+    @model_validator(mode="after")
+    def values_a_score_can_take(self) -> OutcomeMappingSpec:
+        for field in ("failure_values", "safe_values"):
+            for value in getattr(self, field) or []:
+                reason = _never_a_score_value(value)
+                if reason is not None:
+                    shown = "null" if value is None else repr(value)
+                    raise ValueError(f"{field} lists {shown}, {reason}")
+        return self
+
+
+def _never_a_score_value(value: Any) -> str | None:
+    """Why no score value can ever match ``value`` in a mapping, or None when one can.
+
+    A score value reaches ``map_outcome`` as text, a number or a boolean: a missing score
+    never reaches it, a list or an object cannot be matched, and reading a score turns a date
+    into its ISO text.
+    """
+
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return (
+            "a missing score, which never reaches the mapping: score.missing says how a "
+            "missing score counts"
+        )
+    if isinstance(value, (str, int, float)):
+        return None
+    return (
+        f"a {type(value).__name__}, which no score value matches: a mapping lists text, "
+        "numbers and booleans, and in YAML a date must be quoted to be text"
+    )
+
 
 def _tag(value: Any) -> tuple[str, Any]:
     if isinstance(value, bool):
@@ -252,14 +283,9 @@ class ScoreSpec(StrictModel):
             )
         for item in self.mapping_sensitivities:
             # Compared as map_outcome reads them: the order and repeats of the values do not
-            # matter, and their types do.
-            try:
-                repeats = _same_classification(item.mapping, self.mapping)
-            except TypeError:
-                # A list or an object among the values cannot be matched to a score value, and
-                # reading the scores fails on it. The plan loads as it did.
-                repeats = item.mapping == self.mapping
-            if repeats:
+            # matter, and their types do. Every value is one a score can take
+            # (OutcomeMappingSpec.values_a_score_can_take), so each has a tag to compare.
+            if _same_classification(item.mapping, self.mapping):
                 raise ValueError(
                     f"outcome mapping sensitivity {item.id!r} repeats the primary mapping: it "
                     "classifies every score value as the primary mapping does"
