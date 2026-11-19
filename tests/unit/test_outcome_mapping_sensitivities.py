@@ -264,6 +264,53 @@ def test_an_incomplete_alternative_mapping_is_invalid_on_its_own(tmp_path: Path)
     assert sensitivity.diagnostic_counts["SCORE_UNMAPPED"] == 4
 
 
+def _describing_outcomes(plan: Path, mapping: dict[str, Any] | None = None) -> None:
+    """Add what the outcomes are described by: a tail measure at four rollouts per prompt,
+    which TAIL_MEASURES_UNINFORMATIVE flags, and a profile that blocks the prompts by task,
+    whose design effect CLUSTER_DESIGN_EFFECT reports. p1 and p2 are task a, p3 and p4 task b.
+    """
+
+    document = yaml.safe_load(plan.read_text(encoding="utf-8"))
+    if mapping is not None:
+        document["inputs"]["score"]["mapping"] = mapping
+    document["outputs"]["risk_measures"].append({"id": "worst", "type": "maximum"})
+    document["design"] = {
+        "independence_profiles": {
+            "item": {"block_by": ["prompt_id"]},
+            "task": {"block_by": ["task_id"]},
+        }
+    }
+    plan.write_text(yaml.safe_dump(document), encoding="utf-8")
+    (plan.parent / "design.csv").write_text(
+        "prompt_id,question_id,task_id,expected_rollouts\n"
+        + "".join(
+            f"{prompt},q{prompt},{task},4\n"
+            for prompt, task in zip(VERDICTS, ["a", "a", "b", "b"], strict=True)
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_an_alternative_counts_the_diagnostics_its_mapping_would_as_the_primary(
+    tmp_path: Path,
+) -> None:
+    plan, files = _analysis(tmp_path, [{"id": "partial_safe", "mapping": LENIENT}])
+    _describing_outcomes(plan)
+    report = analyze(plan=plan, source=files)
+    (tmp_path / "as_primary").mkdir()
+    as_primary_plan, as_primary_files = _analysis(tmp_path / "as_primary", None)
+    _describing_outcomes(as_primary_plan, mapping=LENIENT)
+    as_primary = analyze(plan=as_primary_plan, source=as_primary_files)
+
+    counts: dict[str, int] = {}
+    for item in as_primary.integrity.diagnostics:
+        counts[item.code] = counts.get(item.code, 0) + 1
+    assert counts == {"CLUSTER_DESIGN_EFFECT": 1, "TAIL_MEASURES_UNINFORMATIVE": 1}
+    (sensitivity,) = report.outcome_mapping_sensitivities
+    assert sensitivity.diagnostic_counts == counts
+    assert sensitivity.integrity_status == as_primary.integrity.status
+
+
 def test_a_receipt_for_another_plan_makes_each_alternative_invalid_too(tmp_path: Path) -> None:
     from datetime import datetime, timezone
 

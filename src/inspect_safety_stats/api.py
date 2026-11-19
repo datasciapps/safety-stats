@@ -159,6 +159,9 @@ def _outcome_mapping_sensitivity(
 
     It carries the primary run's ``plan_diagnostics`` (``_derived_run_diagnostics``), so a
     registration receipt for another plan or a failed decision policy makes it invalid too.
+    It describes its own outcomes as the primary run describes the primary's: single-rollout
+    tail claims, the design effects of grouped profiles and the precision of tail measures.
+    The anytime-valid bounds and the judge flip rate are the primary mapping's only.
     """
 
     alternative = _mapping_plan(plan, spec)
@@ -175,7 +178,9 @@ def _outcome_mapping_sensitivity(
         raise ValueError(f"outcome mapping sensitivity {spec.id!r}: {exc}") from exc
     diagnostics.extend(data.diagnostics)
     diagnostics.extend(single_rollout_tail_claims(alternative, data))
+    cluster_design_effects(alternative, data, diagnostics)
     core = _analysis_core(alternative, data, diagnostics)
+    tail_measure_precision(alternative, core.estimates, diagnostics)
     decision = roll_up(
         core.mandatory_statuses(),
         integrity_valid=core.integrity_status != "invalid",

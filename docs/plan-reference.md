@@ -425,7 +425,11 @@ pick from. A mapping that leaves some observed value unmapped makes its own inte
 analysis. Each alternative carries what the plan itself, its decision policy and its
 registration receipt were checked for, so a receipt for another plan
 (`PLAN_RECEIPT_MISMATCH`) or a decision policy that fails its checks makes every alternative
-`invalid`, as it does the primary analysis.
+`invalid`, as it does the primary analysis. The diagnostics that describe the outcomes, such as
+`TAIL_MEASURE_SINGLE_ROLLOUT`, `TAIL_MEASURES_UNINFORMATIVE` and `CLUSTER_DESIGN_EFFECT`, are
+counted for each alternative from its own reading. The anytime-valid bounds
+(`outputs.anytime_bounds`) and the judge flip rate (`inputs.judge_flip`) are computed for the
+primary mapping only.
 
 Identifiers must be unique and cannot be `primary`, which names the primary mapping in the
 outputs; an alternative may not repeat the primary mapping. One that classifies every value as
