@@ -15,7 +15,7 @@ import importlib.util
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from inspect_safety_stats.generative.comparisons import ComparisonResult, compare_cohorts
 from inspect_safety_stats.generative.contrasts import (
@@ -28,6 +28,7 @@ from inspect_safety_stats.generative.execution import (
     FidelityRow,
     acceptance_by_level,
     check_attempts,
+    check_conversation_arms,
     execute_rewrites,
     fidelity_by_level,
     load_seed_texts,
@@ -117,7 +118,10 @@ class MaterializedRun:
 
 
 def resolve_kernel(specification: str) -> RewriteKernel:
-    """Resolve ``fake``, ``fake:invalid_every=N``, ``module:attribute`` or ``file.py:attribute``.
+    """Resolve ``fake``, ``fake:OPTIONS``, ``module:attribute`` or ``file.py:attribute``.
+
+    The fake kernel's options are ``invalid_every=N`` and ``output=prompt|conversation``,
+    separated by commas.
 
     A provider-backed kernel is supplied as an import path so nothing in this package
     depends on a particular rewriter client. The attribute may be a kernel or a
@@ -131,16 +135,21 @@ def resolve_kernel(specification: str) -> RewriteKernel:
     if specification == "fake" or specification.startswith("fake:"):
         options = specification[5:] if ":" in specification else ""
         invalid_every = 0
-        if options:
-            key, _, value = options.partition("=")
-            if key != "invalid_every" or not value.isdigit():
+        output: Literal["prompt", "conversation"] = "prompt"
+        for option in options.split(",") if options else []:
+            key, _, value = option.partition("=")
+            if key == "invalid_every" and value.isdigit():
+                invalid_every = int(value)
+            elif key == "output" and value in ("prompt", "conversation"):
+                output = "conversation" if value == "conversation" else "prompt"
+            else:
                 raise ValueError(
-                    f"unrecognised fake kernel option {options!r}; expected invalid_every=N"
+                    f"unrecognised fake kernel option {option!r}; expected invalid_every=N "
+                    "or output=prompt|conversation, separated by commas"
                 )
-            invalid_every = int(value)
-        return DeterministicFakeKernel(invalid_every=invalid_every)
+        return DeterministicFakeKernel(invalid_every=invalid_every, output=output)
 
-    candidate = _load_attribute(specification, "kernel", "'fake', 'fake:invalid_every=N'")
+    candidate = _load_attribute(specification, "kernel", "'fake', 'fake:invalid_every=N,...'")
     if not hasattr(candidate, "rewrite"):
         raise ValueError(f"{specification!r} does not provide a rewrite() method")
     return candidate  # type: ignore[no-any-return]
@@ -234,7 +243,7 @@ def _load(plan_path: str | Path) -> tuple[GenerativePlan, Path]:
 
 
 def _prior_work(
-    directory: Path, selections: list[SelectionRecord]
+    directory: Path, selections: list[SelectionRecord], *, conversations: bool = False
 ) -> tuple[dict[str, RewriteRecord], dict[str, AcceptedRewrite]]:
     """Read what an earlier run finished, and check it describes this same design.
 
@@ -258,7 +267,7 @@ def _prior_work(
         )
 
     store = directory / PROMPT_STORE
-    prompts = read_prompt_store(store) if store.exists() else {}
+    prompts = read_prompt_store(store, conversations=conversations) if store.exists() else {}
     completed: dict[str, RewriteRecord] = {}
     accepted: dict[str, AcceptedRewrite] = {}
     for record in read_rewrites(ledger):
@@ -315,6 +324,7 @@ def materialize_run(
             (directory / name).unlink(missing_ok=True)
 
     taxonomy = compile_taxonomy(plan, base_path=base)
+    check_conversation_arms(plan, taxonomy)
     fingerprint = resolve_kernel_fingerprint(plan, base_path=base)
     design = plan_design(taxonomy, plan)
     rewriter = resolve_kernel(kernel)
@@ -351,7 +361,13 @@ def materialize_run(
         raise ValueError("stage must be 'pilot' or 'main'")
     selections = draw_selections(taxonomy, design, stage_id=stage)  # type: ignore[arg-type]
 
-    completed, accepted_before = _prior_work(directory, selections) if resume else ({}, {})
+    completed, accepted_before = (
+        _prior_work(
+            directory, selections, conversations=plan.rewrite.stores_conversations()
+        )
+        if resume
+        else ({}, {})
+    )
     resumed = len(completed)
     attempts_path = directory / ATTEMPT_LEDGER
     if plan.rewrite.records_attempts:

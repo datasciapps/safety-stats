@@ -679,6 +679,15 @@ projection.root_upper, projection.levels, projection.expected_unsampled_nodes
 tests; [`examples/generative_live/rewriter.py`](../examples/generative_live/rewriter.py) is a
 provider-backed reference implementation.
 
+**Conversations (experimental).** Under `rewrite.output: conversation` a kernel returns
+`RewriteOutcome(status="valid", messages=...)`, a tuple of `ChatTurn(role, content)` with
+the roles `user` and `assistant` and, unless the plan attaches system prompts, `system`.
+`conversation_problem(turns)` says why a conversation cannot be evaluated, or returns
+`None`, so a kernel parsing one out of model output can report a malformed reply as
+`invalid`. `RewriteRequest.system_prompt` and `RewriteRequest.conversation_turns` carry the
+plan's system-prompt and turns arms for the request's path. See
+[conversations and system prompts](generative-evaluation.md#conversations-and-system-prompts-experimental).
+
 **Supplying a validator** (experimental) is needed only when the plan sets
 `rewrite.validation.invoke`. Pass `validator=` to `materialize_run` (or `--validator` on the
 command line), in the same forms as `kernel=`, naming an object implementing

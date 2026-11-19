@@ -21,10 +21,15 @@ from pathlib import Path
 import pandas as pd
 
 from inspect_safety_stats.generative.kernels import (
+    ChatTurn,
     KernelFingerprint,
     RewriteKernel,
+    RewriteOutcome,
     RewriteRequest,
     RewriteValidator,
+    decode_conversation,
+    encode_conversation,
+    user_turns,
 )
 from inspect_safety_stats.generative.ledger import (
     AttemptRecord,
@@ -33,7 +38,8 @@ from inspect_safety_stats.generative.ledger import (
     SelectionRecord,
     prompt_sha256,
 )
-from inspect_safety_stats.generative.schema import GenerativePlan
+from inspect_safety_stats.generative.schema import GenerativePlan, turn_count
+from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
 
 
 @dataclass(frozen=True)
@@ -49,6 +55,9 @@ class AcceptedRewrite:
     prompt: str
     prompt_sha256: str
     attempts: int
+    # Set when the plan's rewrite.output is ``conversation``; ``prompt`` then holds the
+    # conversation's canonical encoding, which is what is hashed and stored.
+    messages: tuple[ChatTurn, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -342,6 +351,76 @@ def _prompt_id(sampling_unit_id: str) -> str:
     return f"p-{sampling_unit_id}"
 
 
+def check_conversation_arms(plan: GenerativePlan, taxonomy: CompiledTaxonomy) -> None:
+    """Refuse a system-prompt or turns arm the taxonomy can draw a value of it cannot use.
+
+    Checked before any kernel call, so a gap costs nothing to find. An arm read from a
+    file is only known once the taxonomy is compiled, which is why the plan cannot check
+    this on its own.
+    """
+
+    turns_level = plan.rewrite.conversation_turns
+    if turns_level is not None:
+        for node in taxonomy.nodes:
+            if node.level == turns_level:
+                turn_count(turns_level, node.value)
+    spec = plan.rewrite.system_prompts
+    if spec is None:
+        return
+    values = {node.value for node in taxonomy.nodes if node.level == spec.level}
+    missing = sorted(values - set(spec.texts))
+    if missing:
+        raise ValueError(
+            f"rewrite.system_prompts.texts has no text for {spec.level} values: "
+            f"{', '.join(missing)}"
+        )
+
+
+def _system_prompt(plan: GenerativePlan, path_values: Mapping[str, str]) -> str | None:
+    spec = plan.rewrite.system_prompts
+    if spec is None:
+        return None
+    value = path_values.get(spec.level)
+    if value is None or value not in spec.texts:
+        raise ValueError(
+            f"rewrite.system_prompts has no text for {spec.level}={value!r}"
+        )
+    return spec.texts[value] or None
+
+
+def _attach_system_prompt(
+    outcome: RewriteOutcome, system_prompt: str | None, unit_id: str
+) -> tuple[ChatTurn, ...]:
+    """The accepted conversation: the kernel's turns behind the arm's system prompt."""
+
+    turns = outcome.messages or (ChatTurn("user", str(outcome.prompt)),)
+    if system_prompt is None:
+        return turns
+    if turns[0].role == "system":
+        raise ValueError(
+            f"the kernel wrote a system turn for unit {unit_id}, but the plan's "
+            "rewrite.system_prompts attaches the system prompt itself"
+        )
+    return (ChatTurn("system", system_prompt), *turns)
+
+
+def _check_output_kind(plan: GenerativePlan, outcome: RewriteOutcome, unit_id: str) -> None:
+    """Refuse a valid outcome of the other kind than the plan declares.
+
+    A kernel that answers a conversation plan with a bare prompt, or the reverse, does not
+    implement the procedure the fingerprint describes. That is a defect in the kernel, not
+    a property of the accepted distribution, so it stops the run.
+    """
+
+    declared = plan.rewrite.output
+    produced = "conversation" if outcome.messages is not None else "prompt"
+    if produced != declared:
+        raise ValueError(
+            f"the plan declares rewrite.output {declared!r} but the kernel returned a "
+            f"{produced} for unit {unit_id}"
+        )
+
+
 def execute_rewrites(
     plan: GenerativePlan,
     selections: list[SelectionRecord],
@@ -429,6 +508,11 @@ def execute_rewrites(
             part.split("=", 1) for part in node_id.split("|")[1:] if "=" in part
         )
         key = _dedup_key(plan, node_id, seed_id)
+        system_prompt = _system_prompt(plan, path_values)
+        turns_level = plan.rewrite.conversation_turns
+        required_turns = (
+            turn_count(turns_level, path_values[turns_level]) if turns_level else None
+        )
 
         prior = completed.get(unit_id) if completed else None
         if prior is not None:
@@ -455,6 +539,7 @@ def execute_rewrites(
 
         status = "invalid"
         prompt: str | None = None
+        messages: tuple[ChatTurn, ...] | None = None
         attempts = 0
 
         for attempt in range(1, validation.maximum_attempts + 1):
@@ -467,6 +552,8 @@ def execute_rewrites(
                 seed_text=seed_texts[seed_id],
                 attempt=attempt,
                 selection_seed=salt_seed,
+                system_prompt=system_prompt,
+                conversation_turns=required_turns,
             )
             outcome = kernel.rewrite(request)
             row: dict[str, object] = {
@@ -485,7 +572,24 @@ def execute_rewrites(
                 if validation.on_invalid == "fail":
                     break
                 continue
-            candidate = str(outcome.prompt)
+            _check_output_kind(plan, outcome, unit_id)
+            if required_turns is not None and outcome.messages is not None:
+                # The arm is verified, not just passed on: a conversation with another
+                # count would be counted under an arm value it does not carry.
+                if user_turns(outcome.messages) != required_turns:
+                    # Recorded as the kernel's own rejection: the conversation breaks the
+                    # contract the request stated, before any duplicate or validator check.
+                    row["kernel_status"] = "invalid"
+                    note(row)
+                    if validation.on_invalid == "fail":
+                        break
+                    continue
+            turns: tuple[ChatTurn, ...] | None = None
+            if plan.rewrite.stores_conversations():
+                turns = _attach_system_prompt(outcome, system_prompt, unit_id)
+                candidate = encode_conversation(turns)
+            else:
+                candidate = outcome.text
             digest = prompt_sha256(candidate)
             near = _near_digest(plan, candidate)
             row["prompt_sha256"] = digest
@@ -521,6 +625,7 @@ def execute_rewrites(
             note(row)
             status = "valid"
             prompt = candidate
+            messages = turns
             break
 
         if status == "valid" and prompt is not None:
@@ -530,6 +635,7 @@ def execute_rewrites(
                 prompt=prompt,
                 prompt_sha256=prompt_sha256(prompt),
                 attempts=attempts,
+                messages=messages,
             )
             accepted.append(entry)
             fresh = RewriteRecord(
@@ -576,12 +682,15 @@ def execute_rewrites(
     )
 
 
-def read_prompt_store(path: str | Path) -> dict[str, AcceptedRewrite]:
+def read_prompt_store(
+    path: str | Path, *, conversations: bool = False
+) -> dict[str, AcceptedRewrite]:
     """Read back the restricted prompt artifact, keyed by sampling unit.
 
     Resumption needs the prompt text of previously accepted rewrites, both to rebuild the
     Inspect dataset and to reconstruct deduplication state. The ledger carries only hashes,
-    so this is the artifact that has to be read.
+    so this is the artifact that has to be read. With ``conversations``, each stored text is
+    a conversation's canonical encoding and is decoded back into its turns.
     """
 
     frame = pd.read_csv(path, dtype=str, keep_default_na=False)
@@ -592,12 +701,18 @@ def read_prompt_store(path: str | Path) -> dict[str, AcceptedRewrite]:
     entries: dict[str, AcceptedRewrite] = {}
     for row in frame.to_dict("records"):
         unit_id = str(row["sampling_unit_id"])
+        text = str(row["prompt"])
+        try:
+            messages = decode_conversation(text) if conversations else None
+        except ValueError as exc:
+            raise ValueError(f"prompt store {path}, unit {unit_id}: {exc}") from exc
         entries[unit_id] = AcceptedRewrite(
             sampling_unit_id=unit_id,
             prompt_id=str(row["prompt_id"]),
-            prompt=str(row["prompt"]),
+            prompt=text,
             prompt_sha256=str(row["prompt_sha256"]),
             attempts=0,
+            messages=messages,
         )
     return entries
 
