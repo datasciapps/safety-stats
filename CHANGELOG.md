@@ -267,15 +267,15 @@ described in their pull requests.
   [Conversations and system prompts](docs/generative-evaluation.md#conversations-and-system-prompts-experimental).
 
 - **Lang-Reiczigel limits in validated judge mode (changes report bytes).** With
-  `sampling: simple_random`, each whole-cohort `weighted_mean` row now carries a
-  `judge_corrected_validated_lang_reiczigel` interval beside the exact Clopper-Pearson box:
-  the limits of Lang and Reiczigel (2014) for prevalence adjusted for estimated sensitivity
-  and specificity. They are `diagnostic` and never decide a claim, because a coverage
-  simulation (`research/judge_correction_lang_reiczigel.py`) shows them falling to 91.4%
-  at nominal 95% where prevalence is 2% or below and labels number 300 or fewer, and not
-  uniformly narrower than the box. Where they cannot be computed,
-  `JUDGE_LANG_REICZIGEL_UNAVAILABLE` says why. Python callers get
-  `lang_reiczigel_corrected_risk`. Labels drawn within judge strata, simply or by a
+  `sampling: simple_random`, every group's `weighted_mean` row that the calibration corrects
+  now carries a `judge_corrected_validated_lang_reiczigel` interval beside the exact
+  Clopper-Pearson box: the limits of Lang and Reiczigel (2014) for prevalence adjusted for
+  estimated sensitivity and specificity. Tail measures and hierarchy nodes get none. They are
+  `diagnostic` and never decide a claim, because a coverage simulation
+  (`research/judge_correction_lang_reiczigel.py`) shows them falling to 91.4% at nominal 95%
+  where prevalence is 2% or below and labels number 300 or fewer, and not uniformly narrower
+  than the box. Where they cannot be computed, `JUDGE_LANG_REICZIGEL_UNAVAILABLE` says why.
+  Python callers get `lang_reiczigel_corrected_risk`. Labels drawn within judge strata, simply or by a
   stratified design (`stratified_within_judge_stratum`), get no such interval.
 
 - **Judge flip rate under content-preserving wrappers (experimental, #122).**
