@@ -7,7 +7,9 @@ independence blocks all come from the plan and the design manifest. The planner 
 recompute them: it gives analyze's own functions the rollouts the manifest declares, as if
 already observed, and reads the calibration and the blocks off the result. The interval
 method is the plan's, and the detectable rates invert that method's interval. Claims decided
-any other way are reported as not planned, with the reason.
+any other way are reported as not planned, with the reason, and so is every claim of an
+exploratory plan, which ``analyze`` reports INCONCLUSIVE. A plan with the errors ``validate``
+reports is refused: ``analyze`` finds it invalid and decides none of its claims.
 """
 
 from __future__ import annotations
@@ -42,6 +44,7 @@ from inspect_safety_stats.stats.planning import (
     detectable_failure_rates,
     fixed_design_detectable_failure_rates,
 )
+from inspect_safety_stats.validate.plan import validate_plan_references
 
 if TYPE_CHECKING:
     from inspect_safety_stats.analysis.direct_mean import _EndpointCalibration
@@ -135,8 +138,17 @@ class DesignPlan:
 
 
 def _unplanned_reason(plan: AnalysisPlan, claim: ClaimSpec) -> str | None:
-    """Why ``analyze`` will not decide ``claim`` on a primary direct-mean interval."""
+    """Why ``analyze`` will not decide ``claim`` on a primary direct-mean interval.
 
+    ``plan`` has passed ``validate_plan_references``, so every reference resolves.
+    """
+
+    if plan.analysis.intent == "exploratory":
+        return (
+            "analysis.intent is exploratory, so analyze reports the claim INCONCLUSIVE whatever "
+            "the rollouts show; set analysis.intent: confirmatory, with "
+            "analysis.plan_frozen_at, to plan it"
+        )
     if claim.comparison is not None:
         return f"comparison claim on {claim.comparison!r}; the planner covers aggregate claims"
     if claim.method == "noisy_valid_test":
@@ -144,14 +156,8 @@ def _unplanned_reason(plan: AnalysisPlan, claim: ClaimSpec) -> str | None:
     calibration = plan.inputs.judge_calibration
     if calibration is not None and calibration.mode == "validated":
         return "decided on the validated judge correction, which the planner does not model"
-    if claim.family not in {family.id for family in plan.multiplicity.families}:
-        return f"its multiplicity family {claim.family!r} is not declared"
-    if claim.cohort not in plan.cohorts:
-        return f"its cohort {claim.cohort!r} is not declared"
     measures = {measure.id: measure for measure in plan.outputs.risk_measures}
-    measure = measures.get(str(claim.measure))
-    if measure is None:
-        return f"its measure {claim.measure!r} is not declared"
+    measure = measures[str(claim.measure)]
     if measure.direct_interval:
         return (
             f"measure {measure.id!r} is worst_of_k with a direct interval, which the planner "
@@ -283,7 +289,13 @@ def plan_design(
     manifest: str | Path | None = None,
     rollouts: int | None = None,
 ) -> DesignPlan:
-    """Detectable rates for every claim of ``plan``, and every interval analyze reports."""
+    """Detectable rates for every claim of ``plan``, and every interval analyze reports.
+
+    Raises ``ValueError`` for a sampled design, and for a plan with ``ERROR`` diagnostics from
+    ``validate_plan_references``: ``analyze`` finds such a plan invalid and reports every claim
+    INCONCLUSIVE, so no rate would describe what it decides. Raises ``OSError`` when the design
+    manifest cannot be read.
+    """
 
     # Private helpers of the analysis, so that nodes, calibration and blocks are analyze's
     # own; a copy here could drift from it.
@@ -300,6 +312,16 @@ def plan_design(
         raise ValueError(
             "the plan declares a sampled design; plan fixed-design plans fixed designs only"
         )
+    errors = [item for item in validate_plan_references(plan) if item.severity == "ERROR"]
+    if errors:
+        raise ValueError(
+            "analyze will find this plan invalid and report every claim INCONCLUSIVE, so no "
+            "claim can be planned. Fix the errors that validate reports: "
+            + "; ".join(
+                f"{item.code}" + (f" at {item.scope}" if item.scope else "") + f": {item.message}"
+                for item in errors
+            )
+        )
     frame = load_manifest(
         manifest if manifest is not None else plan.inputs.design_manifest,
         plan_manifest_columns(plan),
@@ -308,19 +330,14 @@ def plan_design(
     groups = {group.id: group for group in resolve_groups(plan, frame)}
     spec = plan.outputs.direct_mean_intervals
     reasons = {claim.id: _unplanned_reason(plan, claim) for claim in plan.claims}
-    family = next((item for item in plan.multiplicity.families if item.id == spec.family), None)
-    if not spec.enabled or family is None:
-        if spec.enabled:
-            reasons = {
-                claim_id: reason
-                or f"outputs.direct_mean_intervals names the undeclared family {spec.family!r}"
-                for claim_id, reason in reasons.items()
-            }
+    if not spec.enabled:
         return DesignPlan(
             claims=[UnplannedClaim(claim.id, str(reasons[claim.id])) for claim in plan.claims],
             intervals=[],
             method=None,
         )
+    # validate_plan_references has checked that the family is declared.
+    family = next(item for item in plan.multiplicity.families if item.id == spec.family)
     independence = _independence(spec)
     profile_ids = [independence.primary, *independence.sensitivities]
     _check_plannable_profiles(plan, frame, profile_ids)

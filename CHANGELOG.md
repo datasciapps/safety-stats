@@ -313,7 +313,11 @@ described in their pull requests.
   weights, hierarchy, independence profile, multiplicity family and thresholds from the
   analysis plan and reports detectable rates for every claim, at the endpoint alpha `analyze`
   will use. Before, they had to be repeated on the command line, and the default hierarchy
-  could silently plan a different design. Claims it cannot plan are listed with the reason.
+  could silently plan a different design. Claims it cannot plan are listed with the reason,
+  and so is every claim of an exploratory plan, which `analyze` reports INCONCLUSIVE. A plan
+  with the errors `validate` reports is refused with them, since `analyze` decides none of its
+  claims, and so is a design manifest the command cannot read. The output names the manifest
+  it reads, the plan's or the one `--manifest` gives in its place.
   See [Command-line interface](docs/api-reference.md#command-line-interface).
 
 - **Plan registration receipts (experimental).** `hash-plan --register RECEIPT.json` writes the
@@ -494,14 +498,6 @@ described in their pull requests.
   visible only by reading every hierarchy row. `report.json`, the CSV files, `report.md` and
   `report.html` are unchanged, and so is `report-full.md` when no section is due. See
   [Where effects sit](docs/interpretation.md#where-effects-sit).
-
-- **The fixed-design planner reads the plan.** `plan fixed-design --plan PLAN` takes groups,
-  weights, hierarchy, independence profile, multiplicity family and thresholds from the
-  analysis plan and reports detectable rates for every claim, at the endpoint alpha `analyze`
-  will use. Before, they had to be repeated on the command line, and the default hierarchy
-  could silently plan a different design. Claims it cannot plan are listed with the reason.
-  The rates are guaranteed for `weighted_hoeffding`; the output names the plan's primary
-  method. See [Command-line interface](docs/api-reference.md#command-line-interface).
 
 - **Random pilot selection (experimental).** `plan pilot --manifest DESIGN.csv
   --per-stratum K --seed S --output PILOT.csv` draws `K` prompts at random from each
