@@ -1,0 +1,401 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: The maintainer <maintainer@example.com>
+Subject: [PATCH] fix: eval-retry of several logs from one eval runs their
+ tasks concurrently under max_tasks
+
+`eval_retry()` called `eval_async()` once per log and awaited each in turn,
+so retrying the logs of an eval that ran several tasks at once (for example
+two task-arg variants under `max_tasks=2`) ran them one after another. The
+display says "Running 1 tasks" once per log, and a resumed run loses the
+batching its tasks shared on the model server.
+
+`eval_async()` refuses concurrent calls, so the retry now puts logs into one
+call: logs with the same `run_id` and equal eval settings (model spec as the
+log records it, generate config, limits, max_tasks, ...) run as the tasks of
+one eval, each `PreviousTask` carrying its own task args. Logs of separate
+evals, or with different settings, still run as evals of their own, one after
+another, and results come back in the order the logs were given.
+
+Tests: `test_eval_retry_runs_several_logs_concurrently_under_max_tasks` fails
+without the change (the retried tasks do not overlap in time);
+`test_eval_retry_runs_logs_with_different_models_one_after_another` checks
+that a multi-model eval's logs keep their own models.
+
+---
+ docs/_errors_and_retries.md  |   2 +
+ src/inspect_ai/_eval/eval.py | 231 +++++++++++++++++++++++------------
+ tests/test_retry.py          |  87 +++++++++++++
+ 3 files changed, 241 insertions(+), 79 deletions(-)
+
+diff --git a/docs/_errors_and_retries.md b/docs/_errors_and_retries.md
+index 9dad81045..2a15f9151 100644
+--- a/docs/_errors_and_retries.md
++++ b/docs/_errors_and_retries.md
+@@ -20,6 +20,8 @@ Note that retry only works for tasks that are created from `@task` decorated fun
+ 
+ Note also that `eval_retry()` does not overwrite the previous log file, but rather creates a new one (preserving the `task_id` from the original file).
+ 
++You can retry several logs at once. Logs written by the same eval with the same settings (model, generation config, limits and so on) are retried together as one eval, so `max_tasks` runs their tasks concurrently as it did in the original eval. Logs from separate evals, or with different settings, are retried one eval after another.
++
+ Here's an example of retrying a failed eval with a lower number of `max_connections` (the theory being that too many concurrent connections may have caused a rate limit error):
+ 
+ ``` python
+diff --git a/src/inspect_ai/_eval/eval.py b/src/inspect_ai/_eval/eval.py
+index 70deaed20..3b6f93f5c 100644
+--- a/src/inspect_ai/_eval/eval.py
++++ b/src/inspect_ai/_eval/eval.py
+@@ -1807,14 +1807,14 @@ async def eval_retry_async(
+             except Exception as ex:
+                 log.warning(f"Recovery failed for {eval_log.location}: {ex}")
+ 
+-    # eval them in turn
+-    eval_logs: list[EvalLog] = []
++    # resolve each log's previous task and the eval settings to retry it with
++    eval_logs: list[EvalLog | None] = [
++        eval_log if i in finalized_indexes else None
++        for i, eval_log in enumerate(retry_eval_logs)
++    ]
++    retries: list[tuple[int, PreviousTask, dict[str, Any]]] = []
+     for i, eval_log in enumerate(retry_eval_logs):
+-        # don't start another retry once the caller is cancelled (under trio
+-        # a Ctrl-C leaves the scope cancelled after the interrupted eval)
+-        await anyio.lowlevel.checkpoint_if_cancelled()
+         if i in finalized_indexes:
+-            eval_logs.append(eval_log)
+             continue
+         # the task needs to be either filesystem or registry
+         # based in order to do a retry (we don't have enough
+@@ -2009,92 +2009,165 @@ async def eval_retry_async(
+             else None
+         )
+ 
+-        # run the eval
+-        retried_log = (
+-            await eval_async(
+-                tasks=PreviousTask(
+-                    id=task_id,
+-                    task=task,
+-                    task_args=task_args,
+-                    model=None,
+-                    model_roles=None,
+-                    sandbox=resolve_task_file_sandbox(
+-                        eval_log.eval.task_file, eval_log.eval.sandbox
+-                    ),
+-                    log=eval_log,
+-                    log_info=None,
++        previous_task = PreviousTask(
++            id=task_id,
++            task=task,
++            task_args=task_args,
++            model=None,
++            model_roles=None,
++            sandbox=resolve_task_file_sandbox(
++                eval_log.eval.task_file, eval_log.eval.sandbox
++            ),
++            log=eval_log,
++            log_info=None,
++        )
++        retries.append(
++            (
++                i,
++                previous_task,
++                dict(
++                    model=model,
++                    model_roles=model_roles,
++                    sandbox=eval_log.eval.sandbox,
++                    sandbox_cleanup=sandbox_cleanup,
++                    sandbox_prebuilt=sandbox_prebuilt,
++                    solver=solver,
++                    scanner=scanner,
++                    scan_id=retry_scan_id,
++                    tags=tags,
++                    metadata=metadata,
++                    approval=approval,
++                    review=review,
++                    sentinel=sentinel,
++                    sentinel_proxy=sentinel_proxy,
++                    notification=notification,
++                    log_level=log_level,
++                    log_level_transcript=log_level_transcript,
++                    log_dir=log_dir,
++                    log_format=log_format,
++                    limit=limit,
++                    sample_id=sample_id,
++                    sample_shuffle=sample_shuffle,
++                    epochs=epochs,
++                    fail_on_error=fail_on_error,
++                    continue_on_fail=continue_on_fail,
++                    retry_on_error=retry_on_error,
++                    score_on_error=score_on_error,
++                    debug_errors=debug_errors,
++                    message_limit=message_limit,
++                    token_limit=token_limit,
++                    turn_limit=turn_limit,
++                    time_limit=time_limit,
++                    working_limit=working_limit,
++                    cost_limit=cost_limit,
++                    model_cost_config=model_cost_config,
++                    max_samples=max_samples,
++                    max_dataset_memory=max_dataset_memory,
++                    max_tasks=max_tasks,
++                    max_subprocesses=max_subprocesses,
++                    max_sandboxes=max_sandboxes,
++                    log_samples=log_samples,
++                    log_realtime=log_realtime,
++                    log_images=log_images,
++                    log_model_api=log_model_api,
++                    log_refusals=log_refusals,
++                    log_buffer=log_buffer,
++                    log_shared=log_shared,
++                    score=score,
++                    score_display=score_display,
++                    checkpoint=checkpoint,
++                    acp_server=acp_server,
++                    ctl_server=ctl_server,
++                    **dict(config),
+                 ),
+-                model=model,
+-                model_roles=model_roles,
+-                task_args=task_args,
+-                sandbox=eval_log.eval.sandbox,
+-                sandbox_cleanup=sandbox_cleanup,
+-                sandbox_prebuilt=sandbox_prebuilt,
+-                solver=solver,
+-                scanner=scanner,
+-                scan_id=retry_scan_id,
+-                tags=tags,
+-                metadata=metadata,
+-                approval=approval,
+-                review=review,
+-                sentinel=sentinel,
+-                sentinel_proxy=sentinel_proxy,
+-                notification=notification,
+-                log_level=log_level,
+-                log_level_transcript=log_level_transcript,
+-                log_dir=log_dir,
+-                log_format=log_format,
+-                limit=limit,
+-                sample_id=sample_id,
+-                sample_shuffle=sample_shuffle,
+-                epochs=epochs,
+-                fail_on_error=fail_on_error,
+-                continue_on_fail=continue_on_fail,
+-                retry_on_error=retry_on_error,
+-                score_on_error=score_on_error,
+-                debug_errors=debug_errors,
+-                message_limit=message_limit,
+-                token_limit=token_limit,
+-                turn_limit=turn_limit,
+-                time_limit=time_limit,
+-                working_limit=working_limit,
+-                cost_limit=cost_limit,
+-                model_cost_config=model_cost_config,
+-                max_samples=max_samples,
+-                max_dataset_memory=max_dataset_memory,
+-                max_tasks=max_tasks,
+-                max_subprocesses=max_subprocesses,
+-                max_sandboxes=max_sandboxes,
+-                log_samples=log_samples,
+-                log_realtime=log_realtime,
+-                log_images=log_images,
+-                log_model_api=log_model_api,
+-                log_refusals=log_refusals,
+-                log_buffer=log_buffer,
+-                log_shared=log_shared,
+-                score=score,
+-                score_display=score_display,
+-                checkpoint=checkpoint,
+-                acp_server=acp_server,
+-                ctl_server=ctl_server,
+-                **dict(config),
+             )
+-        )[0]
++        )
+ 
+-        # add it to our results
+-        eval_logs.append(retried_log)
++    # Run the retries. Logs of one eval whose settings are equal run as the tasks
++    # of one eval again, so that `max_tasks` runs them concurrently as the
++    # original eval did; the task args of each come with its PreviousTask. Logs
++    # of separate evals, or with different settings (another model, generate
++    # config, limits), run as evals of their own.
++    for group in _group_retries(retries):
++        # don't start another retry once the caller is cancelled (under trio
++        # a Ctrl-C leaves the scope cancelled after the interrupted eval)
++        await anyio.lowlevel.checkpoint_if_cancelled()
++        retried_logs = await eval_async(
++            tasks=[previous_task for _, previous_task, _ in group],
++            # with one task the eval-level task args are that task's, as before;
++            # with several, each PreviousTask carries its own
++            task_args=group[0][1].task_args if len(group) == 1 else {},
++            **group[0][2],
++        )
++        retried_by_task_id = {log.eval.task_id: log for log in retried_logs}
++        for i, previous_task, _ in group:
++            eval_logs[i] = retried_by_task_id[previous_task.id]
+ 
+     # Clean up recovered files only for retries that succeeded. On failure,
+     # the recovered file serves as a safety net with samples that would
+     # otherwise be lost.
+     for idx, recovered_file in recovered_files.items():
+-        if eval_logs[idx].status == "success":
++        retried = eval_logs[idx]
++        if retried is not None and retried.status == "success":
+             try:
+                 filesystem(recovered_file).rm(recovered_file)
+             except Exception:
+                 pass
+ 
+-    return EvalLogs(eval_logs)
++    return EvalLogs([log for log in eval_logs if log is not None])
++
++
++def _group_retries(
++    retries: list[tuple[int, PreviousTask, dict[str, Any]]],
++) -> list[list[tuple[int, PreviousTask, dict[str, Any]]]]:
++    """Group retries of one eval whose settings are equal, in order of first appearance.
++
++    A retry joins the first group with equal settings that does not already
++    hold its task id (results are matched to retries by task id). Settings that
++    don't compare equal (an object without `__eq__`) put a retry in a group of
++    its own, so it runs as an eval of its own, as every retry did before.
++    """
++    groups: list[list[tuple[int, PreviousTask, dict[str, Any]]]] = []
++    for retry in retries:
++        _, previous_task, settings = retry
++        key = _retry_settings_key(previous_task, settings)
++        for group in groups:
++            first = group[0]
++            if _retry_settings_key(first[1], first[2]) == key and all(
++                other.id != previous_task.id for _, other, _ in group
++            ):
++                group.append(retry)
++                break
++        else:
++            groups.append([retry])
++    return groups
++
++
++def _retry_settings_key(
++    previous_task: PreviousTask, settings: dict[str, Any]
++) -> dict[str, Any]:
++    # Model instances are not always memoized (mockllm never is), so compare the
++    # models as the log records them; Epochs has no __eq__, so compare what it
++    # was built from
++    spec = previous_task.log.eval
++    key = {
++        name: (value.epochs, value._reducer_spec)
++        if isinstance(value, Epochs)
++        else value
++        for name, value in settings.items()
++        if name not in ("model", "model_roles")
++    }
++    key["model"] = (
++        spec.model,
++        spec.model_generate_config,
++        spec.model_base_url,
++        spec.model_args,
++    )
++    key["model_roles"] = spec.model_roles
++    # only logs that ran together run together again: logs of separate evals
++    # stay separate evals, even with equal settings
++    key["run_id"] = spec.run_id
++    return key
+ 
+ 
+ def eval_init(
+diff --git a/tests/test_retry.py b/tests/test_retry.py
+index f15867213..5ca0f67bf 100644
+--- a/tests/test_retry.py
++++ b/tests/test_retry.py
+@@ -1000,3 +1000,90 @@ def test_eval_retry_model_cost_config(tmp_path: Path) -> None:
+         [log.location, "--model-cost-config", str(pricing_file), "--display", "none"],
+     )
+     assert res.exit_code == 0, f"CLI retry failed: {res.output}\n{res.exception}"
++
++
++# Set while the first run of `retry_arm` should fail. An environment variable,
++# because eval_retry loads this file again as a task file, as a separate module.
++_RETRY_ARM_FAIL = "INSPECT_TEST_RETRY_ARM_FAIL"
++
++
++@solver
++def sleep_then_fail_while_flagged(seconds: float):
++    async def solve(state: TaskState, generate: Any) -> TaskState:
++        import anyio
++
++        await anyio.sleep(seconds)
++        if os.environ.get(_RETRY_ARM_FAIL) == "1":
++            raise RuntimeError("the first run fails")
++        return state
++
++    return solve
++
++
++@task
++def retry_arm(arm: str = "a"):
++    return Task(
++        dataset=[Sample(input=f"arm {arm}", target="x")],
++        solver=sleep_then_fail_while_flagged(1.0),
++    )
++
++
++def _running_together(logs: list[Any]) -> bool:
++    from datetime import datetime
++
++    starts = [datetime.fromisoformat(log.stats.started_at) for log in logs]
++    ends = [datetime.fromisoformat(log.stats.completed_at) for log in logs]
++    return max(starts) < min(ends)
++
++
++def test_eval_retry_runs_several_logs_concurrently_under_max_tasks(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    monkeypatch.setenv(_RETRY_ARM_FAIL, "1")
++    logs = eval(
++        [retry_arm(arm="a"), retry_arm(arm="b")],
++        model="mockllm/model",
++        max_tasks=2,
++        log_dir=str(tmp_path),
++        display="none",
++    )
++    assert [log.status for log in logs] == ["error", "error"]
++    assert _running_together(logs)
++
++    monkeypatch.delenv(_RETRY_ARM_FAIL)
++    retried = eval_retry(logs, log_dir=str(tmp_path), display="none")
++
++    # one log per retried log, in the order given, each with its own task args
++    assert [log.status for log in retried] == ["success", "success"]
++    assert [log.eval.task_id for log in retried] == [log.eval.task_id for log in logs]
++    assert [log.eval.task_args["arm"] for log in retried] == ["a", "b"]
++    # the original eval ran both tasks at once under max_tasks=2, so does the retry
++    assert _running_together(retried)
++
++
++def test_eval_retry_runs_logs_with_different_models_one_after_another(
++    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
++) -> None:
++    monkeypatch.setenv(_RETRY_ARM_FAIL, "1")
++    logs = eval(
++        retry_arm(arm="a"),
++        model=["mockllm/model", "mockllm/other"],
++        max_tasks=2,
++        log_dir=str(tmp_path),
++        display="none",
++    )
++    assert [log.status for log in logs] == ["error", "error"]
++    assert _running_together(logs)
++
++    monkeypatch.delenv(_RETRY_ARM_FAIL)
++    retried = eval_retry(logs, log_dir=str(tmp_path), display="none")
++
++    # the eval-level model differs, so each log is retried as an eval of its own,
++    # keeping its model
++    assert [log.status for log in retried] == ["success", "success"]
++    assert [log.eval.model for log in retried] == [log.eval.model for log in logs]
++    assert sorted(log.eval.model for log in retried) == [
++        "mockllm/model",
++        "mockllm/other",
++    ]
++    assert not _running_together(retried)
