@@ -593,19 +593,25 @@ def _add_panel_derived_correction(
                 ),
             )
         )
-    # A cohort whose rho correction already named its policy-classified rows is not named twice.
+    # A cohort whose rho correction already named its policy-classified rows is not named
+    # twice: the panel's groups join that diagnostic's, since the panel may correct groups the
+    # rho correction's scope leaves out.
     named = {
-        item.scope for item in diagnostics if item.code == "JUDGE_CORRECTION_POLICY_CLASSIFIED"
+        item.scope: index
+        for index, item in enumerate(diagnostics)
+        if item.code == "JUDGE_CORRECTION_POLICY_CLASSIFIED"
     }
-    _policy_classified_diagnostics(
-        population,
-        {
-            cohort_id: groups
-            for cohort_id, groups in policy_rows.items()
-            if cohort_scope(cohort_id) not in named
-        },
-        diagnostics,
-    )
+    unnamed: dict[str, set[str]] = {}
+    for cohort_id, groups in policy_rows.items():
+        index = named.get(cohort_scope(cohort_id))
+        if index is None:
+            unnamed[cohort_id] = groups
+            continue
+        found = diagnostics[index]
+        details = dict(found.details or {})
+        details["groups"] = sorted(set(details.get("groups", [])) | groups)
+        diagnostics[index] = found.model_copy(update={"details": details})
+    _policy_classified_diagnostics(population, unnamed, diagnostics)
     return {
         "composite": composite.id,
         "rule": composite.rule,

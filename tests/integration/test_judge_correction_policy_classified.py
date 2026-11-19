@@ -429,3 +429,20 @@ def test_a_row_whose_sample_holds_no_such_rollout_states_what_its_correction_ass
         assert not _counts_policy_rollouts(interval)
     assert not outcome.with_code("JUDGE_CORRECTION_POLICY_CLASSIFIED")
 
+
+def test_the_panel_adds_its_groups_to_the_cohorts_the_rho_correction_named(
+    tmp_path: Any,
+) -> None:
+    def data(inputs: Inputs) -> None:
+        policy_blocked(inputs)
+        inputs.manifest[0]["domain"] = "a"
+        inputs.plan["groups"].append({"id": "a", "filter": {"domain": "a"}})
+        assumed(inputs)
+        # The rho correction is scoped to group a; the panel corrects every group.
+        inputs.plan["inputs"]["judge_calibration"]["groups"] = ["a"]
+
+    outcome = panel("any", None, None, data)(tmp_path)
+
+    (found,) = outcome.with_code("JUDGE_CORRECTION_POLICY_CLASSIFIED")
+    assert found.details["groups"] == ["a", "all"]
+    assert (found.details["policy_safe"], found.details["policy_failures"]) == (1, 0)
