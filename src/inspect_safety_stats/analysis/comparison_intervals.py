@@ -22,7 +22,7 @@ from inspect_safety_stats.schema.reports import Diagnostic, Eligibility, RiskInt
 from inspect_safety_stats.schema.scopes import scope_path
 from inspect_safety_stats.stats.clusters import paired_cluster_bootstrap
 from inspect_safety_stats.stats.comparisons import DirectComparisonBounds, RatioComparisonBounds
-from inspect_safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES, DirectMeanBounds
+from inspect_safety_stats.stats.direct_mean import COMPARISON_ENGINES, DirectMeanBounds
 from inspect_safety_stats.stats.independence import BoundedBlocks, comparison_contrast_blocks
 from inspect_safety_stats.stats.paired import (
     PartialPairing,
@@ -393,7 +393,7 @@ def _bounded_comparison_mean(
     alpha_upper: float,
     profile_id: str,
 ) -> DirectMeanBounds:
-    function = DIRECT_MEAN_ENGINES[method].bounded
+    function = COMPARISON_ENGINES[method].bounded
     return function(
         blocks.lower,
         blocks.upper,
