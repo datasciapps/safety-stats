@@ -587,7 +587,8 @@ described in their pull requests.
     `log(P/alpha) / n` for each of `P` prompts of `n` rollouts when the row assumes nothing
     between prompts. The lower end can fall by that times `rho_0` and the upper end rise by
     that times `1 - rho_1`, so a box whose `rho_1` reaches 1 and `rho_0` reaches 0 is
-    unchanged.
+    unchanged but for floating-point rounding, which can move a bound by a unit in the last
+    place either way.
   - A sampled design's share is taken at 1, even when the run has no unclassified rollout.
     Its judge corrections therefore no longer lower the upper bound below the judge-system
     upper bound: they can no longer show that the judge's false positives make true risk
