@@ -794,9 +794,12 @@
         .join("::")}`;
     }
     function hierarchyTreeRows(rows, suppliedRoot = null) {
+      // The tree's nodes average the group's prompts, so its root is the weighted-mean row; a
+      // worst_of_k row can also have a direct primary interval.
       const directRoot = suppliedRoot || risks.find(row =>
         row.cohort_id === state.cohort &&
         String(row.group_id) === state.group &&
+        row.method === "finite_design_weighted_mean" &&
         (row.intervals || []).some(interval => interval.role === "primary" && String(interval.interval_id || "").startsWith("direct_"))
       );
       const root = directRoot ? {
