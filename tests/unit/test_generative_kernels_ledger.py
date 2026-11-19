@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from inspect_safety_stats.generative.execution import prompt_store_writer
 from inspect_safety_stats.generative.kernels import (
     DeterministicFakeKernel,
     RewriteKernel,
@@ -192,12 +193,19 @@ def test_selection_requires_a_positive_known_probability() -> None:
         )
 
 
-@pytest.mark.parametrize("writer", [rewrite_ledger_writer, attempt_ledger_writer])
+@pytest.mark.parametrize(
+    "writer", [rewrite_ledger_writer, attempt_ledger_writer, prompt_store_writer]
+)
 def test_replacing_a_ledger_writes_what_appending_would(tmp_path: Path, writer) -> None:
     """A resume rewrites a ledger it then appends to, so both must write the same bytes."""
 
     if writer is rewrite_ledger_writer:
         rows = [rewrite(f"u-{index}").model_dump(mode="json") for index in range(3)]
+    elif writer is prompt_store_writer:
+        rows = [
+            {"sampling_unit_id": f"u-{index}", "prompt_id": f"p-{index}", "prompt": text}
+            for index, text in enumerate(["one\rline", "two\r\nlines", 'a "quoted", text'])
+        ]
     else:
         rows = [
             AttemptRecord(sampling_unit_id=f"u-{index}", attempt=1, kernel_status="valid")
@@ -211,4 +219,6 @@ def test_replacing_a_ledger_writes_what_appending_would(tmp_path: Path, writer) 
     replaced.write_bytes(b"stale rows\n" * 5)
     writer(replaced).replace(iter(rows))
     assert replaced.read_bytes() == appended.read_bytes()
+    assert appended.read_bytes().count(b"\n") == 4 + (writer is prompt_store_writer)
+    assert b"\r\n" not in appended.read_bytes().replace(b"two\r\nlines", b"")
     assert sorted(item.name for item in tmp_path.iterdir()) == ["appended.csv", "replaced.csv"]

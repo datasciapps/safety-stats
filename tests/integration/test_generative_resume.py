@@ -287,3 +287,35 @@ def test_resume_repairs_a_ledger_that_kept_error_rows_beside_their_reruns(
     run = run_with(ScriptedKernel(), plan, artifacts, resume=True)
     assert run is not None and run.resumed == 60 and run.accepted == 60
     assert len(read_rewrites(artifacts / "rewrites.csv")) == 60
+
+
+def test_resume_continues_ledgers_a_development_version_wrote_with_crlf(tmp_path: Path) -> None:
+    """Before resume replaced them, the ledgers were appended to with CRLF line endings.
+
+    No released version wrote them that way, but a development directory may hold such
+    files. A resume writes them afresh, so their rows end like the ones it appends, even
+    when it drops no row: the interrupted run here recorded no error.
+    """
+
+    plan = write_plan(tmp_path, total=60)
+    artifacts = tmp_path / "run"
+    run_with(ScriptedKernel(survive=30), plan, artifacts)
+    names = ("rewrites.csv", "prompts.restricted.csv")
+    for name in names:
+        path = artifacts / name
+        assert b"\r" not in path.read_bytes(), name
+        path.write_bytes(path.read_bytes().replace(b"\n", b"\r\n"))
+    prompts = {
+        key: entry.prompt
+        for key, entry in read_prompt_store(artifacts / "prompts.restricted.csv").items()
+    }
+    assert len(prompts) == 30
+
+    run = run_with(ScriptedKernel(), plan, artifacts, resume=True)
+    assert run is not None and run.resumed == 30 and run.accepted == 60
+    for name in names:
+        assert b"\r" not in (artifacts / name).read_bytes(), name
+    assert len(read_rewrites(artifacts / "rewrites.csv")) == 60
+    stored = read_prompt_store(artifacts / "prompts.restricted.csv")
+    assert len(stored) == 60
+    assert {key: stored[key].prompt for key in prompts} == prompts

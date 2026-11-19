@@ -93,13 +93,6 @@ REWRITE_COLUMNS = tuple(RewriteRecord.model_fields)
 ATTEMPT_COLUMNS = tuple(AttemptRecord.model_fields)
 
 
-# The csv module's own line ending. The rewrite ledger and the prompt store have always been
-# written with it, and a resumed run appends to the files an earlier version wrote, so a
-# change would leave those files with mixed line endings. It is the same on every platform:
-# the files are opened with newline="", so nothing translates it.
-CSV_MODULE_LINE_ENDING = "\r\n"
-
-
 class IncrementalCsvWriter:
     """Append rows as they are produced, flushing each one.
 
@@ -108,14 +101,14 @@ class IncrementalCsvWriter:
     usable record of the units it did complete, which is what makes resumption possible at
     all. Writing only on success loses every completed unit.
 
-    ``lineterminator`` ends every row. A file this writer appends to is rewritten only
-    through :meth:`replace`, so its rows never mix two line endings.
+    Every row ends with LF, as every text artifact does (CONTRIBUTING section 6), and on
+    every platform: the file is opened with ``newline=""``, so nothing translates it. A field
+    holding a line break is quoted, so a prompt's own line endings are kept as they are.
     """
 
-    def __init__(self, path: str | Path, columns: Sequence[str], *, lineterminator: str) -> None:
+    def __init__(self, path: str | Path, columns: Sequence[str]) -> None:
         self._path = Path(path)
         self._columns = list(columns)
-        self._lineterminator = lineterminator
         self._handle: Any = None
         self._writer: Any = None
 
@@ -124,7 +117,7 @@ class IncrementalCsvWriter:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._handle = self._path.open("a", newline="", encoding="utf-8")
         self._writer = csv.DictWriter(
-            self._handle, fieldnames=self._columns, lineterminator=self._lineterminator
+            self._handle, fieldnames=self._columns, lineterminator="\n"
         )
         if not existing:
             self._writer.writeheader()
@@ -145,9 +138,7 @@ class IncrementalCsvWriter:
 
         partial = self._path.with_name(self._path.name + ".partial")
         with partial.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(
-                handle, fieldnames=self._columns, lineterminator=self._lineterminator
-            )
+            writer = csv.DictWriter(handle, fieldnames=self._columns, lineterminator="\n")
             writer.writeheader()
             for row in rows:
                 writer.writerow({key: row.get(key) for key in self._columns})
@@ -165,13 +156,11 @@ class IncrementalCsvWriter:
 
 
 def rewrite_ledger_writer(path: str | Path) -> IncrementalCsvWriter:
-    return IncrementalCsvWriter(path, REWRITE_COLUMNS, lineterminator=CSV_MODULE_LINE_ENDING)
+    return IncrementalCsvWriter(path, REWRITE_COLUMNS)
 
 
 def attempt_ledger_writer(path: str | Path) -> IncrementalCsvWriter:
-    """The writer of ``attempts.csv``, which ends its rows with LF as text artifacts do."""
-
-    return IncrementalCsvWriter(path, ATTEMPT_COLUMNS, lineterminator="\n")
+    return IncrementalCsvWriter(path, ATTEMPT_COLUMNS)
 
 
 def write_attempts(records: list[AttemptRecord], path: str | Path) -> None:

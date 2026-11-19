@@ -173,6 +173,8 @@ def test_text_artifacts_have_the_same_bytes_on_every_platform(
     path = analyze_run(plan, artifacts, "logs", cohort="candidate").write(tmp_path / "report")
     written = [
         artifacts / "selections.csv",
+        artifacts / "rewrites.csv",
+        artifacts / "prompts.restricted.csv",
         *sorted((artifacts / "datasets").glob("*.jsonl")),
         *sorted(path.iterdir()),
     ]

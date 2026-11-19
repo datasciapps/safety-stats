@@ -29,6 +29,12 @@ described in their pull requests.
   refused it. A resume now drops the error rows before it runs anything, replacing the file in
   one step. Resuming a directory an earlier version left in that state repairs it.
 
+- **Generative ledgers end their lines with LF.** `rewrites.csv` and `prompts.restricted.csv`,
+  written row by row since materialization could be resumed, ended every row with CRLF, and
+  `attempts.csv` mixed CRLF and LF after a resume. All three now end every line with LF on
+  every platform, like the other text artifacts. A resume writes them afresh before it runs
+  anything, which converts the files a development version left with CRLF.
+
 ### Added
 
 - **A fixed-design template for prompt variants, and the profile that coupled wordings need.**

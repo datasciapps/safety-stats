@@ -380,6 +380,7 @@ def materialize_run(
     # with the stale ones, and Windows cannot replace a file that is open.
     if resume:
         _keep_finished_rewrites(directory / REWRITE_LEDGER, completed)
+        _keep_accepted_prompts(directory / PROMPT_STORE, accepted_before)
     if plan.rewrite.records_attempts:
         _keep_finished_attempts(attempts_path, completed)
     # Selections are known before any kernel call, so they are persisted first: an
@@ -404,12 +405,7 @@ def materialize_run(
         def persist(record: RewriteRecord, entry: AcceptedRewrite | None) -> None:
             ledger.append(record.model_dump(mode="json"))
             if entry is not None:
-                prompts_out.append({
-                    "sampling_unit_id": entry.sampling_unit_id,
-                    "prompt_id": entry.prompt_id,
-                    "prompt": entry.prompt,
-                    "prompt_sha256": entry.prompt_sha256,
-                })
+                prompts_out.append(_prompt_row(entry))
 
         result = execute_rewrites(
             plan,
@@ -444,19 +440,41 @@ def materialize_run(
     )
 
 
+def _prompt_row(entry: AcceptedRewrite) -> dict[str, str]:
+    return {
+        "sampling_unit_id": entry.sampling_unit_id,
+        "prompt_id": entry.prompt_id,
+        "prompt": entry.prompt,
+        "prompt_sha256": entry.prompt_sha256,
+    }
+
+
 def _keep_finished_rewrites(path: Path, completed: dict[str, RewriteRecord]) -> None:
     """Leave in the rewrite ledger only the rows of units that will not run again.
 
     A unit recorded as ``error`` runs again, and its new row is appended. Left in place, its
-    old row would record the unit twice, which the analysis refuses. A ledger with no such
-    row is left untouched.
+    old row would record the unit twice, which the analysis refuses. The ledger is written
+    afresh even when no row is dropped, so one that a development version wrote with CRLF
+    line endings continues with the LF rows the resumed run appends, never a mix.
     """
 
-    if not path.exists() or len(read_rewrite_rows(path)) == len(completed):
+    if not path.exists():
         return
     rewrite_ledger_writer(path).replace(
         record.model_dump(mode="json") for record in completed.values()
     )
+
+
+def _keep_accepted_prompts(path: Path, accepted: dict[str, AcceptedRewrite]) -> None:
+    """Leave in the prompt store only the prompts of the accepted units it was read for.
+
+    Those are the prompts the resumed run builds on, and their text is written back as it
+    was read. Written afresh like the rewrite ledger, for the same reason.
+    """
+
+    if not path.exists():
+        return
+    prompt_store_writer(path).replace(_prompt_row(entry) for entry in accepted.values())
 
 
 def _keep_finished_attempts(path: Path, completed: dict[str, RewriteRecord]) -> None:
