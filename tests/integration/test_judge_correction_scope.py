@@ -24,6 +24,7 @@ from inspect_safety_stats.schema.reports import (
     GroupRiskResult,
     HierarchyRiskResult,
     SafetyReport,
+    VerdictRange,
 )
 
 EPOCHS = 200
@@ -392,6 +393,7 @@ def test_noisy_valid_test_refuses_a_row_its_labels_do_not_measure(
     assert claim.status == "INCONCLUSIVE"
     (reason,) = claim.reasons
     assert reason.startswith("The noisy-but-valid test cannot certify this row: the row gives")
+    assert claim.verdict_range == VerdictRange()
 
 
 # A calibration scoped to the hard group (F19) is estimated from that group's labels alone.
@@ -596,6 +598,7 @@ def test_noisy_valid_test_uses_the_labels_of_the_rows_group(
         "The judge calibration is scoped to groups that do not include this row's group "
         "'all', so no labels calibrate it."
     ]
+    assert claims_by_id["mean_all"].verdict_range == VerdictRange()
 
 
 def test_an_assumed_calibration_scoped_to_a_group_corrects_only_its_rows(

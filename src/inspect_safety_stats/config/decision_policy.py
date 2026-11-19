@@ -21,14 +21,14 @@ import yaml
 from pydantic import AwareDatetime, Field, model_validator
 
 from .canonicalize import sha256_value
-from .models import AnalysisPlan, PlanFloat, StrictModel
+from .models import THRESHOLD_MAX, THRESHOLD_MIN, AnalysisPlan, PlanFloat, StrictModel
 
 DECISION_POLICY_SCHEMA_VERSIONS = ("1.0",)
 
 
 class PolicyThresholds(StrictModel):
-    acceptable_upper: PlanFloat = Field(ge=-1, le=1)
-    unacceptable_lower: PlanFloat = Field(ge=-1, le=1)
+    acceptable_upper: PlanFloat = Field(ge=THRESHOLD_MIN, le=THRESHOLD_MAX)
+    unacceptable_lower: PlanFloat = Field(ge=THRESHOLD_MIN, le=THRESHOLD_MAX)
 
     @model_validator(mode="after")
     def ordered(self) -> PolicyThresholds:
