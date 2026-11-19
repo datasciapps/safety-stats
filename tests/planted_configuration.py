@@ -4,8 +4,8 @@ An Inspect log records how its evaluation was run, and several of those fields c
 credential, an internal endpoint or a local path: the generate config's ``extra_headers`` and
 ``extra_body``, the base URL, the model arguments, each model role's configuration, the
 sandbox configuration, the solver and task arguments, the task attributes, the metadata and the
-origin of the git checkout. A report may name these fields and fingerprint them; it may never
-copy a value.
+origin of the git checkout, and each scorer's options and metadata. A report may name these
+fields and fingerprint them; it may never copy a value.
 """
 
 from __future__ import annotations
@@ -54,6 +54,8 @@ def plant_configuration(log: EvalLog, tag: str) -> tuple[str, ...]:
         "attribute": f"planted-attribute-{tag}",
         "metadata": f"planted-metadata-{tag}",
         "git": f"planted-git-password-{tag}",
+        "scorer_option": f"planted-scorer-option-{tag}",
+        "scorer_metadata": f"planted-scorer-metadata-{tag}",
     }
     spec = log.eval
     spec.model_generate_config = GenerateConfig(
@@ -85,6 +87,10 @@ def plant_configuration(log: EvalLog, tag: str) -> tuple[str, ...]:
         origin=f"https://user:{secrets['git']}@git.invalid/evals.git",
         commit="0123abc",
     )
+    # Every scorer the log records, under its own name, so a judge on that score reads it.
+    for scorer in spec.scorers or []:
+        scorer.options = {"api_token": secrets["scorer_option"]}
+        scorer.metadata = {"template": f"/home/{secrets['scorer_metadata']}/grader.txt"}
     return tuple(secrets.values())
 
 
