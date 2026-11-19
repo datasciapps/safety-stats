@@ -422,11 +422,38 @@ def test_normalized_text_ignores_case_punctuation_and_spacing(first: str, second
     assert normalized_text(first) == normalized_text(second)
 
 
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("don't", "dont"),
+        ("don’t", "dont"),
+        ("e-mail", "email"),
+        ("step-by-step", "step by step"),
+        ("word—word", "word — word"),
+        ("snake_case", "snakecase"),
+        ("zero​width", "zerowidth"),
+        ("soft­hyphen", "softhyphen"),
+        ("﻿byte order mark", "byte order mark"),
+    ],
+)
+def test_normalized_text_removes_punctuation_and_invisible_characters(
+    first: str, second: str
+) -> None:
+    """Removed, as the docs say, not replaced by a space that still tells the two apart."""
+
+    from inspect_safety_stats.generative.execution import normalized_text
+
+    assert normalized_text(first) == normalized_text(second)
+
+
 def test_normalized_text_keeps_wording_and_order() -> None:
     from inspect_safety_stats.generative.execution import normalized_text
 
     assert normalized_text("tell me how") != normalized_text("how tell me")
     assert normalized_text("tell me how") != normalized_text("tell us how")
+    assert normalized_text("résumé") != normalized_text("resume"), "marks are kept"
+    assert normalized_text("résumé") == normalized_text("résumé")
+    assert normalized_text("step 5") != normalized_text("step 6")
 
 
 def test_near_duplicates_are_rejected_within_their_scope(tmp_path: Path) -> None:

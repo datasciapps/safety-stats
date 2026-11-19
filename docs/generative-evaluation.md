@@ -499,9 +499,13 @@ differs from the plan's is reported as a warning.
 
 **`deduplication.near_duplicate: normalized_text`** also counts a rewrite as a duplicate when
 its text matches an accepted one within the deduplication scope after Unicode NFKC
-normalization, case folding, removal of punctuation and symbols, and whitespace collapsing.
-`on_duplicate` handles it like an exact repeat. Nothing compares embeddings, which would
-need a model the plan does not declare.
+normalization and case folding, compared on its letters, combining marks and digits alone.
+Punctuation, symbols, whitespace and invisible format characters such as a zero-width space
+are removed, not replaced, so "don't" matches "dont" and "step-by-step" matches "step by
+step". Where the words break does not count either: "a part" matches "apart". The letters,
+their order and their accents still distinguish two rewrites. `on_duplicate` handles a near
+duplicate like an exact repeat. Nothing compares embeddings, which would need a model the
+plan does not declare.
 
 Either setting enters the kernel fingerprint, so runs with and without it cannot be pooled.
 Plans that use neither keep their fingerprints and their outputs byte for byte.

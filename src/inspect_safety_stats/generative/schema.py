@@ -250,10 +250,10 @@ class RewriteDeduplicationSpec(StrictModel):
     """Which rewrites within a scope count as the same prompt.
 
     By default only an exact repeat of the text does. ``near_duplicate: normalized_text``
-    (experimental) also counts two rewrites that agree after Unicode NFKC normalization,
-    case folding, removal of punctuation and symbols, and whitespace collapsing, and makes
-    materialization record every attempt in ``attempts.csv``. A near duplicate is handled
-    by ``on_duplicate`` like an exact one.
+    (experimental) also counts two rewrites whose letters, combining marks and digits agree
+    after Unicode NFKC normalization and case folding: punctuation, symbols, whitespace and
+    invisible format characters are removed. It makes materialization record every attempt
+    in ``attempts.csv``. A near duplicate is handled by ``on_duplicate`` like an exact one.
     """
 
     scope: Literal["semantic_seed_path", "structural_path", "none"] = "semantic_seed_path"

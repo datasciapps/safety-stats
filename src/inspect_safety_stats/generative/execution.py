@@ -328,18 +328,25 @@ def _dedup_key(plan: GenerativePlan, node_id: str, semantic_seed_id: str) -> str
 def normalized_text(prompt: str) -> str:
     """The form two rewrites are compared in under ``near_duplicate: normalized_text``.
 
-    NFKC folds compatibility forms (full-width letters, ligatures), case folding removes
-    case, and punctuation and symbols are dropped before whitespace is collapsed, so
-    rewrites that differ only in those respects compare equal. Word order, wording and
-    language still distinguish them.
+    NFKC folds compatibility forms (full-width letters, ligatures) and case folding removes
+    case; NFKC runs again because case folding can leave a sequence unnormalized. Then only
+    letters, combining marks and digits are kept. Punctuation, symbols, whitespace, and
+    invisible format characters such as a zero-width space or a soft hyphen are removed, not
+    replaced by a space, so rewrites that differ only in those respects compare equal:
+    "don't" and "dont", "step-by-step" and "step by step". The letters and their order
+    still distinguish rewrites, and so do wording and language; where the words break does
+    not ("a part" and "apart" compare equal).
+
+    This is what the plan value ``normalized_text`` means, and the kernel fingerprint
+    records only that value: another comparison needs another value, not a change here.
     """
 
-    folded = unicodedata.normalize("NFKC", prompt).casefold()
-    kept = "".join(
-        " " if unicodedata.category(character)[0] in {"P", "S"} else character
-        for character in folded
+    folded = unicodedata.normalize(
+        "NFKC", unicodedata.normalize("NFKC", prompt).casefold()
     )
-    return " ".join(kept.split())
+    return "".join(
+        character for character in folded if unicodedata.category(character)[0] in "LMN"
+    )
 
 
 def _near_digest(plan: GenerativePlan, prompt: str) -> str | None:
