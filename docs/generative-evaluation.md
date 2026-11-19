@@ -239,15 +239,21 @@ rewrite:
   deduplicated. A validator invoked by the package (`rewrite.validation.invoke`) receives
   that JSON, with the system turn attached, as its prompt text.
 - **`system_prompts`.** The procedure attaches `texts[value]` as the system turn of every
-  conversation on a path where `level` takes that value. The kernel sees it as
-  `request.system_prompt` and must not write a system turn itself. If it writes one on a
-  path whose value has a non-empty text, the run stops. The arm needs a text for every value the taxonomy can draw. This key works with
-  `output: prompt` too: the prompt becomes a one-turn conversation behind the system prompt.
+  conversation on a path where `level` takes that value; an empty text gives that value's
+  conversations no system prompt. The kernel sees the text as `request.system_prompt`, or
+  `None` where it is empty, and must not write a system turn itself. If it writes one on any
+  path, including one whose value has an empty text, the run stops. The arm needs a text for
+  every value the taxonomy can draw. This key works with `output: prompt` too: the prompt
+  becomes a one-turn conversation behind the system prompt.
 - **`conversation_turns`.** Each value must be a positive integer. The kernel sees it as
   `request.conversation_turns`. Every conversation is checked: one with another number of
-  user turns is rejected as an invalid attempt and retried, so no conversation is counted
-  under an arm value it does not have. Needs `output: conversation`, and must not name the
-  same arm as `system_prompts`.
+  user turns is rejected as an invalid attempt, so no conversation is counted under an arm
+  value it does not have. Like any invalid attempt, it uses up one of
+  `rewrite.validation.maximum_attempts` and follows `rewrite.validation.on_invalid`: with
+  `retry` the unit is retried while attempts remain, and with `fail` the unit is exhausted
+  at the first such conversation. An exhausted unit counts in `acceptance.csv` and is
+  completed as unclassified in the join (see [Rewrite acceptance](#rewrite-acceptance)).
+  Needs `output: conversation`, and must not name the same arm as `system_prompts`.
 
 Each key that is set enters the kernel fingerprint. The estimand stays what it was: the
 failure rate over the distribution the declared procedure induces. With these keys that
