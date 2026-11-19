@@ -861,6 +861,10 @@ def _transported_judge_interval(
             f"Clopper-Pearson lower bound at alpha {published.sensitivity_alpha:.6g} from "
             f"{published.judge_flagged_unsafe} of {published.human_unsafe} human-unsafe items "
             f"flagged on the published set {published.name!r} ({published.source}).",
+            "The Clopper-Pearson bound treats the published set's human-unsafe items as "
+            "independent draws that share one sensitivity. Several completions of the same "
+            "behaviour are not independent, so counts that include them overstate the bound's "
+            "precision.",
             f"Transport assumption: the same judge ({published.judge}) and rubric "
             f"({published.rubric}), applied to this run's outputs, is at least as sensitive "
             "on every prompt as on the published set, whose outputs came from other "

@@ -1046,6 +1046,8 @@ def test_transported_judge_calibration_bounds_true_risk_by_the_published_sensiti
         )
         assert interval.raw_upper == row.upper
         assert any("Transport assumption" in text for text in interval.assumptions)
+        # The Clopper-Pearson bound's own assumption, on which the coverage rests.
+        assert any("independent draws" in text for text in interval.assumptions)
         assert any("Experimental" in text for text in interval.warnings)
     assert corrected_rows > 1
 
@@ -1060,6 +1062,54 @@ def test_transported_judge_calibration_bounds_true_risk_by_the_published_sensiti
     assert "Published validation set behind the transported sensitivity" in markdown
     assert "Judge flagged 100 of 120 human-unsafe items" in markdown
     assert "judge-model-v1" in markdown
+    # The alpha is written like every other number in the report, at its decimal places.
+    places = report.presentation.decimal_places
+    assert f"(one-sided Clopper-Pearson, alpha {0.05:.{places}f})" in markdown
+
+
+def test_a_transported_plan_without_a_corrected_risk_row_still_names_its_published_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The report says why no row is corrected, rather than leave only the diagnostic."""
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_path.write_text(
+        plan_text.replace("design:\n", _TRANSPORTED_CALIBRATION + "design:\n", 1),
+        encoding="utf-8",
+    )
+    plan = load_plan(plan_path)
+    # Only a measure the correction does not apply to, and so no claim on the mean.
+    plan.outputs.risk_measures = [
+        item for item in plan.outputs.risk_measures if item.type == "entropic"
+    ]
+    plan.claims = []
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan, logs="ignored")
+
+    assert report.group_risks
+    assert not any(
+        item.interval_id.startswith("judge_corrected")
+        for row in report.group_risks
+        for item in row.intervals
+    )
+    assert "JUDGE_CALIBRATION_TRANSPORTED" in {
+        item.code for item in report.integrity.diagnostics
+    }
+    markdown = (report.write(tmp_path / "judge-report") / "report-full.md").read_text(
+        encoding="utf-8"
+    )
+    assert "## Judge misclassification sensitivity" in markdown
+    assert "no group-risk row in this report carries a corrected interval" in markdown
+    assert "Published validation set behind the transported sensitivity" in markdown
+    assert "Judge flagged 100 of 120 human-unsafe items" in markdown
 
 
 def test_transported_judge_calibration_never_moves_a_claim(
@@ -1106,13 +1156,15 @@ def _comparison_judge_plan(
     calibrated: bool,
     assumed: bool = False,
     cohort_boxes: bool = False,
+    transported: bool = False,
 ) -> Path:
     """Two-cohort comparison plan, with or without the judge calibration block.
 
     Labels are keyed by observation_id, so they must be generated from a run over the
     same cohorts and logs. The uncalibrated variant produces that ledger. ``assumed``
     declares two scenarios instead of a validated calibration, and ``cohort_boxes`` gives
-    the candidate cohort a box of its own in the ``declared`` scenario.
+    the candidate cohort a box of its own in the ``declared`` scenario. ``transported``
+    declares a transported calibration instead.
     """
     plan_path = _write_inputs(tmp_path)
     text = plan_path.read_text(encoding="utf-8")
@@ -1125,7 +1177,9 @@ def _comparison_judge_plan(
         "groups:\n",
         1,
     )
-    if assumed:
+    if transported:
+        text = text.replace("design:\n", _TRANSPORTED_CALIBRATION + "design:\n", 1)
+    elif assumed:
         text = text.replace(
             "design:\n",
             "  judge_calibration:\n"
@@ -1458,6 +1512,34 @@ def _patch_two_cohort_frames(monkeypatch: pytest.MonkeyPatch) -> None:
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
+
+
+def test_a_transported_calibration_names_the_comparisons_it_leaves_uncorrected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Comparisons stay on the judge-reported scale under transport, and the report says so."""
+    plan_path = _comparison_judge_plan(
+        tmp_path, method="weighted_kl_chernoff", calibrated=False, transported=True
+    )
+    _patch_two_cohort_frames(monkeypatch)
+
+    report = analyze(plan=load_plan(plan_path), logs="ignored")
+
+    assert report.comparisons
+    for row in report.comparisons:
+        assert not any(item.interval_id.startswith("judge_corrected") for item in row.intervals)
+    # The risk rows are still corrected.
+    mean = next(item for item in report.group_risks if item.measure_id == "mean")
+    assert any(item.interval_id == "judge_corrected_transported" for item in mean.intervals)
+    (notice,) = [
+        item
+        for item in report.integrity.diagnostics
+        if item.code == "JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON"
+    ]
+    assert notice.severity == "WARNING"
+    assert "transported calibration" in notice.message
+    names = sorted({row.result_id or row.comparison_id for row in report.comparisons})
+    assert notice.details == {"result_ids": names, "count": len(names)}
 
 
 def test_decision_presentation_is_opt_in(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

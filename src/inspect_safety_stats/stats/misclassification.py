@@ -155,7 +155,9 @@ def transported_sensitivity_lower(
     ``human_unsafe`` items of the set are truly unsafe by human adjudication, and the judge
     flagged ``judge_flagged_unsafe`` of them. The bound is the Clopper-Pearson lower endpoint
     at ``alpha``; it describes the published set, and holds for another run's outputs only
-    under the transport assumption the caller declares.
+    under the transport assumption the caller declares. It treats the ``human_unsafe`` items
+    as independent draws that share one sensitivity, so it is too narrow for counts that
+    include several completions of the same behaviour.
     """
 
     return binomial_lower_bound(judge_flagged_unsafe, human_unsafe, alpha=alpha)

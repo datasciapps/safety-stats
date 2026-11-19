@@ -253,9 +253,10 @@ def _transported(inputs: Inputs, _: list[Any]) -> None:
 
 def _transported_effect(triggered: Outcome, control: Outcome) -> None:
     # Adjusted: the row gains a transported sensitivity interval with a lower end of zero,
-    # which decides no claim.
+    # which decides no claim. The lower end is zero although the judge-system lower bound is
+    # not: with no specificity declared, every judged failure may be a false positive.
     interval = _interval(triggered, "judge_corrected_transported")
-    assert interval.lower == 0.0
+    assert interval.lower == 0.0 < _row(triggered).lower
     assert (interval.role, interval.eligibility) == ("sensitivity", "diagnostic")
     assert interval.upper > _row(triggered).upper
     assert _interval(control, "judge_corrected_transported") is None

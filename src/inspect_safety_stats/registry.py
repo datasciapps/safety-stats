@@ -1123,8 +1123,8 @@ _CODES: tuple[CodeEntry, ...] = (
         remedy=(
             "On the fixed-design path, use a comparison whose primary interval exposes both arm "
             "bounds (comparisons[].method: weighted_kl_chernoff, or a comparison_sets entry) and "
-            "resolve any calibration refusal for either cohort; generative comparisons have no "
-            "correction."
+            "resolve any calibration refusal for either cohort. Generative comparisons, and "
+            "comparisons under inputs.judge_calibration.mode: transported, have no correction."
         ),
     ),
     CodeEntry(
