@@ -446,6 +446,45 @@ def test_normalized_text_removes_punctuation_and_invisible_characters(
     assert normalized_text(first) == normalized_text(second)
 
 
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        pytest.param("\u26a0\ufe0f Warning", "\u26a0 Warning", id="emoji-selector"),
+        pytest.param("\u26a0\ufe0f Warning", "Warning", id="emoji-and-symbol"),
+        pytest.param("1\ufe0f\u20e3 step", "1 step", id="keycap"),
+        pytest.param("\u845b\U000e0100", "\u845b", id="ideographic-selector"),
+        pytest.param("e\ufe0f\u0301", "\u00e9", id="selector-before-an-accent"),
+        pytest.param("grapheme\u034fjoiner", "graphemejoiner", id="grapheme-joiner"),
+        pytest.param("\u1820\u180b\u1820\u180f", "\u1820\u1820", id="mongolian-selectors"),
+        pytest.param("khmer\u17b4\u17b5", "khmer", id="khmer-inherent-vowels"),
+        pytest.param("hangul\u3164filler", "hangulfiller", id="hangul-filler"),
+        pytest.param("hangul\uffa0filler", "hangulfiller", id="halfwidth-hangul-filler"),
+        pytest.param("\u115f\u1160\ud55c", "\ud55c", id="hangul-jamo-fillers"),
+        pytest.param(
+            "\u0645\u0640\u0640\u0631\u062d\u0628\u0627",
+            "\u0645\u0631\u062d\u0628\u0627",
+            id="tatweel",
+        ),
+        pytest.param("\u0628\ufe71", "\u0628\u064b", id="tatweel-from-a-presentation-form"),
+    ],
+)
+def test_normalized_text_removes_default_ignorable_code_points(first: str, second: str) -> None:
+    """Characters that render as nothing, or only stretch a word, do not tell rewrites apart."""
+
+    from inspect_safety_stats.generative.execution import normalized_text
+
+    assert normalized_text(first) == normalized_text(second)
+
+
+def test_normalized_text_keeps_what_the_ignored_characters_sit_beside() -> None:
+    from inspect_safety_stats.generative.execution import normalized_text
+
+    assert normalized_text("1\ufe0f\u20e3 step") != normalized_text("2\ufe0f\u20e3 step")
+    assert normalized_text("\u0628\ufe71") != normalized_text("\u0628"), "the vowel sign stays"
+    assert normalized_text("\u845b\U000e0100") != normalized_text("\u845c")
+    assert normalized_text("e\ufe0f\u0301") != normalized_text("e")
+
+
 def test_normalized_text_keeps_wording_and_order() -> None:
     from inspect_safety_stats.generative.execution import normalized_text
 

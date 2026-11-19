@@ -328,27 +328,59 @@ def _dedup_key(plan: GenerativePlan, node_id: str, semantic_seed_id: str) -> str
     return semantic_seed_id
 
 
+# Unicode's Default_Ignorable_Code_Point property (DerivedCoreProperties.txt, Unicode 15.1),
+# which unicodedata does not expose: code points a renderer shows as nothing unless it
+# supports them. Most are format characters, which normalized_text drops anyway. Variation
+# selectors, the combining grapheme joiner and the Mongolian free variation selectors are
+# marks, and the Hangul fillers letters, so they would otherwise be kept.
+_DEFAULT_IGNORABLE = (
+    (0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x115F, 0x1160),
+    (0x17B4, 0x17B5), (0x180B, 0x180F), (0x200B, 0x200F), (0x202A, 0x202E),
+    (0x2060, 0x206F), (0x3164, 0x3164), (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF),
+    (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3), (0x1D173, 0x1D17A),
+    (0xE0000, 0xE0FFF),
+)
+# The ARABIC TATWEEL only stretches a word to justify a line, so it is dropped as well.
+_INVISIBLE = {
+    code: None
+    for first, last in (*_DEFAULT_IGNORABLE, (0x0640, 0x0640))
+    for code in range(first, last + 1)
+}
+
+# Letters, combining marks other than enclosing ones, and digits.
+_KEPT_CATEGORIES = frozenset({"Lu", "Ll", "Lt", "Lm", "Lo", "Mn", "Mc", "Nd", "Nl", "No"})
+
+
 def normalized_text(prompt: str) -> str:
     """The form two rewrites are compared in under ``near_duplicate: normalized_text``.
 
-    NFKC folds compatibility forms (full-width letters, ligatures) and case folding removes
-    case; NFKC runs again because case folding can leave a sequence unnormalized. Then only
-    letters, combining marks and digits are kept. Punctuation, symbols, whitespace, and
-    invisible format characters such as a zero-width space or a soft hyphen are removed, not
-    replaced by a space, so rewrites that differ only in those respects compare equal:
-    "don't" and "dont", "step-by-step" and "step by step". The letters and their order
-    still distinguish rewrites, and so do wording and language; where the words break does
-    not ("a part" and "apart" compare equal).
+    Default-ignorable code points are removed first: format characters such as a zero-width
+    space or a soft hyphen, variation selectors such as the one that asks for an emoji
+    presentation, the combining grapheme joiner and the Hangul fillers. So is the Arabic
+    tatweel, which only stretches a word. NFKC then folds compatibility forms (full-width
+    letters, ligatures) and case folding removes case; NFKC runs again because case folding
+    can leave a sequence unnormalized. Then only letters, combining marks other than
+    enclosing ones, and digits are kept. Punctuation, symbols, whitespace and enclosing marks
+    such as a keycap are removed, not replaced by a space, so rewrites that differ only in
+    those respects compare equal: "don't" and "dont", "step-by-step" and "step by step",
+    "⚠️ Warning" and "Warning". The letters and their order still distinguish rewrites, and
+    so do accents, wording and language; where the words break does not ("a part" and
+    "apart" compare equal).
 
     This is what the plan value ``normalized_text`` means, and the kernel fingerprint
     records only that value: another comparison needs another value, not a change here.
     """
 
+    # Removed before normalizing, so that a selector between a letter and its accent does
+    # not keep them from composing, and again after, because NFKC decomposes some Arabic
+    # presentation forms into a tatweel and a vowel sign.
     folded = unicodedata.normalize(
-        "NFKC", unicodedata.normalize("NFKC", prompt).casefold()
+        "NFKC", unicodedata.normalize("NFKC", prompt.translate(_INVISIBLE)).casefold()
     )
     return "".join(
-        character for character in folded if unicodedata.category(character)[0] in "LMN"
+        character
+        for character in folded.translate(_INVISIBLE)
+        if unicodedata.category(character) in _KEPT_CATEGORIES
     )
 
 

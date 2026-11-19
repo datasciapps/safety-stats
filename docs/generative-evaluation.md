@@ -502,10 +502,13 @@ differs from the plan's is reported as a warning.
 **`deduplication.near_duplicate: normalized_text`** also counts a rewrite as a duplicate when
 its text matches an accepted one within the deduplication scope after Unicode NFKC
 normalization and case folding, compared on its letters, combining marks and digits alone.
-Punctuation, symbols, whitespace and invisible format characters such as a zero-width space
-are removed, not replaced, so "don't" matches "dont" and "step-by-step" matches "step by
-step". Where the words break does not count either: "a part" matches "apart". The letters,
-their order and their accents still distinguish two rewrites. `on_duplicate` handles a near
+Punctuation, symbols, whitespace and enclosing marks such as a keycap are removed, and so are
+the characters that render as nothing (Unicode's default-ignorable code points: a zero-width
+space, a soft hyphen, the variation selector that asks for an emoji, a Hangul filler) and
+the Arabic tatweel, which only stretches a word. They are removed, not replaced, so "don't"
+matches "dont", "step-by-step" matches "step by step" and "⚠️ Warning" matches "Warning".
+Where the words break does not count either: "a part" matches "apart". The letters, their
+order and their accents still distinguish two rewrites. `on_duplicate` handles a near
 duplicate like an exact repeat. The setting needs a deduplication scope: with `scope: none`
 nothing is compared, so the plan is refused. Nothing compares embeddings, which would need a
 model the plan does not declare.

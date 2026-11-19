@@ -357,12 +357,12 @@ described in their pull requests.
   the plan names, supplied with `--validator` (or `validator=`), on every rewrite the kernel
   accepts. Its rejections enter the retry path. `rewrite.deduplication.near_duplicate:
   normalized_text` also treats rewrites that differ only in case, compatibility forms,
-  punctuation, symbols, spacing or invisible format characters as duplicates, comparing their
-  letters, marks and digits alone; a plan that also sets `deduplication.scope: none`, which
-  compares nothing, is refused. With either setting, materialization writes
-  `attempts.csv`, one row per kernel call without prompt text. Analysis then writes
-  `fidelity.csv` and a `fidelity` section of `report.json`, which give for each arm why
-  attempts failed. It also adds the diagnostics `GENERATIVE_FIDELITY_UNEVEN`,
+  punctuation, symbols, spacing or characters that render as nothing, such as variation
+  selectors, as duplicates, comparing their letters, marks and digits alone; a plan that also
+  sets `deduplication.scope: none`, which compares nothing, is refused. With either setting,
+  materialization writes `attempts.csv`, one row per kernel call without prompt text.
+  Analysis then writes `fidelity.csv` and a `fidelity` section of `report.json`, which give
+  for each arm why attempts failed. It also adds the diagnostics `GENERATIVE_FIDELITY_UNEVEN`,
   `GENERATIVE_VALIDATOR_MISMATCH` and `GENERATIVE_RETRY_DEPENDENCE`. Plans that use neither
   setting keep their fingerprints and outputs. See
   [Validation and near-duplicates](docs/generative-evaluation.md#validation-and-near-duplicates-experimental).

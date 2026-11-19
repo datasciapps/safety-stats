@@ -251,8 +251,9 @@ class RewriteDeduplicationSpec(StrictModel):
 
     By default only an exact repeat of the text does. ``near_duplicate: normalized_text``
     (experimental) also counts two rewrites whose letters, combining marks and digits agree
-    after Unicode NFKC normalization and case folding: punctuation, symbols, whitespace and
-    invisible format characters are removed. It makes materialization record every attempt
+    after Unicode NFKC normalization and case folding: punctuation, symbols, whitespace,
+    enclosing marks, default-ignorable code points such as variation selectors, and the
+    Arabic tatweel are removed. It makes materialization record every attempt
     in ``attempts.csv``. A near duplicate is handled by ``on_duplicate`` like an exact one.
     ``scope: none`` compares nothing, so it is refused together with ``near_duplicate``.
     """
