@@ -51,6 +51,9 @@ def noisy_valid_verdict_range(result: NoisyValidCertification) -> VerdictRange:
 
     if not result.identified:
         return VerdictRange()
+    # For an identified judge both boundaries lie in [0, 1] algebraically, but identification
+    # reads the false-positive rate through specificity, 1 - FPR, so rounding can leave a
+    # boundary a few ulps outside. It is then clipped to the end of [0, 1], inclusive.
     pass_value: float | None = None
     pass_strict = False
     pass_slope = result.sensitivity_lower - result.false_positive_lower

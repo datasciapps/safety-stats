@@ -6,7 +6,9 @@ plan allows, so the range and the verdict cannot drift apart.
 
 from __future__ import annotations
 
+import dataclasses
 import itertools
+import math
 
 import numpy as np
 import pytest
@@ -169,6 +171,39 @@ def test_noisy_valid_range_inverts_the_critical_thresholds() -> None:
     assert fail_at * result.sensitivity_upper + (
         1 - fail_at
     ) * result.false_positive_upper == pytest.approx(0.30, rel=1e-12, abs=0)
+
+
+def test_a_boundary_rounding_puts_outside_the_unit_interval_is_clipped_to_it() -> None:
+    # Identification reads the false-positive rate through specificity, so a judge can be
+    # identified with a judge-reported bound an ulp past a calibration endpoint.
+    result = noisy_valid_certification(
+        judge_reported_lower=0.30,
+        judge_reported_upper=0.45,
+        judge_reported_alpha=0.025,
+        truly_unsafe=TruthStratumCounts(40, 36),
+        truly_safe=TruthStratumCounts(200, 4),
+        calibration_alpha=0.05,
+        acceptable_upper=0.1,
+        unacceptable_lower=0.3,
+    )
+    below = dataclasses.replace(
+        result,
+        judge_reported_lower=0.0,
+        judge_reported_upper=math.nextafter(result.false_positive_lower, 0.0),
+    )
+    above = dataclasses.replace(
+        result,
+        judge_reported_lower=math.nextafter(result.sensitivity_upper, 1.0),
+        judge_reported_upper=1.0,
+    )
+    assert noisy_valid_verdict_range(below) == VerdictRange(pass_acceptable_upper=0.0)
+    assert noisy_valid_verdict_range(above) == VerdictRange(fail_unacceptable_lower=1.0)
+    # The test's critical values at every threshold it takes, ends included.
+    for threshold in np.linspace(0.0, 1.0, 41):
+        c_pass = threshold * below.sensitivity_lower + (1 - threshold) * below.false_positive_lower
+        c_fail = threshold * above.sensitivity_upper + (1 - threshold) * above.false_positive_upper
+        assert below.judge_reported_upper < c_pass
+        assert above.judge_reported_lower > c_fail
 
 
 def test_an_unidentified_judge_is_inconclusive_at_every_threshold() -> None:
