@@ -87,7 +87,7 @@ estimated by Horvitz--Thompson, reported as `horvitz_thompson_<method>` interval
 
 ### What a sampled design refuses
 
-Four checks reject configurations that a sample cannot support:
+Four checks reject configurations that a sample cannot support, and two warn:
 
 - `PLAN_SAMPLED_MEASURE_UNSUPPORTED` -- only `weighted_mean` is available. Maximum, CVaR,
   top-k, entropic, and the threshold measures are nonlinear functionals of the whole frame's
@@ -98,6 +98,9 @@ Four checks reject configurations that a sample cannot support:
   item that was never drawn.
 - `PLAN_SAMPLED_PROMPT_BOUNDS` (warning) -- simultaneous prompt bounds cover the sampled
   items, not the frame.
+- `PLAN_SAMPLED_SENSITIVITY_PROFILES` (warning) -- the frame item is the independent block
+  whatever `independence` declares, so a declared sensitivity profile gets no interval and
+  claims get no verdict under it. A claim's `profile_verdicts` hold only its `frame_item` row.
 
 ### Nodes with nothing drawn
 

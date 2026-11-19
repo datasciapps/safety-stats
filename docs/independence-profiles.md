@@ -86,6 +86,11 @@ any of them has a sensitivity profile, and the HTML claim card lists each profil
 and bounds. Both label each row `primary` or `sensitivity`, under a note that the claim's status
 is the primary profile's verdict and that a sensitivity verdict cannot replace it.
 
+Under a sampled design the frame item is the independent block whatever `independence`
+declares, so a claim has only its `frame_item` row, and a declared sensitivity profile gives a
+`PLAN_SAMPLED_SENSITIVITY_PROFILES` warning (see
+[Design-based sampling](design-based-sampling.md#what-a-sampled-design-refuses)).
+
 Claims decided on a judge-corrected interval or the noisy-valid test have no per-profile
 counterpart and no rows; when their evidence has sensitivity profiles, a reason says so. A claim
 whose evidence has no primary interval, for example because the primary profile's calibration

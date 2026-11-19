@@ -566,7 +566,10 @@ described in their pull requests.
   shown, never selected. An exploratory claim's rows are all `INCONCLUSIVE`, like the claim,
   whatever its `descriptive_status`. Claims decided on a judge correction or the noisy-valid
   test have no per-profile rows, and say so when their evidence has sensitivity profiles.
-  Reports whose plans declare no sensitivity profile gain only the primary row. See
+  Reports whose plans declare no sensitivity profile gain only the primary row. A sampled
+  design takes the frame item as the independent block, so its claims have only the
+  `frame_item` row, and a sensitivity profile declared for it gives a new
+  `PLAN_SAMPLED_SENSITIVITY_PROFILES` warning from `validate` and `analyze`. See
   [Verdicts by profile](docs/independence-profiles.md#verdicts-by-profile).
 
 ### Changed
