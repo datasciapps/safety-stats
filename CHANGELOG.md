@@ -61,6 +61,11 @@ described in their pull requests.
   under two independence profiles, shared a row, and the second replaced the first. Each now
   has a row, and rows that would read alike name their comparisons.
 
+- **report.md and index.md link the diagnostics reference (changes `report.md` and
+  `index.md`).** Both pointed to `docs/diagnostics.md` for each code's remedy, a path in the
+  repository that leads nowhere beside a report. They now link the page on GitHub, as
+  `index.json` links the agent guide.
+
 - **report.md's prompt-level sensitivity is the prompt profile's (changes `report.md`).** The
   column showed the first sensitivity interval of the primary's method, whatever its profile:
   with a category profile listed before the prompt profile it showed the category interval,

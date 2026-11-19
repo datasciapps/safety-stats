@@ -25,6 +25,9 @@ INDEX_MD = "index.md"
 INDEX_VERSION = "1"
 # Absolute, as the report is read outside the repository; source docs/agent-guide.md.
 AGENT_GUIDE_URL = "https://github.com/aduncan001/safety_stats/blob/main/docs/agent-guide.md"
+# The remedy for each diagnostic code, linked from index.md and report.md; absolute for the
+# same reason. Its source is docs/diagnostics.md.
+DIAGNOSTICS_URL = "https://github.com/aduncan001/safety_stats/blob/main/docs/diagnostics.md"
 SUMMARY_PAGE = "report.md"
 # The section of index.md that lists the errors and warnings; analyze points to it by name.
 WARNINGS_HEADING = "Errors and warnings by code"
@@ -216,7 +219,8 @@ def index_markdown(document: dict[str, Any]) -> str:
             [
                 "",
                 "What each code assumes and what follows is in `index.json` and in "
-                "`report.md`; `docs/diagnostics.md` gives the remedy.",
+                f"`report.md`; [the diagnostics reference]({DIAGNOSTICS_URL}) gives the "
+                "remedy.",
             ]
         )
     else:

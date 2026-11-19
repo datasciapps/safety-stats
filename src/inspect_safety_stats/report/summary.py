@@ -30,6 +30,7 @@ from typing import Any
 
 from inspect_safety_stats.config.models import DEFAULT_PRECISION_TARGET
 from inspect_safety_stats.registry import CODES
+from inspect_safety_stats.report.index import DIAGNOSTICS_URL
 from inspect_safety_stats.report.rounding import bound_text, decimals, exact, threshold_text
 from inspect_safety_stats.report.writer import _claim_status, _escape
 from inspect_safety_stats.schema.reports import (
@@ -905,7 +906,8 @@ def _warnings_section(diagnostics: list[Diagnostic]) -> list[str]:
         [
             "",
             "Each code's message for this analysis is under Data integrity in "
-            "`report-full.md`; `docs/diagnostics.md` gives the remedy for each.",
+            f"`report-full.md`; [the diagnostics reference]({DIAGNOSTICS_URL}) gives the "
+            "remedy for each.",
         ]
     )
     return lines
