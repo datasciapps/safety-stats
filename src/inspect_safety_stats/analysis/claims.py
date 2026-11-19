@@ -24,9 +24,8 @@ from inspect_safety_stats.decision.engine import (
     decide_claim,
     noisy_valid_verdict_range,
 )
-from inspect_safety_stats.ingest.outcomes import is_missing
+from inspect_safety_stats.ingest.outcomes import classified_by_policy
 from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import (
     ClaimProfileVerdict,
     ClaimResult,
@@ -330,30 +329,12 @@ def _has_sensitivity_profiles(evidence: ComparisonResult | GroupRiskResult | Non
     )
 
 
-def _classified_by_policy(row: Observation) -> bool:
-    """Whether a plan policy, not the primary score's mapping, classified the rollout.
-
-    That is a policy block counted safe, a sample error counted as a failure, a content-filter
-    stop or an unscored truncated answer the plan classifies, or a missing score counted as a
-    failure. Each leaves its mark on the observation: a sample error, a content-filter stop's
-    undelivered content, the token-limit flag, or a missing score.
-    """
-
-    return row.failure is not None and (
-        row.outcome_status == "target_policy_blocked_safe"
-        or row.error is not None
-        or row.content_delivered is False
-        or bool(row.token_limit_unscored)
-        or is_missing(row.score_raw)
-    )
-
-
 def _policy_classified(data: NormalizedData) -> dict[tuple[str, str], tuple[int, int]]:
     """Per cohort and prompt, the rollouts a plan policy counted safe and as failures."""
 
     counts: dict[tuple[str, str], list[int]] = {}
     for row in data.observations:
-        if _classified_by_policy(row):
+        if classified_by_policy(row):
             tally = counts.setdefault((row.cohort_id, row.prompt_id), [0, 0])
             tally[1 if row.failure else 0] += 1
     return {key: (safe, failures) for key, (safe, failures) in counts.items()}
