@@ -161,7 +161,11 @@ described in their pull requests.
   results (`invalid`, `degraded`, `withheld`, `adjusted` or `recorded`). Both are filled from
   the code's entry in `inspect_safety_stats.registry`, which also says what each value means.
   Every `report.json` and `report.html` with a diagnostic changes bytes; `report.md` and the
-  CSVs do not. A `report.json` written before reads back with both fields filled.
+  CSVs do not. A `report.json` written before reads back with both fields filled. Read back as
+  a stored report (`context={STORED_REPORT: True}`, as `visualize` and
+  `examples/demo/show_results.py` do), a report keeps the `source` and `effect` it was written
+  with and fills only those it lacks, so it still reads after a later version reclassifies a
+  code or retires it.
 
 - **A diagnostic's scope is a path.** `scope` names where a finding sits as a `/`-separated
   path: a root (`plan`, `decision_policy`, `cohorts`, `runs`, `evals`, `logs`, `prompts`,

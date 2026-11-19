@@ -2,7 +2,9 @@
 
     python examples/demo/show_results.py reports/demo
 
-It reads report.json through the public `SafetyReport` model, as any script can.
+It reads report.json through the public `SafetyReport` model, as any script can. A saved
+report is read as stored (`STORED_REPORT`), so that one written by an earlier version still
+reads after the package's registry of diagnostic codes changes.
 """
 
 import sys
@@ -10,6 +12,7 @@ import textwrap
 from pathlib import Path
 
 from inspect_safety_stats import SafetyReport
+from inspect_safety_stats.schema.reports import STORED_REPORT
 
 COHORTS = ("baseline", "candidate")
 
@@ -21,7 +24,7 @@ def _cell(risk) -> str:  # type: ignore[no-untyped-def]
 
 def show(directory: Path) -> None:
     text = (directory / "report.json").read_text(encoding="utf-8")
-    report = SafetyReport.model_validate_json(text)
+    report = SafetyReport.model_validate_json(text, context={STORED_REPORT: True})
     # The plan's one group covers all prompts; the breakdown by risk domain is a level of its
     # hierarchy, so those rates are hierarchy risks.
     rows: dict[str, dict[str, str]] = {}

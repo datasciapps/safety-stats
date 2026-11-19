@@ -41,6 +41,11 @@ class Diagnostic(ResultModel):
     can act on a diagnostic without looking its code up. A code the registry does not list is
     rejected, and so is a ``source`` or ``effect`` that differs from its entry.
 
+    A stored report read back (``STORED_REPORT``) says what its diagnostics were when it was
+    written, which a later registry may say differently: it keeps the ``source`` and
+    ``effect`` it holds, takes from the registry only those it lacks, and keeps a code the
+    registry no longer lists, with whatever ``source`` and ``effect`` the report gives it.
+
     ``scope`` is a path that says where the finding sits, as ``inspect_safety_stats.schema.scopes``
     describes: ``plan/claims/mean_safe``, ``cohorts/candidate/prompts/p1``. A scope that does
     not follow it is rejected, except when a stored report is read back (``STORED_REPORT``).
@@ -62,23 +67,26 @@ class Diagnostic(ResultModel):
 
     @model_validator(mode="after")
     def fill_source_and_effect_from_the_registry(self, info: ValidationInfo) -> Diagnostic:
+        # A stored report holds what its diagnostics were when it was written. A later
+        # registry may reclassify or retire a code, and a report written before scopes were
+        # paths has free-text scopes; reading it back must reject none of them.
+        stored = bool(info.context and info.context.get(STORED_REPORT))
         entry = CODES.get(self.code)
         if entry is None:
-            raise ValueError(
-                f"diagnostic code {self.code!r} has no entry in inspect_safety_stats.registry"
-            )
-        for name, registered in (("source", entry.source), ("effect", entry.effect)):
-            given = getattr(self, name)
-            if given is None:
-                setattr(self, name, registered)
-            elif given != registered:
+            if not stored:
                 raise ValueError(
-                    f"diagnostic {self.code} gives {name} {given!r}; the registry says "
-                    f"{registered!r}"
+                    f"diagnostic code {self.code!r} has no entry in inspect_safety_stats.registry"
                 )
-        # A report written before scopes were paths keeps its free-text scopes; reading it back
-        # (``STORED_REPORT``) must not reject them.
-        stored = bool(info.context and info.context.get(STORED_REPORT))
+        else:
+            for name, registered in (("source", entry.source), ("effect", entry.effect)):
+                given = getattr(self, name)
+                if given is None:
+                    setattr(self, name, registered)
+                elif given != registered and not stored:
+                    raise ValueError(
+                        f"diagnostic {self.code} gives {name} {given!r}; the registry says "
+                        f"{registered!r}"
+                    )
         if self.scope is not None and not stored:
             scope_segments(self.scope)
         return self

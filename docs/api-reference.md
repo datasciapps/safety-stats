@@ -76,6 +76,14 @@ record of the item, as for a plan setting or a run. `inspect_safety_stats.schema
 lists every scope that has one. The report computes `item` from the scope, also when a saved
 `report.json` is read back, so it always points into the report that holds the diagnostic.
 
+Read a saved `report.json` back with
+`SafetyReport.model_validate_json(text, context={STORED_REPORT: True})`, with `STORED_REPORT`
+from `inspect_safety_stats.schema.reports`, as `visualize` does. The report then says what its
+diagnostics were when it was written: each keeps the `source` and `effect` it was written with,
+takes them from the registry only where the report has none, and a code a later version no
+longer lists still reads. Without the context, a code the registry does not list, or a `source`
+or `effect` that differs from its entry, is rejected.
+
 ### `load_plan`
 
 ```python

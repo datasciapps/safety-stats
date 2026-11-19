@@ -254,7 +254,10 @@ WARNING TAIL_MEASURES_UNINFORMATIVE recorded
 
 `report` is a `SafetyReport`. `SafetyReport.model_validate_json` reads a `report.json` written
 earlier, as [show_results.py](examples/demo/show_results.py) does, and the report it returns has
-the same `summary`.
+the same `summary`. Pass `context={STORED_REPORT: True}` (from
+`inspect_safety_stats.schema.reports`), as that script does, so that a report written by an
+earlier version keeps each diagnostic's `source` and `effect` as written, and still reads when a
+later version reclassifies or retires a diagnostic code.
 
 ### Outputs
 

@@ -8,7 +8,7 @@ import pytest
 from pydantic import ValidationError
 
 from inspect_safety_stats.registry import CODES
-from inspect_safety_stats.schema.reports import Diagnostic, IntegritySummary
+from inspect_safety_stats.schema.reports import STORED_REPORT, Diagnostic, IntegritySummary
 
 
 @pytest.mark.parametrize("code", sorted(CODES))
@@ -47,3 +47,46 @@ def test_a_source_or_effect_that_differs_from_the_registry_is_rejected(
         Diagnostic.model_validate(
             {"code": "COHORT_EMPTY", "severity": "ERROR", "message": "empty", field: value}
         )
+
+
+def _stored(diagnostic: dict[str, object]) -> Diagnostic:
+    return Diagnostic.model_validate(diagnostic, context={STORED_REPORT: True})
+
+
+def test_a_stored_report_keeps_a_source_and_effect_the_registry_now_gives_otherwise() -> None:
+    # Written when the registry said otherwise: reading it back must neither reject it nor
+    # rewrite what it says.
+    entry = CODES["CONFIG_UNOBSERVED"]
+    assert (entry.source, entry.effect) == ("logs", "degraded")
+    diagnostic = _stored(
+        {
+            "code": "CONFIG_UNOBSERVED",
+            "severity": "WARNING",
+            "source": "manifest",
+            "effect": "recorded",
+            "message": "no configuration",
+        }
+    )
+    assert (diagnostic.source, diagnostic.effect) == ("manifest", "recorded")
+
+
+def test_a_stored_report_takes_only_the_fields_it_lacks_from_the_registry() -> None:
+    diagnostic = _stored(
+        {"code": "COHORT_EMPTY", "severity": "ERROR", "effect": "recorded", "message": "empty"}
+    )
+    assert (diagnostic.source, diagnostic.effect) == ("logs", "recorded")
+
+
+def test_a_stored_report_keeps_a_code_the_registry_no_longer_lists() -> None:
+    written = {
+        "code": "RETIRED_CODE",
+        "severity": "WARNING",
+        "source": "logs",
+        "effect": "degraded",
+        "message": "retired",
+    }
+    assert (_stored(written).source, _stored(written).effect) == ("logs", "degraded")
+    bare = _stored({"code": "RETIRED_CODE", "severity": "INFO", "message": "retired"})
+    assert (bare.code, bare.source, bare.effect) == ("RETIRED_CODE", None, None)
+    with pytest.raises(ValidationError, match="RETIRED_CODE"):
+        Diagnostic.model_validate(written)
