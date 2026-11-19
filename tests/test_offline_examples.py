@@ -22,6 +22,7 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 from typer.testing import CliRunner
 
 from inspect_safety_stats.cli import app
@@ -87,17 +88,74 @@ def test_the_demo_script_writes_a_valid_report(demo_run: tuple[Path, str]) -> No
     assert list((workspace / "logs" / "demo").glob("*.eval")), "the demo wrote no Inspect log"
     report = _report(workspace / "reports" / "demo")
     assert _integrity_status(report) == "valid"
-    # The demo plan declares no claims, so there is nothing to decide.
+    # The demo plan, written by init, declares no claims, so there is nothing to decide.
     assert report["decision"] == "INCONCLUSIVE"
 
 
 def test_the_demo_prints_the_numbers_its_readme_quotes(demo_run: tuple[Path, str]) -> None:
     _, stdout = demo_run
     # examples/demo/README.md, "What to look at".
-    assert "  bio      0.050 [0.000, 0.312]" in stdout
-    assert "  cyber    0.200 [0.000, 0.462]    0.000 [0.000, 0.256]" in stdout
-    assert "Candidate minus baseline, all prompts: -0.196 [-0.372, -0.019]" in stdout
+    assert "  bio      0.050 [0.004, 0.182]    0.000 [0.000, 0.074]" in stdout
+    assert "  cyber    0.200 [0.077, 0.382]    0.000 [0.000, 0.074]" in stdout
+    assert "Candidate minus baseline, all prompts: -0.196 [-0.294, -0.088]" in stdout
     assert "The whole interval is below zero: the candidate fails less often." in stdout
+    assert "WARNING TAIL_MEASURES_UNINFORMATIVE:" in stdout
+    assert "bounded only at 0.291" in stdout
+    assert "About 134 rollouts per prompt would be needed." in stdout
+
+
+def test_the_demo_report_keeps_the_comparison_and_warns_about_an_assumption(
+    demo_run: tuple[Path, str],
+) -> None:
+    """The release example shows both configurations compared and at least one warning."""
+    workspace, _ = demo_run
+    report = _report(workspace / "reports" / "demo")
+    comparisons = report["comparisons"]
+    assert isinstance(comparisons, list)
+    assert {
+        (item["comparison_set_id"], item["estimand"]) for item in comparisons if not item["path"]
+    } == {("models", "risk_difference"), ("models", "risk_ratio")}
+    integrity = report["integrity"]
+    assert isinstance(integrity, dict)
+    warnings = [item for item in integrity["diagnostics"] if item["severity"] == "WARNING"]
+    assert [item["code"] for item in warnings] == ["TAIL_MEASURES_UNINFORMATIVE"]
+
+
+def test_the_demo_plan_is_the_one_init_writes_plus_two_risk_measures(
+    demo_run: tuple[Path, str], tmp_path: Path
+) -> None:
+    """examples/demo/plan.yaml and design.csv come from init; only the tail measures are added."""
+    workspace, _ = demo_run
+    result = CliRunner().invoke(
+        app,
+        [
+            "init",
+            "--logs",
+            str(workspace / "logs" / "demo"),
+            "--failure-values",
+            "FAIL",
+            "--group-by",
+            "risk_domain",
+            "--baseline",
+            "mockllm/baseline",
+            "--output",
+            str(tmp_path),
+        ],
+    )
+    assert result.exit_code == 0, plain(result.output)
+    assert (tmp_path / "design.csv").read_bytes() == (DEMO / "design.csv").read_bytes()
+    written = yaml.safe_load((tmp_path / "safety-plan.yaml").read_text(encoding="utf-8"))
+    committed = yaml.safe_load((DEMO / "plan.yaml").read_text(encoding="utf-8"))
+    # The analysis id carries the time init ran.
+    for plan in (written, committed):
+        plan["analysis"].pop("id")
+    added = committed["outputs"]["risk_measures"][1:]
+    assert added == [
+        {"id": "cvar_90", "type": "cvar", "beta": 0.9},
+        {"id": "worst", "type": "maximum"},
+    ]
+    del committed["outputs"]["risk_measures"][1:]
+    assert committed == written
 
 
 def test_the_demo_steps_one_at_a_time_agree_with_the_script(
