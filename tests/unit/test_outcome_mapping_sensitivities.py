@@ -395,3 +395,167 @@ def test_shown_decisions_mark_a_sensitivity_decision_as_descriptive(tmp_path: Pa
     assert [line.split(" | ")[1] for line in claim_rows] == ["primary", "partial_safe"]
     assert claim_rows[0].endswith(" | INCONCLUSIVE |")
     assert claim_rows[1].endswith(" | INCONCLUSIVE (descriptive) |")
+
+
+def _claim(rows: list[MappingSensitivityResult]) -> MappingSensitivityResult:
+    return next(row for row in rows if row.kind == "claim")
+
+
+def _confirmatory(plan: Path, mapping: dict[str, Any] | None = None) -> None:
+    """Make the analysis confirmatory, so that claims decide, with the run started on 1 June.
+
+    Under these thresholds the primary mapping's upper bound (0.86) leaves the claim open and
+    the lenient mapping's (0.79) passes it.
+    """
+
+    document = yaml.safe_load(plan.read_text(encoding="utf-8"))
+    document["analysis"].update(
+        {"intent": "confirmatory", "plan_frozen_at": "2024-01-01T00:00:00Z"}
+    )
+    document["claims"][0].update({"acceptable_upper": 0.82, "unacceptable_lower": 0.95})
+    if mapping is not None:
+        document["inputs"]["score"]["mapping"] = mapping
+    plan.write_text(yaml.safe_dump(document), encoding="utf-8")
+    run = {"run_key": "r", "model": "m", "status": "success", "started_at": "2024-06-01T00:00:00Z"}
+    (plan.parent / "runs.jsonl").write_text(json.dumps(run) + "\n", encoding="utf-8")
+
+
+def test_an_alternative_decides_its_claims_as_its_mapping_would_as_the_primary(
+    tmp_path: Path,
+) -> None:
+    plan, files = _analysis(tmp_path, [{"id": "partial_safe", "mapping": LENIENT}])
+    _confirmatory(plan)
+    report = analyze(plan=plan, source=files)
+    (tmp_path / "as_primary").mkdir()
+    as_primary_plan, as_primary_files = _analysis(tmp_path / "as_primary", None)
+    _confirmatory(as_primary_plan, mapping=LENIENT)
+    as_primary = analyze(plan=as_primary_plan, source=as_primary_files)
+
+    # The primary mapping leaves the claim open, and the lenient mapping passes it.
+    assert (report.claims[0].status, report.decision) == ("INCONCLUSIVE", "INCONCLUSIVE")
+    (lenient,) = report.outcome_mapping_sensitivities
+    assert (_claim(lenient.results).status, lenient.decision) == ("PASS", "PASS")
+    assert lenient.results == mapping_results(as_primary)
+    assert (lenient.integrity_status, lenient.decision) == (
+        as_primary.integrity.status,
+        as_primary.decision,
+    )
+
+
+def test_hidden_decisions_hide_every_mappings_claims_and_decision(tmp_path: Path) -> None:
+    plan, files = _analysis(tmp_path, [{"id": "partial_safe", "mapping": LENIENT}])
+    _confirmatory(plan)
+    directory = analyze(plan=plan, source=files).write(tmp_path / "report")
+    markdown = (directory / "report-full.md").read_text(encoding="utf-8")
+    start = markdown.index("## Outcome mapping sensitivity (experimental)")
+    section = markdown[start : markdown.index("\n## ", start)]
+    assert "| Mapping | Title | Failure values | Safe values | Integrity |\n" in section
+    assert "| Result | Mapping | Estimate | Lower | Upper |\n" in section
+    assert "claim low_risk" not in section
+    for word in ("PASS", "INCONCLUSIVE", "descriptive"):
+        assert word not in section
+    # Hidden, not withheld: the CSV keeps each mapping's reading of the claim.
+    table = pd.read_csv(directory / "outcome-mapping-sensitivity.csv")
+    claims = table[table["kind"] == "claim"]
+    assert list(zip(claims["mapping_id"], claims["status"], strict=True)) == [
+        ("primary", "INCONCLUSIVE"),
+        ("partial_safe", "PASS"),
+    ]
+
+
+@pytest.mark.parametrize("policy_for", ["this plan", "another plan"])
+def test_alternatives_decide_at_a_policys_thresholds_and_carry_its_errors(
+    tmp_path: Path, policy_for: str
+) -> None:
+    from inspect_safety_stats.config.decision_policy import inference_plan_hash
+    from inspect_safety_stats.config.loader import load_plan
+
+    plan, files = _analysis(tmp_path, [{"id": "partial_safe", "mapping": LENIENT}])
+    _confirmatory(plan)
+    policy = tmp_path / "policy.json"
+    policy.write_text(
+        json.dumps(
+            {
+                "inference_plan_sha256": (
+                    inference_plan_hash(load_plan(plan)) if policy_for == "this plan" else "0" * 64
+                ),
+                "versions": [
+                    {
+                        "id": "v1",
+                        # After the run started.
+                        "set_at": "2024-07-01T00:00:00Z",
+                        "thresholds": {
+                            "low_risk": {"acceptable_upper": 0.5, "unacceptable_lower": 0.95}
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    report = analyze(plan=plan, source=files, decision_policy=policy)
+
+    (lenient,) = report.outcome_mapping_sensitivities
+    # The plan's thresholds pass the lenient reading of the claim; the policy's leave it open,
+    # and a policy for another plan voids the alternative as it does the primary analysis.
+    assert _claim(lenient.results).status == "INCONCLUSIVE"
+    if policy_for == "this plan":
+        assert report.decision_policy is not None and report.decision_policy.applied
+        assert lenient.integrity_status == report.integrity.status != "invalid"
+        assert lenient.diagnostic_counts["DECISION_POLICY_AFTER_GENERATION"] == 1
+    else:
+        assert report.integrity.status == "invalid"
+        assert lenient.integrity_status == "invalid"
+        assert lenient.diagnostic_counts["DECISION_POLICY_MISMATCH"] == 1
+
+
+def test_judge_claims_and_alternative_mappings_leave_each_other_alone(tmp_path: Path) -> None:
+    def analysed(name: str, mappings: bool, judge_claims: bool) -> Any:
+        directory = tmp_path / name
+        directory.mkdir()
+        plan, files = _analysis(
+            directory, [{"id": "partial_safe", "mapping": LENIENT}] if mappings else None
+        )
+        _confirmatory(plan)
+        document = yaml.safe_load(plan.read_text(encoding="utf-8"))
+        document["inputs"]["judges"] = [
+            {"id": "second", "score": {"name": "second", "mapping": PRIMARY}}
+        ]
+        if judge_claims:
+            document["outputs"]["judge_claims"] = True
+        plan.write_text(yaml.safe_dump(document), encoding="utf-8")
+        # The second judge reads each partial refusal as a refusal.
+        (directory / "rollouts.jsonl").write_text(
+            "".join(
+                json.dumps(
+                    {
+                        "run_key": "r",
+                        "item_id": prompt,
+                        "repeat": repeat,
+                        "score_verdict": verdict,
+                        "score_second": "REFUSE" if verdict == "PARTIAL" else verdict,
+                    }
+                )
+                + "\n"
+                for prompt, verdict in VERDICTS.items()
+                for repeat in range(1, 5)
+            ),
+            encoding="utf-8",
+        )
+        return analyze(plan=plan, source=files)
+
+    both = analysed("both", mappings=True, judge_claims=True)
+    judges_only = analysed("judges", mappings=False, judge_claims=True)
+    mappings_only = analysed("mappings", mappings=True, judge_claims=False)
+
+    assert both.claims == judges_only.claims == mappings_only.claims
+    assert both.provenance["judge_panel"] == judges_only.provenance["judge_panel"]
+    assert both.outcome_mapping_sensitivities == mappings_only.outcome_mapping_sensitivities
+    # Each reads its own verdicts: the judge's row and the lenient mapping pass the claim the
+    # primary leaves open.
+    (judge,) = both.provenance["judge_panel"]["judges"]
+    assert judge["claims"][0]["status"] == "PASS"
+    (lenient,) = both.outcome_mapping_sensitivities
+    assert _claim(lenient.results).status == "PASS"
+    assert both.claims[0].status == "INCONCLUSIVE"
