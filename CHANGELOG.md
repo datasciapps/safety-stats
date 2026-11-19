@@ -7,6 +7,14 @@ described in their pull requests.
 
 ### Fixed
 
+- **The generative slice family's two-sided coverage is stated as it is computed.** Under
+  `coverage_mode: two_sided` each endpoint gets half of its member's level, so every lower and
+  upper bound of the family covers jointly at `1 - alpha`, and each direction at
+  `1 - alpha / 2`. `report.html` said the members were covered at `1 - alpha` "per direction",
+  which in this package is `per_direction`'s guarantee; it now says "both bounds together", and
+  the generative and statistical-methods pages agree. The bounds are unchanged. Every generative
+  `report.html` embeds the page's script, so it and its `checksums.json` entry change in bytes.
+
 - **The Newcombe paired interval no longer stops `analyze` on large comparisons (changes
   behaviour from 131,072 pairs).** Its correlation divides by the square root of the product of
   the 2×2 table's four margins, which was computed in integers. Once the product passed 2^64,

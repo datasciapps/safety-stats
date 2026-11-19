@@ -417,8 +417,9 @@ weighted sum over the seed strata, bounded by the weighted KL/Chernoff engine.
 `direct` sampling and share one Šidák frontier, as siblings in the tree do. Every other member,
 each contrast included, is a frontier of its own, and frontiers share \(\alpha\) by Bonferroni.
 `frontier_id`, `frontier_size` and `endpoint_alpha` show how much of the budget each member
-received. Under `two_sided`, coverage holds for each direction: every upper bound together, and
-every lower bound together. Under `one_sided_upper` a contrast is bounded from above only, and
+received. Under `two_sided` each endpoint gets half of its member's share, so every lower and
+upper bound covers jointly at \(1-\alpha\), and each direction at \(1-\alpha/2\). Under
+`one_sided_upper` a contrast is bounded from above only, and
 its lower endpoint is reported as -1.
 
 A family slice is not the same calculation as `--slice`. Under `direct` sampling it uses the

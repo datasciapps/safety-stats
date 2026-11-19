@@ -255,7 +255,7 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
     ));
     root.appendChild(el("p", { class: "sub", text:
       "Every member is covered simultaneously at " + pct(1 - family.alpha, 0) +
-      (family.coverage_mode === "two_sided" ? " per direction" : "") + ". A contrast " +
+      (family.coverage_mode === "two_sided" ? ", both bounds together" : "") + ". A contrast " +
       "compares two values of one level on the seeds that hold both, with the seed mix held " +
       "fixed. Members stay on the judge-reported scale." }));
   }
