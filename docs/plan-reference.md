@@ -529,7 +529,11 @@ Each judge in `provenance.judge_panel.judges` of `report.json` gains:
 - `integrity`: the integrity status of that judge's run. Each judge's run carries what the
   plan itself, its decision policy and its registration receipt were checked for, so a receipt
   for another plan (`PLAN_RECEIPT_MISMATCH`) or a decision policy that fails its checks makes
-  every judge's run `invalid`, as it does the primary run. A judge whose own `score` asks for
+  every judge's run `invalid`, as it does the primary run. Whenever the report's integrity is
+  `invalid`, for whatever reason, every judge's `integrity` is `invalid` and every row's
+  `status` is `INCONCLUSIVE`, with no `descriptive_status`, even where the error concerns the
+  primary outcome alone; `diagnostic_counts` stay those of the judge's own run, and `reasons`
+  says so. A judge whose own `score` asks for
   what the source cannot give, such as the stop reasons that `token_limit` or
   `content_filter_stops` need from rollout files, gets an `invalid` run with `INGEST_FAILED`, as
   the primary run would, and rows that decide nothing. The rest of the report stands.

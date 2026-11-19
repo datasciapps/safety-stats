@@ -179,6 +179,10 @@ _UNCALIBRATED_JUDGE_REASON = (
     "The calibration's labels validate the primary outcome, not this judge, so this judge's "
     "bounds are on its reported risk only and the claim is not decided on them."
 )
+_INVALID_REPORT_REASON = (
+    "The report's integrity is invalid, so no judge's row is decided either, whatever this "
+    "judge's own run found; the report's ERROR diagnostics say why."
+)
 _NOISY_VALID_TEST_REASON = (
     "The claim's noisy_valid_test needs labels of this judge's verdicts, which the plan does "
     "not have, so this judge's run bounds it as a corrected_interval claim."
@@ -186,14 +190,20 @@ _NOISY_VALID_TEST_REASON = (
 
 
 def _judge_claim_row(
-    claim: ClaimResult, *, validated_calibration: bool, noisy_valid_test: bool
+    claim: ClaimResult,
+    *,
+    validated_calibration: bool,
+    noisy_valid_test: bool,
+    report_invalid: bool,
 ) -> dict[str, Any]:
     """One claim of a judge's run, as its row in the judge panel.
 
     A judge's run has no calibration, so its bounds are on judge-reported risk. Under a
     validated calibration the plan's thresholds are about true risk, where the primary refuses
     to decide on judge-reported bounds; so does the row, which stays INCONCLUSIVE, and so does
-    its descriptive status under an exploratory intent, as the primary's would be.
+    its descriptive status under an exploratory intent, as the primary's would be. When the
+    report's integrity is invalid and the judge's run is not, the row decides nothing either,
+    with no descriptive status, as a claim of an invalid analysis has none.
     """
 
     status, descriptive = claim.status, claim.descriptive_status
@@ -203,6 +213,9 @@ def _judge_claim_row(
         descriptive = None if descriptive is None else "INCONCLUSIVE"
         if noisy_valid_test:
             reasons.append(_NOISY_VALID_TEST_REASON)
+    if report_invalid:
+        status, descriptive = "INCONCLUSIVE", None
+        reasons.append(_INVALID_REPORT_REASON)
     return {
         "claim_id": claim.claim_id,
         "status": status,
@@ -238,13 +251,18 @@ def _add_judge_claims(
     plan: AnalysisPlan,
     inputs: _JudgeInputs,
     plan_diagnostics: Sequence[Diagnostic],
+    *,
+    report_valid: bool,
 ) -> None:
     """Decide every claim again on each declared judge's verdicts, beside the primary's.
 
     Each judge's run is the analysis the plan would give with that judge as its primary
     outcome, over the same rollouts, so comparing judge configurations is one analysis. It
     carries the primary run's ``plan_diagnostics`` (``_derived_run_diagnostics``), so a
-    registration receipt for another plan or a failed decision policy makes it invalid too. Its
+    registration receipt for another plan or a failed decision policy makes it invalid too.
+    An invalid report never shows a judge's run as anything but ``invalid``, nor a row as
+    decided, whatever made it invalid: ``report_valid`` is false when the primary analysis
+    is invalid, for an error of its own outcome too. Its
     bounds are on that judge's reported risk; under a validated calibration its rows decide
     nothing (``_judge_claim_row``). Beside its integrity status, each judge records how often
     each diagnostic code occurred in its run, so the report says why a run is not valid. A
@@ -285,13 +303,15 @@ def _add_judge_claims(
         diagnostics.extend(data.diagnostics)
         diagnostics.extend(single_rollout_tail_claims(judge_plan, data))
         core = _analysis_core(judge_plan, data, diagnostics)
-        entry["integrity"] = core.integrity_status
+        # The counts stay the judge's own run's; the report's errors are in the report.
+        entry["integrity"] = core.integrity_status if report_valid else "invalid"
         entry["diagnostic_counts"] = _code_counts(diagnostics)
         entry["claims"] = [
             _judge_claim_row(
                 claim,
                 validated_calibration=validated_calibration,
                 noisy_valid_test=claim.claim_id in noisy_claims,
+                report_invalid=not report_valid and core.integrity_status != "invalid",
             )
             for claim in sorted(core.claims, key=lambda item: item.claim_id)
         ]

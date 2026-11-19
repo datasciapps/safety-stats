@@ -463,6 +463,8 @@ def _judge_claim_lines(
         "which makes the plan's thresholds ones on true risk, every row is `INCONCLUSIVE`. "
         "A judge's run handles missing and errored verdicts by that judge's own "
         "`score.missing` and `score.errors`, not the primary outcome's. "
+        "When the report's integrity is invalid, every judge's run is `invalid` and every row "
+        "`INCONCLUSIVE`, whatever the judge's own diagnostics below. "
         "The rows compare judge configurations. The report's decision rests on the primary "
         "outcome alone, and these rows are not adjusted for their number.",
         "",

@@ -15,6 +15,7 @@ from inspect_safety_stats.analysis.design_effect import cluster_design_effects
 from inspect_safety_stats.analysis.inputs import (
     _coerce_plan,
     _derived_run_diagnostics,
+    _integrity_status,
     _JudgeInputs,
     _sorted_integrity,
 )
@@ -325,7 +326,16 @@ def analyze(
     if judge_panel is not None and core.panel_correction is not None:
         judge_panel["derived_correction"] = core.panel_correction
     if judge_panel is not None and judge_inputs is not None and resolved.outputs.judge_claims:
-        _add_judge_claims(judge_panel, resolved, judge_inputs, plan_diagnostics)
+        # ORDER MATTERS: after every stage that can add an error to the primary analysis, since
+        # an invalid report leaves every judge's row undecided. The judge configurations after
+        # it add only a warning.
+        _add_judge_claims(
+            judge_panel,
+            resolved,
+            judge_inputs,
+            plan_diagnostics,
+            report_valid=_integrity_status(diagnostics) != "invalid",
+        )
         _add_judge_configurations(
             judge_panel, resolved, data, judge_inputs.source, diagnostics
         )

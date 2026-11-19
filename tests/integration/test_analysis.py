@@ -3451,6 +3451,47 @@ def test_judge_runs_decide_at_an_applied_policys_thresholds_and_carry_its_note(
     assert (row["status"], row["upper"]) == (primary.status, primary.upper)
 
 
+@pytest.mark.parametrize("intent", ["confirmatory", "exploratory"])
+def test_an_invalid_report_never_shows_a_judges_row_as_valid_or_decided(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, intent: str
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8")
+        .replace("intent: confirmatory", f"intent: {intent}", 1)
+        .replace("report:\n", "report:\n  include_decisions: true\n", 1),
+        encoding="utf-8",
+    )
+    eval_frame, sample_frame = _mirroring_judge_frames()
+    # The primary outcome alone is missing once, which its `missing: block` makes an error;
+    # judge a still has that rollout's verdict, so its own run is valid.
+    missing = (sample_frame["id"] == "p2") & (sample_frame["epoch"] == 2)
+    sample_frame = sample_frame.assign(
+        score_harmful=sample_frame["score_harmful"].where(~missing, None)
+    )
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert report.integrity.status == "invalid"
+    assert "SCORE_MISSING" in {item.code for item in report.integrity.diagnostics}
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    for judge in judges.values():
+        assert judge["integrity"] == "invalid", judge["id"]
+        for row in judge["claims"]:
+            assert (row["status"], row["descriptive_status"]) == ("INCONCLUSIVE", None)
+            assert any("report's integrity is invalid" in reason for reason in row["reasons"])
+    # Judge a's run is fine on its own: its bounds are computed and its counts are its own.
+    (row,) = judges["judge_a"]["claims"]
+    assert row["upper"] is not None
+    assert "SCORE_MISSING" not in judges["judge_a"]["diagnostic_counts"]
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert "`valid`" not in section
+    assert "`PASS`" not in section
+    assert "When the report's integrity is invalid" in section
+
+
 def test_judge_claims_are_opt_in_and_leave_plan_hashes_alone(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
