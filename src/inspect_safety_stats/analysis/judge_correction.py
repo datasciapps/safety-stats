@@ -598,7 +598,13 @@ def _add_judge_corrections(
                                 f"no Lang-Reiczigel limits for group {result.group_id!r}: "
                                 f"{limits}"
                             ),
-                            scope=cohort_scope(result.cohort_id),
+                            scope=cohort_scope(
+                                result.cohort_id,
+                                "groups",
+                                result.group_id,
+                                "measures",
+                                result.measure_id,
+                            ),
                             details={"group_id": result.group_id},
                         )
                     )

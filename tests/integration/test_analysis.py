@@ -28,6 +28,7 @@ from inspect_safety_stats.ingest.inspect_logs import (
 )
 from inspect_safety_stats.ingest.manifest import load_manifest
 from inspect_safety_stats.ingest.records import StopContext
+from inspect_safety_stats.registry import CODES
 from inspect_safety_stats.report import visualization
 from inspect_safety_stats.schema.reports import (
     Diagnostic,
@@ -312,6 +313,43 @@ def test_a_report_written_before_its_json_held_the_design_still_visualizes(
     )
     # The plan's outputs.direct_mean_intervals.independence.primary.
     assert payload["report"]["presentation"]["primary_independence_profile"] == "rollout"
+
+
+def test_a_report_written_under_an_earlier_registry_still_visualizes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A later registry may reclassify a code or retire it; a stored report says what it said."""
+    output = _written_report(monkeypatch, tmp_path)
+    saved = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    assert CODES["CONFIG_UNOBSERVED"].effect == "degraded"
+    assert "RETIRED_CODE" not in CODES
+    written = [
+        {
+            "code": "CONFIG_UNOBSERVED",
+            "severity": "WARNING",
+            "source": "logs",
+            "effect": "recorded",
+            "message": "configuration not reported",
+            "scope": "candidate",
+        },
+        {
+            "code": "RETIRED_CODE",
+            "severity": "WARNING",
+            "source": "analysis",
+            "effect": "adjusted",
+            "message": "a code this version no longer has",
+        },
+    ]
+    saved["integrity"]["diagnostics"].extend(written)
+    (output / "report.json").write_text(json.dumps(saved), encoding="utf-8", newline="\n")
+
+    # What `inspect-safety-stats visualize --report` runs.
+    html = write_visualization(output, tmp_path / "earlier.html").read_text(encoding="utf-8")
+
+    payload = json.loads(html.split('type="application/json">', 1)[1].split("</script>", 1)[0])
+    shown = {item["code"]: item for item in payload["report"]["integrity"]["diagnostics"]}
+    for item in written:
+        assert {key: shown[item["code"]][key] for key in item} == item
 
 
 def test_text_artifacts_have_the_same_bytes_on_every_platform(

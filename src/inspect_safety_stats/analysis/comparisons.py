@@ -33,7 +33,7 @@ from inspect_safety_stats.schema.reports import (
     PromptEstimate,
     RiskIntervalResult,
 )
-from inspect_safety_stats.schema.scopes import scope_path
+from inspect_safety_stats.schema.scopes import node_id, scope_path
 from inspect_safety_stats.stats.comparisons import DirectComparisonBounds, RatioComparisonBounds
 from inspect_safety_stats.stats.independence import (
     comparison_contrast_blocks,
@@ -41,12 +41,23 @@ from inspect_safety_stats.stats.independence import (
 )
 
 
-def _target_scope(comparison_id: str, target: _ComparisonTarget) -> str:
-    """``comparisons/<id>``, or for a hierarchy node ``.../levels/<level>/nodes/<path>``."""
+def _target_scope(comparison_id: str, target: _ComparisonTarget, *pairs: object) -> str:
+    """``comparisons/<id>``, or for a hierarchy node ``.../levels/<level>/nodes/<path>``.
+
+    ``pairs`` are collection/id pairs that follow, such as the method and profile of one
+    interval.
+    """
     if target.level is None:
-        return scope_path("comparisons", comparison_id)
-    node = "/".join(f"{key}={value}" for key, value in target.path.items())
-    return scope_path("comparisons", comparison_id, "levels", target.level, "nodes", node)
+        return scope_path("comparisons", comparison_id, *pairs)
+    return scope_path(
+        "comparisons",
+        comparison_id,
+        "levels",
+        target.level,
+        "nodes",
+        node_id(target.path),
+        *pairs,
+    )
 
 
 def _comparisons(
@@ -223,7 +234,14 @@ def _comparisons(
                                     code="COMPARISON_INTERVAL_INVALID",
                                     severity="ERROR",
                                     message=str(exc),
-                                    scope=_target_scope(spec.id, target),
+                                    scope=_target_scope(
+                                        spec.id,
+                                        target,
+                                        "methods",
+                                        method,
+                                        "profiles",
+                                        profile_id,
+                                    ),
                                 )
                             )
             primary = next((item for item in intervals if item.role == "primary"), None)

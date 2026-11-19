@@ -682,6 +682,7 @@ CASES = [
     Case(
         # Two labels per judge stratum cannot show that rho_1 exceeds rho_0.
         code="JUDGE_CALIBRATION_UNINFORMATIVE",
+        shows="withheld",
         trigger=judged(with_labels(lambda obs: _some(obs, 2, 2))),
         control=judged(with_labels(census)),
         effect=_uninformative,
@@ -689,6 +690,7 @@ CASES = [
     Case(
         # A certifying validated correction retargets the claim to true risk.
         code="JUDGE_CORRECTED_CLAIMS",
+        shows="adjusted",
         trigger=judged(with_labels(census)),
         control=judged(lambda inputs, _: None),
         effect=_corrected_claims,
@@ -696,6 +698,7 @@ CASES = [
     Case(
         # A claim on a maximum has no certifying validated correction.
         code="JUDGE_CORRECTION_UNAVAILABLE",
+        shows="withheld",
         trigger=judged(with_labels(census), _worst_claim),
         control=judged(with_labels(census), _with_worst),
         effect=_correction_unavailable,
@@ -703,6 +706,7 @@ CASES = [
     Case(
         # Only the judge-safe stratum is labelled.
         code="JUDGE_STRATUM_UNLABELLED_COMPLETED",
+        shows="adjusted",
         trigger=judged(with_labels(_only_judge_safe)),
         control=judged(with_labels(census)),
         effect=_completed,
@@ -710,6 +714,7 @@ CASES = [
     Case(
         # The judge never says unsafe, so its unsafe stratum is empty.
         code="JUDGE_VALIDATION_STRATUM_EMPTY",
+        shows="withheld",
         trigger=judged(with_labels(census), _no_judge_failures),
         control=judged(with_labels(census)),
         effect=_stratum_empty,
@@ -717,6 +722,7 @@ CASES = [
     Case(
         # A label names no rollout of the run.
         code="JUDGE_VALIDATION_UNMATCHED",
+        shows="invalid",
         trigger=judged(with_labels(_unmatched)),
         control=judged(with_labels(census)),
         effect=_cannot_pass,
@@ -724,6 +730,7 @@ CASES = [
     Case(
         # A label is neither safe nor unsafe.
         code="JUDGE_VALIDATION_INVALID",
+        shows="invalid",
         trigger=judged(with_labels(_bad_label)),
         control=judged(with_labels(census)),
         effect=_no_correction,
@@ -731,6 +738,7 @@ CASES = [
     Case(
         # p1's labels lie outside group b, the calibration's only group.
         code="JUDGE_VALIDATION_OUT_OF_SCOPE",
+        shows="recorded",
         trigger=judged(with_labels(_all, groups=["b"]), _domains),
         control=judged(with_labels(_p2_only, groups=["b"]), _domains),
         effect=_results_unchanged,
@@ -738,6 +746,7 @@ CASES = [
     Case(
         # The sensitivity is carried over from a published set, not measured on this run.
         code="JUDGE_CALIBRATION_TRANSPORTED",
+        shows="adjusted",
         trigger=judged(_transported),
         control=judged(lambda inputs, _: None),
         effect=_transported_effect,
@@ -745,6 +754,7 @@ CASES = [
     Case(
         # The labels are declared a stratified sample within fine strata.
         code="JUDGE_CALIBRATION_STRATIFIED",
+        shows="adjusted",
         trigger=judged(stratified()),
         control=judged(with_labels(census)),
         effect=_stratified_effect,
@@ -752,6 +762,7 @@ CASES = [
     Case(
         # The fine stratum of p1's first rollouts, all judge-safe, has no label.
         code="JUDGE_FINE_STRATUM_UNLABELLED_COMPLETED",
+        shows="adjusted",
         trigger=judged(stratified(_unlabelled_few, few=True)),
         control=judged(stratified(few=True)),
         effect=_fine_completed,
@@ -759,6 +770,7 @@ CASES = [
     Case(
         # A label names a rollout the provider blocked, which the plan counts safe.
         code="JUDGE_VALIDATION_POLICY_CLASSIFIED",
+        shows="recorded",
         trigger=judged(with_labels(census), policy_blocked),
         control=judged(with_labels(judge_verdicts), policy_blocked),
         effect=_calibrated_alike,
@@ -766,6 +778,7 @@ CASES = [
     Case(
         # The strata file leaves one classified rollout out.
         code="JUDGE_VALIDATION_STRATA_INCOMPLETE",
+        shows="invalid",
         trigger=judged(stratified(drop=1)),
         control=judged(stratified()),
         effect=_no_correction,
@@ -773,6 +786,7 @@ CASES = [
     Case(
         # The strata file names a rollout the run does not have.
         code="JUDGE_VALIDATION_STRATA_UNMATCHED",
+        shows="invalid",
         trigger=judged(stratified(extra=True)),
         control=judged(stratified()),
         effect=_no_correction,
@@ -780,6 +794,7 @@ CASES = [
     Case(
         # The labels skip the first row of the declared labelling queue.
         code="JUDGE_LABELLING_PROTOCOL_VIOLATED",
+        shows="invalid",
         trigger=judged(protocol(skip_first=True)),
         control=judged(protocol(skip_first=False)),
         effect=_no_correction,
@@ -787,6 +802,7 @@ CASES = [
     Case(
         # Prompt p3 of the row has no classified rollout.
         code="JUDGE_LANG_REICZIGEL_UNAVAILABLE",
+        shows="withheld",
         trigger=judged(with_labels(census, sampling="simple_random"), _p3(0)),
         control=judged(with_labels(census, sampling="simple_random"), _p3(1)),
         effect=_no_lang_reiczigel,
@@ -795,6 +811,7 @@ CASES = [
         # Half the rescored judge-positive completions flip to safe in a wrapper. The rate is
         # reported whenever a flip manifest is declared, so the control declares none.
         code="JUDGE_FLIP_RATE",
+        shows="recorded",
         trigger=judged(flips(lambda obs: _flip_rows(obs, 5))),
         control=judged(flips(None)),
         effect=_flip_recorded,
@@ -802,6 +819,7 @@ CASES = [
     Case(
         # A rescored verdict is neither safe nor unsafe.
         code="JUDGE_FLIP_INVALID",
+        shows="invalid",
         trigger=judged(flips(lambda obs: _flip_rows(obs, 0, verdict="maybe"))),
         control=judged(flips(lambda obs: _flip_rows(obs, 0))),
         effect=_cannot_pass,
@@ -811,6 +829,7 @@ CASES += [
     Case(
         # The plan counts a rollout the provider blocked safe; the judge never saw it.
         code="JUDGE_CORRECTION_POLICY_CLASSIFIED",
+        shows="adjusted",
         trigger=judged(assumed, policy_blocked),
         control=judged(assumed),
         effect=_policy_free,
@@ -818,6 +837,7 @@ CASES += [
     Case(
         # The comparison's primary interval is a contrast bound without arm bounds.
         code="JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON",
+        shows="withheld",
         trigger=judged(with_labels(census), comparison("weighted_empirical_bernstein")),
         control=judged(with_labels(census), comparison("weighted_kl_chernoff")),
         effect=_comparison_uncorrected,
@@ -825,6 +845,7 @@ CASES += [
     Case(
         # Twenty rollouts per prompt cannot bound a failure-free prompt below 0.05.
         code="TAIL_MEASURES_UNINFORMATIVE",
+        shows="recorded",
         trigger=judged(lambda inputs, _: None, _tail_target(None)),
         control=judged(lambda inputs, _: None, _tail_target(0.25)),
         effect=_tail_recorded,
@@ -832,6 +853,7 @@ CASES += [
     Case(
         # A majority composite has no closed-form accuracy box.
         code="PANEL_CORRECTION_UNSUPPORTED_RULE",
+        shows="withheld",
         trigger=panel("majority", None, None),
         control=panel("any", None, None),
         effect=_panel_withheld,
@@ -839,6 +861,7 @@ CASES += [
     Case(
         # Judge a vouches for group all only, judge b for group b only.
         code="PANEL_CORRECTION_NO_COMMON_GROUP",
+        shows="withheld",
         trigger=panel("any", ["all"], ["b"]),
         control=panel("any", ["all", "b"], ["b"]),
         effect=_panel_withheld,
@@ -846,6 +869,7 @@ CASES += [
     Case(
         # The primary mapping counts the composite's false verdict as failure.
         code="PANEL_CORRECTION_VERDICT_UNMATCHED",
+        shows="withheld",
         trigger=panel("any", None, None, _inverted_verdict),
         control=panel("any", None, None),
         effect=_panel_withheld,
@@ -854,6 +878,7 @@ CASES += [
         # The judge with declared accuracy reads the primary score, but counts a third value
         # as safe that the primary mapping does not know.
         code="JUDGE_STRESS_BOX_UNMATCHED",
+        shows="withheld",
         trigger=stressed_judge({"failure_values": ["FAIL"], "safe_values": ["PASS", "MAYBE"]}),
         control=stressed_judge({"failure_values": ["FAIL"], "safe_values": ["PASS"]}),
         effect=_stress_box_withheld,
@@ -945,6 +970,7 @@ CASES += [
         # The plan asks for the anytime-valid bound of a run in a recorded random order. The
         # bound is reported whenever the plan asks for it, so the control does not.
         code="ANYTIME_UPPER_BOUND",
+        shows="recorded",
         trigger=_anytime(bounds=True),
         control=_anytime(bounds=False),
         effect=_anytime_recorded,

@@ -29,7 +29,7 @@ from inspect_safety_stats.generative.ledger import RewriteRecord
 from inspect_safety_stats.generative.schema import GenerativePlan
 from inspect_safety_stats.ingest.validation import load_validation_manifest
 from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope
+from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope, scope_path
 from inspect_safety_stats.stats.judge_calibration import (
     NO_STRATA,
     JudgeStrata,
@@ -307,7 +307,8 @@ def comparison_refusal(candidate: str, baseline: str) -> Diagnostic:
             f"comparison {candidate}:{baseline} stays on the judge-reported scale: correcting it "
             "would either discard the paired construction or assume a prevalence-free judge"
         ),
-        scope=cohort_scope(candidate, "comparisons", baseline),
+        # A generative comparison has no id but the candidate:baseline it is asked for by.
+        scope=scope_path("comparisons", f"{candidate}:{baseline}"),
     )
 
 

@@ -342,6 +342,7 @@ CASES = [
     Case(
         # Nothing of task t2 was drawn into the sample.
         code="HIERARCHY_NODE_UNSAMPLED",
+        shows="withheld",
         trigger=analysis(_sampled(p3_drawn=False, nodes=True)),
         control=analysis(_sampled(p3_drawn=True, nodes=True)),
         effect=_node_unsampled,
@@ -349,6 +350,7 @@ CASES = [
     Case(
         # Group b's only frame item was not drawn, so the group has no sampled block.
         code="DIRECT_MEAN_INTERVAL_INVALID",
+        shows="invalid",
         trigger=analysis(_sampled(p3_drawn=False, domain_group=True)),
         control=analysis(_sampled(p3_drawn=True, domain_group=True)),
         effect=_no_direct_interval,
@@ -356,6 +358,7 @@ CASES = [
     Case(
         # Task t2 has weight zero, so the task level does not partition the group.
         code="DIRECT_MEAN_CALIBRATION_INVALID",
+        shows="invalid",
         trigger=analysis(_frontier_direct_means(p3_weight=0)),
         control=analysis(_frontier_direct_means(p3_weight=1)),
         effect=_no_calibrated_interval,
@@ -363,6 +366,7 @@ CASES = [
     Case(
         # Task t2 has weight zero, so the task level does not partition the group.
         code="COMPARISON_CALIBRATION_INVALID",
+        shows="invalid",
         trigger=analysis(_comparison(p3_weight=0)),
         control=analysis(_comparison(p3_weight=1)),
         effect=_no_comparison_interval,
@@ -370,6 +374,7 @@ CASES = [
     Case(
         # No input reaches it: a patch makes the comparison's interval engine refuse.
         code="COMPARISON_INTERVAL_INVALID",
+        shows="invalid",
         trigger=patched(
             "inspect_safety_stats.analysis.comparisons._difference_rectangle_from_blocks",
             _refuse,
@@ -381,6 +386,7 @@ CASES = [
     Case(
         # No input reaches it: a patch makes the direct interval of every node fail.
         code="HIERARCHY_MEAN_INTERVAL_INVALID",
+        shows="invalid",
         trigger=patched(
             "inspect_safety_stats.analysis.risks._direct_intervals",
             _refuse_nodes,
@@ -392,6 +398,7 @@ CASES = [
     Case(
         # No input reaches it: a patch makes the raw group and node intervals disjoint.
         code="HIERARCHY_CONFIDENCE_REGION_EMPTY",
+        shows="withheld",
         trigger=patched(
             "inspect_safety_stats.analysis.regions.project_hierarchy_confidence_region",
             _empty_region("project_hierarchy_confidence_region"),
@@ -403,6 +410,7 @@ CASES = [
     Case(
         # No input reaches it: a patch makes the raw candidate-arm intervals disjoint.
         code="COMPARISON_HIERARCHY_CONFIDENCE_REGION_EMPTY",
+        shows="withheld",
         trigger=patched(
             "inspect_safety_stats.analysis.comparison_regions."
             "project_two_arm_difference_hierarchy_confidence_region",
@@ -415,6 +423,7 @@ CASES = [
     Case(
         # No input reaches it: a patch makes the raw intervals of an arm disjoint.
         code="MULTI_ARM_CONFIDENCE_REGION_EMPTY",
+        shows="withheld",
         trigger=patched(
             "inspect_safety_stats.analysis.comparison_regions.project_hierarchy_confidence_region",
             _empty_region("project_hierarchy_confidence_region"),
@@ -428,6 +437,7 @@ CASES = [
         # that the unscored rollout's completions produce. Without it, the case would need 668
         # pairs unscored in both arms.
         code="PAIR_NEWCOMBE_UNAVAILABLE",
+        shows="withheld",
         trigger=patched(
             "inspect_safety_stats.stats.paired._PARTIAL_NEWCOMBE_COMPLETION_LIMIT",
             1,
