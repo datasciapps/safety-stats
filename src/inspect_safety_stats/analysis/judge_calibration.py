@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from inspect_safety_stats.analysis.estimates import _bounds_carry_unknown_outcome
+from inspect_safety_stats.config.loader import report_message
 from inspect_safety_stats.config.models import (
     AnalysisPlan,
     JudgeCalibrationSpec,
@@ -356,13 +357,13 @@ def _validated_judge_calibrations(
             Diagnostic(
                 code="JUDGE_VALIDATION_INVALID",
                 severity="ERROR",
-                message=str(exc),
+                message=report_message(str(exc), plan, (spec.validation_manifest,)),
                 scope=plan_scope("inputs", "judge_calibration"),
             )
         )
         return {}, {}, None, {}, None
 
-    protocol = _labelling_protocol(spec, labels, diagnostics)
+    protocol = _labelling_protocol(plan, spec, labels, diagnostics)
     if spec.protocol is not None and protocol is None:
         return {}, {}, None, {}, None
     bound: CalibrationBound = (
@@ -382,7 +383,7 @@ def _validated_judge_calibrations(
                 Diagnostic(
                     code="JUDGE_VALIDATION_INVALID",
                     severity="ERROR",
-                    message=str(exc),
+                    message=report_message(str(exc), plan, (spec.validation_strata,)),
                     scope=plan_scope("inputs", "judge_calibration"),
                 )
             )
@@ -562,6 +563,7 @@ def _validated_judge_calibrations(
 
 
 def _labelling_protocol(
+    plan: AnalysisPlan,
     spec: JudgeCalibrationSpec,
     labels: dict[str, bool],
     diagnostics: list[Diagnostic],
@@ -587,7 +589,7 @@ def _labelling_protocol(
             Diagnostic(
                 code="JUDGE_LABELLING_PROTOCOL_VIOLATED",
                 severity="ERROR",
-                message=str(exc),
+                message=report_message(str(exc), plan, (protocol.queue,)),
                 scope=plan_scope("inputs", "judge_calibration", "protocol"),
             )
         )

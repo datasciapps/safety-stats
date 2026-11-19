@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from typing import Any
 
 from inspect_safety_stats.schema.claims import (
@@ -25,13 +26,22 @@ from inspect_safety_stats.schema.reports import (
 CLAIMS_JSON = "claims.json"
 
 
-def _judge_corrected_ids(report: SafetyReport) -> set[str]:
+def _named_claims(report: SafetyReport, code: str) -> set[str]:
+    """The claims the diagnostics with ``code`` name."""
+
     return {
         str(claim_id)
         for diagnostic in report.integrity.diagnostics
-        if diagnostic.code == "JUDGE_CORRECTED_CLAIMS"
+        if diagnostic.code == code
         for claim_id in diagnostic.details.get("claim_ids") or []
     }
+
+
+def _named(refs: Sequence[str], kind: str) -> str | None:
+    """What the first ``<kind>:<name>`` evidence ref names, if there is one."""
+
+    prefix = f"{kind}:"
+    return next((ref.removeprefix(prefix) for ref in refs if ref.startswith(prefix)), None)
 
 
 def _evidence(
@@ -61,7 +71,8 @@ def claims_export(report: SafetyReport) -> ClaimsExport:
         item.claim_id: (index, item)
         for index, item in enumerate(report.presentation.claim_evidence or [])
     }
-    corrected = _judge_corrected_ids(report)
+    corrected = _named_claims(report, "JUDGE_CORRECTED_CLAIMS")
+    uncorrected = _named_claims(report, "JUDGE_CORRECTION_UNAVAILABLE")
     records: list[ClaimRecord] = []
     for index, claim in enumerate(report.claims):
         if claim.claim_id not in evidence_records:
@@ -71,15 +82,15 @@ def claims_export(report: SafetyReport) -> ClaimsExport:
             )
         evidence_index, estimand = evidence_records[claim.claim_id]
         evidence_pointer, evidence = _evidence(report, estimand)
+        test = _named(claim.evidence_refs, "test")
         interval_pointer = None
         interval = None
         if evidence is not None and evidence_pointer is not None:
-            named = [
-                ref.removeprefix("interval:")
-                for ref in claim.evidence_refs
-                if ref.startswith("interval:")
-            ]
-            interval_id = named[0] if named else evidence.primary_interval_id
+            # A test's bound is the test's own, computed from the result's primary interval.
+            # A noisy-valid claim also names the validated correction, which the analysis
+            # records before deciding the claim by the test; its bound does not come from it.
+            named = None if test is not None else _named(claim.evidence_refs, "interval")
+            interval_id = named if named is not None else evidence.primary_interval_id
             for position, item in enumerate(evidence.intervals):
                 if item.interval_id == interval_id:
                     interval_pointer = f"{evidence_pointer}/intervals/{position}"
@@ -93,6 +104,7 @@ def claims_export(report: SafetyReport) -> ClaimsExport:
                 descriptive_status=claim.descriptive_status,
                 mandatory=claim.mandatory,
                 judge_corrected=claim.claim_id in corrected,
+                judge_correction_unavailable=claim.claim_id in uncorrected,
                 estimand=ClaimEstimand(
                     cohort=estimand.cohort,
                     group=estimand.group,
@@ -112,6 +124,7 @@ def claims_export(report: SafetyReport) -> ClaimsExport:
                 ),
                 evidence=ClaimEvidence(
                     refs=list(claim.evidence_refs),
+                    test=test,
                     eligibility=evidence.eligibility if evidence else None,
                     interval_id=interval.interval_id if interval else None,
                     interval_method=interval.method if interval else None,
@@ -127,6 +140,7 @@ def claims_export(report: SafetyReport) -> ClaimsExport:
                     evidence=evidence_pointer,
                     evidence_interval=interval_pointer,
                 ),
+                reasons=list(claim.reasons),
             )
         )
     analysis: dict[str, Any] = report.analysis

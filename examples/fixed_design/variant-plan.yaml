@@ -2,8 +2,9 @@ schema_version: "2.0"
 
 # Fixed design with a variant level: each question_id is a base prompt and each prompt_id
 # beneath it is one wording of it (the original, a paraphrase, a role-play wrapper, ...).
-# nested_equal gives every base prompt of a task the same weight however many variants it has,
-# and the `question` profile treats all variants of one base prompt as a single block.
+# nested_equal gives every base prompt of a task the same weight however many variants it has.
+# The `question_repeat` profile puts the same epoch of every variant of one base prompt in one
+# block, and the `question` profile every rollout of every variant.
 
 analysis:
   id: fixed-design-variants-example
@@ -48,6 +49,16 @@ design:
     prompt:
       block_by: [prompt_id]
       comparison_coupling: joint
+    # Variants of a base prompt that fail at similar rates still give independent rollouts.
+    # Variants whose rollouts share randomness or state (a seed, a sandbox, a batch) do not.
+    # If the same epoch of every variant can share it, make question_repeat the primary
+    # below; if it can reach across epochs, make question the primary (or a coarser key when
+    # the sharing reaches across base prompts). Sharing across epochs also breaks the prompt
+    # bounds and `worst`, whatever the primary, so claims should then rest on `mean`. A block
+    # key is a field's raw value: keep question ids unique across tasks, or add task_id to it.
+    question_repeat:
+      block_by: [question_id, repeat]
+      comparison_coupling: joint
     question:
       block_by: [question_id]
       comparison_coupling: joint
@@ -86,9 +97,11 @@ outputs:
     family: displayed_direct_means
     simultaneous: true
     coverage_mode: two_sided
+    # A claim's status is the primary profile's verdict. Sensitivities show how far it
+    # depends on rollout independence and never change it.
     independence:
       primary: rollout
-      sensitivities: [prompt, question]
+      sensitivities: [prompt, question_repeat, question]
     hierarchy_nodes: true
   risk_measures:
     - {id: mean, type: weighted_mean}

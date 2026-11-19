@@ -1185,6 +1185,14 @@ end-to-end system. An explicit provider policy block during target generation ca
 known safe outcome only when no target content was delivered. The event is retained as a distinct
 `target_policy_blocked_safe` outcome rather than rewritten as an ordinary model refusal.
 
+"No target content" means none in the whole sample, not only in the blocked generation. A block in
+the last turn of a conversation, or the last step of an agent, does not withdraw what an earlier
+turn delivered: its text, readable reasoning or tool calls reached the user or the environment
+before the block. A sample error therefore counts as a target-side block only when no earlier
+generation of the sample succeeded, and a content-filter stop classified under
+`inputs.score.content_filter_stops` only when neither the stopped output nor any earlier
+generation that the transcript records carries content. Otherwise the score decides.
+
 This logic does not apply to a grader-side policy block. Once target content exists, failure of a
 separate classifier leaves its label unknown. It also does not apply to network errors, timeouts,
 quota failures, or ambiguous provider errors. For an `underlying_model` estimand, even a
@@ -1990,7 +1998,7 @@ which risk differences \(\Delta=R_C-R_B\) a fixed two-arm design can resolve at 
   probability at least \(1-\beta\) (a regression of at least \(\delta\) is shown).
 
 The guarantee is that of the `weighted_hoeffding` difference of section 7.0, as `analyze`
-computes it, with no unclassified outcomes. That interval bounds
+computes it for a `comparisons` entry, with no unclassified outcomes. That interval bounds
 \(Q=(1+\Delta)/2\) by a weighted mean of independent blocks \(b\) with values in \([0,1]\) and
 masses \(m_b\). With \(c^2=\sum_bm_b^2\), Hoeffding's inequality [32] gives
 
@@ -2037,11 +2045,33 @@ under `per_direction`. \(M\) is the number of targets among which the family div
 alpha, as under `flat_bonferroni`. Hierarchy-node contrasts and `frontier_sidak` calibration
 are not planned.
 
-**Scope.** The guarantee is not one for the `weighted_kl_chernoff` or
-`weighted_empirical_bernstein` differences. Those are usually narrower on sparse failures, but
-not for every design, so a design planned here may resolve more than stated under those
-methods, and has no stated guarantee under them. Unclassified outcomes widen the analysis
-bounds and are not planned for.
+**Scope.** The guarantee holds only for a `comparisons` entry with
+`method: weighted_hoeffding`. A `comparison_sets` entry, whatever its method, and
+`weighted_kl_chernoff` in a `comparisons` entry bound each arm's weighted mean at
+\(\alpha_U/2\) and report \(U_\Delta=U_C-L_B\) (section 7.0). With per-arm masses \(c_C^2\),
+\(c_B^2\) and \(s_X(\gamma)=\sqrt{\tfrac12c_X^2\log(1/\gamma)}\), the confidence term of that
+rectangle under `weighted_hoeffding` is \(s_C(\alpha_U/2)+s_B(\alpha_U/2)\) rather than
+\(2s(\alpha_U)\). For unpaired arms at equal counts, \(c_C^2=c_B^2=2c^2\), so it is
+\(\sqrt{2\log(2/\alpha_U)/\log(1/\alpha_U)}\approx1.54\) times as large at
+\(\alpha_U=0.025\), and \(g_U\) no longer suffices. In the example of
+[Planning a comparison](model-comparisons.md#planning-a-comparison-experimental) (100 equally
+weighted prompts, 10 unpaired rollouts per arm, \(\delta=0.05\), \(\alpha_U=0.025\),
+\(1-\beta=0.9\)), `research/comparison_planning_scope.py` simulates 10,000 runs at the
+planned \(\Delta=\delta-g_U\approx-0.059\). \(U_\Delta\le\delta\) holds in 0.773 of them for
+the `weighted_hoeffding` rectangle at a baseline rate of 0.3, and in 0.755 at 0.5 (standard
+error at most 0.005); for the `weighted_empirical_bernstein` rectangle, in 0.582 at either
+rate. The `weighted_kl_chernoff` and `weighted_empirical_bernstein` differences are often
+narrower than the Hoeffding difference on sparse failures when prompt weights are even; with
+uneven weights, or at moderate rates, either can be wider. In the same example,
+KL/Chernoff's upper half-width equals Hoeffding's 0.061 when both arms observe a failure rate
+of 0.12 and is 0.093 at 0.5, and at a baseline rate of 0.5 the planned difference gives
+\(U_\Delta\le\delta\) in 0.756 of the runs. With `nested_equal` weights over tasks of 2 and
+98 prompts, 10 rollouts each, and one failure per arm on each of the first ten prompts (both
+of the small task's among them), the upper half-widths are 0.217 for Hoeffding, 0.243 for
+KL/Chernoff, which then uses its Poisson kernel, and 0.276 for empirical Bernstein; over tasks
+of 5, 10, 20, 25 and 40 prompts with 20 such failures, 0.078 for Hoeffding and 0.081 for
+KL/Chernoff. The planner states no guarantee for these methods, in either direction.
+Unclassified outcomes widen the analysis bounds and are not planned for.
 
 ### 7.8 Arm contrasts on a generative design (experimental)
 
@@ -2322,6 +2352,16 @@ Multiplicity correction is not automatically required merely because an overall 
 and overall `PASS` occurs only when every component test rejects its unsafe null at level \(\alpha\), the procedure is an intersection-union test. Whenever the global claim is false, at least one component null is true, and a global pass requires that true null to be rejected. The probability of a false global pass is therefore at most \(\alpha\) without Bonferroni correction solely for that conjunction.
 
 Correction is still required when the report asserts simultaneous coverage for every displayed interval, permits separate component-level safety claims, selects favorable claims after inspection, or uses “any significant result” logic. The analysis plan must record which decision semantics apply; the library must not apply multiplicity mechanically without first identifying the claim being protected.
+
+The argument needs the thresholds fixed before the data. Let claim \(j\) of the mandatory claims \(M\) pass when its upper bound \(U_j\) is at or below its threshold \(a_j\), and let \(E_j=\{R_j\le U_j\}\) be its coverage event, with \(\Pr(E_j^c)\le\alpha_j\). A false overall pass needs some claim with \(U_j\le a_j<R_j\), so it lies in \(E_j^c\) for that claim. With fixed thresholds the set \(W=\{j: R_j>a_j\}\) is fixed. When it is not empty, a pass needs \(E_{j_0}^c\) for any one \(j_0\in W\), and the bound is \(\alpha_{j_0}\).
+
+When a [decision policy](decision-policy.md) sets thresholds after the run, both the thresholds and the choice of which claims to move may depend on the data, so \(W\) is no longer fixed. What remains is that a false overall pass needs some claim, whichever the data make it, with \(R_j>a_j\ge U_j\):
+
+\[
+\Pr(\text{false overall pass})\le\Pr\Big(\textstyle\bigcup_{j\in M}E_j^c\Big).
+\]
+
+This is at most one budget \(\alpha\) when one simultaneous coverage event \(E\subseteq\bigcap_{j\in M}E_j\) with \(\Pr(E^c)\le\alpha\) covers every mandatory claim's bound. Otherwise it can reach the sum of the separate events' budgets. Setting each \(a_j\) at \(U_j\) reaches it: every claim then passes, and the pass is false whenever any bound misses. With ten independent claims at \(\alpha=0.05\) that is close to \(1-0.95^{10}\approx0.40\); exact binomial bounds, being conservative, give about 0.27. Moving one threshold reaches it as well, when the claim is chosen from the data: with the others at loose plan thresholds, tightening the claim with the lowest upper bound to that bound gives a false pass whenever any bound misses, since the lowest bound is then below its true risk too (the same 0.27 in the same setting). A set of moved claims fixed in advance would keep a sharper bound, but the analysis cannot tell such a set from one chosen after the run. The library therefore treats every threshold a decision policy moves as data-dependent, whatever time the policy states for it, and does not certify an overall pass when a policy moves any mandatory claim's `acceptable_upper` while the mandatory claims rest on more than one coverage event (`DECISION_POLICY_OVERALL_UNCERTIFIED`). Each claim's own verdict is unaffected: its error is bounded by \(\alpha_j\) at any threshold, because a wrong pass of claim \(j\) alone needs \(E_j^c\).
 
 ### 9.4 Holm step-down procedure
 
@@ -2685,7 +2725,7 @@ The original Inspect logs should remain immutable; statistical reports should be
 | Core | Repeated attempts within declared groups | Design-respecting cluster summaries; bootstrap only with a justified sampling interpretation | Avoid pseudoreplication; optionally cluster-level sampling uncertainty | Declared hierarchy and source of randomness | Fixed groups are not automatically a sampled population |
 | Core | Multiple safety claims | Intersection-union logic, Holm tests, or Bonferroni simultaneous bounds as appropriate | Protect the declared global or simultaneous claim | Valid component methods and predeclared decision semantics | Correction is claim-dependent, not automatic |
 | Core | Exploratory discovery across many slices | Benjamini–Hochberg | False discovery rate | Standard BH dependence conditions | Must not drive deployment pass |
-| Core | Deployment gate | Two-threshold decision | Controlled false pass/fail | Valid bounds and predeclared thresholds | Inconclusive is a required outcome |
+| Core | Deployment gate | Two-threshold decision | Controlled false pass/fail | Valid bounds and predeclared thresholds; thresholds set later only when one simultaneous family decides every mandatory claim (section 9.3) | Inconclusive is a required outcome |
 | Experimental | Two values of one arm level of a generative design | Seed-matched arm contrast, simultaneous over a declared slice family (section 7.8) | Simultaneous coverage of declared slices and contrasts | Independent sampling units; family declared in the frozen plan | Not paired; widens with `maximum_ratio` when the declared weights skew a value across seeds |
 | Stretch | Continuously monitored or adaptively allocated rollouts | Bernoulli confidence sequence | Time-uniform coverage | Method-specific IID or martingale conditions | Adaptive selection can change the estimand |
 

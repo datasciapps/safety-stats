@@ -489,8 +489,7 @@ def _judge_claim_lines(
         "A judge's run handles missing and errored verdicts by that judge's own "
         "`score.missing` and `score.errors`, not the primary outcome's, and counts "
         "content-filter stops and unscored answers cut at the token limit as the primary "
-        "outcome does, unless the judge's score sets its own `content_filter_stops` or "
-        "`token_limit`. "
+        "outcome does, unless the judge's score sets its own `token_limit`. "
         "When the report's integrity is invalid, every judge's run is `invalid` and every row "
         "`INCONCLUSIVE`, whatever the judge's own diagnostics below. "
         "The rows compare judge configurations. The report's decision rests on the primary "
@@ -980,7 +979,10 @@ def _decision_policy_lines(report: SafetyReport, places: int) -> list[str]:
         summary = (
             "Claim thresholds come from a decision policy kept apart from the plan "
             "(experimental). Thresholds do not enter the bounds, so a policy set after the run "
-            "leaves the plan's hash and the verdicts' certification as they are."
+            "leaves the plan's hash as it is, and each claim's verdict keeps its error bound. "
+            "An overall PASS keeps its own only when the policy moves no mandatory claim's "
+            "acceptable_upper or one coverage event covers every mandatory claim (see "
+            "`DECISION_POLICY_OVERALL_UNCERTIFIED`)."
         )
     else:
         summary = (
@@ -995,6 +997,8 @@ def _decision_policy_lines(report: SafetyReport, places: int) -> list[str]:
         "",
         f"**Inference plan SHA-256:** `{_escape(record.inference_plan_sha256)}`  ",
         f"**Policy SHA-256:** `{_escape(record.policy_sha256)}`",
+        "",
+        "Each version's time is as the policy states it; nothing in the analysis checks it.",
         "",
         "| Version | Set at | After first evaluation | Claims | Reason |",
         "|---|---|---|---|---|",
