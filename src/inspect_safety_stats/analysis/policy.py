@@ -119,6 +119,12 @@ def _policy_roll_up(
     ``claims.coverage_event``), a ``DECISION_POLICY_OVERALL_UNCERTIFIED`` warning is added
     and a PASS becomes INCONCLUSIVE. A FAIL stays FAIL, the conservative direction, and every
     claim keeps its own status, whose error bound holds at any threshold.
+
+    A mandatory ``noisy_valid_test`` claim counts with an event of its own, although a policy
+    cannot move its thresholds and leaving it out would be sound: so the rule does not rest
+    on that refusal (``validate_decision_policy``). Adaptive claims are not among
+    ``frozen.claims``: they take no acceptable_upper and are never PASS, so a mandatory one
+    keeps the overall decision from PASS already.
     """
 
     revised = _revised_mandatory_claims(application)

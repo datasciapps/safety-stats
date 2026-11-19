@@ -79,8 +79,21 @@ author's statement, and nothing in the analysis confirms it. It does not apply w
   intervals, or one comparison family. One coverage event then covers every bound, and a wrong
   overall `PASS` needs that event to fail, whichever thresholds were moved.
 
-A claim decided on a judge-corrected interval, or by a test, counts as a coverage event of its
-own, since its calibration adds an event of its own.
+A claim decided on a judge-corrected interval counts as a coverage event of its own, since its
+correction also needs its calibration to cover.
+
+So does a `noisy_valid_test` claim, decided by a test rather than on an interval. A policy cannot
+set such a claim's thresholds, so they are fixed in advance, and leaving the claim out of the
+count would still bound a wrong overall `PASS` by one error budget. It counts all the same, the
+conservative reading: the rule then does not rest on that refusal, which a later change to what
+a policy may set could lift without anyone revisiting the roll-up. The cost falls only on plans
+that mix a mandatory `noisy_valid_test` claim with other mandatory claims under a policy that
+moves a threshold.
+
+Adaptive claims (`adaptive_claims`) are not counted. They take no `acceptable_upper`, so a policy
+cannot set one, since it names only claims under `claims`, and they are never `PASS`. A mandatory
+adaptive claim therefore already keeps the overall decision from `PASS`, and an optional one
+does not enter it.
 
 ## The inference hash
 

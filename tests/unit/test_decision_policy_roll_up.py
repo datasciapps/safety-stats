@@ -271,6 +271,18 @@ def test_the_roll_up_reads_moved_acceptable_uppers_of_mandatory_claims() -> None
     apart = {**shared, "g1": coverage_event(_ref("g1"), pointwise)}
     assert _overall(optional, {"g0": 0.2}, apart, passes) == "PASS"
     assert _overall(plan, {"g0": 0.2}, apart, passes) == "INCONCLUSIVE"
+    # A noisy_valid_test claim, whose thresholds no policy can move, still counts with an event
+    # of its own, so the rule does not rest on the policy check that refuses to move them.
+    tested = plan.model_copy(
+        update={
+            "claims": [
+                plan.claims[0].model_copy(update={"method": "noisy_valid_test"}),
+                *plan.claims[1:],
+            ]
+        }
+    )
+    with_test = {**shared, "g0": coverage_event(_ref("g0"), None)}
+    assert _overall(tested, {"g1": 0.2}, with_test, passes) == "INCONCLUSIVE"
     # FAIL is the conservative verdict, and stays.
     fails: list[Decision] = ["PASS", "FAIL", "PASS"]
     assert _overall(plan, {"g0": 0.2, "g1": 0.2}, events, fails) == "FAIL"
