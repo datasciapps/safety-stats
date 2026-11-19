@@ -459,6 +459,33 @@
       const role = humanize(interval.role);
       return interval.varied_assumption ? `${role} (${humanize(interval.varied_assumption).toLowerCase()})` : role;
     }
+    // A claim's verdicts by independence profile, labelled by role, with the note report.md
+    // prints above them: a sensitivity row is never the claim's decision. Null when the claim
+    // has no sensitivity profile.
+    function profileVerdictLines(claim) {
+      const verdicts = Array.isArray(claim.profile_verdicts) ? claim.profile_verdicts : [];
+      if (verdicts.length < 2) return null;
+      return {
+        rows: verdicts.map(verdict => `${verdict.independence_profile} (${verdict.role === "primary" ? "primary" : "sensitivity"}): ${verdict.status}, ${pct(verdict.lower)}–${pct(verdict.upper)}`),
+        note: "A claim's status is its verdict under the primary profile. Each sensitivity profile decides the same thresholds on its own interval; it shows how far the verdict rests on the primary profile's independence assumption and cannot replace it."
+      };
+    }
+    // The wording that depends on the design: a sampled design's results are about the
+    // declared item frame its items were drawn from, not about a fixed set.
+    function designText(report) {
+      if (report.scope && report.scope.design === "sampled") {
+        return {
+          riskHeading: "Sampled-design risk measures",
+          prompts: "Frame items",
+          footer: "Values are design-based estimates for the declared item frame; hierarchy filters do not create claims beyond the frame."
+        };
+      }
+      return {
+        riskHeading: "Fixed-design risk measures",
+        prompts: "Fixed prompts",
+        footer: "Values are fixed-design summaries; hierarchy filters do not create population-level claims."
+      };
+    }
     function boundStatus(value) {
       return ({certifying: "Coverage-guaranteed", diagnostic: "Diagnostic", invalid: "Unavailable"})[value] || humanize(value);
     }
@@ -520,6 +547,7 @@
       document.getElementById("title").textContent = report.analysis?.title || report.analysis?.id || "Safety analysis";
       const subtitle = document.getElementById("subtitle");
       subtitle.textContent = report.scope?.disclaimer || "Fixed-design statistical safety analysis.";
+      document.getElementById("risk-heading").textContent = designText(report).riskHeading;
       if (report.scope?.what_results_establish) {
         const link = el("a", "", "What these results establish, and what they do not");
         link.href = report.scope.what_results_establish;
@@ -551,7 +579,7 @@
       const valid = cohortPrompts.reduce((sum, d) => sum + (Number(d.n_valid) || 0), 0);
       const unclassified = cohortPrompts.reduce((sum, d) => sum + (Number(d.n_unclassified) || 0), 0);
       root.append(
-        makeMetric("Fixed prompts", String(cohortPrompts.length), `${groups.length} declared groups`),
+        makeMetric(designText(report).prompts, String(cohortPrompts.length), `${groups.length} declared groups`),
         makeMetric("Classified rollouts", String(valid), `${unclassified} unclassified`),
         makeMetric("Observed failures", String(failures), `${pct(valid ? failures / valid : null)} of classified rollouts`),
         makeMetric("Unclassified outcomes", String(unclassified), unclassified ? "Included in robust bounds" : "None")
@@ -596,14 +624,11 @@
           el("span", "", `Unsafe ≥ ${pct(claim.unacceptable_lower)}`)
         );
         card.append(values);
-        const verdicts = Array.isArray(claim.profile_verdicts) ? claim.profile_verdicts : [];
-        if (verdicts.length > 1) {
+        const profileVerdicts = profileVerdictLines(claim);
+        if (profileVerdicts) {
           const profiles = el("div", "claim-values");
-          verdicts.forEach(verdict => profiles.append(el(
-            "span", "",
-            `${verdict.independence_profile}${verdict.role === "primary" ? " (primary)" : ""}: ${verdict.status}, ${pct(verdict.lower)}–${pct(verdict.upper)}`
-          )));
-          card.append(profiles);
+          profileVerdicts.rows.forEach(row => profiles.append(el("span", "", row)));
+          card.append(profiles, el("p", "claim-reason", profileVerdicts.note));
         }
         const reason = [...(claim.reasons || []), ...(claim.warnings || [])].join(" ");
         if (reason) card.append(el("p", "claim-reason", reason));
@@ -1218,7 +1243,7 @@
     }
     function renderDynamic() { renderSummary(); renderClaims(); renderRisk(); renderAllExploration(); renderHierarchyRisks(); }
     renderHeader(); bind(); renderDynamic(); renderComparisons(); renderAudit();
-    document.getElementById("footer").textContent = `Generated from inspect-safety-stats schema ${report.schema_version || "—"}. Values are fixed-design summaries; hierarchy filters do not create population-level claims.`;
+    document.getElementById("footer").textContent = `Generated from inspect-safety-stats schema ${report.schema_version || "—"}. ${designText(report).footer}`;
   })();
   </script>
 </body>

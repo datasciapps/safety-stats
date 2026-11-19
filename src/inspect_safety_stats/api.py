@@ -248,8 +248,9 @@ def analyze(
     ``parallel`` passed to Inspect's log reader. Passing both ``logs`` and ``source`` is an
     error. The report holds the prompt-level estimates, group and hierarchy risk bounds,
     comparisons, claims with their pass, fail or inconclusive status, and the overall
-    decision. Its results apply to the declared fixed evaluation set, not to a wider prompt
-    population. Write it to disk with ``SafetyReport.write``. Raises when the data cannot be read;
+    decision. Its results apply to the declared fixed evaluation set or, under a sampled design,
+    to the declared item frame, never to a wider prompt population; the report's ``scope`` says
+    which. Write it to disk with ``SafetyReport.write``. Raises when the data cannot be read;
     ``validate`` reports that as a diagnostic instead.
 
     ``decision_policy`` (experimental) is a ``DecisionPolicy`` or the path of a policy file,

@@ -87,7 +87,7 @@ estimated by Horvitz--Thompson, reported as `horvitz_thompson_<method>` interval
 
 ### What a sampled design refuses
 
-Four checks reject configurations that a sample cannot support:
+Three checks reject configurations that a sample cannot support, and two warn:
 
 - `PLAN_SAMPLED_MEASURE_UNSUPPORTED` -- only `weighted_mean` is available. Maximum, CVaR,
   top-k, entropic, and the threshold measures are nonlinear functionals of the whole frame's
@@ -98,6 +98,9 @@ Four checks reject configurations that a sample cannot support:
   item that was never drawn.
 - `PLAN_SAMPLED_PROMPT_BOUNDS` (warning) -- simultaneous prompt bounds cover the sampled
   items, not the frame.
+- `PLAN_SAMPLED_SENSITIVITY_PROFILES` (warning) -- the frame item is the independent block
+  whatever `independence` declares, so a declared sensitivity profile gets no interval and
+  claims get no verdict under it. A claim's `profile_verdicts` hold only its `frame_item` row.
 
 ### Nodes with nothing drawn
 
@@ -130,7 +133,10 @@ fields deserve care:
 The report's scope statement follows the design. A sampled design's `scope` in `report.json`
 has `design: sampled` and says that results apply to the declared item frame, from which the
 evaluated items were drawn with the recorded inclusion probabilities, and not to prompts
-outside the frame. `report-full.md` and `report.html` print it above the claims.
+outside the frame. `report-full.md` and `report.html` print it above the claims. The rest of
+the report follows it: `report.md` counts frame items rather than fixed prompts and says that
+its intervals allow for both the draw and the rollouts, with each drawn item one observation,
+and `report-full.md` and `report.html` head the intervals "Sampled-design risk measures".
 
 ## Fixed-size designs
 

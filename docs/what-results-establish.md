@@ -30,7 +30,8 @@ that every bound assumes the model is not strategically underperforming (see bel
 An interval covers the true risk of that design with the stated coverage, at any sample size, as
 long as the assumptions it rests on hold. The report lists them:
 
-- "Fixed-design risk measures" names each interval method and independence profile used.
+- "Fixed-design risk measures", or "Sampled-design risk measures" under a sampled design, names
+  each interval method and independence profile used.
 - "Limitations" lists each assumption the analysis made, the plan field that sets it, its value,
   and what follows if it is wrong. "Defaults applied" lists the plan fields left to their
   defaults.

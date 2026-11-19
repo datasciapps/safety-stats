@@ -1790,6 +1790,24 @@ _CODES: tuple[CodeEntry, ...] = (
         remedy="Set outputs.direct_mean_intervals.enabled: true, with its family.",
     ),
     CodeEntry(
+        code="PLAN_SAMPLED_SENSITIVITY_PROFILES",
+        severities=("WARNING",),
+        source="plan",
+        effect="withheld",
+        assumption=(
+            "A sampled design's frame intervals take the frame item as the independent block, "
+            "whatever independence profiles the plan declares."
+        ),
+        consequence=(
+            "No interval and no claim verdict is reported under the declared sensitivity "
+            "profiles; the frame intervals and the claims' statuses are unaffected."
+        ),
+        remedy=(
+            "Remove outputs.direct_mean_intervals.independence.sensitivities under design.type: "
+            "sampled, or analyse the prompts as a fixed design to see verdicts under them."
+        ),
+    ),
+    CodeEntry(
         code="PLAN_SELF_DECLARED",
         severities=("WARNING",),
         source="registration",
