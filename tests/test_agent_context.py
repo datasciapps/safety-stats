@@ -9,6 +9,7 @@ import inspect
 import re
 import shlex
 import shutil
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,11 @@ AGENT_CONTEXT_FILES = [
 ]
 
 _MARKDOWN_LINK = re.compile(r"\]\((?!https?:|mailto:|#)([^)#\s]+)(?:#[^)]*)?\)")
-_FENCED_BLOCK = re.compile(r"^```([a-zA-Z0-9_-]+)\n(.*?)^```", re.MULTILINE | re.DOTALL)
+# A fence may be indented, as under a list item in SKILL.md; its closing fence has the same
+# indent, and the block is read dedented.
+_FENCED_BLOCK = re.compile(
+    r"^([ \t]*)```([a-zA-Z0-9_-]+)\n(.*?)^\1```", re.MULTILINE | re.DOTALL
+)
 _SKILL_NAME = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 runner = CliRunner()
@@ -44,9 +49,9 @@ def _fenced_blocks(path: Path, language: str) -> list[tuple[int, str]]:
     text = path.read_text(encoding="utf-8")
     blocks: list[tuple[int, str]] = []
     for match in _FENCED_BLOCK.finditer(text):
-        if match.group(1) == language:
+        if match.group(2) == language:
             line = text.count("\n", 0, match.start()) + 1
-            blocks.append((line, match.group(2)))
+            blocks.append((line, textwrap.dedent(match.group(3))))
     return blocks
 
 
@@ -142,7 +147,7 @@ _SECTION_IMPORT = re.compile(rf"Import\b(.*?)\bfrom `({_MODULE})`")
 _LINE_MODULE = re.compile(rf"\((?:in|import from) `({_MODULE})`\)")
 _IDENTIFIER_SPAN = re.compile(r"`([A-Za-z_]\w*)`")
 # SKILL.md states locations as "`a`, `b` and `c` are in `module`" or "(`a` in `module`)".
-_STATED_LOCATION = re.compile(rf"([^;(*]*?)\b(?:is |are )?in `({_MODULE})`")
+_STATED_LOCATION = re.compile(rf"([^;(*.\n]*?)\b(?:is |are )?in `({_MODULE})`")
 
 
 def _section(path: Path, heading: str) -> str:
@@ -347,6 +352,32 @@ def test_documented_cli_commands_and_options_exist() -> None:
                         problems.append(f"{doc_path.relative_to(ROOT)}: `{path}` has no {option}")
     assert checked >= 50, f"only {checked} documented options found"
     assert not problems, "documented CLI options missing from main:\n" + "\n".join(problems)
+
+
+def test_the_skills_command_blocks_are_checked() -> None:
+    """Guards the check above: SKILL.md's bash blocks sit indented under list items."""
+    lines = [
+        line
+        for _, block in _fenced_blocks(SKILL_FILE, "bash")
+        for line in block.splitlines()
+        if line.startswith("inspect-safety-stats ")
+    ]
+    assert len(lines) >= 2, lines
+
+
+# SKILL.md gives the options of validate and analyze in code spans of their own, as in
+# "with `--runs runs.jsonl --rollouts rollouts.jsonl` in place of `--logs`".
+_OPTION_SPAN = re.compile(r"`(--[a-z][^`]*)`")
+
+
+def test_the_skills_option_spans_name_options_of_validate_or_analyze() -> None:
+    root = _cli_root()
+    known = _option_names(root.commands["validate"]) | _option_names(root.commands["analyze"])
+    spans = _OPTION_SPAN.findall(SKILL_FILE.read_text(encoding="utf-8"))
+    options = [option for span in spans for option in _OPTION.findall(span)]
+    assert len(options) >= 4, options
+    unknown = sorted(set(options) - known)
+    assert not unknown, f"SKILL.md names options validate and analyze do not have: {unknown}"
 
 
 def test_command_list_covers_every_command_and_option() -> None:
