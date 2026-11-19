@@ -232,12 +232,33 @@ def test_a_report_read_back_from_report_json_writes_the_same_index(tmp_path: Pat
         assert (directory / name).read_bytes() == text.encode("utf-8")
 
 
+def _checkout() -> Path | None:
+    """The repository root when the tests run in its git checkout, else None."""
+
+    root = Path(__file__).resolve().parents[2]
+    try:
+        top = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:  # no git
+        return None
+    if top.returncode != 0 or Path(top.stdout.strip()).resolve() != root:
+        return None
+    return root
+
+
 @pytest.mark.parametrize("url", [AGENT_GUIDE_URL, DIAGNOSTICS_URL])
 def test_the_guide_link_names_a_tracked_page_on_main(url: str) -> None:
     prefix = "https://github.com/aduncan001/safety_stats/blob/main/"
     assert url.startswith(prefix)
     page = url.removeprefix(prefix)
-    root = Path(__file__).resolve().parents[2]
+    root = _checkout()
+    if root is None:
+        pytest.skip("not run in a git checkout of the repository, so no file is tracked")
     tracked = subprocess.run(
         ["git", "ls-files", "--error-unmatch", page], cwd=root, capture_output=True, check=False
     )
