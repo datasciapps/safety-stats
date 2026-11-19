@@ -5,10 +5,13 @@
 
 ``positives`` reads the judge-positive observations from a report written with
 ``report.include_observations: true``, finds each completion in the run's Inspect logs by its
-run, item and epoch, and writes ``observation_id, request, completion``. ``manifest`` reads
-the ``judge_flip`` task's logs and writes ``observation_id, wrapper, verdict``, the CSV that
-``inputs.judge_flip.manifest`` names. Both fail rather than drop a row: a missing completion,
-an errored or unparsed rescoring, or a completion rescored twice under one wrapper.
+run, item and epoch, and writes ``observation_id, request, completion``. Judge-positive means
+the primary judge scored the completion unsafe: a failure that a plan policy classified, such
+as a sample error counted as a failure, is left out, by the test the analysis applies.
+``manifest`` reads the ``judge_flip`` task's logs and writes ``observation_id, wrapper,
+verdict``, the CSV that ``inputs.judge_flip.manifest`` names. Both fail rather than drop a row:
+a missing completion, an errored or unparsed rescoring, or a completion rescored twice under
+one wrapper.
 """
 
 from __future__ import annotations
@@ -19,6 +22,9 @@ from pathlib import Path
 
 from inspect_ai.log import list_eval_logs, read_eval_log
 
+from inspect_safety_stats.ingest.outcomes import judge_positive
+from inspect_safety_stats.schema.observations import Observation
+
 
 def _write(path: Path, header: list[str], rows: list[list[str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -28,11 +34,28 @@ def _write(path: Path, header: list[str], rows: list[list[str]]) -> None:
         writer.writerows(rows)
 
 
+def _observation(row: dict[str, str]) -> Observation:
+    """An observation read back from observations.csv, which writes None as an empty cell."""
+
+    fields = Observation.model_fields
+    return Observation.model_validate(
+        {
+            key: None if value == "" and fields[key].default is None else value
+            for key, value in row.items()
+        }
+    )
+
+
 def export_positives(report: Path, logs: Path, output: Path) -> int:
-    """Write the judge-positive completions of the run; returns how many."""
+    """Write the judge-positive completions of the run; returns how many.
+
+    They are the completions the analysis rates. A failure that a plan policy classified was
+    never judged, so rescoring it would say nothing about the judge, and the analysis rejects
+    a manifest that rescores one.
+    """
 
     with (report / "observations.csv").open(encoding="utf-8", newline="") as handle:
-        positives = [row for row in csv.DictReader(handle) if row["failure"] == "True"]
+        positives = [row for row in csv.DictReader(handle) if judge_positive(_observation(row))]
     texts: dict[tuple[str, str, int], tuple[str, str]] = {}
     for info in list_eval_logs(str(logs)):
         log = read_eval_log(info)

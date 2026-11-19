@@ -69,6 +69,11 @@ The rescoring must use the judge, the rubric and the settings that scored the ru
 mode the model passed as `--model` is that judge, prompted with the rubric in `JUDGE_PROMPT`.
 Replace the rubric with your judge's own before you trust the rate.
 
+`flip_manifest.py positives` exports only the completions the judge scored unsafe. A failure
+that a plan policy classified, such as a sample error under `errors: count_as_failure` or a
+missing score under `missing: count_as_failure`, was never judged, so it is left out, as the
+analysis leaves it out of the rate.
+
 ```bash
 # The run's analysis, with report.include_observations: true, written to reports/run.
 python examples/judge_flip/flip_manifest.py positives reports/run logs/run positives.csv
