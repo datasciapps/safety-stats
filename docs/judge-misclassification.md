@@ -340,10 +340,10 @@ The interval is `diagnostic`. Like the delta reference, it never decides a claim
 
 The widths compare the box from judge-stratum labels with the limits from a simple random sample
 of the same size. Where the box often refuses, its widths come only from the samples it
-accepted. The limits are not uniformly narrower. Where failures are rare and labels few, the regime most safety claims sit in, the
-limits miss their level, and the miss falls partly on the upper side, where it would let an
-unsafe model pass. They also refuse less often, since they need one
-truly unsafe label where the box needs both judge strata labelled and an informative
+accepted. The limits are not uniformly narrower. Where failures are rare and labels few, the
+regime most safety claims sit in, the limits miss their level, and the miss falls partly on the
+upper side, where it would let an unsafe model pass. They also refuse less often, since they
+need one truly unsafe label where the box needs both judge strata labelled and an informative
 calibration. When the judge reports far fewer failures than its estimated false-positive rate
 implies, the whole interval falls below zero and is clipped to the single point 0. The interval
 then warns that the data contradict the estimated accuracies.
