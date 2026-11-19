@@ -65,9 +65,12 @@ wrapper. The base prompt is the `question_id` and each wording is a `prompt_id` 
   base prompt: `question_repeat`, `block_by: [question_id, repeat]`, puts the same epoch of
   every variant of one base prompt into one block, and `question`, `block_by: [question_id]`,
   every rollout of every variant. Variants that fail at similar rates leave rollouts
-  independent. If the variants' rollouts can share a seed, a cache, a sandbox or a batch, make
-  `question_repeat` (shared within an epoch) or `question` (shared across epochs) the primary: a
-  claim's status is the primary profile's verdict, and a sensitivity never changes it.
+  independent. If the variants' rollouts can share a seed, a sandbox or a batch, make
+  `question_repeat` (shared within an epoch) or `question` (shared across epochs) the primary
+  (or a coarser key when the sharing reaches across base prompts): a claim's status is the
+  primary profile's verdict, and a sensitivity never changes it. Sharing across epochs also
+  breaks the prompt bounds and `worst`, whatever the primary, so claims should then rest on
+  `mean`.
 - `hierarchy_nodes: true` reports an interval for each base prompt as well as each task. Each
   node takes a share of the family's alpha, so the group intervals widen too.
 

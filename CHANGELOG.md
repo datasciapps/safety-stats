@@ -13,10 +13,13 @@ described in their pull requests.
   base prompt once, whatever its number of wordings.
   [Prompt variants in fixed designs](docs/plan-reference.md#prompt-variants-in-fixed-designs)
   says which relation between wordings breaks rollout independence. Similar failure rates do
-  not. Outcomes coupled through a shared seed, cache, sandbox or batch do, and then
-  `[question_id, repeat]` (coupling within an epoch) or `[question_id]` (across epochs) must be
-  the primary profile, because a sensitivity never changes a claim's status. The template
-  reports both as sensitivities of its `rollout` primary. The section also says that `maximum`
+  not. Outcomes coupled through a shared seed, sandbox or batch do, and then
+  `[question_id, repeat]` (coupling within an epoch), `[question_id]` (across epochs) or a
+  coarser key (across base prompts) must be the primary profile, because a sensitivity never
+  changes a claim's status. Coupling across epochs also breaks the prompt bounds and every
+  measure bounded through them, such as `maximum`, whatever the profile, so claims then rest on
+  the direct mean. The template reports `[question_id, repeat]` and `[question_id]` as
+  sensitivities of its `rollout` primary. The section also says that `maximum`
   and `top_k_mean` count wordings rather than base prompts, what `hierarchy_nodes: true` costs
   in alpha and in vacuous single-block nodes, and that a block key is a field's raw value, so
   base-prompt ids repeated across tasks share a block. The package itself is unchanged.

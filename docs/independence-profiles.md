@@ -217,8 +217,10 @@ whole batches, and very few blocks can make meaningful finite-sample inference i
 When a design asks one base prompt in several wordings, `block_by: [question_id, repeat]` puts
 the same epoch of every wording of a base prompt in one block, and `block_by: [question_id]`
 every rollout of every wording. Wordings that fail at similar rates leave rollouts independent.
-Wordings whose rollouts share a seed, a cache, a sandbox or a batch do not, and then one of
-these profiles must be the primary, because a sensitivity never changes a claim's status. See
+Wordings whose rollouts share a seed, a sandbox or a batch do not, and then one of these
+profiles (or a coarser key when the sharing reaches across base prompts) must be the primary,
+because a sensitivity never changes a claim's status. Sharing across epochs also breaks the
+prompt bounds and the measures bounded through them, whatever the primary. See
 [Prompt variants in fixed designs](plan-reference.md#prompt-variants-in-fixed-designs).
 
 ### How much the grouping matters: `CLUSTER_DESIGN_EFFECT`
