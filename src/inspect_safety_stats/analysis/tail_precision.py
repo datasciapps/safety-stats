@@ -16,19 +16,25 @@ from inspect_safety_stats.stats.binomial import binomial_upper_bound
 
 _THRESHOLD_TYPES = frozenset({"threshold_exceedance", "threshold_excess"})
 _PROPAGATED_TYPES = frozenset({"maximum", "cvar", "top_k_mean", "entropic", *_THRESHOLD_TYPES})
-# The nonlinear measures docs/statistical-methods.md (section 2.4.9) calls misleading or
-# vacuous when each prompt has one rollout, whose empirical rate is then 0 or 1.
-_SINGLE_ROLLOUT_TYPES = frozenset({"cvar", "maximum", "entropic"})
+# The measures nonlinear in each prompt's failure probability, which docs/statistical-methods.md
+# (section 2.4.9) calls misleading or vacuous when each prompt has one rollout, whose empirical
+# rate is then 0 or 1: at one rollout a top-k mean is an equal-weight CVaR, and a threshold
+# measure counts each prompt that failed its one trial as above any threshold below 1. The
+# weighted mean is linear, and worst_of_k gives no estimate below k rollouts per prompt and is
+# the weighted mean at k = 1.
+_SINGLE_ROLLOUT_TYPES = _PROPAGATED_TYPES
 
 
 def single_rollout_tail_claims(plan: AnalysisPlan, data: NormalizedData) -> list[Diagnostic]:
     """Degrade integrity when a claim rests on a nonlinear measure of single-rollout prompts.
 
-    For each claim on a ``cvar``, ``maximum`` or ``entropic`` measure, the classified rollouts
-    of each prompt in the claim's cohort and group are counted. When the median count, over
-    the prompts with any, is one, every typical per-prompt rate is 0 or 1 and the plug-in
-    measure is driven by single trials, so the claim rests on an assumption the logs do not
-    support. Data only: ``validate`` reports it as ``analyze`` does.
+    For each claim on a ``cvar``, ``maximum``, ``top_k_mean``, ``entropic``,
+    ``threshold_exceedance`` or ``threshold_excess`` measure, the classified rollouts of each
+    prompt in the claim's cohort and group are counted. When the lower median count, over the
+    prompts with any, is one, so that at least half of those prompts have a single rollout,
+    their rates are 0 or 1 and the plug-in measure is driven by single trials, so the claim
+    rests on an assumption the logs do not support. The lower median flags an even split, the
+    conservative reading. Data only: ``validate`` reports it as ``analyze`` does.
     """
 
     measures = {measure.id: measure for measure in plan.outputs.risk_measures}
@@ -46,12 +52,12 @@ def single_rollout_tail_claims(plan: AnalysisPlan, data: NormalizedData) -> list
             continue
         if measure.type not in _SINGLE_ROLLOUT_TYPES:
             continue
-        counts = sorted(
+        counts = [
             count
             for count in (classified[(cohort, prompt)] for prompt in group.prompt_ids)
             if count > 0
-        )
-        if not counts or counts[len(counts) // 2] > 1:
+        ]
+        if not counts or _lower_median(counts) > 1:
             continue
         single = sum(count == 1 for count in counts)
         found.append(
@@ -74,7 +80,7 @@ def single_rollout_tail_claims(plan: AnalysisPlan, data: NormalizedData) -> list
                     "group": group.id,
                     "prompts_with_rollouts": len(counts),
                     "single_rollout_prompts": single,
-                    "median_rollouts_per_prompt": counts[len(counts) // 2],
+                    "median_rollouts_per_prompt": _lower_median(counts),
                 },
             )
         )
@@ -87,8 +93,6 @@ def _propagated(measure: RiskMeasureSpec) -> bool:
     if measure.type == "worst_of_k":
         return not measure.direct_interval
     return measure.type in _PROPAGATED_TYPES
-
-
 
 
 # The most rollouts per prompt the search for the count a measure needs tries.

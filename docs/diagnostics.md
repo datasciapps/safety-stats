@@ -987,12 +987,12 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
 
 - **Severity:** WARNING
 - **Effect:** [degraded](#effects)
-- **Assumption:** A claim on a cvar, maximum or entropic measure rests on repeated rollouts per
-  prompt, since these measures are defined on each prompt's failure probability and one rollout
-  estimates it only as 0 or 1.
-- **Consequence:** Integrity is degraded: the claim is evaluated, but with one rollout for the
-  median prompt of its cohort and group the measure is driven by single trials and is misleading or
-  vacuous.
+- **Assumption:** A claim on a cvar, maximum, top_k_mean, entropic, threshold_exceedance or
+  threshold_excess measure rests on repeated rollouts per prompt, since these measures are nonlinear
+  in each prompt's failure probability and one rollout estimates it only as 0 or 1.
+- **Consequence:** Integrity is degraded: the claim is evaluated, but with one rollout for at least
+  half the prompts of its cohort and group the measure is driven by single trials and is misleading
+  or vacuous.
 - **Remedy:** Run repeated rollouts per prompt, or make the claim on a weighted_mean measure, whose
   interval handles one rollout per prompt.
 

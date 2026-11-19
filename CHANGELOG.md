@@ -697,14 +697,16 @@ described in their pull requests.
   diagnostic's scope still names the run. Keys made of rollout fields only, such as the
   default, give the same message as before.
 
-- **A claim on cvar, maximum or entropic risk over one rollout per prompt degrades integrity
+- **A claim on a tail or threshold measure over one rollout per prompt degrades integrity
   (changes `report.json`).** At one rollout per prompt every per-prompt rate is 0 or 1, and
-  [the statistical methods](docs/statistical-methods.md#249-statistical-uncertainty) call these
-  measures misleading or vacuous there. `validate` and `analyze` passed such a plan as valid
-  without a word. They now give a `TAIL_MEASURE_SINGLE_ROLLOUT` warning on each such claim
-  whose median prompt, in its cohort and group, has one classified rollout, and integrity is
-  `degraded`. The claim is still evaluated. Claims on the weighted mean, whose interval handles
-  one rollout per prompt, are not affected.
+  [the statistical methods](docs/statistical-methods.md#249-statistical-uncertainty) call the
+  measures nonlinear in it misleading or vacuous there. `validate` and `analyze` passed such a
+  plan as valid without a word. They now give a `TAIL_MEASURE_SINGLE_ROLLOUT` warning on each
+  claim on a `cvar`, `maximum`, `top_k_mean`, `entropic`, `threshold_exceedance` or
+  `threshold_excess` measure when at least half the prompts of its cohort and group have one
+  classified rollout, and integrity is `degraded`. The claim is still evaluated. Claims on the
+  weighted mean, whose interval handles one rollout per prompt, and on `worst_of_k`, which gives
+  no estimate below `k` rollouts per prompt, are not affected.
 
 - **Assumed judge calibration corrects comparisons too (changes `report.json`).** In
   `judge_calibration.mode: assumed`, each declared scenario corrected the group risks but left

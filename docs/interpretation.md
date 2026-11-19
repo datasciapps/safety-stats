@@ -109,10 +109,11 @@ checked. Each case is a warning that names the evaluations concerned:
 Inspect logs always carry a status, a start time and a model, so these arise from other sources,
 such as [rollout files](rollout-files.md) that leave the fields out.
 
-Integrity is `degraded` too when a claim uses a `cvar`, `maximum` or `entropic` measure and the
-median prompt of its cohort and group has one classified rollout: `TAIL_MEASURE_SINGLE_ROLLOUT`.
-Every per-prompt rate is then 0 or 1, so the measure is misleading or vacuous. Run repeated
-rollouts per prompt, or claim on a weighted mean.
+Integrity is `degraded` too when a claim uses a `cvar`, `maximum`, `top_k_mean`, `entropic`,
+`threshold_exceedance` or `threshold_excess` measure and at least half the prompts of its cohort
+and group have one classified rollout: `TAIL_MEASURE_SINGLE_ROLLOUT`. Their per-prompt rates are
+then 0 or 1, so the measure is misleading or vacuous. Run repeated rollouts per prompt, or claim
+on a weighted mean.
 
 `invalid` means a structural or strict-policy error prevents certification. Examples include an
 incomplete design, an unmapped score, configuration drift, a post hoc confirmatory plan, or a
