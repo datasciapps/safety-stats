@@ -166,21 +166,36 @@ of unseen tasks or questions.
 
 A headline row averages over the hierarchy, so an effect concentrated in one node can look
 small there: a few points of difference overall can be a large difference in one category and
-none in the others. When a report has hierarchy rows, `report-full.md` lists, right after the
-claims:
+none in the others. `report-full.md` has a section "Where effects sit", right after the claims,
+when a comparison has hierarchy rows, or when decisions are shown
+(`report.include_decisions: true`) and a claim's evidence has hierarchy rows. Hierarchy risk
+rows alone give no section while decisions are hidden, which is the default. The section lists:
 
-- every hierarchy node of a comparison whose interval excludes no difference (0 for a risk
+- every hierarchy node of a comparison whose interval excludes zero difference (0 for a risk
   difference or a relative risk reduction, 1 for a risk ratio), beside the comparison's overall
   effect;
-- every hierarchy node whose estimate is above the acceptable limit of a claim on the same
-  evidence, with whether the whole interval or only the estimate is above. An aggregate claim
-  reaches the node rows only through a `weighted_mean` measure, the estimand they report; a
-  comparison claim reaches its comparison's node rows. The list is hidden with the decisions.
+- every hierarchy node whose interval or estimate is above the acceptable limit of a claim on
+  the same evidence, with whether the whole interval or only the estimate is above. The claims
+  are all the claims, mandatory or not, as in `report.md`. An aggregate claim reaches the node
+  rows only through a `weighted_mean` measure, the estimand they report; a comparison claim
+  reaches its comparison's node rows.
+
+A node is placed on its interval first. A risk node has no estimate when one of its prompts has
+no classified rollout, but under `missing: conservative_bounds` or `exclude` it can still have
+an interval, and a node whose whole interval is above the limit is listed with no estimate. A
+node that neither its interval nor its estimate places, such as one whose prompts are blocked,
+is counted under the table, and so is a comparison node with no interval; neither is left out
+without a word. Values are compared as printed, at the report's decimal places, so that a listed
+row never prints a bound equal to the limit or to the null (0, or 1 for a ratio).
 
 These rows are pointers into the hierarchy tables, with the same intervals and coverage; they
-are not further claims. A claim decided on a judge-corrected interval is compared with
-judge-reported node rows. A claim that passes on the average while nodes sit above its limit
-passes as declared: the list makes that visible, it does not change the decision.
+are not further claims. When those intervals are pointwise (`simultaneous: false`), each covers
+its own node only, so among many nodes some are listed by chance, and the section says so.
+Under a validated judge calibration every claim is about true failure risk, while node rows
+are judge-reported risks: those rows say "judge-reported" in their Position, and a note says
+whether the nodes' judge-corrected intervals, in `hierarchy-risks.csv` or `comparisons.csv`,
+are certified. A claim that passes on the average while nodes sit above its limit passes as
+declared: the list makes that visible, it does not change the decision.
 
 The HTML report presents these results as a collapsible tree. Choose one **Independence profile**
 for the whole report. Every interval glyph uses the same 0–100% risk axis. The strong blue band is
