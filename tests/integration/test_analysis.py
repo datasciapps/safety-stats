@@ -4248,12 +4248,14 @@ def _profiled_report(
     sensitivities: list[str],
     *,
     intent: Literal["confirmatory", "exploratory"] = "confirmatory",
+    reference_methods: tuple[str, ...] = (),
 ) -> SafetyReport:
     plan = load_plan(_write_inputs(tmp_path))
     plan.analysis.intent = intent
     plan.report.include_decisions = True
     spec = plan.outputs.direct_mean_intervals
     spec.method = "weighted_kl_chernoff"
+    spec.reference_methods = list(reference_methods)
     assert spec.independence is not None
     spec.independence.sensitivities = sensitivities
     eval_frame, sample_frame = _frames()
@@ -4333,6 +4335,28 @@ def test_an_exploratory_claims_primary_profile_verdict_is_its_final_status(
         markdown
     )
     assert "| `rollout` | primary | `PASS` " not in markdown
+
+
+def test_sensitivity_verdicts_use_only_the_primary_intervals_method(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A reference method's interval under a sensitivity profile is not a verdict row."""
+    report = _profiled_report(
+        monkeypatch, tmp_path, ["prompt"], reference_methods=("weighted_hoeffding",)
+    )
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    # The reference method has an interval under the sensitivity profile too.
+    assert {
+        (item.method, item.independence_profile)
+        for item in mean.intervals
+        if item.role == "sensitivity" and item.independence_profile == "prompt"
+    } == {("weighted_kl_chernoff", "prompt"), ("weighted_hoeffding", "prompt")}
+    claim = report.claims[0]
+    assert [(v.independence_profile, v.role, v.interval_id) for v in claim.profile_verdicts] == [
+        ("rollout", "primary", "direct_weighted_kl_chernoff"),
+        ("prompt", "sensitivity", "direct_weighted_kl_chernoff_prompt"),
+    ]
 
 
 def test_a_claim_without_sensitivity_profiles_has_only_its_primary_verdict(
