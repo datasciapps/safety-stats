@@ -21,8 +21,10 @@ from inspect_ai.log import read_eval_log
 from inspect_ai.scorer import Score, Target, scorer
 from inspect_ai.solver import TaskState, generate
 from inspect_ai.util._early_stopping import EarlyStop
+from typer.testing import CliRunner
 
-from inspect_safety_stats import AnalysisPlan, analyze, load_plan
+from inspect_safety_stats import AnalysisPlan, analyze, load_plan, validate
+from inspect_safety_stats.cli import app
 from inspect_safety_stats.ingest.records import SampleOrder
 from inspect_safety_stats.schema.reports import Diagnostic, SafetyReport
 from inspect_safety_stats.stats.sequential import anytime_upper_bound
@@ -272,6 +274,30 @@ def test_a_run_without_a_recorded_order_is_refused(
     assert why in diagnostic.message
     assert not _found(report, "ANYTIME_UPPER_BOUND")
     assert report.integrity.status == "invalid"
+
+
+@pytest.mark.parametrize("run", ["seeded", "unseeded", "unshuffled"])
+def test_validate_refuses_what_analyze_refuses(
+    logs: dict[str, str], tmp_path: Path, run: str
+) -> None:
+    """CONTRIBUTING 5.2: validate accepts exactly what analyze accepts, at the CLI too."""
+
+    report = _analyze(tmp_path, logs[run], SECTION.format(profile="prompt", family="gate"))
+    plan = tmp_path / "plan.yaml"
+    checked = validate(plan=load_plan(plan), logs=logs[run])
+    command = CliRunner().invoke(app, ["validate", "--plan", str(plan), "--logs", logs[run]])
+
+    def errors(diagnostics: list[Diagnostic]) -> list[tuple[str, str, str | None]]:
+        return [
+            (item.code, item.message, item.scope)
+            for item in diagnostics
+            if item.severity == "ERROR"
+        ]
+
+    assert errors(checked.diagnostics) == errors(report.integrity.diagnostics)
+    assert checked.status == report.integrity.status
+    assert (checked.status == "invalid") == (run != "seeded")
+    assert command.exit_code == (3 if run != "seeded" else 0)
 
 
 @pytest.mark.parametrize(

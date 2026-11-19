@@ -256,6 +256,23 @@ def _streams(
     return streams
 
 
+def anytime_order_diagnostics(
+    plan: AnalysisPlan,
+    data: NormalizedData,
+    diagnostics: list[Diagnostic],
+    read_orders: OrderReader | None,
+) -> None:
+    """For ``validate``: the errors ``anytime_bounds`` would add, without computing a bound.
+
+    The same checks of the runs' recorded orders run, so ``validate`` refuses what
+    ``analyze`` refuses (CONTRIBUTING section 5.2).
+    """
+
+    spec = _requested(plan)
+    if spec is not None:
+        _streams(plan, spec, data, diagnostics, read_orders)
+
+
 @dataclass(frozen=True)
 class ComputedAnytimeBound:
     """The anytime-valid bound of one cohort and group, before it is reported."""

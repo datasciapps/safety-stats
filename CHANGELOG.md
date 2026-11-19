@@ -230,7 +230,7 @@ described in their pull requests.
   weighted mean failure probability that holds at every point of the run's sample order at
   once, and so wherever a rule such as optstop's stopped the run. The run must use Inspect's
   `sample_shuffle` with an integer seed; a run without a recorded order is refused with an
-  `ANYTIME_ORDER_UNRECORDED` error. `analyze` adds an `ANYTIME_UPPER_BOUND` diagnostic with
+  `ANYTIME_ORDER_UNRECORDED` error, by `validate` as by `analyze`. `analyze` adds an `ANYTIME_UPPER_BOUND` diagnostic with
   the bound and, for each weighted-mean claim, whether it lies at or below the claim's
   `acceptable_upper`, or, under exploratory intent or invalid integrity, where no claim can
   pass, `null` with the reason. Claims and the decision keep their fixed-horizon status. The

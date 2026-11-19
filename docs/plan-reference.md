@@ -1112,6 +1112,8 @@ What it needs from the run:
 - **One run per cohort**, whose order lists every prompt of each group once. A `limit` that
   leaves prompts out of the order is refused.
 
+`validate` checks the recorded orders as `analyze` does, so it refuses the same runs.
+
 Each prompt's outcome is its failure share over its first `rollouts_per_item` epochs. Inspect
 schedules every prompt's first epoch before any second epoch, so with several epochs a run
 stopped early has few complete prompts; keep the default of 1 unless every prompt ran its
