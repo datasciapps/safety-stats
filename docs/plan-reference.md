@@ -1094,10 +1094,11 @@ once, so it holds wherever the run stopped, whatever rule chose the stop.
 ```yaml
 outputs:
   anytime_bounds:
-    independence_profile: prompt  # a profile of design.independence_profiles
-    family: gate                  # the multiplicity family whose alpha the bounds share
-    rollouts_per_item: 1          # optional, default 1: epochs per prompt in the stream
-    groups: [all]                 # optional, default every group
+    independence_profile: prompt   # a profile of design.independence_profiles
+    family: gate                   # the multiplicity family whose alpha the bounds share
+    rollouts_per_item: 1           # optional, default 1: epochs per prompt in the stream
+    groups: [all]                  # optional, default every group
+    order: inspect_sample_shuffle  # optional, and the only value: the order Inspect recorded
 ```
 
 What it needs from the run:
@@ -1126,7 +1127,10 @@ a failure. This only raises the bound, so it stays valid.
 independent, or by `prompt_id`, which treats only prompts as independent. A coarser profile is
 refused: the bound needs independent prompts. The family's alpha is split equally over every
 cohort and group bounded. The bound is the weighted mean failure probability of the group,
-with the group's weights.
+with the group's weights. Uneven weights widen it: the first step scales every outcome by the
+largest weight, so with one prompt carrying much of the weight the bound stays at or near 1
+for most of the run, wherever that prompt falls in the order
+([Uneven weights](sequential-design.md#uneven-weights)).
 
 `analyze` adds an `ANYTIME_UPPER_BOUND` diagnostic (`INFO`) for each cohort and group. Its
 message starts with "experimental", and its `details` hold `experimental: true`, the run, its
@@ -1135,12 +1139,14 @@ seed, `population` (the group's prompts), `draws` (prompts read),
 each weighted-mean claim on that cohort and group, whether `upper` is at or below its
 `acceptable_upper` (`certified`). As a claim can pass only in a confirmatory analysis whose
 integrity is valid, `certified` is `null` under exploratory intent or invalid integrity, and
-`certification_withheld` says which. The bound never changes a claim's status or the decision:
-claims keep the status the fixed-horizon analysis gives them, which for a run stopped early is
-usually `INCONCLUSIVE`. Any other reason the bound cannot be computed is an
-`ANYTIME_BOUND_INVALID` error, and a plan the bound cannot serve (a sampled design, an unknown
-family, group or profile, or a coarser profile) is a `PLAN_ANYTIME_BOUNDS_INVALID` error. A
-plan without the section keeps its hash and outputs. See
+`certification_withheld` says which. A bound, once computed, never changes a claim's status or
+the decision: claims keep the status the fixed-horizon analysis gives them, which for a run
+stopped early is usually `INCONCLUSIVE`. A refusal does change them. Any other reason the
+bound cannot be computed is an `ANYTIME_BOUND_INVALID` error, and a plan the bound cannot serve
+(a sampled design, an unknown family, group or profile, a coarser profile, or a judge
+calibration that covers a bounded group) is a `PLAN_ANYTIME_BOUNDS_INVALID` error. These
+errors, like `ANYTIME_ORDER_UNRECORDED`, make the integrity status invalid, so no claim can
+pass. A plan without the section keeps its hash and outputs. See
 [Runs that optstop stopped](sequential-design.md#runs-that-optstop-stopped-126) for the
 construction and what it costs.
 

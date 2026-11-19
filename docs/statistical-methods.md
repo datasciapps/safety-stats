@@ -1422,7 +1422,7 @@ individual block values, so no boundary \(r^*\) exists, and its claims are not p
 
 ## 6. Stretch goal: Bernoulli confidence sequences
 
-**Release status:** deferred. This section preserves the mathematical design for a later adaptive-evaluation module. It is not required for the core fixed-horizon workflow. The [phase-0 design](sequential-design.md) defines the stream, the state and the phases of that module.
+**Release status:** deferred, with two experimental parts implemented: the human labels of a judge calibration (Section 6.9) and the upper bound for Inspect runs stopped early (Section 6.10). Otherwise this section preserves the mathematical design for a later adaptive-evaluation module. It is not required for the core fixed-horizon workflow. The [phase-0 design](sequential-design.md) defines the stream, the state and the phases of that module.
 
 For a predeclared rollout count and a single final analysis, the exact fixed-sample methods in Sections 4 and 5 are preferred: they are simpler to audit and generally yield tighter bounds. Confidence sequences become worthwhile only when observed outcomes are allowed to determine when sampling stops, which prompt receives the next rollout, or when a continuously extended evaluation is allowed to make a formal decision.
 
@@ -1621,7 +1621,7 @@ Sequential inference is emerging explicitly in AI evaluation. *Efficient Sequent
 
 ### 6.9 Implemented: human labels for a judge calibration (experimental)
 
-One confidence sequence is implemented: for the human labels of a validated judge calibration (see [Judge misclassification](judge-misclassification.md#labelling-protocol-experimental)), when the plan's labelling protocol declares `stopping: data_dependent`. The labelling of evaluation outputs, not the evaluation itself, is then allowed to stop on results.
+A confidence sequence is implemented for the human labels of a validated judge calibration (see [Judge misclassification](judge-misclassification.md#labelling-protocol-experimental)), when the plan's labelling protocol declares `stopping: data_dependent`. The labelling of evaluation outputs, not the evaluation itself, is then allowed to stop on results.
 
 **Model.** A judge stratum holds \(N\) rollouts, of which an unknown \(K\) are truly unsafe. The calibration parameter is \(\rho\), the probability that a rollout the judge put in this stratum is truly unsafe: the correction \(R^\ast=R\rho_1+(1-R)\rho_0\) needs a probability, as \(R\) is one, and \(K/N\) is only this run's share. Given \(N\), the stratum's rollouts are independent and each is truly unsafe with probability \(\rho\), so \(K\) is binomial and a census, which knows \(K\), still leaves \(K/N\) about \(\sqrt{\rho(1-\rho)/N}\) from \(\rho\). This is the rollout model under which the labels of the Clopper--Pearson calibration are binomial too. The labelling queue orders the stratum by a uniformly random permutation fixed before labelling, and the labeller labels it from the front. Under the model, the labels \(X_1, X_2, \dots\) in queue order are then independent draws, each unsafe with probability \(\rho\), whatever \(N\) is. After \(n\) labels with \(S_n\) unsafe, their likelihood is \(\rho^{S_n}(1-\rho)^{n-S_n}\).
 
@@ -1646,6 +1646,46 @@ contains \(\rho^\ast\) at every \(n\) simultaneously with probability at least \
 **Assumptions.** The queue's order within each stratum is a uniformly random permutation fixed before labelling, and which stratum the next queue row comes from does not depend on labels not yet seen. Rows are labelled in queue order without skipping, which the analysis checks as a prefix of the declared queue. Given its size, each stratum's rollouts are independent, each truly unsafe with the stratum's \(\rho\). Human labels are ground truth. Several strata interleaved in one queue keep each stratum's martingale, because each stratum's order is drawn independently of the others' labels.
 
 **Validation.** `tests/unit/test_confidence_sequence.py` checks each endpoint against the posterior density in exact rational arithmetic. Its Monte Carlo draws every rollout anew in each of 2,000 strata of 60 rollouts and labels each stratum up to a census, counting a side as missed if it ever excluded \(\rho\), which is the most adversarial stopping rule. At \(a=0.1\) each side missed 0% to 5.3% of the time. A corrected interval on 120 rollouts, at 0.05 for the judge-reported interval and 0.05 for the calibration, with two rows of each stratum labelled per round up to a census, never missed the true risk at any round in 2,000 runs. An earlier version used the finite-population sequence of [41], with a uniform prior on \(K\), and reported \([\min C_n/N,\ \max C_n/N]\) for the counts it kept. That bounds \(K/N\), not \(\rho\): under the same simulations each side missed 43.6% to 58.5% of the time, and the corrected interval lay above the true risk in 12.25% of the runs and below it in 16.25%, against 5% per side.
+
+### 6.10 Implemented: anytime-valid upper bounds for runs stopped early (experimental)
+
+`outputs.anytime_bounds` (#126) bounds the weighted mean failure probability of a fixed design whose Inspect run a rule such as Optstop's stopped once its outcomes looked precise enough (Section 12). The [sequential design](sequential-design.md#runs-that-optstop-stopped-126) explains it for users; this section derives it. The code is `src/inspect_safety_stats/stats/sequential.py`.
+
+**Model.** The design has \(N\) items with weights \(w_i\ge0\) summing to one. Item \(i\)'s outcome \(Y_i\in[0,1]\) is its judge-reported failure share over its first \(r\) epochs, \(r\) fixed in the plan. The \(Y_i\) are independent across items, and under the `rollout` profile so are the \(r\) rollouts within an item. The estimand is \(\theta=\sum_iw_i\,\mathbb E[Y_i]\), the fixed design's weighted mean. The run takes the items in a uniformly random permutation \(\sigma\), drawn before the run and independent of the outcomes, which Inspect's `sample_shuffle` with a nonzero integer seed records in the log. After \(t\) draws the analysis sees \(Y_{\sigma(1)},\dots,Y_{\sigma(t)}\). The guarantee is
+
+\[
+\Pr\bigl(\exists t\le N:\ \theta>U_t\bigr)\le\alpha ,
+\]
+
+so \(U_\tau\) holds at any stopping time \(\tau\), whatever rule chose it, as long as the rule decides only when to stop and never which item runs next.
+
+**Step 1: the realized mean, at \(\alpha/2\).** Let \(S=\sum_iw_iY_i\) and \(Z_i=w_iY_i/\max_jw_j\in[0,1]\), whose population mean is \(\mu^\ast=S/(N\max_jw_j)\). Condition on the outcomes. The order is still a uniform permutation, so given the first \(t-1\) draws the \(t\)-th is uniform over the \(N-t+1\) items left, and
+
+\[
+\mathbb E[Z_{\sigma(t)}\mid\mathcal F_{t-1}]=m_t(\mu^\ast),\qquad m_t(\mu)=\frac{N\mu-\sum_{s<t}Z_{\sigma(s)}}{N-t+1},
+\]
+
+which the past determines (Waudby-Smith and Ramdas [41]). For a candidate \(\mu\) and a bet fraction \(f\in[0,1)\), let
+
+\[
+K_t^f(\mu)=\prod_{s\le t}\left(1-f+f\,\frac{1-Z_{\sigma(s)}}{1-m_s(\mu)}\right),
+\]
+
+with the ratio taken as zero when \(Z_{\sigma(s)}=1\). Each factor is nonnegative. When \(m_s(\mu^\ast)<1\) its conditional mean at \(\mu^\ast\) is \(1-f+f=1\); when \(m_s(\mu^\ast)=1\) every item left has \(Z=1\), and the factor is \(1-f\le1\). So \(K_t^f(\mu^\ast)\) is a nonnegative supermartingale with \(K_0^f=1\), and so is the mixture \(M_t(\mu)=\sum_j\pi_jK_t^{f_j}(\mu)\) over the fixed prior of the betting interval ([Section 2.4.10](#betting-interval-from-a-fixed-mixture-of-common-bets-experimental): sixteen fractions \(f_j=\sin^2(\pi q_j/2)\) at \(q_j=(2j-1)/32\), weight \(1/32\) each and \(1/2\) more on the largest), fixed before any outcome. Ville's inequality [42] gives \(\Pr(\exists t:M_t(\mu^\ast)\ge 2/\alpha)\le\alpha/2\). A candidate is rejected for good once \(M_t(\mu)\ge 2/\alpha\) at some prefix \(s\le t\), and outright when \(m_s(\mu)\ge1\) while \(Z_{\sigma(s)}<1\), which no population with mean \(\mu\) allows. Every factor rises with \(\mu\), since \(m_s(\mu)\) does, so the rejected candidates form an upper ray; \(\mu=0\) is never rejected, as every factor is then at most one. The unseen values are at most one each, so \(\mu^\ast\le c_t=\min\{1,(\sum_{s\le t}Z_{\sigma(s)}+N-t)/N\}\). Step 1's bound \(U^Z_t\) is \(c_t\) when \(c_t\) is not rejected, and otherwise the least rejected candidate, found by bisection on \([0,c_t]\) and reported at its rejected end. On the event of probability at least \(1-\alpha/2\) that \(\mu^\ast\) is never rejected, \(S\le R_t=\min\{1,N\max_jw_j\,U^Z_t\}\) for every \(t\) at once.
+
+**Step 2: from \(S\) to \(\theta\), at \(\alpha/2\).** The fixed-horizon weighted KL/Chernoff bound ([Section 2.4.10](#weighted-klchernoff-interval)) gives \(\Pr(\theta>B(S))\le\alpha/2\) for the independent \(Y_i\), with \(N\) blocks of weight \(w_i\), or \(Nr\) blocks of weight \(w_i/r\) under the `rollout` profile. \(B\) does not decrease in its argument. The bound reported is \(U_t=B(R_t)\). If \(\theta>U_t\) for some \(t\), then either \(R_t<S\), which step 1 allows with probability at most \(\alpha/2\), or \(\theta>B(S)\), which step 2 allows with probability at most \(\alpha/2\). A union bound gives the guarantee.
+
+**Outcomes the run did not finish.** The stream runs in the recorded order up to the last item with any of its first \(r\) epochs observed. Before it, an epoch that is missing or unclassified counts as a failure. Raising a draw's \(Z\) lowers its factor and, through \(m_s\), every later factor, and raises \(c_t\), so the bound with the raised values is at least the bound with the true ones. Leaving such an item out instead would not be valid: the prefix would no longer be a uniform sample, and an item that finishes late may finish late because it fails.
+
+**At \(t=N\).** Then \(c_N=\mu^\ast\), so step 1's bound is \(S\) itself, unless the sequence rejected \(\mu^\ast\) at an earlier prefix, the miss of probability at most \(\alpha/2\) step 1 is allowed; it is then below \(S\). The fixed-horizon bound of the full run, at \(\alpha\), is \(B\) at \(S\) with the whole \(\alpha\); this one spends half, which is its price where the run did not stop early.
+
+**Budget.** The plan's `family` gives \(\alpha\), split equally over every bounded cohort and group, so the bounds hold simultaneously with probability at least \(1-\alpha\) across them.
+
+**Width.** With equal weights \(N\max_jw_j=1\). With uneven weights, step 1 scales every outcome by the largest weight and, not knowing which items are left, treats each unseen one as if it could carry the largest weight, so \(R_t\) is \(N\max_jw_j\) times a bound in \([0,1]\) and stays at one until that bound falls below \(1/(N\max_jw_j)\). With every outcome safe it depends only on how many items were drawn, not on which: drawing a heavy item early does not tighten it. For 100 items all safe at \(\alpha=0.05\), \(R_t\) is 0.057 after 50 draws and 0.018 after 90 with equal weights; with one item carrying half the weight, it is 1 after 50, 0.88 after 90 and 0.45 after 99, and step 2, whose largest block carries half the weight, leaves \(U_t\) at 1 even after all 100.
+
+**Assumptions.** The order is a uniformly random permutation fixed before the run, recorded in the log, and kept from the system under evaluation, so that its behaviour on an item cannot depend on which come next. Each item's failure probability stays fixed while the run goes on: the model, its configuration, the scaffold and the judge do not change, and nothing learns from earlier samples. Each rollout runs anew, sharing no state, cache or conversation with others, which makes the \(Y_i\) independent across items, and the rollouts of an item independent under the `rollout` profile. The stopping rule only stops. These are the assumptions of the [phase-0 stream](sequential-design.md#draws-with-known-probabilities), for a permutation in place of draws with replacement. The bound is on the judge-reported failure probability, so a plan whose judge calibration covers a bounded group is refused.
+
+**Validation.** `tests/unit/test_sequential.py` pins step 1 before the end of the order to an exact rational reference written from the definition above, including draws of one and a candidate capped by the unseen values, and step 1 and step 2 together at \(\alpha/2\) each with uneven weights and two rollouts per item. It checks that the capital is a fair game at the true mean, and, in seeded Monte Carlo at \(\alpha=0.1\), that the bound misses at some prefix, and where a rule that peeks at the running estimate stops, no more often than \(\alpha\) plus three standard errors. `tests/integration/test_anytime_bounds.py` runs Inspect's mock model in seeded shuffled orders with early-stopping managers that stop the run or skip chosen samples and epochs, and checks the bound against the library on the recorded order, and every refusal. `research/optstop_coverage.py` simulates Optstop's stopping rule (sequential design, coverage table): the bound missed at most \(\alpha\), while Clopper-Pearson at the stop missed up to 0.208 at a nominal 0.05.
 
 ---
 
@@ -2662,9 +2702,9 @@ The core package focuses on fixed-horizon frequentist safety guarantees:
 - paired and cluster-aware safety regressions;
 - pass/fail/inconclusive decisions tied to policy thresholds.
 
-The initial package does not attempt to duplicate or certify Optstop's adaptive procedure. If an Optstop policy uses observed outcomes to stop or reallocate sampling, ordinary fixed-sample bounds from this package must not be presented as optional-stopping-valid. Such a run should be reported as adaptively collected and therefore `INCONCLUSIVE` under the core frequentist gate, or followed by a fresh, prespecified confirmatory run.
+The package does not duplicate Optstop's adaptive procedure. If an Optstop policy uses observed outcomes to stop or reallocate sampling, ordinary fixed-sample bounds from this package must not be presented as optional-stopping-valid. Such a run should be reported as adaptively collected and therefore `INCONCLUSIVE` under the core frequentist gate, or followed by a fresh, prespecified confirmatory run.
 
-A later confidence-sequence module could allow Optstop to choose what to evaluate while this package audits what can be concluded under an anytime-valid frequentist guarantee. Across current and future modules, the report must identify whether an interval is:
+For a run that Optstop only stopped, taking the items in a random order recorded before the run, the experimental `outputs.anytime_bounds` reports an anytime-valid upper bound that holds wherever the run stopped (Section 6.10). It sits beside the claims as a diagnostic, and says whether it lies at or below each weighted-mean claim's threshold; the claims keep their fixed-horizon status, which for such a run is usually `INCONCLUSIVE`. A run whose rule also chose which item to run next is not covered. A later confidence-sequence module could allow Optstop to choose what to evaluate while this package audits what can be concluded under an anytime-valid frequentist guarantee. Across current and future modules, the report must identify whether an interval is:
 
 - Bayesian posterior/credible;
 - fixed-sample frequentist;
