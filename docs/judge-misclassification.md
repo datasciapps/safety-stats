@@ -556,7 +556,9 @@ rollouts. The two agree exactly only for a row that
 - gives every classified rollout the same weight, meaning a prompt's weight divided by the
   number of rollouts its rate is computed over is the same for every prompt; and
 - belongs to a fixed design. A sampled design estimates a frame mean, and labels on the drawn
-  items do not bound the judge's accuracy over the frame.
+  items do not bound the judge's accuracy over the frame. The root of a
+  [generative evaluation](#on-the-generative-path) is the one exception, for the reason given
+  there.
 
 Equal prompt weights with equal rollout counts satisfy the weighting condition. `nested_equal`
 weights over an unbalanced hierarchy usually do not. A correction also never supports more
@@ -800,14 +802,37 @@ plan that declares it is refused.
 
 The same correction is available for
 [generative evaluations](generative-evaluation.md), where it is reported for the root, every
-hierarchy node and every cross-cutting slice. A `validated` calibration certifies only the
-root, and only when every unit carries the same weight in it, for the reason in
-[What it certifies](#what-it-certifies): the labels pool the cohort's classified units with
-equal weight, and \(\rho\) depends on prevalence, so a node or slice where the judge misses
-more failures than average would get a corrected upper bound below its true risk. A root with
-unequal unit weights, for example under `minimum_rewrites_per_stratum`, has the same problem.
-Every other corrected estimate is reported as a sensitivity analysis: `eligibility:
-diagnostic`, with a warning that names the reason.
+hierarchy node and every cross-cutting slice.
+
+**Why a validated calibration can certify the root.** A generative root estimates a mean
+over the distribution the declared procedure induces, as a sampled design estimates a frame
+mean, and [What it certifies](#what-it-certifies) refuses sampled designs. The generative
+root is the exception because its labels are drawn from the same distribution it estimates:
+
+- under `sampling.method: direct` every draw is an independent sample from the declared
+  procedure, and with `rollouts_per_rewrite: 1` each unit carries one binary judge verdict;
+- the human labels are a simple random sample of the classified units within each judge
+  verdict stratum, so within a stratum they are independent draws from the procedure's own
+  conditional distribution given that verdict, and estimate its \(\rho_1\) and \(\rho_0\)
+  directly; and
+- the root weights every unit equally, as the labels do, so the identity needs \(\rho\)
+  weighted exactly as the labels weight it.
+
+These are the assumptions the certified root rests on, beyond those of its own interval. A
+`proportional_stratified` root whose strata all get draw counts exactly proportional to their
+weights also weights every unit equally, and is certified on the same terms: its draws are
+independent within each stratum, and fixing each stratum's count at its share keeps the
+labels' mix of strata the one the root weights.
+
+The argument fails for any estimate that weights units unequally. A node or slice covers
+only part of the labelled units, and \(\rho\) depends on prevalence, so one where the judge
+misses more failures than average would get a corrected upper bound below its true risk. A
+root with unequal unit weights has the same problem: `minimum_rewrites_per_stratum`
+oversamples small strata, and a plain `proportional_stratified` root is usually unequal too,
+because the largest-remainder rounding of `total_rewrites` rarely gives every stratum a draw
+count exactly proportional to its weight. Every corrected estimate other than an equally
+weighted root is reported as a sensitivity analysis: `eligibility: diagnostic`, with a
+warning that names the reason.
 
 Units with no judge verdict keep their worst case through the correction, as on the
 fixed-design path: each estimate reports the design weight on them in the run as

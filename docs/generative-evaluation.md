@@ -314,10 +314,14 @@ under the primary only, which keeps the artifact readable on a large taxonomy.
 **`validated` mode measures the same two parameters** from human labels. The labels weight
 every classified unit of the cohort equally, so they certify the corrected root only, and
 only when every unit carries the same weight in it: a direct design does, while
-`minimum_rewrites_per_stratum` oversampling small strata does not. Corrected nodes, slices
+`minimum_rewrites_per_stratum` oversampling small strata does not, and neither, usually, does
+plain `proportional_stratified`, whose largest-remainder rounding of `total_rewrites` rarely
+makes every stratum's draw count exactly proportional to its weight. Corrected nodes, slices
 and an unequally weighted root are sensitivity results (`eligibility: diagnostic`) with a
 warning that names the reason, because the judge's accuracy within them can differ from the
-pooled one. Point it at a `validation_manifest` keyed on the sample identifier materialization wrote --
+pooled one. The certified root rests on independent draws, one rollout per unit, and labels
+drawn as a simple random sample within each judge verdict stratum; see
+[on the generative path](judge-misclassification.md#on-the-generative-path) for the argument. Point it at a `validation_manifest` keyed on the sample identifier materialization wrote --
 a generative run has no prompt manifest to key on. It needs `rollouts_per_rewrite: 1`, so
 that each unit carries a single binary verdict, and it refuses rather than correcting when
 the labels do not establish a strictly informative judge.
