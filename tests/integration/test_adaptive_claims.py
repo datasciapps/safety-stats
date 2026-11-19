@@ -349,6 +349,42 @@ def test_claim_identifiers_are_unique_across_both_kinds(tmp_path: Path) -> None:
     assert "PLAN_DUPLICATE_ID" in codes
 
 
+def test_two_adaptive_claims_cannot_share_a_family(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Each adaptive bound takes its family's whole alpha, so two in one family would spend it
+    # twice. With a family each, the same two claims are decided.
+    second = {**ADAPTIVE, "id": "adaptive_attacker_succeeds_again"}
+    _logs(monkeypatch, _verdicts(20))
+    shared = analyze(plan=_write(tmp_path, adaptive=[ADAPTIVE, second]), logs="ignored")
+
+    (diagnostic,) = [
+        item for item in shared.integrity.diagnostics if item.code == "PLAN_INVALID_MULTIPLICITY"
+    ]
+    assert diagnostic.severity == "ERROR"
+    assert diagnostic.scope == "plan/multiplicity/families/gate"
+    assert "share the multiplicity family 'gate'" in diagnostic.message
+    assert shared.integrity.status == "invalid"
+    assert [claim.status for claim in shared.adaptive_claims] == ["INCONCLUSIVE"] * 2
+
+    separate = tmp_path / "separate"
+    separate.mkdir()
+    families = [
+        *PLAN["multiplicity"]["families"],
+        {**PLAN["multiplicity"]["families"][0], "id": "second_gate"},
+    ]
+    report = analyze(
+        plan=_write(
+            separate,
+            adaptive=[ADAPTIVE, {**second, "family": "second_gate"}],
+            multiplicity={"families": families},
+        ),
+        logs="ignored",
+    )
+    assert report.integrity.status == "valid"
+    assert [claim.status for claim in report.adaptive_claims] == ["FAIL"] * 2
+
+
 def test_claims_export_is_refused_with_adaptive_claims(tmp_path: Path) -> None:
     path = _write(
         tmp_path,

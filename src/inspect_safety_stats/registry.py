@@ -1751,8 +1751,9 @@ _CODES: tuple[CodeEntry, ...] = (
         effect="invalid",
         assumption=(
             "Simultaneous results take their alpha from a family whose method supports them, "
-            "and the direct comparisons sharing a family use one coverage_mode and one set of "
-            "independence profiles."
+            "the direct comparisons sharing a family use one coverage_mode and one set of "
+            "independence profiles, and no two adaptive claims share a family, since each "
+            "takes the family's whole alpha."
         ),
         consequence="The integrity status is invalid, so no claim can pass.",
         remedy=(
@@ -1760,7 +1761,7 @@ _CODES: tuple[CodeEntry, ...] = (
             "weighted_bonferroni family, and simultaneous outputs.direct_mean_intervals a "
             "bonferroni family, in multiplicity.families[].method; or align coverage_mode and "
             "independence across the comparisons sharing a family, or split them into "
-            "separate families."
+            "separate families; give each adaptive claim a family of its own."
         ),
     ),
     CodeEntry(

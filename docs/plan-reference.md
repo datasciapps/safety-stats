@@ -1304,7 +1304,7 @@ adaptive_claims:
 |---|---|
 | `cohort`, `group` | the attacker's runs: the cohort's runs on the group's behaviours |
 | `order_field` | the design-manifest column that gives each behaviour its place in the attack order, as an integer; each value once in the group |
-| `family` | the multiplicity family whose `alpha` the bound takes, as for `claims` |
+| `family` | the multiplicity family whose `alpha` the bound takes, whole, as each claim under `claims` does; no two adaptive claims may share a family (`PLAN_INVALID_MULTIPLICITY`). The bound is a test of its own, not one of the family's simultaneous bounds: in a family whose `alpha` prompt bounds, direct-mean intervals or comparisons split, it spends that `alpha` again, so give it a family of its own |
 | `unacceptable_lower` | the claim is `FAIL` when the lower bound is at or above it; in (0, 1] |
 | `mandatory` | whether the claim enters the overall decision; default `true` |
 

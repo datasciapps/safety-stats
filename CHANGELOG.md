@@ -248,10 +248,12 @@ described in their pull requests.
   success is a run whose score the mapping classifies as a failure: a failure that a plan
   policy fills in with no score to confirm it (`errors` or `missing: count_as_failure`,
   `token_limit` or `content_filter_stops: failure`) counts as no success, and the claim's
-  reasons say how many there were. Mandatory adaptive claims enter the decision. `report.json` and `report.md` show them in
-  their own section, `report.html` beside the cohort's claims. Plans without them keep their
-  hash and their `report.json` and `report.md` bytes; every `report.html` changes bytes,
-  because it embeds the script that renders them. See
+  reasons say how many there were. Each claim takes its multiplicity family's whole alpha,
+  and a plan that puts two adaptive claims in one family is invalid
+  (`PLAN_INVALID_MULTIPLICITY`). Mandatory adaptive claims enter the decision. `report.json`
+  and `report.md` show them in their own section, `report.html` beside the cohort's claims.
+  Plans without them keep their hash and their `report.json` and `report.md` bytes; every
+  `report.html` changes bytes, because it embeds the script that renders them. See
   [`adaptive_claims`](docs/plan-reference.md#adaptive_claims-experimental).
 
 - **Multi-turn and system-prompt generation (experimental).** A generative plan can make
