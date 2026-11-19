@@ -687,7 +687,7 @@ def test_a_declared_slice_family_reaches_every_artifact(
     )
     output = plain(result.output)
     assert result.exit_code == 0, output
-    assert "Slice family (experimental, simultaneous):" in output
+    assert "Slice family (experimental, simultaneous, judge-reported scale):" in output
     assert "language=maltese: upper" in output
     assert "roleplay-vs-plain (roleplay - plain): upper" in output
 

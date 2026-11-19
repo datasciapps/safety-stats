@@ -1391,7 +1391,8 @@ def generative_analyze_command(
             f"upper {comparison.upper:+.5f} ({comparison.method})"
         )
     if report.slice_family is not None:
-        typer.echo("Slice family (experimental, simultaneous):")
+        # The family is never judge-corrected, even where the plan declares a calibration.
+        typer.echo("Slice family (experimental, simultaneous, judge-reported scale):")
         for member in report.slice_family.slices:
             typer.echo(f"  {member.member_id}: upper {member.arm.upper:.5f}")
         for contrast in report.slice_family.contrasts:

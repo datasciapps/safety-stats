@@ -432,8 +432,9 @@ refuses a family declared after materialization before it reads the logs. Raise
 fixed levels are nodes of the tree.
 
 This is experimental. The family covers the primary cohort only; a contrast between cohorts is
-`--compare`. It stays on the judge-reported scale, and with `judge_calibration` declared,
-`JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY` says so. The derivation is in
+`--compare`. It stays on the judge-reported scale: `generative analyze` prints it under a
+heading that says so, and with `judge_calibration` declared,
+`JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY` says so in the report. The derivation is in
 [statistical methods](statistical-methods.md#78-arm-contrasts-on-a-generative-design-experimental).
 
 ## Sensitivity to the declared design
