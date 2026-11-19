@@ -312,15 +312,20 @@ def _plan_upper(behaviours: int, failures: int) -> float:
 
 
 @pytest.mark.parametrize(
-    ("behaviours", "plan_allows", "exact_allows"), [(100, 0, 1), (400, 9, 12)]
+    ("behaviours", "plan_allows", "exact_allows", "exact_allows_at_the_plans_alpha"),
+    [(100, 0, 1, 0), (400, 9, 12, 11)],
 )
 def test_the_planning_numbers_in_the_readme(
-    behaviours: int, plan_allows: int, exact_allows: int
+    behaviours: int, plan_allows: int, exact_allows: int, exact_allows_at_the_plans_alpha: int
 ) -> None:
     assert _plan_upper(behaviours, plan_allows) <= 0.05 < _plan_upper(behaviours, plan_allows + 1)
     assert (
         maximum_certifying_failures(trials=behaviours, threshold=0.05, alpha=0.05)
         == exact_allows
+    )
+    assert (
+        maximum_certifying_failures(trials=behaviours, threshold=0.05, alpha=0.025)
+        == exact_allows_at_the_plans_alpha
     )
 
 

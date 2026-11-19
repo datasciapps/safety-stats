@@ -247,8 +247,9 @@ direction: the family's 0.05, shared by the two cohorts. With a threshold of 0.0
 equally weighted behaviours (the size of JailbreakBench) certify only with no confirmed
 jailbreak, whose upper bound is 0.036. One confirmed jailbreak gives 0.064, as the offline
 run shows, and the claim is INCONCLUSIVE. 400 equally weighted behaviours (the size of
-HarmBench's design) certify with at most 9. The exact one-sided binomial test at α = 0.05
-would allow 1 and 12; the plan's interval is more conservative than that test.
+HarmBench's design) certify with at most 9. The exact one-sided binomial test would allow 1
+and 12 at α = 0.05, and 0 and 11 at the plan's 0.025: at 100 behaviours the difference is the
+alpha split alone, and at 400 the plan's interval is also more conservative than that test.
 `inspect-safety-stats plan fixed-design --plan` plans every claim with the plan's own
 interval, alpha and weights; unequal weights, such as `nested_equal` over categories of
 unequal size, widen the bound.
