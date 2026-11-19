@@ -171,10 +171,10 @@ def _needed_text(needed: dict[str, int | None]) -> str:
     if len(counts) == 1:
         (count,) = counts
         if count is None:
-            return "No number of rollouts per prompt would be enough."
+            return "No number of rollouts per prompt up to 10^9 would be enough."
         return f"About {count} rollouts per prompt would be needed."
     parts = [
-        ("about " + str(count) if count is not None else "no number")
+        ("about " + str(count) if count is not None else "none up to 10^9")
         + " for "
         + _names([measure for measure, value in needed.items() if value == count])
         for count in counts

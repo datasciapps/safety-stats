@@ -366,7 +366,7 @@ def test_a_threshold_no_bound_can_reach_is_warned_about_without_a_count(tmp_path
     (warning,) = _uninformative(plan, source)
     assert warning.details["rollouts_per_prompt_needed"] is None
     assert warning.details["rollouts_per_prompt_needed_by_measure"] == {"exceed": None}
-    assert warning.message.endswith("No number of rollouts per prompt would be enough.")
+    assert warning.message.endswith("No number of rollouts per prompt up to 10^9 would be enough.")
 
 
 def test_each_cohort_is_judged_on_its_own_rollouts(tmp_path: Path) -> None:
