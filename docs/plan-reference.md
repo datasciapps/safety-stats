@@ -641,29 +641,64 @@ credential-theft wording weighs 1/6 and the authentication-bypass prompt weighs 
 `equal_prompt` would instead give each row 1/4, so the base prompt with more wordings would
 count three times as much.
 
-**Independence.** Wordings of one base prompt can fail together, so a profile that blocks by
-base prompt is a natural sensitivity:
+**Independence.** Wordings of one base prompt can be related in two ways, and only one of them
+breaks the `rollout` profile:
+
+- **Similar failure rates.** Wordings of one base prompt are often hard or easy together. In a
+  fixed design each wording's risk is a fixed quantity of the estimand, so similar risks do not
+  make rollouts dependent, and the `rollout` profile stays valid.
+- **Coupled outcomes.** Rollouts of different wordings are dependent when they share randomness
+  or state: a sampling seed shared by the same epoch of each wording, a response cache, a
+  sandbox or tool state, or a batch that fails as a whole. The `rollout` and `prompt` profiles
+  then count dependent rollouts as independent ones, and their bounds miss the risk more often
+  than alpha allows. In a simulation of 4 base prompts with 10 wordings each, 20 epochs and
+  risk 0.12, in which the wordings of a base prompt shared each epoch's outcome, the `rollout`
+  upper bound at one-sided level 0.025 fell below the risk in about 7% (Hoeffding), 14%
+  (empirical Bernstein) and 24% (KL/Chernoff) of runs, so a claim could pass on a risk above
+  its `acceptable_upper`.
+
+Whether outcomes are coupled is a fact about how the evaluation ran; the bounds do not reveal
+it. `CLUSTER_DESIGN_EFFECT` can hint at it, but under a fixed design its correlation also counts
+differences in rate between base prompts (see
+[its limits](independence-profiles.md#how-much-the-grouping-matters-cluster_design_effect)).
+
+A claim's status, and the report's decision, are the primary profile's verdict alone (see
+[Verdicts by profile](independence-profiles.md#verdicts-by-profile)). A sensitivity profile
+shows how far that verdict depends on rollout independence, but never changes it. When the
+wordings' outcomes can be coupled, the primary profile must therefore put all the rollouts that
+can share the coupling in one block:
+
+- `[question_id, repeat]` when the coupling stays within one epoch. The same epoch of every
+  wording of a base prompt forms one block, and the epochs stay independent of each other. In
+  the simulation above its upper bounds fell below the risk in at most 0.2% of runs.
+- `[question_id]` when the coupling can reach across epochs, for example through a cache or a
+  sandbox that persists between them. Every rollout of every wording of a base prompt forms one
+  block, so the block count is the number of base prompts.
+- A coarser key when the coupling reaches beyond one base prompt, such as `[repeat]` for a seed
+  shared by the same epoch of every prompt.
 
 ```yaml
 design:
   independence_profiles:
     rollout: {block_by: [rollout], comparison_coupling: independent}
     prompt: {block_by: [prompt_id], comparison_coupling: joint}
+    question_repeat: {block_by: [question_id, repeat], comparison_coupling: joint}
     question: {block_by: [question_id], comparison_coupling: joint}
 outputs:
   direct_mean_intervals:
     independence:
-      primary: rollout
-      sensitivities: [prompt, question]
+      primary: rollout  # question_repeat or question when the wordings can be coupled
+      sensitivities: [prompt, question_repeat, question]
 ```
 
-The `question` profile puts every rollout of every wording of one base prompt in one block, so
-its block count is the number of base prompts. Its effective sample size,
+With independent rollouts, `rollout` stays the primary and the other profiles are
+sensitivities. The `question` profile's effective sample size,
 $\left(\sum_g A_g^2\right)^{-1}$ over the base-prompt weights $A_g$ (see
 [Statistical construction](independence-profiles.md#statistical-construction)), is no larger
-than the `prompt` profile's. With few base prompts its intervals can reach the whole range
-$[0, 1]$. Set `hierarchy_nodes: true` under `direct_mean_intervals` to report an interval for
-each base prompt as well as each task.
+than the `prompt` profile's. With the same number of epochs for every wording,
+`question_repeat`'s is that many times larger than `question`'s. With few base prompts the
+`question` intervals can reach the whole range $[0, 1]$. Set `hierarchy_nodes: true` under
+`direct_mean_intervals` to report an interval for each base prompt as well as each task.
 
 [`examples/fixed_design`](../examples/fixed_design/README.md#prompt-variants-of-one-base-prompt)
 has a complete template: `variant-design.csv`, `variant-plan.yaml` and the Inspect task

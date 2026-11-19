@@ -49,6 +49,10 @@ design:
     prompt:
       block_by: [prompt_id]
       comparison_coupling: joint
+    # Variants of a base prompt that fail at similar rates still give independent rollouts.
+    # Variants whose rollouts share randomness or state (a seed, a cache, a sandbox, a batch)
+    # do not. If the same epoch of every variant can share it, make question_repeat the
+    # primary below; if it can reach across epochs, make question the primary.
     question_repeat:
       block_by: [question_id, repeat]
       comparison_coupling: joint
@@ -90,6 +94,8 @@ outputs:
     family: displayed_direct_means
     simultaneous: true
     coverage_mode: two_sided
+    # A claim's status is the primary profile's verdict. Sensitivities show how far it
+    # depends on rollout independence and never change it.
     independence:
       primary: rollout
       sensitivities: [prompt, question_repeat, question]

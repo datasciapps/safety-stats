@@ -7,6 +7,17 @@ described in their pull requests.
 
 ### Added
 
+- **A fixed-design template for prompt variants, and the profile that coupled wordings need.**
+  `examples/fixed_design` has a plan, a manifest and an Inspect task in which each base prompt
+  (`question_id`) is asked in several wordings (`prompt_id`). `nested_equal` weights count each
+  base prompt once, whatever its number of wordings.
+  [Prompt variants in fixed designs](docs/plan-reference.md#prompt-variants-in-fixed-designs)
+  says which relation between wordings breaks rollout independence. Similar failure rates do
+  not. Outcomes coupled through a shared seed, cache, sandbox or batch do, and then
+  `[question_id, repeat]` (coupling within an epoch) or `[question_id]` (across epochs) must be
+  the primary profile, because a sensitivity never changes a claim's status. The template
+  reports both as sensitivities of its `rollout` primary. The package itself is unchanged.
+
 - **An offline example compares two versions of a harness around the same model.**
   `examples/harness_versions` runs one simulated model inside harness v1 and v2, selects the two
   runs by the task argument `harness`, and reports v2 minus v1 with its interval. On its seeded

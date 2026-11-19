@@ -12,12 +12,17 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from inspect_safety_stats import analyze, load_plan
+from inspect_safety_stats.config.models import IndependenceProfileSpec
 from inspect_safety_stats.ingest.manifest import load_manifest, resolve_groups
+from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import RiskIntervalResult, SafetyReport
+from inspect_safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES
+from inspect_safety_stats.stats.independence import block_index, direct_bounded_blocks
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "fixed_design"
 PLAN = EXAMPLE / "variant-plan.yaml"
@@ -313,3 +318,96 @@ def test_per_epoch_coupling_shows_only_in_the_design_effect_of_question_repeat(
                 (other.lower, other.upper), rel=1e-12, abs=1e-12
             ), (target, interval.interval_id)
 
+
+def _rollout(prompt: str, question: str, epoch: int, failure: bool) -> Observation:
+    return Observation(
+        observation_id=f"{prompt}-{epoch}",
+        source="simulated.eval",
+        run_key="run",
+        rollout_id=f"{prompt}-{epoch}",
+        item_id=prompt,
+        repeat=epoch,
+        prompt_id=prompt,
+        question_id=question,
+        task_id="task",
+        cohort_id="candidate",
+        score_name="safety",
+        score_raw="FAIL" if failure else "PASS",
+        failure=failure,
+        model="model",
+        configuration_fingerprint="configuration",
+        collection_order=epoch,
+    )
+
+
+def test_wordings_sharing_each_epoch_need_question_repeat_blocks_for_coverage() -> None:
+    """The simulation docs/plan-reference.md describes for coupled wordings.
+
+    Four base prompts of ten wordings, twenty epochs, every wording at risk 0.12. One draw per
+    base prompt and epoch decides every wording at that epoch. The blocks come from the
+    analysis's own block construction. Upper bounds at one-sided level 0.025 under `rollout`
+    miss the risk far more often than 2.5%; under `[question_id, repeat]` they do not. The
+    margin is three simulation standard errors at the nominal rate.
+    """
+    bases, wordings, risk, alpha, repetitions = 4, 10, 0.12, 0.025, 1000
+    manifest = pd.DataFrame(
+        [
+            {"prompt_id": f"q{base}-w{wording}", "question_id": f"q{base}", "task_id": "task"}
+            for base in range(bases)
+            for wording in range(wordings)
+        ]
+    )
+    prompts = manifest["prompt_id"].tolist()
+    weights = np.full(len(prompts), 1 / len(prompts))
+    cells = [
+        (prompt_index, prompt, question, epoch)
+        for prompt_index, (prompt, question) in enumerate(
+            zip(manifest["prompt_id"], manifest["question_id"], strict=True)
+        )
+        for epoch in range(1, EPOCHS + 1)
+    ]
+    rollouts = {
+        failure: [
+            _rollout(prompt, question, epoch, failure) for _, prompt, question, epoch in cells
+        ]
+        for failure in (False, True)
+    }
+    base_of = np.asarray([prompt_index // wordings for prompt_index, *_ in cells])
+    epoch_of = np.asarray([epoch - 1 for *_, epoch in cells])
+    profiles = {
+        "rollout": IndependenceProfileSpec(block_by=["rollout"]),
+        "question_repeat": IndependenceProfileSpec(block_by=["question_id", "repeat"]),
+    }
+    methods = ("weighted_hoeffding", "weighted_empirical_bernstein", "weighted_kl_chernoff")
+    misses = dict.fromkeys(((profile, method) for profile in profiles for method in methods), 0)
+    generator = np.random.default_rng(20261119)
+    for _ in range(repetitions):
+        shared = generator.random((bases, EPOCHS)) < risk
+        failures = shared[base_of, epoch_of]
+        observations = [rollouts[bool(failure)][row] for row, failure in enumerate(failures)]
+        index = block_index(observations, manifest)
+        for name, profile in profiles.items():
+            blocks = direct_bounded_blocks(
+                observations,
+                manifest,
+                profile,
+                cohort_id="candidate",
+                prompt_ids=prompts,
+                prompt_weights=weights,
+                index=index,
+            )
+            for method in methods:
+                bounds = DIRECT_MEAN_ENGINES[method].bounded(
+                    blocks.lower,
+                    blocks.upper,
+                    blocks.weights,
+                    alpha_lower=alpha,
+                    alpha_upper=alpha,
+                    independence_profile=name,
+                )
+                misses[(name, method)] += bounds.upper < risk
+
+    limit = alpha + 3 * (alpha * (1 - alpha) / repetitions) ** 0.5
+    for method in methods:
+        assert misses[("rollout", method)] / repetitions > limit, (method, misses)
+        assert misses[("question_repeat", method)] / repetitions <= limit, (method, misses)
