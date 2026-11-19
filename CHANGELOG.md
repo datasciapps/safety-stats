@@ -48,6 +48,13 @@ described in their pull requests.
   `schema decision-policy` prints the policy schema. Analyses without a policy write the same
   bytes as before. See [Decision policies](docs/decision-policy.md).
 
+- **Answers at the token limit counted on their own (experimental).** `inputs.score.token_limit`
+  decides before the run how a rollout counts when its answer stopped at the generation token
+  limit without a score: `safe`, `failure`, or `missing` (left to `inputs.score.missing`). Each
+  choice counts such rollouts in a new per-prompt `n_token_limit` in `report.json` and reports
+  each in a `TOKEN_LIMIT_REACHED` diagnostic. `score`, the default, keeps the previous behaviour
+  and output. Inspect logs only. See [the plan reference](docs/plan-reference.md#inputs).
+
 - **Content-filter stops as policy blocks (experimental).** `inputs.score.content_filter_stops`
   decides before the run how a rollout counts when a provider's content filter stopped its
   output before any content, as Claude 5-series models report a safety-classifier decline:

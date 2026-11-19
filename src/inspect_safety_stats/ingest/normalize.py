@@ -179,6 +179,12 @@ def normalize(
             f"score.content_filter_stops: {stops} needs the stop reason of each output, which "
             f"this source ({source.source_format.get('format')}) does not report"
         )
+    token_limit = plan.inputs.score.token_limit
+    if token_limit != "score" and stop_context is None:
+        raise ValueError(
+            f"score.token_limit: {token_limit} needs the stop reason of each output, which "
+            f"this source ({source.source_format.get('format')}) does not report"
+        )
     diagnostics: list[Diagnostic] = []
     run_cohorts: dict[str, str] = {}
     run_records: dict[str, RunRecord] = {}
@@ -477,10 +483,20 @@ def normalize(
         # A content-filter stop that delivered nothing; one that delivered content before the
         # decline is scored like any other answer.
         stop = None
-        if raw_error is None and stops != "score" and stop_context is not None:
-            stop = stop_context(rollout)
-            if stop is not None and stop.content_delivered:
-                stop = None
+        # An answer without a score that stopped at the token limit, when the plan looks for
+        # one; a truncated answer that was scored keeps its score.
+        truncated = False
+        if (
+            raw_error is None
+            and (stops != "score" or token_limit != "score")
+            and stop_context is not None
+        ):
+            found = stop_context(rollout)
+            if found is not None and found.stop_reason == "content_filter":
+                if stops != "score" and not found.content_delivered:
+                    stop = found
+            elif found is not None and found.stop_reason == "max_tokens":
+                truncated = token_limit != "score" and is_missing(raw_score)
         if raw_error is not None:
             context = source.error_context(rollout)
             if context.unread_reason is not None:
@@ -583,6 +599,9 @@ def normalize(
                         details=block,
                     )
                 )
+        elif truncated and token_limit in {"safe", "failure"}:
+            failure = token_limit == "failure"
+            outcome_status = "classified_failure" if failure else "classified_safe"
         elif is_missing(raw_score):
             if plan.inputs.score.missing == "count_as_failure":
                 failure = True
@@ -624,6 +643,20 @@ def normalize(
                         details=_blocked_prompt(cohort_id, prompt_id),
                     )
                 )
+        if truncated:
+            counted_as = {"safe": "safe", "failure": "a failure", "missing": "a missing score"}
+            diagnostics.append(
+                Diagnostic(
+                    code="TOKEN_LIMIT_REACHED",
+                    severity="INFO",
+                    message=(
+                        "the answer stopped at the generation token limit without a score; "
+                        f"the plan counts it as {counted_as[token_limit]}"
+                    ),
+                    scope=scope,
+                    details={"stop_reason": "max_tokens", "token_limit": token_limit},
+                )
+            )
         log_path = rollout.source
         if log_path not in source_hashes:
             source_hashes[log_path] = source.source_sha256(log_path)
@@ -666,6 +699,7 @@ def normalize(
                 model=run.model if run.model is not None else "unknown",
                 configuration_fingerprint=sha256_value(config),
                 collection_order=collection_order,
+                token_limit_unscored=None if token_limit == "score" else truncated,
             )
         )
 

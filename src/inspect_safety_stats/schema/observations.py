@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, SerializerFunctionWrapHandler, model_serializer
 
 # Report schema 2.0 named these fields after Inspect. A plan may still name them so in
 # block_by, pair_key and cluster_key.
@@ -55,3 +55,16 @@ class Observation(BaseModel):
     model: str
     configuration_fingerprint: str
     collection_order: int
+    # Whether the answer stopped at the generation token limit without a score or a sample
+    # error; None when the plan's score.token_limit is "score", which does not look.
+    token_limit_unscored: bool | None = None
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_token_limit(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        # Left out unless the plan looks, so observations.csv keeps the bytes it had before.
+        data: dict[str, Any] = handler(self)
+        if self.token_limit_unscored is None:
+            data.pop("token_limit_unscored", None)
+        return data

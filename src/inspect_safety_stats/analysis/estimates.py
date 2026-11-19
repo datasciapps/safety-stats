@@ -195,6 +195,9 @@ def _prompt_estimates(
                     n_policy_blocked_safe=sum(
                         row.outcome_status == "target_policy_blocked_safe" for row in rows
                     ),
+                    n_token_limit=None
+                    if plan.inputs.score.token_limit == "score"
+                    else sum(bool(row.token_limit_unscored) for row in rows),
                     p_hat=failures / len(valid) if valid else None,
                     lower=lower,
                     upper=upper,
