@@ -357,3 +357,211 @@ def test_the_corrected_interval_covers_every_completion_and_calibration(
                     grid.append(mass * rho_1 + (1 - share - mass) * rho_0 + share * unknown)
     assert result.lower <= min(grid) + 1e-12
     assert result.upper >= max(grid) - 1e-12
+
+
+def test_transported_sensitivity_is_the_one_sided_clopper_pearson_lower_bound() -> None:
+    from scipy.stats import beta
+
+    from inspect_safety_stats.stats.misclassification import transported_sensitivity_lower
+
+    assert transported_sensitivity_lower(
+        judge_flagged_unsafe=100, human_unsafe=120, alpha=0.05
+    ) == pytest.approx(float(beta.ppf(0.05, 100, 21)), rel=1e-12, abs=0)
+    assert transported_sensitivity_lower(judge_flagged_unsafe=0, human_unsafe=10, alpha=0.05) == 0
+    # Every item flagged still leaves a bound below one.
+    assert transported_sensitivity_lower(
+        judge_flagged_unsafe=50, human_unsafe=50, alpha=0.05
+    ) == pytest.approx(0.05 ** (1 / 50), rel=1e-12, abs=0)
+
+
+def test_transported_correction_divides_the_upper_bound_and_floors_the_lower_at_zero() -> None:
+    from inspect_safety_stats.stats.misclassification import transport_judge_risk
+
+    result = transport_judge_risk(
+        observed_upper=0.0106, observed_estimate=0.004, sensitivity_lower=0.8
+    )
+    assert result.lower == 0.0
+    assert result.upper == pytest.approx(0.0106 / 0.8, rel=1e-15, abs=0)
+    assert result.completion_estimate_lower == 0.0
+    assert result.completion_estimate_upper == pytest.approx(0.005, rel=1e-15, abs=0)
+    assert result.source == "transported"
+    # Tiny rates keep their relative precision.
+    tiny = transport_judge_risk(observed_upper=3e-17, observed_estimate=None, sensitivity_lower=0.5)
+    assert tiny.upper == pytest.approx(6e-17, rel=1e-12, abs=0)
+    assert tiny.completion_estimate_upper is None
+
+
+def test_transported_correction_caps_at_one_and_refuses_to_divide_by_zero() -> None:
+    from inspect_safety_stats.stats.misclassification import transport_judge_risk
+
+    assert transport_judge_risk(
+        observed_upper=0.6, observed_estimate=0.5, sensitivity_lower=0.5
+    ).upper == 1.0
+    blind = transport_judge_risk(observed_upper=0.0, observed_estimate=0.0, sensitivity_lower=0.0)
+    assert (blind.lower, blind.upper, blind.completion_estimate_upper) == (0.0, 1.0, 1.0)
+    for kwargs in (
+        {"observed_upper": 1.5, "observed_estimate": None, "sensitivity_lower": 0.5},
+        {"observed_upper": 0.5, "observed_estimate": -0.1, "sensitivity_lower": 0.5},
+        {"observed_upper": 0.5, "observed_estimate": None, "sensitivity_lower": 1.1},
+    ):
+        with pytest.raises(ValueError):
+            transport_judge_risk(**kwargs)  # type: ignore[arg-type]
+
+
+@settings(max_examples=200, deadline=None)
+@given(
+    upper=st.floats(0.0, 1.0),
+    sensitivity=st.floats(0.0, 1.0),
+    looser=st.floats(0.0, 1.0),
+)
+def test_transported_upper_never_falls_below_the_judge_system_upper(
+    upper: float, sensitivity: float, looser: float
+) -> None:
+    from inspect_safety_stats.stats.misclassification import transport_judge_risk
+
+    result = transport_judge_risk(
+        observed_upper=upper, observed_estimate=None, sensitivity_lower=sensitivity
+    )
+    assert result.lower == 0.0
+    assert upper <= result.upper <= 1.0
+    # A weaker sensitivity bound can only widen the band.
+    weaker = transport_judge_risk(
+        observed_upper=upper, observed_estimate=None, sensitivity_lower=sensitivity * looser
+    )
+    assert weaker.upper >= result.upper
+
+
+def test_transported_upper_bound_covers_true_risk_when_sensitivity_transports() -> None:
+    """Seeded Monte Carlo: the bound covers at the union of its two budgets, or better.
+
+    The published set and the run share one judge sensitivity; the run's false-positive
+    rate is unrelated to anything on the published set. Coverage must reach
+    1 - (run alpha + sensitivity alpha) = 0.90.
+    """
+    import numpy as np
+
+    from inspect_safety_stats.stats.binomial import binomial_upper_bound
+    from inspect_safety_stats.stats.misclassification import (
+        transport_judge_risk,
+        transported_sensitivity_lower,
+    )
+
+    rng = np.random.default_rng(20261116)
+    run_alpha = sensitivity_alpha = 0.05
+    replications = 4000
+    published_unsafe, rollouts = 80, 600
+    misses = 0
+    for _ in range(replications):
+        sensitivity = rng.uniform(0.6, 0.98)
+        true_risk = rng.uniform(0.0, 0.08)
+        false_positive = rng.uniform(0.0, 0.02)
+        flagged = int(rng.binomial(published_unsafe, sensitivity))
+        judged = int(
+            rng.binomial(rollouts, true_risk * sensitivity + (1 - true_risk) * false_positive)
+        )
+        bound = transport_judge_risk(
+            observed_upper=binomial_upper_bound(judged, rollouts, alpha=run_alpha),
+            observed_estimate=None,
+            sensitivity_lower=transported_sensitivity_lower(
+                judge_flagged_unsafe=flagged, human_unsafe=published_unsafe, alpha=sensitivity_alpha
+            ),
+        )
+        misses += true_risk > bound.upper
+    coverage = 1 - misses / replications
+    # Monte Carlo standard error at the nominal 0.90 is sqrt(0.9 * 0.1 / 4000) < 0.005.
+    assert coverage >= 0.90 - 3 * 0.005
+
+
+def test_a_transported_calibration_needs_its_published_set_and_nothing_else() -> None:
+    from pydantic import ValidationError
+
+    from inspect_safety_stats.config.models import JudgeCalibrationSpec
+
+    published = {
+        "name": "set",
+        "source": "https://example.org",
+        "judge": "judge",
+        "rubric": "rubric",
+        "human_unsafe": 10,
+        "judge_flagged_unsafe": 8,
+    }
+    spec = JudgeCalibrationSpec.model_validate({"mode": "transported", "published_set": published})
+    assert spec.published_set is not None
+    assert spec.published_set.sensitivity_alpha == 0.05
+    scenario = {"id": "s", "rho_1": {"lower": 0.9, "upper": 1}, "rho_0": {"lower": 0, "upper": 0}}
+    for invalid in (
+        {"mode": "transported"},
+        {"mode": "transported", "published_set": {**published, "judge_flagged_unsafe": 11}},
+        {"mode": "transported", "published_set": {**published, "human_unsafe": True}},
+        {"mode": "transported", "published_set": {**published, "source": ""}},
+        {"mode": "transported", "published_set": published, "family": "judge_error"},
+        {"mode": "transported", "published_set": published, "scenarios": [scenario]},
+        {"mode": "assumed", "primary": "s", "scenarios": [scenario], "published_set": published},
+    ):
+        with pytest.raises(ValidationError):
+            JudgeCalibrationSpec.model_validate(invalid)
+
+
+def test_plans_without_a_published_set_serialise_as_before() -> None:
+    """The new field is left out when absent, so existing plan hashes do not move."""
+    from inspect_safety_stats.config.models import JudgeCalibrationSpec
+
+    scenario = {"id": "s", "rho_1": {"lower": 0.9, "upper": 1}, "rho_0": {"lower": 0, "upper": 0}}
+    spec = JudgeCalibrationSpec.model_validate(
+        {"mode": "assumed", "primary": "s", "scenarios": [scenario]}
+    )
+    assert "published_set" not in spec.model_dump(mode="json", by_alias=True)
+
+
+def test_a_perfectly_sensitive_judge_leaves_the_upper_bound_unchanged() -> None:
+    """#123's identity check: with sensitivity one nothing is inflated."""
+    from inspect_safety_stats.stats.misclassification import transport_judge_risk
+
+    for upper in (0.0, 3e-17, 0.0106, 0.5, 1.0):
+        result = transport_judge_risk(
+            observed_upper=upper, observed_estimate=upper, sensitivity_lower=1.0
+        )
+        assert result.upper == upper
+        assert result.completion_estimate_upper == upper
+
+
+@settings(max_examples=300, deadline=None)
+@given(
+    bounds=st.tuples(st.floats(0.0, 1.0), st.floats(0.0, 1.0)).map(sorted),
+    sensitivity=st.floats(0.01, 1.0),
+    specificity=st.floats(0.0, 1.0),
+)
+def test_transported_upper_is_the_rogan_gladen_maximum_over_any_informative_specificity(
+    bounds: list[float], sensitivity: float, specificity: float
+) -> None:
+    """The bound is Rogan-Gladen's maximum at a corner of the accuracy box.
+
+    Rogan-Gladen's ``(q - 1 + Sp) / (Se + Sp - 1)`` increases in ``Sp`` whenever
+    ``q <= Se``, so over sensitivity in ``[Se_L, 1]`` and any informative specificity range
+    reaching one its maximum is ``q_U / Se_L``, at the corner ``Sp = 1``. Leaving the
+    specificity undeclared therefore loses nothing at the upper end; only the lower end
+    falls to zero.
+    """
+    from hypothesis import assume
+
+    from inspect_safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
+    from inspect_safety_stats.stats.misclassification import transport_judge_risk
+
+    lower, upper = bounds
+    assume(sensitivity + specificity > 1)
+    transported = transport_judge_risk(
+        observed_upper=upper, observed_estimate=None, sensitivity_lower=sensitivity
+    )
+    identified = identified_risk_set(
+        lower,
+        upper,
+        JudgeAccuracyBox(
+            sensitivity_lower=sensitivity,
+            sensitivity_upper=1.0,
+            specificity_lower=specificity,
+            specificity_upper=1.0,
+        ),
+    )
+    assert identified.identified
+    assert transported.upper == pytest.approx(identified.upper, rel=1e-9, abs=1e-15)
+    assert transported.lower <= identified.lower

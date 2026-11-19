@@ -4,7 +4,7 @@ import itertools
 from dataclasses import dataclass
 from typing import Literal
 
-from inspect_safety_stats.stats.binomial import binomial_bounds
+from inspect_safety_stats.stats.binomial import binomial_bounds, binomial_lower_bound
 
 
 @dataclass(frozen=True)
@@ -145,6 +145,71 @@ def correct_judge_risk(
         completion_estimate_upper=estimate_upper,
         scenario_id=calibration.scenario_id,
         source=calibration.source,
+    )
+
+
+def transported_sensitivity_lower(
+    *, judge_flagged_unsafe: int, human_unsafe: int, alpha: float
+) -> float:
+    """One-sided exact lower bound on a judge's sensitivity from a published labelled set.
+
+    ``human_unsafe`` items of the set are truly unsafe by human adjudication, and the judge
+    flagged ``judge_flagged_unsafe`` of them. The bound is the Clopper-Pearson lower endpoint
+    at ``alpha``; it describes the published set, and holds for another run's outputs only
+    under the transport assumption the caller declares.
+    """
+
+    return binomial_lower_bound(judge_flagged_unsafe, human_unsafe, alpha=alpha)
+
+
+def transport_judge_risk(
+    *,
+    observed_upper: float,
+    observed_estimate: float | None,
+    sensitivity_lower: float,
+    scenario_id: str = "transported",
+) -> CorrectedRisk:
+    """Bound true risk from a transported sensitivity and the run's own judged rate.
+
+    With true risk ``pi``, sensitivity ``Se`` and false-positive rate ``FPR``, the judged
+    rate is ``q = pi Se + (1 - pi) FPR``. Nothing about this run's false positives is
+    known except that they are among its judged failures, ``(1 - pi) FPR <= q``, so every
+    judged failure may be a false positive and the lower bound is zero. The true failures
+    the judge caught are at most ``q``, so ``pi <= q / Se``. With ``Se >= sensitivity_lower``
+    and ``q <= observed_upper``, true risk is at most ``observed_upper / sensitivity_lower``.
+    This is the Rogan-Gladen inversion ``pi = (q - 1 + Sp) / (Se + Sp - 1)`` (Rogan and
+    Gladen, Am. J. Epidemiol. 107(1), 1978) at its maximising corner ``Sp = 1``: no
+    specificity is declared, because a published set's specificity does not transport.
+
+    Rollouts the judge never classified need no separate term: the observed upper bound
+    already completes them as judge failures, and dividing by a sensitivity of at most one
+    only enlarges that completion. The bound is monotone and positively homogeneous in the
+    prompt rates, so it applies to the weighted mean and to the tail measures alike,
+    provided the sensitivity bound holds on every prompt.
+    """
+
+    if not 0 <= observed_upper <= 1:
+        raise ValueError("observed upper bound must be in [0, 1]")
+    if observed_estimate is not None and not 0 <= observed_estimate <= 1:
+        raise ValueError("observed estimate must be in [0, 1]")
+    if not 0 <= sensitivity_lower <= 1:
+        raise ValueError("the sensitivity lower bound must be in [0, 1]")
+
+    def inflate(rate: float) -> float:
+        # A judge that may catch nothing leaves true risk unbounded within [0, 1].
+        if sensitivity_lower == 0:
+            return 1.0
+        return min(1.0, rate / sensitivity_lower)
+
+    return CorrectedRisk(
+        lower=0.0,
+        upper=inflate(observed_upper),
+        completion_estimate_lower=None if observed_estimate is None else 0.0,
+        completion_estimate_upper=(
+            None if observed_estimate is None else inflate(observed_estimate)
+        ),
+        scenario_id=scenario_id,
+        source="transported",
     )
 
 

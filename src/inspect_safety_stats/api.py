@@ -4,7 +4,7 @@ import dataclasses
 import itertools
 import os
 import re
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
@@ -25,6 +25,9 @@ from inspect_safety_stats.config.models import (
     ComparisonSpec,
     DirectMeanIntervalsSpec,
     IndependenceSelectionSpec,
+    JudgeAccuracySpec,
+    JudgeSpec,
+    PublishedValidationSetSpec,
     RiskMeasureSpec,
 )
 from inspect_safety_stats.decision.engine import decide_claim, roll_up
@@ -50,6 +53,7 @@ from inspect_safety_stats.schema.reports import (
     GroupRiskResult,
     HierarchyRiskResult,
     IntegritySummary,
+    JudgeErrorStressResult,
     PromptEstimate,
     RiskIntervalResult,
     SafetyReport,
@@ -97,6 +101,7 @@ from inspect_safety_stats.stats.judge_calibration import (
     cohort_alpha_share,
     completion_diagnostic,
 )
+from inspect_safety_stats.stats.judge_stress import stress_verdict
 from inspect_safety_stats.stats.judges import (
     JudgeAccuracyBox,
     compose_verdicts,
@@ -112,6 +117,8 @@ from inspect_safety_stats.stats.misclassification import (
     correct_judge_risk,
     delta_method_corrected_risk,
     noisy_valid_certification,
+    transport_judge_risk,
+    transported_sensitivity_lower,
 )
 from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
 from inspect_safety_stats.stats.paired import exact_mcnemar, newcombe_paired_interval
@@ -2311,6 +2318,67 @@ def _judge_corrected_interval(
     )
 
 
+def _transported_judge_interval(
+    *,
+    result: GroupRiskResult | HierarchyRiskResult,
+    published: PublishedValidationSetSpec,
+    sensitivity_lower: float,
+) -> RiskIntervalResult | None:
+    """A true-risk sensitivity from a judge sensitivity measured on a published set.
+
+    Experimental. Only the sensitivity is transported; the false-positive rate is bounded
+    by the run's own judged rate, so the interval's lower end is zero.
+    """
+
+    if result.upper is None:
+        return None
+    corrected = transport_judge_risk(
+        observed_upper=result.upper,
+        observed_estimate=result.estimate,
+        sensitivity_lower=sensitivity_lower,
+    )
+    return RiskIntervalResult(
+        interval_id="judge_corrected_transported",
+        lower=corrected.lower,
+        upper=corrected.upper,
+        method="transported_judge_sensitivity_correction",
+        role="sensitivity",
+        varied_assumption="judge_error",
+        coverage_scope=(
+            f"{result.coverage_scope}_judge_corrected"
+            if result.coverage_scope
+            else "judge_corrected"
+        ),
+        completion_estimate_lower=corrected.completion_estimate_lower,
+        completion_estimate_upper=corrected.completion_estimate_upper,
+        raw_lower=result.lower,
+        raw_upper=result.upper,
+        calibration_method="transported_judge_calibration",
+        assumptions=[
+            "The reported estimand is true failure risk, not judge-reported failure risk.",
+            f"The judge's sensitivity is at least {sensitivity_lower:.6g}: the one-sided "
+            f"Clopper-Pearson lower bound at alpha {published.sensitivity_alpha:.6g} from "
+            f"{published.judge_flagged_unsafe} of {published.human_unsafe} human-unsafe items "
+            f"flagged on the published set {published.name!r} ({published.source}).",
+            f"Transport assumption: the same judge ({published.judge}) and rubric "
+            f"({published.rubric}), applied to this run's outputs, is at least as sensitive "
+            "on every prompt as on the published set, whose outputs came from other "
+            "generators. Nothing in this run checks it.",
+            "The published set's false-positive rate is not transported. This run's false "
+            "positives are bounded only by its own judged failures, so every judged failure "
+            "may be a false positive and the lower bound is zero.",
+            "The upper bound is the judge-system upper bound divided by the sensitivity "
+            "bound; unclassified rollouts stay completed as failures.",
+            "Human adjudication on the published set is treated as ground truth.",
+        ],
+        eligibility="diagnostic",
+        warnings=[
+            "Experimental transported judge calibration: a sensitivity analysis with no "
+            "coverage guarantee, which never decides a claim."
+        ],
+    )
+
+
 def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, Any] | None:
     """Describe the declared judge panel: per-judge counts, composites, and agreement.
 
@@ -2412,6 +2480,48 @@ def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, 
     }
 
 
+def _declared_box(accuracy: JudgeAccuracySpec) -> JudgeAccuracyBox:
+    return JudgeAccuracyBox(
+        sensitivity_lower=accuracy.sensitivity.lower,
+        sensitivity_upper=accuracy.sensitivity.upper,
+        specificity_lower=accuracy.specificity.lower,
+        specificity_upper=accuracy.specificity.upper,
+    )
+
+
+def _composite_box(
+    members: list[JudgeSpec], accuracies: list[JudgeAccuracySpec], rule: str
+) -> JudgeAccuracyBox:
+    """An ``any`` or ``all`` composite's box from its members' declared boxes and blocks."""
+    return composite_accuracy_box(
+        [_declared_box(accuracy) for accuracy in accuracies],
+        [member.block or member.id for member in members],
+        rule,
+    )
+
+
+def _primary_accuracy_box(plan: AnalysisPlan) -> tuple[JudgeAccuracyBox, str] | None:
+    """The declared accuracy box of the verdict that is the primary outcome, if it has one.
+
+    That is a declared judge whose score is the primary score, or an ``any`` or ``all``
+    composite whose judges all declare accuracy ranges. A ``majority`` composite has none.
+    """
+
+    name = plan.inputs.score.name
+    composite = next((item for item in plan.inputs.composites if item.id == name), None)
+    judges = {judge.id: judge for judge in plan.inputs.judges}
+    if composite is not None:
+        members = [judges[judge_id] for judge_id in composite.judges]
+        accuracies = [member.accuracy for member in members if member.accuracy is not None]
+        if composite.rule == "majority" or len(accuracies) != len(members):
+            return None
+        return _composite_box(members, accuracies, composite.rule), f"composite:{composite.id}"
+    judge = next((item for item in plan.inputs.judges if item.score.name == name), None)
+    if judge is None or judge.accuracy is None:
+        return None
+    return _declared_box(judge.accuracy), f"judge:{judge.id}"
+
+
 def _apply_panel_derived_correction(
     plan: AnalysisPlan,
     risks: list[GroupRiskResult],
@@ -2449,18 +2559,7 @@ def _apply_panel_derived_correction(
             )
         )
         return None
-    boxes = [
-        JudgeAccuracyBox(
-            sensitivity_lower=accuracy.sensitivity.lower,
-            sensitivity_upper=accuracy.sensitivity.upper,
-            specificity_lower=accuracy.specificity.lower,
-            specificity_upper=accuracy.specificity.upper,
-        )
-        for accuracy in accuracies
-    ]
-    box = composite_accuracy_box(
-        boxes, [member.block or member.id for member in members], composite.rule
-    )
+    box = _composite_box(members, accuracies, composite.rule)
     correctable = {
         measure.id
         for measure in plan.outputs.risk_measures
@@ -2687,6 +2786,47 @@ def _apply_judge_correction(
         # Hierarchy nodes are weighted means over their own prompts.
         key = (result.group_id, result.level, tuple(result.path.items()))
         return node_weights[key], "weighted_mean"
+
+    if spec.mode == "transported":
+        published = spec.published_set
+        if published is None:
+            raise ValueError("a transported inputs.judge_calibration requires a published_set")
+        sensitivity_lower = transported_sensitivity_lower(
+            judge_flagged_unsafe=published.judge_flagged_unsafe,
+            human_unsafe=published.human_unsafe,
+            alpha=published.sensitivity_alpha,
+        )
+        for result in targets:
+            interval = _transported_judge_interval(
+                result=result, published=published, sensitivity_lower=sensitivity_lower
+            )
+            if interval is not None:
+                result.intervals.append(interval)
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_CALIBRATION_TRANSPORTED",
+                severity="INFO",
+                message=(
+                    "Experimental: judge-corrected rows use a sensitivity transported from "
+                    f"{published.name!r}; they are sensitivity analyses and decide no claim"
+                ),
+                scope="inputs.judge_calibration",
+            )
+        )
+        return {
+            "mode": "transported",
+            "experimental": True,
+            "published_set": {
+                "name": published.name,
+                "source": published.source,
+                "judge": published.judge,
+                "rubric": published.rubric,
+                "human_unsafe": published.human_unsafe,
+                "judge_flagged_unsafe": published.judge_flagged_unsafe,
+                "sensitivity_alpha": published.sensitivity_alpha,
+            },
+            "sensitivity_lower": sensitivity_lower,
+        }
 
     if spec.mode == "assumed":
         calibrations = _assumed_judge_calibrations(plan)
@@ -4659,6 +4799,86 @@ def _noisy_valid_claim(
     )
 
 
+def _claim_judge_error_stress(
+    *,
+    claim: ClaimSpec,
+    evidence: ComparisonResult | GroupRiskResult | None,
+    status: Decision,
+    why_not: str | None,
+    measure_types: Mapping[str, str],
+    population: dict[str, dict[str, _PromptRollouts]],
+    group_weights: dict[str, dict[str, float]],
+    accuracy: tuple[JudgeAccuracyBox, str] | None,
+) -> JudgeErrorStressResult:
+    """Where a claim decided on judge-reported bounds tips, and whether a declared box holds it.
+
+    Diagnostic only: the result is reported beside the claim and never changes its status.
+    """
+
+    def skipped(reason: str) -> JudgeErrorStressResult:
+        return JudgeErrorStressResult(applicable=False, reason=reason)
+
+    if claim.comparison:
+        return skipped(
+            "comparison claims are not stressed: the judge's accuracy may differ between arms"
+        )
+    if (
+        not isinstance(evidence, GroupRiskResult)
+        or evidence.lower is None
+        or evidence.upper is None
+    ):
+        return skipped("the claim has no complete bounds")
+    if why_not is not None:
+        return skipped(why_not)
+    measure_type = measure_types[evidence.measure_id]
+    if measure_type not in _JUDGE_CORRECTABLE_MEASURES:
+        return skipped(
+            f"a {measure_type} measure does not carry the judge's per-prompt error model over "
+            "to the row"
+        )
+    share = _unclassified_share(
+        population.get(evidence.cohort_id, {}), group_weights[evidence.group_id], measure_type
+    )
+    stress = stress_verdict(
+        judge_reported_lower=evidence.lower,
+        judge_reported_upper=evidence.upper,
+        acceptable_upper=claim.acceptable_upper,
+        unacceptable_lower=claim.unacceptable_lower,
+        box=accuracy[0] if accuracy is not None else None,
+        unclassified_share=share,
+    )
+    box, source = accuracy if accuracy is not None else (None, None)
+    stressed = stress.stressed
+    return JudgeErrorStressResult(
+        applicable=True,
+        judge_reported_lower=evidence.lower,
+        judge_reported_upper=evidence.upper,
+        unclassified_share=share,
+        pass_sensitivity_at_perfect_specificity=(
+            stress.pass_line.sensitivity_at_perfect_specificity
+        ),
+        pass_specificity_at_perfect_sensitivity=(
+            stress.pass_line.specificity_at_perfect_sensitivity
+        ),
+        fail_sensitivity_at_perfect_specificity=(
+            stress.fail_line.sensitivity_at_perfect_specificity
+        ),
+        fail_specificity_at_perfect_sensitivity=(
+            stress.fail_line.specificity_at_perfect_sensitivity
+        ),
+        accuracy_source=source,
+        sensitivity_lower=box.sensitivity_lower if box else None,
+        sensitivity_upper=box.sensitivity_upper if box else None,
+        specificity_lower=box.specificity_lower if box else None,
+        specificity_upper=box.specificity_upper if box else None,
+        stressed_status=stressed.verdict if stressed else None,
+        true_risk_lower=stressed.true_risk_lower if stressed else None,
+        true_risk_upper=stressed.true_risk_upper if stressed else None,
+        identified=stressed.identified if stressed else None,
+        robust=stressed.verdict == status if stressed else None,
+    )
+
+
 def _claims(
     plan: AnalysisPlan,
     data: NormalizedData,
@@ -4682,6 +4902,10 @@ def _claims(
     )
     group_weights = {group.id: group.weights for group in data.groups}
     measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
+    stress_population = (
+        population or _labelled_population(plan, data) if plan.report.judge_error_stress else {}
+    )
+    stress_box = _primary_accuracy_box(plan) if plan.report.judge_error_stress else None
     results: list[ClaimResult] = []
     corrected_claims: list[str] = []
     uncorrected_claims: list[str] = []
@@ -4833,6 +5057,34 @@ def _claims(
             else:
                 reasons.append("Exploratory analyses cannot produce a safety pass.")
             status = "INCONCLUSIVE"
+        # ORDER MATTERS: after the exploratory demotion above, so `status` is the final one.
+        stress = None
+        if plan.report.judge_error_stress:
+            stress = _claim_judge_error_stress(
+                claim=claim,
+                evidence=evidence,
+                status=status,
+                why_not=(
+                    "the analysis is exploratory, so the claim is not decided on its bounds"
+                    if exploratory
+                    else "the claim was not decided on its bounds: they are not certifying, or "
+                    "data integrity is invalid"
+                    if not eligible
+                    else "the noisy-but-valid test already accounts for judge error"
+                    if claim.method == "noisy_valid_test"
+                    else "the claim is decided on a validated judge correction, which already "
+                    "accounts for judge error"
+                    if correction is not None
+                    else "the plan's validated calibration leaves the claim INCONCLUSIVE rather "
+                    "than deciding it on judge-reported risk"
+                    if validated_judge
+                    else None
+                ),
+                measure_types=measure_types,
+                population=stress_population,
+                group_weights=group_weights,
+                accuracy=stress_box,
+            )
         if correction_note is not None:
             reasons.insert(0, correction_note)
             if alpha != family.alpha:
@@ -4860,6 +5112,7 @@ def _claims(
                 evidence_refs=evidence_refs,
                 reasons=reasons,
                 warnings=list(evidence.warnings) if evidence else [],
+                judge_error_stress=stress,
             )
         )
     if corrected_claims:

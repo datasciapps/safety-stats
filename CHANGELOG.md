@@ -7,6 +7,20 @@ described in their pull requests.
 
 ### Added
 
+- **Transported judge calibration (experimental).** `inputs.judge_calibration.mode:
+  transported` takes a judge's sensitivity from a published human-labelled validation set,
+  such as HarmBench's classifier validation set, instead of labels on the run's own outputs.
+  The set's name, source, judge and rubric are required. Only the sensitivity is
+  transported: a published set's false-positive rate does not carry over to another model's
+  outputs. The run's false positives are therefore bounded only by its own judged failures.
+  Each correctable row gains a `judge_corrected_transported` interval from zero to the
+  judge-system upper bound divided by the one-sided Clopper-Pearson lower bound on
+  sensitivity. These intervals are diagnostic sensitivities and never decide a claim. The
+  analysis emits `JUDGE_CALIBRATION_TRANSPORTED`, and `report.md` names the published set.
+  Fixed-design analyses only. Plans without the mode keep their hash and write the same
+  report bytes as before. See
+  [Transported mode](docs/judge-misclassification.md#transported-mode-a-published-sensitivity-experimental).
+
 - **A single-valued risk bound for system models (experimental).** Fault trees and Markov
   models take one number per component, not an interval at a chosen alpha. With
   `outputs.direct_mean_intervals.single_valued_bound: true`, every direct-mean interval also
@@ -43,6 +57,16 @@ described in their pull requests.
   runs file and a rollouts file in JSON Lines or CSV: `analyze` and `validate` take
   `--runs` and `--rollouts` in place of `--logs`, and `source=RolloutFiles(...)` in place of
   `logs=` in Python. See [Rollout files](docs/rollout-files.md).
+
+- **Judge-error stress for threshold claims (experimental).** With
+  `report.judge_error_stress: true`, every claim in `report.json` gains a `judge_error_stress`
+  record, and `report.md` gains a section after the claims. For a claim decided on
+  judge-reported bounds, the record gives the sensitivity and specificity at which the PASS or
+  FAIL would no longer hold for true risk. When the primary outcome's judge, or its `any` or
+  `all` composite, declares accuracy ranges, it also gives the verdict over that box and whether
+  it matches the claim. It never changes a claim. Plans without the field keep their hash and
+  their output. See
+  [Stressing a threshold verdict](docs/judge-misclassification.md#stressing-a-threshold-verdict-experimental).
 
 - **A live rewrite kernel without an external API.** The live generative example runs with an
   open-weight model served locally through Inspect's `vllm/` provider:

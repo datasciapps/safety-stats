@@ -142,6 +142,32 @@ exact Clopper-Pearson bounds within each judge stratum, and the corrected interv
 is the union of its own family budget and the judge family budget. The two modes are mutually
 exclusive.
 
+`mode: transported` (experimental) takes a judge's sensitivity from a published
+human-labelled validation set, and nothing else:
+
+```yaml
+inputs:
+  judge_calibration:
+    mode: transported
+    published_set:
+      name: HarmBench classifier validation set
+      source: https://github.com/centerforaisafety/HarmBench
+      judge: HarmBench-Llama-2-13b-cls
+      rubric: HarmBench behaviour rubric
+      human_unsafe: 120
+      judge_flagged_unsafe: 100
+      sensitivity_alpha: 0.05
+```
+
+`name`, `source`, `judge` and `rubric` are required and must not be empty.
+`judge_flagged_unsafe` cannot exceed `human_unsafe`, which must be at least one.
+`sensitivity_alpha` defaults to 0.05. The mode cannot be combined with `scenarios`,
+`primary`, `validation_manifest` or `family`, and `published_set` is refused in any other
+mode. The specificity is not transported, so each corrected interval runs from zero to the
+judge-system upper bound divided by the sensitivity's lower bound. The intervals are always
+`diagnostic` and never affect a claim. Generative plans do not offer this mode. See
+[Transported mode](judge-misclassification.md#transported-mode-a-published-sensitivity-experimental).
+
 Corrections are applied to `weighted_mean`, `maximum`, `cvar`, and `top_k_mean` measures, to
 every hierarchy node, and to comparisons whose primary interval exposes both arm bounds
 (`weighted_kl_chernoff` and any `comparison_sets` entry). A validated correction certifies
@@ -540,6 +566,7 @@ claims:
 | `include_prompt_text` | false | Reserved; raw content remains omitted in v1 |
 | `include_observations` | true | Write normalized observation CSV |
 | `decimal_places` | 6 | Markdown display precision; JSON retains full precision |
+| `judge_error_stress` | false | Experimental. Add to every claim the judge accuracy at which its verdict would change for true risk, and the verdict over the primary judge's declared accuracy box; diagnostic only. See [Stressing a threshold verdict](judge-misclassification.md#stressing-a-threshold-verdict-experimental) |
 
 ## Generate JSON schemas
 

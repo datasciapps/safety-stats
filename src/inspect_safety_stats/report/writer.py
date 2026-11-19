@@ -89,6 +89,100 @@ def _coverage_label(risk: Any) -> str:
     return f"{_percent(risk.simultaneous_coverage)} joint; {_percent(directional)} each direction"
 
 
+def _judge_error_stress_lines(
+    report: SafetyReport, places: int, include_decisions: bool
+) -> list[str]:
+    """The judge-error stress section, present only when the plan opted in."""
+
+    stressed = [
+        (claim, claim.judge_error_stress)
+        for claim in report.claims
+        if claim.judge_error_stress is not None
+    ]
+    if not stressed:
+        return []
+    lines = ["", "## Judge-error stress (experimental)", ""]
+    if not include_decisions:
+        return [
+            *lines,
+            "This report omits decisions (`report.include_decisions` is false), so the judge "
+            "accuracy at which each verdict would change is only in `report.json`, under each "
+            "claim's `judge_error_stress`.",
+        ]
+    lines.extend(
+        [
+            "Each claim below was decided on the risk the **judge reports**. With sensitivity "
+            "Se and specificity Sp applied unchanged to every rollout, the verdict holds for "
+            "**true** risk only on one side of a line in (Se, Sp). The columns give where that "
+            "line meets the edges of perfect specificity and perfect sensitivity; a value above "
+            "1 or below 0 means the condition holds along the whole edge or nowhere on it. "
+            "Unclassified rollouts keep their conservative completion. Where the primary "
+            "outcome's judge declares accuracy ranges, the verdict on true risk over that box "
+            "is shown too. Declared ranges are assumptions: nothing here moves a claim.",
+            "",
+            (
+                "| Claim | Status | Judge-reported bounds | PASS: Se at least (Sp = 1) | "
+                "PASS: Sp at most (Se = 1) | FAIL: Se at most (Sp = 1) | "
+                "FAIL: Sp at least (Se = 1) | True risk over declared accuracy | "
+                "Verdict there | Robust |"
+            ),
+            "|---|---|---|---:|---:|---:|---:|---|---|---|",
+        ]
+    )
+    reasons: list[str] = []
+    for claim, stress in stressed:
+        if not stress.applicable:
+            reasons.append(f"- {_escape(claim.title)}: {_escape(stress.reason)}.")
+            cells = ["not applicable", *["—"] * 7]
+        else:
+            cells = [
+                f"{_number(stress.judge_reported_lower, places)}–"
+                f"{_number(stress.judge_reported_upper, places)}",
+                _number(stress.pass_sensitivity_at_perfect_specificity, places),
+                _number(stress.pass_specificity_at_perfect_sensitivity, places),
+                _number(stress.fail_sensitivity_at_perfect_specificity, places),
+                _number(stress.fail_specificity_at_perfect_sensitivity, places),
+                (
+                    f"{_number(stress.true_risk_lower, places)}–"
+                    f"{_number(stress.true_risk_upper, places)}"
+                    + ("" if stress.identified else " (not identified)")
+                    if stress.stressed_status is not None
+                    else "no declared accuracy"
+                ),
+                f"`{stress.stressed_status}`" if stress.stressed_status else "—",
+                "—" if stress.robust is None else "yes" if stress.robust else "**no**",
+            ]
+        lines.append(
+            "| " + " | ".join([_escape(claim.title), f"`{claim.status}`", *cells]) + " |"
+        )
+    sources = sorted(
+        {
+            (
+                stress.accuracy_source,
+                stress.sensitivity_lower,
+                stress.sensitivity_upper,
+                stress.specificity_lower,
+                stress.specificity_upper,
+            )
+            for _, stress in stressed
+            if stress.accuracy_source is not None
+        },
+        key=lambda item: str(item[0]),
+    )
+    for source, se_low, se_high, sp_low, sp_high in sources:
+        lines.extend(
+            [
+                "",
+                f"Declared accuracy of `{_escape(source)}`: sensitivity in "
+                f"[{_number(se_low, places)}, {_number(se_high, places)}], specificity in "
+                f"[{_number(sp_low, places)}, {_number(sp_high, places)}].",
+            ]
+        )
+    if reasons:
+        lines.extend(["", "Not stressed:", "", *reasons])
+    return lines
+
+
 def _claim_status(claim: Any) -> str:
     if claim.descriptive_status is None:
         return f"`{claim.status}`"
@@ -154,6 +248,7 @@ def _markdown(report: SafetyReport) -> str:
                     ),
                 ]
             )
+    lines.extend(_judge_error_stress_lines(report, places, include_decisions))
     lines.extend(["", "## Data integrity", ""])
     if report.integrity.diagnostics:
         lines.extend(
@@ -334,8 +429,19 @@ def _markdown(report: SafetyReport) -> str:
         calibration = report._resolved_plan.get("inputs", {}).get("judge_calibration") or {}
         primary_scenario = str(calibration.get("primary") or "")
         validated = str(calibration.get("mode")) == "validated"
+        transported = str(calibration.get("mode")) == "transported"
         preamble = (
             (
+                "Experimental. Only the judge's sensitivity is taken from a published "
+                "human-labelled set, on the assumption that the same judge and rubric are at "
+                "least as sensitive on this run's outputs as on that set's, which came from "
+                "other generators. The set's false-positive rate is not transported: this "
+                "run's false positives are bounded only by its own judged failures, so the "
+                "lower bound is zero and only the upper bound is informative. The rows below "
+                "carry no coverage guarantee and cannot support a safety claim."
+            )
+            if transported
+            else (
                 "These accuracies are exact Clopper-Pearson bounds from human labels drawn "
                 "within each judge stratum. The labels weight every classified rollout of a "
                 "cohort equally, so they certify only a weighted mean that does the same, over "
@@ -366,8 +472,12 @@ def _markdown(report: SafetyReport) -> str:
                     "Every other interval in this report estimates the risk that the **judge "
                     "reports** a failure. This section maps those intervals onto the underlying "
                     "**true** failure risk using "
-                    + ("measured" if validated else "declared")
-                    + " conditional judge accuracies."
+                    + (
+                        "a judge sensitivity transported from a published validation set."
+                        if transported
+                        else ("measured" if validated else "declared")
+                        + " conditional judge accuracies."
+                    )
                 ),
                 "",
                 preamble,
@@ -434,6 +544,26 @@ def _markdown(report: SafetyReport) -> str:
                         )
                         + " |"
                     )
+        elif transported:
+            summary = report.provenance.get("judge_calibration") or {}
+            published = summary.get("published_set") or {}
+            if published:
+                lines.extend(
+                    [
+                        "",
+                        "Published validation set behind the transported sensitivity:",
+                        "",
+                        f"- Set: {_escape(published.get('name'))} "
+                        f"({_escape(published.get('source'))})",
+                        f"- Judge: {_escape(published.get('judge'))}; rubric: "
+                        f"{_escape(published.get('rubric'))}",
+                        f"- Judge flagged {published.get('judge_flagged_unsafe')} of "
+                        f"{published.get('human_unsafe')} human-unsafe items; sensitivity "
+                        f"at least {_number(summary.get('sensitivity_lower'), places)} "
+                        "(one-sided Clopper-Pearson, alpha "
+                        f"{published.get('sensitivity_alpha')})",
+                    ]
+                )
         else:
             scenarios = calibration.get("scenarios") or []
             if scenarios:

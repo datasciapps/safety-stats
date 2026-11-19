@@ -260,6 +260,34 @@ class ComparisonSetResult(ResultModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class JudgeErrorStressResult(ResultModel):
+    """How good the judge must be for a threshold claim's verdict to hold on true risk.
+
+    Experimental and diagnostic: it never moves a claim. ``applicable`` is False, with the
+    reason, when the claim was not decided on judge-reported bounds this can stress.
+    """
+
+    applicable: bool
+    reason: str | None = None
+    judge_reported_lower: float | None = None
+    judge_reported_upper: float | None = None
+    unclassified_share: float | None = None
+    pass_sensitivity_at_perfect_specificity: float | None = None
+    pass_specificity_at_perfect_sensitivity: float | None = None
+    fail_sensitivity_at_perfect_specificity: float | None = None
+    fail_specificity_at_perfect_sensitivity: float | None = None
+    accuracy_source: str | None = None
+    sensitivity_lower: float | None = None
+    sensitivity_upper: float | None = None
+    specificity_lower: float | None = None
+    specificity_upper: float | None = None
+    stressed_status: Decision | None = None
+    true_risk_lower: float | None = None
+    true_risk_upper: float | None = None
+    identified: bool | None = None
+    robust: bool | None = None
+
+
 class ClaimResult(ResultModel):
     claim_id: str
     title: str
@@ -283,6 +311,17 @@ class ClaimResult(ResultModel):
     evidence_refs: list[str] = Field(default_factory=list)
     reasons: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    # Present only when the plan opts in with report.judge_error_stress.
+    judge_error_stress: JudgeErrorStressResult | None = None
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_judge_error_stress(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if self.judge_error_stress is None:
+            data.pop("judge_error_stress", None)
+        return data
 
 
 class SafetyReport(ResultModel):
