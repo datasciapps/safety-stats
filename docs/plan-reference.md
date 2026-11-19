@@ -491,6 +491,11 @@ the same counts and agreement figures for each listed group's rollouts, per coho
 shows them under **Judge panel by group**. The cohort-wide figures are reported as before. The
 field requires `inputs.judges`, and its groups must be declared.
 
+In all three scopes, a group the plan does not declare is a `PLAN_UNKNOWN_REFERENCE` error:
+integrity is invalid, and `analyze` still writes the report. The undeclared group gets no
+calibration and no panel breakdown, but in `validated` mode it still takes its share of the
+judge family budget.
+
 All three scopes are optional. A plan that leaves them out keeps its hash and writes the same
 report bytes as before.
 

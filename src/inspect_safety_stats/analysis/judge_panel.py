@@ -165,8 +165,11 @@ def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, 
     }
     if plan.inputs.panel_groups is not None:
         prompts_by_group = {group.id: set(group.prompt_ids) for group in data.groups}
-        panel["groups"] = list(plan.inputs.panel_groups)
-        for group_id in plan.inputs.panel_groups:
+        # A group the plan does not declare is reported as PLAN_UNKNOWN_REFERENCE and has no
+        # rollouts to break down, so the breakdown lists the declared groups only.
+        listed = [item for item in plan.inputs.panel_groups if item in prompts_by_group]
+        panel["groups"] = listed
+        for group_id in listed:
             by_judge, by_composite, by_pair = section(prompts_by_group[group_id])
             for entry in judges:
                 entry.setdefault("groups", {})[group_id] = by_judge[entry["id"]]

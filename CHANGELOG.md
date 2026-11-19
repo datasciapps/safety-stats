@@ -388,8 +388,9 @@ described in their pull requests.
     judge, composite and pair in `provenance.judge_panel`, and a "Judge panel by group" table
     to `report.md`.
 
-  Listed groups must be declared. Plans that leave the fields out keep their hash and write the
-  same report bytes as before. See
+  Listed groups must be declared: `validate` and `analyze` report an undeclared one as
+  `PLAN_UNKNOWN_REFERENCE`, and `analyze` still writes the report. Plans that leave the fields
+  out keep their hash and write the same report bytes as before. See
   [Scoping the calibration to groups](docs/judge-misclassification.md#scoping-the-calibration-to-groups)
   and the [plan reference](docs/plan-reference.md#inputs).
 

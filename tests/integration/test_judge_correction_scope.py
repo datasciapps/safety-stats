@@ -547,3 +547,47 @@ def test_an_assumed_calibration_scoped_to_a_group_corrects_only_its_rows(
     # An assumed correction never moves a claim, scoped or not.
     claim = next(item for item in report.claims if item.claim_id == "mean_hard")
     assert claim.method != "assumed_judge_misclassification_correction"
+
+
+@pytest.mark.parametrize("sampling", [None, "simple_random"])
+def test_an_undeclared_calibration_group_is_reported_not_crashed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sampling: str | None
+) -> None:
+    """analyze raised a bare StopIteration here, and the CLI printed an empty message."""
+
+    report = _analyze(
+        tmp_path,
+        monkeypatch,
+        claims=HARD_CLAIMS,
+        sampling=sampling,
+        compare=True,
+        judge_groups="[hard, hardd]",
+    )
+
+    assert report.integrity.status == "invalid"
+    unknown = [
+        (item.scope, item.message)
+        for item in report.integrity.diagnostics
+        if item.code == "PLAN_UNKNOWN_REFERENCE"
+    ]
+    assert unknown == [
+        (
+            "plan/inputs/judge_calibration",
+            "inputs.judge_calibration references unknown groups: hardd",
+        )
+    ]
+    # The declared group is calibrated as before. The undeclared one has no rollouts and no
+    # calibration, but keeps its share of the budget: two cohorts and two listed groups.
+    summary = report.provenance["judge_calibration"]
+    assert summary["groups"] == ["hard", "hardd"]
+    assert summary["per_calibration_alpha"] == pytest.approx(0.0125, abs=0)
+    assert {cohort: sorted(groups) for cohort, groups in summary["cohorts"].items()} == {
+        "baseline": ["hard"],
+        "candidate": ["hard"],
+    }
+    # An invalid plan decides nothing.
+    assert {item.claim_id: item.status for item in report.claims} == {
+        "mean_all": "INCONCLUSIVE",
+        "mean_hard": "INCONCLUSIVE",
+    }
+    assert (report.write(tmp_path / "report") / "report.json").is_file()
