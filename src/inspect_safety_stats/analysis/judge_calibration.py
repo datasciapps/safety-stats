@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from inspect_safety_stats.analysis.estimates import _bounds_carry_unknown_outcome
+from inspect_safety_stats.config.loader import report_message
 from inspect_safety_stats.config.models import (
     AnalysisPlan,
     JudgeCalibrationSpec,
@@ -369,13 +370,13 @@ def _validated_judge_calibrations(
             Diagnostic(
                 code="JUDGE_VALIDATION_INVALID",
                 severity="ERROR",
-                message=str(exc),
+                message=report_message(str(exc), plan, (spec.validation_manifest,)),
                 scope=plan_scope("inputs", "judge_calibration"),
             )
         )
         return {}, {}, None, {}, None
 
-    checked = _labelling_protocol(spec, labels, data.observations, diagnostics)
+    checked = _labelling_protocol(plan, spec, labels, data.observations, diagnostics)
     if spec.protocol is not None and checked is None:
         return {}, {}, None, {}, None
     protocol = None if checked is None else checked.record
@@ -399,7 +400,7 @@ def _validated_judge_calibrations(
                 Diagnostic(
                     code="JUDGE_VALIDATION_INVALID",
                     severity="ERROR",
-                    message=str(exc),
+                    message=report_message(str(exc), plan, (spec.validation_strata,)),
                     scope=plan_scope("inputs", "judge_calibration"),
                 )
             )
@@ -598,6 +599,7 @@ class _CheckedProtocol:
 
 
 def _labelling_protocol(
+    plan: AnalysisPlan,
     spec: JudgeCalibrationSpec,
     labels: dict[str, bool],
     observations: list[Observation],
@@ -623,7 +625,9 @@ def _labelling_protocol(
             Diagnostic(
                 code="JUDGE_LABELLING_PROTOCOL_VIOLATED",
                 severity="ERROR",
-                message=message,
+                # Every message names the queue as the report does, never by the absolute path
+                # the plan loader resolved it to.
+                message=report_message(message, plan, (protocol.queue,)),
                 scope=plan_scope("inputs", "judge_calibration", "protocol"),
                 details=details or {},
             )

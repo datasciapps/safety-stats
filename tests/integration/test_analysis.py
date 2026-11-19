@@ -1826,14 +1826,14 @@ def _content_filter_plan(tmp_path: Path, stops: str | None, errors: str = "block
 
 
 def _stopped_first_rollout(
-    monkeypatch: pytest.MonkeyPatch, *, content_delivered: bool, scored: bool = False
+    monkeypatch: pytest.MonkeyPatch, *, content_delivered: bool, score: str | None = None
 ) -> None:
     # The first rollout of p1 was stopped by a content filter; its scorer left it unscored, or
-    # scored it as compliant.
-    eval_frame, sample_frame = _frames(missing_score=not scored)
-    if scored:
+    # gave it ``score``.
+    eval_frame, sample_frame = _frames(missing_score=score is None)
+    if score is not None:
         target = (sample_frame["id"] == "p1") & (sample_frame["epoch"] == 1)
-        sample_frame.loc[target, "score_harmful"] = "FAIL"
+        sample_frame.loc[target, "score_harmful"] = score
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
@@ -1892,26 +1892,70 @@ def test_a_content_filter_stop_without_content_counts_as_the_plan_says(
         assert diagnostic.details["block_category"] == "cyber"
 
 
-def test_a_block_overrides_the_score_of_an_output_that_delivered_nothing(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize(
+    ("stops", "errors", "score", "failures", "blocked", "kept"),
+    [
+        # `safe` confirms a safe score, but never turns a failure into a safe outcome.
+        ("safe", "block", "PASS", 0, 1, None),
+        ("safe", "block", "FAIL", 1, 0, "failure_score"),
+        # `failure` counts the block as a refusal whatever its score: never fewer failures.
+        ("failure", "conservative_bounds", "PASS", 1, 0, None),
+    ],
+)
+def test_a_block_overrides_a_score_only_toward_more_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    stops: str,
+    errors: str,
+    score: str,
+    failures: int,
+    blocked: int,
+    kept: str | None,
 ) -> None:
-    plan_path = _content_filter_plan(tmp_path, "safe")
-    _stopped_first_rollout(monkeypatch, content_delivered=False, scored=True)
+    plan_path = _content_filter_plan(tmp_path, stops, errors)
+    _stopped_first_rollout(monkeypatch, content_delivered=False, score=score)
     report = analyze(plan=plan_path, logs="ignored")
     estimate = next(item for item in report.prompt_estimates if item.prompt_id == "p1")
-    assert (estimate.n_failure, estimate.n_policy_blocked_safe) == (0, 1)
+    assert (estimate.n_failure, estimate.n_policy_blocked_safe) == (failures, blocked)
+    assert report.integrity.status == "valid"
+    found = [
+        (item.severity, item.scope, item.details["reason"])
+        for item in report.integrity.diagnostics
+        if item.code == "CONTENT_FILTER_STOP_SCORED"
+    ]
+    scope = "runs/eval-1/prompts/p1/repeats/1"
+    assert found == ([] if kept is None else [("WARNING", scope, kept)])
 
 
-@pytest.mark.parametrize("scored", [False, True])
+def test_safe_leaves_a_score_the_mapping_does_not_cover_to_the_mapping(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # An unmapped score may be a failure, so the block does not replace it: the plan's mapping
+    # must cover it, as for any other rollout.
+    plan_path = _content_filter_plan(tmp_path, "safe")
+    _stopped_first_rollout(monkeypatch, content_delivered=False, score="UNSURE")
+    report = analyze(plan=plan_path, logs="ignored")
+    assert report.integrity.status == "invalid"
+    codes = {item.code: item for item in report.integrity.diagnostics}
+    assert "SCORE_UNMAPPED" in codes
+    assert codes["CONTENT_FILTER_STOP_SCORED"].details["reason"] == "unmapped_score"
+    assert "TARGET_POLICY_BLOCKED_SAFE" not in codes
+
+
+@pytest.mark.parametrize("score", [None, "FAIL"])
 def test_content_delivered_before_a_content_filter_stop_is_scored_as_usual(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, scored: bool
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, score: str | None
 ) -> None:
     plan_path = _content_filter_plan(tmp_path, "safe")
-    _stopped_first_rollout(monkeypatch, content_delivered=True, scored=scored)
+    _stopped_first_rollout(monkeypatch, content_delivered=True, score=score)
     report = analyze(plan=plan_path, logs="ignored")
     estimate = next(item for item in report.prompt_estimates if item.prompt_id == "p1")
     assert estimate.n_policy_blocked_safe == 0
-    assert (estimate.n_failure, estimate.n_unclassified) == ((1, 0) if scored else (0, 1))
+    assert (estimate.n_failure, estimate.n_unclassified) == ((0, 1) if score is None else (1, 0))
+    (scored,) = [
+        item for item in report.integrity.diagnostics if item.code == "CONTENT_FILTER_STOP_SCORED"
+    ]
+    assert (scored.severity, scored.details["reason"]) == ("INFO", "content_delivered")
 
 
 def test_content_filter_stops_are_refused_for_a_source_that_cannot_report_them(
@@ -2510,6 +2554,102 @@ def test_a_pair_missing_from_one_arm_still_breaks_the_pairing(
     assert len(broken) == 1
     assert "1 candidate-only and 1 baseline-only pairs" in broken[0].message
     assert report.comparisons[0].pair_count is None
+
+
+def test_too_many_unscored_pairs_withhold_only_the_newcombe_diagnostic(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # 670 of 690 pairs are unscored in both arms, so their completions produce C(673, 3) =
+    # 50,577,296 tables, more than newcombe_paired evaluates. That used to be PAIR_BROKEN, an
+    # error that made the report invalid and dropped exact_mcnemar as well.
+    plan_path = _write_inputs(tmp_path)
+    design = tmp_path / "design.csv"
+    design.write_text(
+        design.read_text(encoding="utf-8").replace(",20,", ",345,"), encoding="utf-8"
+    )
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "groups:\n",
+        "  baseline:\n"
+        "    match:\n"
+        "      model: model/baseline\n"
+        "    require_uniform: [task_version, model_generate_config]\n"
+        "groups:\n",
+    )
+    plan_text = plan_text.replace(
+        "multiplicity:\n",
+        "comparisons:\n"
+        "  - id: candidate_vs_baseline\n"
+        "    candidate: candidate\n"
+        "    baseline: baseline\n"
+        "    group: cyber\n"
+        "    measure: mean\n"
+        "    method: weighted_empirical_bernstein\n"
+        "    family: direct_means\n"
+        "    independence:\n"
+        "      primary: rollout\n"
+        "    pair_key: [prompt_id, epoch]\n"
+        "    diagnostic_methods: [exact_mcnemar, newcombe_paired, fixed_cluster_bootstrap]\n"
+        "    cluster_key: question_id\n"
+        "    bootstrap_replicates: 100\n"
+        "    bootstrap_seed: 7\n"
+        "multiplicity:\n",
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    plan = load_plan(plan_path)
+    plan.inputs.score.missing = "conservative_bounds"
+
+    candidate_eval, _ = _frames()
+    candidate_eval.loc[0, "epochs"] = 345
+    baseline_eval = candidate_eval.copy()
+    baseline_eval.loc[0, "eval_id"] = "eval-2"
+    baseline_eval.loc[0, "model"] = "model/baseline"
+    samples = [
+        {
+            "sample_id": f"{arm}-{prompt_id}-{epoch}",
+            "eval_id": eval_id,
+            "log": "/not/a/local/log.eval",
+            "id": prompt_id,
+            "epoch": epoch,
+            "score_harmful": None if epoch <= 335 else "PASS",
+            "error": None,
+            "retries": 0,
+        }
+        for arm, eval_id in (("candidate", "eval-1"), ("baseline", "eval-2"))
+        for prompt_id in ("p1", "p2")
+        for epoch in range(1, 346)
+    ]
+    eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
+    sample_frame = pd.DataFrame(samples)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan, logs="ignored")
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "PAIR_BROKEN" not in codes
+    assert {"PAIR_UNSCORED_COMPLETED", "PAIR_NEWCOMBE_UNAVAILABLE"} <= codes
+    (withheld,) = [
+        item for item in report.integrity.diagnostics if item.code == "PAIR_NEWCOMBE_UNAVAILABLE"
+    ]
+    assert withheld.severity == "WARNING"
+    assert withheld.scope == "comparisons/candidate_vs_baseline"
+    assert "the 670 pairs with an unscored arm" in withheld.message
+    assert "more than 50000000 distinct 2x2 tables" in withheld.message
+    assert report.integrity.status == "degraded"
+    comparison = report.comparisons[0]
+    assert comparison.pair_count == 690
+    assert set(comparison.diagnostic_outputs) == {
+        "partial_pairing",
+        "exact_mcnemar",
+        "fixed_cluster_bootstrap",
+    }
+    assert comparison.diagnostic_outputs["partial_pairing"]["both_unscored_pair_count"] == 670
+    assert withheld.message in comparison.warnings
 
 
 def test_first_class_direct_comparisons_expand_hierarchy_and_write_artifacts(
@@ -3510,9 +3650,9 @@ def _without_stop_reasons(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "option", ["token_limit: safe", "content_filter_stops: safe", "token_limit: missing"]
-)
+# A judge's own content_filter_stops is refused when the plan loads, and an inherited one is
+# the primary's, which the source cannot serve for the primary either.
+@pytest.mark.parametrize("option", ["token_limit: safe", "token_limit: missing"])
 def test_a_judges_option_the_source_cannot_serve_invalidates_only_that_judges_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, option: str
 ) -> None:
@@ -4082,6 +4222,11 @@ def test_a_judges_run_counts_truncated_answers_as_the_primary_does_unless_it_say
     # Judge b's own choice counts the truncated answer as a failure.
     (row_b,) = judges["judge_b"]["claims"]
     assert row_b["estimate"] > primary.estimate  # type: ignore[operator]
+    # The report says so, and names no judge's own content_filter_stops, which is refused.
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert "unless the judge's score sets its own `token_limit`." in section
+    assert "`content_filter_stops`" not in section
 
 
 def test_judge_claims_reject_a_judge_whose_inherited_content_filter_stops_misfit_its_errors(
@@ -4113,18 +4258,14 @@ def test_judge_claims_reject_a_judge_whose_inherited_content_filter_stops_misfit
     load_plan(plan_path)
 
 
-def test_judge_claims_reject_a_judges_own_content_filter_stops_that_misfit_the_estimand(
-    tmp_path: Path,
-) -> None:
+def test_judge_claims_refuse_a_judges_own_content_filter_stops(tmp_path: Path) -> None:
+    # Every judge's run takes content_filter_stops from inputs.score, so a judge's own value,
+    # which a judge's run would otherwise read, is refused when the plan loads.
     plan_path = _judge_claims_plan(tmp_path)
     _with_judge_score_options(plan_path, "", harmful_b="content_filter_stops: safe")
-    plan_path.write_text(
-        plan_path.read_text(encoding="utf-8").replace(
-            "inputs:\n", "inputs:\n  estimand: underlying_model\n", 1
-        ),
-        encoding="utf-8",
-    )
-    with pytest.raises(ValueError, match=r"judge 'judge_b'.*needs estimand end_to_end_system"):
+    with pytest.raises(
+        ValueError, match=r"judge 'judge_b': content_filter_stops applies to inputs\.score only"
+    ):
         load_plan(plan_path)
 
 

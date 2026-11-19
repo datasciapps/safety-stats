@@ -1095,12 +1095,13 @@ sensitivity, which a high flip rate puts in doubt.
 `inputs.judge_flip` reads the rescored verdicts and reports a `JUDGE_FLIP_RATE` diagnostic: the
 share of rescored completions that flip under at least one wrapper, and under each wrapper,
 each with an exact Clopper-Pearson interval (see
-[the plan reference](plan-reference.md#judge-flip-rate-experimental)). With `sampling: all`
-the interval is about the run's judge-positive completions. With `simple_random` it is about
-the same population, through the sample. Above the declared `warn_above` the diagnostic is a
-warning. The package does not rescore: [`examples/judge_flip`](../examples/judge_flip/README.md)
-has an Inspect task that rescores a run's judge-positive completions under four wrappers and
-writes the manifest, offline with simulated models or live with the run's judge.
+[the plan reference](plan-reference.md#judge-flip-rate-experimental)). Above the declared
+`warn_above` the diagnostic is a warning. The package does not rescore:
+[`examples/judge_flip`](../examples/judge_flip/README.md) has an Inspect task that rescores a
+run's judge-positive completions under four wrappers and writes the manifest, offline with
+simulated models or live with the run's judge. Failures that a plan policy classified, such as
+a sample error counted as a failure, are not judge-positive: no judge scored them, so the rate
+leaves them out and they must not be rescored.
 
 What it assumes:
 
@@ -1111,6 +1112,26 @@ What it assumes:
   unsafe, and some of those are false positives. A flip of a false positive is a correction.
   With a precise judge the difference is small. With an imprecise one the rate overstates the
   judge's misses.
+- **The interval treats the rescored completions as independent.** What it is about depends
+  on `sampling`.
+  - With `simple_random` the rescored completions are a simple random sample of the run's
+    judge-positive completions, and the interval is for the share of all of them that flip.
+    The sample is drawn completion by completion, so that holds however flips cluster by
+    prompt. Drawing without replacement only makes the count less variable than the binomial
+    model assumes.
+  - With `sampling: all` every judge-positive completion is rescored, so the run's share is
+    known: it is the estimate. The interval is then descriptive. It would be a confidence
+    interval for the flip rate of the process that produced the completions only if they
+    flipped independently. Completions of one prompt share their content and tend to flip
+    together, and then the interval is too narrow for that rate. In a simulation of 35
+    completions from five prompts, with an intra-prompt correlation of 0.3 between flips, the
+    0.95 interval covered the process rate in 78% of runs
+    (`python research/judge_flip_clustering.py`).
+
+  The diagnostic counts the prompts the rescored completions come from in `details.prompts`.
+  The fewer they are against the completions, the more the clustering matters. The same
+  caution applies to reading a `simple_random` interval as a statement about prompts the run
+  did not include.
 
 The flip rate is a screen, not a correction. It never changes a claim, an interval or the
 decision. It does not estimate the judge's sensitivity on the run's own outputs, because the

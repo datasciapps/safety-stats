@@ -29,7 +29,8 @@ risk rather than judge-reported risk, and the claim records both intervals. See
 An analysis with `intent: exploratory` certifies nothing, so every claim and the report's
 decision are `INCONCLUSIVE`. When integrity is valid and a claim's bounds are certifying, the
 claim also has a descriptive status: the status a confirmatory analysis of the same bounds
-would give at the plan's thresholds. `report.json` records it as `descriptive_status`,
+would give at the claim's thresholds, the plan's or a [decision policy](decision-policy.md)'s.
+`report.json` records it as `descriptive_status`,
 and, with `report.include_decisions: true`, `report-full.md` shows it beside the status, for example
 `` `INCONCLUSIVE` (descriptive: `PASS`) ``, and `report.html` as a dashed badge. A claim without
 certifying bounds, or a report whose integrity is invalid, has none (`null`).
@@ -72,12 +73,17 @@ In an exploratory analysis the claim is `INCONCLUSIVE` at every threshold. Its r
 descriptive status, is what a confirmatory analysis of the same bounds would give, and it
 certifies nothing.
 
-The range shows how far the verdict is from changing. The error rate of a verdict read off it
-is bounded at any thresholds, because a wrong `PASS` or `FAIL` needs the true risk outside the
-bounds. A threshold chosen after seeing the bounds cannot show, though, that the requirement
-came before the evidence. To decide at revised thresholds and keep that visible, give the
-analysis a [decision policy](decision-policy.md) (experimental): it records each version of the
-thresholds with the time it was set, and leaves the plan and its hash as frozen.
+The range shows how far the verdict is from changing. The error rate of one claim's verdict
+read off it is bounded at any thresholds, because a wrong `PASS` or `FAIL` needs the true risk
+outside the bounds. That does not carry over to the overall decision: when mandatory claims' thresholds,
+or the choice of which thresholds to change, are read off the bounds, an overall `PASS` can be
+wrong whenever any one of those bounds misses, and across separate coverage events that can be
+far more often than one claim's error budget. A threshold chosen after seeing the bounds also cannot show that the
+requirement came before the evidence. To decide at revised thresholds and keep that visible,
+give the analysis a [decision policy](decision-policy.md) (experimental): it records each
+version of the thresholds with the time it was set, leaves the plan and its hash as frozen, and
+holds back an overall `PASS` that the revised thresholds leave uncertified (see
+[When the overall decision certifies](decision-policy.md#when-the-overall-decision-certifies)).
 
 ### Verdicts under sensitivity profiles
 

@@ -133,8 +133,9 @@ return `None` when the requested direction is unattainable at the supplied horiz
 `fixed_design_detectable_failure_rates` gives the weighted-design analogue under an
 independent-rollout Hoeffding guarantee, permitting heterogeneous prompt probabilities.
 `comparison_resolvable_differences` (experimental) returns the risk differences a two-arm
-design resolves at a margin under the same kind of guarantee, for the `weighted_hoeffding`
-comparison with `rollout`, `pair` or `prompt_cluster` blocks; see
+design resolves at a margin under the same kind of guarantee, for a `comparisons` entry with
+`method: weighted_hoeffding` and `rollout`, `pair` or `prompt_cluster` blocks. It does not hold
+for a `comparison_sets` entry or another method; see
 [Planning a comparison](model-comparisons.md#planning-a-comparison-experimental).
 
 Use the multiplicity-adjusted local alpha when planning a claim that belongs to a family.
@@ -433,7 +434,9 @@ p-values over the completions, `estimate_lower` and `estimate_upper`, and the Mc
 the fully scored pairs as `scored`, or `None` when there are none.
 `newcombe_paired_interval_partial` returns the lowest lower bound and the highest upper bound
 over the completions, the range of the estimate, and `completion_count`, the number of distinct
-2×2 tables the completions produce.
+2×2 tables the completions produce. It evaluates its bound on every one of them, and raises
+`ValueError` before evaluating any when there are more than 50 million, as from 668 pairs
+unscored in both arms.
 
 `paired_cluster_bootstrap` is available from
 `inspect_safety_stats.stats.clusters`. It resamples whole creator-declared clusters while
@@ -651,7 +654,8 @@ plan's for the claims it sets, and `hash-plan --inference` prints the hash such 
 (experimental; see [Decision policies](decision-policy.md)).
 
 `plan comparison` (experimental) reads the manifest as `plan fixed-design --manifest` does and
-reports the risk differences a two-arm design resolves at `--margin`; see
+reports the risk differences a two-arm design resolves at `--margin`, guaranteed only for a
+`comparisons` entry with `method: weighted_hoeffding`; see
 [Planning a comparison](model-comparisons.md#planning-a-comparison-experimental).
 
 `plan pilot` (experimental) draws `K` prompts at random from each combination of the
