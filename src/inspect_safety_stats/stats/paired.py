@@ -75,12 +75,13 @@ def newcombe_paired_interval(
     correlation_numerator = float(both_failure * both_safe - candidate_only * baseline_only)
     if correlation_numerator > 0:
         correlation_numerator = max(correlation_numerator - trials / 2, 0.0)
-    correlation_denominator = np.sqrt(
-        (both_failure + candidate_only)
-        * (baseline_only + both_safe)
-        * (both_failure + baseline_only)
-        * (candidate_only + both_safe)
-    )
+    # The product of the four margins passes 2 ** 64 from 131,072 pairs, and NumPy cannot take
+    # the square root of a larger Python integer. Each product of two margins is below 2 ** 53
+    # under about 1.9e8 pairs, so it is exact as a float, and the float product of the two is
+    # the exact product rounded once, as the integer's conversion rounded it before.
+    candidate_spread = float((both_failure + candidate_only) * (baseline_only + both_safe))
+    baseline_spread = float((both_failure + baseline_only) * (candidate_only + both_safe))
+    correlation_denominator = np.sqrt(candidate_spread * baseline_spread)
     correlation = (
         correlation_numerator / correlation_denominator if correlation_denominator > 0 else 0.0
     )
@@ -307,21 +308,28 @@ def _newcombe_bounds_from_counts(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Vectorised newcombe_paired_interval over arrays of the four cell counts."""
 
+    # Float counts: products of counts overflow an integer array, int64 from about 110,000
+    # pairs and a narrower integer much sooner. Every count is exact as a float. A product of
+    # two is exact below 2 ** 53 (two margins under about 1.9e8 pairs, trials ** 2 under about
+    # 9.5e7) and otherwise rounded once, as converting the integer product rounded it, and
+    # multiplying by 4 is exact, so each result below is rounded as in the scalar interval.
+    both_failure, candidate_only, baseline_only, both_safe = (
+        np.asarray(counts, dtype=float)
+        for counts in (both_failure, candidate_only, baseline_only, both_safe)
+    )
     trials = both_failure + candidate_only + baseline_only + both_safe
     candidate_count = both_failure + candidate_only
     baseline_count = both_failure + baseline_only
     candidate_rate = candidate_count / trials
     baseline_rate = baseline_count / trials
     estimate = candidate_rate - baseline_rate
-    numerator = (both_failure * both_safe - candidate_only * baseline_only).astype(float)
+    numerator = both_failure * both_safe - candidate_only * baseline_only
     numerator = np.where(numerator > 0, np.maximum(numerator - trials / 2, 0.0), numerator)
+    # The two exact products of two margins are multiplied last, so the four-margin product
+    # is rounded once.
     denominator = np.sqrt(
-        (
-            (both_failure + candidate_only)
-            * (baseline_only + both_safe)
-            * (both_failure + baseline_only)
-            * (candidate_only + both_safe)
-        ).astype(float)
+        ((both_failure + candidate_only) * (baseline_only + both_safe))
+        * ((both_failure + baseline_only) * (candidate_only + both_safe))
     )
     with np.errstate(divide="ignore", invalid="ignore"):
         correlation = np.where(denominator > 0, numerator / denominator, 0.0)

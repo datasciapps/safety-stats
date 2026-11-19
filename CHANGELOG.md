@@ -7,6 +7,22 @@ described in their pull requests.
 
 ### Fixed
 
+- **The Newcombe paired interval no longer stops `analyze` on large comparisons (changes
+  behaviour from 131,072 pairs).** Its correlation divides by the square root of the product of
+  the 2×2 table's four margins, which was computed in integers. Once the product passed 2^64,
+  `newcombe_paired_interval` raised a `TypeError`, and `analyze` stopped without a report for a
+  comparison with `diagnostic_methods: [newcombe_paired]`. That happened from 131,072 pairs when
+  both arms fail about half the time; the rarer the failures, the more pairs it took (about
+  300,000 when both arms fail 5% of the time). The product is now computed in floating point,
+  and smaller tables give the same bounds to the last bit.
+
+- **`stats.direct_risk_difference_bounds` no longer wraps 32-bit counts.** With
+  `independence_unit="prompt_cluster"`, the function multiplies the two arms' counts in the
+  integer type of the arrays it is given. Counts in `int32`, the default for a Python list on
+  Windows with NumPy 1, wrapped from 32,768 rollouts a prompt: most such inputs were refused
+  with a `ValueError`, but some gave wrong Hoeffding and empirical-Bernstein bounds without an
+  error. The counts are now taken as `int64`. `analyze` was not affected.
+
 - **A judge's input files are named relative to the plan (changes report bytes).** With
   validated judge calibration, `report.json` recorded the labels file under
   `provenance.judge_calibration.validation_manifest` by the absolute path the plan loader
