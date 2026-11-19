@@ -7,6 +7,12 @@ described in their pull requests.
 
 ### Fixed
 
+- **A generative run whose identifiers read as numbers can be analysed.** The seed manifest is
+  read as text, but `generative analyze` and a resumed `generative materialize` read the
+  selection and rewrite ledgers back with pandas' type inference. A semantic seed or other
+  identifier such as `001`, `1.0` or `true` became a number or a boolean there, and the run
+  stopped with a validation error. The ledgers are now read as text, as written.
+
 - **Manifest identifiers and grouping columns are read as written (changes report bytes for
   numeric-looking labels).** The analysis read the design manifest with pandas' type
   inference. Labels that read as one number or boolean, such as `1` and `01`, `1` and `1.0`,

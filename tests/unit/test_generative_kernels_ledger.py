@@ -145,6 +145,35 @@ def test_ledger_round_trip(tmp_path: Path) -> None:
     assert read_rewrites(tmp_path / "rewrites.csv") == rewrites
 
 
+@pytest.mark.parametrize("label", ["007", "1.0", "true"])
+def test_ledgers_round_trip_labels_that_read_as_numbers(tmp_path: Path, label: str) -> None:
+    """Read with pandas' inference, `007` became 7 and `true` a boolean: the run's own ledger
+    could not be read back."""
+
+    chosen = SelectionRecord(
+        **{
+            **selection(0, label).model_dump(),
+            "node_id": label,
+            "semantic_seed_id": label,
+            "stratum": label,
+            "proposal_id": label,
+        }
+    )
+    rewritten = RewriteRecord(
+        **{
+            **rewrite(label).model_dump(),
+            "rewrite_draw_id": label,
+            "rewrite_kernel_id": label,
+            "prompt_id": label,
+            "source_semantic_seed_id": label,
+        }
+    )
+    write_selections([chosen], tmp_path / "selections.csv")
+    write_rewrites([rewritten], tmp_path / "rewrites.csv")
+    assert read_selections(tmp_path / "selections.csv") == [chosen]
+    assert read_rewrites(tmp_path / "rewrites.csv") == [rewritten]
+
+
 def test_unevaluated_rewrite_round_trips_with_null_prompt_fields(tmp_path: Path) -> None:
     exhausted = RewriteRecord(
         sampling_unit_id="u-9",
