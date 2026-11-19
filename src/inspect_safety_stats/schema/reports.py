@@ -804,6 +804,7 @@ class SafetyReport(ResultModel):
 
         return write_report(self, output, overwrite=overwrite)
 
+
 def mapping_results(report: SafetyReport) -> list[MappingSensitivityResult]:
     """The displayed results that outcome mapping sensitivities put side by side."""
 
