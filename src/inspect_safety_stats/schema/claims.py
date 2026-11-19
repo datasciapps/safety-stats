@@ -32,7 +32,9 @@ class ClaimBound(ResultModel):
     For a claim decided on a validated judge correction this is the corrected bound, and
     ``alpha`` is the error budget of the claim family and the judge calibration together. For
     a claim decided by the noisy-but-valid test it is the test's set of true risks, with the
-    same combined ``alpha``.
+    same combined ``alpha``. ``alpha`` is the claim's error budget, which is not
+    ``evidence.family_alpha``, the budget of the multiplicity family the evidence interval was
+    computed in.
 
     A claim that is INCONCLUSIVE without a decision on its bound still carries the bound
     report.json gives it: when its multiplicity family is undeclared (``alpha`` is None), and
@@ -59,6 +61,11 @@ class ClaimEvidence(ResultModel):
     the test, and the interval is that primary interval, whatever interval the refs name. Its
     assumptions are then the interval's alone, and the record's ``reasons`` state the test's.
     The interval fields are None when that result, or that interval, is not in the report.
+
+    ``family_alpha`` is the interval's own: the error budget of the multiplicity family it was
+    computed in, which for a judge correction is the judge calibration's. It is not the claim's
+    error budget, ``bound.alpha``. For a judge-corrected claim ``bound.alpha`` is the claim
+    family's alpha plus this ``family_alpha``.
     """
 
     refs: list[str] = Field(default_factory=list)

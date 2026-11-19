@@ -1165,6 +1165,10 @@ exploratory analysis, `status` stays `INCONCLUSIVE` and `descriptive_status` giv
 confirmatory analysis would decide; it certifies nothing. Fields of `evidence` are null when
 the report holds no such result or interval.
 
+`evidence.family_alpha` is the interval's own: the budget of the multiplicity family it was
+computed in, not the claim's error budget, which is `bound.alpha`. For a judge-corrected claim
+it is the judge calibration's budget, and `bound.alpha` is the claim family's alpha plus it.
+
 A claim can be `INCONCLUSIVE` without a decision on its bound, and its record still carries the
 bound `report.json` gives it. That happens when its multiplicity family is undeclared (`alpha`
 is null), and when the plan declares a validated judge calibration but the claim's evidence has
