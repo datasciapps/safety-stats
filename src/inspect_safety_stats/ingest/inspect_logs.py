@@ -19,7 +19,7 @@ from typing import Any, Literal
 import pandas as pd
 
 try:
-    from inspect_ai.analysis import evals_df, samples_df
+    from inspect_ai.analysis import EvalColumn, EvalColumns, evals_df, samples_df
     from inspect_ai.log import EvalLog, read_eval_log
 except ImportError as error:  # pragma: no cover - exercised in a fresh interpreter
     raise ImportError(
@@ -177,6 +177,11 @@ _CONFIGURATION_FIELDS = (
 )
 
 
+# The run fields read from each log: Inspect's defaults, and the scorers with their options, so
+# a report can record the configuration of each declared judge. ``evals_df`` leaves them out.
+_RUN_COLUMNS = [*EvalColumns, EvalColumn("scorers", path="eval.scorers")]
+
+
 def _parse_time(value: Any) -> datetime | None:
     if is_missing(value):
         return None
@@ -259,7 +264,7 @@ def _rollouts(samples: pd.DataFrame, runs: list[RunRecord]) -> InspectRollouts:
 def read_inspect_runs(logs: LogInput) -> list[RunRecord]:
     """Read the runs of Inspect logs, one per evaluation."""
 
-    evaluations = evals_df(logs)
+    evaluations = evals_df(logs, columns=_RUN_COLUMNS)
     if evaluations.empty:
         raise ValueError("no Inspect evaluation logs were found")
     return _runs(evaluations)
@@ -281,7 +286,7 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
 
     # ORDER MATTERS: both frames are read before either is checked, so that a run without
     # samples reports the same error it always did.
-    evaluations = evals_df(logs)
+    evaluations = evals_df(logs, columns=_RUN_COLUMNS)
     samples = samples_df(logs, parallel=parallel)
     if evaluations.empty:
         raise ValueError("no Inspect evaluation logs were found")

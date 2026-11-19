@@ -556,6 +556,20 @@ class OutputsSpec(StrictModel):
     prompt_bounds: PromptBoundsSpec = Field(default_factory=PromptBoundsSpec)
     direct_mean_intervals: DirectMeanIntervalsSpec = Field(default_factory=DirectMeanIntervalsSpec)
     risk_measures: list[RiskMeasureSpec] = Field(default_factory=list)
+    # Experimental. Decide every claim again on each declared judge's own verdicts, as if the
+    # plan named that judge as its primary outcome, and record the judges' configurations.
+    judge_claims: bool = False
+
+    @model_serializer(mode="wrap")
+    def leave_out_judge_claims_when_off(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        # Off, the field is left out, so plans written before it keep their hash and the
+        # resolved plan a report records keeps its bytes.
+        data: dict[str, Any] = handler(self)
+        if not self.judge_claims:
+            data.pop("judge_claims", None)
+        return data
 
 
 class ComparisonSpec(StrictModel):
@@ -894,6 +908,16 @@ class AnalysisPlan(StrictModel):
         expanded_ids = [item.id for item in self.expanded_comparisons()]
         if len(set(expanded_ids)) != len(expanded_ids):
             raise ValueError("expanded comparison identifiers must be unique")
+        return self
+
+    @model_validator(mode="after")
+    def judge_claims_need_judges(self) -> AnalysisPlan:
+        if self.outputs.judge_claims and not self.inputs.judges:
+            raise ValueError(
+                "outputs.judge_claims decides the claims on each declared judge's verdicts, "
+                "but inputs.judges declares no judge. Declare the judges, or set "
+                "outputs.judge_claims: false"
+            )
         return self
 
     def source_path(self) -> Path | None:

@@ -217,7 +217,7 @@ def _analyze(
 
     eval_frame, sample_frame = _frames(("candidate", "baseline") if compare else ("candidate",))
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
