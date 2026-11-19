@@ -1437,19 +1437,20 @@ stratum with
 
 These are the inclusion probabilities of the fixed-size sampled design that analyses the pilot
 frame. Because \(\pi_j\) differs between strata of different size, the pilot's unweighted
-mean is biased for the frame's, and the Horvitz–Thompson mean
-\(\frac1N\sum_{j\in S}y_j/\pi_j\) is not.
+mean is biased for the frame's whenever the strata's means differ too, and the
+Horvitz–Thompson mean \(\frac1N\sum_{j\in S}y_j/\pi_j\) is unbiased whatever they are.
 
 The rank is a hash rather than a draw from `numpy.random.default_rng(seed)`, the generator
 the [contributing guide](../CONTRIBUTING.md#53-numerics) asks for, because a prompt's hash
 depends only on the seed and its own identifier. The draw is therefore the same whatever the
-order of the manifest's rows and whatever the other strata hold; the \(k\) lowest ranks
-contain the \(k'<k\) lowest, so draws with one seed are nested; and SHA-256 gives the same
+order of the manifest's rows and whatever the other strata hold, and SHA-256 gives the same
 digest on every platform and library version, which numpy does not promise for a generator's
-methods. The seed is recorded as it would be for a generator: the pilot frame carries it in
-`pilot_seed`, and a report whose design manifest is that frame covers it with the manifest's
-hash. Choose the seed before drawing and draw once: trying seeds until the pilot looks
-favourable selects the prompts.
+methods. Draws with one seed on the same manifest and strata are nested, since the \(k\)
+lowest ranks contain the \(k'<k\) lowest; ranks drawn from a generator would nest as well,
+so nesting is not a reason for the hash. The seed is recorded as it would be for a
+generator: the pilot frame carries it in `pilot_seed`, and a report whose design manifest is
+that frame covers it with the manifest's hash. Choose the seed before drawing and draw once:
+trying seeds until the pilot looks favourable selects the prompts.
 
 The unit tests pin the prompts one seed draws, including identifiers outside ASCII, and check
 that over 2,000 seeds every prompt of a stratum of ten is drawn at a rate close to \(k/N_h\).

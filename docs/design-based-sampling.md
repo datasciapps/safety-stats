@@ -264,9 +264,9 @@ Each prompt's rank is a SHA-256 hash of the seed and its `prompt_id`, so the dra
 
 - uses only the manifest and the seed, never an outcome;
 - does not depend on the order of the manifest's rows or on the platform;
-- is nested: a pilot drawn with a larger `--per-stratum` and the same seed contains the
-  smaller one, so a pilot can be enlarged for planning without discarding the prompts
-  already run. An enlarged pilot certifies nothing; see
+- is nested: a pilot drawn from the same manifest and strata with a larger `--per-stratum`
+  and the same seed contains the smaller one, so a pilot can be enlarged for planning
+  without discarding the prompts already run. An enlarged pilot certifies nothing; see
   [What a pilot can show](#what-a-pilot-can-show).
 
 The frame records the seed and the per-stratum count, so the frame alone repeats the draw,
