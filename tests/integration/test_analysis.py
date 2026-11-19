@@ -3467,6 +3467,102 @@ def test_noisy_valid_claim_is_decided_from_truth_strata(
     assert claim.status == "INCONCLUSIVE"
 
 
+def test_random_sample_labels_add_lang_reiczigel_limits_beside_the_exact_box(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from inspect_safety_stats.stats.misclassification import (
+        TruthStratumCounts,
+        lang_reiczigel_corrected_risk,
+    )
+
+    _label_everything(tmp_path, monkeypatch)
+    plan_path = _random_sample_validated_plan(
+        tmp_path, claim_method="corrected_interval", sampling="simple_random"
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    limits = next(
+        item
+        for item in mean.intervals
+        if item.interval_id == "judge_corrected_validated_lang_reiczigel"
+    )
+    assert mean.estimate is not None
+    # Forty classified rollouts, every one weighing the same.
+    assert limits.effective_sample_size == pytest.approx(40, rel=1e-12, abs=0)
+    expected = lang_reiczigel_corrected_risk(
+        apparent_rate=mean.estimate,
+        apparent_size=40,
+        truly_unsafe=TruthStratumCounts(10, 10),
+        truly_safe=TruthStratumCounts(30, 0),
+        alpha=0.05,
+    )
+    assert limits.lower == pytest.approx(expected.lower, rel=1e-12, abs=0)
+    assert limits.upper == pytest.approx(expected.upper, rel=1e-12, abs=0)
+    assert limits.method == "lang_reiczigel_judge_misclassification_correction"
+    assert limits.eligibility == "diagnostic"
+    assert limits.role == "sensitivity"
+    assert limits.varied_assumption == "judge_error"
+    assert limits.family_alpha == 0.05
+    # The exact box stays, and only it decides the claim.
+    assert any(item.interval_id == "judge_corrected_validated" for item in mean.intervals)
+    for claim in report.claims:
+        assert claim.method == "validated_judge_misclassification_correction"
+        assert "interval:judge_corrected_validated_lang_reiczigel" not in claim.evidence_refs
+    # Like the delta reference, it describes the weighted mean and no tail measure.
+    for row in report.group_risks:
+        has_limits = any(
+            item.interval_id == "judge_corrected_validated_lang_reiczigel"
+            for item in row.intervals
+        )
+        assert has_limits == (row.measure_id == "mean"), row.measure_id
+
+
+def test_labels_within_judge_strata_add_no_lang_reiczigel_limits(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _label_everything(tmp_path, monkeypatch)
+    plan_path = _random_sample_validated_plan(
+        tmp_path,
+        claim_method="corrected_interval",
+        sampling="simple_random_within_judge_stratum",
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    for row in report.group_risks:
+        assert all(
+            item.interval_id != "judge_corrected_validated_lang_reiczigel"
+            for item in row.intervals
+        )
+    assert "JUDGE_LANG_REICZIGEL_UNAVAILABLE" not in {d.code for d in report.integrity.diagnostics}
+
+
+def test_missing_lang_reiczigel_limits_are_reported_not_skipped(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _label_everything(tmp_path, monkeypatch)
+    labels = tmp_path / "labels.csv"
+    kept = [
+        line
+        for line in labels.read_text(encoding="utf-8").splitlines()
+        if not line.endswith(",unsafe")
+    ]
+    labels.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    plan_path = _random_sample_validated_plan(
+        tmp_path, claim_method="corrected_interval", sampling="simple_random"
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    (diagnostic,) = [
+        d for d in report.integrity.diagnostics if d.code == "JUDGE_LANG_REICZIGEL_UNAVAILABLE"
+    ]
+    assert diagnostic.severity == "INFO"
+    assert "no labelled rollout is truly unsafe" in diagnostic.message
+
+
 def test_noisy_valid_claim_requires_a_random_sample_calibration(tmp_path: Path) -> None:
     from inspect_safety_stats.validate.plan import validate_plan_references
 

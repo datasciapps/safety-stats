@@ -446,6 +446,8 @@ correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibra
 delta_method_corrected_risk(*, observed_estimate, observed_variance, unsafe_stratum,
                             safe_stratum, alpha)   # asymptotic reference, diagnostic
 TruthStratumCounts(labelled, judge_positive)
+lang_reiczigel_corrected_risk(*, apparent_rate, apparent_size, truly_unsafe, truly_safe,
+                              alpha)   # approximate limits, diagnostic
 noisy_valid_certification(*, judge_reported_lower, judge_reported_upper, judge_reported_alpha,
                           truly_unsafe, truly_safe, calibration_alpha, acceptable_upper,
                           unacceptable_lower)   # finite-sample threshold test
