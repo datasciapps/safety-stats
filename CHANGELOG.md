@@ -641,6 +641,13 @@ described in their pull requests.
   now gets no `judge_corrected_panel_derived` interval, and the new warning
   `PANEL_CORRECTION_VERDICT_UNMATCHED` says why. The judge-error stress already refused it.
 
+- **A report states the `token_limit` and `content_filter_stops` assumptions for the value the
+  plan took (changes `report.json`, `report.md` and `report-full.md`).** Their entries in
+  `assumptions_used` stated the default, that such rollouts count by their score, even when the
+  plan classified them as safe or as failures. A registry assumption can now carry a statement,
+  and an if-wrong text, for each non-default value of its field, and the report and
+  `docs/diagnostics.md` give them. Plans at the defaults are unchanged.
+
 - **`report.include_decisions` hides decisions, and every reader defaults it to false (#58).**
   The option was read as true by `report.html` and by the Python report model when a report did
   not record it, and as false by the plan and the CLI. Every reader now reads it as false. The

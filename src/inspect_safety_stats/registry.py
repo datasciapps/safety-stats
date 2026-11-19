@@ -116,6 +116,18 @@ class CodeEntry:
 
 
 @dataclass(frozen=True)
+class AssumptionSetting:
+    """An assumption as one value of its plan field states it, other than the default.
+
+    ``value`` is written as in a plan. ``if_wrong`` is None when the entry's own holds.
+    """
+
+    value: str
+    statement: str
+    if_wrong: str | None = None
+
+
+@dataclass(frozen=True)
 class AssumptionEntry:
     """One assumption a report's results can rest on.
 
@@ -125,6 +137,10 @@ class AssumptionEntry:
     written as in a plan; None when the plan must state it, or when there is no field.
     ``checked_by`` gives the diagnostic codes that report evidence against it, read from the
     ``assumptions`` of their entries in ``CODES``.
+
+    ``statement`` and ``if_wrong`` describe the assumption at the default. ``by_setting``
+    describes it at other values of a field that takes one of a few named values; a report
+    states the one for the value the plan took.
     """
 
     id: str
@@ -134,6 +150,16 @@ class AssumptionEntry:
     default: str | None
     if_wrong: str
     remedy: str
+    by_setting: tuple[AssumptionSetting, ...] = ()
+
+    def stated_for(self, value: object) -> tuple[str, str]:
+        """The statement and if-wrong text for the plan field's value: the entry's own unless
+        the value has its own."""
+
+        setting = next((item for item in self.by_setting if item.value == value), None)
+        if setting is None:
+            return self.statement, self.if_wrong
+        return setting.statement, setting.if_wrong or self.if_wrong
 
 
 _ASSUMPTIONS: tuple[AssumptionEntry, ...] = (
@@ -293,6 +319,23 @@ _ASSUMPTIONS: tuple[AssumptionEntry, ...] = (
             "Raise the token limit and rerun, or classify truncated answers with "
             "score.token_limit."
         ),
+        by_setting=(
+            AssumptionSetting(
+                "missing",
+                "An answer that stopped at the generation token limit counts by its score, and "
+                "without a score or a sample error as missing, counted on its own.",
+            ),
+            AssumptionSetting(
+                "safe",
+                "An answer that stopped at the generation token limit counts by its score, and "
+                "without a score or a sample error as safe, as the plan declares.",
+            ),
+            AssumptionSetting(
+                "failure",
+                "An answer that stopped at the generation token limit counts by its score, and "
+                "without a score or a sample error as a failure, as the plan declares.",
+            ),
+        ),
     ),
     AssumptionEntry(
         id="content_filter_stops",
@@ -310,6 +353,24 @@ _ASSUMPTIONS: tuple[AssumptionEntry, ...] = (
         remedy=(
             "Classify the stops with score.content_filter_stops: safe or failure, under the "
             "end-to-end estimand."
+        ),
+        by_setting=(
+            AssumptionSetting(
+                "safe",
+                "An output a provider's content filter stopped before it delivered any "
+                "content, without a sample error, counts as safe whatever its score: a policy "
+                "block of the end-to-end system, as the plan declares.",
+                "The rate holds for the system behind this provider's filter. Behind another "
+                "filter, a stopped output may have been delivered, and may have been harmful.",
+            ),
+            AssumptionSetting(
+                "failure",
+                "An output a provider's content filter stopped before it delivered any "
+                "content, without a sample error, counts as a failure whatever its score: a "
+                "refusal of the end-to-end system, as the plan declares.",
+                "The rate holds for the system behind this provider's filter. Behind another "
+                "filter, a stopped output may have been delivered as an answer, not a refusal.",
+            ),
         ),
     ),
     AssumptionEntry(

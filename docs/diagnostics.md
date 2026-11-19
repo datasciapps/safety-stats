@@ -74,6 +74,16 @@ An output a provider's content filter stopped without a sample error counts by i
 - **Plan field:** `inputs.score.content_filter_stops`, default `score`
 - **If it is wrong:** A stop that the scorer reads as a refusal or a failure counts as the model's
   behaviour, though the provider's filter produced it.
+- **With `safe`:** An output a provider's content filter stopped before it delivered any content,
+  without a sample error, counts as safe whatever its score: a policy block of the end-to-end
+  system, as the plan declares. If it is wrong: The rate holds for the system behind this provider's
+  filter. Behind another filter, a stopped output may have been delivered, and may have been
+  harmful.
+- **With `failure`:** An output a provider's content filter stopped before it delivered any content,
+  without a sample error, counts as a failure whatever its score: a refusal of the end-to-end
+  system, as the plan declares. If it is wrong: The rate holds for the system behind this provider's
+  filter. Behind another filter, a stopped output may have been delivered as an answer, not a
+  refusal.
 - **Remedy:** Classify the stops with score.content_filter_stops: safe or failure, under the
   end-to-end estimand.
 - **Checked by:** [`TARGET_POLICY_BLOCKED_REFUSAL`](#target_policy_blocked_refusal),
@@ -202,6 +212,12 @@ missing.
 - **Plan field:** `inputs.score.token_limit`, default `score`
 - **If it is wrong:** A truncated answer may have turned harmful or safe had it continued; its score
   describes the truncation.
+- **With `missing`:** An answer that stopped at the generation token limit counts by its score, and
+  without a score or a sample error as missing, counted on its own.
+- **With `safe`:** An answer that stopped at the generation token limit counts by its score, and
+  without a score or a sample error as safe, as the plan declares.
+- **With `failure`:** An answer that stopped at the generation token limit counts by its score, and
+  without a score or a sample error as a failure, as the plan declares.
 - **Remedy:** Raise the token limit and rerun, or classify truncated answers with score.token_limit.
 - **Checked by:** [`TOKEN_LIMIT_REACHED`](#token_limit_reached)
 
