@@ -213,6 +213,13 @@ with LF; a resume converts the CRLF line endings a development version wrote.
 The plan is re-compiled and checked against the recorded selection ledger first, so a directory
 belonging to a different design is refused rather than silently continued.
 
+Each row of `rewrites.csv` records the kernel fingerprint of the rewrite procedure that produced
+it. A resume does not compare it with the plan's, so a plan whose rewrite section or prompt
+template changed before a resume, or after materialization, is still analysed. `generative
+analyze` then warns with `GENERATIVE_KERNEL_MISMATCH`, which counts the units recorded under
+another fingerprint than the plan's: the report's `kernel_sha256` does not describe them.
+Materialize again from the start to keep one procedure behind every rewrite.
+
 ## Conversations and system prompts (experimental)
 
 A unit can be a whole conversation rather than a single prompt, and the system prompt the

@@ -148,8 +148,13 @@ def generative(
     validator: str | None = None,
     cohort: str | None = None,
     slices: tuple[str, ...] = (),
+    after: Callable[[Path], None] | None = None,
 ) -> Run:
-    """Materialize the plan, changed by ``change``, evaluate it with ``logs``, analyse it."""
+    """Materialize the plan, changed by ``change``, evaluate it with ``logs``, analyse it.
+
+    ``after`` gets the directory that holds the plan once the run is materialized, to change
+    what the analysis reads.
+    """
 
     def run(directory: Path) -> Outcome:
         from inspect_safety_stats.generative.ledger import read_rewrites
@@ -162,6 +167,8 @@ def generative(
         plan_path = materialize(directory, edited, SEEDS_WITH_TEXT)
         artifacts = directory / "run"
         materialize_run(plan_path, artifacts, kernel=kernel, validator=validator)
+        if after is not None:
+            after(directory)
         prompts = [
             str(record.prompt_id)
             for record in read_rewrites(artifacts / "rewrites.csv")
@@ -312,6 +319,20 @@ def validators_named(triggered: Outcome, control: Outcome) -> None:
     # Recorded: the message names the declared validator and the one the ledger records.
     message = only(triggered, "GENERATIVE_VALIDATOR_MISMATCH").message
     assert "'semantic-equivalence-v1'" in message and "'fake-validator'" in message
+    same_estimates(triggered, control)
+
+
+def retemplated(directory: Path) -> None:
+    (directory / "template.txt").write_text("Reword: {seed}\n", encoding="utf-8", newline="\n")
+
+
+def kernels_named(triggered: Outcome, control: Outcome) -> None:
+    # Recorded: every unit is counted, and the details give both fingerprints.
+    found = only(triggered, "GENERATIVE_KERNEL_MISMATCH")
+    assert "records 60 of 60 unit(s)" in found.message
+    plan_digest = found.details["plan"]
+    (recorded,) = (key for key in found.details if key.startswith("ledger:"))
+    assert found.details[recorded] == 60 and recorded != f"ledger:{plan_digest}"
     same_estimates(triggered, control)
 
 
@@ -516,6 +537,14 @@ CASES = [
         trigger=generative(logs=together(evaluation(value=_safe), change=lambda rows: rows[5:])),
         control=generative(logs=evaluation(value=_safe)),
         effect=completed_and_widened(5),
+    ),
+    # The prompt template changed after the run was materialized.
+    Case(
+        code="GENERATIVE_KERNEL_MISMATCH",
+        shows="recorded",
+        trigger=generative(after=retemplated),
+        control=generative(),
+        effect=kernels_named,
     ),
     # The plan names another validator than the one that judged the rewrites.
     Case(

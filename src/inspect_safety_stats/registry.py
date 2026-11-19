@@ -992,6 +992,28 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
     ),
     CodeEntry(
+        code="GENERATIVE_KERNEL_MISMATCH",
+        severities=("WARNING",),
+        source="generation",
+        effect="recorded",
+        assumption=(
+            "Every rewrite the ledger records was produced under the rewrite procedure the "
+            "plan declares: its rewrite section and prompt template, whose kernel fingerprint "
+            "the report gives as kernel_sha256."
+        ),
+        consequence=(
+            "Nothing is recomputed: the diagnostic counts the units the rewrite ledger records "
+            "under another kernel fingerprint, as when the plan's rewrite section or prompt "
+            "template changed after materialization or before a resume, and its details give "
+            "the plan's fingerprint and those the ledger records."
+        ),
+        remedy=(
+            "Analyse under the plan and prompt template the run was materialized with, or "
+            "materialize again from the start (--overwrite or a new output directory, not "
+            "--resume) under the plan as it stands."
+        ),
+    ),
+    CodeEntry(
         code="GENERATIVE_LOG_INCOMPLETE",
         severities=("ERROR",),
         source="generation",
