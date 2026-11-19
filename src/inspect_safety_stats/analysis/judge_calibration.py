@@ -20,6 +20,7 @@ from inspect_safety_stats.ingest.validation import (
     load_validation_strata,
     truth_stratum_counts,
 )
+from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import (
     Diagnostic,
     GroupRiskResult,
@@ -362,7 +363,7 @@ def _validated_judge_calibrations(
         )
         return {}, {}, None, {}, None
 
-    protocol = _labelling_protocol(spec, labels, diagnostics)
+    protocol = _labelling_protocol(spec, labels, data.observations, diagnostics)
     if spec.protocol is not None and protocol is None:
         return {}, {}, None, {}, None
     bound: CalibrationBound = (
@@ -564,9 +565,15 @@ def _validated_judge_calibrations(
 def _labelling_protocol(
     spec: JudgeCalibrationSpec,
     labels: dict[str, bool],
+    observations: list[Observation],
     diagnostics: list[Diagnostic],
 ) -> dict[str, Any] | None:
     """Check the labels against the declared labelling protocol, and record both.
+
+    The labels must be the first rows of the queue (or of its tier), and every row of it
+    must name a classified rollout of the analysed run: a queue drawn from other rollouts
+    is not a random order of this run's judge strata. Every label then names a classified
+    rollout too, so a fixed size counts only labels the calibration uses.
 
     ``None`` with an ERROR diagnostic when the labels break the protocol, and ``None``
     without one when the plan declares no protocol.
@@ -575,21 +582,49 @@ def _labelling_protocol(
     protocol = spec.protocol
     if protocol is None:
         return None
-    try:
-        prefix = check_labelled_prefix(protocol.queue, labels, tier=protocol.tier)
-        if protocol.stopping == "fixed_size" and prefix.labelled != protocol.size:
-            raise ValueError(
-                f"the labelling protocol fixes {protocol.size} labels in advance, but the "
-                f"validation manifest has {prefix.labelled}"
-            )
-    except (OSError, ValueError) as exc:
+
+    def violated(message: str, details: dict[str, Any] | None = None) -> None:
         diagnostics.append(
             Diagnostic(
                 code="JUDGE_LABELLING_PROTOCOL_VIOLATED",
                 severity="ERROR",
-                message=str(exc),
+                message=message,
                 scope=plan_scope("inputs", "judge_calibration", "protocol"),
+                details=details or {},
             )
+        )
+
+    try:
+        prefix = check_labelled_prefix(protocol.queue, labels, tier=protocol.tier)
+    except (OSError, ValueError) as exc:
+        violated(str(exc))
+        return None
+    classified = {row.observation_id for row in observations if row.failure is not None}
+    stray = [
+        (row, key)
+        for row, key in enumerate(prefix.observation_ids, start=1)
+        if key not in classified
+    ]
+    if stray:
+        where = (
+            "labelling queue"
+            if protocol.tier is None
+            else f"labelling queue tier {protocol.tier!r}"
+        )
+        row, key = stray[0]
+        labelled = sum(item in labels for _, item in stray)
+        violated(
+            f"{len(stray)} rows of the {where} ({labelled} of them labelled) name "
+            "observations absent from the analysed logs or with unclassified outcomes, the "
+            f"first at row {row} ({key!r}); the queue must order classified rollouts of the "
+            "analysed run only",
+            {"observation_ids": [item for _, item in stray[:20]]},
+        )
+        return None
+    if protocol.stopping == "fixed_size" and prefix.labelled != protocol.size:
+        violated(
+            f"the labelling protocol fixes {protocol.size} labels in advance, but the "
+            f"validation manifest has {prefix.labelled}"
         )
         return None
     return {

@@ -81,12 +81,16 @@ report: {include_observations: true, decimal_places: 6}
 """
 
 
+ABSENT = "not-a-rollout-of-the-run"
+
+
 def _truly_unsafe(epoch: int) -> bool:
     return epoch <= 60 or JUDGE_UNSAFE < epoch <= JUDGE_UNSAFE + 5
 
 
-@pytest.fixture
-def logs(monkeypatch: pytest.MonkeyPatch) -> None:
+def _patch_logs(monkeypatch: pytest.MonkeyPatch, unscored: int | None = None) -> None:
+    """Serve the run's logs; the rollout of epoch ``unscored``, if any, has no score."""
+
     evals = pd.DataFrame(
         [
             {
@@ -116,7 +120,9 @@ def logs(monkeypatch: pytest.MonkeyPatch) -> None:
                 "log": "/not/a/local/log.eval",
                 "id": "p1",
                 "epoch": epoch,
-                "score_harmful": "FAIL" if epoch <= JUDGE_UNSAFE else "PASS",
+                "score_harmful": (
+                    None if epoch == unscored else "FAIL" if epoch <= JUDGE_UNSAFE else "PASS"
+                ),
                 "error": None,
                 "retries": 0,
             }
@@ -130,6 +136,11 @@ def logs(monkeypatch: pytest.MonkeyPatch) -> None:
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, **_: samples,
     )
+
+
+@pytest.fixture
+def logs(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_logs(monkeypatch)
 
 
 def _observation_ids(directory: Path) -> dict[int, str]:
@@ -174,8 +185,9 @@ def _write_plan(directory: Path, protocol: str | None) -> Path:
 
 def _labels(directory: Path, ids: dict[int, str], observation_ids: list[str]) -> None:
     truth = {value: _truly_unsafe(epoch) for epoch, value in ids.items()}
+    # A key the run does not have is labelled safe.
     rows = ["observation_id,human_label"] + [
-        f"{key},{'unsafe' if truth[key] else 'safe'}" for key in observation_ids
+        f"{key},{'unsafe' if truth.get(key) else 'safe'}" for key in observation_ids
     ]
     (directory / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
@@ -197,6 +209,14 @@ def _run(
 ) -> tuple[SafetyReport, pd.DataFrame]:
     ids = _observation_ids(tmp_path)
     queue = _queue(ids)
+    if edit in ("absent", "absent_labelled"):
+        # A rollout the run does not have, first in the tier and labelled, or right after
+        # the labelled rows.
+        at = 0
+        if edit == "absent":
+            at = int(queue.index[queue["tier"] == "calibration"][take - 1]) + 1
+        stray = pd.DataFrame([{"observation_id": ABSENT, "tier": "calibration"}])
+        queue = pd.concat([queue.iloc[:at], stray, queue.iloc[at:]], ignore_index=True)
     queue.to_csv(tmp_path / "queue.csv", index=False, lineterminator="\n")
     calibration = list(queue.loc[queue["tier"] == "calibration", "observation_id"])
     labelled = calibration[:take]
@@ -266,6 +286,59 @@ def test_a_label_outside_the_declared_tier_stops_the_calibration(tmp_path: Path)
     assert "1 labelled observations are not in the labelling queue tier 'calibration'" in (
         message
     )
+    assert _corrected(report) is None
+
+
+@pytest.mark.usefixtures("logs")
+def test_a_queue_row_the_run_does_not_have_stops_the_calibration(tmp_path: Path) -> None:
+    # The labels are a prefix of the tier, but the tier lists a rollout of some other run,
+    # so it is not a random order of this run's judge strata.
+    report, _ = _run(tmp_path, _protocol("label_independent"), edit="absent")
+
+    (message,) = _violations(report)
+    assert message == (
+        "1 rows of the labelling queue tier 'calibration' (0 of them labelled) name "
+        "observations absent from the analysed logs or with unclassified outcomes, the first "
+        f"at row 41 ({ABSENT!r}); the queue must order classified rollouts of the analysed "
+        "run only"
+    )
+    (found,) = [
+        item
+        for item in report.integrity.diagnostics
+        if item.code == "JUDGE_LABELLING_PROTOCOL_VIOLATED"
+    ]
+    assert found.details == {"observation_ids": [ABSENT]}
+    assert report.integrity.status == "invalid"
+    assert _corrected(report) is None
+    assert "protocol" not in report.provenance.get("judge_calibration", {})
+
+
+@pytest.mark.usefixtures("logs")
+def test_a_labelled_queue_row_the_run_does_not_have_is_one_error(tmp_path: Path) -> None:
+    # The label for the stray row is a protocol violation, not a second error for the same
+    # row, and a fixed size never counts it.
+    report, _ = _run(tmp_path, _protocol("fixed_size", size=40), edit="absent_labelled")
+
+    errors = [item.code for item in report.integrity.diagnostics if item.severity == "ERROR"]
+    assert errors == ["JUDGE_LABELLING_PROTOCOL_VIOLATED"]
+    (message,) = _violations(report)
+    assert "(1 of them labelled)" in message and f"the first at row 1 ({ABSENT!r})" in message
+    assert _corrected(report) is None
+
+
+def test_an_unclassified_queue_row_stops_the_calibration(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The rollout after the labelled rows has no score, so it is in neither judge stratum.
+    _patch_logs(monkeypatch)
+    ids = _observation_ids(tmp_path / "ids")
+    row = _queue(ids).query("tier == 'calibration'")["observation_id"].iloc[40]
+    _patch_logs(monkeypatch, unscored=next(e for e, key in ids.items() if key == row))
+
+    report, _ = _run(tmp_path, _protocol("label_independent"))
+
+    (message,) = _violations(report)
+    assert "(0 of them labelled)" in message and f"the first at row 41 ({row!r})" in message
     assert _corrected(report) is None
 
 

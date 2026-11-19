@@ -92,12 +92,14 @@ class LabelledPrefix:
     """What the labelling-protocol check found: the queue, and how far down it labels reach.
 
     ``queue_sha256`` is the SHA-256 of the queue file's bytes as read, which are also the
-    bytes the check parsed.
+    bytes the check parsed. ``observation_ids`` are the queue's rows in labelling order, those
+    of the selected tier only when a tier is given.
     """
 
     queue_rows: int
     labelled: int
     queue_sha256: str
+    observation_ids: tuple[str, ...]
 
 
 def check_labelled_prefix(
@@ -160,6 +162,7 @@ def check_labelled_prefix(
         queue_rows=len(order),
         labelled=count,
         queue_sha256=hashlib.sha256(content).hexdigest(),
+        observation_ids=tuple(order),
     )
 
 

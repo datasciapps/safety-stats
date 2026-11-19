@@ -1222,8 +1222,9 @@ _CODES: tuple[CodeEntry, ...] = (
         source="judge_labels",
         effect="invalid",
         assumption=(
-            "The validation manifest labels exactly the first rows of the declared labelling "
-            "queue, and as many as a fixed_size protocol declares."
+            "The declared labelling queue lists only classified rollouts of the analysed run, "
+            "and the validation manifest labels exactly its first rows, as many as a fixed_size "
+            "protocol declares."
         ),
         consequence=(
             "The integrity status is invalid, so no claim can pass, and no validated judge "
@@ -1231,8 +1232,9 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
         remedy=(
             "Label the queue named by inputs.judge_calibration.protocol.queue in order without "
-            "skipping rows, or correct protocol.tier, protocol.stopping or protocol.size to match "
-            "how the labels were collected."
+            "skipping rows, write the queue from the classified rollouts of the logs analysed, "
+            "or correct protocol.tier, protocol.stopping or protocol.size to match how the "
+            "labels were collected."
         ),
     ),
     CodeEntry(

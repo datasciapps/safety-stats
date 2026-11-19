@@ -226,9 +226,12 @@ that also holds rows the calibration does not use, such as rows oversampled to s
 the judge goes wrong; the manifest then holds the calibration tier's labels only.
 
 The analysis checks that the manifest labels exactly the first rows of the queue (or of its
-tier). A skipped row, or a label for a rollout outside the queue, is an error,
-`JUDGE_LABELLING_PROTOCOL_VIOLATED`, and no correction is reported. `stopping` says why
-labelling stopped where it did:
+tier), and that every row of the queue (or of its tier) names a classified rollout of the
+analysed run. A skipped row, a label for a rollout outside the queue, or a queue row that
+names a rollout the run does not have or did not classify is an error,
+`JUDGE_LABELLING_PROTOCOL_VIOLATED`, and no correction is reported. Every label is then on a
+classified rollout, so `size` below counts only labels the calibration uses. `stopping` says
+why labelling stopped where it did:
 
 | `stopping` | Meaning | What the analysis does |
 |---|---|---|

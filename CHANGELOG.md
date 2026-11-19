@@ -261,8 +261,9 @@ described in their pull requests.
 - **Labelling protocol for a validated judge calibration (experimental).** A plan can
   declare how its human labels were collected, under `inputs.judge_calibration.protocol`:
   the labelling queue, the seed that ordered it, and why labelling stopped. The analysis
-  checks that the labels are exactly the queue's first rows, and the declared size under
-  `stopping: fixed_size`; a violation is the error `JUDGE_LABELLING_PROTOCOL_VIOLATED`.
+  checks that the queue lists only classified rollouts of the analysed run, that the labels
+  are exactly its first rows, and the declared size under `stopping: fixed_size`; a violation
+  is the error `JUDGE_LABELLING_PROTOCOL_VIOLATED`.
   `stopping: data_dependent` bounds each judge stratum's accuracy with an anytime-valid
   binomial confidence sequence, so labelling may stop once the result is clear. The sequence
   bounds the probability that a rollout of the stratum is truly unsafe, which the run's

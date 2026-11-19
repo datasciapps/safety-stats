@@ -102,6 +102,14 @@ def test_the_whole_queue_labelled_is_a_prefix(tmp_path: Path) -> None:
     path = _queue(tmp_path, "observation_id\na\nb\n")
     prefix = check_labelled_prefix(path, {"a": True, "b": False})
     assert (prefix.queue_rows, prefix.labelled) == (2, 2)
+    assert prefix.observation_ids == ("a", "b")
+
+
+def test_a_tier_keeps_its_own_rows_in_queue_order(tmp_path: Path) -> None:
+    text = "observation_id,tier\nc,other\na, calibration\nd,other\nb,calibration\n"
+    path = _queue(tmp_path, text)
+    prefix = check_labelled_prefix(path, {"a": True}, tier="calibration")
+    assert (prefix.observation_ids, prefix.queue_rows, prefix.labelled) == (("a", "b"), 2, 1)
 
 
 def test_the_queue_hash_is_of_the_bytes_the_check_parsed(
