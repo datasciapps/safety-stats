@@ -993,11 +993,12 @@ def comparison_planning_command(
     guarantee of a comparisons entry with method weighted_hoeffding. The numbers do not hold
     for a comparison_sets entry or another method: a comparison set bounds each arm
     separately, which is usually wider, and weighted_kl_chernoff and
-    weighted_empirical_bernstein, though narrower on sparse failures, can be wider at
-    moderate failure rates. Rollout counts per arm come from the manifest's
-    expected_rollouts column unless --candidate-rollouts or --baseline-rollouts override
-    them. --independence-unit pair plans for a profile block_by [prompt_id, repeat] with
-    joint coupling; prompt_cluster for block_by [prompt_id] with joint coupling.
+    weighted_empirical_bernstein, often narrower on sparse failures when prompt weights are
+    even, can be wider with uneven weights or at moderate failure rates. Rollout counts per
+    arm come from the manifest's expected_rollouts column unless --candidate-rollouts or
+    --baseline-rollouts override them. --independence-unit pair plans for a profile
+    block_by [prompt_id, repeat] with joint coupling; prompt_cluster for block_by
+    [prompt_id] with joint coupling.
     """
 
     from inspect_safety_stats.stats.planning import comparison_resolvable_differences

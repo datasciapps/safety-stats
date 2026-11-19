@@ -11,7 +11,9 @@ upper bound falls at or below the margin, for each method as a ``comparisons`` e
 ("entry") and as a two-arm rectangle ("rectangle"). The planner guarantees at least 0.9
 only for weighted_hoeffding as an entry. It also prints each construction's upper
 half-width when both arms observe the same failure rate, spread as evenly over the prompts
-as the counts allow.
+as the counts allow, and, for uneven ``nested_equal`` weights over tasks of different sizes,
+each method's upper half-width as an entry when the same failures fall on the most heavily
+weighted prompts (where KL/Chernoff uses its Poisson kernel).
 
 Section 7.7 of docs/statistical-methods.md quotes its output.
 
@@ -39,6 +41,9 @@ OBSERVED_RATES = (0.02, 0.05, 0.1, 0.12, 0.15, 0.2, 0.3, 0.5)
 REPLICATES = 10_000
 SEED = 20261119
 METHODS = ("weighted_hoeffding", "weighted_empirical_bernstein", "weighted_kl_chernoff")
+
+# Task sizes of uneven nested_equal designs, each with the failure rate observed in both arms.
+UNEVEN_DESIGNS = (((5, 10, 20, 25, 40), 0.02), ((2, 98), 0.01))
 
 WEIGHTS = np.full(PROMPTS, 1 / PROMPTS)
 TRIALS = np.full(PROMPTS, ROLLOUTS)
@@ -100,6 +105,22 @@ def main() -> None:
         print(f"  {rate:<4}  " + "  ".join(
             f"entry {entry:.4f} rect {rectangle:.4f}" for entry, rectangle in widths
         ))
+    print("upper half-width as an entry with nested_equal weights, one failure on each of the "
+          "first prompts of both arms (the smallest task's first)")
+    for sizes, rate in UNEVEN_DESIGNS:
+        weights = np.concatenate([np.full(size, 1 / (len(sizes) * size)) for size in sizes])
+        trials = np.full(len(weights), ROLLOUTS)
+        none = np.zeros(len(weights), dtype=int)
+        failures = np.zeros(len(weights), dtype=int)
+        failures[: round(rate * len(weights) * ROLLOUTS)] = 1
+        widths = []
+        for method in METHODS:
+            bounds = direct_risk_difference_bounds(
+                failures, none, trials, failures, none, trials, weights,
+                alpha_lower=ALPHA, alpha_upper=ALPHA, method=method,  # type: ignore[arg-type]
+            )
+            widths.append(f"{method.removeprefix('weighted_')} {bounds.upper:.4f}")
+        print(f"  tasks of {'/'.join(map(str, sizes))} prompts, rate {rate}: " + ", ".join(widths))
 
 
 if __name__ == "__main__":

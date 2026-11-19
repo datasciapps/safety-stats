@@ -379,11 +379,13 @@ for:
   about 76% at 50%, not the planned 90%.
 - **The other methods.** `weighted_kl_chernoff`, the recommended method, bounds each arm
   separately as a comparison set does, and `weighted_empirical_bernstein` adapts to the
-  observed variance. Both are narrower than `weighted_hoeffding` when failures are sparse, and
-  either can be wider at moderate failure rates. In the same example, `weighted_kl_chernoff`
-  is wider once both arms fail on more than about 12% of rollouts, and at 50% the difference
-  −0.059 passes in about 76% of runs. The planner states nothing for these methods, in either
-  direction.
+  observed variance. Both are often narrower than `weighted_hoeffding` on sparse failures
+  when prompt weights are even; with uneven weights, or at moderate failure rates, either can
+  be wider. In the same example, `weighted_kl_chernoff` is wider once both arms fail on more
+  than about 12% of rollouts, and at 50% the difference −0.059 passes in about 76% of runs.
+  With `nested_equal` weights over tasks of 2 and 98 prompts and 1% failures on the most
+  heavily weighted prompts, both are wider than `weighted_hoeffding`. The planner states
+  nothing for these methods, in either direction.
 
 The planner assumes no unclassified outcomes and does not plan hierarchy-node contrasts. The
 derivation is in

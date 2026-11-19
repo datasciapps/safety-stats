@@ -518,8 +518,9 @@ def comparison_resolvable_differences(
     endpoints, which under ``weighted_hoeffding`` is usually wider (about 1.5 times for
     unpaired arms at equal counts and a one-sided alpha of 0.025).
     Nor does it extend to ``weighted_empirical_bernstein``. The KL/Chernoff and
-    empirical-Bernstein differences are narrower on sparse failures and can be wider at
-    moderate failure rates.
+    empirical-Bernstein differences are often narrower on sparse failures when prompt
+    weights are even; with uneven weights, or at moderate failure rates, either can be
+    wider.
     """
 
     nc = np.asarray(candidate_trials)

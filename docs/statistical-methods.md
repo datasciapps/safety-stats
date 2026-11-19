@@ -1951,12 +1951,18 @@ weighted prompts, 10 unpaired rollouts per arm, \(\delta=0.05\), \(\alpha_U=0.02
 planned \(\Delta=\delta-g_U\approx-0.059\). \(U_\Delta\le\delta\) holds in 0.773 of them for
 the `weighted_hoeffding` rectangle at a baseline rate of 0.3, and in 0.755 at 0.5 (standard
 error at most 0.005); for the `weighted_empirical_bernstein` rectangle, in 0.582 at either
-rate. The `weighted_kl_chernoff` and `weighted_empirical_bernstein` differences are narrower
-than the Hoeffding difference on sparse failures and can be wider at moderate rates. In the
-same example, KL/Chernoff's upper half-width equals Hoeffding's 0.061 when both arms observe
-a failure rate of 0.12 and is 0.093 at 0.5, and at a baseline rate of 0.5 the planned
-difference gives \(U_\Delta\le\delta\) in 0.756 of the runs. The planner states no guarantee for these methods,
-in either direction. Unclassified outcomes widen the analysis bounds and are not planned for.
+rate. The `weighted_kl_chernoff` and `weighted_empirical_bernstein` differences are often
+narrower than the Hoeffding difference on sparse failures when prompt weights are even; with
+uneven weights, or at moderate rates, either can be wider. In the same example,
+KL/Chernoff's upper half-width equals Hoeffding's 0.061 when both arms observe a failure rate
+of 0.12 and is 0.093 at 0.5, and at a baseline rate of 0.5 the planned difference gives
+\(U_\Delta\le\delta\) in 0.756 of the runs. With `nested_equal` weights over tasks of 2 and
+98 prompts, 10 rollouts each, and one failure per arm on each of the first ten prompts (both
+of the small task's among them), the upper half-widths are 0.217 for Hoeffding, 0.243 for
+KL/Chernoff, which then uses its Poisson kernel, and 0.276 for empirical Bernstein; over tasks
+of 5, 10, 20, 25 and 40 prompts with 20 such failures, 0.078 for Hoeffding and 0.081 for
+KL/Chernoff. The planner states no guarantee for these methods, in either direction.
+Unclassified outcomes widen the analysis bounds and are not planned for.
 
 ### 7.8 Arm contrasts on a generative design (experimental)
 
