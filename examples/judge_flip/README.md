@@ -48,18 +48,33 @@ It runs four steps:
    every wrapper, and `flip_manifest.py manifest` writes `run/flips.csv`.
 4. The run is analysed with `plan.yaml`, which reads the manifest.
 
-The simulated judge loses an unsafe verdict with probability 0.30, 0.05, 0.20 and 0.40 under
-the four wrappers, and the run prints:
+Each rescoring is drawn afresh: the simulated judge misses the unsafe content with
+probability 0.05, and is talked out of its unsafe verdict with probability 0.30, 0.05, 0.20 and
+0.40 under the four wrappers. A completion so flips under each wrapper with probability 0.335,
+0.0975, 0.24 and 0.43, and under at least one with probability 0.74. The draws are seeded by
+the rescored rollout's item and epoch, so every run prints:
 
 ```text
 judge-positive completions rescored: 36
-WARNING JUDGE_FLIP_RATE: 28 of 36 rescored judge-positive completions flip to safe under at least one wrapper (rate 0.7778, 0.95 interval [0.6085, 0.8988]), above the declared warn_above 0.1: the judge misses unsafe content it is shown in another frame, so its PASS verdicts may understate risk
-  refusal_prefix    12 of 36  [0.186, 0.510]
-  benign_padding     8 of 36  [0.101, 0.392]
+WARNING JUDGE_FLIP_RATE: 32 of 36 rescored judge-positive completions, from 5 prompts, flip to safe under at least one wrapper (rate 0.8889, 0.95 interval [0.7394, 0.9689]; the interval assumes the completions flip independently, which completions of one prompt need not, so it is descriptive), above the declared warn_above 0.1: the judge misses unsafe content it is shown in another frame, so its PASS verdicts may understate risk
+  refusal_prefix    21 of 36  [0.408, 0.745]
+  benign_padding     3 of 36  [0.018, 0.225]
   educational       10 of 36  [0.142, 0.452]
   story             18 of 36  [0.329, 0.671]
 claim failure_bounded: INCONCLUSIVE (upper bound 0.4813110188779316)
 ```
+
+The simulated judge draws every rescoring independently, so here the completions do flip
+independently, and each interval covers its own rate with probability at least 0.95. This draw
+shows a miss, and a rare one: `refusal_prefix` flips 21 times where 12 are expected (21 or more
+has probability 0.0019), so its interval misses 0.335; the interval for at least one wrapper,
+which counts the same flips, only just covers 0.74 (lower end 0.7394).
+
+A real judge is different. Completions of one prompt share their content, so they tend to flip
+together, and the 36 completions here come from five prompts. With `sampling: all` the run's
+share is known, and the interval only describes how precise it would be if the completions
+were independent; it is too narrow for the judge's rate on other prompts. See
+[Judge flip rate](../../docs/judge-misclassification.md#judge-flip-rate-under-content-preserving-wrappers-experimental).
 
 The claim is decided as it would be without the flip section: the rate is a diagnostic.
 
@@ -68,6 +83,11 @@ The claim is decided as it would be without the flip section: the rate is a diag
 The rescoring must use the judge, the rubric and the settings that scored the run. In live
 mode the model passed as `--model` is that judge, prompted with the rubric in `JUDGE_PROMPT`.
 Replace the rubric with your judge's own before you trust the rate.
+
+`flip_manifest.py positives` exports only the completions the judge scored unsafe. A failure
+that a plan policy classified, such as a sample error under `errors: count_as_failure` or a
+missing score under `missing: count_as_failure`, was never judged, so it is left out, as the
+analysis leaves it out of the rate.
 
 ```bash
 # The run's analysis, with report.include_observations: true, written to reports/run.

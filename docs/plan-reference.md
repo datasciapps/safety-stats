@@ -647,6 +647,12 @@ educational frame or a story frame. A verdict that becomes safe is a flip. Since
 did not change, a flip is a false negative that the wrapper caused. The rescoring is done
 outside the package, which never calls a model, and its verdicts are passed in as a CSV.
 
+A judge-positive completion is one the primary judge scored unsafe: its score maps to a
+failure. A failure that a plan policy classified is not judge-positive, since no judge scored
+it. Those are a sample error or a missing score under `count_as_failure`, a content-filter stop
+under `content_filter_stops: failure`, and an unscored truncated answer under
+`token_limit: failure`. Such failures are not rescored, and the rate leaves them out.
+
 ```yaml
 inputs:
   judge_flip:
@@ -660,21 +666,32 @@ inputs:
 The manifest has the columns `observation_id`, `wrapper` and `verdict`, with one row per
 rescored completion and wrapper. `observation_id` is the observation identifier of the
 analysed run, as in a validation manifest. `verdict` is `safe` or `unsafe`. A rescoring that
-failed must be rerun before the file is written: the analysis does not drop rows.
+failed must be rerun before the file is written: the analysis does not drop rows. The manifest's
+cells are read with surrounding whitespace removed, so a name in `wrappers` that starts or ends
+with whitespace could match none of its rows, and the plan rejects it.
 
 - With `sampling: all`, every judge-positive completion of the run must be rescored. With
   `simple_random`, the rescored completions must be a simple random sample of them, drawn
   before rescoring, and at least one must be rescored.
 - Every rescored completion needs a row for each declared wrapper and for no other wrapper,
-  and it must be judge-positive in the run.
+  and it must be judge-positive in the run. A failure that a plan policy classified must not
+  be rescored.
 
 `analyze` adds a `JUDGE_FLIP_RATE` diagnostic to the integrity section of `report.json` and
 `report-full.md`. Its `details` hold `judge_positive` (the run's judge-positive completions),
-`any_wrapper` (the completions that flip under at least one wrapper) and `by_wrapper` (one entry
-per wrapper). Each entry holds `flipped`, `rescored`, `estimate`, `lower` and `upper`. The
-interval is the two-sided exact Clopper-Pearson interval at `alpha`, split equally between its
-ends. Each interval holds for its own rate, not jointly with the others. The rate is pooled over
-the analysed cohorts.
+`policy_classified_failures` (the failures a plan policy classified, which the rate leaves out),
+`prompts` (the prompts the rescored completions come from), `any_wrapper` (the completions that
+flip under at least one wrapper) and `by_wrapper` (one entry per wrapper). Each entry holds
+`flipped`, `rescored`, `estimate`, `lower` and `upper`. The interval is the two-sided exact
+Clopper-Pearson interval at `alpha`, split equally between its ends. Each interval holds for
+its own rate, not jointly with the others. The rate is pooled over the analysed cohorts.
+
+The interval treats the rescored completions as independent. With `simple_random` it is for the
+share of the run's judge-positive completions that flip, which the random sample justifies.
+With `sampling: all` that share is known exactly, and the interval is descriptive: completions
+of one prompt tend to flip together, so as a range for the judge's flip rate on other prompts
+it is too narrow when the completions come from few prompts. See
+[Judge flip rate](judge-misclassification.md#judge-flip-rate-under-content-preserving-wrappers-experimental).
 
 The diagnostic is `INFO`, or a `WARNING` when the `any_wrapper` estimate exceeds `warn_above`.
 Neither changes integrity, a claim or the decision. A manifest that cannot be read, or that

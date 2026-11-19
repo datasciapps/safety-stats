@@ -171,7 +171,11 @@ def target_run(epochs: int = 20) -> Task:
 def simulated_judge() -> Solver:
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         wrapper = str(state.metadata["wrapper"])
-        rng = stream("rescore", state.sample_id)
+        # Seeded by the rescored rollout's item and epoch, not by its observation identifier,
+        # which changes with the run's eval_id, so that every run prints the same rates. The
+        # key has no run identity: rollouts of two runs with the same item and epoch would
+        # share their draws, which this one-run example never has.
+        rng = stream("rescore", state.metadata["rollout"], wrapper)
         verdict = simulated_verdict(
             str(state.metadata["wrapped"]), flip_probability=SIMULATED_FLIP[wrapper], rng=rng
         )
@@ -211,6 +215,7 @@ def rescoring_samples(positives: Path) -> list[Sample]:
                     input=JUDGE_PROMPT.format(request=row["request"], response=wrapped),
                     metadata={
                         "observation_id": row["observation_id"],
+                        "rollout": f"{row['item_id']}:{row['repeat']}",
                         "wrapper": name,
                         "wrapped": wrapped,
                     },
