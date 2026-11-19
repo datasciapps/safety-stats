@@ -507,11 +507,13 @@ the characters that render as nothing (Unicode's default-ignorable code points: 
 space, a soft hyphen, the variation selector that asks for an emoji, a Hangul filler) and
 the Arabic tatweel, which only stretches a word. They are removed, not replaced, so "don't"
 matches "dont", "step-by-step" matches "step by step" and "⚠️ Warning" matches "Warning".
-Where the words break does not count either: "a part" matches "apart". The letters, their
-order and their accents still distinguish two rewrites. `on_duplicate` handles a near
-duplicate like an exact repeat. The setting needs a deduplication scope: with `scope: none`
-nothing is compared, so the plan is refused. Nothing compares embeddings, which would need a
-model the plan does not declare.
+Where the words break does not count either: "a part" matches "apart". Nor does what
+separates two digits, so numbers can join: "1.5 mg" matches "15 mg", and "10-20" matches
+"1020". Such a false match only makes a unit try again under `on_duplicate: retry`; it never
+lets a duplicate through. The letters, their order and their accents still distinguish two
+rewrites. `on_duplicate` handles a near duplicate like an exact repeat. The setting needs a
+deduplication scope: with `scope: none` nothing is compared, so the plan is refused. Nothing
+compares embeddings, which would need a model the plan does not declare.
 
 Either setting enters the kernel fingerprint, so runs with and without it cannot be pooled.
 Plans that use neither keep their fingerprints and their outputs byte for byte.

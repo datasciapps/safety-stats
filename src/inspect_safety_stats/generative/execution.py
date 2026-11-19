@@ -365,7 +365,10 @@ def normalized_text(prompt: str) -> str:
     those respects compare equal: "don't" and "dont", "step-by-step" and "step by step",
     "⚠️ Warning" and "Warning". The letters and their order still distinguish rewrites, and
     so do accents, wording and language; where the words break does not ("a part" and
-    "apart" compare equal).
+    "apart" compare equal). Nor does what separates two digits, so numbers can join: "1.5 mg"
+    and "15 mg" compare equal, and so do "10-20" and "1020". Such a false match costs a retry
+    under ``on_duplicate: retry``, and never lets a duplicate through, so it errs on the side
+    the deduplication is for.
 
     This is what the plan value ``normalized_text`` means, and the kernel fingerprint
     records only that value: another comparison needs another value, not a change here.

@@ -485,6 +485,19 @@ def test_normalized_text_keeps_what_the_ignored_characters_sit_beside() -> None:
     assert normalized_text("e\ufe0f\u0301") != normalized_text("e")
 
 
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [("Take 1.5 mg", "Take 15 mg"), ("10-20 people", "1020 people"), ("1,000", "1 000")],
+)
+def test_normalized_text_joins_digits_across_separators(first: str, second: str) -> None:
+    """Documented: a false match costs a retry, and never lets a duplicate through."""
+
+    from inspect_safety_stats.generative.execution import normalized_text
+
+    assert normalized_text(first) == normalized_text(second)
+    assert normalized_text(first) != normalized_text(first.replace("1", "2", 1))
+
+
 def test_normalized_text_keeps_wording_and_order() -> None:
     from inspect_safety_stats.generative.execution import normalized_text
 
