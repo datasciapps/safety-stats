@@ -294,6 +294,27 @@ def test_the_package_has_no_runtime_asserts() -> None:
     assert offenders == []
 
 
+# Characters that do not show in an editor or a diff: line and paragraph separators, zero-width
+# characters, bidirectional controls and the byte-order mark.
+_INVISIBLE = re.compile("[\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
+
+
+def test_the_package_source_spells_invisible_characters_as_escapes() -> None:
+    """A literal invisible character cannot be reviewed: the U+2028 and U+2029 escapes of the
+    report page's data once became the characters themselves, which read as blank strings."""
+    # The imported package, not the checkout, so that scripts/prove_red.py can test it.
+    package = Path(inspect_safety_stats.__file__).parent
+    offenders = [
+        f"{path.relative_to(package.parent).as_posix()}:{line}"
+        for path in sorted(package.rglob("*"))
+        if path.suffix in {".py", ".html"}
+        # split("\n"), not splitlines(), which would take U+2028 and U+2029 as line ends.
+        for line, text in enumerate(path.read_text(encoding="utf-8").split("\n"), start=1)
+        if _INVISIBLE.search(text)
+    ]
+    assert offenders == []
+
+
 def _versions(text: str) -> set[str]:
     return set(re.findall(r'[`"]([0-9]+\.[0-9]+)[`"]', text))
 
