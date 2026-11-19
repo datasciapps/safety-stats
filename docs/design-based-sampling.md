@@ -240,7 +240,11 @@ Each prompt's rank is a SHA-256 hash of the seed and its `prompt_id`, so the dra
 Record the seed with the pilot. The command refuses a stratum with fewer prompts than
 `--per-stratum`, a missing value in a strata column, strata values that would share a label
 once joined, a manifest that already has the added columns, and an `--output` that would
-overwrite the manifest. Values are written back as they appear in the manifest.
+overwrite the manifest. Values are written back as they appear in the manifest. The draw
+reads strata as text, but `analyze` reads the pilot frame with pandas' type inference, so
+the command also refuses a stratum label that pandas reads as missing (`N/A`, `None`, `NA`)
+and labels that it reads as one value (`1` and `01`, `true` and `True`): `analyze` would
+otherwise check the draw against strata it did not use.
 
 The pilot frame is the frame of a fixed-size sampled design, so the pilot's rates can be
 analysed as a sample of the whole manifest without editing any column:

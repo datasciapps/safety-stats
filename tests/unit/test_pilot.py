@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
+from inspect_safety_stats.ingest.manifest import load_manifest
 from inspect_safety_stats.ingest.pilot import draw_pilot
 
 
@@ -160,6 +162,49 @@ def test_strata_labels_that_would_merge_are_rejected() -> None:
     )
     with pytest.raises(ValueError, match="share a label"):
         draw_pilot(manifest, per_stratum=1, strata=["first", "second"], seed=1)
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "read_as"),
+    [
+        ("1", "01", "1"),
+        ("1", "1.0", "1.0"),
+        ("true", "True", "True"),
+    ],
+)
+def test_strata_that_analyze_would_merge_are_rejected(
+    first: str, second: str, read_as: str
+) -> None:
+    """The draw reads strata as text; analyze reads the frame with pandas' inference."""
+    manifest = _manifest({"a": 4, "b": 4})
+    manifest["category"] = [first] * 4 + [second] * 4
+    expected = f"{sorted([first, second])[0]!r}, {sorted([first, second])[1]!r} "
+    with pytest.raises(ValueError, match=re.escape(f"{expected}(read as {read_as!r})")):
+        draw_pilot(manifest, per_stratum=1, strata=["category"], seed=1)
+
+
+@pytest.mark.parametrize("label", ["N/A", "None", "NA", "null", "nan"])
+def test_strata_that_analyze_would_read_as_missing_are_rejected(label: str) -> None:
+    """Under pandas 2 they form one "nan" stratum, and under pandas 3 analyze cannot sort them."""
+    manifest = _manifest({"a": 4, "b": 4})
+    manifest["category"] = ["kept"] * 4 + [label] * 4
+    with pytest.raises(ValueError, match=re.escape(f"as missing values: [{label!r}]")):
+        draw_pilot(manifest, per_stratum=1, strata=["category"], seed=1)
+
+
+def test_strata_read_back_as_drawn_are_accepted(tmp_path: Path) -> None:
+    """Labels that pandas reads as numbers keep their strata when no two read alike."""
+    manifest = _manifest({"a": 4, "b": 4, "c": 4})
+    manifest["category"] = ["7"] * 4 + ["07x"] * 4 + ["x"] * 4
+    frame = draw_pilot(manifest, per_stratum=1, strata=["category"], seed=1)
+    frame.to_csv(tmp_path / "pilot.csv", index=False, lineterminator="\n")
+    analysed = load_manifest(tmp_path / "pilot.csv", required=("prompt_id",))
+    pairs = set(zip(frame["pilot_stratum"], analysed["pilot_stratum"].astype(str), strict=True))
+    assert pairs == {("7", "7"), ("07x", "07x"), ("x", "x")}
+    numbers = _manifest({"a": 4, "b": 4})
+    numbers["category"] = ["1"] * 4 + ["2"] * 4
+    frame = draw_pilot(numbers, per_stratum=1, strata=["category"], seed=1)
+    assert set(frame["pilot_stratum"]) == {"1", "2"}
 
 
 @pytest.mark.parametrize(

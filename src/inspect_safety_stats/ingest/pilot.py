@@ -22,6 +22,7 @@ and `inclusion_probability_column: pilot_inclusion_probability`.
 from __future__ import annotations
 
 import hashlib
+import io
 from collections.abc import Sequence
 
 import pandas as pd
@@ -36,6 +37,42 @@ _SEPARATOR = "/"
 
 def _rank_key(seed: int, prompt_id: str) -> bytes:
     return hashlib.sha256(f"{seed}|{prompt_id}".encode()).digest()
+
+
+def _check_strata_read_back(labels: pd.Series) -> None:
+    """Refuse strata that analyze would not read back from the pilot frame as drawn.
+
+    The draw treats stratum labels as text, but analyze reads the written frame with pandas'
+    type inference (`load_manifest`) and then takes `str()` of each `pilot_stratum` value.
+    Labels such as `1` and `01`, or `true` and `True`, would become one stratum, and the
+    analysis would check and weight the draw against strata it did not use. A label that
+    pandas reads as missing, such as `N/A` or `None`, has no stratum that analyze reads the
+    same way under every supported pandas version.
+    """
+
+    text = labels.rename(STRATUM_COLUMN).to_csv(index=False, lineterminator="\n")
+    read = pd.read_csv(io.StringIO(text))[STRATUM_COLUMN]
+    missing = sorted(set(labels.to_numpy()[read.isna().to_numpy()]))
+    if missing:
+        raise ValueError(
+            "analyze reads the pilot frame with pandas' type inference, which reads these "
+            f"strata labels as missing values: {missing[:10]!r}. Recode those strata values, "
+            "for example as 'none'"
+        )
+    pairs = pd.DataFrame({"drawn": labels.to_numpy(), "read": read.astype(str).to_numpy()})
+    groups = pairs.drop_duplicates().groupby("read")["drawn"].agg(sorted)
+    merged = [
+        f"{', '.join(repr(label) for label in drawn)} (read as {read_as!r})"
+        for read_as, drawn in groups.items()
+        if len(drawn) > 1
+    ]
+    if merged:
+        raise ValueError(
+            "analyze reads the pilot frame with pandas' type inference, which would merge "
+            "strata whose labels read as the same number or boolean: "
+            f"{'; '.join(merged[:10])}. Recode the strata values so that they differ as "
+            "text, for example with a letter prefix"
+        )
 
 
 def draw_pilot(
@@ -58,8 +95,9 @@ def draw_pilot(
     and draw different prompts from the command's.
 
     Raises ValueError when a `prompt_id` is not text or is blank, when a stratum holds fewer
-    than `per_stratum` prompts, when a strata column is absent or has missing values, or when
-    the manifest already has an added column.
+    than `per_stratum` prompts, when a strata column is absent or has missing values, when
+    two strata labels would read back from the written frame as one (`1` and `01`, say), or
+    when the manifest already has an added column.
     """
 
     if isinstance(per_stratum, bool) or per_stratum < 1:
@@ -112,6 +150,7 @@ def draw_pilot(
             raise ValueError(
                 f"strata values contain {_SEPARATOR!r}, so two strata would share a label"
             )
+    _check_strata_read_back(labels)
 
     selected = pd.Series(False, index=manifest.index)
     probability = pd.Series(0.0, index=manifest.index)
