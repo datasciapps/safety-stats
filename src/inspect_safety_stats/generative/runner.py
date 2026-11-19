@@ -458,9 +458,13 @@ def materialize_run(
             attempts_out.append(entry.model_dump(mode="json"))
 
         def persist(record: RewriteRecord, entry: AcceptedRewrite | None) -> None:
-            ledger.append(record.model_dump(mode="json"))
+            # ORDER MATTERS: the prompt row before the rewrite row. A run killed between
+            # the two then leaves a prompt no finished unit claims, which a resume drops
+            # before it reruns the unit. The other way round, it leaves a unit recorded as
+            # accepted without its text, and every resume refuses the directory.
             if entry is not None:
                 prompts_out.append(_prompt_row(entry))
+            ledger.append(record.model_dump(mode="json"))
 
         result = execute_rewrites(
             plan,

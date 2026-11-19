@@ -425,3 +425,37 @@ def test_overwrite_removes_a_partial_ledger_a_killed_resume_left(tmp_path: Path)
         (artifacts / f"{name}.partial").write_bytes(b"half a ledger\n")
     materialize_run(plan, artifacts, overwrite=True)
     assert sorted(item.name for item in artifacts.glob("*.partial")) == []
+
+
+def test_a_run_killed_between_a_units_two_rows_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An accepted unit is two writes, its prompt row and its rewrite row; a kill can land
+    between them. Before, the rewrite row came first, and the unit it left recorded as
+    accepted without its text made every resume refuse the directory."""
+
+    from inspect_safety_stats.generative.ledger import IncrementalCsvWriter
+
+    plan = write_plan(tmp_path, total=20)
+    artifacts = tmp_path / "run"
+    original = IncrementalCsvWriter.append
+    rows = 0
+
+    def killed_after_eleven_rows(self: IncrementalCsvWriter, row: dict[str, object]) -> None:
+        nonlocal rows
+        if self._path.name in {"rewrites.csv", "prompts.restricted.csv"}:
+            if rows == 11:
+                raise Interrupted("killed between a unit's two rows")
+            rows += 1
+        original(self, row)
+
+    monkeypatch.setattr(IncrementalCsvWriter, "append", killed_after_eleven_rows)
+    with pytest.raises(Interrupted):
+        run_with(ScriptedKernel(), plan, artifacts)
+    monkeypatch.setattr(IncrementalCsvWriter, "append", original)
+
+    run = run_with(ScriptedKernel(), plan, artifacts, resume=True)
+    assert run is not None and run.resumed == 5 and run.accepted == 20
+    assert len(read_rewrites(artifacts / "rewrites.csv")) == 20
+    with (artifacts / "prompts.restricted.csv").open(encoding="utf-8", newline="") as handle:
+        assert len(list(csv.DictReader(handle))) == 20
