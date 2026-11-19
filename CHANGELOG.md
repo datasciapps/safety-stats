@@ -18,6 +18,13 @@ described in their pull requests.
   41% at 0.2 in the cases tested. Both now compute the product in floating point. Smaller tables
   give the same bounds to the last bit.
 
+- **`stats.direct_risk_difference_bounds` no longer wraps 32-bit counts.** With
+  `independence_unit="prompt_cluster"`, the function multiplies the two arms' counts in the
+  integer type of the arrays it is given. Counts in `int32`, the default for a Python list on
+  Windows with NumPy 1, wrapped from 32,768 rollouts a prompt: most such inputs were refused
+  with a `ValueError`, but some gave wrong Hoeffding and empirical-Bernstein bounds without an
+  error. The counts are now taken as `int64`. `analyze` was not affected.
+
 - **A zero-tolerance column that the manifest lacks is an error.** When a plan sets
   `policy.zero_tolerance.manifest_field` and the manifest has no such column, the analysis
   silently held no prompt to zero tolerance. It now stops with an error that names the column.
