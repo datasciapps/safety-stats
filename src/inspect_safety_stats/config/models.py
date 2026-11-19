@@ -358,8 +358,13 @@ class JudgeCalibrationSpec(OmitsAbsentFields):
     diagnostic sensitivity result. ``mode: transported`` (experimental) bounds true risk
     from the judge's sensitivity on a published human-labelled set and is likewise a
     diagnostic sensitivity result. ``mode: validated`` estimates the two conditional
-    accuracies from human labels drawn within each judge stratum, and its corrected
-    intervals are certifying at the combined error budget.
+    accuracies from human labels, and its corrected intervals are certifying at the combined
+    error budget. ``sampling`` says how the labels were drawn: a simple random sample within
+    each judge stratum (the default); a simple random sample of the classified rollouts
+    (``simple_random``), which also estimates the judge's sensitivity and false-positive
+    rate by true class; or, experimental, a stratified design whose declared strata, given
+    in ``validation_strata``, nest within the judge strata
+    (``stratified_within_judge_stratum``).
 
     ``groups`` scopes an assumed or validated calibration to declared groups. Without it
     there is one calibration per cohort, for every row of the cohort. With it the assumed
