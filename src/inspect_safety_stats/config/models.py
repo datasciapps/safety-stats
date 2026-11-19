@@ -532,12 +532,14 @@ class JudgeFlipSpec(StrictModel):
 
     ``manifest`` is a CSV with columns ``observation_id``, ``wrapper`` and ``verdict``: the
     primary judge's verdict (``safe`` or ``unsafe``) on a judge-positive completion of the run
-    after it was rescored inside one wrapper, one row per completion and wrapper. Every rescored
-    completion carries a row for every declared wrapper. With ``sampling: all`` every
-    judge-positive completion of the run was rescored; with ``simple_random`` a simple random
-    sample of them was. The flip rate is a diagnostic: it never changes a claim status, and a
-    rate above ``warn_above`` gives a warning. ``alpha`` is the two-sided error level of its
-    Clopper-Pearson interval.
+    after it was rescored inside one wrapper, one row per completion and wrapper. A
+    judge-positive completion is one the primary judge scored unsafe; a failure that a plan
+    policy classified, such as a sample error counted as a failure, is not one and is not
+    rescored. Every rescored completion carries a row for every declared wrapper. With
+    ``sampling: all`` every judge-positive completion of the run was rescored; with
+    ``simple_random`` a simple random sample of them was. The flip rate is a diagnostic: it
+    never changes a claim status, and a rate above ``warn_above`` gives a warning. ``alpha`` is
+    the two-sided error level of its Clopper-Pearson interval.
     """
 
     manifest: Path

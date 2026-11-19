@@ -129,15 +129,21 @@ def fake_logs(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _write_plan(directory: Path, flip: str) -> Path:
+def _write_plan(directory: Path, flip: str, *, counting: bool = False) -> Path:
+    """The plan; ``counting`` counts sample errors and missing scores as failures."""
+
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "design.csv").write_text(
         "prompt_id,question_id,task_id,suite,expected_rollouts\n"
         f"p1,q1,t1,s,{ROLLOUTS}\n",
         encoding="utf-8",
     )
+    text = PLAN.replace("@FLIP@\n", flip)
+    if counting:
+        text = text.replace("missing: conservative_bounds", "missing: count_as_failure")
+        text = text.replace("errors: block", "errors: count_as_failure")
     plan = directory / "plan.yaml"
-    plan.write_text(PLAN.replace("@FLIP@\n", flip).strip() + "\n", encoding="utf-8")
+    plan.write_text(text.strip() + "\n", encoding="utf-8")
     return plan
 
 
@@ -166,8 +172,9 @@ def _write_flips(directory: Path, positives: dict[int, str], epochs: list[int]) 
     )
 
 
-def _analyze(directory: Path, flip: str) -> SafetyReport:
-    return analyze(plan=load_plan(_write_plan(directory, flip)), logs="ignored")
+def _analyze(directory: Path, flip: str, *, counting: bool = False) -> SafetyReport:
+    plan = _write_plan(directory, flip, counting=counting)
+    return analyze(plan=load_plan(plan), logs="ignored")
 
 
 def _only(report: SafetyReport, code: str) -> Diagnostic:
@@ -291,3 +298,67 @@ def test_a_plan_without_the_section_leaves_it_out() -> None:
     )
 
     assert "judge_flip" not in inputs.model_dump(mode="json")
+
+
+
+# Epochs whose failure a plan policy, not the judge, classifies: a sample error and a missing
+# score, each counted as a failure under ``counting``.
+POLICY_FAILURES = {41: "error", 42: "error", 43: "missing", 44: "missing"}
+
+
+@pytest.fixture
+def failures(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[int, str]:
+    """Logs with the policy failures added; each failing epoch's observation identifier."""
+
+    import inspect_safety_stats.ingest.inspect_logs as inspect_logs
+
+    samples = inspect_logs.samples_df("ignored").copy()
+    for epoch, kind in POLICY_FAILURES.items():
+        row = samples["epoch"] == epoch
+        samples.loc[row, "score_harmful"] = None
+        if kind == "error":
+            samples.loc[row, "error"] = "the provider failed"
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: samples,
+    )
+    report = _analyze(tmp_path / "plain", "", counting=True)
+    found = {
+        int(item.rollout_id.rsplit("-", 1)[1]): item.observation_id
+        for item in report._observations
+        if item.failure is True
+    }
+    assert sorted(found) == list(range(1, POSITIVES + 1)) + sorted(POLICY_FAILURES)
+    return found
+
+
+def test_failures_a_plan_policy_classified_are_not_judge_positive(
+    tmp_path: Path, failures: dict[int, str]
+) -> None:
+    # The census is of the 40 failures the judge scored; the four that the error and missing
+    # policies counted as failures were never judged, so they are not rescored.
+    _write_flips(tmp_path / "flips", failures, list(range(1, POSITIVES + 1)))
+
+    report = _analyze(tmp_path / "flips", _flip_section(0.5), counting=True)
+
+    details = _only(report, "JUDGE_FLIP_RATE").details
+    assert details["judge_positive"] == POSITIVES
+    assert details["policy_classified_failures"] == len(POLICY_FAILURES)
+    assert (details["any_wrapper"]["flipped"], details["any_wrapper"]["rescored"]) == (14, 40)
+
+
+@pytest.mark.parametrize("sampling", ["all", "simple_random"])
+def test_rescoring_a_failure_a_plan_policy_classified_is_an_error(
+    tmp_path: Path, failures: dict[int, str], sampling: str
+) -> None:
+    # A rescored policy failure would enter the rate as if the judge had scored it unsafe.
+    epochs = list(range(1, POSITIVES + 1)) if sampling == "all" else list(range(1, 21))
+    _write_flips(tmp_path / "flips", failures, [*epochs, 41, 43])
+
+    report = _analyze(tmp_path / "flips", _flip_section(0.5, sampling=sampling), counting=True)
+
+    error = _only(report, "JUDGE_FLIP_INVALID")
+    assert "a plan policy, not the judge, counted as failures" in error.message
+    assert failures[41] in error.message and failures[43] in error.message
+    assert failures[42] not in error.message
+    assert report.integrity.status == "invalid"

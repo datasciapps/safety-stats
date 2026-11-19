@@ -1077,6 +1077,9 @@ the same population, through the sample. Above the declared `warn_above` the dia
 warning. The package does not rescore: [`examples/judge_flip`](../examples/judge_flip/README.md)
 has an Inspect task that rescores a run's judge-positive completions under four wrappers and
 writes the manifest, offline with simulated models or live with the run's judge.
+Failures that a plan policy classified, such as a sample error counted as a failure, are not
+judge-positive: no judge scored them, so the rate leaves them out and they must not be
+rescored.
 
 What it assumes:
 

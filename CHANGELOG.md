@@ -230,7 +230,9 @@ described in their pull requests.
   frame. `analyze` adds a `JUDGE_FLIP_RATE` diagnostic to the integrity section of
   `report.json` and `report.md`: the share that flips to safe under at least one wrapper and
   under each, with exact Clopper-Pearson intervals. Above the plan's `warn_above` it is a
-  warning. It never changes a claim or the decision. A manifest that does not fit the run is a
+  warning. It never changes a claim or the decision. Failures that a plan policy classified,
+  such as a sample error counted as a failure, are not judge-positive and are left out. A
+  manifest that does not fit the run, or that rescores such a failure, is a
   `JUDGE_FLIP_INVALID` error. Plans without the section keep their hash and outputs.
   [`examples/judge_flip`](examples/judge_flip/README.md) rescores a run under four wrappers
   and writes the manifest; the package itself does not call a model. See

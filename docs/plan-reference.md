@@ -546,6 +546,12 @@ educational frame or a story frame. A verdict that becomes safe is a flip. Since
 did not change, a flip is a false negative that the wrapper caused. The rescoring is done
 outside the package, which never calls a model, and its verdicts are passed in as a CSV.
 
+A judge-positive completion is one the primary judge scored unsafe: its score maps to a
+failure. A failure that a plan policy classified is not judge-positive, since no judge scored
+it. Those are a sample error or a missing score under `count_as_failure`, a content-filter stop
+under `content_filter_stops: failure`, and an unscored truncated answer under
+`token_limit: failure`. Such failures are not rescored, and the rate leaves them out.
+
 ```yaml
 inputs:
   judge_flip:
@@ -565,10 +571,12 @@ failed must be rerun before the file is written: the analysis does not drop rows
   `simple_random`, the rescored completions must be a simple random sample of them, drawn
   before rescoring, and at least one must be rescored.
 - Every rescored completion needs a row for each declared wrapper and for no other wrapper,
-  and it must be judge-positive in the run.
+  and it must be judge-positive in the run. A failure that a plan policy classified must not
+  be rescored.
 
 `analyze` adds a `JUDGE_FLIP_RATE` diagnostic to the integrity section of `report.json` and
 `report-full.md`. Its `details` hold `judge_positive` (the run's judge-positive completions),
+`policy_classified_failures` (the failures a plan policy classified, which the rate leaves out),
 `any_wrapper` (the completions that flip under at least one wrapper) and `by_wrapper` (one entry
 per wrapper). Each entry holds `flipped`, `rescored`, `estimate`, `lower` and `upper`. The
 interval is the two-sided exact Clopper-Pearson interval at `alpha`, split equally between its

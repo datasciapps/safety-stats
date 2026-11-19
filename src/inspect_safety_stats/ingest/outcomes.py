@@ -42,6 +42,16 @@ def classified_by_policy(row: Observation) -> bool:
     )
 
 
+def judge_positive(row: Observation) -> bool:
+    """Whether the primary judge scored the rollout unsafe: its score mapped to a failure.
+
+    A failure that a plan policy classified, such as a sample error or a missing score counted
+    as a failure (:func:`classified_by_policy`), is not judge-positive: no judge scored it.
+    """
+
+    return row.failure is True and not classified_by_policy(row)
+
+
 def _tag(value: Any) -> tuple[str, Any]:
     if isinstance(value, bool):
         return ("bool", value)

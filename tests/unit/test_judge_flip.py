@@ -211,3 +211,45 @@ def test_the_plan_section_rejects_invalid_values(fields: dict[str, object], mess
     }
     with pytest.raises(ValidationError, match=message):
         JudgeFlipSpec.model_validate({**base, **fields})
+
+
+@pytest.mark.parametrize(
+    ("fields", "positive"),
+    [
+        ({"score_raw": "FAIL", "failure": True}, True),
+        ({"score_raw": "PASS", "failure": False}, False),
+        ({"score_raw": None, "failure": None}, False),
+        # Failures a plan policy classified: a sample error and a missing score counted as
+        # failures, a content-filter stop counted as a refusal, an unscored truncated answer.
+        ({"score_raw": None, "failure": True, "error": "failed"}, False),
+        ({"score_raw": None, "failure": True}, False),
+        ({"score_raw": None, "failure": True, "content_delivered": False}, False),
+        ({"score_raw": None, "failure": True, "token_limit_unscored": True}, False),
+    ],
+)
+def test_judge_positive_means_the_judge_scored_it_unsafe(
+    fields: dict[str, object], positive: bool
+) -> None:
+    from inspect_safety_stats.ingest.outcomes import judge_positive
+    from inspect_safety_stats.schema.observations import Observation
+
+    row = Observation.model_validate(
+        {
+            "observation_id": "o",
+            "source": "s",
+            "run_key": "r",
+            "rollout_id": "x",
+            "item_id": "p",
+            "repeat": 1,
+            "prompt_id": "p",
+            "question_id": "q",
+            "task_id": "t",
+            "cohort_id": "c",
+            "score_name": "harmful",
+            "model": "m",
+            "configuration_fingerprint": "f",
+            "collection_order": 0,
+            **fields,
+        }
+    )
+    assert judge_positive(row) is positive
