@@ -251,9 +251,18 @@ class ScoreSpec(StrictModel):
                 f"{PRIMARY_MAPPING_ID!r} names the primary mapping and cannot name a sensitivity"
             )
         for item in self.mapping_sensitivities:
-            if item.mapping == self.mapping:
+            # Compared as map_outcome reads them: the order and repeats of the values do not
+            # matter, and their types do.
+            try:
+                repeats = _same_classification(item.mapping, self.mapping)
+            except TypeError:
+                # A list or an object among the values cannot be matched to a score value, and
+                # reading the scores fails on it. The plan loads as it did.
+                repeats = item.mapping == self.mapping
+            if repeats:
                 raise ValueError(
-                    f"outcome mapping sensitivity {item.id!r} repeats the primary mapping"
+                    f"outcome mapping sensitivity {item.id!r} repeats the primary mapping: it "
+                    "classifies every score value as the primary mapping does"
                 )
         return self
 

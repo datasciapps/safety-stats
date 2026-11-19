@@ -93,6 +93,43 @@ def test_invalid_sensitivities_are_rejected(
         AnalysisPlan.model_validate(_plan(sensitivities))
 
 
+@pytest.mark.parametrize(
+    "mapping",
+    [
+        {"failure_values": ["PARTIAL", "COMPLY"], "safe_values": ["REFUSE"]},
+        {"failure_values": ["COMPLY", "PARTIAL", "COMPLY"], "safe_values": ["REFUSE", "REFUSE"]},
+    ],
+    ids=["reordered", "repeated"],
+)
+def test_an_alternative_that_classifies_as_the_primary_does_is_rejected(
+    mapping: dict[str, Any],
+) -> None:
+    # What counts is how each value is classified, not the order or repeats of the values.
+    with pytest.raises(ValidationError, match="repeats the primary mapping"):
+        AnalysisPlan.model_validate(_plan([{"id": "same", "mapping": mapping}]))
+
+
+def test_values_of_another_type_make_another_mapping() -> None:
+    # Matching is type-sensitive, so a score of 1 is unmapped under 1.0 or true.
+    plan = _plan(
+        [
+            {"id": "floats", "mapping": {"failure_values": [1.0], "safe_values": [0.0]}},
+            {"id": "booleans", "mapping": {"failure_values": [True], "safe_values": [False]}},
+        ]
+    )
+    plan["inputs"]["score"]["mapping"] = {"failure_values": [1], "safe_values": [0]}
+    sensitivities = AnalysisPlan.model_validate(plan).inputs.score.mapping_sensitivities
+    assert [item.id for item in sensitivities] == ["floats", "booleans"]
+
+
+def test_a_list_among_the_primary_values_still_lets_the_plan_load() -> None:
+    # No score value matches a list, and reading the scores fails on it; the plan loads.
+    plan = _plan([{"id": "partial_safe", "mapping": LENIENT}])
+    plan["inputs"]["score"]["mapping"] = {"failure_values": [["COMPLY"]], "safe_values": ["X"]}
+    (sensitivity,) = AnalysisPlan.model_validate(plan).inputs.score.mapping_sensitivities
+    assert sensitivity.id == "partial_safe"
+
+
 def test_a_judge_score_cannot_declare_sensitivities() -> None:
     plan = _plan()
     plan["inputs"]["judges"] = [
@@ -178,10 +215,13 @@ def test_each_mapping_is_analysed_once_from_one_read_and_never_moves_the_decisio
         tmp_path,
         [
             {"id": "partial_safe", "title": "Partial refusal is safe", "mapping": LENIENT},
-            # The primary mapping with its values in another order: the same reading.
+            # Another mapping that reads every value the rollouts give as the primary does.
             {
-                "id": "reordered",
-                "mapping": {"failure_values": ["PARTIAL", "COMPLY"], "safe_values": ["REFUSE"]},
+                "id": "alike",
+                "mapping": {
+                    "failure_values": ["PARTIAL", "COMPLY"],
+                    "safe_values": ["REFUSE", "UNSEEN"],
+                },
             },
         ],
     )
@@ -197,14 +237,14 @@ def test_each_mapping_is_analysed_once_from_one_read_and_never_moves_the_decisio
     assert report.decision == baseline.decision
     primary = _mean(mapping_results(report))
     assert primary.estimate == pytest.approx(0.5, abs=1e-12)
-    lenient, reordered = report.outcome_mapping_sensitivities
+    lenient, alike = report.outcome_mapping_sensitivities
     assert lenient.id == "partial_safe"
     assert lenient.mapping == LENIENT
     assert lenient.integrity_status == "valid"
     assert _mean(lenient.results).estimate == pytest.approx(0.25, abs=1e-12)
     assert _mean(lenient.results).upper < primary.upper  # type: ignore[operator]
-    assert reordered.results == mapping_results(report)
-    assert reordered.decision == report.decision
+    assert alike.results == mapping_results(report)
+    assert alike.decision == report.decision
 
 
 def test_an_incomplete_alternative_mapping_is_invalid_on_its_own(tmp_path: Path) -> None:

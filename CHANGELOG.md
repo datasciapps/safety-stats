@@ -307,8 +307,10 @@ described in their pull requests.
   `outcome-mapping-sensitivity.csv` and a section of `report.md`. Only the primary mapping
   enters claims and the decision. Each alternative carries what the plan, its decision policy
   and its registration receipt were checked for, so a receipt for another plan or a failed
-  decision policy makes it `invalid` as it does the primary analysis. Opt-in: plans without the
-  field keep their hash and their report bytes. See
+  decision policy makes it `invalid` as it does the primary analysis. An alternative that
+  classifies every value as the primary mapping does is refused as a repeat, whatever the order
+  or repeats of its values. Opt-in: plans without the field keep their hash and their report
+  bytes. See
   [Outcome mapping sensitivities](docs/plan-reference.md#outcome-mapping-sensitivities-experimental).
 
 - **The fixed-design planner uses the analysis method.** `plan fixed-design --plan PLAN`

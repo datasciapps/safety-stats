@@ -428,8 +428,10 @@ registration receipt were checked for, so a receipt for another plan
 `invalid`, as it does the primary analysis.
 
 Identifiers must be unique and cannot be `primary`, which names the primary mapping in the
-outputs; an alternative may not repeat the primary mapping. Only `inputs.score` takes
-sensitivities, not a judge's score. A plan without the field keeps its hash, and its report
+outputs; an alternative may not repeat the primary mapping. One that classifies every value as
+the primary mapping does is a repeat, whatever the order of its values and however often it
+lists one; values of another type are not, since mappings are type-sensitive. Only
+`inputs.score` takes sensitivities, not a judge's score. A plan without the field keeps its hash, and its report
 is unchanged. `report.html` does not show the sensitivities yet.
 
 ### Judge panels
