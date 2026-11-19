@@ -334,11 +334,13 @@ def test_a_contrast_with_a_never_failing_baseline_covers_at_its_level(
         misses += family.contrasts[0].upper < truth
     # plain never fails, so its lower bound is its risk, 0, and the contrast's upper bound
     # misses exactly when the roleplay arm's does: the union bound is tight, and the miss
-    # rate follows the level the arm is given. Under one_sided_upper that is alpha / 2; under
-    # two_sided alpha / 4. The upper bound covers at 1 - alpha in either mode, with an
-    # allowance of three binomial standard errors. Confounded, the arm reweights its draws by
-    # a maximum ratio of 1.9, so dropping the ratio or not rescaling by it also misses here.
-    assert misses / repetitions <= alpha + 3 * np.sqrt(alpha * (1 - alpha) / repetitions)
+    # rate follows the level the arm is given: alpha / 2 under one_sided_upper, alpha / 4 under
+    # two_sided. The test holds the miss rate to that level, with an allowance of three
+    # binomial standard errors, not to the contrast's alpha: a bound that spent the contrast's
+    # whole alpha on this arm would pass that. Confounded, the arm reweights its draws by a
+    # maximum ratio of 1.9, so dropping the ratio, or not rescaling by it, misses here.
+    level = alpha / 2 if mode == "one_sided_upper" else alpha / 4
+    assert misses / repetitions <= level + 3 * np.sqrt(level * (1 - level) / repetitions)
 
 
 def test_true_contrast_holds_the_seed_mix_fixed(tmp_path: Path) -> None:
