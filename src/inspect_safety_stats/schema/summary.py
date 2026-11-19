@@ -14,6 +14,7 @@ back, which keeps a saved report and the model it reads back to the same.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field, SerializerFunctionWrapHandler, model_serializer
@@ -22,9 +23,15 @@ from inspect_safety_stats.registry import CODES, Effect, SourceKind
 from inspect_safety_stats.schema.reports import Decision, Eligibility, ResultModel
 
 if TYPE_CHECKING:
-    from inspect_safety_stats.schema.reports import Diagnostic, GroupRiskResult, SafetyReport
+    from inspect_safety_stats.schema.reports import (
+        Diagnostic,
+        GroupRiskResult,
+        RiskIntervalResult,
+        SafetyReport,
+    )
 
 HEADLINE_METHOD = "finite_design_weighted_mean"
+_JUDGE_PREFIX = "judge_corrected_"
 SHOWN_SEVERITIES = ("ERROR", "WARNING")
 
 
@@ -32,6 +39,27 @@ def is_headline_risk(risk: GroupRiskResult) -> bool:
     """Whether a group risk is a headline: a weighted-mean failure rate."""
 
     return risk.method == HEADLINE_METHOD
+
+
+def judge_interval(
+    intervals: Iterable[RiskIntervalResult], primary_scenario: str | None
+) -> RiskIntervalResult | None:
+    corrected = [item for item in intervals if item.interval_id.startswith(_JUDGE_PREFIX)]
+    validated = next(
+        (item for item in corrected if item.interval_id == f"{_JUDGE_PREFIX}validated"), None
+    )
+    if validated is not None:
+        return validated
+    if primary_scenario:
+        return next(
+            (
+                item
+                for item in corrected
+                if item.interval_id == f"{_JUDGE_PREFIX}{primary_scenario}"
+            ),
+            None,
+        )
+    return None
 
 
 class SummaryEstimate(ResultModel):

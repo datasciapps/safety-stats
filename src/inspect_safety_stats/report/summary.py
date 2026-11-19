@@ -41,7 +41,7 @@ from inspect_safety_stats.schema.reports import (
     RiskIntervalResult,
     SafetyReport,
 )
-from inspect_safety_stats.schema.summary import is_headline_risk
+from inspect_safety_stats.schema.summary import is_headline_risk, judge_interval
 from inspect_safety_stats.stats.planning import (
     rollout_scale_for_half_width,
     rollouts_for_half_width,
@@ -171,27 +171,6 @@ def _sensitivity(
     )
 
 
-def _judge_interval(
-    intervals: Iterable[RiskIntervalResult], primary_scenario: str | None
-) -> RiskIntervalResult | None:
-    corrected = [item for item in intervals if item.interval_id.startswith(_JUDGE_PREFIX)]
-    validated = next(
-        (item for item in corrected if item.interval_id == f"{_JUDGE_PREFIX}validated"), None
-    )
-    if validated is not None:
-        return validated
-    if primary_scenario:
-        return next(
-            (
-                item
-                for item in corrected
-                if item.interval_id == f"{_JUDGE_PREFIX}{primary_scenario}"
-            ),
-            None,
-        )
-    return None
-
-
 def _measure_type(risk: GroupRiskResult) -> str | None:
     """The plan's type of the measure, which the result's method names."""
 
@@ -266,7 +245,7 @@ def _root_section(
     if not risks:
         return []
     with_judge = any(
-        _judge_interval(risk.intervals, primary_scenario) is not None for risk in risks
+        judge_interval(risk.intervals, primary_scenario) is not None for risk in risks
     )
     header = "| Model | Group | Failure rate | Interval | Prompt-level sensitivity |"
     rule = "|---|---|---:|---|---|"
@@ -290,7 +269,7 @@ def _root_section(
             ),
         ]
         if with_judge:
-            judged = _judge_interval(risk.intervals, primary_scenario)
+            judged = judge_interval(risk.intervals, primary_scenario)
             cells.append(
                 "—"
                 if judged is None
