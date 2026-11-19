@@ -4,7 +4,7 @@
 
 Analysis `real-xstest-published-gpt4-replay` (exploratory), plan SHA-256 `6aa8818abe40e749c05e70868542753f738401ec49f49317fb8bcba8e5e8081c`, inspect-safety-stats 0.15.0, report schema 3.0, index version 1.
 
-Data integrity: **valid** (0 errors, 1 warnings, 0 informational).
+Data integrity: **valid** (0 errors, 3 warnings, 0 informational).
 
 Decisions are hidden (`report.include_decisions` is false); `report.json` still holds them at `/decision` and `/claims`.
 
@@ -20,7 +20,7 @@ Decisions are hidden (`report.include_decisions` is false); `report.json` still 
 
 | Code | Severity | Count | Effect | Diagnostics | Items |
 |---|---|---:|---|---|---|
-| `TAIL_MEASURES_UNINFORMATIVE` | warning | 1 | recorded | `/integrity/diagnostics/0` | — |
+| `TAIL_MEASURES_UNINFORMATIVE` | warning | 3 | recorded | `/integrity/diagnostics/0`, `/integrity/diagnostics/1`, `/integrity/diagnostics/2` | — |
 
 What each code assumes and what follows is in `index.json` and in `report.md`; `docs/diagnostics.md` gives the remedy.
 
