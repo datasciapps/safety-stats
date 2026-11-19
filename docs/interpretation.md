@@ -146,7 +146,10 @@ combined floor. Reports display both figures explicitly.
 When attempted rollouts have missing labels, the lower endpoint completes every unknown as safe
 and the upper endpoint completes every unknown as a failure before applying the exact binomial
 bound. Aggregate fixed-design measures propagate those endpoint vectors through the declared
-monotone risk function.
+monotone risk function. That is what the default score policies do (`inputs.score.missing:
+conservative_bounds`, `inputs.score.errors: end_to_end`). Under `count_as_failure` those
+rollouts count as failures, under `exclude` they are left out of the bounds, which then cover
+only the classified rollouts, and under `block` their prompt's bounds are withheld.
 
 ## Risk measures
 
