@@ -1,5 +1,7 @@
 import itertools
+import math
 import random
+from statistics import NormalDist
 
 import numpy as np
 import pytest
@@ -187,3 +189,124 @@ def test_partial_outcomes_must_be_booleans_or_none() -> None:
         exact_mcnemar_partial([1], [None])  # type: ignore[list-item]
     with pytest.raises(ValueError):
         newcombe_paired_interval_partial([], [])
+
+
+def _reference_newcombe(
+    n11: int, n10: int, n01: int, n00: int, *, alpha_lower: float, alpha_upper: float
+) -> tuple[float, float]:
+    """Newcombe method 10 from the four cells, with the correlation's integers kept exact.
+
+    Independent of the package: Python integers for the products of counts, ``math.sqrt`` for
+    their square root and ``statistics.NormalDist`` for the quantiles.
+    """
+
+    n = n11 + n10 + n01 + n00
+    candidate_rate = (n11 + n10) / n
+    baseline_rate = (n11 + n01) / n
+    estimate = candidate_rate - baseline_rate
+    numerator = n11 * n00 - n10 * n01
+    corrected = max(numerator - n / 2, 0.0) if numerator > 0 else float(numerator)
+    product = (n11 + n10) * (n01 + n00) * (n11 + n01) * (n10 + n00)
+    correlation = min(1.0, max(-1.0, corrected / math.sqrt(product))) if product else 0.0
+
+    def wilson(rate: float, z: float) -> tuple[float, float]:
+        scale = 1 + z * z / n
+        centre = (rate + z * z / (2 * n)) / scale
+        radius = z * math.sqrt(rate * (1 - rate) / n + z * z / (4 * n * n)) / scale
+        return max(0.0, centre - radius), min(1.0, centre + radius)
+
+    def distance(first: float, second: float) -> float:
+        return math.sqrt(max(0.0, first**2 + second**2 - 2 * correlation * first * second))
+
+    z = NormalDist().inv_cdf(1 - alpha_lower)
+    candidate_low, _ = wilson(candidate_rate, z)
+    _, baseline_high = wilson(baseline_rate, z)
+    lower = estimate - distance(candidate_rate - candidate_low, baseline_high - baseline_rate)
+    z = NormalDist().inv_cdf(1 - alpha_upper)
+    _, candidate_high = wilson(candidate_rate, z)
+    baseline_low, _ = wilson(baseline_rate, z)
+    upper = estimate + distance(candidate_high - candidate_rate, baseline_rate - baseline_low)
+    return max(-1.0, lower), min(1.0, upper)
+
+
+def _paired_lists(n11: int, n10: int, n01: int, n00: int) -> tuple[list[bool], list[bool]]:
+    candidate = [True] * n11 + [True] * n10 + [False] * n01 + [False] * n00
+    baseline = [True] * n11 + [False] * n10 + [True] * n01 + [False] * n00
+    return candidate, baseline
+
+
+# Cell counts (n11, n10, n01, n00) around the counts at which the product of the four margins,
+# the correlation's denominator, outgrows a fixed-width integer. With all four margins m it is
+# m ** 4: past 2 ** 63 from m = 55,109 (110,218 pairs) and past 2 ** 64 from m = 65,536.
+_MARGIN_OVERFLOW_TABLES = {
+    "below_2_63": (13_777, 41_331, 41_331, 13_777),
+    "past_2_63": (13_777, 41_332, 41_332, 13_777),
+    "below_2_64": (16_384, 49_151, 49_151, 16_384),
+    "past_2_64": (16_384, 49_152, 49_152, 16_384),
+    "past_5_times_2_64_positive": (60_000, 40_000, 40_000, 60_000),
+}
+
+
+@pytest.mark.parametrize(
+    "cells", list(_MARGIN_OVERFLOW_TABLES.values()), ids=list(_MARGIN_OVERFLOW_TABLES)
+)
+def test_newcombe_keeps_the_correlation_when_the_margin_product_outgrows_integers(
+    cells: tuple[int, int, int, int],
+) -> None:
+    # The int64 product wrapped: past 2 ** 63 its square root was NaN or 0, so the correlation
+    # became 0, and past 2 ** 64 + 2 ** 63 it was a wrong positive number. As an integer past
+    # 2 ** 64 the scalar interval's product was an object NumPy could not take a root of.
+    expected_lower, expected_upper = _reference_newcombe(
+        *cells, alpha_lower=0.01, alpha_upper=0.04
+    )
+    scalar = newcombe_paired_interval(*_paired_lists(*cells), alpha_lower=0.01, alpha_upper=0.04)
+    assert scalar.lower == pytest.approx(expected_lower, rel=1e-12, abs=0)
+    assert scalar.upper == pytest.approx(expected_upper, rel=1e-12, abs=0)
+    _, lower, upper = _newcombe_bounds_from_counts(
+        *(np.asarray([value], dtype=np.int64) for value in cells),
+        alpha_lower=0.01,
+        alpha_upper=0.04,
+    )
+    assert float(lower[0]) == pytest.approx(expected_lower, rel=1e-12, abs=0)
+    assert float(upper[0]) == pytest.approx(expected_upper, rel=1e-12, abs=0)
+
+
+def test_partial_newcombe_bounds_hold_when_the_margin_product_outgrows_integers() -> None:
+    # One candidate outcome unscored in a table whose margins all reach 2 ** 16; the true
+    # correlation is -0.5, and the int64 product made it 0, which narrows the interval.
+    complete_candidate, complete_baseline = _paired_lists(16_384, 49_152, 49_152, 16_384)
+    candidate: list[bool | None] = list(complete_candidate)
+    baseline: list[bool | None] = list(complete_baseline)
+    candidate[-1] = None  # a pair whose baseline is safe
+    expected = [
+        _reference_newcombe(*cells, alpha_lower=0.05, alpha_upper=0.05)
+        for cells in [(16_384, 49_152, 49_152, 16_384), (16_384, 49_153, 49_152, 16_383)]
+    ]
+    interval = newcombe_paired_interval_partial(candidate, baseline)
+    assert interval.completion_count == 2
+    assert interval.lower == pytest.approx(min(low for low, _ in expected), rel=1e-12, abs=0)
+    assert interval.upper == pytest.approx(max(high for _, high in expected), rel=1e-12, abs=0)
+
+
+@pytest.mark.parametrize(
+    "cells",
+    [(100, 400, 400, 100), (5_000, 20_000, 20_000, 5_000)],
+    ids=["margins_500", "margins_25000"],
+)
+def test_vectorised_newcombe_does_not_depend_on_the_integer_type_of_the_counts(
+    cells: tuple[int, int, int, int],
+) -> None:
+    # The completions enumerate the counts in NumPy's default integer, which is int32 on
+    # Windows with NumPy 1. There the product of the four margins overflows once they reach
+    # 216 each, and the Wilson term's 4 * trials ** 2 from 23,171 pairs.
+    expected_lower, expected_upper = _reference_newcombe(
+        *cells, alpha_lower=0.05, alpha_upper=0.05
+    )
+    for dtype in (np.int32, np.int64):
+        _, lower, upper = _newcombe_bounds_from_counts(
+            *(np.asarray([value], dtype=dtype) for value in cells),
+            alpha_lower=0.05,
+            alpha_upper=0.05,
+        )
+        assert float(lower[0]) == pytest.approx(expected_lower, rel=1e-12, abs=0), dtype
+        assert float(upper[0]) == pytest.approx(expected_upper, rel=1e-12, abs=0), dtype

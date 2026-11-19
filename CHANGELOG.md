@@ -7,6 +7,17 @@ described in their pull requests.
 
 ### Fixed
 
+- **The Newcombe paired interval no longer overflows on large comparisons (changes results
+  from about 110,000 pairs).** Its correlation divides by the square root of the product of the
+  2×2 table's four margins, which was computed in integers. With every pair scored, the product
+  passed 2^64 from 131,072 pairs and `newcombe_paired_interval` raised a `TypeError`, so
+  `analyze` stopped without a report for any comparison with `diagnostic_methods:
+  [newcombe_paired]`. With an unscored pair, `newcombe_paired_interval_partial` wrapped the
+  product around in 64-bit integers from about 110,000 pairs: the correlation silently became 0
+  or a wrong value, and the interval could be too narrow, by 18% at a correlation of −0.5 and by
+  41% at 0.2 in the cases tested. Both now compute the product in floating point. Smaller tables
+  give the same bounds to the last bit.
+
 - **A zero-tolerance column that the manifest lacks is an error.** When a plan sets
   `policy.zero_tolerance.manifest_field` and the manifest has no such column, the analysis
   silently held no prompt to zero tolerance. It now stops with an error that names the column.
