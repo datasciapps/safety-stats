@@ -47,7 +47,8 @@ source; `inspect_safety_stats.ingest.EvaluationSource` is the protocol. Passing 
 `registration_receipt` (experimental) names a receipt written by `hash-plan --register`.
 `analyze` and `validate` check it against the plan's hash and the earliest evaluation start;
 see [Registration receipts](plan-reference.md#registration-receipts-experimental). `analyze`
-raises `ValueError` for a malformed receipt, and `validate` reports it as `INGEST_FAILED`.
+raises `ValueError` for a malformed receipt and `OSError`, such as `FileNotFoundError`, for one
+it cannot read; `validate` reports either as `INGEST_FAILED`.
 
 ### `validate`
 

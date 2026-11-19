@@ -329,6 +329,23 @@ def test_validate_reports_a_malformed_receipt_instead_of_crashing(tmp_path: Path
     )
 
 
+@pytest.mark.parametrize("unreadable", ["missing", "directory"])
+def test_validate_reports_an_unreadable_receipt_instead_of_crashing(
+    tmp_path: Path, unreadable: str
+) -> None:
+    plan = tmp_path / "plan.yaml"
+    plan.write_text(PLAN.replace("INTENT", "confirmatory"), encoding="utf-8")
+    receipt = tmp_path / "receipt.json"
+    if unreadable == "directory":
+        receipt.mkdir()
+    summary = validate(plan=plan, source=_source(tmp_path), registration_receipt=receipt)
+    assert summary.status == "invalid"
+    assert any(
+        item.code == "INGEST_FAILED" and "receipt.json" in item.message
+        for item in summary.diagnostics
+    )
+
+
 def test_analyze_cli_checks_the_receipt_end_to_end(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
     receipt = tmp_path / "plan.receipt.json"
