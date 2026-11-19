@@ -585,12 +585,18 @@ described in their pull requests.
   status and bounds, and one row for each sensitivity profile, which decides the same
   thresholds on that profile's interval of the same method. A row carries the profile, its
   role, the status, the interval id, the bounds, the independent block count and the effective
-  sample size. `report.md` adds a "Verdicts by independence profile" table under the mandatory
+  sample size. `report-full.md` adds a "Verdicts by independence profile" table under the mandatory
   claims when a claim has a sensitivity profile, and the HTML claim card lists the verdicts.
+  Both label each row primary or sensitivity, under a note that a sensitivity verdict cannot
+  replace the primary one.
   The claim's status and the decision stay the primary profile's; a sensitivity verdict is
-  shown, never selected. Claims decided on a judge correction or the noisy-valid test have no
-  per-profile rows, and say so when their evidence has sensitivity profiles. Reports whose
-  plans declare no sensitivity profile gain only the primary row. See
+  shown, never selected. An exploratory claim's rows are all `INCONCLUSIVE`, like the claim,
+  whatever its `descriptive_status`. Claims decided on a judge correction or the noisy-valid
+  test have no per-profile rows, and say so when their evidence has sensitivity profiles.
+  Reports whose plans declare no sensitivity profile gain only the primary row. A sampled
+  design takes the frame item as the independent block, so its claims have only the
+  `frame_item` row, and a sensitivity profile declared for it gives a new
+  `PLAN_SAMPLED_SENSITIVITY_PROFILES` warning from `validate` and `analyze`. See
   [Verdicts by profile](docs/independence-profiles.md#verdicts-by-profile).
 
 ### Changed
@@ -681,7 +687,11 @@ described in their pull requests.
   fixed evaluation set", even under `design.type: sampled`, whose intervals are about the
   whole declared item frame. A sampled design's `scope` now has `design: sampled`, names the
   frame and the recorded inclusion probabilities as the randomness, and says that results apply
-  to the frame and not to prompts outside it. Fixed designs keep their statement byte for byte.
+  to the frame and not to prompts outside it. The text around it follows: `report.md` counts
+  frame items rather than fixed prompts and says that its intervals allow for both the draw of
+  items and the rollouts, `report-full.md` and `report.html` head the intervals
+  "Sampled-design risk measures", and the hierarchy note of `report-full.md` and the summary
+  and footer of `report.html` speak of the frame. Fixed designs keep their wording.
 
 - **Generative judge corrections certify less, and keep the worst case of unscored units
   (#109, changes results).** A `validated` judge calibration pools its human labels over the

@@ -363,6 +363,26 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope=plan_scope("outputs", "direct_mean_intervals"),
                 )
             )
+        sampled_independence = plan.outputs.direct_mean_intervals.independence
+        if (
+            plan.outputs.direct_mean_intervals.enabled
+            and sampled_independence is not None
+            and sampled_independence.sensitivities
+        ):
+            # The frame item is the independent block of the frame intervals, so a declared
+            # sensitivity profile has no interval and no claim verdict.
+            diagnostics.append(
+                Diagnostic(
+                    code="PLAN_SAMPLED_SENSITIVITY_PROFILES",
+                    severity="WARNING",
+                    message=(
+                        "a sampled design takes the frame item as the independent block, so no "
+                        "interval or claim verdict is reported under the declared sensitivity "
+                        "profiles: " + ", ".join(sampled_independence.sensitivities)
+                    ),
+                    scope=plan_scope("outputs", "direct_mean_intervals", "independence"),
+                )
+            )
         if plan.outputs.prompt_bounds.enabled and plan.outputs.prompt_bounds.simultaneous:
             diagnostics.append(
                 Diagnostic(

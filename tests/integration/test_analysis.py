@@ -5,14 +5,16 @@ import io
 import itertools
 import json
 import shutil
+import subprocess
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 import pytest
 
 from inspect_safety_stats import analyze, load_plan, render_visualization, write_visualization
+from inspect_safety_stats.analysis import comparisons as comparisons_stage
 from inspect_safety_stats.analysis.claims import _claims, verdicts_by_profile
 from inspect_safety_stats.analysis.core import scorer_configurations
 from inspect_safety_stats.analysis.estimates import alpha_by_prompt, prompt_blocked
@@ -25,6 +27,7 @@ from inspect_safety_stats.ingest.inspect_logs import (
 )
 from inspect_safety_stats.ingest.manifest import load_manifest
 from inspect_safety_stats.ingest.records import StopContext
+from inspect_safety_stats.report import visualization
 from inspect_safety_stats.schema.reports import (
     Diagnostic,
     GroupRiskResult,
@@ -34,6 +37,7 @@ from inspect_safety_stats.schema.reports import (
 )
 from tests.claims_export import round_trip_differences
 from tests.report_rendering import rendering_differences
+from tests.template_functions import function_source
 
 
 def _write_inputs(tmp_path: Path) -> Path:
@@ -4569,13 +4573,22 @@ def test_a_report_names_its_inputs_relative_to_the_plan(
 
 
 def _profiled_report(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sensitivities: list[str]
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sensitivities: list[str],
+    *,
+    intent: Literal["confirmatory", "exploratory"] = "confirmatory",
+    reference_methods: tuple[str, ...] = (),
+    primary: str = "rollout",
 ) -> SafetyReport:
     plan = load_plan(_write_inputs(tmp_path))
+    plan.analysis.intent = intent
     plan.report.include_decisions = True
     spec = plan.outputs.direct_mean_intervals
     spec.method = "weighted_kl_chernoff"
+    spec.reference_methods = list(reference_methods)
     assert spec.independence is not None
+    spec.independence.primary = primary
     spec.independence.sensitivities = sensitivities
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
@@ -4620,8 +4633,161 @@ def test_claims_show_their_verdict_under_every_independence_profile(
         "| Mean fixed-design risk is acceptable | `prompt` | sensitivity | `INCONCLUSIVE` "
         in markdown
     )
-    html = (output / "report.html").read_text(encoding="utf-8")
-    assert "profile_verdicts" in html
+
+
+_PROFILE_VERDICT_DRIVER = """
+const fs = require("fs");
+const [functionsPath, reportPath] = process.argv.slice(2);
+const api = new Function(
+  fs.readFileSync(functionsPath, "utf8") + "\\nreturn {profileVerdictLines};"
+)();
+const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+process.stdout.write(JSON.stringify(report.claims.map(claim => api.profileVerdictLines(claim))));
+"""
+
+
+def _card_profile_verdicts(report: SafetyReport, tmp_path: Path) -> list[Any]:
+    """What the HTML claim card lists for each claim's profile verdicts, run under Node."""
+    template = visualization._TEMPLATE.read_text(encoding="utf-8")
+    functions = tmp_path / "functions.js"
+    functions.write_text(
+        "\n".join(function_source(template, name) for name in ("pct", "profileVerdictLines")),
+        encoding="utf-8",
+    )
+    payload = tmp_path / "report.json"
+    payload.write_text(json.dumps(report.model_dump(mode="json")), encoding="utf-8")
+    driver = tmp_path / "driver.js"
+    driver.write_text(_PROFILE_VERDICT_DRIVER, encoding="utf-8")
+    node = shutil.which("node")
+    assert node is not None
+    completed = subprocess.run(
+        [node, str(driver), str(functions), str(payload)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    return list(json.loads(completed.stdout))
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is not installed")
+@pytest.mark.parametrize(
+    ("primary", "sensitivity", "rows"),
+    [
+        (
+            "rollout",
+            "prompt",
+            [
+                "rollout (primary): PASS, 0.0%–8.8%",
+                "prompt (sensitivity): INCONCLUSIVE, 0.0%–84.2%",
+            ],
+        ),
+        # A sensitivity PASS beside an INCONCLUSIVE claim was listed as "rollout: PASS".
+        (
+            "prompt",
+            "rollout",
+            [
+                "prompt (primary): INCONCLUSIVE, 0.0%–84.2%",
+                "rollout (sensitivity): PASS, 0.0%–8.8%",
+            ],
+        ),
+    ],
+)
+def test_the_html_claim_card_labels_every_profile_verdict_by_its_role(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, primary: str, sensitivity: str, rows: list[str]
+) -> None:
+    report = _profiled_report(monkeypatch, tmp_path, [sensitivity], primary=primary)
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+
+    (card,) = _card_profile_verdicts(report, tmp_path)
+
+    assert card["rows"] == rows
+    # The note report-full.md prints above its table: a sensitivity verdict is not a decision.
+    assert card["note"].endswith("and cannot replace it.")
+    assert f"\n{card['note']}\n" in markdown
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is not installed")
+def test_the_html_claim_card_lists_no_verdicts_without_a_sensitivity_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = _profiled_report(monkeypatch, tmp_path, [])
+
+    assert len(report.claims[0].profile_verdicts) == 1
+    assert _card_profile_verdicts(report, tmp_path) == [None]
+
+
+def test_an_exploratory_claims_primary_profile_verdict_is_its_final_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The primary row repeats the claim's status, never the descriptive one.
+
+    The rows were built before the exploratory demotion, so an exploratory claim whose bounds
+    pass showed `PASS` under "A claim's status is its verdict under the primary profile" while
+    the claim itself was INCONCLUSIVE.
+    """
+    report = _profiled_report(monkeypatch, tmp_path, ["prompt"], intent="exploratory")
+
+    claim = report.claims[0]
+    # The bounds would pass under a confirmatory analysis; the claim certifies nothing.
+    assert (claim.status, claim.descriptive_status) == ("INCONCLUSIVE", "PASS")
+    assert [(v.independence_profile, v.role, v.status) for v in claim.profile_verdicts] == [
+        ("rollout", "primary", "INCONCLUSIVE"),
+        ("prompt", "sensitivity", "INCONCLUSIVE"),
+    ]
+    assert claim.profile_verdicts[0].status == claim.status
+    assert (claim.profile_verdicts[0].lower, claim.profile_verdicts[0].upper) == (
+        claim.lower,
+        claim.upper,
+    )
+    markdown = (report.write(tmp_path / "exploratory-report") / "report-full.md").read_text(
+        encoding="utf-8"
+    )
+    assert "| Mean fixed-design risk is acceptable | `rollout` | primary | `INCONCLUSIVE` " in (
+        markdown
+    )
+    assert "| `rollout` | primary | `PASS` " not in markdown
+
+
+def test_an_exploratory_claims_sensitivity_verdicts_are_inconclusive_too(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A sensitivity row whose interval would pass stays INCONCLUSIVE under exploratory intent.
+
+    Under the prompt profile the rollout sensitivity interval is narrow enough to pass, so a
+    row decided on it would read PASS although the analysis certifies nothing.
+    """
+    report = _profiled_report(
+        monkeypatch, tmp_path, ["rollout"], intent="exploratory", primary="prompt"
+    )
+
+    verdicts = report.claims[0].profile_verdicts
+    assert [(v.independence_profile, v.role, v.status) for v in verdicts] == [
+        ("prompt", "primary", "INCONCLUSIVE"),
+        ("rollout", "sensitivity", "INCONCLUSIVE"),
+    ]
+
+
+def test_sensitivity_verdicts_use_only_the_primary_intervals_method(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A reference method's interval under a sensitivity profile is not a verdict row."""
+    report = _profiled_report(
+        monkeypatch, tmp_path, ["prompt"], reference_methods=("weighted_hoeffding",)
+    )
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    # The reference method has an interval under the sensitivity profile too.
+    assert {
+        (item.method, item.independence_profile)
+        for item in mean.intervals
+        if item.role == "sensitivity" and item.independence_profile == "prompt"
+    } == {("weighted_kl_chernoff", "prompt"), ("weighted_hoeffding", "prompt")}
+    claim = report.claims[0]
+    assert [(v.independence_profile, v.role, v.interval_id) for v in claim.profile_verdicts] == [
+        ("rollout", "primary", "direct_weighted_kl_chernoff"),
+        ("prompt", "sensitivity", "direct_weighted_kl_chernoff_prompt"),
+    ]
 
 
 def test_a_claim_without_sensitivity_profiles_has_only_its_primary_verdict(
@@ -4746,6 +4912,135 @@ def test_comparison_claims_show_their_verdict_under_every_independence_profile(
         sensitivity.lower,
         sensitivity.upper,
     )
+
+
+def test_a_claim_without_a_primary_interval_says_why_it_has_no_profile_verdicts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Missing the primary interval is not the same as deciding on another interval.
+
+    When a comparison's primary-profile calibration is unavailable, only its sensitivity
+    intervals are computed. The claim was decided directly, INCONCLUSIVE for want of a bound,
+    yet its reason said it was "not decided directly on the profile intervals".
+    """
+    plan_path = _two_arm_plan(tmp_path, as_set=False)
+    text = plan_path.read_text(encoding="utf-8")
+    comparison_profiles = (
+        "    family: model_comparisons\n    independence:\n      primary: rollout\n"
+    )
+    assert text.count(comparison_profiles) == 1
+    text = text.replace(
+        comparison_profiles, comparison_profiles + "      sensitivities: [prompt]\n"
+    ).replace(
+        "policy:\n",
+        "  - id: not_worse\n"
+        "    title: Candidate is not worse than baseline\n"
+        "    comparison: candidate_vs_baseline\n"
+        "    family: gate\n"
+        "    acceptable_upper: 0.35\n"
+        "    unacceptable_lower: 0.60\n"
+        "policy:\n",
+        1,
+    )
+    plan_path.write_text(text, encoding="utf-8")
+    _patch_frames(monkeypatch, _two_cohort_frames())
+    calibrations = comparisons_stage._comparison_calibrations
+
+    def without_the_primary_profile(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in calibrations(*args, **kwargs).items()
+            if not key.startswith("rollout@@")
+        }
+
+    monkeypatch.setattr(comparisons_stage, "_comparison_calibrations", without_the_primary_profile)
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    comparison = next(item for item in report.comparisons if item.level is None)
+    assert comparison.primary_interval_id is None
+    assert {item.independence_profile for item in comparison.intervals} == {"prompt"}
+    claim = next(item for item in report.claims if item.claim_id == "not_worse")
+    assert claim.status == "INCONCLUSIVE"
+    assert claim.profile_verdicts == []
+    assert claim.reasons == [
+        "No complete certifying bound is available.",
+        "Verdicts under the sensitivity independence profiles are not reported, because the "
+        "evidence has no primary interval, so the claim has no verdict under the primary "
+        "profile for them to qualify.",
+    ]
+
+
+def _validated_judge_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sensitivities: list[str]
+) -> SafetyReport:
+    """The integration plan under a validated judge calibration whose labels agree with it."""
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "design:\n",
+        "  judge_calibration:\n"
+        "    mode: validated\n"
+        "    validation_manifest: labels.csv\n"
+        "    family: judge_error\n"
+        "design:\n",
+        1,
+    )
+    plan_text = plan_text.replace(
+        "    - {id: displayed,",
+        "    - {id: judge_error, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: displayed,",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    baseline_dir = tmp_path / "baseline"
+    baseline_dir.mkdir()
+    baseline = analyze(plan=load_plan(_write_inputs(baseline_dir)), logs="ignored")
+    rows = ["observation_id,human_label"]
+    for observation in baseline._observations:
+        if observation.failure is not None:
+            label = "unsafe" if observation.failure else "safe"
+            rows.append(f"{observation.observation_id},{label}")
+    (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    plan = load_plan(plan_path)
+    independence = plan.outputs.direct_mean_intervals.independence
+    assert independence is not None
+    independence.sensitivities = sensitivities
+    return analyze(plan=plan, logs="ignored")
+
+
+@pytest.mark.parametrize("sensitivities", [["prompt"], []])
+def test_a_judge_corrected_claim_has_no_profile_verdicts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sensitivities: list[str]
+) -> None:
+    """A claim decided on true risk has no verdict on judge-reported profile intervals.
+
+    The rows were built for it all the same: the primary row joined the corrected bounds to the
+    judge-reported interval's id, and each sensitivity row decided the thresholds, which are
+    about true risk, on a judge-reported interval no correction had touched.
+    """
+    report = _validated_judge_report(monkeypatch, tmp_path, sensitivities)
+
+    claim = report.claims[0]
+    assert any(ref.startswith("interval:judge_corrected_") for ref in claim.evidence_refs)
+    assert claim.profile_verdicts == []
+    not_reported = (
+        "Verdicts under the sensitivity independence profiles are not reported, because this "
+        "claim is not decided directly on the profile intervals."
+    )
+    assert (not_reported in claim.reasons) == bool(sensitivities)
 
 
 def _patch_frames_with_failures(

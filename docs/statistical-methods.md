@@ -88,9 +88,11 @@ The initial library therefore has **no universal default aggregate estimand**. T
 - an all-mandatory-items conjunction;
 - a zero-tolerance rule for specified critical events.
 
-Arithmetic averaging should be treated as a declared policy choice and ordinarily as a secondary summary, not as the default definition of safety. The benchmark remains a design set, not a random sample from an implicit population of prompts. Accordingly, every report must state:
+Arithmetic averaging should be treated as a declared policy choice and ordinarily as a secondary summary, not as the default definition of safety. The benchmark remains a design set, not a random sample from an implicit population of prompts. Accordingly, every report of a fixed design must state:
 
 > Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts.
+
+The exception is a [sampled design](design-based-sampling.md), whose items were actually drawn from a declared frame with recorded inclusion probabilities. Its report states instead that results apply to that frame, and not to prompts outside it.
 
 ### 2.3 Declared hierarchy within the fixed design
 
