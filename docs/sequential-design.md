@@ -263,7 +263,8 @@ reports a one-sided upper bound \(U_t\) with
 \]
 
 so \(U_\tau\) is valid at the stopping time \(\tau\), whatever rule chose it. The code is
-`src/inspect_safety_stats/stats/sequential.py`.
+`src/inspect_safety_stats/stats/sequential.py`, and the derivation is in
+[statistical methods, section 6.10](statistical-methods.md#610-implemented-anytime-valid-upper-bounds-for-runs-stopped-early-experimental).
 
 ### The stream
 
@@ -271,6 +272,21 @@ Inspect's `sample_shuffle` runs the \(N\) items in a uniformly random order, a p
 before the run. Item \(i\) has weight \(w_i\) and outcome \(Y_i\in[0,1]\), its failure share
 over its first \(r\) epochs, where \(r\) is declared in advance. Epochs after the first \(r\)
 are ignored, so a rule that stops an item's later epochs on its results cannot bias \(Y_i\).
+
+The order cannot supply the three assumptions of the
+[phase-0 stream](#draws-with-known-probabilities), which carry over to a permutation:
+
+- **Fixed failure probabilities.** Each item's failure probability stays the same while the
+  run goes on. The model, its configuration, the scaffold and the judge do not change, and
+  nothing in the system learns from earlier samples.
+- **Fresh rollouts.** Each rollout runs anew, sharing no state, cache or conversation with
+  other samples. This makes the \(Y_i\) independent across items, and, under the `rollout`
+  profile, the rollouts of one item independent too.
+- **A hidden order.** The seed is fixed before the run and kept from the system under
+  evaluation, so that its behaviour on an item cannot depend on which items come next.
+
+The stopping rule may use every outcome so far to decide when to stop, but never which item
+runs next.
 
 ### Two steps, each at \(\alpha/2\)
 
@@ -289,7 +305,10 @@ are ignored, so a rule that stops an item's later epochs on its results cannot b
    with \(S\), so step 1's bound can stand in for \(S\). Under a `rollout` profile the \(Nr\)
    rollouts count as independent blocks, as they do at the fixed horizon.
 
-At \(t=N\) step 1 is exact, and only step 2 remains. The package's labelling protocol uses a
+At \(t=N\) the largest mean the draws allow is \(S\) itself, so step 1's bound is \(S\), and
+only step 2 remains, unless the sequence rejected the true mean at an earlier prefix. That is
+the miss, of probability at most \(\alpha/2\), that step 1 is allowed; its bound is then below
+\(S\). The package's labelling protocol uses a
 related sequence, `judge_accuracy_confidence_sequence`, a binomial prior-posterior ratio for
 binary labels without weights (statistical methods, judge calibration); this one takes
 weighted outcomes in \([0,1]\).
@@ -298,6 +317,19 @@ Replacing an outcome by a larger value lowers every factor of the capital, and t
 are fixed in advance, so the bound stays valid when unfinished or unclassified epochs before
 the last observed item count as failures. Leaving such an item out instead would not be valid.
 Draws are read in the recorded order, never in completion order.
+
+### Uneven weights
+
+Step 1 divides every outcome by the largest weight, and, not knowing which items are left,
+treats each unseen item as if it could carry the largest weight. Its bound on \(S\) is
+\(N\max_j w_j\) times a bound on a mean in \([0,1]\), so it stays at 1 until that bound falls
+below \(1/(N\max_j w_j)\). With every outcome safe it depends only on how many items were
+drawn, not on which: drawing a heavy item early does not tighten it. For 100 items all safe at
+\(\alpha=0.05\), the bound on \(S\) is 0.057 after 50 draws and 0.018 after 90 with equal
+weights. With one item carrying half the weight it is 1 after 50, 0.88 after 90 and 0.45 after
+99, and step 2, whose largest block then carries half the weight, leaves the bound on
+\(\theta\) at 1 even after all 100. Weights spread evenly from 1 to 3 give
+\(N\max_j w_j=1.5\): after 50 safe draws the bound on \(S\) is 0.086 instead of 0.057.
 
 ### Coverage where optstop's rule stops
 
@@ -329,7 +361,8 @@ Optstop's repository (MIT licence) releases its shadow-mode results as
 optstop would have stopped and the sample ids, but no per-trial outcomes. The bound at the stop
 cannot be computed from them. Their runs also record `sample_shuffle: null`, so the analysis
 would refuse them for having no recorded order. A shadow-mode replay needs the run's Inspect
-log, run with `sample_shuffle` set to a seed.
+log, run with `sample_shuffle` set to a nonzero integer seed (Inspect does not shuffle under
+the seed 0).
 
 ## Work that builds on this
 

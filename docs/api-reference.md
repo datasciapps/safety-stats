@@ -58,7 +58,8 @@ from inspect_safety_stats import validate
 integrity = validate(plan="safety-plan.yaml", logs="logs/")
 ```
 
-Runs plan-reference, manifest, provenance, cohort, rollout, and score-mapping checks without
+Runs plan-reference, manifest, provenance, cohort, rollout, and score-mapping checks, and,
+under `outputs.anytime_bounds`, the checks of the runs' recorded sample orders, without
 making a deployment decision. `integrity.status` is `valid`, `degraded`, or `invalid`; individual diagnostics
 carry a severity, stable code, `source` and `effect` (from the code's entry in
 `inspect_safety_stats.registry`), message, and optional scope. The scope is a `/`-separated path

@@ -374,12 +374,14 @@ The analysis plan: its fields, references and their combinations.
 - **Severity:** ERROR
 - **Effect:** [invalid](#effects)
 - **Assumption:** The anytime-valid bounds are requested on a fixed design, with a declared family,
-  declared groups and a declared independence profile that blocks by rollout or by prompt_id.
+  declared groups and a declared independence profile that blocks by rollout or by prompt_id, and on
+  groups no judge calibration covers: the bounds are on the judge-reported failure probability.
 - **Consequence:** The integrity status is invalid, so no claim can pass, and no anytime-valid bound
   is computed.
 - **Remedy:** Fix outputs.anytime_bounds as the message says: name a family of
   multiplicity.families, groups of groups and a profile of design.independence_profiles that blocks
-  by rollout or prompt_id, under design.type: fixed; or remove outputs.anytime_bounds.
+  by rollout or prompt_id, under design.type: fixed, and bound only groups that
+  inputs.judge_calibration.groups leaves out; or remove outputs.anytime_bounds.
 
 #### `PLAN_DIAGNOSTIC_GATE`
 
@@ -701,11 +703,12 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
 - **Severity:** ERROR
 - **Effect:** [invalid](#effects)
 - **Assumption:** The run's samples ran in a random order fixed before the run and recorded in its
-  Inspect log: sample_shuffle set to an integer seed, with the shuffled sample ids.
+  Inspect log: sample_shuffle set to a nonzero integer seed, with the shuffled sample ids. Inspect
+  does not shuffle under the seed 0.
 - **Consequence:** No anytime-valid bound is reported for the cohort and group, and the error makes
   the integrity status invalid, so no claim can pass.
-- **Remedy:** Rerun the evaluation as Inspect logs with sample_shuffle set to an integer seed, or
-  remove outputs.anytime_bounds.
+- **Remedy:** Rerun the evaluation as Inspect logs with sample_shuffle set to a nonzero integer
+  seed, or remove outputs.anytime_bounds.
 
 #### `CLUSTER_DESIGN_EFFECT`
 
@@ -1321,7 +1324,8 @@ cannot be computed, or a result it qualifies.
   stopped it chose only when to stop, never which prompt ran next.
 - **Consequence:** The anytime-valid upper bound on the group's weighted mean failure probability,
   and whether it lies at or below each weighted-mean claim's acceptable_upper, are recorded beside
-  the claims, whose status does not change.
+  the claims, whose status does not change. Under exploratory intent or invalid integrity, where no
+  claim can pass, it certifies none.
 - **Remedy:** Nothing to change. Read the bound's certified flags for a run stopped early, since its
   claims keep their fixed-horizon status.
 

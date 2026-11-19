@@ -7,7 +7,12 @@ from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from inspect_safety_stats.analysis.anytime import OrderReader, anytime_bound_diagnostics
+from inspect_safety_stats.analysis.anytime import (
+    OrderReader,
+    anytime_bound_diagnostics,
+    anytime_bounds,
+    anytime_order_diagnostics,
+)
 from inspect_safety_stats.analysis.core import (
     _add_judge_claims,
     _add_judge_configurations,
@@ -287,8 +292,9 @@ def validate(
     error. As in ``analyze``, a failure to read the data does not raise: it is reported as an
     ``INGEST_FAILED`` diagnostic. ``decision_policy`` is checked against the plan as
     ``analyze`` checks it, and so is ``registration_receipt``; a receipt that cannot be read,
-    or is malformed, is reported as ``INGEST_FAILED``. Returns the integrity status
-    (``valid``, ``degraded`` or ``invalid``) and the sorted diagnostics.
+    or is malformed, is reported as ``INGEST_FAILED``. Under ``outputs.anytime_bounds`` the
+    runs' recorded sample orders are checked as ``analyze`` checks them. Returns the integrity
+    status (``valid``, ``degraded`` or ``invalid``) and the sorted diagnostics.
     """
 
     resolved = _coerce_plan(plan)
@@ -301,7 +307,10 @@ def validate(
         diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=str(exc)))
         return _sorted_integrity(diagnostics)
     receipt = _matched_receipt(resolved, receipt, diagnostics)
-    _read_input(resolved, logs, parallel, source, diagnostics, receipt)
+    read = _read_input(resolved, logs, parallel, source, diagnostics, receipt)
+    if read is not None:
+        # The runs' recorded orders, which analyze checks before it computes any bound.
+        anytime_order_diagnostics(resolved, read[0], diagnostics, _order_reader(logs, source))
     return _sorted_integrity(diagnostics)
 
 
@@ -385,8 +394,13 @@ def analyze(
     judge_flip_diagnostic(resolved, data, diagnostics)
     # ORDER MATTERS as well: a run without a recorded order must be an error before integrity
     # is read.
-    anytime_bound_diagnostics(resolved, data, diagnostics, _order_reader(logs, source))
+    anytime = anytime_bounds(resolved, data, diagnostics, _order_reader(logs, source))
     core = _analysis_core(resolved, data, diagnostics, _policy_set_claims(application))
+    # ORDER MATTERS: after the core, so that the bounds certify a claim only where the
+    # integrity the claims were decided under lets a claim pass.
+    anytime_bound_diagnostics(
+        resolved, anytime, diagnostics, integrity_valid=core.integrity_status != "invalid"
+    )
     estimates = core.estimates
     tail_measure_precision(resolved, data, estimates, diagnostics)
     risks = core.risks
