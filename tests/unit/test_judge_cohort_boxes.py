@@ -84,8 +84,16 @@ def test_each_cohort_box_must_be_strictly_informative() -> None:
 
 
 def test_a_cohort_box_takes_only_rho_1_and_rho_0() -> None:
-    with pytest.raises(ValidationError, match="Extra inputs"):
+    with pytest.raises(ValidationError) as raised:
         _plan({"candidate": {**CANDIDATE_BOX, "id": "other"}})
+    # The box refuses the key itself. A scenario without a `cohorts` field would also raise
+    # "Extra inputs", for `cohorts` as a whole, so only the location shows which.
+    assert [(error["type"], error["loc"]) for error in raised.value.errors()] == [
+        (
+            "extra_forbidden",
+            ("inputs", "judge_calibration", "scenarios", 0, "cohorts", "candidate", "id"),
+        )
+    ]
 
 
 def test_a_cohort_box_naming_an_undeclared_cohort_is_a_plan_reference_error() -> None:
