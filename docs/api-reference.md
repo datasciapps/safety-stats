@@ -152,10 +152,12 @@ The report data, resolved hierarchy, and declared group weights are embedded loc
 network access, or external JavaScript is required. When the source is a `SafetyReport`, `output`
 is required. For a report path, omitting `output` writes `report.html` beside `report.json`.
 
-A `report.json` is enough on its own: the prompt rows and weights are in its `design.prompts`,
-and what the report text depends on beyond the results (decimal places, the primary
-independence profile, each claim's evidence, the judge calibration's mode and scenarios) is in
-its `presentation`. A `report.json` written by an earlier version lacks `design.prompts` and the
+A `report.json` is enough on its own to render the report: the prompt rows and weights are in
+its `design.prompts`, and what the report text depends on beyond the results (decimal places,
+the primary independence profile, each claim's evidence, the judge calibration's mode and
+scenarios) is in its `presentation`. It does not hold the resolved plan, which is
+`plan.resolved.yaml` in the report directory; the page's audit trail points there rather than
+showing the plan. A `report.json` written by an earlier version lacks `design.prompts` and the
 primary profile; for such a report the visualization reads them from `design.resolved.csv` and
 `plan.resolved.yaml` beside it.
 
