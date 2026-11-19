@@ -16,8 +16,8 @@ description: >
   Call `inspect_safety_stats.stats` directly in Python—no log files, YAML plans, or [Inspect AI](https://inspect.aisi.org.uk/) harness required.
 - **Completed Inspect AI `.eval` logs:**
   Run `inspect-safety-stats validate` then `inspect-safety-stats analyze` with a `design.csv` manifest and a strict `schema_version: "2.0"` YAML plan.
-- **Custom JSONL/CSV evaluation logs needing full hierarchy reports and `report.html`:**
-  Convert records into in-memory `inspect_ai.log.EvalLog` objects and pass `logs=[...]` to `inspect_safety_stats.validate()` and `inspect_safety_stats.analyze()`, reading `design.csv` and `plan.yaml` from disk.
+- **Results from another evaluation harness needing full hierarchy reports and `report.html`:**
+  Write them as a runs file and a rollouts file ([rollout files](../../docs/rollout-files.md), JSON Lines or CSV) and run `inspect-safety-stats validate` / `analyze` with `--runs runs.jsonl --rollouts rollouts.jsonl` in place of `--logs`, or pass `source=RolloutFiles(runs=..., rollouts=...)` (from `inspect_safety_stats.ingest`) to `validate()` and `analyze()`. Use a `schema_version: "3.0"` plan and a `design.csv` whose `prompt_id` matches each rollout's `item_id` (no Inspect AI install needed).
 
 ## 2. Input requirements in `inspect_safety_stats.stats`
 
@@ -104,8 +104,9 @@ Always preserve the fixed-design scope boundary and declared independence assump
 
 ## 5. Deeper references
 
-- Complete single-file API map, minimal `v2.0` YAML, and external `EvalLog` adapter: [llms-full.txt](../../llms-full.txt)
+- Complete single-file API map, minimal `v2.0` YAML, and a rollout-files recipe for other harnesses: [llms-full.txt](../../llms-full.txt)
 - Reading a report directory as an agent: [docs/agent-guide.md](../../docs/agent-guide.md)
+- Runs and rollouts file formats: [docs/rollout-files.md](../../docs/rollout-files.md)
 - Plan schema guide: [docs/plan-reference.md](../../docs/plan-reference.md)
 - API and CLI contract: [docs/api-reference.md](../../docs/api-reference.md)
 - Judge misclassification math and config: [docs/judge-misclassification.md](../../docs/judge-misclassification.md)
