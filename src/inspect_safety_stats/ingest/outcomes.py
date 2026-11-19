@@ -24,7 +24,7 @@ def is_missing(value: Any) -> bool:
         return False
 
 
-def _classified_by_policy(row: Observation) -> bool:
+def classified_by_policy(row: Observation) -> bool:
     """Whether a plan policy, not the primary score's mapping, classified the rollout.
 
     That is a policy block counted safe, a sample error counted as a failure, a content-filter

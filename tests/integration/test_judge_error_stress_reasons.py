@@ -347,7 +347,7 @@ def test_every_policy_classification_is_recognised(
     fields: dict[str, Any], by_policy: bool
 ) -> None:
     # Imported here, so that the module's other tests still collect against a tree without it.
-    from inspect_safety_stats.ingest.outcomes import _classified_by_policy
+    from inspect_safety_stats.ingest.outcomes import classified_by_policy
 
     row = Observation(
         observation_id="o",
@@ -366,7 +366,7 @@ def test_every_policy_classification_is_recognised(
         collection_order=0,
         **fields,
     )
-    assert _classified_by_policy(row) is by_policy
+    assert classified_by_policy(row) is by_policy
 
 
 def test_a_claim_without_a_declared_family_gets_a_record(tmp_path: Path) -> None:

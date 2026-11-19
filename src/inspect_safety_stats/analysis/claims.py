@@ -24,7 +24,7 @@ from inspect_safety_stats.decision.engine import (
     decide_claim,
     noisy_valid_verdict_range,
 )
-from inspect_safety_stats.ingest.outcomes import _classified_by_policy
+from inspect_safety_stats.ingest.outcomes import classified_by_policy
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.reports import (
     ClaimProfileVerdict,
@@ -332,7 +332,7 @@ def _policy_classified(data: NormalizedData) -> dict[tuple[str, str], tuple[int,
 
     counts: dict[tuple[str, str], list[int]] = {}
     for row in data.observations:
-        if _classified_by_policy(row):
+        if classified_by_policy(row):
             tally = counts.setdefault((row.cohort_id, row.prompt_id), [0, 0])
             tally[1 if row.failure else 0] += 1
     return {key: (safe, failures) for key, (safe, failures) in counts.items()}
