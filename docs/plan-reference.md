@@ -38,7 +38,11 @@ to the plan's directory. A field the plan leaves out is not hashed, whatever its
 release that adds a field or changes a default leaves the hash of an unchanged plan file as it
 was (#56). A field written at its default value is hashed: the plan states it, and its meaning
 does not follow a later default. Writing out a default therefore changes the hash, as any other
-edit does.
+edit does, with one exception: a field that `plan.resolved.yaml` leaves out at its default, so
+that plans written before it existed keep their hashes, is left out of the hash at that value
+whether written or not. Such fields are experimental or were added after plans were frozen, such
+as `report.judge_error_stress: false` and `inputs.score.token_limit: score`; writing one at any
+other value changes the hash.
 
 What the hash leaves out, the report records. `plan_defaults` in `report.json` lists every field
 the plan left out, with the value its default gave the analysis, as `{"path", "value"}` entries
@@ -142,9 +146,10 @@ or booleans even when it also groups prompts by them: a weight `column`, the
 `expected_rollouts` are numbers, and the `selection_column`, `mandatory` and the zero-tolerance
 field are booleans.
 
-When `policy.zero_tolerance.manifest_field` is set in the plan and zero tolerance is enabled, the
-manifest must have that column, and an analysis without it stops with an error. The default
-field `zero_tolerance` stays optional.
+When `policy.zero_tolerance.manifest_field` names a column other than the default
+`zero_tolerance` and zero tolerance is enabled, the manifest must have that column, and an
+analysis without it stops with an error. The default column stays optional, whether the plan
+leaves the field out or writes it: a manifest without it holds no prompt to zero tolerance.
 
 `estimand` is `end_to_end_system` by default. In this mode, an explicit provider policy block is
 safe only if it occurred during target generation and no content was delivered. Set
@@ -1440,6 +1445,9 @@ for a claim that can only fail. Plans without `adaptive_claims` keep their hash.
 ## `policy`
 
 `zero_tolerance` selects a Boolean manifest field. Any mapped failure on a flagged prompt creates a policy failure event.
+It is enabled by default, with the field `zero_tolerance`; a manifest without that column flags
+no prompt, so the gate then holds none to zero tolerance. A plan that names another field needs
+that column in the manifest.
 
 ## `report`
 

@@ -221,7 +221,7 @@ error, so that they show even when standard output is piped:
 
 ```text
 Analysis: refusal_demo-20261117T171929Z
-Plan SHA-256: 8f634e7db40e3f538f7262e10b10d53823ba4ef0abc7b98ed091a9693c2e1e6f
+Plan SHA-256: 90d9f0751d9456b8323df48d57f3e94d682f4ec0f298e067d1712ee287c20fed
 Integrity: valid
 Failure rate (weighted mean):
   baseline / all: 20.4% [13.0%, 29.5%]

@@ -5,11 +5,15 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from inspect_safety_stats import analyze
 from inspect_safety_stats.config.loader import canonical_plan_value, plan_defaults
 from inspect_safety_stats.config.models import AnalysisPlan
+from inspect_safety_stats.ingest.manifest import check_zero_tolerance_field, load_manifest
+from inspect_safety_stats.report.writer import _defaults_markdown
+from inspect_safety_stats.schema.reports import PlanDefault
 
 ROOT = Path(__file__).resolve().parents[2]
 SIMPLEQA = ROOT / "examples" / "real_simpleqa"
@@ -118,6 +122,45 @@ def test_what_the_plan_wrote_and_its_defaults_make_the_plan_that_ran() -> None:
     assert plan_defaults(written_out) == []
 
 
+def test_a_judge_block_left_out_is_a_default_not_part_of_the_hash() -> None:
+    # The block was set with model_copy(update=...), which marks it written: it was hashed,
+    # and the report did not list it among the defaults.
+    judged = copy.deepcopy(PLAN)
+    mapping = {"failure_values": ["F"], "safe_values": ["S"]}
+    judge = {"id": "grader", "score": {"name": "graded", "mapping": mapping}}
+    judged["inputs"]["judges"] = [judge]
+    plan = AnalysisPlan.model_validate(judged)
+    assert plan.inputs.judges[0].block == "grader"
+    assert "block" not in canonical_plan_value(plan)["inputs"]["judges"][0]
+    assert _defaults(judged)["inputs.judges[0].block"] == "grader"
+    written = copy.deepcopy(judged)
+    written["inputs"]["judges"][0]["block"] = "grader"
+    assert canonical_plan_value(AnalysisPlan.model_validate(written))["inputs"]["judges"][0][
+        "block"
+    ] == "grader"
+    assert "inputs.judges[0].block" not in _defaults(written)
+    rebuilt = canonical_plan_value(plan)
+    for entry in plan_defaults(plan):
+        _set(rebuilt, entry["path"], entry["value"])
+    assert AnalysisPlan.model_validate(rebuilt) == plan
+
+
+def test_the_plan_written_out_in_full_reads_the_manifest_as_the_plan_that_ran(
+    tmp_path: Path,
+) -> None:
+    # The defaults include policy.zero_tolerance.manifest_field; written out, it must not make
+    # a manifest without that column an error, as it did not for the plan that left it out.
+    path = tmp_path / "design.csv"
+    path.write_text("prompt_id,question_id,task_id\np1,q1,t1\n", encoding="utf-8")
+    manifest = load_manifest(path)
+    plan = AnalysisPlan.model_validate(PLAN)
+    rebuilt = canonical_plan_value(plan)
+    for entry in plan_defaults(plan):
+        _set(rebuilt, entry["path"], entry["value"])
+    for each in (plan, AnalysisPlan.model_validate(rebuilt)):
+        check_zero_tolerance_field(each, manifest)
+
+
 def test_experimental_defaults_are_listed_although_the_resolved_plan_leaves_them_out() -> None:
     # Their models leave them out of dumps while off, to keep older outputs' bytes; the
     # analysis still applied them.
@@ -144,5 +187,17 @@ def test_analyze_records_the_defaults_in_report_json_and_report_md(tmp_path: Pat
     assert '- `inputs.score.token_limit`: `"score"`' in section
     # Defaults that leave a feature off are counted, not listed.
     assert "outputs.judge_claims" not in section
-    off = sum(entry.value in (None, False, [], {}) for entry in report.plan_defaults)
-    assert f"{off} further defaults leave" in section
+    listed = sum(line.startswith("- `") for line in section.splitlines())
+    assert f"{len(report.plan_defaults) - listed} further defaults leave" in section
+
+
+def test_a_default_of_zero_is_listed_as_a_value_it_sets() -> None:
+    # 0 == False and 0.0 == False, so a membership test counted bootstrap_seed: 0 among the
+    # defaults that leave a feature off, and left it out of the list.
+    values: list[Any] = [0, 0.0, 1, "", None, False, [], {}, [0], {"a": 0}]
+    entries = [PlanDefault(path=f"f{index}", value=value) for index, value in enumerate(values)]
+    report = SimpleNamespace(plan_defaults=entries)
+    lines = _defaults_markdown(report)  # type: ignore[arg-type]
+    listed = [line.split("`")[1] for line in lines if line.startswith("- `")]
+    assert listed == ["f0", "f1", "f2", "f3", "f8", "f9"]
+    assert "4 further defaults leave" in lines[-1]

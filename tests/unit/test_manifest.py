@@ -162,6 +162,19 @@ def test_a_named_zero_tolerance_column_must_be_in_the_manifest(tmp_path: Path) -
     check_zero_tolerance_field(plan, manifest)
 
 
+def test_the_default_zero_tolerance_column_stays_optional_when_the_plan_writes_it(
+    tmp_path: Path,
+) -> None:
+    # A report lists manifest_field: zero_tolerance among the defaults it applied; a plan that
+    # writes it out must read the same manifest as the plan that left it out.
+    path = tmp_path / "design.csv"
+    path.write_text("prompt_id,task_id\np1,t1\n", encoding="utf-8")
+    manifest = load_manifest(path, ["prompt_id", "task_id"])
+    written: dict[str, object] = {"manifest_field": "zero_tolerance"}
+    for policy in (written, {**written, "enabled": True}):
+        check_zero_tolerance_field(_zero_tolerance_plan(policy), manifest)
+
+
 class _UnreadSource:
     """A source that fails the test if anything reads it."""
 

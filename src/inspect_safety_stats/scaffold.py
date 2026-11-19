@@ -40,6 +40,7 @@ from inspect_safety_stats.registry import ASSUMPTIONS, AssumptionEntry
 _IDENTIFIER = re.compile(r"[^A-Za-z0-9_.-]+")
 _UNIFORM_FIELDS = ("task_version", "model_generate_config", "solver")
 _SCHEMA_VERSION = "2.0"
+_ZERO_TOLERANCE_FIELD = "zero_tolerance"
 
 
 class _PlainDumper(yaml.SafeDumper):
@@ -75,6 +76,9 @@ class ScaffoldResult:
     group_by: str | None
     notes: list[str] = field(default_factory=list)
     assumptions: list[AssumptionNote] = field(default_factory=list)
+    # The logs to analyze the plan with: those given, or, when init ignored some, only the
+    # evaluation logs it used, since analyze would report the ignored ones incomplete.
+    logs: list[str] = field(default_factory=list)
 
 
 def _native(value: Any) -> Any:
@@ -171,10 +175,20 @@ def _resolve_mapping(
             )
     else:
         safes = [value for value in observed if value not in failures]
-        notes.append(
-            "safe values were taken to be every other observed value: "
-            + ", ".join(repr(value) for value in safes)
-        )
+        # A value nobody named is never taken as safe, except the other value of a two-valued
+        # score: there the failure value leaves no doubt about what the rest means.
+        if len(observed) > 2 and safes:
+            raise ValueError(
+                f"score {score!r} has {len(observed)} values, and --failure-values names "
+                f"only {failures!r}; init does not take the others as safe unless you say "
+                "so. Name the safe ones with --safe-values and add any other failures to "
+                "--failure-values: " + ", ".join(repr(value) for value in safes)
+            )
+        if safes:
+            notes.append(
+                f"score {score!r} has two values, so {safes[0]!r}, the one --failure-values "
+                "does not name, was taken as safe; pass --safe-values to name it yourself"
+            )
     if set(map(repr, failures)) & set(map(repr, safes)):
         raise ValueError("a score value cannot be both a failure and safe")
     if not safes:
@@ -259,8 +273,8 @@ def _assumption_notes(
         AssumptionNote(
             "judge_accuracy",
             "inputs.judge_calibration is left out, so the score's verdicts are taken as "
-            "correct, as under its mode's default, "
-            f"{ASSUMPTIONS['judge_accuracy'].default}.",
+            "correct, as they are under inputs.judge_calibration.mode: "
+            f"{ASSUMPTIONS['judge_accuracy'].default}, its default.",
         ),
         _left_at_default("missing_scores"),
         _left_at_default("sample_errors"),
@@ -270,7 +284,23 @@ def _assumption_notes(
     return notes
 
 
-def _header(stamp: datetime, assumptions: Sequence[AssumptionNote]) -> str:
+def _alpha_text(alpha: float, families: Sequence[str]) -> str:
+    """How the plan spends alpha: once in each multiplicity family, not once in all."""
+
+    joint = max(0.0, 1 - len(families) * alpha)
+    return (
+        f"each multiplicity family ({', '.join(families)}) spends alpha {alpha:g} on its own: "
+        f"the intervals of one family hold together with probability at least {1 - alpha:g}, "
+        "and all "
+        f"of the plan's intervals hold together with probability at least {joint:g}. To make "
+        "them all hold together with a stated probability, split alpha between the families "
+        "(multiplicity.families)"
+    )
+
+
+def _header(
+    stamp: datetime, assumptions: Sequence[AssumptionNote], alpha_text: str
+) -> str:
     """The comment that opens the plan: how it was made, and the assumptions it rests on."""
 
     lines = [
@@ -278,6 +308,23 @@ def _header(stamp: datetime, assumptions: Sequence[AssumptionNote]) -> str:
         "Review the score mapping, cohorts and weights before running `analyze`.",
         "Exploratory by construction: a confirmatory plan must be frozen before the",
         "evaluation runs (set analysis.intent and analysis.plan_frozen_at).",
+        "",
+        *textwrap.wrap(
+            "Zero tolerance is off (policy.zero_tolerance.enabled: false): design.csv has no "
+            f"{_ZERO_TOLERANCE_FIELD} column, so the gate would hold no prompt. To hold prompts "
+            f"to zero tolerance, add a {_ZERO_TOLERANCE_FIELD} column, true for those prompts, "
+            "and set enabled: true.",
+            width=88,
+            break_long_words=False,
+            break_on_hyphens=False,
+        ),
+        "",
+        *textwrap.wrap(
+            alpha_text[0].upper() + alpha_text[1:] + ".",
+            width=88,
+            break_long_words=False,
+            break_on_hyphens=False,
+        ),
         "",
         "The choices init made, and the assumptions they rest on (from",
         "inspect_safety_stats.registry):",
@@ -352,12 +399,36 @@ def scaffold_plan(
     notes: list[str] = []
 
     status = evaluations.get("status", pd.Series(["success"] * len(evaluations)))
-    successful = evaluations.loc[status.astype(str) == "success"].copy()
-    skipped = len(evaluations) - len(successful)
-    if skipped:
-        notes.append(f"ignored {skipped} evaluation log(s) that did not finish successfully")
+    finished = (status.astype(str) == "success").to_numpy()
+    successful = evaluations.loc[finished].copy()
     if successful.empty:
         raise ValueError("none of the evaluation logs finished successfully")
+    given = log_input if isinstance(log_input, list) else [log_input]
+    analyze_logs = given
+    if not finished.all():
+        ignored = sorted(evaluations.loc[~finished, "log"].astype(str))
+        notes.append(
+            f"ignored {len(ignored)} evaluation log(s) that did not finish successfully: "
+            + ", ".join(ignored)
+            + ". analyze would report them incomplete, so give it only the logs init used, "
+            "as Next: does"
+        )
+        analyze_logs = sorted(successful["log"].astype(str).unique())
+
+    # analyze takes a run's task as part of its configuration, and a cohort whose runs differ
+    # in configuration is invalid (CONFIG_DRIFT). A cohort here is one model, so it can span
+    # only one task.
+    tasks = sorted(
+        set(successful["task_name"].astype(str)) if "task_name" in successful else {"task"}
+    )
+    if len(tasks) > 1:
+        raise ValueError(
+            f"the logs hold evaluations of {len(tasks)} tasks ({', '.join(tasks)}); init writes "
+            "a plan for one task, because analyze requires the evaluations of each model to "
+            "share one configuration, task included. Pass the logs of one task with --logs, and "
+            "run init once for each task."
+        )
+    task = tasks[0]
 
     per_model = successful.groupby(successful["model"].astype(str))["eval_id"].nunique()
     repeated = sorted(str(model) for model, count in per_model.items() if count > 1)
@@ -368,7 +439,9 @@ def scaffold_plan(
             + ". Pass the specific .eval files to use with --logs."
         )
 
-    samples = samples_df(log_input)
+    # Read the samples of only the logs init uses: samples of an ignored log that lack a
+    # metadata field would turn the field's integers into floats, 1 into 1.0, for every log.
+    samples = samples_df(analyze_logs)
     samples = samples.loc[samples["eval_id"].astype(str).isin(successful["eval_id"].astype(str))]
     if samples.empty:
         raise ValueError("the successful evaluations contain no samples")
@@ -403,25 +476,7 @@ def scaffold_plan(
     )
     notes.extend(mapping_notes)
 
-    task_by_eval = dict(
-        zip(
-            successful["eval_id"].astype(str),
-            successful.get("task_name", pd.Series(["task"] * len(successful))).astype(str),
-            strict=True,
-        )
-    )
-    samples = samples.assign(
-        _prompt_id=samples["id"].astype(str),
-        _task=samples["eval_id"].astype(str).map(task_by_eval),
-    )
-    tasks = sorted(samples["_task"].unique())
-    per_prompt_tasks = samples.groupby("_prompt_id")["_task"].nunique()
-    if (per_prompt_tasks > 1).any():
-        clashes = sorted(per_prompt_tasks[per_prompt_tasks > 1].index)[:5]
-        raise ValueError(
-            "sample identifiers repeat across tasks "
-            f"({', '.join(clashes)}); run init separately for each task"
-        )
+    samples = samples.assign(_prompt_id=samples["id"].astype(str))
 
     group_column: str | None = None
     if group_by is not None:
@@ -439,6 +494,19 @@ def scaffold_plan(
         group_column = _IDENTIFIER.sub("_", group_by)
         if group_column in {"prompt_id", "question_id", "task_id", "expected_rollouts"}:
             group_column = f"{group_column}_group"
+        # A sample without the field is refused, not grouped under a made-up value that could
+        # merge with a real one. An empty value counts as missing: design.csv would read back
+        # an empty cell as missing.
+        absent = samples[metadata].map(lambda value: is_missing(value) or str(value) == "")
+        if absent.any():
+            named = sorted(samples.loc[absent, "_prompt_id"].unique())
+            raise ValueError(
+                f"metadata field {group_by!r} is missing or empty for {len(named)} sample(s): "
+                + ", ".join(named[:10])
+                + (", ..." if len(named) > 10 else "")
+                + ". init does not invent a group for them: record the field for every sample, "
+                "or leave out --group-by"
+            )
         conflicting = samples.groupby("_prompt_id")[metadata].nunique(dropna=False)
         if (conflicting > 1).any():
             raise ValueError(
@@ -467,11 +535,10 @@ def scaffold_plan(
         row: dict[str, Any] = {
             "prompt_id": sample["_prompt_id"],
             "question_id": sample["_prompt_id"],
-            "task_id": sample["_task"],
+            "task_id": task,
         }
         if group_column is not None:
-            value = sample[f"metadata_{group_by}"]
-            row[group_column] = "missing" if is_missing(value) else str(value)
+            row[group_column] = str(sample[f"metadata_{group_by}"])
         row["expected_rollouts"] = rollouts
         rows.append(row)
     manifest = pd.DataFrame(rows)
@@ -503,7 +570,6 @@ def scaffold_plan(
         )
 
     hierarchy = [
-        *(["task_id"] if len(tasks) > 1 else []),
         *([group_column] if group_column else []),
         "prompt_id",
     ]
@@ -516,12 +582,13 @@ def scaffold_plan(
          "alpha": alpha},
     ]
     stamp = datetime.now(timezone.utc)
-    task_label = tasks[0] if len(tasks) == 1 else f"{len(tasks)} tasks"
     plan: dict[str, Any] = {
         "schema_version": _SCHEMA_VERSION,
         "analysis": {
-            "id": _IDENTIFIER.sub("-", f"{task_label}-{stamp:%Y%m%dT%H%M%SZ}"),
-            "title": f"{task_label}: " + ", ".join(cohorts.values()),
+            "id": _IDENTIFIER.sub("-", f"{task}-{stamp:%Y%m%dT%H%M%SZ}"),
+            # Cohort ids, not model names: a model name can be a path on the machine that
+            # served it, and the title heads every report.
+            "title": f"{task}: " + ", ".join(cohorts),
             "description": (
                 "Starter plan generated by inspect-safety-stats init. Exploratory: it was "
                 "written after the logs existed."
@@ -597,7 +664,14 @@ def scaffold_plan(
                 "hierarchy_calibration": "frontier_sidak" if has_nodes else "flat_bonferroni",
             }
         ]
+    # The manifest has no zero-tolerance column, so an enabled gate could flag nothing, and a
+    # report would list the default enabled: true as if it held prompts to zero tolerance.
+    plan["policy"] = {
+        "zero_tolerance": {"enabled": False, "manifest_field": _ZERO_TOLERANCE_FIELD}
+    }
     AnalysisPlan.model_validate(plan)
+    alpha_text = _alpha_text(alpha, [str(family["id"]) for family in families])
+    notes.append(alpha_text)
     assumptions = _assumption_notes(
         score=score,
         mapping=mapping,
@@ -618,7 +692,7 @@ def scaffold_plan(
         )
     manifest.to_csv(manifest_path, index=False, lineterminator="\n")
     plan_path.write_text(
-        _header(stamp, assumptions)
+        _header(stamp, assumptions, alpha_text)
         + "\n"
         + yaml.dump(plan, Dumper=_PlainDumper, sort_keys=False, allow_unicode=True),
         encoding="utf-8",
@@ -637,4 +711,5 @@ def scaffold_plan(
         group_by=group_by,
         notes=notes,
         assumptions=assumptions,
+        logs=analyze_logs,
     )

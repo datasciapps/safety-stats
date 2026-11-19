@@ -2099,9 +2099,15 @@ def _limitations_markdown(report: SafetyReport) -> list[str]:
 
 
 def _sets_a_value(value: Any) -> bool:
-    """Whether a default sets something, rather than leaving a feature off or a field unused."""
+    """Whether a default sets something, rather than leaving a feature off or a field unused.
 
-    return value not in (None, False, [], {})
+    None and false leave something off, and so does an empty list or mapping. A zero sets a
+    value: ``0 == False``, so the test is by identity and type, not by equality.
+    """
+
+    if value is None or value is False:
+        return False
+    return not (isinstance(value, (list, dict)) and not value)
 
 
 def _defaults_markdown(report: SafetyReport) -> list[str]:

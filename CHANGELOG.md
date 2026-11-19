@@ -186,9 +186,10 @@ described in their pull requests.
   that exclude nothing keep their bytes.
 
 - **A zero-tolerance column that the manifest lacks is an error.** When a plan sets
-  `policy.zero_tolerance.manifest_field` and the manifest has no such column, the analysis
+  `policy.zero_tolerance.manifest_field` to a column the manifest does not have, the analysis
   silently held no prompt to zero tolerance. It now stops with an error that names the column.
-  The default field `zero_tolerance` stays optional.
+  The default column `zero_tolerance` stays optional, whether the plan leaves the field out or
+  writes it, so a plan written out with the defaults its report lists analyzes as it did.
 
 - **A generative run resumed after errors can be analyzed.** `generative materialize --resume`
   reruns the units whose rewrite hit an operational error, from the kernel or from the
@@ -415,7 +416,11 @@ described in their pull requests.
   assumptions those intervals record. "Limitations" is generated from the package's registry
   of assumptions: each assumption that applies, with the plan settings it took, marked as
   default or written, and what follows if it is wrong. `report.json` gains
-  `assumptions_used` with the same content. See
+  `assumptions_used` with the same content. A sampled design states `probability_sample`, that
+  the items were drawn at random with inclusion probabilities fixed in advance and without
+  regard to the outcomes, as `design.sampling` declares, in place of `rollout_independence`:
+  its intervals take each drawn item as the independent block. It keeps
+  `rollout_independence` when its prompt bounds are enabled. See
   [Assumptions and defaults a report states](docs/interpretation.md#assumptions-and-defaults-a-report-states).
 
 - **Reports record every default the analysis applied.** `report.json` gains `plan_defaults`:
@@ -427,11 +432,21 @@ described in their pull requests.
 - **`init`: a starter plan from completed logs, with its assumptions noted (experimental).**
   `inspect-safety-stats init --logs LOGS --failure-values V` writes `design.csv` and
   `safety-plan.yaml`: one cohort per model, the root failure risk with a prompt-level
-  sensitivity, an optional breakdown and a comparison of several models. The plan's header,
-  and the command's output, list each choice `init` made with the assumption it rests on from
-  `inspect_safety_stats.registry`, rollout independence first, what goes wrong if it does not
-  hold, and the remedy. The plan is exploratory; `--intent confirmatory` is refused, because
-  the plan is written after the logs exist. See
+  sensitivity, an optional breakdown and a comparison of several models, for one task: logs of
+  several tasks are refused, since a cohort that spans tasks fails `analyze`'s configuration
+  check. `init` takes no value as safe that nobody named: a score with more than two values
+  needs `--safe-values`, and without it `init` refuses and lists the values left over.
+  `design.csv` has no `zero_tolerance` column, so the plan turns the zero-tolerance gate off
+  and its header says how to turn it on; left at its default, the gate could hold no prompt.
+  `init` names the logs of evaluations that did not finish successfully, which it ignores, and
+  its suggested `analyze` command then lists only the logs it used. `--group-by` refuses a
+  metadata field that some samples lack or leave empty, naming them. `--alpha` is spent once
+  in each multiplicity family, which the plan's header and the output state. The plan's title
+  names the task and the cohort ids, not the model names, which can be machine paths. The
+  plan's header, and the command's output, list each choice `init` made with the assumption it
+  rests on from `inspect_safety_stats.registry`, rollout independence first, what goes wrong
+  if it does not hold, and the remedy. The plan is exploratory; `--intent confirmatory` is
+  refused, because the plan is written after the logs exist. See
   [Command-line interface](docs/api-reference.md#command-line-interface).
 
 - **A warning when tail measures cannot be informative.** Tail and threshold measures

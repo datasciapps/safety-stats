@@ -643,7 +643,11 @@ class JudgeSpec(StrictModel):
     @model_validator(mode="after")
     def resolve_block(self) -> JudgeSpec:
         if self.block is None:
-            return self.model_copy(update={"block": self.id})
+            # Set without marking block as written (model_fields_set), so the plan's hash
+            # leaves out a block the author did not write, and the report lists it among the
+            # defaults applied.
+            object.__setattr__(self, "block", self.id)
+            return self
         if not self.block.strip():
             raise ValueError("judge block must be a non-empty identifier")
         return self

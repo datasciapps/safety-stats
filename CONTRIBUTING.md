@@ -109,9 +109,11 @@ Plans are strict (`extra="forbid"`).
 - changing what an existing value means.
 
 **Plan hash:** `inspect-safety-stats hash-plan` must give an unchanged plan file the same hash
-from any directory (#42).
-
-- **[gap]** It does not yet survive package upgrades, because defaults are hashed (#56).
+from any directory (#42). The hash covers only the fields the plan writes, so it also survives a
+package upgrade that adds a field or changes a default (#56). A field set by a validator, such
+as a schema version's defaults, must not count as written: set it with `object.__setattr__`, not
+`model_copy(update=...)`. `report.json` lists the defaults an analysis applied in
+`plan_defaults`.
 
 ### 4.3 Report outputs
 

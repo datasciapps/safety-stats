@@ -542,8 +542,8 @@ see [Hierarchy-aware simultaneous inference](hierarchy-simultaneous-inference.md
 ## Command-line interface
 
 ```text
-inspect-safety-stats init --logs LOGS (--failure-values V | --failure-threshold T) [--score NAME]
-    [--group-by FIELD] [--baseline MODEL] [--output DIRECTORY] [--overwrite]
+inspect-safety-stats init --logs LOGS (--failure-values V [--safe-values V] | --failure-threshold T)
+    [--score NAME] [--group-by FIELD] [--baseline MODEL] [--output DIRECTORY] [--overwrite]
 inspect-safety-stats analyze --plan PLAN --logs LOGS --output DIRECTORY
 inspect-safety-stats validate --plan PLAN --logs LOGS
 inspect-safety-stats analyze --plan PLAN --runs RUNS --rollouts ROLLOUTS --output DIRECTORY
@@ -573,13 +573,27 @@ inspect-safety-stats version
 `init` (experimental) reads completed Inspect logs and writes a starter `design.csv` and
 `safety-plan.yaml` into `--output`. The plan has one cohort per model, the root failure risk
 with a prompt-level sensitivity, an optional one-level breakdown by `--group-by`, and a
-comparison when there are several models. `init` never guesses which scores are failures: name
-them with `--failure-values` or `--failure-threshold`. The plan's header lists each choice
-`init` made and the assumption it rests on, from `inspect_safety_stats.registry`: rollout
-independence first, then the rest. Each note says what goes wrong if the assumption does not
-hold and how to change it. The command prints the same list. A plan written after the logs
-exist cannot be confirmatory, so `--intent confirmatory` is refused with exit status `3`;
-the plan is `exploratory`. For a confirmatory analysis, write the plan before the runs.
+comparison when there are several models. `--group-by` names a sample metadata field that
+every sample records; `init` refuses one that some samples lack or leave empty, naming them,
+rather than invent a group for them. The plan covers one task: `analyze` requires a cohort's
+evaluations to share one configuration, task included, so `init` refuses logs of several tasks;
+run it once for each task. `init` never guesses which scores are failures: name them with
+`--failure-values` or `--failure-threshold`. Nor does it take a value nobody named as safe: when
+the score has more than two values, name the safe ones with `--safe-values`, or `init` refuses
+and lists the values left over. With two, the one `--failure-values` does not name is safe, and
+`init` says so. `design.csv` has no `zero_tolerance` column, so the plan turns the
+zero-tolerance gate off, and its header says how to turn it on. `init` uses only the
+evaluations that finished successfully and names the logs it ignored; its suggested `analyze`
+command then lists the logs it used, since `analyze` would report the others incomplete.
+`--alpha` (default 0.05) is spent once in each multiplicity family the plan writes: the prompt
+bounds, the risk intervals and, with several models, the comparisons. The plan's header and the
+command's output say so, and with what probability all the intervals hold together. The plan's
+header lists each choice `init` made and the assumption it rests on, from
+`inspect_safety_stats.registry`: rollout independence first, then the rest. Each note says what
+goes wrong if the assumption does not hold and how to change it. The command prints the same
+list. A plan written after the logs exist cannot be confirmatory, so `--intent confirmatory` is
+refused with exit status `3`; the plan is `exploratory`. For a confirmatory analysis, write the
+plan before the runs.
 
 Every `plan` subcommand except `pilot` accepts `--family-size M`, which plans at the Bonferroni share
 `alpha / M`. Use it to match the `equal_bonferroni` allocation that `analyze` applies to a
