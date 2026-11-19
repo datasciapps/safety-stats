@@ -97,7 +97,7 @@ from a largest-remainder split of `total_rewrites`, so the draws depend on the t
 
 The manifest-based Inspect path does not give this stream, with or without a recorded seed.
 Inspect runs samples in dataset order unless `sample_shuffle` is set, and it is off by default.
-With `sample_shuffle` set to a seed, the order is a seeded permutation: each sample runs once, so
+With `sample_shuffle` set to a seed, the order is a seeded permutation: each sample appears once in the order, so
 the draws are without replacement and outside the proposition above (with replacement only).
 Phase 1's sequences refuse that path. Its only anytime-valid route is the upper bound of #126
 ([below](#runs-that-optstop-stopped-126)), which covers a permutation, and which in turn refuses
@@ -220,8 +220,8 @@ gives every figure except Clopper–Pearson re-checked after every draw, which
 | probability of passing at a true rate of 0.03 | 0.708 by 1,200 draws; a run uses 745 draws on average | 0.970 with 1,200 draws; 482 draws pass 0.708 |
 | false-pass rate at a true rate of 0.05, checked after every draw | 0.040 (s.e. 0.0014) | Clopper–Pearson: 0.242 (s.e. 0.0010); a single look at 1,200 draws: 0.045 |
 
-The sequence saves draws only where the failure rate is well below the threshold and not known
-in advance. At 0.005 it passes after a mean of 101 draws, where a fixed design needs 153 to pass
+The sequence saves the most draws where the failure rate is well below the threshold and not
+known in advance. At 0.005 it passes after a mean of 101 draws, where a fixed design needs 153 to pass
 0.99 of the time; the zero-failure design of 59 draws is smaller but passes only 0.744 of the
 time. Near the threshold the sequence costs draws: at 0.03 a fixed design of 482 draws passes as
 often as the sequence, which uses 745 on average. The Hoeffding-spending reference passes none
@@ -235,9 +235,10 @@ demonstration phase 1 must turn into a test.
 
 The review of #10, tracked in #128, reported figures of the same kind from a sequence it did not
 name: 1.1–1.5× for the width, 72 draws at 0.005, 0.76 at 0.03 and 0.247 for Clopper–Pearson
-re-checked. It set its 72 draws against the 1,200-draw horizon, not against a fixed design, and
-its 0.247 is about five Monte Carlo standard errors from the 0.242 reproduced here, so its set-up
-differed in some detail it did not report. The table above replaces those figures. Phase 1
+re-checked. It set its 72 draws against the 1,200-draw horizon, not against a fixed design. Its
+0.247 is about five of this table's Monte Carlo standard errors from the 0.242 reproduced here,
+but the review did not report how many runs it used, so the gap may be its own Monte Carlo
+error. The table above replaces those figures. Phase 1
 measures them again for the sequence it builds.
 
 ## Related work
