@@ -658,17 +658,25 @@ references, `judge_corrected_validated_delta` and the Lang--Reiczigel limits, wo
 policy's rollouts as judge verdicts, so they are not reported for that row.
 
 **A row whose sample holds none.** The widening is triggered by the sample. A row whose sample
-holds no rollout a plan policy classified is corrected over the box as given, which assumes that
-the population its rollouts are drawn from holds none either. When the policy classifies rare
-rollouts, such as an occasional missing score counted as a failure, a run can miss them, and the
-correction then reads the population's policy failures through \(\rho_1<1\) at the upper bound,
-so the upper bound can miss more often than its nominal rate. The corrected interval states this
-assumption when the plan sets a policy that classifies rollouts (`missing` or `errors` set to
-`count_as_failure`, or `token_limit` or `content_filter_stops` set to `safe` or `failure`), and
-in any cohort whose sample holds such a rollout in some row. A plan at the defaults whose sample
-holds none, where only an unseen policy block could be missed, does not repeat it on every row.
-The correction does not yet bound the policy's share in the population, which would correct such
-a row without this assumption.
+holds no rollout a plan policy classified is corrected over the box as given. The population its
+rollouts are drawn from may still hold such rollouts, which a run can miss when the policy
+classifies rare ones, such as an occasional sample error counted as a failure. Read through
+\(\rho_1<1\), the population's policy failures would lower the upper bound, and its
+policy-safe rollouts, read through \(\rho_0>0\), would raise the lower. The bound on the row's
+[unclassified share](#unclassified-rollouts) covers them. It is computed from the run's count of
+unclassified rollouts, and in a run with no policy-classified rollout that count is also the
+count of the two kinds together, so at its alpha the bound holds for their combined share. The
+correction takes that share as failures at the upper bound and as safe at the lower, or moves
+each end by it under `exclude`, which covers both kinds. With errors counted as failures at rate
+0.10 on 20 rollouts, a judge that flags nothing and \(\rho_1\in[0.4,0.5]\), the box alone would
+give 0.099 in the 12% of runs that see no error, and with the share bound the corrected upper
+bound stays above the true 0.10 in every run. The corrected interval says so when the plan sets
+a policy that classifies rollouts (`missing` or `errors` set to `count_as_failure`, or
+`token_limit` or `content_filter_stops` set to `safe` or `failure`), and in any cohort whose
+sample holds such a rollout in some row. A plan at the defaults whose sample holds none, where
+only an unseen policy block could be missed, does not repeat it on every row. The panel-derived
+correction and the noisy-but-valid test take no share bound, so for them it remains an
+assumption that the population holds no such rollout the run did not see.
 
 In a seeded simulation of three prompts of 300 rollouts at a point box on the judge's true
 accuracy, a judge that over-flags (\(\rho_1=0.5\)) with up to 40% policy failures, and one that
@@ -932,8 +940,10 @@ the test certifies only the rows the corrected interval does ([What it certifies
 Elsewhere the claim is INCONCLUSIVE, with the reason. So is a claim whose row holds a rollout a
 plan policy classified ([Rollouts a policy classifies](#rollouts-a-policy-classifies)): the test
 inverts the judge-reported bounds as if every classified rollout carried a judge verdict, which
-moves them the wrong way for such a rollout. A `corrected_interval` claim on the same row is
-decided on the correction, which covers it.
+moves them the wrong way for such a rollout. A row whose run holds none is tested as it is,
+which assumes that its population holds none either: the test takes no
+[unclassified share](#unclassified-rollouts) bound that would cover them. A `corrected_interval`
+claim on the same row is decided on the correction, which covers both.
 The construction follows the structure of Feng et al.'s "Noisy but Valid" framework (a calibration
 set for the judge's error rates and a variance-corrected critical threshold on the judge-labelled
 set, with finite-sample validity); it is realised here with the package's exact Clopper--Pearson
