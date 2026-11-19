@@ -328,3 +328,37 @@ def test_the_panel_derived_correction_credits_no_panel_error_on_a_row_a_policy_c
     (found,) = outcome.with_code("JUDGE_CORRECTION_POLICY_CLASSIFIED")
     assert found.details == {"groups": ["all"], "policy_safe": 1, "policy_failures": 0}
 
+
+
+# --- A prompt of weight zero ---------------------------------------------------------------
+
+
+def _weightless_p1_with_missing_scores(inputs: Inputs) -> None:
+    """p1 weighted 0 and p2 weighted 1, with 15 of p1's 20 scores missing as failures.
+
+    The maximum ignores weights, so p1, nearly all failures, sets the row's upper bound.
+    """
+
+    for row, weight in zip(inputs.manifest, (0, 1), strict=True):
+        row["weight"] = weight
+    inputs.plan["design"] = {"weights": {"strategy": "explicit", "column": "weight"}}
+    inputs.plan["outputs"]["risk_measures"].append({"id": "worst", "type": "maximum"})
+    inputs.plan["inputs"]["score"]["missing"] = "count_as_failure"
+    for item in inputs.rollouts[:15]:
+        assert item["item_id"] == "p1"
+        item["score_harmful"] = None
+
+
+def test_a_prompt_of_weight_zero_that_a_policy_classified_still_widens_the_correction(
+    tmp_path: Any,
+) -> None:
+    outcome = judged(assumed, _weightless_p1_with_missing_scores)(tmp_path)
+
+    row = _row(outcome, measure="worst")
+    widened = _interval(row, DECLARED)
+    assert widened.upper == pytest.approx(row.upper + (1 - row.upper) * RHO_0[1], abs=1e-12)
+    assert widened.lower == pytest.approx(row.lower * RHO_1[0], abs=1e-12)
+    assert any(
+        item.startswith("15 of the row's rollouts were classified by a plan policy")
+        for item in widened.assumptions
+    )

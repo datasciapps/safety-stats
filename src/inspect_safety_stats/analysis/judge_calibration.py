@@ -236,13 +236,13 @@ def _unclassified_share(
 def _policy_rollouts(
     population: Mapping[str, PromptRollouts], weights: Mapping[str, float]
 ) -> tuple[int, int]:
-    """The rollouts a plan policy counted safe and as failures in the prompts a row weights."""
+    """The rollouts a plan policy counted safe and as failures in the prompts of a row.
 
-    found = [
-        item
-        for prompt_id, weight in weights.items()
-        if weight > 0 and (item := population.get(prompt_id)) is not None
-    ]
+    Every prompt the row's weights list counts, a prompt of weight zero too: the maximum and
+    the top-k mean ignore weights, so such a prompt can set the row's bounds.
+    """
+
+    found = [item for prompt_id in weights if (item := population.get(prompt_id)) is not None]
     return sum(item.policy_safe for item in found), sum(item.policy_failures for item in found)
 
 

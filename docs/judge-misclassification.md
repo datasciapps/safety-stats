@@ -518,7 +518,9 @@ rollouts, true risk is \(J_1\rho_1+J_0\rho_0+P+Vu\). The base bounds cover
 \(L\le J_1+P\) and \(J_1+P+V\le U\), and \(J_0\le1-U\) then, so true risk lies between
 \(\underline{\rho}_1(J_1+P)\ge\underline{\rho}_1L\) and
 \(J_1+P+V+\overline{\rho}_0J_0\le U+(1-U)\overline{\rho}_0\). The step holds prompt by prompt,
-so it holds for the tail measures too. The correction states which rollouts it covers in the
+so it holds for the tail measures too. A row holds such a rollout when any prompt it lists does,
+a prompt of weight zero included, since the maximum and the top-k mean ignore weights and such
+a prompt can set the row's bounds. The correction states which rollouts it covers in the
 interval's assumptions, and an INFO diagnostic, `JUDGE_CORRECTION_POLICY_CLASSIFIED`, names the
 groups per cohort. A validated correction of such a row still certifies. Its asymptotic
 references, `judge_corrected_validated_delta` and the Lang--Reiczigel limits, would read the
