@@ -253,13 +253,14 @@ described in their pull requests.
   (`PLAN_INVALID_MULTIPLICITY`). Mandatory adaptive claims enter the decision, which they can
   make `FAIL` but, never being `PASS`, otherwise hold at `INCONCLUSIVE`; with
   `mandatory: false` a claim neither fails nor holds the decision. `report.json`
-  and `report.md` show them in their own section, `report.html` beside the cohort's claims,
+  and `report-full.md` show them in their own section, `report.html` beside the cohort's claims,
   with the bound's assumptions: the attack order fixed before any outcome or drawn at random,
   at most one run per behaviour, and judge error not corrected; when
   `report.include_decisions` is false, only `report.json` holds the claims. Such a report
   lists the assumptions among those it rests on as `adaptive_attack_stream`.
-  Plans without them keep their hash and their `report.json` and `report.md` bytes; every
-  `report.html` changes bytes, because it embeds the script that renders them. See
+  Plans without them keep their hash and their `report.json`, `report.md` and
+  `report-full.md` bytes; every `report.html` changes bytes, because it embeds the script
+  that renders them. See
   [`adaptive_claims`](docs/plan-reference.md#adaptive_claims-experimental).
 
 - **Multi-turn and system-prompt generation (experimental).** A generative plan can make
