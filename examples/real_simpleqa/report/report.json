@@ -4,10 +4,145 @@
     "id": "real-simpleqa-eight",
     "intent": "confirmatory",
     "plan_frozen_at": "2026-08-18T08:00:00Z",
-    "plan_sha256": "e27c60131ebe6bfbe19fa21de11eb03144040a3f75c70e35c9f90692d956ad7c",
+    "plan_sha256": "fd9ee06715157246e1e6d90d86f2cada7d7cffe96ee9fd7e280c8d026a0f654c",
     "registration": null,
     "title": "Eight real SimpleQA items as a fixed-design failure analysis"
   },
+  "assumptions_used": [
+    {
+      "id": "fixed_design",
+      "if_wrong": "A result read as covering prompts beyond the manifest overstates what the bounds say about them.",
+      "settings": [
+        {
+          "default": false,
+          "path": "design.type",
+          "value": "fixed"
+        }
+      ],
+      "statement": "Prompt, question, task and group membership are fixed, creator-declared design elements. The bounds cover these prompts, not a population they were drawn from."
+    },
+    {
+      "id": "run_stability",
+      "if_wrong": "The bounds describe a mixture of configurations, not the system the cohort names.",
+      "settings": [
+        {
+          "default": false,
+          "path": "cohorts.candidate.require_uniform",
+          "value": [
+            "task_version",
+            "model_generate_config",
+            "solver"
+          ]
+        }
+      ],
+      "statement": "Every rollout of a cohort comes from one stable system: the same model and configuration throughout its runs."
+    },
+    {
+      "id": "rollout_independence",
+      "if_wrong": "Rollouts that share a cause, such as a retried request, a cache or a shared conversation, make the bounds narrower than their stated coverage.",
+      "settings": [
+        {
+          "default": false,
+          "path": "outputs.direct_mean_intervals.independence",
+          "value": {
+            "primary": "rollout",
+            "sensitivities": []
+          }
+        }
+      ],
+      "statement": "The blocks of the declared independence profile are independent: under the rollout profile, every rollout of a prompt is an independent draw."
+    },
+    {
+      "id": "scorer_validity",
+      "if_wrong": "The bounds are precise about the wrong quantity: a narrow bound on a score that misses the hazard says nothing about the hazard.",
+      "settings": [],
+      "statement": "The score measures the hazard. Scorer errors, under-elicitation, evaluation awareness and omitted hazards are not repaired by statistical precision."
+    },
+    {
+      "id": "judge_accuracy",
+      "if_wrong": "Judge errors bias every rate and comparison the judge's verdicts enter.",
+      "settings": [
+        {
+          "default": true,
+          "path": "inputs.judge_calibration",
+          "value": null
+        }
+      ],
+      "statement": "Judge verdicts are taken as correct unless the plan validates or transports the judge's error rates."
+    },
+    {
+      "id": "missing_scores",
+      "if_wrong": "Under exclude or count_as_failure, missing scores that are not missing at random bias the rates.",
+      "settings": [
+        {
+          "default": false,
+          "path": "inputs.score.missing",
+          "value": "block"
+        }
+      ],
+      "statement": "A rollout without a score has an unknown outcome, bounded at both extremes, unless the plan counts it otherwise."
+    },
+    {
+      "id": "sample_errors",
+      "if_wrong": "When errors come from the harness rather than the system, counting them as outcomes biases the rates.",
+      "settings": [
+        {
+          "default": false,
+          "path": "inputs.score.errors",
+          "value": "block"
+        }
+      ],
+      "statement": "A sample error counts as the plan's score.errors says. Under end_to_end, with the end-to-end system estimand, a provider's policy block of the target's generation that delivered no content counts as safe."
+    },
+    {
+      "id": "token_limit",
+      "if_wrong": "A truncated answer may have turned harmful or safe had it continued; its score describes the truncation.",
+      "settings": [
+        {
+          "default": true,
+          "path": "inputs.score.token_limit",
+          "value": "score"
+        }
+      ],
+      "statement": "An answer that stopped at the generation token limit counts by its score, and without a score as missing."
+    },
+    {
+      "id": "content_filter_stops",
+      "if_wrong": "A stop that the scorer reads as a refusal or a failure counts as the model's behaviour, though the provider's filter produced it.",
+      "settings": [
+        {
+          "default": true,
+          "path": "inputs.score.content_filter_stops",
+          "value": "score"
+        }
+      ],
+      "statement": "An output a provider's content filter stopped without a sample error counts by its score."
+    },
+    {
+      "id": "complete_design",
+      "if_wrong": "Prompts or rollouts that are missing for a reason linked to their outcome bias the rates.",
+      "settings": [
+        {
+          "default": false,
+          "path": "design.require_expected_rollouts",
+          "value": true
+        }
+      ],
+      "statement": "Every run finished, every prompt of a fixed design was evaluated, and every prompt has the rollouts the manifest expects."
+    },
+    {
+      "id": "plan_fixed_in_advance",
+      "if_wrong": "Choices made after seeing outcomes can select the result, and the stated coverage no longer holds.",
+      "settings": [
+        {
+          "default": false,
+          "path": "analysis.intent",
+          "value": "confirmatory"
+        }
+      ],
+      "statement": "The plan was fixed before the runs started, so that no choice in it was made after seeing the outcomes."
+    }
+  ],
   "claims": [
     {
       "acceptable_upper": 0.25,
@@ -2415,6 +2550,252 @@
     }
   ],
   "package_version": "0.15.0",
+  "plan_defaults": [
+    {
+      "path": "analysis.registration",
+      "value": null
+    },
+    {
+      "path": "inputs.estimand",
+      "value": "end_to_end_system"
+    },
+    {
+      "path": "inputs.sample_join.inspect_field",
+      "value": "id"
+    },
+    {
+      "path": "inputs.sample_join.manifest_field",
+      "value": "prompt_id"
+    },
+    {
+      "path": "inputs.score.mapping.failure_if",
+      "value": null
+    },
+    {
+      "path": "inputs.score.content_filter_stops",
+      "value": "score"
+    },
+    {
+      "path": "inputs.score.token_limit",
+      "value": "score"
+    },
+    {
+      "path": "inputs.score.mapping_sensitivities",
+      "value": []
+    },
+    {
+      "path": "inputs.judge_calibration",
+      "value": null
+    },
+    {
+      "path": "inputs.judges",
+      "value": []
+    },
+    {
+      "path": "inputs.composites",
+      "value": []
+    },
+    {
+      "path": "design.sampling",
+      "value": "poisson"
+    },
+    {
+      "path": "design.inclusion_probability_column",
+      "value": null
+    },
+    {
+      "path": "design.stratum_column",
+      "value": null
+    },
+    {
+      "path": "design.weights.hierarchy",
+      "value": [
+        "task_id",
+        "question_id",
+        "prompt_id"
+      ]
+    },
+    {
+      "path": "design.weights.column",
+      "value": null
+    },
+    {
+      "path": "groups[0].weights.hierarchy",
+      "value": [
+        "task_id",
+        "question_id",
+        "prompt_id"
+      ]
+    },
+    {
+      "path": "groups[0].weights.column",
+      "value": null
+    },
+    {
+      "path": "outputs.prompt_bounds.explicit_alpha",
+      "value": null
+    },
+    {
+      "path": "outputs.direct_mean_intervals.independence.sensitivities",
+      "value": []
+    },
+    {
+      "path": "outputs.direct_mean_intervals.single_valued_bound",
+      "value": false
+    },
+    {
+      "path": "outputs.risk_measures[0].beta",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[0].lambda",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[0].k",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[0].threshold",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[0].threshold_column",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[0].diagnostic_only",
+      "value": false
+    },
+    {
+      "path": "outputs.risk_measures[0].direct_interval",
+      "value": false
+    },
+    {
+      "path": "outputs.risk_measures[1].lambda",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[1].k",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[1].threshold",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[1].threshold_column",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[1].diagnostic_only",
+      "value": false
+    },
+    {
+      "path": "outputs.risk_measures[1].direct_interval",
+      "value": false
+    },
+    {
+      "path": "outputs.risk_measures[2].beta",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[2].k",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[2].threshold",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[2].threshold_column",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[2].diagnostic_only",
+      "value": false
+    },
+    {
+      "path": "outputs.risk_measures[2].direct_interval",
+      "value": false
+    },
+    {
+      "path": "outputs.risk_measures[3].beta",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[3].lambda",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[3].k",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[3].threshold",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[3].threshold_column",
+      "value": null
+    },
+    {
+      "path": "outputs.risk_measures[3].diagnostic_only",
+      "value": false
+    },
+    {
+      "path": "outputs.risk_measures[3].direct_interval",
+      "value": false
+    },
+    {
+      "path": "outputs.judge_claims",
+      "value": false
+    },
+    {
+      "path": "outputs.anytime_bounds",
+      "value": null
+    },
+    {
+      "path": "comparisons",
+      "value": []
+    },
+    {
+      "path": "comparison_sets",
+      "value": []
+    },
+    {
+      "path": "claims[0].comparison",
+      "value": null
+    },
+    {
+      "path": "claims[0].method",
+      "value": "corrected_interval"
+    },
+    {
+      "path": "adaptive_claims",
+      "value": []
+    },
+    {
+      "path": "policy.data_quality_failure",
+      "value": "inconclusive"
+    },
+    {
+      "path": "report.include_decisions",
+      "value": false
+    },
+    {
+      "path": "report.judge_error_stress",
+      "value": false
+    },
+    {
+      "path": "report.claims_export",
+      "value": false
+    },
+    {
+      "path": "report.precision_target",
+      "value": 0.05
+    }
+  ],
   "policy_events": [],
   "presentation": {
     "claim_evidence": [

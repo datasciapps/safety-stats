@@ -32,8 +32,8 @@ thresholds stay in the plan, and a policy cannot set them.
 
 ## The inference hash
 
-A policy names the plan it decides for by the plan's inference hash: the plan's canonical hash
-with `acceptable_upper` and `unacceptable_lower` of every `corrected_interval` claim left out.
+A policy names the plan it decides for by the plan's inference hash: the plan's
+[canonical hash](plan-reference.md#the-plan-hash) with `acceptable_upper` and `unacceptable_lower` of every `corrected_interval` claim left out.
 Any other change to the plan changes the inference hash, and an analysis refuses a policy whose
 hash does not match.
 

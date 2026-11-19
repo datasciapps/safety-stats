@@ -257,7 +257,11 @@ def test_a_plan_that_does_not_opt_in_writes_what_it_wrote_before(tmp_path: Path)
     assert canonical_plan_hash(load_plan(off)) == canonical_plan_hash(load_plan(explicit))
 
     output = analyze(plan=off, logs="ignored").write(tmp_path / "report")
-    for name in ("report.json", "report.md", "plan.resolved.yaml"):
+    # The report's record of the defaults applied lists the option, and nothing else does.
+    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    assert {"path": "report.judge_error_stress", "value": False} in report.pop("plan_defaults")
+    assert "judge_error_stress" not in json.dumps(report)
+    for name in ("report.md", "plan.resolved.yaml"):
         assert "judge_error_stress" not in (output / name).read_text(encoding="utf-8")
     assert "Judge-error stress" not in (output / "report.md").read_text(encoding="utf-8")
 
