@@ -61,11 +61,14 @@ def _inputs(
 
 
 def _layout_inputs(
-    conversations: Sequence[Sequence[tuple[int, int]]], primary: str = "item"
+    conversations: Sequence[Sequence[tuple[int, int]]],
+    primary: str = "item",
+    crossed: bool = False,
 ) -> Inputs:
     """Prompt ``p`` of conversation ``c`` is ``c{c}p{p}``, with the (rollouts, failures) at
     ``conversations[c][p]``: its first ``failures`` rollouts fail. Every prompt is its own
-    question."""
+    question, or with ``crossed``, the ``p``-th prompts of all conversations ask the question
+    ``q{p}``, which a ``question`` profile blocks by."""
 
     inputs = base_inputs()
     inputs.manifest = []
@@ -76,7 +79,7 @@ def _layout_inputs(
             inputs.manifest.append(
                 {
                     "prompt_id": prompt,
-                    "question_id": prompt,
+                    "question_id": f"q{item}" if crossed else prompt,
                     "task_id": "t1",
                     "expected_rollouts": rollouts,
                     "conversation": f"c{conversation}",
@@ -88,6 +91,8 @@ def _layout_inputs(
     profiles = {"item": {"block_by": ["prompt_id"]}, "conversation": {"block_by": ["conversation"]}}
     if primary == "rollout":
         profiles["rollout"] = {"block_by": ["rollout"]}
+    if crossed:
+        profiles["question"] = {"block_by": ["question_id"]}
     sensitivities = [name for name in profiles if name != primary]
     inputs.plan["design"] = {"independence_profiles": profiles}
     inputs.plan["multiplicity"]["families"].append(
@@ -124,12 +129,18 @@ def test_co_failing_conversations_warn_with_their_design_effect(tmp_path: Path) 
     (units,) = cohort["primaries"]
     assert units == {
         "profile": "item",
+        "blocks": 80,
         "units": 80,
         "intracluster_correlation": cohort["intracluster_correlation"],
         "design_effect": cohort["design_effect"],
         "effective_units": cohort["effective_rollouts"],
     }
-    assert "for the 80 units of primary 'item' in them" in found.message
+    assert "for the 80 units of primary 'item' in them (its 80 blocks)" in found.message
+    # Each prompt lies in one conversation, so the item primary's units are its blocks.
+    assert (
+        "The units of 'item' are their own blocks, so there the results resting on them count "
+        "at least 2 times as many independent blocks as the effective number of their units."
+    ) in found.message
 
 
 def test_co_failing_conversations_warn_on_the_units_of_repeated_rollouts(
@@ -219,6 +230,7 @@ def test_a_rollout_primary_gets_the_figures_on_rollouts(tmp_path: Path) -> None:
     (units,) = cohort["primaries"]
     assert units == {
         "profile": "rollout",
+        "blocks": 800,
         "units": 800,
         "intracluster_correlation": cohort["intracluster_correlation"],
         "design_effect": cohort["design_effect"],
@@ -226,6 +238,42 @@ def test_a_rollout_primary_gets_the_figures_on_rollouts(tmp_path: Path) -> None:
     }
     assert found.severity == "WARNING"
     assert found.details["primaries_splitting_blocks"] == ["rollout"]
+
+
+def test_a_primary_crossed_with_the_conversations_is_given_its_own_blocks(
+    tmp_path: Path,
+) -> None:
+    # Five questions, each asked in all eight conversations, with ten rollouts per prompt. Every
+    # question fails 6 of 10 rollouts in conversations c0-c2 and 1 of 10 elsewhere.
+    inputs = _layout_inputs(
+        [[(10, 6 if conversation < 3 else 1)] * 5 for conversation in range(8)],
+        primary="question",
+        crossed=True,
+    )
+    diagnostics = _found(run_analysis(inputs, tmp_path).diagnostics)
+    (found,) = [item for item in diagnostics if item.details["profile"] == "conversation"]
+    assert found.severity == "WARNING"
+    assert found.details["primaries_splitting_blocks"] == ["question"]
+    # The question primary's units are its questions within each conversation: 40 units from
+    # its 5 blocks. Within a conversation they fail alike, so the design effect on them is the
+    # 5 units of a conversation, and about 8 units are effective.
+    (cohort,) = found.details["cohorts"]
+    (units,) = cohort["primaries"]
+    assert (units["profile"], units["blocks"], units["units"]) == ("question", 5, 40)
+    assert units["intracluster_correlation"] == pytest.approx(1.0, rel=1e-12, abs=0)
+    assert units["design_effect"] == pytest.approx(5.0, rel=1e-12, abs=0)
+    assert units["effective_units"] == pytest.approx(8.0, rel=1e-12, abs=0)
+    assert (
+        "for the 40 units of primary 'question' in them (from its 5 blocks, some of which span "
+        "several of these blocks)"
+    ) in found.message
+    # The primary counts 5 blocks, fewer than twice the 8 effective units: the message must
+    # not say it counts at least twice as many.
+    assert "at least 2 times" not in found.message
+    assert (
+        "The blocks of 'question' span several of these blocks: the results resting on them "
+        "count their own blocks, given above, as independent"
+    ) in found.message
 
 
 def test_spread_failures_are_only_recorded(tmp_path: Path) -> None:

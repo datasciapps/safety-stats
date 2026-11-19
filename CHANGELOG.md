@@ -82,7 +82,11 @@ described in their pull requests.
   of one block over the variance of all units. The one-way ANOVA estimate on the rates would
   read small blocks of units with few rollouts, beside a large block of well-replicated ones, as
   a correlation where there is none. It is a warning when, in a cohort, the design effect on a
-  primary's units reaches 2, so that their effective number is at most half of them. Figures on
+  primary's units reaches 2, so that their effective number is at most half of them. The
+  figures on a primary's units give the number of its own blocks they come from, and the warning
+  says that a primary whose blocks lie within the profile's counts at least twice as many
+  independent blocks as the effective units, while one whose blocks span several of the
+  profile's, such as questions asked in every conversation, counts only its own blocks. Figures on
   rollouts would warn about a prompt-level primary with repeated rollouts whenever prompts
   differ in failure rate, however little the grouping adds. Otherwise it is informational. No
   bound changes. With few blocks the figures are noisy and can warn with no grouping effect.

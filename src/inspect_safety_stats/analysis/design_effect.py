@@ -201,13 +201,17 @@ def _primary_profiles(plan: AnalysisPlan) -> list[str]:
     return sorted(primaries)
 
 
-def _unit_figures(profile_id: str, blocks: list[list[tuple[int, int]]]) -> dict[str, Any]:
-    """The figures on one primary's units, given as (rollouts, failures) within each block."""
+def _unit_figures(
+    profile_id: str, own_blocks: int, blocks: list[list[tuple[int, int]]]
+) -> dict[str, Any]:
+    """The figures on one primary's units, given as (rollouts, failures) within each block,
+    with the number of the primary's own blocks they come from."""
 
     correlation, effect = unit_design_effect(blocks)
     units = sum(len(block) for block in blocks)
     return {
         "profile": profile_id,
+        "blocks": own_blocks,
         "units": units,
         "intracluster_correlation": correlation,
         "design_effect": effect,
@@ -257,6 +261,7 @@ def _cohort_figures(
         splitting.append(
             _unit_figures(
                 name,
+                len({inner for inner_units in units.values() for inner in inner_units}),
                 [
                     [(unit[0], unit[1]) for _, unit in sorted(units[key].items())]
                     for key, _ in ordered
@@ -276,8 +281,20 @@ def _cohort_figures(
     return figures, grouped
 
 
+def _spans_blocks(figures: dict[str, Any]) -> bool:
+    """Whether some block of the primary spans several of the profile's blocks, giving more
+    units than the primary has blocks."""
+
+    return bool(figures["units"] != figures["blocks"])
+
+
 def _describe_units(figures: dict[str, Any]) -> str:
-    head = f"for the {figures['units']} units of primary {figures['profile']!r} in them"
+    own = (
+        f"from its {figures['blocks']} blocks, some of which span several of these blocks"
+        if _spans_blocks(figures)
+        else f"its {figures['blocks']} blocks"
+    )
+    head = f"for the {figures['units']} units of primary {figures['profile']!r} in them ({own})"
     if figures["intracluster_correlation"] is None:
         return f"{head}, all with the same failure rate, so no correlation can be estimated"
     return (
@@ -304,6 +321,38 @@ def _describe(cohort_id: str, figures: dict[str, Any]) -> str:
     )
 
 
+def _warning(profile_id: str, warned: list[str], spanning: list[str]) -> str:
+    """What the warning adds to the message, for the primaries warned about."""
+
+    def names(profiles: list[str]) -> str:
+        return ", ".join(repr(name) for name in profiles)
+
+    threshold = f"{DESIGN_EFFECT_WARNING:g}"
+    text = (
+        f" The primary profile(s) {names(warned)} treat their units in one of these blocks as "
+        f"independent, though where the design effect on their units is {threshold} or more, "
+        "those units carry the evidence of at most half as many independent ones."
+    )
+    nested = [name for name in warned if name not in spanning]
+    if nested:
+        text += (
+            f" The units of {names(nested)} are their own blocks, so there the results resting "
+            f"on them count at least {threshold} times as many independent blocks as the "
+            "effective number of their units."
+        )
+    if spanning:
+        text += (
+            f" The blocks of {names(spanning)} span several of these blocks: the results "
+            "resting on them count their own blocks, given above, as independent, though "
+            "blocks that meet in one of these blocks share its dependence, and the effective "
+            "number of their units does not say how many independent blocks those are worth."
+        )
+    return text + (
+        f" Read the bounds under {profile_id!r}, declared as an independence sensitivity or as "
+        "the primary, beside theirs."
+    )
+
+
 def cluster_design_effects(
     plan: AnalysisPlan, data: NormalizedData, diagnostics: list[Diagnostic]
 ) -> None:
@@ -318,9 +367,14 @@ def cluster_design_effects(
     blocks in different blocks of its own, which it treats as independent, it gives the same
     figures on that primary's units, from :func:`unit_design_effect`: the scored rollouts of
     one of its blocks within one of the profile's blocks, each with its failure rate as the
-    outcome. The diagnostic is a warning when, in some cohort, the design effect on a
-    primary's units is at least ``DESIGN_EFFECT_WARNING``, so that their effective number is
-    at most half of them; otherwise it is informational.
+    outcome, with the number of its own blocks they come from. The diagnostic is a warning
+    when, in some cohort, the design effect on a primary's units is at least
+    ``DESIGN_EFFECT_WARNING``, so that their effective number is at most half of them;
+    otherwise it is informational. The message says that a warned primary whose units are its
+    own blocks counts at least that many times as many independent blocks as their effective
+    number, and that one whose blocks span several of the profile's blocks counts its own
+    blocks, which share the dependence, so that the effective number of units does not count
+    them.
     """
 
     profiles = plan.design.independence_profiles
@@ -342,18 +396,23 @@ def cluster_design_effects(
         cohorts: list[dict[str, Any]] = []
         grouped = False
         warned: set[str] = set()
+        # Primaries warned about in a cohort where some of their blocks span several of the
+        # profile's blocks: their units are not their blocks.
+        spanning: set[str] = set()
         for cohort_id in sorted(by_cohort):
             figures, cohort_grouped = _cohort_figures(
                 by_cohort[cohort_id], profile, primaries, manifest_values
             )
             grouped = grouped or cohort_grouped
             cohorts.append({"cohort_id": cohort_id, **figures})
-            warned.update(
-                item["profile"]
-                for item in figures["primaries"]
-                if item["design_effect"] is not None
-                and item["design_effect"] >= DESIGN_EFFECT_WARNING
-            )
+            for item in figures["primaries"]:
+                if (
+                    item["design_effect"] is not None
+                    and item["design_effect"] >= DESIGN_EFFECT_WARNING
+                ):
+                    warned.add(item["profile"])
+                    if _spans_blocks(item):
+                        spanning.add(item["profile"])
         if not grouped:
             continue
         message = (
@@ -363,15 +422,7 @@ def cluster_design_effects(
             + "."
         )
         if warned:
-            message += (
-                f" The primary profile(s) {', '.join(repr(name) for name in sorted(warned))} "
-                "treat their units in one of these blocks as independent, so where the design "
-                f"effect on their units is {DESIGN_EFFECT_WARNING:g} or more, the results "
-                f"resting on them count at least {DESIGN_EFFECT_WARNING:g} times as many "
-                "independent units as the effective number above. Read the bounds under "
-                f"{profile_id!r}, declared as an independence sensitivity or as the primary, "
-                "beside theirs."
-            )
+            message += _warning(profile_id, sorted(warned), sorted(spanning))
         diagnostics.append(
             Diagnostic(
                 code="CLUSTER_DESIGN_EFFECT",

@@ -253,12 +253,14 @@ that primary's units, under `primaries` in each cohort's details:
   blocks. Where the primary's blocks lie within the profile's, as a prompt lies within its
   conversation, the units are the primary's blocks. A block of the primary that spans several of
   the profile's blocks gives one unit in each;
+- `blocks`, the number of the primary's own blocks that the units come from. It is the number of
+  units unless some of the primary's blocks span several of the profile's blocks;
 - the intra-cluster correlation of the units' failure rates within the blocks, with each unit
   counted once. Where some unit holds several rollouts, it is the covariance of the rates of two
   units in one block, averaged over all such pairs, over the variance of all the units' rates.
-  A unit with few rollouts has a noisy rate,
-  and this pairwise estimate, unlike the one-way ANOVA estimate on the rates, does not read
-  small blocks of such units beside a large block of well-replicated ones as a correlation;
+  A unit with few rollouts has a noisy rate, and this pairwise estimate, unlike the one-way ANOVA
+  estimate on the rates, does not read small blocks of such units beside a large block of
+  well-replicated ones as a correlation;
 - the design effect, with $m$ counted in units: the number of units in the block a unit sits in,
   averaged over the $K$ units. With a correlation of 0 or more it is the variance of the units'
   total with the blocks as independent, over that with the units as independent, so it is at
@@ -283,8 +285,16 @@ outputs:
 ```
 
 The diagnostic is a warning when, in some cohort, the design effect on a primary's units is at
-least 2: their effective number is then at most half of them, though the primary counts each as
-independent. It is informational otherwise, for example when the grouping profile is itself the
+least 2: their effective number is then at most half of them, though the primary treats the units
+in one of the profile's blocks as independent. Where the primary's blocks lie within the
+profile's, its units are its blocks, and the results resting on it count at least twice as many
+independent blocks as the effective number of units. Where its blocks span several of the
+profile's blocks, as the questions of a `[question_id]` primary do when every conversation asks
+every question, those results count only its own blocks, which the diagnostic gives beside the
+units. Blocks that meet in one of the profile's blocks share its dependence, but the effective
+number of units does not say how many independent blocks they are worth, and can exceed their
+number: 5 questions asked in 8 conversations that fail alike give 40 units, about 8 of them
+effective. It is informational otherwise, for example when the grouping profile is itself the
 primary, or when no result the plan computes rests on a primary that splits the blocks. Profiles
 whose blocks never hold more than one prompt get no diagnostic. It changes no bound: it is a
 measure of how much the independence choice matters, to read beside the sensitivity bounds.
