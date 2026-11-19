@@ -50,9 +50,12 @@ In an exploratory analysis the claim is `INCONCLUSIVE` at every threshold. Its r
 descriptive status, is what a confirmatory analysis of the same bounds would give, and it
 certifies nothing.
 
-The range shows how far the verdict is from changing. It does not license choosing thresholds
-after seeing it: the verdict and its error rate hold only at the thresholds the plan declared
-in advance.
+The range shows how far the verdict is from changing. The error rate of a verdict read off it
+is bounded at any thresholds, because a wrong `PASS` or `FAIL` needs the true risk outside the
+bounds. A threshold chosen after seeing the bounds cannot show, though, that the requirement
+came before the evidence. To decide at revised thresholds and keep that visible, give the
+analysis a [decision policy](decision-policy.md) (experimental): it records each version of the
+thresholds with the time it was set, and leaves the plan and its hash as frozen.
 
 ### Verdicts under sensitivity profiles
 

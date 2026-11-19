@@ -362,6 +362,50 @@ class ClaimResult(ResultModel):
         return data
 
 
+class PolicyThresholdsRecord(ResultModel):
+    acceptable_upper: float
+    unacceptable_lower: float
+
+
+class DecisionPolicyVersionRecord(ResultModel):
+    id: str
+    set_at: str
+    reason: str | None = None
+    thresholds: dict[str, PolicyThresholdsRecord]
+    # Whether the version was set after the earliest start time of the selected evaluations;
+    # None when no evaluation reports a start time.
+    set_after_first_evaluation: bool | None = None
+
+
+class ClaimThresholdsRecord(ResultModel):
+    """The thresholds a claim was decided at, and where they came from."""
+
+    claim_id: str
+    acceptable_upper: float
+    unacceptable_lower: float
+    # "plan", or the id of the policy version that set them last.
+    set_by: str
+    plan_acceptable_upper: float
+    plan_unacceptable_lower: float
+
+
+class DecisionPolicyRecord(ResultModel):
+    """The decision policy an analysis applied (experimental).
+
+    Its thresholds replace the plan's for the claims it sets, while ``analysis.plan_sha256``
+    stays the hash of the plan as frozen. ``applied`` is false when the policy failed a check
+    (see the ``DECISION_POLICY_*`` diagnostics); the claims then keep the plan's thresholds.
+    """
+
+    inference_plan_sha256: str
+    policy_inference_plan_sha256: str
+    policy_sha256: str
+    applied: bool
+    first_evaluation_started_at: str | None = None
+    versions: list[DecisionPolicyVersionRecord]
+    claims: list[ClaimThresholdsRecord]
+
+
 class SafetyReport(ResultModel):
     """The result of ``analyze``: estimates, bounds, comparisons, claims and the decision.
 
@@ -388,9 +432,22 @@ class SafetyReport(ResultModel):
     claims: list[ClaimResult]
     policy_events: list[dict[str, Any]]
     decision: Decision
+    # Present only when the analysis was given a decision policy.
+    decision_policy: DecisionPolicyRecord | None = None
     _observations: list[Any] = PrivateAttr(default_factory=list)
     _resolved_design: list[dict[str, Any]] = PrivateAttr(default_factory=list)
     _resolved_plan: dict[str, Any] = PrivateAttr(default_factory=dict)
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_decision_policy(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        # A report of an analysis without a decision policy keeps the bytes it had before
+        # decision policies existed.
+        data: dict[str, Any] = handler(self)
+        if self.decision_policy is None:
+            data.pop("decision_policy", None)
+        return data
 
     def write(self, output: str | Path, *, overwrite: bool = False) -> Path:
         from inspect_safety_stats.report.writer import write_report

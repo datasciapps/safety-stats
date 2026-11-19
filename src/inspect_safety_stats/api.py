@@ -8,6 +8,7 @@ import os
 import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
@@ -15,6 +16,14 @@ import numpy as np
 import pandas as pd
 
 from inspect_safety_stats.config.canonicalize import sha256_value
+from inspect_safety_stats.config.decision_policy import (
+    DecisionPolicy,
+    decision_policy_hash,
+    inference_plan_hash,
+    load_decision_policy,
+    plan_with_thresholds,
+    policy_thresholds,
+)
 from inspect_safety_stats.config.loader import (
     canonical_plan_hash,
     load_plan,
@@ -56,15 +65,19 @@ from inspect_safety_stats.schema.observations import Observation, observation_fi
 from inspect_safety_stats.schema.reports import (
     ClaimProfileVerdict,
     ClaimResult,
+    ClaimThresholdsRecord,
     ComparisonResult,
     ComparisonSetResult,
     Decision,
+    DecisionPolicyRecord,
+    DecisionPolicyVersionRecord,
     Diagnostic,
     Eligibility,
     GroupRiskResult,
     HierarchyRiskResult,
     IntegritySummary,
     JudgeErrorStressResult,
+    PolicyThresholdsRecord,
     PromptEstimate,
     RiskIntervalResult,
     SafetyReport,
@@ -167,6 +180,116 @@ if TYPE_CHECKING:
 
 def _coerce_plan(plan: AnalysisPlan | str | Path) -> AnalysisPlan:
     return plan if isinstance(plan, AnalysisPlan) else load_plan(plan)
+
+
+@dataclass
+class _PolicyApplication:
+    """A decision policy, checked against the frozen plan, and the plan it decides with."""
+
+    frozen: AnalysisPlan
+    policy: DecisionPolicy
+    applied: bool
+    effective: AnalysisPlan
+
+
+def _apply_decision_policy(
+    plan: AnalysisPlan,
+    policy: DecisionPolicy | str | Path | None,
+    diagnostics: list[Diagnostic],
+) -> _PolicyApplication | None:
+    """Check a decision policy against the plan and give the plan with its thresholds.
+
+    A policy that fails a check adds its errors to ``diagnostics``, which makes integrity
+    invalid, and leaves the plan's thresholds in force.
+    """
+
+    if policy is None:
+        return None
+    from inspect_safety_stats.validate.decision_policy import validate_decision_policy
+
+    resolved = policy if isinstance(policy, DecisionPolicy) else load_decision_policy(policy)
+    problems = validate_decision_policy(plan, resolved)
+    diagnostics.extend(problems)
+    effective = plan if problems else plan_with_thresholds(plan, policy_thresholds(resolved))
+    return _PolicyApplication(
+        frozen=plan, policy=resolved, applied=not problems, effective=effective
+    )
+
+
+def _decision_policy_record(
+    application: _PolicyApplication | None,
+    first_started_at: datetime | None,
+    diagnostics: list[Diagnostic],
+) -> DecisionPolicyRecord | None:
+    """The report's record of a decision policy, and a note when it was set after the run."""
+
+    if application is None:
+        return None
+    policy = application.policy
+    in_force = policy_thresholds(policy) if application.applied else {}
+    versions = [
+        DecisionPolicyVersionRecord(
+            id=version.id,
+            set_at=version.set_at.isoformat(),
+            reason=version.reason,
+            thresholds={
+                claim_id: PolicyThresholdsRecord(
+                    acceptable_upper=item.acceptable_upper,
+                    unacceptable_lower=item.unacceptable_lower,
+                )
+                for claim_id, item in sorted(version.thresholds.items())
+            },
+            set_after_first_evaluation=(
+                None if first_started_at is None else version.set_at > first_started_at
+            ),
+        )
+        for version in policy.versions
+    ]
+    claims = [
+        ClaimThresholdsRecord(
+            claim_id=claim.id,
+            acceptable_upper=(
+                in_force[claim.id][0].acceptable_upper
+                if claim.id in in_force
+                else claim.acceptable_upper
+            ),
+            unacceptable_lower=(
+                in_force[claim.id][0].unacceptable_lower
+                if claim.id in in_force
+                else claim.unacceptable_lower
+            ),
+            set_by=in_force[claim.id][1] if claim.id in in_force else "plan",
+            plan_acceptable_upper=claim.acceptable_upper,
+            plan_unacceptable_lower=claim.unacceptable_lower,
+        )
+        for claim in sorted(application.frozen.claims, key=lambda item: item.id)
+    ]
+    later = [version.id for version in versions if version.set_after_first_evaluation]
+    if application.applied and later:
+        diagnostics.append(
+            Diagnostic(
+                code="DECISION_POLICY_AFTER_GENERATION",
+                severity="INFO",
+                message=(
+                    "decision policy version(s) "
+                    + ", ".join(repr(item) for item in later)
+                    + " were set after the first evaluation started. Thresholds do not enter "
+                    "the bounds, so the verdicts at them remain certifying"
+                ),
+                details={"versions": later},
+            )
+        )
+    return DecisionPolicyRecord(
+        inference_plan_sha256=inference_plan_hash(application.frozen),
+        policy_inference_plan_sha256=policy.inference_plan_sha256,
+        policy_sha256=decision_policy_hash(policy),
+        applied=application.applied,
+        first_evaluation_started_at=(
+            None if first_started_at is None else first_started_at.isoformat()
+        ),
+        versions=versions,
+        claims=claims,
+    )
 
 
 def _integrity_status(diagnostics: list[Diagnostic]) -> Literal["valid", "degraded", "invalid"]:
@@ -302,6 +425,7 @@ def validate(
     logs: LogInput = None,
     parallel: bool | int = False,
     source: EvaluationSource | None = None,
+    decision_policy: DecisionPolicy | str | Path | None = None,
 ) -> IntegritySummary:
     """Check a plan and its evaluation data without computing any bound or decision.
 
@@ -309,12 +433,14 @@ def validate(
     data comes from ``source`` when given, or else from the Inspect logs in ``logs``, read with
     ``parallel`` passed to Inspect's log reader. Passing both ``logs`` and ``source`` is an
     error. As in ``analyze``, a failure to read the data does not raise: it is reported as an
-    ``INGEST_FAILED`` diagnostic. Returns the integrity status (``valid``, ``degraded`` or
+    ``INGEST_FAILED`` diagnostic. ``decision_policy`` is checked against the plan as
+    ``analyze`` checks it. Returns the integrity status (``valid``, ``degraded`` or
     ``invalid``) and the sorted diagnostics.
     """
 
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
+    _apply_decision_policy(resolved, decision_policy, diagnostics)
     _read_input(resolved, logs, parallel, source, diagnostics)
     return _sorted_integrity(diagnostics)
 
@@ -5846,7 +5972,12 @@ def _design_frame(plan: AnalysisPlan) -> dict[str, Any]:
     }
 
 
-def _unread_input_report(plan: AnalysisPlan, diagnostics: list[Diagnostic]) -> SafetyReport:
+def _unread_input_report(
+    plan: AnalysisPlan,
+    diagnostics: list[Diagnostic],
+    frozen: AnalysisPlan | None = None,
+    policy_record: DecisionPolicyRecord | None = None,
+) -> SafetyReport:
     """The report of an analysis whose input could not be read.
 
     The diagnostics carry the ``INGEST_FAILED`` error, so integrity is invalid. The report has
@@ -5878,8 +6009,9 @@ def _unread_input_report(plan: AnalysisPlan, diagnostics: list[Diagnostic]) -> S
         )
         for claim in sorted(plan.claims, key=lambda item: item.id)
     ]
+    frozen = plan if frozen is None else frozen
     report = SafetyReport(
-        **_report_frame(plan),
+        **_report_frame(frozen),
         provenance={"source_format": {}, "sources": []},
         integrity=_sorted_integrity(diagnostics),
         design={
@@ -5900,8 +6032,9 @@ def _unread_input_report(plan: AnalysisPlan, diagnostics: list[Diagnostic]) -> S
             zero_tolerance_failure=False,
             confirmatory=plan.analysis.intent == "confirmatory",
         ),
+        decision_policy=policy_record,
     )
-    report._resolved_plan = report_plan(plan)
+    report._resolved_plan = report_plan(frozen)
     return report
 
 
@@ -6093,6 +6226,7 @@ def analyze(
     logs: LogInput = None,
     parallel: bool | int = False,
     source: EvaluationSource | None = None,
+    decision_policy: DecisionPolicy | str | Path | None = None,
 ) -> SafetyReport:
     """Run the analysis a plan declares on its evaluation data and return the safety report.
 
@@ -6105,14 +6239,26 @@ def analyze(
     population. Write it to disk with ``SafetyReport.write``. Data that cannot be read does not
     raise: the report then carries an ``INGEST_FAILED`` diagnostic, its integrity is invalid,
     and every claim is INCONCLUSIVE.
+
+    ``decision_policy`` (experimental) is a ``DecisionPolicy`` or the path of a policy file,
+    read with ``load_decision_policy``. Its thresholds replace the plan's for the claims it
+    sets, and the report records every version of it, while the plan and its hash stay as
+    frozen (docs/decision-policy.md).
     """
 
-    resolved = _coerce_plan(plan)
-    diagnostics = validate_plan_references(resolved)
+    frozen = _coerce_plan(plan)
+    diagnostics = validate_plan_references(frozen)
+    application = _apply_decision_policy(frozen, decision_policy, diagnostics)
+    # Every stage decides with the policy's thresholds; the report records the frozen plan.
+    resolved = frozen if application is None else application.effective
     read = _read_input(resolved, logs, parallel, source, diagnostics)
     if read is None:
-        return _unread_input_report(resolved, diagnostics)
+        return _unread_input_report(
+            resolved, diagnostics, frozen, _decision_policy_record(application, None, diagnostics)
+        )
     data, judge_inputs = read
+    # ORDER MATTERS: the record adds its diagnostic before the analysis reads integrity.
+    policy_record = _decision_policy_record(application, data.first_started_at, diagnostics)
     core = _analysis_core(resolved, data, diagnostics)
     estimates = core.estimates
     risks = core.risks
@@ -6137,7 +6283,7 @@ def analyze(
         _add_judge_claims(judge_panel, resolved, judge_inputs)
         _add_judge_configurations(judge_panel, resolved, data, judge_inputs.source)
     report = SafetyReport(
-        **_report_frame(resolved),
+        **_report_frame(frozen),
         provenance={
             "source_format": data.source_format,
             "sources": [
@@ -6183,8 +6329,9 @@ def analyze(
         claims=sorted(claims, key=lambda item: item.claim_id),
         policy_events=events,
         decision=decision,
+        decision_policy=policy_record,
     )
     report._observations = data.observations
     report._resolved_design = _resolved_design(data, resolved.design.hierarchy)
-    report._resolved_plan = report_plan(resolved)
+    report._resolved_plan = report_plan(frozen)
     return report

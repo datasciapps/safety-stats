@@ -33,6 +33,8 @@ class NormalizedData:
     judge_verdicts: dict[str, dict[str, bool | None]] = dataclass_field(default_factory=dict)
     # What kind of source was read, as its adapter describes it, for the report's provenance.
     source_format: dict[str, Any] = dataclass_field(default_factory=dict)
+    # The earliest start time of the selected evaluations, None when none reports one.
+    first_started_at: datetime | None = None
     # Built by the analysis on first use, from these observations and this manifest.
     block_index: BlockIndex | None = dataclass_field(
         default=None, init=False, repr=False, compare=False
