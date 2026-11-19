@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
@@ -14,6 +13,7 @@ from inspect_safety_stats.config.methods import (
 )
 from inspect_safety_stats.stats.direct_mean import (
     COMPARISON_ENGINES,
+    CountsFunction,
     DirectMeanBounds,
 )
 
@@ -118,7 +118,7 @@ def _arrays(
     return cf, cu, cn, bf, bu, bn, w
 
 
-def _direct_function(method: ComparisonMethod) -> Callable[..., DirectMeanBounds]:
+def _direct_function(method: ComparisonMethod) -> CountsFunction:
     engine = COMPARISON_ENGINES.get(method)
     if engine is None:
         raise ValueError(

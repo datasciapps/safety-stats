@@ -4,7 +4,7 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Final, Literal
+from typing import Final, Literal, Protocol
 
 import numpy as np
 from numpy.typing import ArrayLike
@@ -991,6 +991,37 @@ def weighted_betting_mean_bounds(
     )
 
 
+class BoundedFunction(Protocol):
+    """The signature of a method's function on per-block completion bounds."""
+
+    def __call__(
+        self,
+        completion_lower: ArrayLike,
+        completion_upper: ArrayLike,
+        weights: ArrayLike,
+        *,
+        alpha_lower: float,
+        alpha_upper: float,
+        independence_profile: str,
+    ) -> DirectMeanBounds: ...
+
+
+class CountsFunction(Protocol):
+    """The signature of a method's function on failure, unclassified and trial counts."""
+
+    def __call__(
+        self,
+        failures: ArrayLike,
+        unclassified: ArrayLike,
+        trials: ArrayLike,
+        weights: ArrayLike,
+        *,
+        alpha_lower: float,
+        alpha_upper: float,
+        independence_unit: IndependenceUnit = "rollout",
+    ) -> DirectMeanBounds: ...
+
+
 @dataclass(frozen=True)
 class DirectMeanEngine:
     """The two forms of one direct-mean method.
@@ -999,8 +1030,8 @@ class DirectMeanEngine:
     ``counts`` takes failure, unclassified and trial counts and an independence unit.
     """
 
-    bounded: Callable[..., DirectMeanBounds]
-    counts: Callable[..., DirectMeanBounds]
+    bounded: BoundedFunction
+    counts: CountsFunction
 
 
 DIRECT_MEAN_ENGINES: Final[Mapping[DirectMeanMethod, DirectMeanEngine]] = MappingProxyType(
