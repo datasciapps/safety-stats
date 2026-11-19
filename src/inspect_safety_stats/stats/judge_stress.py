@@ -6,23 +6,36 @@ sensitivity ``Se`` and false-positive rate ``FPR = 1 - Sp`` reports failures at
 
     q = pi * Se + (1 - pi) * FPR
 
-for true risk ``pi``, applied per prompt. The map is affine and increasing in ``pi`` for an
-informative judge (``Se > FPR``), so it carries over to every positively homogeneous,
-translation-equivariant measure: weighted mean, maximum, CVaR and top-k mean.
+for true risk ``pi``, applied per prompt. For an informative judge (``Se > FPR``) the map is
+affine and increasing in ``pi``, so it carries over to every monotone, positively homogeneous,
+translation-equivariant measure: weighted mean, maximum, CVaR and top-k mean. With
+judge-reported bounds ``[L, U]``, true risk lies in
 
-Rollouts the judge never classified carry a share ``s`` of a row's weight. The bounds
-complete them as judge-safe at the lower end and judge-unsafe at the upper; here they keep
-that completion on the true-risk scale (truly safe at the lower end, truly unsafe at the
-upper), and only the classified mass is inverted. With judge-reported bounds ``[L, U]``:
+    [(L - FPR) / (Se - FPR), (U - FPR) / (Se - FPR)],
 
-    true upper = s + (U - s - FPR (1 - s)) / (Se - FPR)
-    true lower =     (L     - FPR (1 - s)) / (Se - FPR)
+the Rogan-Gladen inversion of ``identified_risk_set``, which the panel-derived correction
+uses too.
 
-A PASS (``U <= a``) holds for true risk iff ``(a - s) Se + (1 - a) FPR >= U - s``, and a
-FAIL (``L >= b``) iff ``b Se + (1 - s - b) FPR <= L``. Each condition is a line in the
-``(Se, Sp)`` square; this module reports where each line meets the square's two perfect
-edges, and decides the verdict over a declared accuracy box. Both inversions are separately
-monotone in ``Se`` and ``FPR``, so their extrema over a box sit at its vertices.
+Rollouts the judge never classified need no share of their own. The bounds complete them as
+judge-safe at the lower end and judge-unsafe at the upper, and inverting that completion is
+conservative on both sides. A rollout completed as judge-unsafe adds
+``(1 - FPR) / (Se - FPR) >= 1`` of its weight to the upper bound, at least the 1 it can add to
+true risk, and one completed as judge-safe adds ``-FPR / (Se - FPR) <= 0`` to the lower bound.
+That holds prompt by prompt whatever the share, so it holds for every measure above, and
+under ``exclude`` as under ``conservative_bounds``. A share that took the excess back would be
+valid only where it is exact: the largest prompt's share of a tail row, or the larger count's
+share under ``exclude``, overstates it and moves both bounds the anti-conservative way.
+
+Rollouts a plan policy classifies are not covered. The policy's classification is the truth,
+so one counted safe takes ``FPR / (Se - FPR)`` off the upper bound it should leave alone, and
+one counted as a failure adds ``(1 - FPR) / (Se - FPR)``, more than 1 whenever ``Se < 1``, to
+the lower bound where it should add 1. The caller does not stress a row that holds one.
+
+A PASS (``U <= a``) holds for true risk iff ``a Se + (1 - a) FPR >= U``, and a FAIL
+(``L >= b``) iff ``b Se + (1 - b) FPR <= L``. Each condition is a line in the ``(Se, Sp)``
+square; this module reports where each line meets the square's two perfect edges, and
+decides the verdict over a declared accuracy box. Both inversions are separately monotone in
+``Se`` and ``FPR``, so their extrema over a box sit at its vertices.
 
 Nothing here is evidence. A declared box is an assumption, so the stressed verdict is a
 diagnostic and never moves a claim.
@@ -33,7 +46,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from inspect_safety_stats.stats.judges import JudgeAccuracyBox
+from inspect_safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
 
 Verdict = Literal["PASS", "FAIL", "INCONCLUSIVE"]
 
@@ -45,8 +58,10 @@ class VerdictLine:
     ``sensitivity_at_perfect_specificity`` is the sensitivity at which the condition holds
     with equality when the judge never raises a false alarm; ``specificity_at_perfect_
     sensitivity`` is the specificity at which it does when the judge never misses. A value
-    outside ``[0, 1]`` means the condition holds along the whole edge or nowhere on it;
-    ``None`` means the line never meets that edge (its coefficient there is not positive).
+    above 1 means the condition holds along the whole edge or nowhere on it. ``None`` means
+    the condition does not tighten along that edge, because its threshold is 0 or below for
+    sensitivity, or 1 for specificity: it then holds along the whole edge or nowhere on it.
+    Neither value is ever below 0.
     """
 
     sensitivity_at_perfect_specificity: float | None
@@ -82,30 +97,28 @@ def verdict_lines(
     judge_reported_upper: float,
     acceptable_upper: float,
     unacceptable_lower: float,
-    unclassified_share: float = 0.0,
 ) -> tuple[VerdictLine, VerdictLine]:
     """The PASS and FAIL tipping lines for judge-reported bounds ``[L, U]``.
 
-    PASS holds for true risk where ``(a - s) Se + (1 - a) FPR >= U - s``: at perfect
-    specificity iff ``Se >= (U - s) / (a - s)``, and at perfect sensitivity iff
-    ``Sp <= (1 - U) / (1 - a)``. FAIL holds where ``b Se + (1 - s - b) FPR <= L``: at
-    perfect specificity iff ``Se <= L / b``, and at perfect sensitivity iff
-    ``Sp >= 1 - (L - b) / (1 - s - b)``.
+    PASS holds for true risk where ``a Se + (1 - a) FPR >= U``: at perfect specificity iff
+    ``Se >= U / a``, and at perfect sensitivity iff ``Sp <= (1 - U) / (1 - a)``. FAIL holds
+    where ``b Se + (1 - b) FPR <= L``: at perfect specificity iff ``Se <= L / b``, and at
+    perfect sensitivity iff ``Sp >= (1 - L) / (1 - b)``. Every coefficient is positive for
+    thresholds inside ``(0, 1)``, so a line and the verdict over a box agree on which side
+    of it the verdict holds.
     """
 
-    _check_bounds(judge_reported_lower, judge_reported_upper, unclassified_share)
-    s, low, high = unclassified_share, judge_reported_lower, judge_reported_upper
+    _check_bounds(judge_reported_lower, judge_reported_upper)
+    low, high = judge_reported_lower, judge_reported_upper
     a, b = acceptable_upper, unacceptable_lower
-    pass_fpr = _ratio(high - a, 1 - a)
-    fail_fpr = _ratio(low - b, 1 - s - b)
     return (
         VerdictLine(
-            sensitivity_at_perfect_specificity=_ratio(high - s, a - s),
-            specificity_at_perfect_sensitivity=None if pass_fpr is None else 1 - pass_fpr,
+            sensitivity_at_perfect_specificity=_ratio(high, a),
+            specificity_at_perfect_sensitivity=_ratio(1 - high, 1 - a),
         ),
         VerdictLine(
             sensitivity_at_perfect_specificity=_ratio(low, b),
-            specificity_at_perfect_sensitivity=None if fail_fpr is None else 1 - fail_fpr,
+            specificity_at_perfect_sensitivity=_ratio(1 - low, 1 - b),
         ),
     )
 
@@ -115,32 +128,17 @@ def true_risk_bounds(
     judge_reported_lower: float,
     judge_reported_upper: float,
     box: JudgeAccuracyBox,
-    unclassified_share: float = 0.0,
 ) -> tuple[float, float, bool]:
     """True-risk bounds over ``box``: ``(lower, upper, identified)``.
 
-    Not identified, and ``[0, 1]``, when the box admits a judge no better than chance
+    The judge-reported bounds inverted over the box, as ``identified_risk_set`` does. Not
+    identified, and ``[0, 1]``, when the box admits a judge no better than chance
     (``Se + Sp <= 1``) or when no accuracy in it can produce the observed bounds.
     """
 
-    _check_bounds(judge_reported_lower, judge_reported_upper, unclassified_share)
-    if box.sensitivity_lower + box.specificity_lower <= 1:
-        return 0.0, 1.0, False
-    s = unclassified_share
-    # The classified judge-unsafe mass cannot exceed the classified share; as in
-    # correct_judge_risk, a tail row's share is its largest prompt's, which may exceed U.
-    mass_lower = min(judge_reported_lower, 1 - s)
-    mass_upper = max(mass_lower, judge_reported_upper - s)
-    corners = [
-        (se, 1 - sp)
-        for se in (box.sensitivity_lower, box.sensitivity_upper)
-        for sp in (box.specificity_lower, box.specificity_upper)
-    ]
-    lower = min((mass_lower - fpr * (1 - s)) / (se - fpr) for se, fpr in corners)
-    upper = max(s + (mass_upper - fpr * (1 - s)) / (se - fpr) for se, fpr in corners)
-    if upper < 0 or lower > 1:
-        return 0.0, 1.0, False
-    return max(0.0, lower), min(1.0, upper), True
+    _check_bounds(judge_reported_lower, judge_reported_upper)
+    identified = identified_risk_set(judge_reported_lower, judge_reported_upper, box)
+    return identified.lower, identified.upper, identified.identified
 
 
 def stress_verdict(
@@ -150,7 +148,6 @@ def stress_verdict(
     acceptable_upper: float,
     unacceptable_lower: float,
     box: JudgeAccuracyBox | None,
-    unclassified_share: float = 0.0,
 ) -> JudgeErrorStress:
     """Tipping lines for a threshold claim, and its verdict on true risk over ``box``.
 
@@ -165,7 +162,6 @@ def stress_verdict(
         judge_reported_upper=judge_reported_upper,
         acceptable_upper=acceptable_upper,
         unacceptable_lower=unacceptable_lower,
-        unclassified_share=unclassified_share,
     )
     stressed = None
     if box is not None:
@@ -173,7 +169,6 @@ def stress_verdict(
             judge_reported_lower=judge_reported_lower,
             judge_reported_upper=judge_reported_upper,
             box=box,
-            unclassified_share=unclassified_share,
         )
         verdict: Verdict = "INCONCLUSIVE"
         if identified and upper <= acceptable_upper:
@@ -186,8 +181,6 @@ def stress_verdict(
     return JudgeErrorStress(pass_line=pass_line, fail_line=fail_line, stressed=stressed)
 
 
-def _check_bounds(lower: float, upper: float, share: float) -> None:
+def _check_bounds(lower: float, upper: float) -> None:
     if not 0 <= lower <= upper <= 1:
         raise ValueError("judge-reported bounds must satisfy 0 <= lower <= upper <= 1")
-    if not 0 <= share <= 1:
-        raise ValueError("the unclassified share must be in [0, 1]")

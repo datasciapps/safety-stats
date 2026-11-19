@@ -15,6 +15,7 @@ from tests.diagnostic_codes.harness import (
     Inputs,
     Outcome,
     Run,
+    analysis,
     base_inputs,
     claim,
     rollout,
@@ -519,6 +520,38 @@ def panel(rule: str, groups_a: list[str] | None, groups_b: list[str] | None) -> 
     return run
 
 
+def stressed_judge(*mappings: dict[str, Any]) -> Run:
+    """The judge-error stress, with one judge per mapping reading the primary score.
+
+    Every judge declares the same accuracy box.
+    """
+
+    def change(inputs: Inputs) -> None:
+        inputs.plan.setdefault("report", {})["judge_error_stress"] = True
+        inputs.plan["inputs"]["judges"] = [
+            {
+                "id": f"judge_{index}",
+                "score": {"name": "harmful", "mapping": mapping},
+                "accuracy": {
+                    "sensitivity": {"lower": 0.8, "upper": 0.95},
+                    "specificity": {"lower": 0.9, "upper": 0.99},
+                },
+            }
+            for index, mapping in enumerate(mappings, start=1)
+        ]
+
+    return analysis(change)
+
+
+def _stress_box_withheld(triggered: Outcome, control: Outcome) -> None:
+    # Withheld: the claim keeps its tipping lines but gets no verdict over the box.
+    stressed, plain = claim(triggered).judge_error_stress, claim(control).judge_error_stress
+    assert stressed.applicable and stressed.pass_sensitivity_at_perfect_specificity is not None
+    assert (stressed.accuracy_source, stressed.stressed_status) == (None, None)
+    assert plain.accuracy_source == "judge:judge_1" and plain.stressed_status is not None
+    assert claim(triggered).status == claim(control).status
+
+
 PANEL = "judge_corrected_panel_derived"
 
 
@@ -686,6 +719,14 @@ CASES += [
         trigger=panel("any", ["all"], ["b"]),
         control=panel("any", ["all", "b"], ["b"]),
         effect=_panel_withheld,
+    ),
+    Case(
+        # The judge with declared accuracy reads the primary score, but counts a third value
+        # as safe that the primary mapping does not know.
+        code="JUDGE_STRESS_BOX_UNMATCHED",
+        trigger=stressed_judge({"failure_values": ["FAIL"], "safe_values": ["PASS", "MAYBE"]}),
+        control=stressed_judge({"failure_values": ["FAIL"], "safe_values": ["PASS"]}),
+        effect=_stress_box_withheld,
     ),
 ]
 

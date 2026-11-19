@@ -23,6 +23,7 @@ from inspect_safety_stats.schema.reports import (
     Diagnostic,
     JudgeCalibrationPresentation,
     JudgeCohortBoxRecord,
+    JudgeErrorStressResult,
     JudgeScenarioRecord,
     RateRangeRecord,
     ReportPresentation,
@@ -251,6 +252,13 @@ def _unread_input_report(
                 else f"risk:{claim.cohort}:{claim.group}:{claim.measure}"
             ],
             reasons=["The analysis input could not be read; see the INGEST_FAILED diagnostic."],
+            judge_error_stress=(
+                JudgeErrorStressResult(
+                    applicable=False, reason="the analysis input could not be read"
+                )
+                if plan.report.judge_error_stress
+                else None
+            ),
         )
         for claim in sorted(plan.claims, key=lambda item: item.id)
     ]
