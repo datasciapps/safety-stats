@@ -1001,10 +1001,18 @@ def comparison_planning_command(
     The difference is candidate minus baseline risk over the manifest's weighted design.
     Reports the largest true difference whose upper bound falls at or below --margin, and
     the smallest whose lower bound reaches it, each with --power, under the Hoeffding
-    guarantee of the weighted_hoeffding comparison. Rollout counts per arm come from the
-    manifest's expected_rollouts column unless --candidate-rollouts or --baseline-rollouts
-    override them. --independence-unit pair plans for a profile block_by [prompt_id, repeat]
-    with joint coupling; prompt_cluster for block_by [prompt_id] with joint coupling.
+    guarantee of a comparisons entry with method weighted_hoeffding. That is not the setup
+    init writes, nor the one the guide recommends for two or more configurations: both use a
+    comparison_sets entry with method weighted_kl_chernoff. To rely on the numbers, declare
+    the contrast as a comparisons entry with method weighted_hoeffding. The numbers do not
+    hold for a comparison_sets entry or another method: a comparison set bounds each arm
+    separately, which is usually wider, and weighted_kl_chernoff and
+    weighted_empirical_bernstein, often narrower on sparse failures when prompt weights are
+    even, can be wider with uneven weights or at moderate failure rates. Rollout counts per
+    arm come from the manifest's expected_rollouts column unless --candidate-rollouts or
+    --baseline-rollouts override them. --independence-unit pair plans for a profile that
+    blocks by prompt_id and repeat with joint coupling; prompt_cluster for one that blocks
+    by prompt_id with joint coupling.
     """
 
     from inspect_safety_stats.stats.planning import comparison_resolvable_differences
@@ -1055,6 +1063,10 @@ def comparison_planning_command(
     typer.echo(f"Effective sample size: {plan.effective_sample_size:.8g}")
     typer.echo(f"Margin: {margin:.8g}")
     typer.echo(f"Target power: {power:.8g}")
+    typer.echo(
+        "Interval method: weighted_hoeffding in a comparisons entry only; not comparison_sets "
+        "(as init writes) or other methods, where power can fall far below the target"
+    )
     typer.echo(
         "Largest difference with upper bound at or below the margin: "
         + (
@@ -1129,11 +1141,14 @@ def _one_line_error(exc: Exception) -> str:
     from pydantic import ValidationError
 
     if isinstance(exc, ValidationError):
-        return "; ".join(
+        text = "; ".join(
             f"{'.'.join(str(part) for part in error['loc']) or '(root)'}: {error['msg']}"
             for error in exc.errors()
         )
-    return " ".join(str(exc).split())
+    else:
+        text = str(exc)
+    # A validator's own message may hold line breaks; the line is collapsed either way.
+    return " ".join(text.split())
 
 
 @app.command("hash-plan")

@@ -7,6 +7,16 @@ described in their pull requests.
 
 ### Fixed
 
+- **A judge's input files are named relative to the plan (changes report bytes).** With
+  validated judge calibration, `report.json` recorded the labels file under
+  `provenance.judge_calibration.validation_manifest` by the absolute path the plan loader
+  resolved it to. A labels, strata, labelling queue or `judge_flip` manifest file that could
+  not be read gave a `JUDGE_VALIDATION_INVALID`, `JUDGE_LABELLING_PROTOCOL_VIOLATED` or
+  `JUDGE_FLIP_INVALID` message with that path. Reports name every other input relative to the
+  plan's directory, so the same analysis wrote different bytes in different checkouts and a
+  shared report revealed the local directory layout. Each now gives the path relative to the
+  plan.
+
 - **A zero-tolerance column that the manifest lacks is an error.** When a plan sets
   `policy.zero_tolerance.manifest_field` and the manifest has no such column, the analysis
   silently held no prompt to zero tolerance. It now stops with an error that names the column.
@@ -20,6 +30,39 @@ described in their pull requests.
   one step. Resuming a directory an earlier version left in that state repairs it.
 
 ### Added
+
+- **A fixed-design template for prompt variants, and the profile that coupled wordings need.**
+  `examples/fixed_design` has a plan, a manifest and an Inspect task in which each base prompt
+  (`question_id`) is asked in several wordings (`prompt_id`). `nested_equal` weights count each
+  base prompt once, whatever its number of wordings.
+  [Prompt variants in fixed designs](docs/plan-reference.md#prompt-variants-in-fixed-designs)
+  says which relation between wordings breaks rollout independence. Similar failure rates do
+  not. Outcomes coupled through a shared seed, sandbox or batch do, and then
+  `[question_id, repeat]` (coupling within an epoch), `[question_id]` (across epochs) or a
+  coarser key (across base prompts) must be the primary profile, because a sensitivity never
+  changes a claim's status. Coupling across epochs also breaks the prompt bounds and every
+  measure bounded through them, such as `maximum`, whatever the profile, so claims then rest on
+  the direct mean. The template reports `[question_id, repeat]` and `[question_id]` as
+  sensitivities of its `rollout` primary. The section also says that `maximum`
+  and `top_k_mean` count wordings rather than base prompts, what `hierarchy_nodes: true` costs
+  in alpha and in vacuous single-block nodes, and that a block key is a field's raw value, so
+  base-prompt ids repeated across tasks share a block. The package itself is unchanged.
+- **An example scores attack runs by a confirmation rollout (#124).**
+  [`examples/attack_confirmation`](examples/attack_confirmation/README.md) makes one Inspect
+  sample one attack run with a query budget K. The scorer sends the prompt the attack found to
+  the target once more and grades that fresh completion with a judge the attacker did not search
+  against, so the outcome is not selected for the attacker's judge's false positives, which
+  inflate the attacker's own report to 1 − (1 − f)^K for a target that never complies. Every
+  design-manifest row declares the attack. The task refuses a design that declares another
+  attack, and relative paths to its files, which `inspect eval` would read from the task file's
+  directory. The plan requires one declared attack per cohort, fingerprint included, and the
+  README has a plan for live runs match every cohort on the attack id, budget, attacker and
+  judges. Nothing compares fingerprints across cohorts, so the README asks for a new attack id
+  whenever the attack changes, its prompt templates included. The README also says what the
+  confirmed rate still depends on: the attacker's judge, whose false positives end runs on
+  prompts that do not work and so lower it; a target that samples; and two judges that err
+  independently. It runs offline with no API key, and against real models with `-T mode=live`.
+  The package itself is unchanged.
 
 - **An offline example compares two versions of a harness around the same model.**
   `examples/harness_versions` runs one simulated model inside harness v1 and v2, selects the two
@@ -231,15 +274,15 @@ described in their pull requests.
   [Conversations and system prompts](docs/generative-evaluation.md#conversations-and-system-prompts-experimental).
 
 - **Lang-Reiczigel limits in validated judge mode (changes report bytes).** With
-  `sampling: simple_random`, each whole-cohort `weighted_mean` row now carries a
-  `judge_corrected_validated_lang_reiczigel` interval beside the exact Clopper-Pearson box:
-  the limits of Lang and Reiczigel (2014) for prevalence adjusted for estimated sensitivity
-  and specificity. They are `diagnostic` and never decide a claim, because a coverage
-  simulation (`research/judge_correction_lang_reiczigel.py`) shows them falling to 91.4%
-  at nominal 95% where prevalence is 2% or below and labels number 300 or fewer, and not
-  uniformly narrower than the box. Where they cannot be computed,
-  `JUDGE_LANG_REICZIGEL_UNAVAILABLE` says why. Python callers get
-  `lang_reiczigel_corrected_risk`. Labels drawn within judge strata, simply or by a
+  `sampling: simple_random`, every group's `weighted_mean` row that the calibration corrects
+  now carries a `judge_corrected_validated_lang_reiczigel` interval beside the exact
+  Clopper-Pearson box: the limits of Lang and Reiczigel (2014) for prevalence adjusted for
+  estimated sensitivity and specificity. Tail measures and hierarchy nodes get none. They are
+  `diagnostic` and never decide a claim, because a coverage simulation
+  (`research/judge_correction_lang_reiczigel.py`) shows them falling to 91.4% at nominal 95%
+  where prevalence is 2% or below and labels number 300 or fewer, and not uniformly narrower
+  than the box. Where they cannot be computed, `JUDGE_LANG_REICZIGEL_UNAVAILABLE` says why.
+  Python callers get `lang_reiczigel_corrected_risk`. Labels drawn within judge strata, simply or by a
   stratified design (`stratified_within_judge_stratum`), get no such interval.
 
 - **Judge flip rate under content-preserving wrappers (experimental, #122).**
@@ -247,9 +290,15 @@ described in their pull requests.
   completions, rescored inside wrappers that keep the content verbatim, such as a story
   frame. `analyze` adds a `JUDGE_FLIP_RATE` diagnostic to the integrity section of
   `report.json` and `report.md`: the share that flips to safe under at least one wrapper and
-  under each, with exact Clopper-Pearson intervals. Above the plan's `warn_above` it is a
-  warning. It never changes a claim or the decision. A manifest that does not fit the run is a
-  `JUDGE_FLIP_INVALID` error. Plans without the section keep their hash and outputs.
+  under each, with exact Clopper-Pearson intervals, and the number of prompts the rescored
+  completions come from. The intervals treat the completions as independent. Under
+  `sampling: simple_random` they are for the run's share; under `sampling: all`, a census,
+  they are descriptive, and too narrow for the judge's rate beyond the run when completions of
+  one prompt flip together. Above the plan's `warn_above` it is a warning. It never changes a
+  claim or the decision. Failures that a plan policy classified, such as a sample error counted
+  as a failure, are not judge-positive and are left out. A manifest that does not fit the run,
+  or that rescores such a failure, is a `JUDGE_FLIP_INVALID` error. Plans without the section
+  keep their hash and outputs.
   [`examples/judge_flip`](examples/judge_flip/README.md) rescores a run under four wrappers
   and writes the manifest; the package itself does not call a model. See
   [Judge flip rate](docs/judge-misclassification.md#judge-flip-rate-under-content-preserving-wrappers-experimental).
@@ -260,7 +309,11 @@ described in their pull requests.
   assumptions behind that bound, and JSON pointers to each value's place in `report.json`,
   with the analysis's plan hash and input hashes once for the document. Every value is copied
   from `report.json`; a judge-corrected claim exports the corrected bound and the combined
-  alpha. `checksums.json` covers the file, and `inspect-safety-stats schema claims` prints its
+  alpha, and a claim decided by the noisy-but-valid test names the test and exports the
+  judge-reported interval it was applied to. A claim that a validated calibration leaves
+  `INCONCLUSIVE` for want of a certifying correction is flagged as such, because its bound is
+  the uncorrected judge-reported one, and every record carries the claim's reasons.
+  `checksums.json` covers the file, and `inspect-safety-stats schema claims` prints its
   schema. The option needs `report.include_decisions: true`. Plans without it keep their hash
   and every artifact's bytes. See
   [claims.json](docs/plan-reference.md#claimsjson-experimental).
@@ -391,16 +444,27 @@ described in their pull requests.
   [Worst-of-k interval](docs/statistical-methods.md#worst-of-k-interval-experimental).
 
 - **Decision policies (experimental).** Claim thresholds can come from a decision policy kept
-  apart from the plan, and be set or revised after the run, without changing the plan's hash
-  or voiding certification: thresholds never enter the bounds, so the error rate of a verdict
-  holds at any thresholds. `analyze` and `validate` take `--decision-policy` (Python:
+  apart from the plan, and be set or revised after the run, without changing the plan's hash:
+  thresholds never enter the bounds, so the error rate of each claim's verdict holds at any
+  thresholds. The overall decision's does not: when a policy moves any mandatory claim's
+  `acceptable_upper` while the mandatory claims' bounds rest on separate coverage events, a
+  threshold read off the data could make a wrong overall `PASS` as likely as the sum of their
+  error budgets, so an overall `PASS` becomes `INCONCLUSIVE` with the warning
+  `DECISION_POLICY_OVERALL_UNCERTIFIED`. Plans whose mandatory claims all rest on one
+  simultaneous family, such as the default prompt bounds, keep it. This holds whatever time the
+  policy states for its versions. `analyze` and `validate` take `--decision-policy` (Python:
   `decision_policy=`). A policy names its plan by the inference hash, which leaves out the
   thresholds of `corrected_interval` claims (`hash-plan --inference`); it cannot set
   `noisy_valid_test` claims, whose test uses their thresholds. `report.json` gains a
   `decision_policy` section with every version, its time and whether it came after the first
-  evaluation started, and the thresholds each claim was decided at; `report.md` shows the same.
+  evaluation started (`null` when that cannot be told, as when a run reports no start time),
+  and the thresholds each claim was decided at; `report-full.md` and `report.html` show the
+  same, and `report.md` says which thresholds the policy set.
   New diagnostics: `DECISION_POLICY_MISMATCH`, `DECISION_POLICY_UNKNOWN_CLAIM`,
-  `DECISION_POLICY_FIXED_CLAIM` (errors) and `DECISION_POLICY_AFTER_GENERATION` (info).
+  `DECISION_POLICY_FIXED_CLAIM` (errors), `DECISION_POLICY_OVERALL_UNCERTIFIED` and
+  `DECISION_POLICY_SELF_DECLARED` (warnings: the second says that a version's stated time,
+  which nothing checks, is all that shows it came before the run) and
+  `DECISION_POLICY_AFTER_GENERATION` (info).
   `schema decision-policy` prints the policy schema. Analyses without a policy write the same
   bytes as before. See [Decision policies](docs/decision-policy.md).
 
@@ -413,10 +477,18 @@ described in their pull requests.
 
 - **Content-filter stops as policy blocks (experimental).** `inputs.score.content_filter_stops`
   decides before the run how a rollout counts when a provider's content filter stopped its
-  output before any content, as Claude 5-series models report a safety-classifier decline:
-  `safe` for a harm estimand, `failure` (a refusal) for an over-refusal estimand, or `score`,
-  the default, which keeps the previous behaviour. Inspect logs only. See
-  [the plan reference](docs/plan-reference.md#inputs).
+  output before the target delivered any content in the sample, as Claude 5-series models
+  report a safety-classifier decline: `safe` for a harm estimand, `failure` (a refusal) for an
+  over-refusal estimand, or `score`, the default, which keeps the previous behaviour. Text,
+  readable reasoning or a tool call in the stopped output or in any earlier generation of the
+  sample, such as an earlier turn of a conversation, counts as delivered content: such a stop
+  is scored as usual and reported in a `CONTENT_FILTER_STOP_SCORED` diagnostic, so harm that an
+  earlier turn delivered is never counted safe because a later turn was blocked. `safe`
+  replaces only a missing or safe score: a failure score, or one the mapping does not cover,
+  keeps deciding, with a `CONTENT_FILTER_STOP_SCORED` warning. `inputs.score` sets it for
+  every judge: each judge's run under `outputs.judge_claims` takes the primary's value (see
+  Claims by judge below), and a judge's score in `inputs.judges` that sets its own is refused.
+  Inspect logs only. See [the plan reference](docs/plan-reference.md#inputs).
 
 - **Group scopes for judge calibration, declared accuracies and the judge panel.** A cohort
   that holds several benchmarks no longer has to share one judge calibration and one panel
@@ -489,12 +561,12 @@ described in their pull requests.
   plan, its decision policy and its registration receipt were checked for, so a receipt for
   another plan or a failed decision policy makes it `invalid` as it does the primary analysis.
   An invalid report never shows a judge's run as anything but `invalid`, nor a row as anything
-  but `INCONCLUSIVE`. A judge's run takes the primary score's `content_filter_stops` and
-  `token_limit` where the judge leaves them at `score`, so it counts the rollouts the target's
-  provider stopped as the primary analysis does (an inherited `token_limit` also covers a
-  truncated rollout the judge left unscored for another reason, which can narrow its row;
-  `token_limit: missing` on the judge opts out); a plan whose judges' resulting
-  `content_filter_stops` misfit their `errors` or the estimand is refused when it is loaded.
+  but `INCONCLUSIVE`. A judge's run takes the primary score's `content_filter_stops`, which a
+  judge's score cannot set, and its `token_limit` where the judge leaves it at `score`, so it
+  counts the rollouts the target's provider stopped as the primary analysis does (an inherited
+  `token_limit` also covers a truncated rollout the judge left unscored for another reason,
+  which can narrow its row; `token_limit: missing` on the judge opts out); a plan whose
+  primary `content_filter_stops` misfits a judge's `errors` is refused when it is loaded.
   A judge whose own `score` asks for what the source cannot give, such as the stop reasons
   `token_limit` needs, gets an `invalid` run with `INGEST_FAILED` and rows that decide nothing,
   instead of stopping the analysis. `report-full.md` adds a "Claims by judge (experimental)"
@@ -539,8 +611,13 @@ described in their pull requests.
   largest whose upper bound falls at or below `--margin`, and the smallest whose lower bound
   reaches it, each at the target power. It reads the design manifest as `plan fixed-design`
   does, takes rollout counts per arm, and plans unpaired arms, pairs of rollouts with the same
-  prompt and repeat, or prompt clusters. The guarantee is Hoeffding's, for the
-  `weighted_hoeffding` comparison. In Python:
+  prompt and repeat, or prompt clusters. The guarantee is Hoeffding's, for a `comparisons`
+  entry with `method: weighted_hoeffding` only: a `comparison_sets` entry bounds each arm
+  separately, which is usually wider, and `weighted_kl_chernoff` and
+  `weighted_empirical_bernstein` can be wider with uneven prompt weights or at moderate
+  failure rates, so the numbers do not hold for them. The setup `init` writes, a
+  `comparison_sets` entry with `weighted_kl_chernoff`, is therefore not covered; the output's
+  `Interval method` line says so. In Python:
   `stats.planning.comparison_resolvable_differences`. See
   [Planning a comparison](docs/model-comparisons.md#planning-a-comparison-experimental).
 
@@ -728,6 +805,12 @@ described in their pull requests.
   `ExitCode` in `cli.py`, and no other exit status changes. See
   [Exit codes](docs/api-reference.md#exit-codes).
 
+- **`hash-plan` reports a plan it cannot read or validate on one line, and exits `3`.** It
+  prints `Plan invalid:` followed by each failing field as `field: message`, or the reading
+  error, on one line on stderr, where it printed a traceback and exited `1`. stdout still
+  carries only the hash, so a script that reads it is unaffected; one that tested for exit `1`
+  should test for a nonzero status.
+
 - **The generative report writes `checksums.json`.** It holds the SHA-256 of every other file
   the report writes, as the fixed-design report's does. The other files keep their bytes.
   Both reports now write their files through one module, `inspect_safety_stats.report.artifacts`.
@@ -790,8 +873,10 @@ described in their pull requests.
   `estimate_upper` in place of `estimate`, a `partial_pairing` record in `diagnostic_outputs`
   and a `PAIR_UNSCORED_COMPLETED` warning. A pair unscored in both arms, which was dropped
   without notice, is now counted and bounded too. A key missing from one arm is still
-  `PAIR_BROKEN`. `exact_mcnemar_partial` and `newcombe_paired_interval_partial` are exported
-  from `stats`. See
+  `PAIR_BROKEN`. When the completions produce more than 50 million distinct 2×2 tables, as from
+  668 pairs unscored in both arms, `newcombe_paired` alone is not reported, with a
+  `PAIR_NEWCOMBE_UNAVAILABLE` warning, and the integrity status is unaffected.
+  `exact_mcnemar_partial` and `newcombe_paired_interval_partial` are exported from `stats`. See
   [Pairs with an unscored arm](docs/model-comparisons.md#pairs-with-an-unscored-arm).
 
 - **`analyze` reports input it cannot read (changes behaviour).** A missing or broken
