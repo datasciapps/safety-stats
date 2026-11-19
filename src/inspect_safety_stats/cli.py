@@ -626,12 +626,12 @@ def fixed_design_planning_command(
     ] = IndependenceUnitOption.rollout,
     family_size: Annotated[int, typer.Option("--family-size", min=1)] = 1,
 ) -> None:
-    """Detectable rates for a declared weighted design under a Hoeffding guarantee.
+    """Detectable rates for a declared weighted design.
 
     Reads the design manifest so planning sees the same prompts, weights, and
     expected rollout counts that `analyze` will resolve. Rollout counts come
     from the manifest's `expected_rollouts` column unless `--rollouts` supplies
-    a uniform override.
+    a uniform override. Without --plan the rates are weighted Hoeffding guarantees.
 
     With --plan, every claim is planned as `analyze` will decide it, and the options the
     plan supplies are refused rather than overridden.
@@ -819,8 +819,15 @@ def _plan_fixed_design_from_plan(
             + _rate(rejection.minimum_detectable_failure_rate if rejection else None)
         )
         typer.echo(
-            f"  Certification floor: {planned.certification_floor:.8g}, the upper bound "
-            "when every rollout is safe"
+            f"  Certification floor: {item.certification_floor:.8g}, the upper bound analyze "
+            "reports when every rollout is safe"
+            + (
+                f" ({item.raw_certification_floor:.8g} before the hierarchy-region projection; "
+                "the rates above are planned before it, and the projection can only raise "
+                "their power)"
+                if item.certification_floor < item.raw_certification_floor
+                else ""
+            )
         )
         for reference in item.references:
             typer.echo(
@@ -837,12 +844,14 @@ def _plan_fixed_design_from_plan(
         typer.echo("")
         typer.echo(
             f"Direct-mean intervals analyze will report ({design.method}); "
-            "floor is the upper bound when every rollout is safe, and a target resolves "
-            "when the floor is at or below its group's smallest acceptable_upper:"
+            "raw floor is the interval's upper bound when every rollout is safe, and floor "
+            "the bound analyze reports then, after the hierarchy-region projection when the "
+            "plan asks for it. A target resolves when its floor is at or below its group's "
+            "smallest acceptable_upper:"
         )
         typer.echo(
             f"  {'profile':<14} {'cohort':<14} {'target':<36} {'blocks':>7} {'ESS':>9} "
-            f"{'alpha':>11} {'calibration':<15} {'floor':>9} {'resolves':>8}"
+            f"{'alpha':>11} {'calibration':<15} {'raw floor':>9} {'floor':>9} {'resolves':>8}"
         )
         for interval in design.intervals:
             target = (
@@ -855,6 +864,7 @@ def _plan_fixed_design_from_plan(
                 f"  {interval.independence_profile:<14} {interval.cohort:<14} {target:<36} "
                 f"{interval.independent_blocks:>7} {interval.effective_sample_size:>9.4g} "
                 f"{interval.alpha.endpoint_alpha:>11.4g} {interval.alpha.calibration:<15} "
+                f"{interval.raw_certification_floor:>9.4g} "
                 f"{interval.certification_floor:>9.4g} {resolves:>8}"
             )
         unresolved: dict[tuple[str, str, str, str], list[int]] = {}
@@ -873,7 +883,8 @@ def _plan_fixed_design_from_plan(
                 tally[0] += 1
         notes = [
             f"  level {level} of group {group} in cohort {cohort} under profile {profile}: "
-            f"{failed} of {total} nodes cannot be certified at the group's acceptable_upper"
+            f"{failed} of {total} nodes cannot be certified at the group's acceptable_upper, "
+            "even when every rollout is safe"
             for (profile, cohort, group, level), (failed, total) in unresolved.items()
             if failed
         ]
@@ -1000,10 +1011,18 @@ def comparison_planning_command(
     The difference is candidate minus baseline risk over the manifest's weighted design.
     Reports the largest true difference whose upper bound falls at or below --margin, and
     the smallest whose lower bound reaches it, each with --power, under the Hoeffding
-    guarantee of the weighted_hoeffding comparison. Rollout counts per arm come from the
-    manifest's expected_rollouts column unless --candidate-rollouts or --baseline-rollouts
-    override them. --independence-unit pair plans for a profile block_by [prompt_id, repeat]
-    with joint coupling; prompt_cluster for block_by [prompt_id] with joint coupling.
+    guarantee of a comparisons entry with method weighted_hoeffding. That is not the setup
+    init writes, nor the one the guide recommends for two or more configurations: both use a
+    comparison_sets entry with method weighted_kl_chernoff. To rely on the numbers, declare
+    the contrast as a comparisons entry with method weighted_hoeffding. The numbers do not
+    hold for a comparison_sets entry or another method: a comparison set bounds each arm
+    separately, which is usually wider, and weighted_kl_chernoff and
+    weighted_empirical_bernstein, often narrower on sparse failures when prompt weights are
+    even, can be wider with uneven weights or at moderate failure rates. Rollout counts per
+    arm come from the manifest's expected_rollouts column unless --candidate-rollouts or
+    --baseline-rollouts override them. --independence-unit pair plans for a profile that
+    blocks by prompt_id and repeat with joint coupling; prompt_cluster for one that blocks
+    by prompt_id with joint coupling.
     """
 
     from inspect_safety_stats.stats.planning import comparison_resolvable_differences
@@ -1054,6 +1073,10 @@ def comparison_planning_command(
     typer.echo(f"Effective sample size: {plan.effective_sample_size:.8g}")
     typer.echo(f"Margin: {margin:.8g}")
     typer.echo(f"Target power: {power:.8g}")
+    typer.echo(
+        "Interval method: weighted_hoeffding in a comparisons entry only; not comparison_sets "
+        "(as init writes) or other methods, where power can fall far below the target"
+    )
     typer.echo(
         "Largest difference with upper bound at or below the margin: "
         + (
@@ -1128,11 +1151,14 @@ def _one_line_error(exc: Exception) -> str:
     from pydantic import ValidationError
 
     if isinstance(exc, ValidationError):
-        return "; ".join(
+        text = "; ".join(
             f"{'.'.join(str(part) for part in error['loc']) or '(root)'}: {error['msg']}"
             for error in exc.errors()
         )
-    return " ".join(str(exc).split())
+    else:
+        text = str(exc)
+    # A validator's own message may hold line breaks; the line is collapsed either way.
+    return " ".join(text.split())
 
 
 @app.command("hash-plan")

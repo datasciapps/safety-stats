@@ -27,6 +27,7 @@ from inspect_safety_stats.schema.reports import (
     RiskIntervalResult,
     SafetyReport,
     VerdictRange,
+    design_columns,
     mapping_results,
 )
 
@@ -276,9 +277,13 @@ def _judge_error_stress_lines(
 
 
 def _claim_status(claim: Any) -> str:
-    if claim.descriptive_status is None:
-        return f"`{claim.status}`"
-    return f"`{claim.status}` (descriptive: `{claim.descriptive_status}`)"
+    return _status_text(claim.status, claim.descriptive_status)
+
+
+def _status_text(status: str, descriptive_status: str | None) -> str:
+    if descriptive_status is None:
+        return f"`{status}`"
+    return f"`{status}` (descriptive: `{descriptive_status}`)"
 
 
 _MAPPING_KIND_ORDER = {"group_risk": 0, "comparison": 1, "claim": 2}
@@ -479,15 +484,27 @@ def _judge_claim_lines(
         "",
         "Each judge's rows are the claims this plan gives with that judge's verdicts as its "
         "primary outcome, over the same rollouts, without the panel or the judge calibration. "
-        "They compare judge configurations. The report's decision rests on the primary outcome "
-        "alone, and these rows are not adjusted for their number.",
+        "Their bounds are on that judge's reported risk. Under a validated judge calibration, "
+        "which makes the plan's thresholds ones on true risk, every row is `INCONCLUSIVE`. "
+        "A judge's run handles missing and errored verdicts by that judge's own "
+        "`score.missing` and `score.errors`, not the primary outcome's, and counts "
+        "content-filter stops and unscored answers cut at the token limit as the primary "
+        "outcome does, unless the judge's score sets its own `token_limit`. "
+        "When the report's integrity is invalid, every judge's run is `invalid` and every row "
+        "`INCONCLUSIVE`, whatever the judge's own diagnostics below. "
+        "The rows compare judge configurations. The report's decision rests on the primary "
+        "outcome alone, and these rows are not adjusted for their number.",
         "",
         f"| Judge | Integrity | Claim | {status_header}Estimate | Lower | Upper | Method |",
         f"|---|---|---|{status_rule}---:|---:|---:|---|",
     ]
     for judge in judges:
         for claim in judge["claims"]:
-            status = f"`{claim['status']}` | " if include_decisions else ""
+            status = (
+                f"{_status_text(claim['status'], claim['descriptive_status'])} | "
+                if include_decisions
+                else ""
+            )
             lines.append(
                 f"| {_escape(judge['id'])} | `{judge['integrity']}` | "
                 f"{_escape(claim['claim_id'])} | {status}"
@@ -497,8 +514,24 @@ def _judge_claim_lines(
     lines.extend(
         [
             "",
+            "Each judge's run's diagnostics, by code, with how often each occurred:",
+            "",
+            "| Judge | Integrity | Diagnostics |",
+            "|---|---|---|",
+        ]
+    )
+    for judge in judges:
+        counts = judge["diagnostic_counts"]
+        listed = "; ".join(f"`{_escape(code)}` ({count})" for code, count in counts.items())
+        lines.append(
+            f"| {_escape(judge['id'])} | `{judge['integrity']}` | {listed or 'none'} |"
+        )
+    lines.extend(
+        [
+            "",
             "The scorer configuration and model roles each cohort's runs record, by judge: the "
-            "options of the scorer named like the judge's score.",
+            "SHA-256 fingerprint of the scorer named like the judge's score, and each model "
+            "role's model id. Neither shows the scorer's options or metadata.",
             "",
             "| Judge | Cohort | Scorer | Model roles |",
             "|---|---|---|---|",
@@ -946,7 +979,10 @@ def _decision_policy_lines(report: SafetyReport, places: int) -> list[str]:
         summary = (
             "Claim thresholds come from a decision policy kept apart from the plan "
             "(experimental). Thresholds do not enter the bounds, so a policy set after the run "
-            "leaves the plan's hash and the verdicts' certification as they are."
+            "leaves the plan's hash as it is, and each claim's verdict keeps its error bound. "
+            "An overall PASS keeps its own only when the policy moves no mandatory claim's "
+            "acceptable_upper or one coverage event covers every mandatory claim (see "
+            "`DECISION_POLICY_OVERALL_UNCERTIFIED`)."
         )
     else:
         summary = (
@@ -961,6 +997,8 @@ def _decision_policy_lines(report: SafetyReport, places: int) -> list[str]:
         "",
         f"**Inference plan SHA-256:** `{_escape(record.inference_plan_sha256)}`  ",
         f"**Policy SHA-256:** `{_escape(record.policy_sha256)}`",
+        "",
+        "Each version's time is as the policy states it; nothing in the analysis checks it.",
         "",
         "| Version | Set at | After first evaluation | Claims | Reason |",
         "|---|---|---|---|---|",
@@ -2020,16 +2058,11 @@ def _defaults_markdown(report: SafetyReport) -> list[str]:
 def _design_rows(report: SafetyReport) -> list[dict[str, Any]]:
     """The rows of design.resolved.csv, with their columns in the design's order.
 
-    report.json stores the rows with sorted keys, so the order comes from the hierarchy:
-    the group, the hierarchy levels, the task, question and prompt, then the weight.
+    report.json stores the rows with sorted keys, so the order comes from the hierarchy
+    (``design_columns``).
     """
 
-    hierarchy = [str(item) for item in report.design.get("hierarchy") or []]
-    columns = [
-        "group_id",
-        *dict.fromkeys([*hierarchy, "task_id", "question_id", "prompt_id"]),
-        "weight",
-    ]
+    columns = design_columns([str(item) for item in report.design.get("hierarchy") or []])
     return [
         {column: row[column] for column in columns if column in row}
         for row in report.design.get("prompts") or []

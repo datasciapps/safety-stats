@@ -135,6 +135,7 @@ class RewriteRequest:
     selection_seed: int
     # The system prompt the procedure attaches to this rewrite, when the plan declares
     # rewrite.system_prompts: context for the kernel, which must not write one itself.
+    # None where the arm value's text is empty; a system turn is refused there too.
     system_prompt: str | None = None
     # The number of user turns the conversation must have, when the plan declares
     # rewrite.conversation_turns. A conversation with any other count is rejected.

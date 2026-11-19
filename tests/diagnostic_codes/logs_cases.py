@@ -269,6 +269,29 @@ def _missing_votes(count: int) -> Check:
     return check
 
 
+def _judge_claims_with_roles(model_roles: Any) -> Change:
+    """Judges j1 and j2 with outputs.judge_claims, and the run's model_roles as given."""
+
+    def change(inputs: Inputs) -> None:
+        _judged("other")(inputs)
+        inputs.plan["outputs"]["judge_claims"] = True
+        inputs.runs[0]["model_roles"] = model_roles
+
+    return change
+
+
+def _roles_left_out(triggered: Outcome, control: Outcome) -> None:
+    """The run's model roles are left out of each judge's configuration; nothing else moves."""
+
+    for outcome, expected in ((triggered, None), (control, [{"grader": {"model": "m"}}])):
+        for judge in outcome.report.provenance["judge_panel"]["judges"]:
+            assert judge["configuration"]["candidate"]["model_roles"] == expected
+    assert triggered.report.claims == control.report.claims
+    assert [judge["claims"] for judge in triggered.report.provenance["judge_panel"]["judges"]] == [
+        judge["claims"] for judge in control.report.provenance["judge_panel"]["judges"]
+    ]
+
+
 # --- manifest --------------------------------------------------------------------------------
 
 
@@ -483,7 +506,8 @@ def _claim_still_evaluated(triggered: Outcome, control: Outcome) -> None:
 @dataclass(frozen=True)
 class StoppedRollouts:
     """Rollout files whose rollouts may carry a ``stop_reason``: ``content_filter`` for a
-    provider block that delivered no content, ``max_tokens`` for the generation token limit."""
+    provider block, ``max_tokens`` for the generation token limit. A block delivered no
+    content unless the rollout gives ``stop_delivered_in``, where content was delivered."""
 
     runs: Path
     rollouts: Path
@@ -495,12 +519,14 @@ class StoppedRollouts:
             reason = item.attributes.get("stop_reason")
             if reason is None:
                 return None
+            delivered_in = item.attributes.get("stop_delivered_in")
             return StopContext(
-                content_delivered=False,
+                content_delivered=delivered_in is not None,
                 block_type=None,
                 block_category=None,
                 block_error=False,
                 stop_reason=reason,
+                delivered_in=delivered_in,
             )
 
         return replace(read_rollout_files(self.runs, self.rollouts), stop_context=stop)
@@ -714,11 +740,34 @@ CASES = [
         effect=_same_estimates,
     ),
     Case(
+        code="CONTENT_FILTER_STOP_SCORED",
+        # A FAIL-scored output was stopped by a content filter after an earlier turn delivered
+        # content, under content_filter_stops: safe; the control's output was not stopped.
+        # Either way the score decides.
+        trigger=_stopped(
+            _changes(
+                _plan_score(content_filter_stops="safe"),
+                _first(
+                    "FAIL", stop_reason="content_filter", stop_delivered_in="earlier_generation"
+                ),
+            )
+        ),
+        control=_stopped(_changes(_plan_score(content_filter_stops="safe"), _first("FAIL"))),
+        effect=_same_estimates,
+    ),
+    Case(
         code="INGEST_FAILED",
         # A rollout's repeat of 0 makes the rollout files unreadable.
         trigger=analysis(_unreadable_rollout),
         control=analysis(),
         effect=_nothing_reported,
+    ),
+    Case(
+        code="JUDGE_CONFIGURATION_UNREADABLE",
+        # The run records its model roles as text that is not JSON.
+        trigger=analysis(_judge_claims_with_roles("grader=m")),
+        control=analysis(_judge_claims_with_roles({"grader": {"model": "m"}})),
+        effect=_roles_left_out,
     ),
     Case(
         code="JUDGE_SCORE_MISSING",

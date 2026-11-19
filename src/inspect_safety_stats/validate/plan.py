@@ -9,6 +9,20 @@ def _duplicates(values: list[str]) -> set[str]:
     return {value for value in values if values.count(value) > 1}
 
 
+def noisy_valid_test_supported(plan: AnalysisPlan) -> bool:
+    """Whether the plan's judge calibration can run a ``noisy_valid_test`` claim's test.
+
+    The test needs a validated calibration whose labels are a simple random sample.
+    """
+
+    calibration = plan.inputs.judge_calibration
+    return (
+        calibration is not None
+        and calibration.mode == "validated"
+        and calibration.sampling == "simple_random"
+    )
+
+
 def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     expanded_comparisons = plan.expanded_comparisons()
@@ -158,12 +172,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
             )
     for claim in plan.claims:
         if claim.method == "noisy_valid_test":
-            calibration = plan.inputs.judge_calibration
-            if (
-                calibration is None
-                or calibration.mode != "validated"
-                or calibration.sampling != "simple_random"
-            ):
+            if not noisy_valid_test_supported(plan):
                 diagnostics.append(
                     Diagnostic(
                         code="PLAN_INVALID_CLAIM",
@@ -311,7 +320,12 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope=plan_scope("outputs", "direct_mean_intervals"),
                 )
             )
-        if not any(measure.type == "weighted_mean" for measure in measures.values()):
+        # A direct worst_of_k interval is calibrated in the direct-mean family, so the section
+        # is in use even without a weighted mean.
+        if not any(
+            measure.type == "weighted_mean" or measure.direct_interval
+            for measure in measures.values()
+        ):
             diagnostics.append(
                 Diagnostic(
                     code="PLAN_METHOD_UNUSED",
@@ -461,7 +475,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope=plan_scope("inputs", "judge_calibration"),
                 )
             )
-    diagnostics.extend(_worst_of_k_interval_problems(plan))
+    diagnostics.extend(_worst_of_k_interval_diagnostics(plan))
     diagnostics.extend(anytime_bound_problems(plan))
     if not plan.outputs.risk_measures:
         diagnostics.append(
@@ -478,13 +492,15 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
     return diagnostics
 
 
-def _worst_of_k_interval_problems(plan: AnalysisPlan) -> list[Diagnostic]:
-    """What the experimental worst-of-k direct interval cannot do yet, each an error."""
+def worst_of_k_interval_problems(plan: AnalysisPlan) -> list[str]:
+    """Why the plan cannot have the experimental direct worst_of_k interval it asks for.
 
-    requested = sorted(
-        measure.id for measure in plan.outputs.risk_measures if measure.direct_interval
-    )
-    if not requested:
+    Empty when no measure asks for the interval, or when the plan supports it.
+    ``validate_plan_references`` reports each problem as a PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED
+    error, and ``analyze`` withholds the interval from every row while any remains.
+    """
+
+    if not any(measure.direct_interval for measure in plan.outputs.risk_measures):
         return []
     direct = plan.outputs.direct_mean_intervals
     problems: list[str] = []
@@ -511,6 +527,15 @@ def _worst_of_k_interval_problems(plan: AnalysisPlan) -> list[Diagnostic]:
                 "outputs.direct_mean_intervals must block by rollout, not "
                 f"{profile.block_by!r}"
             )
+    return problems
+
+
+def _worst_of_k_interval_diagnostics(plan: AnalysisPlan) -> list[Diagnostic]:
+    """What the experimental worst-of-k direct interval cannot do yet, each an error."""
+
+    requested = sorted(
+        measure.id for measure in plan.outputs.risk_measures if measure.direct_interval
+    )
     return [
         Diagnostic(
             code="PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED",
@@ -518,7 +543,7 @@ def _worst_of_k_interval_problems(plan: AnalysisPlan) -> list[Diagnostic]:
             message=f"the direct worst_of_k interval of {', '.join(requested)}: {problem}",
             scope=plan_scope("outputs", "risk_measures"),
         )
-        for problem in problems
+        for problem in worst_of_k_interval_problems(plan)
     ]
 
 

@@ -16,7 +16,7 @@ confidence sequence is worth its cost only when observed outcomes decide when sa
 | phase | scope | issue |
 |---|---|---|
 | 0 | this document | #10 |
-| 1 | `stats/sequential.py` with the Hoeffding-spending reference sequence and a betting or empirical-Bernstein sequence; `analyze --sequential` over a growing log directory; no Inspect integration | #10 |
+| 1 | the Hoeffding-spending reference sequence and a betting or empirical-Bernstein sequence for draws with replacement, added to `stats/sequential.py` beside the bound of #126; `analyze --sequential` over a growing log directory; no Inspect integration | #10 |
 | 2 | optional integration with Inspect's early stopping, after shadow mode (below) | separate issue when reached |
 
 Phase 1 is accepted when a simulation shows time-uniform coverage under continuous monitoring
@@ -50,12 +50,24 @@ Draw the item for step \(t\) at random, independently of the past, with
 \mathbb E[X_t\mid\mathcal F_{t-1}]=\sum_i w_i\,p_i=\theta
 \]
 
-for every \(t\), although the items differ. Hsu and Shekhar prove the general form: for any
-predictable querying rule \(q_t\) with \(q_t(i)>0\) for every item, their inverse-probability
-betting factor is a conditional e-value (*Efficient Sequential Evaluation of Large Language
-Models*, arXiv:2607.17409, Proposition 4.2). Drawing in proportion to the weights,
-\(q_t=w\), makes the inverse-probability correction cancel. Each observation is then the plain
-outcome in \([0,1]\), so the weighting costs nothing in the range of admissible bets.
+for every \(t\), although the items differ. The identity also rests on three assumptions about
+the evaluation, which the draws cannot supply:
+
+- **Fixed failure probabilities.** Each \(p_i\) stays the same while the stream runs. The
+  model, its configuration, the scaffold and the judge do not change between draws, and
+  nothing in the system learns from earlier rollouts.
+- **Fresh rollouts.** Each draw runs its rollouts anew, sharing no state, cache or conversation
+  with earlier draws. An item drawn again is run again, not replayed.
+- **A hidden draw sequence.** The selection seed is fixed before the run and kept from the
+  system under evaluation, so that its behaviour on a draw cannot depend on which items come
+  next.
+
+Hsu and Shekhar prove the general form: for any predictable querying rule \(q_t\) with
+\(q_t(i)>0\) for every item, their inverse-probability betting factor is a conditional e-value
+(*Efficient Sequential Evaluation of Large Language Models*, arXiv:2607.17409, Proposition
+4.2). Drawing in proportion to the weights, \(q_t=w\), makes the inverse-probability correction
+cancel. Each observation is then the plain outcome in \([0,1]\), so the weighting costs nothing
+in the range of admissible bets.
 
 Two limits follow from that proposition:
 
@@ -83,9 +95,13 @@ of a short one, and the stream is well defined before its length is known.
 Phase 1 refuses `sampling.method: proportional_stratified`. Its allocation across strata comes
 from a largest-remainder split of `total_rewrites`, so the draws depend on the total.
 
-The manifest-based Inspect path is not a stream yet. Inspect runs samples in dataset order
-unless `sample_shuffle` is set, and it is off by default. A stream from that path needs the order
-seed recorded and checked against the log, and phase 1 refuses a run without one.
+The manifest-based Inspect path does not give this stream, with or without a recorded seed.
+Inspect runs samples in dataset order unless `sample_shuffle` is set, and it is off by default.
+With `sample_shuffle` set to a seed, the order is a seeded permutation: each sample appears once in the order, so
+the draws are without replacement and outside the proposition above (with replacement only).
+Phase 1's sequences refuse that path. Its only anytime-valid route is the upper bound of #126
+([below](#runs-that-optstop-stopped-126)), which covers a permutation, and which in turn refuses
+a run whose seed and shuffled order the log does not record (`ANYTIME_ORDER_UNRECORDED`).
 
 ### Draw order, not completion order
 
@@ -95,16 +111,31 @@ outcomes tend to arrive first, and a sequence fed in completion order would look
 system is. At each look the analysis uses one of:
 
 - the longest prefix of draws that are all complete; or
-- every draw issued so far, with unfinished draws counted as failures. This is valid for the
-  upper bound only, by the same argument as the conservative completion of unclassified rollouts
-  in section 4.5.
+- every draw issued so far, with unfinished draws counted as failures, for the upper bound only.
+
+The second option rests on the argument of section 4.5 for unclassified rollouts: a bound that
+never falls when one observation rises stays valid when unknown outcomes are set to their
+largest value. The Hoeffding-spending reference sequence has that property, and so does a
+betting mixture over fractions fixed in advance, such as the bound of #126: a larger outcome
+lowers its own factor of the capital and raises none of the others. A sequence that fits its
+bets or its variance estimate to earlier outcomes, as a betting sequence with predictable
+plug-in bets or an empirical-Bernstein sequence does, need not have it. A larger early outcome
+changes every later bet, and the bound can fall. Phase 1 offers the second option only for a
+sequence that has the property, and uses the longest complete prefix for any other.
 
 ## Several claims
 
 Section 11 applies unchanged. Each claim \(i\) gets its own \(\alpha_i\), with
-\(\sum_i\alpha_i\) at most the family's \(\alpha\), and the union bound covers repeated looks and
-repeated claims at once. The allocation is frozen before monitoring starts. A claim added during
-monitoring needs alpha reserved for it in advance, or a new family.
+\(\sum_i\alpha_i\) at most the family's \(\alpha\). Two mechanisms share the work:
+
+- **Looks.** Each claim's sequence is time-uniform at its \(\alpha_i\): the chance that it ever
+  excludes the true value, at any look, is at most \(\alpha_i\). Looks cost no alpha, however
+  many there are and whenever they are taken.
+- **Claims.** The union bound over claims then gives at most \(\sum_i\alpha_i\) for any claim
+  ever being wrong.
+
+The allocation is frozen before monitoring starts. A claim added during monitoring needs alpha
+reserved for it in advance, or a new family.
 
 ## State between looks
 
@@ -172,27 +203,48 @@ phase 2 needs.
 
 ## Cost
 
-Anytime validity costs width. The figures below are for one-sided \(\alpha=0.05\), a pass
-threshold of 0.05 and at most 1,200 draws. Only the peeking row has been reproduced here, with
-`python research/sequential_peeking.py`. The others come from a simulation reported in the
-review of #10 tracked in #128, which did not name the sequence it used. Phase 1 reproduces them
-with its own sequence before they are relied on.
+Anytime validity costs width, and with it draws. The figures below are for one-sided
+\(\alpha=0.05\), a pass threshold of 0.05 and at most 1,200 draws with replacement. The
+sequence is a betting mixture: the capital of step 1 of #126 without its finite-population
+correction, mixed over the fixed bet fractions of the betting bounds (#3), with the running
+intersection over draws. A run passes at the first draw whose upper bound is at or below the
+threshold. A fixed design is one-sided Clopper–Pearson at a number of draws fixed in advance.
+`python research/sequential_cost.py` (about 75 s, 20,000 runs per rate, 1,000 per width cell)
+gives every figure except Clopper–Pearson re-checked after every draw, which
+`python research/sequential_peeking.py` gives from 200,000 runs.
 
-| quantity | value | source |
+| quantity | sequence | fixed design |
 |---|---|---|
-| sequence width at a fixed \(n\), against Clopper–Pearson | 1.1–1.5× | review |
-| draws to pass at a true rate of 0.005 (median) | 72, against 1,200 | review |
-| probability of passing at a true rate of 0.03 | 0.76, against 0.97 | review |
-| false-pass rate when Clopper–Pearson is re-checked after every draw, true rate 0.05 | 0.242 (0.247 in the review), against a nominal 0.05 | `research/sequential_peeking.py`, 200,000 runs |
+| upper bound minus estimate after 100, 300 or 1,200 draws, at true rates 0.005 to 0.05: median ratio to Clopper–Pearson's | 1.13–1.89× | 1 |
+| draws to pass at a true rate of 0.005 | median 67, mean 101; every run passes | 59 draws pass 0.744 of runs, 93 pass 0.90, 153 pass 0.99 |
+| probability of passing at a true rate of 0.03 | 0.708 by 1,200 draws; a run uses 745 draws on average | 0.970 with 1,200 draws; 482 draws pass 0.708 |
+| false-pass rate at a true rate of 0.05, checked after every draw | 0.040 (s.e. 0.0014) | Clopper–Pearson: 0.242 (s.e. 0.0010); a single look at 1,200 draws: 0.045 |
 
-A single look at the horizon passes 0.045 of those runs, within the nominal 0.05. Re-checking
-after every draw multiplies the false-pass rate about five-fold, which is the peeking
+The sequence saves the most draws where the failure rate is well below the threshold and not
+known in advance. At 0.005 it passes after a mean of 101 draws, where a fixed design needs 153 to pass
+0.99 of the time; the zero-failure design of 59 draws is smaller but passes only 0.744 of the
+time. Near the threshold the sequence costs draws: at 0.03 a fixed design of 482 draws passes as
+often as the sequence, which uses 745 on average. The Hoeffding-spending reference passes none
+of these runs. After 1,200 draws without a failure its bound is still 0.085, and its margin over
+the estimate is 4.7 to 17 times Clopper–Pearson's. It is a reference for tests, not a sequence
+to run.
+
+Re-checking Clopper–Pearson after every draw multiplies the false-pass rate about five-fold,
+while the sequence, checked as often, stays within the nominal 0.05. This is the peeking
 demonstration phase 1 must turn into a test.
+
+The review of #10, tracked in #128, reported figures of the same kind from a sequence it did not
+name: 1.1–1.5× for the width, 72 draws at 0.005, 0.76 at 0.03 and 0.247 for Clopper–Pearson
+re-checked. It set its 72 draws against the 1,200-draw horizon, not against a fixed design. Its
+0.247 is about five of this table's Monte Carlo standard errors from the 0.242 reproduced here,
+but the review did not report how many runs it used, so the gap may be its own Monte Carlo
+error. The table above replaces those figures. Phase 1
+measures them again for the sequence it builds.
 
 ## Related work
 
 [Statistical methods](statistical-methods.md) section 6.8 compares the prior work: Hsu and
-Shekhar (reference 20) and CELEUS (reference 33) build anytime-valid intervals for LLM
+Shekhar (reference 20) and CELEUS (reference 39) build anytime-valid intervals for LLM
 evaluation, and Optstop (reference 21) is the Bayesian counterpart, with no frequentist
 false-pass guarantee (section 12). Neither of the first two offers one-sided threshold
 decisions, a weighted estimand, several rollouts per prompt, judge correction or multiplicity
@@ -238,8 +290,9 @@ are ignored, so a rule that stops an item's later epochs on its results cannot b
    rollouts count as independent blocks, as they do at the fixed horizon.
 
 At \(t=N\) step 1 is exact, and only step 2 remains. The package's labelling protocol uses a
-related sequence, `hypergeometric_confidence_sequence`, for binary labels without weights
-(statistical methods, judge calibration); this one takes weighted outcomes in \([0,1]\).
+related sequence, `judge_accuracy_confidence_sequence`, a binomial prior-posterior ratio for
+binary labels without weights (statistical methods, judge calibration); this one takes
+weighted outcomes in \([0,1]\).
 
 Replacing an outcome by a larger value lowers every factor of the capital, and the fractions
 are fixed in advance, so the bound stays valid when unfinished or unclassified epochs before

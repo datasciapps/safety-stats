@@ -22,7 +22,7 @@ without replacement. Each prompt's rank is a hash of the seed and its `prompt_id
 A generator from `numpy.random.default_rng(seed)`, which the contributing guide asks for,
 would give neither of the last two: its draw depends on the order in which it meets the
 rows, and numpy does not promise the same values from its methods across versions. The
-derivation is in docs/statistical-methods.md, section 5.7.
+derivation is in docs/statistical-methods.md, section 5.8.
 
 The returned frame is the whole manifest with five added columns, among them the seed and
 the per-stratum count, so the frame alone records how to repeat the draw. It doubles as

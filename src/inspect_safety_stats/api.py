@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -12,10 +12,22 @@ from inspect_safety_stats.analysis.core import (
     _analysis_core,
 )
 from inspect_safety_stats.analysis.design_effect import cluster_design_effects
-from inspect_safety_stats.analysis.inputs import _coerce_plan, _JudgeInputs, _sorted_integrity
+from inspect_safety_stats.analysis.inputs import (
+    _coerce_plan,
+    _derived_run_diagnostics,
+    _integrity_status,
+    _JudgeInputs,
+    _sorted_integrity,
+)
 from inspect_safety_stats.analysis.judge_flip import judge_flip_diagnostic
 from inspect_safety_stats.analysis.judge_panel import _judge_panel_summary
-from inspect_safety_stats.analysis.policy import _apply_decision_policy, _decision_policy_record
+from inspect_safety_stats.analysis.policy import (
+    _apply_decision_policy,
+    _decision_policy_record,
+    _policy_roll_up,
+    _policy_set_claims,
+    _PolicyApplication,
+)
 from inspect_safety_stats.analysis.report import (
     _design_frame,
     _policy_events,
@@ -112,16 +124,16 @@ def _read_input(
     if source is not None and logs is not None:
         raise ValueError("pass either logs or source, not both")
     try:
-        manifest, groups, source_data = read_inputs(plan, _source(logs, parallel, source))
+        raw = read_inputs(plan, _source(logs, parallel, source))
         # ORDER MATTERS: the per-judge runs and the outcome mapping sensitivities take copies
         # made before the primary run normalizes the manifest and groups, so nothing that run
         # does can reach them.
         judge_inputs = (
-            _JudgeInputs(manifest.copy(), copy.deepcopy(groups), source_data, receipt)
+            _JudgeInputs(raw.manifest.copy(), copy.deepcopy(raw.groups), raw.source, receipt)
             if plan.outputs.judge_claims or plan.inputs.score.mapping_sensitivities
             else None
         )
-        data = normalize(plan, manifest, groups, source_data, receipt)
+        data = normalize(plan, raw.manifest, raw.groups, raw.source, receipt)
         validate_profile_fields(plan.design.independence_profiles, data.manifest)
     except Exception as exc:
         diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=str(exc)))
@@ -144,12 +156,22 @@ def _mapping_plan(plan: AnalysisPlan, spec: OutcomeMappingSensitivitySpec) -> An
 
 
 def _outcome_mapping_sensitivity(
-    plan: AnalysisPlan, inputs: _JudgeInputs, spec: OutcomeMappingSensitivitySpec
+    plan: AnalysisPlan,
+    inputs: _JudgeInputs,
+    spec: OutcomeMappingSensitivitySpec,
+    plan_diagnostics: Sequence[Diagnostic],
+    application: _PolicyApplication | None = None,
 ) -> OutcomeMappingSensitivity:
-    """The analysis repeated under one alternative outcome mapping, on the same rollouts."""
+    """The analysis repeated under one alternative outcome mapping, on the same rollouts.
+
+    It carries the primary run's ``plan_diagnostics`` (``_derived_run_diagnostics``), so a
+    registration receipt for another plan or a failed decision policy makes it invalid too.
+    ``application`` is the decision policy the primary analysis applied, if any: ``plan``
+    already carries its thresholds, and its overall decision is held to the same roll-up.
+    """
 
     alternative = _mapping_plan(plan, spec)
-    diagnostics = validate_plan_references(alternative)
+    diagnostics = _derived_run_diagnostics(alternative, plan_diagnostics)
     try:
         data = normalize(
             alternative,
@@ -162,13 +184,15 @@ def _outcome_mapping_sensitivity(
         raise ValueError(f"outcome mapping sensitivity {spec.id!r}: {exc}") from exc
     diagnostics.extend(data.diagnostics)
     diagnostics.extend(single_rollout_tail_claims(alternative, data))
-    core = _analysis_core(alternative, data, diagnostics)
+    core = _analysis_core(alternative, data, diagnostics, _policy_set_claims(application))
     decision = roll_up(
         core.mandatory_statuses(),
         integrity_valid=core.integrity_status != "invalid",
         zero_tolerance_failure=bool(_policy_events(alternative, data)),
         confirmatory=alternative.analysis.intent == "confirmatory",
     )
+    # ORDER MATTERS: before the integrity is summarised, which counts its diagnostic.
+    decision = _policy_roll_up(application, core.coverage_events, decision, diagnostics)
     integrity = _sorted_integrity(diagnostics)
     counts: dict[str, int] = {}
     for item in integrity.diagnostics:
@@ -257,7 +281,8 @@ def analyze(
     ``decision_policy`` (experimental) is a ``DecisionPolicy`` or the path of a policy file,
     read with ``load_decision_policy``. Its thresholds replace the plan's for the claims it
     sets, and the report records every version of it, while the plan and its hash stay as
-    frozen (docs/decision-policy.md).
+    frozen. When it moves any mandatory claim's acceptable_upper and the mandatory claims rest
+    on separate coverage events, an overall PASS becomes INCONCLUSIVE (docs/decision-policy.md).
 
     ``registration_receipt`` (experimental) is the path of a receipt written by
     ``hash-plan --register``. It is checked against the frozen plan's hash and the earliest
@@ -270,6 +295,10 @@ def analyze(
     diagnostics = validate_plan_references(frozen)
     application = _apply_decision_policy(frozen, decision_policy, diagnostics)
     receipt = _matched_receipt(frozen, receipt, diagnostics)
+    # What the plan, its decision policy and its registration receipt were checked for, which
+    # the judges' runs and the outcome mapping sensitivities carry. ORDER MATTERS: taken
+    # before the input is read, whose diagnostics are the primary outcome's own.
+    plan_diagnostics = list(diagnostics)
     # Every stage decides with the policy's thresholds; the report records the frozen plan.
     resolved = frozen if application is None else application.effective
     read = _read_input(resolved, logs, parallel, source, diagnostics, receipt)
@@ -278,14 +307,23 @@ def analyze(
             resolved, diagnostics, frozen, _decision_policy_record(application, None, diagnostics)
         )
     data, judge_inputs = read
-    # ORDER MATTERS: the record adds its diagnostic before the analysis reads integrity.
-    policy_record = _decision_policy_record(application, data.first_started_at, diagnostics)
+    # ORDER MATTERS: the record adds its diagnostic before the analysis reads integrity. It is
+    # the policy's, so the runs that carry the plan's diagnostics carry it too.
+    policy_diagnostics: list[Diagnostic] = []
+    policy_record = _decision_policy_record(
+        application,
+        data.first_started_at,
+        policy_diagnostics,
+        start_unrecorded=data.start_unrecorded,
+    )
+    diagnostics.extend(policy_diagnostics)
+    plan_diagnostics.extend(policy_diagnostics)
     # ORDER MATTERS too: an invalid flip manifest must be an error before integrity is read.
     judge_flip_diagnostic(resolved, data, diagnostics)
     # ORDER MATTERS as well: a run without a recorded order must be an error before integrity
     # is read.
     anytime_bound_diagnostics(resolved, data, diagnostics, _order_reader(logs, source))
-    core = _analysis_core(resolved, data, diagnostics)
+    core = _analysis_core(resolved, data, diagnostics, _policy_set_claims(application))
     estimates = core.estimates
     tail_measure_precision(resolved, estimates, diagnostics)
     risks = core.risks
@@ -302,13 +340,30 @@ def analyze(
         zero_tolerance_failure=bool(events),
         confirmatory=resolved.analysis.intent == "confirmatory",
     )
-    integrity = _sorted_integrity(diagnostics)
+    # ORDER MATTERS: before the integrity is summarised, so that its diagnostic is reported.
+    decision = _policy_roll_up(application, core.coverage_events, decision, diagnostics)
     judge_panel = _judge_panel_summary(resolved, data)
     if judge_panel is not None and core.panel_correction is not None:
         judge_panel["derived_correction"] = core.panel_correction
     if judge_panel is not None and judge_inputs is not None and resolved.outputs.judge_claims:
-        _add_judge_claims(judge_panel, resolved, judge_inputs)
-        _add_judge_configurations(judge_panel, resolved, data, judge_inputs.source)
+        # ORDER MATTERS: after every stage that can add an error to the primary analysis, since
+        # an invalid report leaves every judge's row undecided. The judge configurations after
+        # it add only a warning.
+        _add_judge_claims(
+            judge_panel,
+            resolved,
+            judge_inputs,
+            plan_diagnostics,
+            report_valid=_integrity_status(diagnostics) != "invalid",
+            policy_claims=_policy_set_claims(application),
+        )
+        _add_judge_configurations(
+            judge_panel, resolved, data, judge_inputs.source, diagnostics
+        )
+    # ORDER MATTERS: after the judge configurations, whose warning about a run field that
+    # cannot be read must reach the report's diagnostics. It is a warning, which no claim's
+    # eligibility above depends on.
+    integrity = _sorted_integrity(diagnostics)
     report = SafetyReport(
         **_report_frame(frozen),
         provenance={
@@ -362,7 +417,9 @@ def analyze(
     )
     if judge_inputs is not None:
         report.outcome_mapping_sensitivities = [
-            _outcome_mapping_sensitivity(resolved, judge_inputs, spec)
+            _outcome_mapping_sensitivity(
+                resolved, judge_inputs, spec, plan_diagnostics, application
+            )
             for spec in resolved.inputs.score.mapping_sensitivities
         ]
     report._observations = data.observations

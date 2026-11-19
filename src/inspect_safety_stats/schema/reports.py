@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import warnings
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -471,8 +473,10 @@ class DecisionPolicyVersionRecord(ResultModel):
     set_at: str
     reason: str | None = None
     thresholds: dict[str, PolicyThresholdsRecord]
-    # Whether the version was set after the earliest start time of the selected evaluations;
-    # None when no evaluation reports a start time.
+    # Whether the version was set after the earliest start time of the selected evaluations,
+    # as its set_at states; None when that cannot be told: no evaluation reports a start
+    # time, or the version is set at or before the earliest reported one while some
+    # evaluation reports none.
     set_after_first_evaluation: bool | None = None
 
 
@@ -569,6 +573,11 @@ class ReportPresentation(ResultModel):
     leaves out the overall decision and the claims' statuses when it is false, while
     ``report.json`` keeps both. A report that does not record it reads as the plan's default,
     false, here and in ``report.html``.
+
+    ``SafetyReport.presentation`` used to be a dictionary. Reading it as one
+    (``presentation["include_decisions"]``, ``presentation.get(...)``, ``in``) is deprecated:
+    it still works and raises a ``DeprecationWarning``. A field that is None reads as a
+    missing key, as ``report.json`` leaves it out.
     """
 
     include_decisions: bool = False
@@ -591,6 +600,34 @@ class ReportPresentation(ResultModel):
         # A field a report does not record stays out of report.json, rather than null.
         data: dict[str, Any] = handler(self)
         return {key: value for key, value in data.items() if value is not None}
+
+    def _deprecated_read(self, key: str) -> Any:
+        # stacklevel 3 names the code that called __getitem__, get or __contains__.
+        advice = (
+            f"read report.presentation.{key} instead"
+            if key in type(self).model_fields
+            else f"it has no field {key!r}"
+        )
+        warnings.warn(
+            "SafetyReport.presentation is a ReportPresentation, not a dictionary; "
+            f"{advice}. Reading it as a dictionary will be removed in a later release.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return getattr(self, key) if key in type(self).model_fields else None
+
+    def __getitem__(self, key: str) -> Any:
+        value = self._deprecated_read(key)
+        if value is None:
+            raise KeyError(key)
+        return value
+
+    def get(self, key: str, default: Any = None) -> Any:
+        value = self._deprecated_read(key)
+        return default if value is None else value
+
+    def __contains__(self, key: object) -> bool:
+        return isinstance(key, str) and self._deprecated_read(key) is not None
 
 
 class MappingSensitivityResult(ResultModel):
@@ -656,6 +693,24 @@ class AssumptionUse(ResultModel):
     settings: list[PlanSetting] = Field(default_factory=list)
 
 
+def design_levels(hierarchy: Sequence[str]) -> list[str]:
+    """The identifier columns of a row of ``design.prompts``: the design's hierarchy levels,
+    then ``task_id``, ``question_id`` and ``prompt_id``, each once."""
+
+    return list(dict.fromkeys([*hierarchy, "task_id", "question_id", "prompt_id"]))
+
+
+def design_columns(hierarchy: Sequence[str]) -> list[str]:
+    """The columns of a row of ``design.prompts``, in the order of ``design.resolved.csv``:
+    ``group_id``, the identifier columns (``design_levels``), then ``weight``.
+
+    ``report.json`` stores each row with its keys sorted, so this is the one place their order
+    is defined.
+    """
+
+    return ["group_id", *design_levels(hierarchy), "weight"]
+
+
 class SafetyReport(ResultModel):
     """The result of ``analyze``: estimates, bounds, comparisons, claims and the decision.
 
@@ -677,6 +732,9 @@ class SafetyReport(ResultModel):
     scope: dict[str, Any]
     presentation: ReportPresentation = Field(default_factory=ReportPresentation)
     integrity: IntegritySummary
+    # The manifest and its hash, the hierarchy, the independence profiles, the groups and, in
+    # design.prompts, one row per prompt of each group with the keys of design_columns. The
+    # hierarchy's levels are the plan's own column names, so the rows are not a fixed model.
     design: dict[str, Any]
     cohorts: list[dict[str, Any]]
     prompt_estimates: list[PromptEstimate]

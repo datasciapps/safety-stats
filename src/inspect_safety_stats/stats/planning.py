@@ -249,9 +249,10 @@ so no single estimate boundary separates PASS from not PASS.
 class MethodDetectableRates:
     """Detectable rates of a fixed weighted mean under the interval method analyze uses.
 
-    ``certification_floor`` is the upper endpoint when every block is safe: a claim whose
-    acceptable_upper lies below it can never PASS. ``rejection_ceiling`` is the lower endpoint
-    when every block fails: a claim whose unacceptable_lower lies above it can never FAIL.
+    ``certification_floor`` is the upper endpoint when every block is safe, and
+    ``rejection_ceiling`` the lower endpoint when every block fails. They are the interval's
+    own endpoints: analyze's hierarchy-region projection can lower the reported upper bound
+    and raise the lower one. ``claim_planning`` reports the projected floor.
     """
 
     method: DirectMeanMethod
@@ -356,15 +357,14 @@ def detectable_failure_rates(
     them, whatever the blocks' individual rates, by the sharpest of Hoeffding's inequality
     and the Chernoff kernel the KL-Chernoff interval uses (Bernoulli KL for equal block
     weights, Poisson deviance with the largest weight otherwise), applied to the failures
-    and to the safe outcomes. Under the rollout profile
-    each rollout is a block. ``None`` means no true rate reaches the target power, or no
-    outcome at all crosses the threshold.
+    and to the safe outcomes. Under the rollout profile each rollout is a block. A rate is
+    ``None`` when its threshold is not given or when no outcome at all crosses it; otherwise
+    some true rate, 0 or 1 at the extreme, reaches the target power.
     """
 
     from inspect_safety_stats.stats.direct_mean import (
-        _bernoulli_kl,
+        _bounded_chernoff_kernel,
         _invert_divergence,
-        _poisson_deviance,
     )
 
     w = np.asarray(weights, dtype=float)
@@ -388,11 +388,9 @@ def detectable_failure_rates(
     concentration_variance = float(np.sum(np.square(w)))
     log_beta = math.log(1 / (1 - power))
     hoeffding_radius = math.sqrt(0.5 * concentration_variance * log_beta)
-    # The same kernel choice as the KL-Chernoff interval.
-    if bool(np.allclose(w, np.full_like(w, 1 / len(w)), rtol=1e-10, atol=1e-14)):
-        divergence, target = _bernoulli_kl, log_beta / len(w)
-    else:
-        divergence, target = _poisson_deviance, float(np.max(w)) * log_beta
+    # The KL-Chernoff interval's kernel, at level beta = 1 - power.
+    _, kernel_target, divergence = _bounded_chernoff_kernel(w)
+    target = kernel_target(1 - power)
 
     def endpoints(estimate: float) -> tuple[float, float]:
         return _planned_endpoints(method, w, estimate, alpha)
@@ -408,8 +406,6 @@ def detectable_failure_rates(
             # The same kernel on the safe outcomes, whose weighted mean is 1 - estimate.
             1 - _invert_divergence(1 - boundary, target, direction="upper", divergence=divergence),
         )
-        if maximum_certifiable < 0:
-            maximum_certifiable = None
     minimum_detectable: float | None = None
     if unacceptable_lower is not None and endpoints(1.0)[0] >= unacceptable_lower:
         boundary = _first_true(lambda estimate: endpoints(estimate)[0] >= unacceptable_lower)
@@ -418,8 +414,6 @@ def detectable_failure_rates(
             _invert_divergence(boundary, target, direction="upper", divergence=divergence),
             1 - _invert_divergence(1 - boundary, target, direction="lower", divergence=divergence),
         )
-        if minimum_detectable > 1:
-            minimum_detectable = None
     return MethodDetectableRates(
         method=method,
         endpoint_alpha=alpha,
@@ -437,7 +431,8 @@ def certification_floor(weights: ArrayLike, *, method: DirectMeanMethod, alpha: 
     """The upper endpoint of ``method``'s interval when every block is safe.
 
     The data are then fully known, so this holds for every method, the ones the planner
-    cannot invert included: a threshold below it can never PASS.
+    cannot invert included. It is the interval's own endpoint, before any hierarchy-region
+    projection, which can lower it.
     """
 
     from inspect_safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES
@@ -498,11 +493,12 @@ def comparison_resolvable_differences(
     """Return Hoeffding-guaranteed resolvable risk differences for a two-arm design.
 
     The guarantee is that of the ``weighted_hoeffding`` risk difference which ``analyze``
-    builds on ``Q = (1 + candidate - baseline) / 2``: with no unclassified outcomes, a true
-    difference at or below ``maximum_supportable_difference`` gives an upper bound at or below
-    ``margin``, and one at or above ``minimum_detectable_difference`` a lower bound at or
-    above ``margin``, each with probability at least ``power`` (Hoeffding, 1963). Prompt
-    probabilities may differ. The independence unit names the blocks of ``Q``:
+    builds on ``Q = (1 + candidate - baseline) / 2`` for a ``comparisons`` entry: with no
+    unclassified outcomes, a true difference at or below ``maximum_supportable_difference``
+    gives an upper bound at or below ``margin``, and one at or above
+    ``minimum_detectable_difference`` a lower bound at or above ``margin``, each with
+    probability at least ``power`` (Hoeffding, 1963). Prompt probabilities may differ. The
+    independence unit names the blocks of ``Q``:
 
     - ``rollout``: every rollout of either arm is independent (unpaired arms; an
       independence profile ``block_by: [rollout]``).
@@ -512,8 +508,14 @@ def comparison_resolvable_differences(
     - ``prompt_cluster``: all rollouts of both arms on a prompt form one block
       (``block_by: [prompt_id]`` with ``comparison_coupling: joint``).
 
-    The guarantee does not extend to the KL/Chernoff or empirical-Bernstein differences,
-    which are usually, not always, narrower.
+    The guarantee does not extend to a ``comparison_sets`` entry, whatever its method, nor
+    to ``weighted_kl_chernoff``: both bound each arm at half the alpha and subtract the
+    endpoints, which under ``weighted_hoeffding`` is usually wider (about 1.5 times for
+    unpaired arms at equal counts and a one-sided alpha of 0.025).
+    Nor does it extend to ``weighted_empirical_bernstein``. The KL/Chernoff and
+    empirical-Bernstein differences are often narrower on sparse failures when prompt
+    weights are even; with uneven weights, or at moderate failure rates, either can be
+    wider.
     """
 
     nc = np.asarray(candidate_trials)

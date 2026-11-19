@@ -103,7 +103,7 @@ def test_hash_plan_refuses_to_register_the_inference_hash(tmp_path: Path) -> Non
         ("decimal_places: 6", "decimal_places: true", "report.decimal_places: "),
         ('schema_version: "2.0"', 'schema_version: "2.0"\nunknown_field: 1', "unknown_field: "),
         ('schema_version: "2.0"', 'schema_version: "9.9"', "'9.9'"),
-        ('schema_version: "2.0"', 'schema_version: ["unclosed', "Plan invalid: "),
+        ('schema_version: "2.0"', 'schema_version: ["unclosed', "while parsing a flow sequence"),
     ],
     ids=["boolean-field", "unknown-field", "schema-version", "yaml-syntax"],
 )
@@ -123,6 +123,54 @@ def test_hash_plan_reports_an_invalid_plan_on_one_line_and_exits_3(
     assert named in output
     assert "\n" not in output.strip()
     assert "Traceback" not in output
+
+
+@pytest.mark.parametrize(
+    ("name", "content", "named"),
+    [
+        ("plan.txt", None, "analysis plan must be YAML or JSON"),
+        ("plan.yaml", "[1, 2]\n", "analysis plan root must be an object"),
+        ("plan.json", '{"schema_version": ', "Plan invalid: "),
+    ],
+    ids=["suffix", "root-not-object", "json-syntax"],
+)
+def test_hash_plan_reports_an_unreadable_plan_on_one_line_and_exits_3(
+    tmp_path: Path, name: str, content: str | None, named: str
+) -> None:
+    plan = tmp_path / name
+    if content is None:
+        shutil.copy(_plan(tmp_path), plan)
+    else:
+        plan.write_text(content, encoding="utf-8", newline="\n")
+
+    result = runner.invoke(app, ["hash-plan", "--plan", str(plan)])
+
+    assert result.exit_code == 3
+    output = plain(result.output)
+    assert output.startswith("Plan invalid: ")
+    assert named in output
+    assert "\n" not in output.strip()
+    assert "Traceback" not in output
+
+
+def test_a_validator_message_with_a_line_break_stays_on_one_line() -> None:
+    from pydantic import BaseModel, ValidationError, field_validator
+
+    from inspect_safety_stats.cli import _one_line_error
+
+    class _Spec(BaseModel):
+        size: int
+
+        @field_validator("size")
+        @classmethod
+        def _two_lines(cls, value: int) -> int:
+            raise ValueError("first line\n  second line")
+
+    with pytest.raises(ValidationError) as caught:
+        _Spec(size=1)
+
+    assert _one_line_error(caught.value) == "size: Value error, first line second line"
+
 
 
 @pytest.mark.parametrize(

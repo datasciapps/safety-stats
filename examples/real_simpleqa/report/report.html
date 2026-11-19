@@ -819,9 +819,12 @@
         .join("::")}`;
     }
     function hierarchyTreeRows(rows, suppliedRoot = null) {
+      // The tree's nodes average the group's prompts, so its root is the weighted-mean row; a
+      // worst_of_k row can also have a direct primary interval.
       const directRoot = suppliedRoot || risks.find(row =>
         row.cohort_id === state.cohort &&
         String(row.group_id) === state.group &&
+        row.method === "finite_design_weighted_mean" &&
         (row.intervals || []).some(interval => interval.role === "primary" && String(interval.interval_id || "").startsWith("direct_"))
       );
       const root = directRoot ? {
@@ -1218,12 +1221,8 @@
       if (showDecisions) addAuditDetails(root, `Policy events (${(report.policy_events || []).length})`, report.policy_events || []);
       addAuditDetails(root, `Multiplicity families (${(report.multiplicity || []).length})`, report.multiplicity || []);
       addAuditDetails(root, "Provenance", report.provenance || {});
-      const displayedPlan = JSON.parse(JSON.stringify(plan));
-      if (!showDecisions) {
-        delete displayedPlan.claims;
-        if (displayedPlan.policy) delete displayedPlan.policy.zero_tolerance;
-      }
-      addAuditDetails(root, "Resolved plan", displayedPlan);
+      // The page embeds the report alone, and report.json does not hold the plan.
+      addAuditDetails(root, "Resolved plan", "Not embedded in this page. The plan as analysed, with its defaults filled in, is plan.resolved.yaml in the report directory, beside report.json.");
     }
 
     function bind() {
@@ -1242,8 +1241,10 @@
       document.getElementById("sort-select").addEventListener("change", event => { state.sort = event.target.value; state.page = 0; renderPromptTable(); });
     }
     function renderDynamic() { renderSummary(); renderClaims(); renderRisk(); renderAllExploration(); renderHierarchyRisks(); }
-    renderHeader(); bind(); renderDynamic(); renderComparisons(); renderAudit();
+    // ORDER MATTERS: the footer holds the scope caveat, so it is set before the sections render;
+    // set after them, an uncaught error in any section would leave the page without it.
     document.getElementById("footer").textContent = `Generated from inspect-safety-stats schema ${report.schema_version || "—"}. ${designText(report).footer}`;
+    renderHeader(); bind(); renderDynamic(); renderComparisons(); renderAudit();
   })();
   </script>
 </body>

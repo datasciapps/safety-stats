@@ -237,11 +237,12 @@ labelling stopped where it did:
 | `data_dependent` | possibly because of the labels, such as once the corrected bound cleared a threshold | anytime-valid confidence sequences instead of Clopper-Pearson |
 
 A confidence sequence holds at every number of labels at once, so it stays valid whenever
-labelling stops. When a small share of a stratum is labelled it is wider than
-Clopper-Pearson at the same number of labels (60 labels with one unsafe in a stratum of
-2,000 give an upper bound of 0.165 against 0.102 at the same budget). It counts a stratum's
-size, though, so when most of a stratum is labelled it can be narrower, and a stratum
-labelled in full is known exactly. The derivation is in
+labelling stops. It bounds the judge's accuracy in a stratum, the probability that one of its
+rollouts is truly unsafe, which the run's rollouts only sample. The stratum's size therefore
+does not enter, and even a stratum labelled in full keeps a width. The sequence is wider than
+Clopper-Pearson at the same labels (60 labels with one unsafe give an upper bound of 0.167
+against 0.102 at the same budget), so declare `data_dependent` only when labelling may
+really have stopped on results. The derivation is in
 [Statistical methods, section 6.9](statistical-methods.md#69-implemented-human-labels-for-a-judge-calibration-experimental).
 It spends the same budget per endpoint, so the coverage the corrected interval states is
 unchanged. `data_dependent` requires `sampling: simple_random_within_judge_stratum`, because
@@ -890,6 +891,13 @@ directly. That is the recommended route to evidence for a panel. The panel secti
 adds pairwise agreement and Cohen's kappa as diagnostics; neither carries a coverage guarantee and
 neither identifies the true failure rate on its own.
 
+To see what each judge alone would decide, set `outputs.judge_claims: true` (experimental). The
+report's judge panel section then gains each judge's claim rows, decided as the plan would decide
+them with that judge as its primary outcome, and the configuration its runs record. The rows bound
+each judge's *reported* risk: no correction on this page applies to them, and under a `validated`
+calibration every row is `INCONCLUSIVE`. They compare judges and do not enter the decision. See
+[Claims by judge](plan-reference.md#claims-by-judge-experimental).
+
 ### Deriving a panel's accuracy box
 
 If the primary outcome is an `any` or `all` composite and every member judge declares
@@ -1071,12 +1079,13 @@ sensitivity, which a high flip rate puts in doubt.
 `inputs.judge_flip` reads the rescored verdicts and reports a `JUDGE_FLIP_RATE` diagnostic: the
 share of rescored completions that flip under at least one wrapper, and under each wrapper,
 each with an exact Clopper-Pearson interval (see
-[the plan reference](plan-reference.md#judge-flip-rate-experimental)). With `sampling: all`
-the interval is about the run's judge-positive completions. With `simple_random` it is about
-the same population, through the sample. Above the declared `warn_above` the diagnostic is a
-warning. The package does not rescore: [`examples/judge_flip`](../examples/judge_flip/README.md)
-has an Inspect task that rescores a run's judge-positive completions under four wrappers and
-writes the manifest, offline with simulated models or live with the run's judge.
+[the plan reference](plan-reference.md#judge-flip-rate-experimental)). Above the declared
+`warn_above` the diagnostic is a warning. The package does not rescore:
+[`examples/judge_flip`](../examples/judge_flip/README.md) has an Inspect task that rescores a
+run's judge-positive completions under four wrappers and writes the manifest, offline with
+simulated models or live with the run's judge. Failures that a plan policy classified, such as
+a sample error counted as a failure, are not judge-positive: no judge scored them, so the rate
+leaves them out and they must not be rescored.
 
 What it assumes:
 
@@ -1087,6 +1096,26 @@ What it assumes:
   unsafe, and some of those are false positives. A flip of a false positive is a correction.
   With a precise judge the difference is small. With an imprecise one the rate overstates the
   judge's misses.
+- **The interval treats the rescored completions as independent.** What it is about depends
+  on `sampling`.
+  - With `simple_random` the rescored completions are a simple random sample of the run's
+    judge-positive completions, and the interval is for the share of all of them that flip.
+    The sample is drawn completion by completion, so that holds however flips cluster by
+    prompt. Drawing without replacement only makes the count less variable than the binomial
+    model assumes.
+  - With `sampling: all` every judge-positive completion is rescored, so the run's share is
+    known: it is the estimate. The interval is then descriptive. It would be a confidence
+    interval for the flip rate of the process that produced the completions only if they
+    flipped independently. Completions of one prompt share their content and tend to flip
+    together, and then the interval is too narrow for that rate. In a simulation of 35
+    completions from five prompts, with an intra-prompt correlation of 0.3 between flips, the
+    0.95 interval covered the process rate in 78% of runs
+    (`python research/judge_flip_clustering.py`).
+
+  The diagnostic counts the prompts the rescored completions come from in `details.prompts`.
+  The fewer they are against the completions, the more the clustering matters. The same
+  caution applies to reading a `simple_random` interval as a statement about prompts the run
+  did not include.
 
 The flip rate is a screen, not a correction. It never changes a claim, an interval or the
 decision. It does not estimate the judge's sensitivity on the run's own outputs, because the

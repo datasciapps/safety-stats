@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from inspect_safety_stats.analysis.estimates import _bounds_carry_unknown_outcome
+from inspect_safety_stats.config.loader import report_message
 from inspect_safety_stats.config.models import (
     AnalysisPlan,
     JudgeCalibrationSpec,
@@ -356,13 +357,13 @@ def _validated_judge_calibrations(
             Diagnostic(
                 code="JUDGE_VALIDATION_INVALID",
                 severity="ERROR",
-                message=str(exc),
+                message=report_message(str(exc), plan, (spec.validation_manifest,)),
                 scope=plan_scope("inputs", "judge_calibration"),
             )
         )
         return {}, {}, None, {}, None
 
-    protocol = _labelling_protocol(spec, labels, diagnostics)
+    protocol = _labelling_protocol(plan, spec, labels, diagnostics)
     if spec.protocol is not None and protocol is None:
         return {}, {}, None, {}, None
     bound: CalibrationBound = (
@@ -382,7 +383,7 @@ def _validated_judge_calibrations(
                 Diagnostic(
                     code="JUDGE_VALIDATION_INVALID",
                     severity="ERROR",
-                    message=str(exc),
+                    message=report_message(str(exc), plan, (spec.validation_strata,)),
                     scope=plan_scope("inputs", "judge_calibration"),
                 )
             )
@@ -562,6 +563,7 @@ def _validated_judge_calibrations(
 
 
 def _labelling_protocol(
+    plan: AnalysisPlan,
     spec: JudgeCalibrationSpec,
     labels: dict[str, bool],
     diagnostics: list[Diagnostic],
@@ -587,7 +589,7 @@ def _labelling_protocol(
             Diagnostic(
                 code="JUDGE_LABELLING_PROTOCOL_VIOLATED",
                 severity="ERROR",
-                message=str(exc),
+                message=report_message(str(exc), plan, (protocol.queue,)),
                 scope=plan_scope("inputs", "judge_calibration", "protocol"),
             )
         )
@@ -699,7 +701,8 @@ def _judge_corrected_interval(
     elif validated:
         sequence = calibration.bound == "confidence_sequence"
         method = (
-            "anytime-valid hypergeometric confidence sequence (Waudby-Smith and Ramdas, 2020)"
+            "anytime-valid binomial confidence sequence (a prior-posterior ratio, "
+            "Waudby-Smith and Ramdas, 2020)"
             if sequence
             else "exact Clopper-Pearson bound"
         )
@@ -718,6 +721,18 @@ def _judge_corrected_interval(
                 if sequence
                 else "Those two ranges are exact Clopper-Pearson bounds from human labels "
                 "drawn within each judge stratum."
+            )
+        if sequence:
+            assumptions.extend(
+                [
+                    "Each sequence bounds the judge stratum's conditional probability, which "
+                    "the stratum's rollouts only sample, not the share of them that is truly "
+                    "unsafe; it does not use the stratum's size, and even a census leaves the "
+                    "probability uncertain.",
+                    "Given a judge stratum's size, its rollouts are independent and each is "
+                    "truly unsafe with the stratum's conditional probability, so its labels, "
+                    "in the queue's random order, are independent draws at that probability.",
+                ]
             )
         assumptions.extend(
             [

@@ -231,6 +231,45 @@ class ScoreSpec(StrictModel):
         return self
 
 
+def judge_run_score(primary: ScoreSpec, judge: ScoreSpec) -> ScoreSpec:
+    """The score a judge's run under ``outputs.judge_claims`` reads: the judge's own, except
+    the stop reasons the judge leaves at ``score``, which it takes from the primary score.
+
+    ``content_filter_stops`` and ``token_limit`` say how rollouts count that the target's
+    provider stopped, which is the same for every judge of the same rollouts. Left at
+    ``score`` the judge's score says nothing about them, so its run counts them as the plan's
+    primary analysis does, and differs from it in the judge's verdicts alone. A judge's score
+    cannot set ``content_filter_stops`` (``JudgeSpec`` refuses it), so every judge's run takes
+    the primary's; a ``token_limit`` the judge sets is kept.
+    """
+
+    update: dict[str, Any] = {}
+    if judge.content_filter_stops == "score":
+        update["content_filter_stops"] = primary.content_filter_stops
+    if judge.token_limit == "score":
+        update["token_limit"] = primary.token_limit
+    return judge.model_copy(update=update) if update else judge
+
+
+def _content_filter_stops_problem(score: ScoreSpec, estimand: str) -> str | None:
+    """Why ``score.content_filter_stops`` does not fit the estimand or ``score.errors``, if it
+    does not."""
+
+    stops = score.content_filter_stops
+    if stops != "score" and estimand != "end_to_end_system":
+        return (
+            "score.content_filter_stops counts a provider's block as the outcome of the "
+            "end-to-end system; it needs estimand end_to_end_system"
+        )
+    if stops == "failure" and score.errors == "end_to_end":
+        return (
+            "score.content_filter_stops: failure counts a block as a refusal, but "
+            "score.errors: end_to_end counts a policy-blocked sample error as safe; "
+            "choose another score.errors"
+        )
+    return None
+
+
 class JudgeRateRangeSpec(StrictModel):
     """A declared closed range for one conditional judge accuracy."""
 
@@ -511,6 +550,18 @@ class JudgeSpec(StrictModel):
         return self
 
     @model_validator(mode="after")
+    def no_content_filter_stops(self) -> JudgeSpec:
+        # A content-filter stop is the target's, the same whichever judge reads the rollout,
+        # so every judge's run takes inputs.score's content_filter_stops (judge_run_score). A
+        # judge's own value would count the same stops differently, so it is refused.
+        if self.score.content_filter_stops != "score":
+            raise ValueError(
+                f"judge {self.id!r}: content_filter_stops applies to inputs.score only, and "
+                "every judge's run takes it from there; remove it from the judge's score"
+            )
+        return self
+
+    @model_validator(mode="after")
     def resolve_block(self) -> JudgeSpec:
         if self.block is None:
             return self.model_copy(update={"block": self.id})
@@ -532,12 +583,14 @@ class JudgeFlipSpec(StrictModel):
 
     ``manifest`` is a CSV with columns ``observation_id``, ``wrapper`` and ``verdict``: the
     primary judge's verdict (``safe`` or ``unsafe``) on a judge-positive completion of the run
-    after it was rescored inside one wrapper, one row per completion and wrapper. Every rescored
-    completion carries a row for every declared wrapper. With ``sampling: all`` every
-    judge-positive completion of the run was rescored; with ``simple_random`` a simple random
-    sample of them was. The flip rate is a diagnostic: it never changes a claim status, and a
-    rate above ``warn_above`` gives a warning. ``alpha`` is the two-sided error level of its
-    Clopper-Pearson interval.
+    after it was rescored inside one wrapper, one row per completion and wrapper. A
+    judge-positive completion is one the primary judge scored unsafe; a failure that a plan
+    policy classified, such as a sample error counted as a failure, is not one and is not
+    rescored. Every rescored completion carries a row for every declared wrapper. With
+    ``sampling: all`` every judge-positive completion of the run was rescored; with
+    ``simple_random`` a simple random sample of them was. The flip rate is a diagnostic: it
+    never changes a claim status, and a rate above ``warn_above`` gives a warning. ``alpha`` is
+    the two-sided error level of its Clopper-Pearson interval.
     """
 
     manifest: Path
@@ -550,6 +603,14 @@ class JudgeFlipSpec(StrictModel):
     def distinct_wrappers(self) -> JudgeFlipSpec:
         if any(not item.strip() for item in self.wrappers):
             raise ValueError("judge_flip wrappers must be non-empty names")
+        # The manifest's wrapper names are read stripped, so a padded name here could never
+        # match one of its rows.
+        padded = [item for item in self.wrappers if item != item.strip()]
+        if padded:
+            raise ValueError(
+                "judge_flip wrappers must not start or end with whitespace: "
+                + ", ".join(repr(item) for item in padded)
+            )
         if len(set(self.wrappers)) != len(self.wrappers):
             raise ValueError("judge_flip wrappers must be unique")
         return self
@@ -594,18 +655,9 @@ class InputsSpec(OmitsAbsentFields):
 
     @model_validator(mode="after")
     def content_filter_stops_fit_the_estimand(self) -> InputsSpec:
-        stops = self.score.content_filter_stops
-        if stops != "score" and self.estimand != "end_to_end_system":
-            raise ValueError(
-                "score.content_filter_stops counts a provider's block as the outcome of the "
-                "end-to-end system; it needs estimand end_to_end_system"
-            )
-        if stops == "failure" and self.score.errors == "end_to_end":
-            raise ValueError(
-                "score.content_filter_stops: failure counts a block as a refusal, but "
-                "score.errors: end_to_end counts a policy-blocked sample error as safe; "
-                "choose another score.errors"
-            )
+        problem = _content_filter_stops_problem(self.score, self.estimand)
+        if problem is not None:
+            raise ValueError(problem)
         return self
 
 
@@ -1308,6 +1360,26 @@ class AnalysisPlan(StrictModel):
                 "but inputs.judges declares no judge. Declare the judges, or set "
                 "outputs.judge_claims: false"
             )
+        return self
+
+    @model_validator(mode="after")
+    def judge_runs_count_content_filter_stops_consistently(self) -> AnalysisPlan:
+        # Each judge's run reads the judge's score with the primary's content_filter_stops,
+        # which a judge cannot set (judge_run_score), so the value must fit each judge's own
+        # errors as it fits the primary's. The estimand is the plan's, which the primary's
+        # value already fits. Without judge_claims no run reads a judge's stop reasons.
+        if not self.outputs.judge_claims:
+            return self
+        for judge in self.inputs.judges:
+            score = judge_run_score(self.inputs.score, judge.score)
+            problem = _content_filter_stops_problem(score, self.inputs.estimand)
+            if problem is not None:
+                raise ValueError(
+                    f"outputs.judge_claims runs judge {judge.id!r} on its own score, where "
+                    f"{problem}. Every judge's run takes content_filter_stops from "
+                    f"inputs.score, so the judge's run takes {score.content_filter_stops} "
+                    "from inputs.score."
+                )
         return self
 
     def source_path(self) -> Path | None:
