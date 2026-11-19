@@ -1834,6 +1834,73 @@ The library must report and normally reject:
 
 Paired analysis is increasingly being productized for model evaluation. NVIDIA NeMo Evaluator uses exact McNemar comparisons on the same problems and reports human-readable `PASS`, `WARN`, `BLOCK`, and `INCONCLUSIVE` outcomes [22]. In safety-adjacent clinical LLM evaluation, exact McNemar tests with Holm correction have been used to compare harmful-content and safety outcomes across models [27]. These are useful precedents for both the mathematics and the decision interface.
 
+### 7.7 Planning a comparison at a margin (experimental)
+
+`inspect-safety-stats plan comparison` and
+`inspect_safety_stats.stats.planning.comparison_resolvable_differences` say, before a run,
+which risk differences \(\Delta=R_C-R_B\) a fixed two-arm design can resolve at a margin
+\(\delta\in(-1,1)\). They give two numbers:
+
+- the largest true \(\Delta\) at which the upper bound \(U_\Delta\) falls at or below
+  \(\delta\) with probability at least \(1-\beta\) (a non-inferiority claim at margin
+  \(\delta\) passes); and
+- the smallest true \(\Delta\) at which the lower bound \(L_\Delta\) reaches \(\delta\) with
+  probability at least \(1-\beta\) (a regression of at least \(\delta\) is shown).
+
+The guarantee is that of the `weighted_hoeffding` difference of section 7.0, as `analyze`
+computes it, with no unclassified outcomes. That interval bounds
+\(Q=(1+\Delta)/2\) by a weighted mean of independent blocks \(b\) with values in \([0,1]\) and
+masses \(m_b\). With \(c^2=\sum_bm_b^2\), Hoeffding's inequality [32] gives
+
+\[
+\Pr\{\widehat Q-Q\ge s\}\le\exp\{-2s^2/c^2\},
+\qquad
+s(\gamma)=\sqrt{\tfrac12c^2\log(1/\gamma)},
+\]
+
+and \(U_\Delta=2\widehat Q-1+2s(\alpha_U)\). With probability at least \(1-\beta\),
+\(\widehat Q<Q+s(\beta)\), and then \(U_\Delta<\Delta+2s(\alpha_U)+2s(\beta)\). So every
+\(\Delta\le\delta-g_U\) with
+
+\[
+g_U=2s(\alpha_U)+2s(\beta)
+\]
+
+has \(\Pr\{U_\Delta\le\delta\}\ge1-\beta\). The lower side is symmetric, with
+\(g_L=2s(\alpha_L)+2s(\beta)\) and \(\Delta\ge\delta+g_L\). A difference that would lie
+outside \([-1,1]\) is reported as unattainable. Prompt probabilities may differ, and the
+guarantee holds for every configuration of them.
+
+The block masses follow the independence profile the analysis will use. For prompt \(j\) with
+weight \(w_j\) and \(n_{Cj}\), \(n_{Bj}\) rollouts in the two arms:
+
+| Unit | Profile | \(c^2\) |
+|---|---|---|
+| `rollout` | `block_by: [rollout]` (arms independent) | \(\sum_j\frac{w_j^2}{4}\left(\frac1{n_{Cj}}+\frac1{n_{Bj}}\right)\) |
+| `pair` | `block_by: [prompt_id, repeat]`, `comparison_coupling: joint` | \(\sum_j\left[\underline n_j\frac{w_j^2}{4}\left(\frac1{n_{Cj}}+\frac1{n_{Bj}}\right)^2+(\overline n_j-\underline n_j)\frac{w_j^2}{4\overline n_j^2}\right]\) |
+| `prompt_cluster` | `block_by: [prompt_id]`, `comparison_coupling: joint` | \(\sum_jw_j^2\) |
+
+Here \(\underline n_j=\min(n_{Cj},n_{Bj})\) and \(\overline n_j=\max(n_{Cj},n_{Bj})\): a pair
+block holds one rollout of each arm with the same repeat index, and repeats that only the
+longer arm has form blocks of one rollout. The pair profile permits arbitrary dependence
+within a pair, for example a shared seed. Hoeffding uses only the range of a block, so it
+cannot gain from the correlation of paired outcomes; at equal counts a pair block has twice
+the variance proxy of two independent rollouts, and the resolvable differences are
+\(\sqrt2\) times further from the margin. Pairing helps the paired diagnostics of section 7.2
+to 7.4, not this guarantee.
+
+The family alpha is shared as in `analyze`: a claim's Bonferroni share
+\(\alpha/M\) is split between the two bounds under `two_sided` coverage, and spent on each
+under `per_direction`. \(M\) is the number of targets among which the family divides its
+alpha, as under `flat_bonferroni`. Hierarchy-node contrasts and `frontier_sidak` calibration
+are not planned.
+
+**Scope.** The guarantee is not one for the `weighted_kl_chernoff` or
+`weighted_empirical_bernstein` differences. Those are usually narrower on sparse failures, but
+not for every design, so a design planned here may resolve more than stated under those
+methods, and has no stated guarantee under them. Unclassified outcomes widen the analysis
+bounds and are not planned for.
+
 ---
 
 ## 8. Cluster-aware comparisons

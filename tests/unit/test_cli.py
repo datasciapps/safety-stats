@@ -1,3 +1,4 @@
+import math
 import shutil
 import subprocess
 import sys
@@ -231,6 +232,108 @@ def test_fixed_design_planning_needs_only_the_levels_its_weights_name(tmp_path: 
     rejected = runner.invoke(app, arguments)
     assert rejected.exit_code != 0
     assert "missing required columns: question_id, task_id" in plain(rejected.output)
+
+
+def test_comparison_planning_needs_only_the_levels_its_weights_name(tmp_path: Path) -> None:
+    manifest = tmp_path / "design.csv"
+    manifest.write_text("prompt_id,expected_rollouts\np1,20\np2,20\n", encoding="utf-8")
+    arguments = ["plan", "comparison", "--manifest", str(manifest), "--margin", "0.1"]
+    accepted = runner.invoke(app, [*arguments, "--weights", "equal_prompt"])
+    assert accepted.exit_code == 0, accepted.output
+    assert "Prompts: 2" in accepted.stdout
+    rejected = runner.invoke(app, arguments)
+    assert rejected.exit_code != 0
+    assert "missing required columns: question_id, task_id" in plain(rejected.output)
+
+
+def _comparison_manifest(tmp_path: Path, *, counts: bool = True) -> Path:
+    manifest = tmp_path / "design.csv"
+    rows = [f"p{index},q{index},t1" + (",100" if counts else "") for index in range(1, 5)]
+    header = "prompt_id,question_id,task_id" + (",expected_rollouts" if counts else "")
+    manifest.write_text("\n".join([header, *rows]) + "\n", encoding="utf-8")
+    return manifest
+
+
+def test_comparison_planning_cli_splits_alpha_and_reports_both_directions(
+    tmp_path: Path,
+) -> None:
+    arguments = [
+        "plan",
+        "comparison",
+        "--manifest",
+        str(_comparison_manifest(tmp_path)),
+        "--margin",
+        "0.05",
+        "--power",
+        "0.8",
+        "--weights",
+        "equal_prompt",
+    ]
+    result = runner.invoke(app, arguments)
+    assert result.exit_code == 0, result.output
+    output = plain(result.output)
+    # 800 independent rollouts with range 0.25 / 100 each on the difference; two_sided spends
+    # 0.025 on each bound.
+    ranges = 800 * (0.25 / 100) ** 2
+    gap = math.sqrt(0.5 * ranges * math.log(40)) + math.sqrt(0.5 * ranges * math.log(5))
+    assert "Candidate rollouts: 400" in output
+    assert "Baseline rollouts: 400" in output
+    assert "Independent blocks: 800" in output
+    assert f"at or below the margin: {0.05 - gap:.8g}" in output
+    assert f"at or above the margin: {0.05 + gap:.8g}" in output
+    assert "One-sided alpha per direction: 0.025" in output
+
+    per_direction = runner.invoke(app, [*arguments, "--coverage-mode", "per_direction"])
+    assert per_direction.exit_code == 0, per_direction.output
+    assert "One-sided alpha per direction: 0.05" in plain(per_direction.output)
+
+
+def test_comparison_planning_cli_pairs_and_overrides_counts(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "comparison",
+            "--manifest",
+            str(_comparison_manifest(tmp_path, counts=False)),
+            "--margin",
+            "-0.02",
+            "--candidate-rollouts",
+            "30",
+            "--baseline-rollouts",
+            "20",
+            "--independence-unit",
+            "pair",
+            "--family-size",
+            "2",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    output = plain(result.output)
+    assert "Candidate rollouts: 120" in output
+    assert "Baseline rollouts: 80" in output
+    assert "Independent blocks: 120" in output
+    assert "Margin: -0.02" in output
+    assert "Local alpha: 0.025" in output
+    assert "One-sided alpha per direction: 0.0125" in output
+
+
+def test_comparison_planning_cli_needs_counts_for_both_arms(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "comparison",
+            "--manifest",
+            str(_comparison_manifest(tmp_path, counts=False)),
+            "--margin",
+            "0.05",
+            "--candidate-rollouts",
+            "30",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--baseline-rollouts" in plain(result.output)
 
 
 def test_cli_errors_render_in_tests_as_they_do_on_ci() -> None:
