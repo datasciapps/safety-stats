@@ -126,9 +126,16 @@ sequence that has the property, and uses the longest complete prefix for any oth
 ## Several claims
 
 Section 11 applies unchanged. Each claim \(i\) gets its own \(\alpha_i\), with
-\(\sum_i\alpha_i\) at most the family's \(\alpha\), and the union bound covers repeated looks and
-repeated claims at once. The allocation is frozen before monitoring starts. A claim added during
-monitoring needs alpha reserved for it in advance, or a new family.
+\(\sum_i\alpha_i\) at most the family's \(\alpha\). Two mechanisms share the work:
+
+- **Looks.** Each claim's sequence is time-uniform at its \(\alpha_i\): the chance that it ever
+  excludes the true value, at any look, is at most \(\alpha_i\). Looks cost no alpha, however
+  many there are and whenever they are taken.
+- **Claims.** The union bound over claims then gives at most \(\sum_i\alpha_i\) for any claim
+  ever being wrong.
+
+The allocation is frozen before monitoring starts. A claim added during monitoring needs alpha
+reserved for it in advance, or a new family.
 
 ## State between looks
 

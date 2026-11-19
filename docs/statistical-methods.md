@@ -2447,12 +2447,12 @@ then
 \le\alpha_{\mathrm{family}}.
 \]
 
-This single union-bound argument controls both dimensions:
+Two mechanisms control the two dimensions:
 
-- repeated looks over time;
-- repeated claims across the safety family.
+- repeated looks over time, by each claim's time-uniform guarantee in the first display, which spends no alpha per look;
+- repeated claims across the safety family, by the union bound over \(i\).
 
-It is simple and conservative, which makes it an appropriate first implementation within the later sequential module. More powerful online multiple-testing or e-value procedures may follow, but they should not obscure the guarantee.
+The union bound is simple and conservative, which makes it an appropriate first implementation within the later sequential module. More powerful online multiple-testing or e-value procedures may follow, but they should not obscure the guarantee.
 
 The analysis plan must freeze each claim's \(\alpha_i\) before monitoring begins. Adding claims midstream requires reserving alpha in advance or starting a new declared family.
 
