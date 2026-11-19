@@ -267,9 +267,10 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
     root.appendChild(section("Judge misclassification"));
     root.appendChild(el("p", { class: "sub", text:
       judge.mode === "validated"
-        ? "Measured from human labels, which weight every unit of the cohort equally. " +
-          "Only a root that does the same is certifying, at the union of the interval and " +
-          "calibration budgets; nodes and slices are sensitivity results."
+        ? "Measured from human labels, which weight every classified unit of the cohort " +
+          "equally. Only a root that does the same is certifying, at the union of the " +
+          "interval's budget, the calibration's and that of the bound on the unclassified " +
+          "share; nodes and slices are sensitivity results."
         : "Declared, not measured. These are sensitivity results and carry no evidence: " +
           "they cannot support a claim." }));
     if (judge.rho_1) {
@@ -296,6 +297,20 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
         ];
       })
     ));
+    var warned = {};
+    shown.forEach(function (item) {
+      (item.warnings || []).forEach(function (text) {
+        var target = item.node_id.replace(/^slice:/, "");
+        var targets = warned[text] = warned[text] || [];
+        if (targets.indexOf(target) < 0) targets.push(target);
+      });
+    });
+    Object.keys(warned).forEach(function (text) {
+      root.appendChild(el("div", { class: "diag WARNING" }, [
+        el("div", { class: "code", text: "WARNING · " + warned[text].join(", ") }),
+        el("div", { text: text })
+      ]));
+    });
     root.appendChild(el("p", { class: "sub", text:
       "The corrected band is normally wider, because uncertainty about the judge is real " +
       "uncertainty being added. The corrected estimate is normally lower, because false " +

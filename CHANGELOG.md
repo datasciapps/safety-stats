@@ -598,6 +598,11 @@ described in their pull requests.
 
   See [Unclassified rollouts](docs/judge-misclassification.md#unclassified-rollouts).
 
+- **The generative report page says why a judge correction is a sensitivity (changes
+  `report.html`).** The judge misclassification section lists the warnings of the corrected
+  root and slices it shows, which `report.json` already held, and says that the labels weight
+  every classified unit equally rather than every unit.
+
 - **A claim on cvar, maximum or entropic risk over one rollout per prompt degrades integrity
   (changes `report.json`).** At one rollout per prompt every per-prompt rate is 0 or 1, and
   [the statistical methods](docs/statistical-methods.md#249-statistical-uncertainty) call these
