@@ -35,6 +35,7 @@ from inspect_safety_stats.ingest.manifest import (
     resolve_groups,
 )
 from inspect_safety_stats.ingest.records import NormalizedData
+from inspect_safety_stats.registry import CODES
 from inspect_safety_stats.schema.observations import Observation, observation_field
 from inspect_safety_stats.schema.reports import Diagnostic
 from inspect_safety_stats.stats.independence import (
@@ -369,6 +370,24 @@ def _endpoint_alpha(
     )
 
 
+def _refusal(errors: list[Diagnostic], reported_by: str, *, remedy: bool = False) -> ValueError:
+    """The refusal to plan a plan that analyze finds invalid, naming its errors.
+
+    ``remedy`` adds each code's remedy from the registry, for errors that validate does not
+    report and so does not explain.
+    """
+
+    def described(item: Diagnostic) -> str:
+        text = f"{item.code}" + (f" at {item.scope}" if item.scope else "") + f": {item.message}"
+        return f"{text}. {CODES[item.code].remedy}" if remedy else text
+
+    return ValueError(
+        "analyze will find this plan invalid and report every claim INCONCLUSIVE, so no "
+        f"claim can be planned. Fix the errors that {reported_by} reports: "
+        + "; ".join(described(item) for item in errors)
+    )
+
+
 def plan_design(
     plan: AnalysisPlan,
     *,
@@ -378,10 +397,11 @@ def plan_design(
 ) -> DesignPlan:
     """Detectable rates for every claim of ``plan``, and every interval analyze reports.
 
-    Raises ``ValueError`` for a sampled design, and for a plan with ``ERROR`` diagnostics from
-    ``validate_plan_references``: ``analyze`` finds such a plan invalid and reports every claim
-    INCONCLUSIVE, so no rate would describe what it decides. Raises ``OSError`` when the design
-    manifest cannot be read.
+    Raises ``ValueError`` for a sampled design, for a plan with ``ERROR`` diagnostics from
+    ``validate_plan_references``, and for a direct-mean hierarchy that ``analyze`` cannot
+    calibrate on the manifest (``DIRECT_MEAN_CALIBRATION_INVALID``): ``analyze`` finds such a
+    plan invalid and reports every claim INCONCLUSIVE, so no rate would describe what it
+    decides. Raises ``OSError`` when the design manifest cannot be read.
     """
 
     # Private helpers of the analysis, so that nodes, calibration and blocks are analyze's
@@ -401,14 +421,7 @@ def plan_design(
         )
     errors = [item for item in validate_plan_references(plan) if item.severity == "ERROR"]
     if errors:
-        raise ValueError(
-            "analyze will find this plan invalid and report every claim INCONCLUSIVE, so no "
-            "claim can be planned. Fix the errors that validate reports: "
-            + "; ".join(
-                f"{item.code}" + (f" at {item.scope}" if item.scope else "") + f": {item.message}"
-                for item in errors
-            )
-        )
+        raise _refusal(errors, "validate")
     frame = load_manifest(
         manifest if manifest is not None else plan.inputs.design_manifest,
         plan_manifest_columns(plan),
@@ -438,7 +451,11 @@ def plan_design(
         source_hashes={},
     )
     nodes = _hierarchy_nodes(plan, data)
-    context = _direct_mean_context(plan, data, nodes=nodes)
+    calibration_errors: list[Diagnostic] = []
+    context = _direct_mean_context(plan, data, nodes=nodes, diagnostics=calibration_errors)
+    if calibration_errors:
+        # DIRECT_MEAN_CALIBRATION_INVALID, which analyze reports for the same plan and manifest.
+        raise _refusal(calibration_errors, "analyze", remedy=True)
     # The planned rollouts are all safe, so analyze's upper bounds on them are the floors.
     all_safe = _all_safe_upper_bounds(plan, data, nodes, context)
     directional, _, _ = _coverage_floors(family.alpha, spec.coverage_mode)

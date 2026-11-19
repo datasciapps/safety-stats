@@ -31,7 +31,10 @@ described in their pull requests.
   `COMPARISON_CALIBRATION_INVALID`: integrity is invalid, so no claim can pass, no direct-mean
   interval of the family is calibrated, group rows keep only the propagated prompt envelope and
   hierarchy-node rows have no interval. Giving every node a positive weight, or
-  `hierarchy_calibration: flat_bonferroni`, avoids it.
+  `hierarchy_calibration: flat_bonferroni`, avoids it. `plan fixed-design --plan` still refuses
+  such a plan, which `analyze` decides no claim of, but now as it refuses a plan that
+  `validate` finds invalid: it names `DIRECT_MEAN_CALIBRATION_INVALID` and its remedy, where
+  it gave only "hierarchy level ... does not partition the group".
 
 ### Added
 

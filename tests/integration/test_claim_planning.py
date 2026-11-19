@@ -619,6 +619,56 @@ def test_a_plan_analyze_finds_invalid_is_refused(
     assert "PASS at acceptable_upper" not in output
 
 
+@pytest.mark.parametrize("p3_weight", [1, 0])
+def test_a_hierarchy_analyze_cannot_calibrate_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, p3_weight: int
+) -> None:
+    """A zero-weight node leaves its level short of the group, so frontier_sidak has no frontier.
+
+    analyze reports DIRECT_MEAN_CALIBRATION_INVALID and decides no claim, so the planner refuses
+    and names the code and its remedy; with every node weighted, both run as usual.
+    """
+    from inspect_safety_stats.registry import CODES
+
+    plan = _parity_plan("frontier_sidak", "weighted_hoeffding").replace(
+        "  weights: {strategy: nested_equal, hierarchy: [task_id, question_id, prompt_id]}\n",
+        "  weights: {strategy: explicit, column: weight}\n",
+    )
+    assert "column: weight" in plan
+    plan_path = _write(tmp_path, plan=plan)
+    # p3 is question q2's only prompt; cyber weighs its prompts equally whatever the column.
+    lines = MANIFEST.splitlines()
+    weighted = [lines[0] + ",weight"] + [
+        line + (f",{p3_weight}" if line.startswith("p3,") else ",1") for line in lines[1:]
+    ]
+    (tmp_path / "design.csv").write_text("\n".join(weighted) + "\n", encoding="utf-8")
+    _patch_logs(monkeypatch)
+    report = analyze(plan=plan_path, logs="ignored")
+    code = "DIRECT_MEAN_CALIBRATION_INVALID"
+    raised = [item for item in report.integrity.diagnostics if item.code == code]
+    result = runner.invoke(app, ["plan", "fixed-design", "--plan", str(plan_path)])
+    output = plain(result.output)
+    if p3_weight:
+        assert not raised
+        assert plan_design(load_plan(plan_path), power=0.9).intervals
+        assert result.exit_code == 0, output
+        return
+    assert [item.message for item in raised] == [
+        "hierarchy level all:question_id does not partition the group"
+    ]
+    assert {claim.status for claim in report.claims} == {"INCONCLUSIVE"}
+    refusal = (
+        f"Fix the errors that analyze reports: {code} at families/direct_means: hierarchy "
+        f"level all:question_id does not partition the group. {CODES[code].remedy}"
+    )
+    with pytest.raises(ValueError, match="report every claim INCONCLUSIVE") as refused:
+        plan_design(load_plan(plan_path), power=0.9)
+    assert str(refused.value).endswith(refusal)
+    assert result.exit_code == 2, output
+    assert refusal in output
+    assert "PASS at acceptable_upper" not in output
+
+
 def test_blocks_must_be_manifest_columns(tmp_path: Path) -> None:
     plan_path = _write(
         tmp_path,
