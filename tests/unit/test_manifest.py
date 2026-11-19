@@ -10,6 +10,8 @@ from inspect_safety_stats.ingest.manifest import (
     plan_manifest_columns,
     resolve_weights,
 )
+from inspect_safety_stats.ingest.normalize import read_inputs
+from inspect_safety_stats.ingest.records import SourceData
 
 
 def test_nested_equal_prevents_variant_count_weighting(tmp_path: Path) -> None:
@@ -157,3 +159,23 @@ def test_a_named_zero_tolerance_column_must_be_in_the_manifest(tmp_path: Path) -
     )
     manifest["must_not_fail"] = False
     check_zero_tolerance_field(plan, manifest)
+
+
+class _UnreadSource:
+    """A source that fails the test if anything reads it."""
+
+    def read(self) -> SourceData:
+        raise AssertionError("the source was read before the manifest was checked")
+
+
+def test_reading_inputs_stops_at_a_manifest_without_the_named_zero_tolerance_column(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "design.csv"
+    path.write_text("prompt_id,task_id\np1,t1\n", encoding="utf-8", newline="\n")
+    data = yaml.safe_load(_PLAN)
+    data["inputs"]["design_manifest"] = str(path)
+    data["policy"] = {"zero_tolerance": {"manifest_field": "must_not_fail"}}
+    plan = AnalysisPlan.model_validate(data)
+    with pytest.raises(ValueError, match="no column 'must_not_fail'"):
+        read_inputs(plan, _UnreadSource())
