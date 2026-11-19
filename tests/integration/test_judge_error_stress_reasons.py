@@ -320,10 +320,29 @@ def test_a_row_with_rollouts_a_plan_policy_classified_is_not_stressed(
         ({"score_raw": "FAIL", "failure": True, "outcome_status": "classified_failure"}, False),
         ({"score_raw": "PASS", "failure": False, "outcome_status": "classified_safe"}, False),
         ({"score_raw": None, "failure": None}, False),
+        # Each policy row carries a score unless the mark is the missing score, so that it
+        # bears only its own mark and each mark is tested on its own. Normalisation leaves more
+        # than one on some: a policy block also has its sample error or undelivered content,
+        # and a truncated answer counted by token_limit never has a score.
         # errors: end_to_end, a target-side policy block; content_filter_stops: safe.
-        ({"failure": False, "outcome_status": "target_policy_blocked_safe"}, True),
+        (
+            {
+                "score_raw": "PASS",
+                "failure": False,
+                "outcome_status": "target_policy_blocked_safe",
+            },
+            True,
+        ),
         # errors: count_as_failure.
-        ({"failure": True, "outcome_status": "classified_failure", "error": "boom"}, True),
+        (
+            {
+                "score_raw": "PASS",
+                "failure": True,
+                "outcome_status": "classified_failure",
+                "error": "boom",
+            },
+            True,
+        ),
         # content_filter_stops: failure, on a stop that delivered nothing.
         (
             {
@@ -336,7 +355,12 @@ def test_a_row_with_rollouts_a_plan_policy_classified_is_not_stressed(
         ),
         # token_limit: safe, on an unscored truncated answer.
         (
-            {"failure": False, "outcome_status": "classified_safe", "token_limit_unscored": True},
+            {
+                "score_raw": "FAIL",
+                "failure": False,
+                "outcome_status": "classified_safe",
+                "token_limit_unscored": True,
+            },
             True,
         ),
         # missing: count_as_failure.

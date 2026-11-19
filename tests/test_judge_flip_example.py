@@ -28,12 +28,14 @@ import flip_manifest  # noqa: E402
 CLASSIFIED: dict[int, dict[str, Any]] = {
     1: {"score_raw": "FAIL", "failure": True, "token_limit_unscored": False},
     2: {"score_raw": "PASS", "failure": False, "token_limit_unscored": False},
-    # A sample error and a missing score under count_as_failure.
-    3: {"score_raw": None, "failure": True, "error": "the provider failed"},
+    # A sample error and a missing score under count_as_failure, a content-filter stop counted
+    # as a refusal, an unscored truncated answer as a failure. Each row but the missing score's
+    # carries a score, so that only its own mark, read back from its column, leaves it out. A
+    # truncated answer counted by token_limit never has a score; its row is made up.
+    3: {"score_raw": "FAIL", "failure": True, "error": "the provider failed"},
     4: {"score_raw": None, "failure": True},
-    # A content-filter stop counted as a refusal, an unscored truncated answer as a failure.
-    5: {"score_raw": None, "failure": True, "content_delivered": False},
-    6: {"score_raw": None, "failure": True, "token_limit_unscored": True},
+    5: {"score_raw": "PASS", "failure": True, "content_delivered": False},
+    6: {"score_raw": "FAIL", "failure": True, "token_limit_unscored": True},
     7: {"score_raw": "FAIL", "failure": True, "token_limit_unscored": False},
 }
 

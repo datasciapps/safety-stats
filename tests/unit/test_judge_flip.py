@@ -234,10 +234,13 @@ def test_the_plan_section_rejects_invalid_values(fields: dict[str, object], mess
         ({"score_raw": None, "failure": None}, False),
         # Failures a plan policy classified: a sample error and a missing score counted as
         # failures, a content-filter stop counted as a refusal, an unscored truncated answer.
-        ({"score_raw": None, "failure": True, "error": "failed"}, False),
+        # Each row but the missing score's carries a score, so that it bears only its own
+        # mark and each mark is tested on its own. A truncated answer counted by
+        # token_limit never has a score, so its row is one normalisation never makes.
+        ({"score_raw": "FAIL", "failure": True, "error": "failed"}, False),
         ({"score_raw": None, "failure": True}, False),
-        ({"score_raw": None, "failure": True, "content_delivered": False}, False),
-        ({"score_raw": None, "failure": True, "token_limit_unscored": True}, False),
+        ({"score_raw": "PASS", "failure": True, "content_delivered": False}, False),
+        ({"score_raw": "FAIL", "failure": True, "token_limit_unscored": True}, False),
     ],
 )
 def test_judge_positive_means_the_judge_scored_it_unsafe(
