@@ -1516,27 +1516,29 @@ Sequential inference is emerging explicitly in AI evaluation. *Efficient Sequent
 
 One confidence sequence is implemented: for the human labels of a validated judge calibration (see [Judge misclassification](judge-misclassification.md#labelling-protocol-experimental)), when the plan's labelling protocol declares `stopping: data_dependent`. The labelling of evaluation outputs, not the evaluation itself, is then allowed to stop on results.
 
-**Model.** A judge stratum holds \(N\) rollouts, of which an unknown \(K\) are truly unsafe; the calibration parameter is \(\rho=K/N\). The labelling queue orders the stratum by a uniformly random permutation, and the labeller labels it from the front. After \(n\) labels with \(S_n\) unsafe, the labelled rows are a sample without replacement, and the probability of the observed sequence under \(K\) is proportional to the hypergeometric probability \(h_n(K)=\binom{K}{S_n}\binom{N-K}{n-S_n}/\binom{N}{n}\).
+**Model.** A judge stratum holds \(N\) rollouts, of which an unknown \(K\) are truly unsafe. The calibration parameter is \(\rho\), the probability that a rollout the judge put in this stratum is truly unsafe: the correction \(R^\ast=R\rho_1+(1-R)\rho_0\) needs a probability, as \(R\) is one, and \(K/N\) is only this run's share. Given \(N\), the stratum's rollouts are independent and each is truly unsafe with probability \(\rho\), so \(K\) is binomial and a census, which knows \(K\), still leaves \(K/N\) about \(\sqrt{\rho(1-\rho)/N}\) from \(\rho\). This is the rollout model under which the labels of the Clopper--Pearson calibration are binomial too. The labelling queue orders the stratum by a uniformly random permutation fixed before labelling, and the labeller labels it from the front. Under the model, the labels \(X_1, X_2, \dots\) in queue order are then independent draws, each unsafe with probability \(\rho\), whatever \(N\) is. After \(n\) labels with \(S_n\) unsafe, their likelihood is \(\rho^{S_n}(1-\rho)^{n-S_n}\).
 
-**Construction.** Put a uniform prior \(\pi_0(K)=1/(N+1)\) on \(\{0,\dots,N\}\). The posterior is \(\pi_n(K)\propto h_n(K)\), and since \(\sum_{K}\binom{K}{S}\binom{N-K}{n-S}=\binom{N+1}{n+1}\), the prior marginal likelihood of \(S_n\) is \(1/(n+1)\). So
-
-\[
-\frac{\pi_n(K)}{\pi_0(K)}=(n+1)\,h_n(K).
-\]
-
-At the true \(K^\ast\), the prior-posterior ratio \(\pi_0(K^\ast)/\pi_n(K^\ast)\) is a nonnegative martingale with initial value one (Waudby-Smith and Ramdas [39], Proposition 1). Ville's inequality gives \(\Pr(\exists n:\pi_0(K^\ast)/\pi_n(K^\ast)\ge 1/a)\le a\), so
+**Construction.** Put a uniform prior on \(\rho\in[0,1]\). The posterior is \(\mathrm{Beta}(S_n+1,\,n-S_n+1)\), whose density
 
 \[
-C_n=\{K:(n+1)\,h_n(K)>a\}
+\pi_n(\rho)=\frac{\rho^{S_n}(1-\rho)^{n-S_n}}{B(S_n+1,\,n-S_n+1)}
 \]
 
-contains \(K^\ast\) at every \(n\) simultaneously with probability at least \(1-a\). Because the guarantee is time-uniform, it holds at any stopping time, including one chosen because of the labels seen so far. \(h_n(K)\) is log-concave in \(K\), so \(C_n\) is an interval; it is reported as \([\min C_n/N,\ \max C_n/N]\). It never empties, since the average of \((n+1)h_n(K)\) over the prior is one. With no labels it is \([0,1]\), and a census pins \(\rho\) exactly, which a binomial bound cannot.
+is also the posterior-to-prior ratio. At the true \(\rho^\ast\), the prior-posterior ratio \(1/\pi_n(\rho^\ast)\) is a nonnegative martingale with initial value one (Waudby-Smith and Ramdas [39], Proposition 1, here for the binomial model rather than a finite population). It is the likelihood ratio of the uniform mixture of rates against \(\rho^\ast\), a method-of-mixtures martingale in the sense of [3]. Ville's inequality gives \(\Pr(\exists n:1/\pi_n(\rho^\ast)\ge 1/a)\le a\), so
+
+\[
+C_n=\{\rho:\pi_n(\rho)>a\}
+\]
+
+contains \(\rho^\ast\) at every \(n\) simultaneously with probability at least \(1-a\). Because the guarantee is time-uniform, it holds at any stopping time, including one chosen because of the labels seen so far. The Beta density is log-concave, so \(C_n\) is an interval. Its finite endpoints are where \(\pi_n(\rho)=a\), found by root-finding on either side of the mode \(S_n/n\), where the density is at least one. With no labels it is \([0,1]\). \(N\) does not enter: the unlabelled rollouts say nothing about \(\rho\), so labelling a larger share of a stratum narrows \(C_n\) only as the extra labels do, and a census leaves \(\rho\) uncertain.
 
 **Budget.** The calibration spends \(a=\alpha/4\) on each parameter, where \(\alpha\) is the calibration's share of the judge family budget (one per cohort, or per cohort and listed group). A two-sided miss at \(a\) bounds each one-sided miss by \(a\) as well, so the accounting of the Clopper-Pearson calibration (\(\alpha/4\) per endpoint) and the corrected interval's stated coverage carry over unchanged. It is conservative by the unused half of each parameter's share.
 
-**Assumptions.** The queue's order within each stratum is a uniformly random permutation fixed before labelling, and which stratum the next queue row comes from does not depend on labels not yet seen. Rows are labelled in queue order without skipping, which the analysis checks as a prefix of the declared queue. Human labels are ground truth. Several strata interleaved in one queue keep each stratum's martingale, because each stratum's order is drawn independently of the others' labels.
+**Width.** The sequence pays for holding at every \(n\). A sweep of every count up to 400 labels, at \(a\) of 0.0125, 0.05, 0.1 and 0.4, found it never narrower than the Clopper--Pearson interval at \(a\) per side. With 60 labels and one unsafe, its upper end at \(a=0.0125\) is 0.167, against 0.102.
 
-**Validation.** `tests/unit/test_confidence_sequence.py` checks the set against an exact rational computation and runs a seeded Monte Carlo of 600 labelling paths, each stopped the first time the range excludes the truth: the sequence misses at most \(\alpha\) up to simulation error, and fixed-sample Clopper-Pearson under the same rule misses about three times as often.
+**Assumptions.** The queue's order within each stratum is a uniformly random permutation fixed before labelling, and which stratum the next queue row comes from does not depend on labels not yet seen. Rows are labelled in queue order without skipping, which the analysis checks as a prefix of the declared queue. Given its size, each stratum's rollouts are independent, each truly unsafe with the stratum's \(\rho\). Human labels are ground truth. Several strata interleaved in one queue keep each stratum's martingale, because each stratum's order is drawn independently of the others' labels.
+
+**Validation.** `tests/unit/test_confidence_sequence.py` checks each endpoint against the posterior density in exact rational arithmetic. Its Monte Carlo draws every rollout anew in each of 2,000 strata of 60 rollouts and labels each stratum up to a census, counting a side as missed if it ever excluded \(\rho\), which is the most adversarial stopping rule. At \(a=0.1\) each side missed 0% to 5.3% of the time. A corrected interval on 120 rollouts, at 0.05 for the judge-reported interval and 0.05 for the calibration, with two rows of each stratum labelled per round up to a census, never missed the true risk at any round in 2,000 runs. An earlier version used the finite-population sequence of [39], with a uniform prior on \(K\), and reported \([\min C_n/N,\ \max C_n/N]\) for the counts it kept. That bounds \(K/N\), not \(\rho\): under the same simulations each side missed 43.6% to 58.5% of the time, and the corrected interval lay above the true risk in 12.25% of the runs and below it in 16.25%, against 5% per side.
 
 ---
 

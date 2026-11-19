@@ -18,10 +18,8 @@ import pytest
 from inspect_safety_stats import analyze, load_plan
 from inspect_safety_stats.config.loader import canonical_plan_hash
 from inspect_safety_stats.schema.reports import RiskIntervalResult, SafetyReport
-from inspect_safety_stats.stats.misclassification import (
-    JudgeStratumCounts,
-    hypergeometric_confidence_sequence,
-)
+from inspect_safety_stats.stats import misclassification
+from inspect_safety_stats.stats.misclassification import JudgeStratumCounts
 
 ROLLOUTS = 400
 JUDGE_UNSAFE = 80
@@ -293,14 +291,14 @@ def test_a_fixed_size_must_be_the_number_labelled(
 def test_data_dependent_stopping_bounds_each_stratum_with_the_confidence_sequence(
     tmp_path: Path,
 ) -> None:
-    report, _ = _run(tmp_path, _protocol("data_dependent"))
+    report, _ = _run(tmp_path, _protocol("data_dependent"), take=60)
 
     summary = report.provenance["judge_calibration"]
     assert summary["protocol"]["bound"] == "confidence_sequence"
     strata = summary["cohorts"]["candidate"]
     endpoint_alpha = summary["per_cohort_alpha"] / 4
     expected = [
-        hypergeometric_confidence_sequence(
+        misclassification.judge_accuracy_confidence_sequence(
             JudgeStratumCounts(
                 strata[name]["labelled"],
                 strata[name]["truly_unsafe"],
@@ -316,8 +314,12 @@ def test_data_dependent_stopping_bounds_each_stratum_with_the_confidence_sequenc
     rho_1, rho_0 = expected
     assert f"[{rho_1[0]:.6g}, {rho_1[1]:.6g}]" in text
     assert f"[{rho_0[0]:.6g}, {rho_0[1]:.6g}]" in text
-    assert "anytime-valid hypergeometric confidence sequence" in text
+    assert "anytime-valid binomial confidence sequence" in text
     assert "labelling may have stopped because of the labels seen" in text
+    # The sequence bounds the judge's accuracy, which the stratum's rollouts only sample, not
+    # the share of them that is truly unsafe.
+    assert "even a census leaves the probability uncertain" in text
+    assert "hypergeometric" not in text
     assert "Clopper-Pearson" not in text
 
 
