@@ -83,6 +83,58 @@ def _emitted_severities() -> dict[str, set[str]]:
     return found
 
 
+DEGRADED_DETAIL = "integrity_degraded"
+
+
+def _degraded_details() -> tuple[dict[str, list[bool]], list[str]]:
+    """Which ``Diagnostic(code=...)`` sites write ``integrity_degraded: True`` in ``details``.
+
+    The first value maps each code written as a literal to one flag per site: whether the
+    site's ``details`` is a dict literal with that key set to True. The second lists every
+    other place in the package that writes the key, which the flags would miss.
+    """
+
+    marks: dict[str, list[bool]] = {}
+    stray: list[str] = []
+    for path in sorted(PACKAGE.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
+        counted: set[int] = set()
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and ast.unparse(node.func) == "Diagnostic"):
+                continue
+            keywords = {item.arg: item.value for item in node.keywords}
+            code, details = keywords.get("code"), keywords.get("details")
+            marked = False
+            if isinstance(details, ast.Dict):
+                for key, value in zip(details.keys, details.values, strict=True):
+                    if isinstance(key, ast.Constant) and key.value == DEGRADED_DETAIL:
+                        counted.add(id(key))
+                        marked = isinstance(value, ast.Constant) and value.value is True
+            if isinstance(code, ast.Constant):
+                marks.setdefault(code.value, []).append(marked)
+            elif marked:
+                stray.append(f"{path.relative_to(PACKAGE)}:{node.lineno}")
+        stray.extend(
+            f"{path.relative_to(PACKAGE)}:{node.lineno}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant)
+            and node.value == DEGRADED_DETAIL
+            and id(node) not in counted
+        )
+    return marks, stray
+
+
+def test_the_codes_whose_sites_mark_integrity_degraded_are_the_degraded_ones() -> None:
+    # Integrity reads the registry's effect (analysis.inputs._integrity_status); the detail is
+    # what the emitting site says of its own finding. An entry whose effect disagrees with its
+    # sites, or a site that marks a code the registry does not degrade, fails here.
+    marks, stray = _degraded_details()
+    degraded = sorted(code for code, entry in CODES.items() if entry.effect == "degraded")
+    assert stray == [], "integrity_degraded written outside a Diagnostic(code=...) literal"
+    assert sorted(code for code, sites in marks.items() if any(sites)) == degraded
+    assert sorted(code for code in degraded if not all(marks.get(code, [False]))) == []
+
+
 def test_every_code_in_the_source_has_a_registry_entry() -> None:
     missing = {code: sites for code, sites in _source_codes().items() if code not in CODES}
     assert missing == {}
