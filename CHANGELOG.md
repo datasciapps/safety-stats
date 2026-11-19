@@ -24,6 +24,15 @@ described in their pull requests.
   now left out of the page, which then shows no link. The package writes an `https://`
   address, so no report it writes changes bytes.
 
+- **Reports say when the plan leaves unclassified rollouts out of the bounds (changes those
+  reports' bytes).** `report-full.md` said that missingness-robust bounds cover both
+  completions of unclassified outcomes, its judge-error stress that an unclassified rollout
+  counts as judge-unsafe at the upper bound, and `report.html` that unclassified outcomes are
+  "Included in robust bounds". Under `inputs.score.missing: exclude` or
+  `inputs.score.errors: exclude` those rollouts are left out of the bounds instead, which then
+  cover only the classified rollouts. Each text now says so for such a plan. Reports of plans
+  that exclude nothing keep their bytes.
+
 - **A zero-tolerance column that the manifest lacks is an error.** When a plan sets
   `policy.zero_tolerance.manifest_field` and the manifest has no such column, the analysis
   silently held no prompt to zero tolerance. It now stops with an error that names the column.

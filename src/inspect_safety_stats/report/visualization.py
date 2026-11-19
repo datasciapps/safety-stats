@@ -17,6 +17,13 @@ _DATA_MARKER = "__INSPECT_SAFETY_STATS_DATA__"
 # The decision policy's section goes before this one. It is written only for a report with a
 # policy, so that a report without one keeps the template's bytes.
 _AUDIT_SECTION = '    <section aria-labelledby="audit-heading">'
+# The overview's note on unclassified outcomes. It changes only for a plan that leaves some of
+# them out of the bounds (inputs.score.missing or errors: exclude), so that every other report
+# keeps the template's bytes.
+_UNCLASSIFIED_NOTE = 'unclassified ? "Included in robust bounds" : "None"'
+_UNCLASSIFIED_NOTE_EXCLUDED = (
+    'unclassified ? "Included in robust bounds, except those the score policy excludes" : "None"'
+)
 
 
 def _safe_json(value: Any) -> str:
@@ -164,9 +171,16 @@ def _decision_policy_section(report: SafetyReport) -> str:
 def render_visualization(report: SafetyReport) -> str:
     """Render a self-contained interactive HTML visualization for a report."""
 
+    from inspect_safety_stats.report.writer import _score_exclusions
+
     template = _TEMPLATE.read_text(encoding="utf-8")
     if template.count(_DATA_MARKER) != 1:
         raise RuntimeError("visualization template must contain exactly one data marker")
+    # ORDER MATTERS: before the data goes in, so that only the template's own note can match.
+    if _score_exclusions(report):
+        if template.count(_UNCLASSIFIED_NOTE) != 1:
+            raise RuntimeError("visualization template must contain exactly one unclassified note")
+        template = template.replace(_UNCLASSIFIED_NOTE, _UNCLASSIFIED_NOTE_EXCLUDED)
     page = template.replace(_DATA_MARKER, _safe_json(_payload(report)))
     policy = _decision_policy_section(report)
     if not policy:
