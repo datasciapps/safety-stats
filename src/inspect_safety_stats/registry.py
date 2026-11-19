@@ -1022,8 +1022,10 @@ _CODES: tuple[CodeEntry, ...] = (
             "declared fine stratum, of a size fixed independently of the labels."
         ),
         consequence=(
-            "The validated calibration uses exact hypergeometric bounds over the declared fine "
-            "strata, and the asymptotic delta-method reference interval is not reported."
+            "The validated calibration bounds each judge stratum's truly unsafe count with "
+            "exact hypergeometric bounds over the declared fine strata, and its conditional "
+            "accuracy at those counts with Clopper-Pearson bounds; the asymptotic delta-method "
+            "reference interval is not reported."
         ),
         remedy=(
             "None needed when the labels were drawn by the declared strata; otherwise set "

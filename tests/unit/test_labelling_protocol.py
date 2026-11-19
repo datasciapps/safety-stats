@@ -45,7 +45,7 @@ def test_a_calibration_without_a_protocol_dumps_as_before() -> None:
         (
             {"queue": "q.csv", "stopping": "data_dependent"},
             {
-                "sampling": "stratified_without_replacement",
+                "sampling": "stratified_within_judge_stratum",
                 "validation_strata": "strata.csv",
             },
             "data_dependent requires sampling: simple_random_within_judge_stratum",

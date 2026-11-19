@@ -1000,8 +1000,10 @@ The judge validation inputs: the human labels, their strata and the labelling pr
 - **Effect:** [adjusted](#effects)
 - **Assumption:** The human labels are a simple random sample without replacement within each
   declared fine stratum, of a size fixed independently of the labels.
-- **Consequence:** The validated calibration uses exact hypergeometric bounds over the declared fine
-  strata, and the asymptotic delta-method reference interval is not reported.
+- **Consequence:** The validated calibration bounds each judge stratum's truly unsafe count with
+  exact hypergeometric bounds over the declared fine strata, and its conditional accuracy at those
+  counts with Clopper-Pearson bounds; the asymptotic delta-method reference interval is not
+  reported.
 - **Remedy:** None needed when the labels were drawn by the declared strata; otherwise set
   inputs.judge_calibration.sampling to the design the labels were drawn by.
 
