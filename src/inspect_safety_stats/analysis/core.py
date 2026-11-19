@@ -125,6 +125,19 @@ def _analysis_core(
     )
 
 
+def _corrected_interval_claims(plan: AnalysisPlan) -> set[str]:
+    """The ``noisy_valid_test`` claims a judge's run bounds as ``corrected_interval`` claims.
+
+    The test needs the plan's calibration labels, which validate the primary outcome, not a
+    judge. Where the plan can run the test, a judge's run bounds such a claim on its interval
+    instead; where it cannot, there are none, and the claim stays a plan error in every run.
+    """
+
+    if not noisy_valid_test_supported(plan):
+        return set()
+    return {claim.id for claim in plan.claims if claim.method == "noisy_valid_test"}
+
+
 def _judge_plan(plan: AnalysisPlan, judge: JudgeSpec) -> AnalysisPlan:
     """The plan as it would read with this judge as its only, primary outcome.
 
@@ -136,14 +149,13 @@ def _judge_plan(plan: AnalysisPlan, judge: JudgeSpec) -> AnalysisPlan:
     plan cannot, the claim is kept, so the judge's run reports the primary's plan error.
     """
 
-    claims = plan.claims
-    if noisy_valid_test_supported(plan):
-        claims = [
-            claim.model_copy(update={"method": "corrected_interval"})
-            if claim.method == "noisy_valid_test"
-            else claim
-            for claim in plan.claims
-        ]
+    remapped = _corrected_interval_claims(plan)
+    claims = [
+        claim.model_copy(update={"method": "corrected_interval"})
+        if claim.id in remapped
+        else claim
+        for claim in plan.claims
+    ]
     inputs = plan.inputs.model_copy(
         update={
             "score": judge.score,
@@ -212,7 +224,9 @@ def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeI
         plan.inputs.judge_calibration is not None
         and plan.inputs.judge_calibration.mode == "validated"
     )
-    noisy_claims = {claim.id for claim in plan.claims if claim.method == "noisy_valid_test"}
+    # Only where the judge's run does bound them so: where the plan cannot run the test, each
+    # run reports the plan error instead, and its rows must not say otherwise.
+    noisy_claims = _corrected_interval_claims(plan)
     by_id = {judge.id: judge for judge in plan.inputs.judges}
     for entry in panel["judges"]:
         judge_plan = _judge_plan(plan, by_id[entry["id"]])

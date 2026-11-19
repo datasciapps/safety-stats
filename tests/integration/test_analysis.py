@@ -3521,6 +3521,13 @@ def test_a_judges_run_keeps_the_primarys_noisy_valid_test_error(
     (judge,) = report.provenance["judge_panel"]["judges"]
     assert judge["integrity"] == "invalid"
     assert judge["diagnostic_counts"]["PLAN_INVALID_CLAIM"] == 1
+    # The judge's run kept the claim's test, so its row must not say it bounded the claim as a
+    # corrected_interval claim.
+    rows = {row["claim_id"]: row for row in judge["claims"]}
+    assert rows["mean_safe"]["method"] != rows["mean_bounded"]["method"]
+    assert rows["mean_safe"]["status"] == "INCONCLUSIVE"
+    for row in rows.values():
+        assert not any("corrected_interval" in reason for reason in row["reasons"])
     text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
     section = text[text.index("### Claims by judge (experimental)") :]
     assert "`PLAN_INVALID_CLAIM` (1)" in section

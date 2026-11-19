@@ -418,10 +418,12 @@ described in their pull requests.
   runs record: a SHA-256 fingerprint of the scorer named like the judge's score and the model
   roles, `null` where none are recorded. The rows' bounds are on the judge's reported risk;
   under a validated judge calibration, whose thresholds are about true risk, every row is
-  `INCONCLUSIVE`, as the primary outcome's claims are without a certifying correction. A
-  judge's run bounds a `noisy_valid_test` claim as a `corrected_interval` claim, since the test
-  needs labels of that judge's verdicts. The scorer's options and metadata, which can hold
-  request headers, tokens, endpoints and local paths, never reach the report. A model role
+  `INCONCLUSIVE`, as the primary outcome's claims are without a certifying correction. Where
+  the plan can run a `noisy_valid_test` claim's test (a validated calibration with
+  `sampling: simple_random`), a judge's run bounds the claim as a `corrected_interval` claim,
+  since the test needs labels of that judge's verdicts; where it cannot, the claim is the same
+  plan error in each judge's run as in the primary's. The scorer's options and metadata, which
+  can hold request headers, tokens, endpoints and local paths, never reach the report. A model role
   keeps only its name and model id: its `base_url`, `args` and `extra_headers`, which can hold
   endpoints and credentials, never reach the report. A run whose scorers or model roles cannot
   be read, such as text that is not JSON or a role without a model id, is left out of the
