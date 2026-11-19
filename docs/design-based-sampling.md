@@ -276,6 +276,12 @@ label that pandas reads as missing (`N/A`, `None`, `NA`) and labels that it read
 value (`1` and `01`, `true` and `True`): `analyze` would otherwise check the draw against
 strata it did not use.
 
+In Python, `draw_pilot(manifest, per_stratum=..., strata=[...], seed=...)` in
+`inspect_safety_stats.ingest.pilot` returns the same frame as a DataFrame. Read the manifest
+as the command does, with `pd.read_csv(path, dtype=str, keep_default_na=False)`: the draw
+hashes each `prompt_id` as written, and pandas' defaults would read an identifier such as
+`0001` as the number 1. `draw_pilot` refuses a `prompt_id` that is not text or is blank.
+
 ### Estimating from a pilot
 
 Every stratum gives the same number of prompts, so a prompt in a small stratum is more
@@ -306,12 +312,6 @@ design:
   inclusion_probability_column: pilot_inclusion_probability
   selection_column: pilot_selected
 ```
-
-In Python, `draw_pilot(manifest, per_stratum=..., strata=[...], seed=...)` in
-`inspect_safety_stats.ingest.pilot` returns the same frame as a DataFrame. Read the manifest
-as the command does, with `pd.read_csv(path, dtype=str, keep_default_na=False)`: the draw
-hashes each `prompt_id` as written, and pandas' defaults would read an identifier such as
-`0001` as the number 1. `draw_pilot` refuses a `prompt_id` that is not text or is blank.
 
 ## Not yet supported
 
