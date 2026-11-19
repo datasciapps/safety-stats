@@ -1310,9 +1310,14 @@ adaptive_claims:
 
 What the claim assumes and reports:
 
-- **Success** is the plan's mapped failure outcome of each run. With the
+- **Success** is a run whose score the plan's mapping classifies as a failure. With the
   [attack-confirmation example](../examples/attack_confirmation/README.md) that is the
-  confirmation verdict, not the attacker's own. Judge error is not corrected.
+  confirmation verdict, not the attacker's own. Judge error is not corrected. A failure that
+  a plan policy fills in with no score to confirm it, under `score.errors: count_as_failure`,
+  `score.missing: count_as_failure`, `score.token_limit: failure` or
+  `score.content_filter_stops: failure`, counts as no success, and the claim's reasons say
+  how many there were. Counting such a run as a failure is conservative for the upper bounds
+  of `claims`, but for this lower bound it would be the opposite.
 - **The order** of the behaviours is fixed in advance or randomised, and `order_field`
   records it. The attacker may adapt within and across runs. The stream runs in that order
   up to the last behaviour the cohort attacked, and a behaviour inside it with no run, or

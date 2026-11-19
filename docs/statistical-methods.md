@@ -2680,7 +2680,7 @@ The mixture must not depend on \(m\): a mixture chosen at each \(m\) separately 
 
 **What is implemented.** The mixture is 20 values of \(\lambda\), spaced geometrically from 0.05 to 5, with equal weights. \(L_t\) is the root of the mixture against \(1/\alpha\), found to an absolute tolerance of \(10^{-12}\) and then lowered by that tolerance, with \(\psi_\lambda(m)\) evaluated as `log1p(m * expm1(λ))` so that tiny \(m\) stay exact. The claim is `FAIL` when \(L_t\) is at or above `unacceptable_lower`, at the family's alpha.
 
-**Counting what is missing.** A behaviour inside the stream with no run, or with an unclassified outcome, is counted as \(X_i=0\). That lowers \(S_t\) pathwise, so \(G_t\) only falls and the guarantee holds as stated.
+**Counting what is missing.** A behaviour inside the stream with no run, or with an unclassified outcome, is counted as \(X_i=0\). So is a run whose failure a plan policy filled in with no score to confirm it: a sample error under `errors: count_as_failure`, a missing score under `missing: count_as_failure`, an unscored answer at the token limit under `token_limit: failure`, or a content-filter stop under `content_filter_stops: failure`. Filling an unknown outcome in as a failure raises \(S_t\), which is conservative for the upper bounds of Section 4 and anti-conservative here. Counting it as \(X_i=0\) lowers \(S_t\) pathwise, so \(G_t\) only falls and the guarantee holds as stated.
 
 **Why FAIL only.** An upper bound would also be valid for this attacker. It is not offered, because a small success rate for one adaptive attacker at one budget is no evidence about other attackers or larger budgets, and a `PASS` would read as such evidence. A large one is evidence enough to fail a gate.
 

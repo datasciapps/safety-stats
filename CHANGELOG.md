@@ -244,8 +244,11 @@ described in their pull requests.
   from below by an anytime-valid bound on the attacker's running average of conditional
   success probabilities, which needs no independence between runs. The claim is `FAIL` when
   the bound reaches `unacceptable_lower` and `INCONCLUSIVE` otherwise; a plan that gives it an
-  `acceptable_upper` is refused, because the bound describes one attacker at one budget.
-  Mandatory adaptive claims enter the decision. `report.json` and `report.md` show them in
+  `acceptable_upper` is refused, because the bound describes one attacker at one budget. A
+  success is a run whose score the mapping classifies as a failure: a failure that a plan
+  policy fills in with no score to confirm it (`errors` or `missing: count_as_failure`,
+  `token_limit` or `content_filter_stops: failure`) counts as no success, and the claim's
+  reasons say how many there were. Mandatory adaptive claims enter the decision. `report.json` and `report.md` show them in
   their own section, `report.html` beside the cohort's claims. Plans without them keep their
   hash and their `report.json` and `report.md` bytes; every `report.html` changes bytes,
   because it embeds the script that renders them. See
