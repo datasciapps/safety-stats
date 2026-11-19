@@ -181,6 +181,8 @@ plan's as frozen. The `decision_policy` section of `report.json` holds:
 | `versions` | Every version, with `set_after_first_evaluation`: `null` when it cannot be told, because no evaluation reports a start time, or because the version is set at or before the earliest reported start while some evaluation reports none |
 | `claims` | For every claim, the thresholds it was decided at, `set_by` (`plan` or a version id) and the plan's thresholds |
 
-`report-full.md` shows the same in a "Decision policy" section. With
+`report-full.md` shows the same in a "Decision policy" section, and `report.html` in a section
+of its own. `report.md` says below its claims table which claims' thresholds the policy set and
+which versions state a time after the first evaluation started. With
 [verdict ranges](interpretation.md#verdicts-at-other-thresholds), a reader can also see the
 verdict at any other thresholds without a policy.

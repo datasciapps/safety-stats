@@ -191,6 +191,8 @@ def test_an_analysis_without_a_policy_reports_none(plan_path: Path, tmp_path: Pa
     output = report.write(tmp_path / "report")
     assert "decision_policy" not in json.loads((output / "report.json").read_text("utf-8"))
     assert "## Decision policy" not in (output / "report-full.md").read_text("utf-8")
+    assert "decision policy" not in (output / "report.md").read_text("utf-8")
+    assert "decision-policy-heading" not in (output / "report.html").read_text("utf-8")
 
 
 def test_thresholds_revised_after_the_run_decide_without_voiding_certification(
@@ -265,6 +267,18 @@ def test_thresholds_revised_after_the_run_decide_without_voiding_certification(
     assert "Each version's time is as the policy states it; nothing in the analysis checks it." in (
         markdown
     )
+    # The summary and the page say where the thresholds come from, and which versions are
+    # stated after the first evaluation started, which only an INFO diagnostic said before.
+    summary = (output / "report.md").read_text("utf-8")
+    assert (
+        "Thresholds of `mean_safe` come from a decision policy (experimental), not the plan; "
+        "the others are the plan's. Version(s) `v2` state a time after the first evaluation "
+        "started"
+    ) in summary
+    page = (output / "report.html").read_text("utf-8")
+    assert page.count('<h2 id="decision-policy-heading">Decision policy</h2>') == 1
+    assert "<td>v2</td><td>2026-02-01T00:00:00+01:00</td><td>yes</td><td>mean_safe</td>" in page
+    assert '<td>mean_safe</td><td class="num">' in page
 
 
 def test_a_policy_for_another_plan_is_an_error_and_is_not_applied(plan_path: Path) -> None:
@@ -759,3 +773,39 @@ def test_a_version_is_not_reported_before_the_run_when_a_start_is_unknown(
         ("early", None),
         ("late", True),
     ]
+
+
+def test_the_page_escapes_the_policy_text(tmp_path: Path) -> None:
+    from inspect_safety_stats.report.visualization import render_visualization
+
+    groups = ["g1"]
+    plan_path = _gate_inputs(tmp_path, _gate_plan(groups, direct=None), groups)
+    reason = "<script>alert(1)</script> & __INSPECT_SAFETY_STATS_DATA__"
+    policy = tmp_path / "policy.json"
+    policy.write_text(
+        json.dumps(
+            {
+                "inference_plan_sha256": inference_plan_hash(load_plan(plan_path)),
+                "versions": [
+                    {
+                        "id": "v<1>",
+                        "set_at": "2026-03-01T00:00:00Z",
+                        "reason": reason,
+                        "thresholds": {
+                            "g1_mean": {"acceptable_upper": 0.5, "unacceptable_lower": 0.9}
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    page = render_visualization(_gate_analysis(plan_path, policy))
+    assert "<td>&lt;script&gt;alert(1)&lt;/script&gt; &amp; __INSPECT_SAFETY_STATS_DATA__</td>" in (
+        page
+    )
+    assert "<td>v&lt;1&gt;</td>" in page
+    assert "<script>alert(1)" not in page
+    # The report's data is still inlined once, and the page keeps one audit section.
+    assert page.count('<section aria-labelledby="audit-heading">') == 1
+    assert page.count('<script id="inspect-safety-stats-data" type="application/json">{') == 1

@@ -358,7 +358,8 @@ described in their pull requests.
   `noisy_valid_test` claims, whose test uses their thresholds. `report.json` gains a
   `decision_policy` section with every version, its time and whether it came after the first
   evaluation started (`null` when that cannot be told, as when a run reports no start time),
-  and the thresholds each claim was decided at; `report.md` shows the same.
+  and the thresholds each claim was decided at; `report-full.md` and `report.html` show the
+  same, and `report.md` says which thresholds the policy set.
   New diagnostics: `DECISION_POLICY_MISMATCH`, `DECISION_POLICY_UNKNOWN_CLAIM`,
   `DECISION_POLICY_FIXED_CLAIM` (errors), `DECISION_POLICY_OVERALL_UNCERTIFIED` and
   `DECISION_POLICY_SELF_DECLARED` (warnings: the second says that a version's stated time,
