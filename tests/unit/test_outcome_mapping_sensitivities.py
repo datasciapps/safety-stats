@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -122,12 +123,61 @@ def test_values_of_another_type_make_another_mapping() -> None:
     assert [item.id for item in sensitivities] == ["floats", "booleans"]
 
 
-def test_a_list_among_the_primary_values_still_lets_the_plan_load() -> None:
-    # No score value matches a list, and reading the scores fails on it; the plan loads.
-    plan = _plan([{"id": "partial_safe", "mapping": LENIENT}])
-    plan["inputs"]["score"]["mapping"] = {"failure_values": [["COMPLY"]], "safe_values": ["X"]}
-    (sensitivity,) = AnalysisPlan.model_validate(plan).inputs.score.mapping_sensitivities
-    assert sensitivity.id == "partial_safe"
+@pytest.mark.parametrize(
+    ("value", "reason"),
+    [
+        (["COMPLY"], "a list, which no score value matches"),
+        ({"grade": "COMPLY"}, "a dict, which no score value matches"),
+        (date(2024, 1, 1), "a date, which no score value matches"),
+        (None, "a missing score"),
+        (float("nan"), "a missing score"),
+    ],
+    ids=["list", "object", "date", "null", "nan"],
+)
+@pytest.mark.parametrize("field", ["failure_values", "safe_values"])
+@pytest.mark.parametrize("where", ["primary", "alternative", "judge"])
+def test_a_mapping_value_no_score_can_match_is_refused_when_the_plan_loads(
+    value: Any, reason: str, field: str, where: str
+) -> None:
+    # A list or an object made reading the scores fail, and under an alternative stopped
+    # analyze with a TypeError that validate did not foresee; a missing value or a date was
+    # accepted and matched nothing, and slipped past the repeat check.
+    mapping = copy.deepcopy(LENIENT)
+    mapping[field].append(value)
+    alternative = mapping if where == "alternative" else LENIENT
+    plan = _plan([{"id": "partial_safe", "mapping": alternative}])
+    if where == "primary":
+        plan["inputs"]["score"]["mapping"] = mapping
+    if where == "judge":
+        plan["inputs"]["judges"] = [{"id": "j", "score": {"name": "j", "mapping": mapping}}]
+    with pytest.raises(ValidationError, match=f"{field} lists .*, {reason}"):
+        AnalysisPlan.model_validate(plan)
+
+
+def test_text_numbers_booleans_and_infinities_are_mapping_values() -> None:
+    plan = _plan()
+    plan["inputs"]["score"]["mapping"] = {
+        "failure_values": ["COMPLY", 1, 0.5, True, float("inf")],
+        "safe_values": ["REFUSE", 0, -0.5, False, float("-inf")],
+    }
+    mapping = AnalysisPlan.model_validate(plan).inputs.score.mapping
+    assert mapping.failure_values == ["COMPLY", 1, 0.5, True, float("inf")]
+
+
+def test_a_date_in_a_yaml_mapping_is_text_only_when_quoted(tmp_path: Path) -> None:
+    from inspect_safety_stats.config.loader import load_plan
+
+    plan = _plan()
+    plan["inputs"]["score"]["mapping"]["safe_values"].append("2024-01-01")
+    path = tmp_path / "plan.yaml"
+    path.write_text(yaml.safe_dump(plan), encoding="utf-8")
+    text = path.read_text(encoding="utf-8")
+    assert "'2024-01-01'" in text
+    assert load_plan(path).inputs.score.mapping.safe_values == ["REFUSE", "2024-01-01"]
+    # Unquoted, YAML reads a date, which no score value is: reading turns a date into text.
+    path.write_text(text.replace("'2024-01-01'", "2024-01-01"), encoding="utf-8")
+    with pytest.raises(ValidationError, match="quote"):
+        load_plan(path)
 
 
 def test_a_judge_score_cannot_declare_sensitivities() -> None:
@@ -442,6 +492,64 @@ def test_an_alternative_decides_its_claims_as_its_mapping_would_as_the_primary(
         as_primary.integrity.status,
         as_primary.decision,
     )
+
+
+@pytest.mark.parametrize("zero_tolerance", [False, True], ids=["plain", "zero_tolerance"])
+def test_an_invalid_report_never_shows_an_alternative_as_valid_or_decided(
+    tmp_path: Path, zero_tolerance: bool
+) -> None:
+    # One rollout is scored OTHER, which the primary mapping leaves unmapped, an error of the
+    # primary outcome alone. The alternative maps it, so its own run is valid and passes.
+    lenient = {"failure_values": ["COMPLY"], "safe_values": ["PARTIAL", "REFUSE", "OTHER"]}
+    plan, files = _analysis(tmp_path, [{"id": "partial_safe", "mapping": lenient}])
+    _confirmatory(plan)
+    document = yaml.safe_load(plan.read_text(encoding="utf-8"))
+    document["report"] = {"include_decisions": True}
+    plan.write_text(yaml.safe_dump(document), encoding="utf-8")
+    (tmp_path / "rollouts.jsonl").write_text(
+        "".join(
+            json.dumps(
+                {
+                    "run_key": "r",
+                    "item_id": prompt,
+                    "repeat": repeat,
+                    "score_verdict": "OTHER" if (prompt, repeat) == ("p3", 1) else verdict,
+                }
+            )
+            + "\n"
+            for prompt, verdict in VERDICTS.items()
+            for repeat in range(1, 5)
+        ),
+        encoding="utf-8",
+    )
+    if zero_tolerance:
+        # p1 always complies, a failure under either mapping.
+        (tmp_path / "design.csv").write_text(
+            "prompt_id,question_id,task_id,expected_rollouts,zero_tolerance\n"
+            + "".join(f"{prompt},q{prompt},t,4,{prompt == 'p1'}\n" for prompt in VERDICTS),
+            encoding="utf-8",
+        )
+
+    report = analyze(plan=plan, source=files)
+
+    assert report.integrity.status == "invalid"
+    assert "SCORE_UNMAPPED" in {item.code for item in report.integrity.diagnostics}
+    (alternative,) = report.outcome_mapping_sensitivities
+    # The alternative's own run is sound: its counts are its own, its bounds are computed.
+    assert "SCORE_UNMAPPED" not in alternative.diagnostic_counts
+    claim = _claim(alternative.results)
+    assert claim.upper is not None and claim.upper < 0.82
+    # The report it sits in is invalid, so it decides nothing, as an invalid analysis: a
+    # zero-tolerance failure still fails it, as it fails the report.
+    assert alternative.integrity_status == "invalid"
+    assert claim.status == "INCONCLUSIVE"
+    assert alternative.decision == report.decision == ("FAIL" if zero_tolerance else "INCONCLUSIVE")
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    start = markdown.index("## Outcome mapping sensitivity (experimental)")
+    section = markdown[start : markdown.index("\n## ", start)]
+    assert "`valid`" not in section
+    assert "PASS" not in section
+    assert "When the report's integrity is invalid" in section
 
 
 def test_hidden_decisions_hide_every_mappings_claims_and_decision(tmp_path: Path) -> None:

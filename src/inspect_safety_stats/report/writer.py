@@ -379,7 +379,8 @@ def _mapping_sensitivity_markdown(
             "The analysis is repeated under each declared alternative outcome mapping. Each "
             "mapping's intervals carry the coverage the plan declares for that mapping alone; "
             "they are not simultaneous across mappings. Only the primary mapping enters claims "
-            "and the decision."
+            "and the decision. When the report's integrity is invalid, every alternative's is "
+            "`invalid` too and none of its claims is decided, whatever its own diagnostics."
         ),
         "",
         "| Mapping | Title | Failure values | Safe values | Integrity |"
