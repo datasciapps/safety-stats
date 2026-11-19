@@ -31,7 +31,11 @@ from inspect_safety_stats.generative.inference import unclassified_upper_bound
 from inspect_safety_stats.generative.judge import correct
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.stats import JudgeCalibration, correct_judge_risk
-from inspect_safety_stats.stats.binomial import binomial_bounds, binomial_upper_bound
+from inspect_safety_stats.stats.binomial import (
+    binomial_bounds,
+    binomial_upper_bound,
+    missingness_robust_binomial_bounds,
+)
 from inspect_safety_stats.stats.misclassification import (
     JudgeStratumCounts,
     estimate_judge_calibration,
@@ -428,6 +432,74 @@ def test_a_fixed_design_share_is_bounded_prompt_by_prompt() -> None:
         rel=1e-12,
         abs=0,
     )
+
+
+@pytest.mark.parametrize("measure", ["maximum", "top_k_mean"])
+def test_a_prompt_of_weight_zero_counts_for_a_measure_that_ignores_weights(measure: str) -> None:
+    """The maximum and the top-k mean ignore weights, so a prompt of weight zero can set the
+    row's bounds, and its unclassified share is one the correction must bound.
+
+    p1 weighs the whole row and every rollout of it is classified; p2 weighs nothing, and 30
+    of its 40 rollouts are unclassified. Those can all be unsafe, so true risk on p2, and with
+    it the row's maximum, can reach 0.75. A bound over p1 alone would let the correction
+    credit the judge's false alarms against p2's unclassified rollouts.
+    """
+
+    plan = _plan()
+    share = unclassified_share_bound(
+        plan,
+        cast(NormalizedData, None),
+        {"p1": _Counts(40, 40), "p2": _Counts(10, 40)},
+        cohort_id="candidate",
+        weights={"p1": 1.0, "p2": 0.0},
+        measure_type=measure,
+        independence_profile=None,
+        alpha=0.02,
+    )
+    assert share.prompts == 2
+    assert share.per_prompt
+    assert share.observed == pytest.approx(0.75, rel=1e-12, abs=0)
+    assert share.upper == pytest.approx(
+        binomial_upper_bound(30, 40, alpha=0.01), rel=1e-12, abs=0
+    )
+    # p1 has 20 judge-unsafe rollouts, p2 none of its 10 classified ones. The row's upper
+    # bound is p2's completion, and a judge whose flags are half false alarms, never missing
+    # a failure, must not pull it below p2's possible true risk.
+    upper = max(
+        missingness_robust_binomial_bounds(20, 40, 40, alpha_lower=0.01, alpha_upper=0.01).upper,
+        missingness_robust_binomial_bounds(0, 10, 40, alpha_lower=0.01, alpha_upper=0.01).upper,
+    )
+    corrected = correct_judge_risk(
+        observed_lower=0.0,
+        observed_upper=upper,
+        observed_estimate=None,
+        calibration=JudgeCalibration("point", 0.5, 0.5, 0.0, 0.0),
+        unclassified_share=share.upper,
+        unclassified_share_per_prompt=share.per_prompt,
+    )
+    assert corrected.upper >= 0.75
+
+
+def test_a_prompt_of_weight_zero_counts_for_no_measure_that_weights_it() -> None:
+    """A weighted mean and a CVaR give a prompt of weight zero no mass."""
+
+    plan = _plan()
+    for measure in ("weighted_mean", "cvar"):
+        share = unclassified_share_bound(
+            plan,
+            cast(NormalizedData, None),
+            {"p1": _Counts(40, 40), "p2": _Counts(10, 40)},
+            cohort_id="candidate",
+            weights={"p1": 1.0, "p2": 0.0},
+            measure_type=measure,
+            independence_profile=None,
+            alpha=0.02,
+        )
+        assert share.prompts == 1, measure
+        assert share.observed == 0.0, measure
+        assert share.upper == pytest.approx(
+            binomial_upper_bound(0, 40, alpha=0.02), rel=1e-12, abs=0
+        ), measure
 
 
 def test_a_sampled_design_takes_its_share_at_one() -> None:

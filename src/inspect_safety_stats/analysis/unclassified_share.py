@@ -34,6 +34,9 @@ _DROPPING_POLICY = "exclude"
 PER_PROMPT_METHOD = "per_prompt_clopper_pearson_bonferroni"
 BLOCK_METHOD = "block_kl_chernoff"
 UNBOUNDED_METHOD = "not_bounded_sampled_frame"
+# Measures whose value ignores the prompt weights: a prompt of weight zero can set their
+# bounds, so its share is the row's to bound. A weighted mean and a CVaR give it no mass.
+_WEIGHT_FREE_MEASURES = frozenset({"maximum", "top_k_mean"})
 
 
 class PromptCounts(Protocol):
@@ -140,6 +143,9 @@ def unclassified_share_bound(
     prompts, so that all hold at once by Bonferroni: the weighted sum bounds a mean, and the
     largest bounds a tail measure. That needs only independent rollouts within each prompt,
     as the prompt bounds do. A weighted prompt with no rollout counts as wholly unclassified.
+    The maximum and the top-k mean ignore weights, so for them every prompt the weights list
+    counts, a prompt of weight zero included; a weighted mean and a CVaR count only the
+    prompts they weight.
 
     A sampled design estimates a frame mean, and bounding the frame's share would need the
     design's own estimator, so its share is taken at the largest value, 1. Its corrections are
@@ -149,7 +155,10 @@ def unclassified_share_bound(
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     in_bounds = bounds_complete_unclassified(plan)
-    weighted = [(prompt_id, weight) for prompt_id, weight in weights.items() if weight > 0]
+    every_prompt = measure_type in _WEIGHT_FREE_MEASURES
+    weighted = [
+        (prompt_id, weight) for prompt_id, weight in weights.items() if weight > 0 or every_prompt
+    ]
     tail = measure_type != "weighted_mean"
     observed = _observed_share(rollouts, weighted, tail)
     if plan.design.type != "fixed":

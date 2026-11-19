@@ -511,7 +511,8 @@ R^*=M\rho_1+(1-s-M)\rho_0+s\,u,\qquad u\in[0,1],
 
 where \(s\) is the row's weight on unclassified rollouts and \(M\) its classified
 judge-unsafe mass. For a tail measure, \(s\) is the largest unclassified share of any prompt
-it weights.
+it weights. The maximum and the top-k mean ignore weights, so a prompt of weight zero can set
+their bounds, and for them every prompt the row lists counts, that one included.
 
 **The share is a parameter.** \(s\) is the share in the population the row estimates, and the
 run's own share \(\hat s\) only estimates it. With \(\hat s\) in its place the corrected upper
@@ -525,7 +526,7 @@ independence assumption:
   profile takes the KL/Chernoff bound over that profile's independent blocks, each block's
   unclassified share a value in \([0,1]\);
 - any other fixed-design row takes an exact Clopper--Pearson bound on each prompt's share, at
-  the share alpha divided by the number of prompts the row weights, so that all hold together
+  the share alpha divided by the number of prompts the row counts, so that all hold together
   by Bonferroni with no independence between prompts. A weighted mean sums them with the
   row's weights, a tail measure takes the largest, and a weighted prompt with no rollout
   counts as wholly unclassified;

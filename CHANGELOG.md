@@ -814,6 +814,9 @@ described in their pull requests.
     that times `1 - rho_1`, so a box whose `rho_1` reaches 1 and `rho_0` reaches 0 is
     unchanged but for floating-point rounding, which can move a bound by a unit in the last
     place either way.
+  - The maximum and the top-k mean ignore weights, so a prompt of weight zero can set their
+    bounds. Their share bound counts every prompt the row lists, that one included; a
+    weighted mean and a CVaR count only the prompts they weight.
   - A sampled design's share is taken at 1, even when the run has no unclassified rollout.
     Its judge corrections therefore no longer lower the upper bound below the judge-system
     upper bound: they can no longer show that the judge's false positives make true risk
