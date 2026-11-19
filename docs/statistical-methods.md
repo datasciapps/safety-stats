@@ -2726,7 +2726,7 @@ For weights \(w_j>0\) summing to one on values \(\lambda_j>0\), all fixed before
 L_t=\inf\Bigl\{m\in[0,1]:\sum_j w_j\exp\bigl(\lambda_j S_t-t\,\psi_{\lambda_j}(m)\bigr)<1/\alpha\Bigr\}.
 \]
 
-Each term falls in \(m\), because \(\psi_\lambda\) rises in \(m\) for \(\lambda>0\), so the set is an interval \([L_t,1]\). If \(L_t>\bar m_t\) then \(G_t\ge 1/\alpha\), hence \(N_t\ge 1/\alpha\), and therefore
+Each term falls in \(m\), because \(\psi_\lambda\) rises in \(m\) for \(\lambda>0\), so the set is the interval \((L_t,1]\), or all of \([0,1]\) when the mixture is below \(1/\alpha\) already at \(m=0\) and \(L_t=0\). If \(L_t>\bar m_t\) then \(G_t\ge 1/\alpha\), hence \(N_t\ge 1/\alpha\), and therefore
 
 \[
 \Pr\bigl(\exists t: L_t>\bar m_t\bigr)\le\alpha .
@@ -2734,9 +2734,11 @@ Each term falls in \(m\), because \(\psi_\lambda\) rises in \(m\) for \(\lambda>
 
 The mixture must not depend on \(m\): a mixture chosen at each \(m\) separately would be evaluated at the random \(\bar m_t\), and \(N_t\) would no longer be a martingale. The construction is that of Howard et al. [3], with the Bernoulli cumulant generating function in place of a sub-exponential bound; Waudby-Smith and Ramdas [33] study the betting form of such processes.
 
-**What is implemented.** The mixture is 20 values of \(\lambda\), spaced geometrically from 0.05 to 5, with equal weights. \(L_t\) is the root of the mixture against \(1/\alpha\), found to an absolute tolerance of \(10^{-12}\) and then lowered by that tolerance, with \(\psi_\lambda(m)\) evaluated as `log1p(m * expm1(λ))` so that tiny \(m\) stay exact. The claim is `FAIL` when \(L_t\) is at or above `unacceptable_lower`, at the family's alpha.
+**What is implemented.** The mixture is 20 values of \(\lambda\), spaced geometrically from 0.05 to 5, with equal weights. \(L_t\) is the root of the mixture against \(1/\alpha\), found to an absolute tolerance of \(10^{-12}\) and then lowered by twice that tolerance, which covers the root finder's error and the rounding of the subtraction, with \(\psi_\lambda(m)\) evaluated as `log1p(m * expm1(λ))` so that tiny \(m\) stay exact. The claim is `FAIL` when \(L_t\) is at or above `unacceptable_lower`, at the family's alpha.
 
-**Counting what is missing.** A behaviour inside the stream with no run, or with an unclassified outcome, is counted as \(X_i=0\). That lowers \(S_t\) pathwise, so \(G_t\) only falls and the guarantee holds as stated.
+**Error budget.** Each adaptive claim takes its family's whole \(\alpha\), as each claim under `claims` does, and \(\alpha\) bounds the chance that the claim is `FAIL` wrongly. The claim never enters a `PASS`, so it leaves the chance of a wrong overall `PASS`, and the coverage of every other bound, as they were. It is a test of its own, not one of its family's simultaneous bounds: in a family whose \(\alpha\) other bounds split, such as simultaneous prompt bounds, the chance that one of those bounds misses or the claim is `FAIL` wrongly can reach \(2\alpha\). A plan cannot put two adaptive claims in one family (`PLAN_INVALID_MULTIPLICITY`), so a family's \(\alpha\) serves at most one adaptive bound.
+
+**Counting what is missing.** A behaviour inside the stream with no run, or with an unclassified outcome, is counted as \(X_i=0\). So is a run whose failure a plan policy filled in with no score to confirm it: a sample error under `errors: count_as_failure`, a missing score under `missing: count_as_failure`, an unscored answer at the token limit under `token_limit: failure`, or a content-filter stop under `content_filter_stops: failure`. Filling an unknown outcome in as a failure raises \(S_t\), which is conservative for the upper bounds of Section 4 and anti-conservative here. Counting it as \(X_i=0\) lowers \(S_t\) pathwise, so \(G_t\) only falls and the guarantee holds as stated.
 
 **Why FAIL only.** An upper bound would also be valid for this attacker. It is not offered, because a small success rate for one adaptive attacker at one budget is no evidence about other attackers or larger budgets, and a `PASS` would read as such evidence. A large one is evidence enough to fail a gate.
 

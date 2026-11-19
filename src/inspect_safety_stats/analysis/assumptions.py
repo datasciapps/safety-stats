@@ -29,6 +29,9 @@ APPLIES: dict[str, Callable[[AnalysisPlan], bool]] = {
     "complete_design": lambda plan: True,
     # An exploratory analysis does not claim its plan was fixed in advance, and cannot pass.
     "plan_fixed_in_advance": lambda plan: plan.analysis.intent == "confirmatory",
+    # The adaptive-attacker bound needs no independence between runs, but rests on this.
+    # rollout_independence still applies to such a plan: its risk bounds rest on it.
+    "adaptive_attack_stream": lambda plan: bool(plan.adaptive_claims),
 }
 
 

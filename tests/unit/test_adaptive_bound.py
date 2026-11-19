@@ -50,12 +50,25 @@ def test_twenty_successes_in_fifty() -> None:
 
 
 def test_the_bound_never_excludes_a_mean_the_data_do_not_reject() -> None:
-    # The root is lowered by the solver's tolerance, so the e-value at the bound reaches 1/alpha
-    # and the bound itself is excluded, never a mean the data still allow below it.
+    # The root is lowered by twice the solver's tolerance, so the e-value at the bound reaches
+    # 1/alpha and the bound itself is excluded, never a mean the data still allow below it.
     for successes, runs in [(2, 20), (20, 50), (50, 200)]:
         bound = adaptive_lower_bound(successes, runs, alpha=0.05)
         assert log_mixture_e_value(successes, runs, bound) >= math.log(20)
         assert log_mixture_e_value(successes, runs, bound + 1e-9) < math.log(20)
+
+
+@pytest.mark.parametrize("alpha", [0.2, 0.05, 0.01, 0.001])
+def test_the_bound_never_lies_above_the_largest_mean_the_data_allow(alpha: float) -> None:
+    # The bisection keeps its lower end where the mixture reaches 1/alpha, so after 200 halvings
+    # that end is the largest mean the data do not exclude, to the last bit. Rounding in the
+    # root finder must leave the bound at or below it, by no more than the slack taken for it.
+    for runs in (1, 2, 5, 13, 50, 200, 1000):
+        for successes in sorted({1, runs // 7, runs // 3, runs // 2, runs - 1, runs} - {0}):
+            reference = _bisected(successes, runs, alpha)
+            bound = adaptive_lower_bound(successes, runs, alpha=alpha)
+            assert bound <= reference, (successes, runs, alpha)
+            assert bound >= reference - 3e-12, (successes, runs, alpha)
 
 
 def test_no_success_excludes_nothing() -> None:

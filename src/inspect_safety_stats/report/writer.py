@@ -1088,21 +1088,35 @@ def _adaptive_claim_lines(report: SafetyReport, places: int, include_decisions: 
         "",
         (
             "Each bound is an anytime-valid lower bound on the attacker's running mean of "
-            "conditional success probabilities over its runs, in the declared attack order. It "
-            "needs no independence between runs, and describes this attacker at this budget "
-            "only: it is no evidence about other attackers or budgets, so these claims can only "
-            "FAIL."
+            "conditional success probabilities over its runs, in the declared attack order, at "
+            "its multiplicity family's whole alpha. It needs no independence between runs, and "
+            "describes this attacker at this budget only: it is no evidence about other "
+            "attackers or budgets, so these claims can only FAIL. A success is a run whose "
+            "score the plan's mapping classifies as a failure; a failure a plan policy filled "
+            "in without a score counts as none. The bound assumes that the attack order was "
+            "fixed before any outcome was seen, or drawn at random; that each behaviour was "
+            "attacked at most once, which the analysis checks; and that each run's score is "
+            "right: judge error is not corrected, even where the plan validates the judge."
         ),
         "",
     ]
-    header = ["Claim", "Mandatory", "Runs", "Successes", "Lower", "Unacceptable", "Alpha"]
-    if include_decisions:
-        header.insert(1, "Status")
+    if not include_decisions:
+        # A claim's bound beside its threshold, or its reasons, state its verdict, which the
+        # plan asked the report to leave out; the threshold claims and report.html's adaptive
+        # cards are left out the same way.
+        return [
+            *lines,
+            "This report omits decisions (`report.include_decisions` is false), so the adaptive "
+            "claims, their bounds and their statuses are left out here; `report.json` holds "
+            "them, under `adaptive_claims`.",
+        ]
+    header = ["Claim", "Status", "Mandatory", "Runs", "Successes", "Lower", "Unacceptable", "Alpha"]
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "---|" * (len(header) - 5) + "---:|" * 5)
     for claim in report.adaptive_claims:
         cells = [
             _escape(claim.title),
+            _claim_status(claim),
             "yes" if claim.mandatory else "no",
             "—" if claim.runs is None else str(claim.runs),
             "—" if claim.successes is None else str(claim.successes),
@@ -1110,12 +1124,7 @@ def _adaptive_claim_lines(report: SafetyReport, places: int, include_decisions: 
             _number(claim.unacceptable_lower, places),
             _number(claim.alpha, places),
         ]
-        if include_decisions:
-            cells.insert(1, _claim_status(claim))
         lines.append("| " + " | ".join(cells) + " |")
-    if not include_decisions:
-        # The reasons state the verdict, which the plan asked the report to leave out.
-        return lines
     for claim in report.adaptive_claims:
         lines.extend(["", f"`{_escape(claim.claim_id)}`:", ""])
         lines.extend(f"- {_escape(reason)}" for reason in claim.reasons)
