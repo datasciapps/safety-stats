@@ -1351,6 +1351,25 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
     ),
     CodeEntry(
+        code="JUDGE_SCORE_MAPPING_MISMATCH",
+        severities=("ERROR",),
+        source="logs",
+        effect="invalid",
+        assumption=(
+            "Every value a declared judge's score takes in the selected logs is covered by "
+            "that judge's outcome mapping."
+        ),
+        consequence=(
+            "Integrity is invalid; the error lists the values the judge's mapping does not "
+            "cover and withholds no bound itself, and each verdict with such a value counts "
+            "as missing, with its own JUDGE_SCORE_UNMAPPED."
+        ),
+        remedy=(
+            "Add each listed value to inputs.judges[].score.mapping, minding that mappings "
+            "are type-sensitive, or fix the scorer that produced them and rescore."
+        ),
+    ),
+    CodeEntry(
         code="JUDGE_SCORE_MISSING",
         severities=("ERROR",),
         source="logs",
@@ -2249,6 +2268,25 @@ _CODES: tuple[CodeEntry, ...] = (
         assumptions=("sample_errors",),
     ),
     CodeEntry(
+        code="SAMPLE_SELECTION_MISMATCH",
+        severities=("ERROR",),
+        source="logs",
+        effect="invalid",
+        assumption=(
+            "With design.selection_column, each cohort has observations for exactly the frame "
+            "items that column marks as selected by the draw."
+        ),
+        consequence=(
+            "Integrity is invalid and every bound of the cohort is withheld: the items "
+            "evaluated are not the recorded draw, so the inclusion probabilities do not "
+            "describe them."
+        ),
+        remedy=(
+            "Evaluate every selected frame item and no other, or correct the selection column "
+            "to the draw actually made, at random and before any outcome was seen."
+        ),
+    ),
+    CodeEntry(
         code="SAMPLE_SIZE_IMPLAUSIBLE",
         severities=("ERROR",),
         source="logs",
@@ -2283,6 +2321,25 @@ _CODES: tuple[CodeEntry, ...] = (
             "Name the column that defines the strata in design.stratum_column, correct the "
             "inclusion probability column, or use design.sampling: poisson when items were "
             "drawn independently."
+        ),
+    ),
+    CodeEntry(
+        code="SCORE_MAPPING_MISMATCH",
+        severities=("ERROR",),
+        source="logs",
+        effect="invalid",
+        assumption=(
+            "Every value the selected score takes in the selected logs is classified by "
+            "inputs.score.mapping as a failure or as safe."
+        ),
+        consequence=(
+            "Integrity is invalid; the error lists the values the mapping does not cover and "
+            "withholds no bound itself, while each rollout with such a value has its own "
+            "SCORE_UNMAPPED, which withholds its prompt's bounds in its cohort."
+        ),
+        remedy=(
+            "Add each listed value to failure_values or safe_values of inputs.score.mapping, "
+            "minding that mappings are type-sensitive, or fix the scorer that produced them."
         ),
     ),
     CodeEntry(

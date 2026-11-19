@@ -148,7 +148,10 @@ mapping:
     value: 0.5
 ```
 
-Mappings are type-sensitive: `true`, `1`, `1.0`, and `"1"` are distinct.
+Mappings are type-sensitive: `true`, `1`, `1.0`, and `"1"` are distinct. A score value that the
+mapping does not cover is an error for its rollout, `SCORE_UNMAPPED`, which withholds the bounds
+of that rollout's prompt. One `SCORE_MAPPING_MISMATCH` error lists every such value, with its
+type and how many rollouts have it.
 
 `missing` accepts `conservative_bounds`, `block`, `count_as_failure`, or `exclude`.
 `conservative_bounds` is the default: integrity becomes `degraded`, and exact bounds cover both
@@ -301,11 +304,12 @@ The manifest holds `observation_id,human_label` with labels `safe` or `unsafe`; 
 come from the `observations.csv` of a prior run. `sampling` is
 `simple_random_within_judge_stratum` (the default) or `simple_random`; only the latter also
 estimates sensitivity and the false-positive rate by true class, which a claim with
-`method: noisy_valid_test` requires (the validator emits `PLAN_INVALID_CLAIM` otherwise). With those estimates, a whole-cohort `weighted_mean` row also carries
-diagnostic Lang-Reiczigel limits beside the exact box. Threshold claims whose evidence carries a
-validated correction are decided from the corrected bounds; an `assumed` correction never
-affects a claim. One calibration is estimated per cohort by
-exact Clopper-Pearson bounds within each judge stratum, and the corrected interval's coverage
+`method: noisy_valid_test` requires (the validator emits `PLAN_INVALID_CLAIM` otherwise). With
+those estimates, every group's `weighted_mean` row that the calibration corrects also carries
+diagnostic Lang-Reiczigel limits beside the exact box; tail measures and hierarchy nodes do not.
+Threshold claims whose evidence carries a validated correction are decided from the corrected
+bounds; an `assumed` correction never affects a claim. One calibration is estimated per cohort
+by exact Clopper-Pearson bounds within each judge stratum, and the corrected interval's coverage
 is the union of its own family budget and the judge family budget. A plan declares one mode:
 `assumed`, `validated` or `transported` (below).
 
@@ -430,24 +434,33 @@ report shows every reading side by side:
   interval of every group risk, comparison and claim (with the claim's status), and
   `presentation.primary_outcome_mapping` records the primary mapping beside them;
 - `outcome-mapping-sensitivity.csv` holds one row per result and mapping, `primary` first,
-  with each result's readings adjacent, and is listed in `checksums.json`;
+  with each result's readings adjacent, and is listed in `checksums.json`. Its last column,
+  `descriptive`, is `True` on every row of an alternative, whose claim status certifies
+  nothing;
 - `report-full.md` has an "Outcome mapping sensitivity (experimental)" section. Claims and
-  decisions appear in it only when `report.include_decisions` is true.
+  decisions appear in it only when `report.include_decisions` is true, and an alternative's
+  are marked "(descriptive)".
 
 Only the primary mapping enters claims and the decision. Each alternative's intervals carry
 the coverage the plan declares for that mapping alone; the readings are not simultaneous
 across mappings, so the side-by-side view is a sensitivity analysis, not a set of tests to
 pick from. A mapping that leaves some observed value unmapped makes its own integrity
-`invalid` (`SCORE_UNMAPPED` in its diagnostic counts) without affecting the primary
-analysis. Each alternative carries what the plan itself, its decision policy and its
-registration receipt were checked for, so a receipt for another plan
+`invalid` (`SCORE_UNMAPPED` and `SCORE_MAPPING_MISMATCH` in its diagnostic counts) without
+affecting the primary analysis. Each alternative carries what the plan itself, its decision
+policy and its registration receipt were checked for, so a receipt for another plan
 (`PLAN_RECEIPT_MISMATCH`) or a decision policy that fails its checks makes every alternative
-`invalid`, as it does the primary analysis.
+`invalid`, as it does the primary analysis. The diagnostics that describe the outcomes, such as
+`TAIL_MEASURE_SINGLE_ROLLOUT`, `TAIL_MEASURES_UNINFORMATIVE` and `CLUSTER_DESIGN_EFFECT`, are
+counted for each alternative from its own reading. The anytime-valid bounds
+(`outputs.anytime_bounds`) and the judge flip rate (`inputs.judge_flip`) are computed for the
+primary mapping only.
 
 Identifiers must be unique and cannot be `primary`, which names the primary mapping in the
-outputs; an alternative may not repeat the primary mapping. Only `inputs.score` takes
-sensitivities, not a judge's score. A plan without the field keeps its hash, and its report
-is unchanged. `report.html` does not show the sensitivities yet.
+outputs; an alternative may not repeat the primary mapping. One that classifies every value as
+the primary mapping does is a repeat, whatever the order of its values and however often it
+lists one; values of another type are not, since mappings are type-sensitive. Only
+`inputs.score` takes sensitivities, not a judge's score. A plan without the field keeps its
+hash, and its report is unchanged. `report.html` does not show the sensitivities yet.
 
 ### Judge panels
 
@@ -488,7 +501,8 @@ when a missing vote could still change it or when `majority` ties. The report ga
 panel** section with per-judge counts, each composite's Kish **effective votes** over the declared
 blocks, and pairwise agreement with Cohen's kappa. Agreement is a diagnostic, not evidence: judges
 that share a blind spot agree and are both wrong. Missing judge columns and unmappable judge
-values are errors (`JUDGE_SCORE_MISSING`, `JUDGE_SCORE_UNMAPPED`).
+values are errors (`JUDGE_SCORE_MISSING`, `JUDGE_SCORE_UNMAPPED`), and one
+`JUDGE_SCORE_MAPPING_MISMATCH` per judge lists the values its mapping does not cover.
 
 A judge may declare prevalence-free accuracy ranges, `accuracy: {sensitivity: {lower, upper},
 specificity: {lower, upper}}`. When the primary outcome is an `any` or `all` composite whose judges
@@ -711,6 +725,7 @@ for what the rate shows.
 | `inclusion_probability_column` | Required with `type: sampled`; names a manifest column holding each frame item's inclusion probability in (0, 1] |
 | `sampling` | `poisson` (independent inclusion, default) or `fixed_size` (exact draws per stratum, without replacement) |
 | `stratum_column` | Optional with `sampling: fixed_size`; names the manifest column defining sampling strata |
+| `selection_column` | Experimental, optional with `type: sampled`; names a manifest column marking the frame items the draw selected (`true`/`false`). `analyze` and `validate` then check that each cohort observed exactly those items (`SAMPLE_SELECTION_MISMATCH`); without it only the number of items is checked. A plan without it keeps its hash and report bytes. See [Checking which items were evaluated](design-based-sampling.md#checking-which-items-were-evaluated-experimental) |
 | `hierarchy` | Creator-declared hierarchy ending in `prompt_id` |
 | `rollout_key` | Fields uniquely identifying one terminal rollout; see [Schema versions](#schema-versions) for the names and default. A field the rollout does not record is read from its run. A run's fields hold its configuration, so a `ROLLOUT_DUPLICATE` message names such a field, as `<model_base_url of the run>`, instead of showing its value |
 | `require_complete_manifest` | Require every fixed prompt in every cohort |

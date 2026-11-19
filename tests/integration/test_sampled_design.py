@@ -10,14 +10,25 @@ import json
 import random
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import analyze
+from inspect_safety_stats import analyze, validate
+from inspect_safety_stats.config.models import DesignSpec
 from inspect_safety_stats.ingest.pilot import draw_pilot
 from inspect_safety_stats.report import visualization
+from tests.diagnostic_codes.harness import (
+    BASE_RUN,
+    Inputs,
+    Outcome,
+    base_inputs,
+    rollout,
+    run_analysis,
+)
 from tests.template_functions import function_source
 
 FRAME_SIZE = 200
@@ -471,39 +482,55 @@ def test_fixed_size_requires_a_constant_probability_within_each_stratum(
     assert report.integrity.status == "invalid"
 
 
-def test_a_drawn_pilot_frame_is_analysed_as_a_fixed_size_design(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """draw_pilot's frame is the frame of a fixed-size design, with no columns to edit."""
+def _pilot_frame(
+    tmp_path: Path, *, selection_column: bool
+) -> tuple[Path, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """A fixed-size plan over a drawn pilot frame: the plan, evals, a sample row, the frame."""
     plan_path, evals, samples = _write_frame(tmp_path, fixed_size=True)
-    frame = pd.read_csv(tmp_path / "design.csv").drop(columns="inclusion_probability")
+    frame = pd.read_csv(tmp_path / "design.csv", dtype=str, keep_default_na=False)
+    frame = frame.drop(columns="inclusion_probability")
     pilot = draw_pilot(frame, per_stratum=12, strata=["sampling_stratum"], seed=20261116)
     pilot.to_csv(tmp_path / "design.csv", index=False)
+    stratum = "  stratum_column: pilot_stratum\n"
+    if selection_column:
+        stratum += "  selection_column: pilot_selected\n"
     plan_path.write_text(
         plan_path.read_text(encoding="utf-8")
-        .replace("stratum_column: sampling_stratum", "stratum_column: pilot_stratum")
+        .replace("  stratum_column: sampling_stratum\n", stratum)
         .replace(
             "inclusion_probability_column: inclusion_probability",
             "inclusion_probability_column: pilot_inclusion_probability",
         ),
         encoding="utf-8",
     )
-    template = samples.iloc[0].to_dict()
-    drawn = pilot.loc[pilot["pilot_selected"], "prompt_id"].tolist()
-    pilot_samples = pd.DataFrame(
+    return plan_path, evals, samples.iloc[[0]], pilot
+
+
+def _pilot_run(template: pd.DataFrame, prompt_ids: list[str]) -> pd.DataFrame:
+    row = template.iloc[0].to_dict()
+    return pd.DataFrame(
         [
             {
-                **template,
+                **row,
                 "sample_id": f"{prompt_id}-{epoch}",
                 "id": prompt_id,
                 "epoch": epoch,
                 "score_harmful": "FAIL" if epoch == 1 and index % 3 == 0 else "PASS",
             }
-            for index, prompt_id in enumerate(drawn)
+            for index, prompt_id in enumerate(prompt_ids)
             for epoch in range(1, ROLLOUTS + 1)
         ]
     )
-    _patch(monkeypatch, evals, pilot_samples)
+
+
+@pytest.mark.parametrize("selection_column", [False, True], ids=["counts", "selection"])
+def test_a_drawn_pilot_frame_is_analysed_as_a_fixed_size_design(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, selection_column: bool
+) -> None:
+    """draw_pilot's frame is the frame of a fixed-size design, with no columns to edit."""
+    plan_path, evals, template, pilot = _pilot_frame(tmp_path, selection_column=selection_column)
+    drawn = pilot.loc[pilot["pilot_selected"], "prompt_id"].tolist()
+    _patch(monkeypatch, evals, _pilot_run(template, drawn))
 
     report = analyze(plan=plan_path, logs="ignored")
 
@@ -512,6 +539,195 @@ def test_a_drawn_pilot_frame_is_analysed_as_a_fixed_size_design(
     primary = next(item for item in mean.intervals if item.role == "primary")
     assert primary.interval_id.startswith("stratified_without_replacement_")
     assert primary.independent_block_count == 24
+
+
+def test_a_pilot_of_the_first_prompts_is_caught_only_by_the_selection_column(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The first twelve prompts of each stratum by id match the draw's counts, not its items.
+
+    Without design.selection_column the run passes the fixed-size checks; with it, analyze
+    and validate both report SAMPLE_SELECTION_MISMATCH and withhold the cohort's bounds.
+    """
+    plan_path, evals, template, pilot = _pilot_frame(tmp_path, selection_column=True)
+    first = (
+        pilot.sort_values("prompt_id").groupby("pilot_stratum").head(12)["prompt_id"].tolist()
+    )
+    drawn = set(pilot.loc[pilot["pilot_selected"], "prompt_id"])
+    assert set(first) != drawn
+    _patch(monkeypatch, evals, _pilot_run(template, first))
+
+    report = analyze(plan=plan_path, logs="ignored")
+    checked = validate(plan=plan_path, logs="ignored")
+
+    mismatch = [
+        item for item in report.integrity.diagnostics if item.code == "SAMPLE_SELECTION_MISMATCH"
+    ]
+    assert len(mismatch) == 1
+    assert mismatch[0].severity == "ERROR"
+    assert mismatch[0].details["observed_not_selected"] == len(set(first) - drawn)
+    assert mismatch[0].details["selected_not_observed"] == len(drawn - set(first))
+    assert report.integrity.status == "invalid"
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    assert (mean.lower, mean.upper) == (None, None)
+    assert checked.status == "invalid"
+    assert "SAMPLE_SELECTION_MISMATCH" in {item.code for item in checked.diagnostics}
+
+    # Without the column, the same run satisfies every count a fixed-size design checks.
+    text = plan_path.read_text(encoding="utf-8")
+    assert "  selection_column: pilot_selected\n" in text
+    plan_path.write_text(
+        text.replace("  selection_column: pilot_selected\n", ""), encoding="utf-8"
+    )
+    unchecked = analyze(plan=plan_path, logs="ignored")
+    assert unchecked.integrity.status == "valid", unchecked.integrity.diagnostics
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        (lambda frame: frame.drop(columns="pilot_selected"), "has no selection column"),
+        (lambda frame: frame.assign(pilot_selected="maybe"), "invalid boolean"),
+        (lambda frame: frame.assign(pilot_selected=None), "has missing values"),
+    ],
+    ids=["absent", "not_boolean", "missing"],
+)
+def test_an_unreadable_selection_column_fails_ingest_naming_it(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    change: Callable[[pd.DataFrame], pd.DataFrame],
+    message: str,
+) -> None:
+    plan_path, evals, template, pilot = _pilot_frame(tmp_path, selection_column=True)
+    change(pilot).to_csv(tmp_path / "design.csv", index=False)
+    drawn = pilot.loc[pilot["pilot_selected"], "prompt_id"].tolist()
+    _patch(monkeypatch, evals, _pilot_run(template, drawn))
+
+    checked = validate(plan=plan_path, logs="ignored")
+
+    (failed,) = [item for item in checked.diagnostics if item.code == "INGEST_FAILED"]
+    assert "'pilot_selected'" in failed.message
+    assert message in failed.message
+
+
+def test_the_selection_column_is_recorded_only_when_a_plan_sets_it() -> None:
+    """Plans without the experimental field keep the resolved plan their reports record."""
+    sampled = {"type": "sampled", "inclusion_probability_column": "probability"}
+    assert "selection_column" not in DesignSpec.model_validate(sampled).model_dump()
+    declared = DesignSpec.model_validate({**sampled, "selection_column": "drawn"})
+    assert declared.model_dump()["selection_column"] == "drawn"
+    with pytest.raises(ValueError, match="selection_column requires design.type: sampled"):
+        DesignSpec.model_validate({"selection_column": "drawn"})
+
+
+def _poisson_selection(
+    selected: tuple[bool, bool], observed: dict[str, tuple[str, ...]]
+) -> Inputs:
+    """A Poisson sample of the two-prompt harness frame, each prompt with probability 0.5.
+
+    The manifest column ``drawn``, the plan's selection column, marks p1 and p2 as
+    ``selected``. ``observed`` maps each cohort to the prompts its run evaluated: cohort
+    ``candidate`` matches model ``m``, and any other cohort a model of its own name.
+    """
+
+    inputs = base_inputs()
+    inputs.plan["design"] = {
+        "type": "sampled",
+        "inclusion_probability_column": "inclusion",
+        "selection_column": "drawn",
+        "independence_profiles": {
+            "rollout": {"block_by": ["rollout"], "comparison_coupling": "independent"}
+        },
+    }
+    inputs.plan["outputs"]["prompt_bounds"] = {"enabled": False}
+    inputs.plan["outputs"]["direct_mean_intervals"] = {
+        "enabled": True,
+        "method": "weighted_kl_chernoff",
+        "family": "displayed",
+        "independence": {"primary": "rollout"},
+    }
+    for row, chosen in zip(inputs.manifest, selected, strict=True):
+        row["inclusion"] = 0.5
+        row["drawn"] = chosen
+    inputs.runs, inputs.rollouts = [], []
+    for index, (cohort, prompts) in enumerate(observed.items(), start=1):
+        model = "m" if cohort == "candidate" else cohort
+        inputs.plan["cohorts"][cohort] = {"match": {"model": model}}
+        inputs.runs.append({**BASE_RUN, "run_key": f"r{index}", "model": model})
+        inputs.rollouts += [
+            rollout(prompt, repeat, run_key=f"r{index}")
+            for prompt in prompts
+            for repeat in range(1, 5)
+        ]
+    return inputs
+
+
+def _selection_mismatches(outcome: Outcome) -> dict[str, dict[str, Any]]:
+    """The details of each SAMPLE_SELECTION_MISMATCH, by cohort."""
+
+    found = outcome.with_code("SAMPLE_SELECTION_MISMATCH")
+    by_cohort = {item.details["cohort_id"]: item.details for item in found}
+    assert len(by_cohort) == len(found), "a cohort has two selection mismatches"
+    return by_cohort
+
+
+def _cohort_mean_withheld(outcome: Outcome, cohort: str) -> bool:
+    (mean,) = [
+        row
+        for row in outcome.report.group_risks
+        if row.cohort_id == cohort and row.group_id == "all" and row.measure_id == "mean"
+    ]
+    return (mean.lower, mean.upper) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("selected", "observed", "evaluated_not_drawn", "drawn_not_evaluated"),
+    [
+        ((True, False), ("p1", "p2"), ["p2"], []),
+        ((True, True), ("p1",), [], ["p2"]),
+    ],
+    ids=["evaluated_not_drawn", "drawn_not_evaluated"],
+)
+def test_each_direction_of_a_selection_mismatch_is_reported_on_its_own(
+    tmp_path: Path,
+    selected: tuple[bool, bool],
+    observed: tuple[str, ...],
+    evaluated_not_drawn: list[str],
+    drawn_not_evaluated: list[str],
+) -> None:
+    """An item evaluated but not drawn, or drawn but not evaluated, is a mismatch by itself.
+
+    The design is Poisson, so no count check catches either run: only the selection does.
+    """
+
+    outcome = run_analysis(_poisson_selection(selected, {"candidate": observed}), tmp_path)
+
+    details = _selection_mismatches(outcome)["candidate"]
+    assert details["observed_not_selected"] == len(evaluated_not_drawn)
+    assert details["observed_not_selected_prompt_ids"] == evaluated_not_drawn
+    assert details["selected_not_observed"] == len(drawn_not_evaluated)
+    assert details["selected_not_observed_prompt_ids"] == drawn_not_evaluated
+    assert outcome.status == "invalid"
+    assert _cohort_mean_withheld(outcome, "candidate")
+
+
+@pytest.mark.parametrize("mismatched", ["candidate", "baseline"])
+def test_only_the_cohort_whose_items_differ_from_the_selection_is_withheld(
+    tmp_path: Path, mismatched: str
+) -> None:
+    """Every cohort is checked against the selection, and its error withholds only its own.
+
+    The mismatching cohort is first in the plan in one case and last in the other.
+    """
+
+    observed = {"candidate": ("p1",), "baseline": ("p1",)}
+    observed[mismatched] = ("p1", "p2")
+
+    outcome = run_analysis(_poisson_selection((True, False), observed), tmp_path)
+
+    assert set(_selection_mismatches(outcome)) == {mismatched}
+    for cohort in observed:
+        assert _cohort_mean_withheld(outcome, cohort) == (cohort == mismatched), cohort
 
 
 @pytest.mark.parametrize("fixed_size", [False, True], ids=["poisson", "fixed_size"])
