@@ -42,12 +42,35 @@ design:
       comparison_coupling: joint
 
 cohorts:
+  # A cohort's runs must declare one attack. The task's metadata holds the whole declaration,
+  # fingerprint included, and any `inspect eval --metadata` values, so pass the same ones, or
+  # none, to every run of a cohort. In live mode the task arguments hold the declaration too,
+  # without the fingerprint. A plan for live runs also matches every cohort on the attack id,
+  # budget, attacker and judges, so two cohorts cannot differ in those. Fingerprints are
+  # compared only within a cohort, so give any change to the attack, templates included, a new
+  # attack_id (README.md, "Running it against real models").
   candidate:
     match: {model: mockllm/candidate}
-    require_uniform: [task_version, model_generate_config, solver, solver_args]
+    require_uniform:
+      - task_version
+      - model_generate_config
+      - metadata
+      - task_arg_attack_id
+      - task_arg_budget_k
+      - task_arg_attacker_model
+      - task_arg_attacker_judge
+      - task_arg_confirmation_judge
   baseline:
     match: {model: mockllm/baseline}
-    require_uniform: [task_version, model_generate_config, solver, solver_args]
+    require_uniform:
+      - task_version
+      - model_generate_config
+      - metadata
+      - task_arg_attack_id
+      - task_arg_budget_k
+      - task_arg_attacker_model
+      - task_arg_attacker_judge
+      - task_arg_confirmation_judge
 
 groups:
   - id: all
