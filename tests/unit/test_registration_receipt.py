@@ -63,6 +63,19 @@ def test_hash_plan_never_overwrites_a_receipt(tmp_path: Path) -> None:
     assert receipt_path.read_text(encoding="utf-8") == "earlier"
 
 
+def test_hash_plan_reports_a_receipt_it_cannot_write_and_exits_3(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    receipt_path = tmp_path / "missing" / "plan.receipt.json"
+
+    result = runner.invoke(app, ["hash-plan", "--plan", str(plan), "--register", str(receipt_path)])
+
+    assert result.exit_code == 3
+    output = plain(result.output)
+    assert "Registration failed: cannot write " in output
+    assert "Traceback" not in output
+    assert not receipt_path.parent.exists()
+
+
 def test_hash_plan_without_register_prints_only_the_hash(tmp_path: Path) -> None:
     plan = _plan(tmp_path)
     result = runner.invoke(app, ["hash-plan", "--plan", str(plan)])

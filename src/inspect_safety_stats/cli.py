@@ -1162,6 +1162,12 @@ def hash_plan_command(
             err=True,
         )
         raise typer.Exit(code=ExitCode.ERROR) from exc
+    except OSError as exc:
+        # Such as a directory that does not exist or cannot be written: no receipt is written.
+        typer.echo(
+            f"Registration failed: cannot write {register}: {exc.strerror or exc}", err=True
+        )
+        raise typer.Exit(code=ExitCode.ERROR) from exc
     typer.echo(f"Registered at: {receipt.registered_at.isoformat()}")
     typer.echo(f"Receipt: {register}")
     typer.echo(
