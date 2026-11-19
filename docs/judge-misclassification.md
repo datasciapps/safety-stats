@@ -518,10 +518,11 @@ binary failures is already `weighted_kl_chernoff`, the recommended path is cover
 
 The judge family alpha is divided equally among the **declared cohorts**, or, when the
 calibration is [scoped to groups](#scoping-the-calibration-to-groups), among the cohorts
-times the listed groups. A single risk row consumes one share; a comparison consumes the two
-shares of the cohorts it spans. A union
-over every corrected row therefore stays inside the declared family budget, and each interval
-reports the share it actually spent in `family_alpha`.
+times the listed groups. A single risk row consumes one share; a comparison consumes two,
+those of its two arms' calibrations: each cohort's, or with `groups` each cohort's calibration
+for the comparison's group. A union over every corrected row therefore stays inside the
+declared family budget, and each interval reports the share it actually spent in
+`family_alpha`.
 
 ### What it assumes
 
@@ -573,8 +574,14 @@ Weighting the labels by the design, which would certify more rows, is future wor
 A cohort often holds several benchmarks, and a judge's accuracy can differ between them. The
 labels of one benchmark then say little about another's rows, yet a cohort-wide calibration
 pools them. `judge_calibration.groups` estimates one calibration per cohort and listed group
-instead, from the labels and judge-stratum sizes of that group's rollouts. Each listed group
-is then calibrated the way a cohort is otherwise:
+instead, from the labels and judge-stratum sizes of that group's rollouts.
+
+In `validated` mode the scope is **experimental**. It certifies rows, such as a mean over one
+benchmark of a cohort, that a cohort-wide calibration reports only as sensitivity analyses,
+so it is less conservative than leaving `groups` out. The report marks it with
+`experimental: true` under `provenance.judge_calibration`.
+
+Each listed group is calibrated the way a cohort is otherwise:
 
 - the conditions above apply with "the cohort" read as "the group". A `weighted_mean` over a
   whole listed group, in a fixed design, that weights every classified rollout of the group
@@ -590,16 +597,48 @@ calibrate nothing, and the warning `JUDGE_VALIDATION_OUT_OF_SCOPE` reports them.
 mode, `groups` limits the declared scenarios to the listed groups' rows. Groups may overlap;
 each listed group is calibrated from its own rollouts.
 
+The labels need not be drawn group by group. A sample drawn as the [workflow](#workflow) says,
+within each judge stratum over the whole cohort, serves every listed group. Take the labels
+that land on one group's part of a judge stratum. Given how many land there, they are a
+simple random sample of that part, since every set of that size was equally likely to be
+drawn. How many land there depends on the draw, not on the labels, so the exact bounds hold
+for the group's counts as they do for a cohort's. The same holds for a stratified design's
+fine strata within the group, for the simple random sample the noisy-but-valid test needs,
+and for every prefix of a labelling queue that orders each judge stratum at random.
+
+**A small group gets few labels.** A sample drawn over the cohort puts on each group about
+its share of each judge stratum. A group that holds a tenth of a cohort's rollouts gets about
+a tenth of the labels, and its calibration is often refused as uninformative. In a simulation
+of such a group, whose judge is worse than elsewhere in the cohort, with `groups: [all,
+small]` and 4,000 runs per budget, the small group's calibration was refused in 92% of runs at
+30 labels per judge stratum of the cohort, 83% at 100, and none at 400. A reported box, the
+small group's or that of `all`, which spans the cohort, missed its \(\rho_1\) or
+\(\rho_0\) in at most 0.5% of runs, against the 5% the judge family allows.
+`tests/unit/test_scoped_judge_calibration_coverage.py` runs the same simulation, 400 runs per
+budget.
+
+Plan the labels for the smallest listed group. When the listed groups do not overlap, each
+group's labels may instead be drawn within its own judge strata, at the size it needs: each
+calibration counts only its own group's labels, and a sample within each of a group's judge
+strata is what it needs. When they overlap, as `all` and a group inside it do, oversampling
+one of them leaves the other's labels no simple random sample of its strata, so draw over the
+cohort and label more.
+
 ### When it refuses
 
 The module produces no correction, and says why, when:
 
-- a cohort has an empty judge stratum (`JUDGE_VALIDATION_STRATUM_EMPTY`);
+- a cohort, or with `groups` a listed group of a cohort, has an empty judge stratum
+  (`JUDGE_VALIDATION_STRATUM_EMPTY`);
 - the labels do not establish a strictly informative judge -- the \(\rho_1\) lower bound
   fails to exceed the \(\rho_0\) upper bound, meaning more labels or a better judge are
   needed -- or neither judge stratum has a label (`JUDGE_CALIBRATION_UNINFORMATIVE`); or
 - a validation row references an observation absent from the analysed logs, or one whose
   outcome was never classified (`JUDGE_VALIDATION_UNMATCHED`, an error).
+
+With `groups`, each listed group of a cohort is refused on its own.
+`JUDGE_VALIDATION_STRATUM_EMPTY` and `JUDGE_CALIBRATION_UNINFORMATIVE` then name the group
+and the cohort, and their scope is `cohorts/<cohort>/groups/<group>`.
 
 ### Effect on threshold claims
 

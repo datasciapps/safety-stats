@@ -375,10 +375,14 @@ described in their pull requests.
   that holds several benchmarks no longer has to share one judge calibration and one panel
   summary across them. Three optional plan fields:
   - `inputs.judge_calibration.groups` corrects only the listed groups' rows. In `validated`
-    mode it estimates one calibration per cohort and listed group from that group's labels,
-    and splits the judge family budget over those calibrations (`per_calibration_alpha`).
-    Such a calibration certifies a `weighted_mean` over a whole listed group. A claim on a
-    row outside the scope is INCONCLUSIVE in a validated plan, and labels outside it raise
+    mode, which is experimental with `groups`, it estimates one calibration per cohort and
+    listed group from that group's labels, and splits the judge family budget over those
+    calibrations (`per_calibration_alpha`). Such a calibration certifies a `weighted_mean`
+    over a whole listed group, a row that an unscoped calibration reports only as a
+    sensitivity analysis, and the report records `experimental: true` beside it. Labels drawn
+    within the cohort's judge strata remain a valid sample for each group, but a small group
+    gets few of them, and its calibration is often refused. A claim on a row outside the
+    scope is INCONCLUSIVE in a validated plan, and labels outside it raise
     `JUDGE_VALIDATION_OUT_OF_SCOPE`. A `transported` calibration takes no `groups`.
   - `inputs.judges[].accuracy.groups` limits a judge's declared ranges to the listed groups.
     The panel-derived correction, and the judge-error stress box, then apply only where every
@@ -388,8 +392,9 @@ described in their pull requests.
     judge, composite and pair in `provenance.judge_panel`, and a "Judge panel by group" table
     to `report.md`.
 
-  Listed groups must be declared. Plans that leave the fields out keep their hash and write the
-  same report bytes as before. See
+  Listed groups must be declared: `validate` and `analyze` report an undeclared one as
+  `PLAN_UNKNOWN_REFERENCE`, and `analyze` still writes the report. Plans that leave the fields
+  out keep their hash and write the same report bytes as before. See
   [Scoping the calibration to groups](docs/judge-misclassification.md#scoping-the-calibration-to-groups)
   and the [plan reference](docs/plan-reference.md#inputs).
 

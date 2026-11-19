@@ -495,6 +495,10 @@ def test_a_group_scoped_calibration_counts_only_the_group_s_fine_strata(
     assert _codes(scoped)["JUDGE_VALIDATION_OUT_OF_SCOPE"] == "WARNING"
     markdown = (scoped.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
     assert "| candidate | all | judge_safe | disagree | 30 / 30 | 10 | 10–10 |" in markdown
+    assert (
+        "The fine strata weight every classified rollout of a group equally, so they certify "
+        "only a weighted mean that does the same, over the whole group in a fixed design."
+    ) in markdown
 
 
 def _comparison_correction(outcome: Any) -> RiskIntervalResult:
