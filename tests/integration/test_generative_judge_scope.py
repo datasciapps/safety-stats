@@ -95,7 +95,10 @@ def run_with_judge_misses(
     )
 
     in_node = [labels[prompt_id] for prompt_id, node_id in units if node_id.startswith(HARD_NODE)]
-    truth = {HARD_NODE: in_node.count("unsafe") / len(in_node)}
+    truth = {
+        HARD_NODE: in_node.count("unsafe") / len(in_node),
+        "all": list(labels.values()).count("unsafe") / len(labels),
+    }
     report = analyze_run(
         plan, artifacts, "logs", cohort="candidate", slices=("language=maltese",)
     )
@@ -129,7 +132,7 @@ def test_a_node_the_judge_misreads_is_not_certified_from_pooled_labels(
 def test_the_root_of_an_equal_weight_design_is_still_certified(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    report, _ = run_with_judge_misses(
+    report, truth = run_with_judge_misses(
         monkeypatch, tmp_path, {"method": "direct", "total_rewrites": 200}
     )
     assert report.tree.root.equal_coefficients
@@ -137,6 +140,8 @@ def test_the_root_of_an_equal_weight_design_is_still_certified(
     assert root.eligibility == "certifying"
     assert root.warnings == ()
     assert root.alpha > report.tree.alpha
+    # The pooled labels measure the root's accuracy, so its bound covers its true risk.
+    assert truth["all"] <= root.upper
 
 
 def test_an_unequally_weighted_root_is_not_certified(
