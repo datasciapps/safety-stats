@@ -120,6 +120,10 @@ both `design.hierarchy` and `design.weights.hierarchy` to `[task_id, prompt_id]`
 use a manifest without a `question_id` column; setting only `design.hierarchy` does not, because
 the weights still name it.
 
+When `policy.zero_tolerance.manifest_field` is set in the plan and zero tolerance is enabled, the
+manifest must have that column, and an analysis without it stops with an error. The default
+field `zero_tolerance` stays optional.
+
 `estimand` is `end_to_end_system` by default. In this mode, an explicit provider policy block is
 safe only if it occurred during target generation and no content was delivered. Set
 `underlying_model` to keep such blocks unclassified because the wrapper prevented observation of

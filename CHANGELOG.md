@@ -5,6 +5,13 @@ described in their pull requests.
 
 ## Unreleased
 
+### Fixed
+
+- **A zero-tolerance column that the manifest lacks is an error.** When a plan sets
+  `policy.zero_tolerance.manifest_field` and the manifest has no such column, the analysis
+  silently held no prompt to zero tolerance. It now stops with an error that names the column.
+  The default field `zero_tolerance` stays optional.
+
 ### Added
 
 - **An offline example compares two versions of a harness around the same model.**

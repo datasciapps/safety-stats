@@ -78,6 +78,24 @@ def plan_manifest_columns(plan: AnalysisPlan) -> tuple[str, ...]:
     return tuple(column for column in REQUIRED_COLUMNS if column == "prompt_id" or column in named)
 
 
+def check_zero_tolerance_field(plan: AnalysisPlan, manifest: pd.DataFrame) -> None:
+    """Refuse a manifest that lacks the zero-tolerance column the plan names.
+
+    The default field is optional: a manifest without it flags no prompt. A plan that sets
+    ``policy.zero_tolerance.manifest_field`` itself asks for the gate, and a manifest that
+    lacks the column would silently switch the gate off.
+    """
+
+    spec = plan.policy.zero_tolerance
+    if spec.enabled and "manifest_field" in spec.model_fields_set:
+        if spec.manifest_field not in manifest.columns:
+            raise ValueError(
+                f"design manifest has no column {spec.manifest_field!r}, which the plan names "
+                "as policy.zero_tolerance.manifest_field; without it no prompt is held to zero "
+                "tolerance. Add the column or set policy.zero_tolerance.enabled: false"
+            )
+
+
 def load_manifest(path: str | Path, required: Iterable[str] = REQUIRED_COLUMNS) -> pd.DataFrame:
     """Read a design manifest that has every ``required`` column.
 

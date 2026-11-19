@@ -5,6 +5,7 @@ import yaml
 
 from inspect_safety_stats.config.models import AnalysisPlan, WeightSpec
 from inspect_safety_stats.ingest.manifest import (
+    check_zero_tolerance_field,
     load_manifest,
     plan_manifest_columns,
     resolve_weights,
@@ -135,3 +136,24 @@ def test_a_plan_requires_only_the_identifier_columns_it_names() -> None:
 def test_a_plan_that_names_question_id_anywhere_requires_it(edit: str) -> None:
     assert plan_manifest_columns(_plan(edit)) == ("prompt_id", "question_id", "task_id")
 
+
+def _zero_tolerance_plan(policy: dict[str, object]) -> AnalysisPlan:
+    data = yaml.safe_load(_PLAN)
+    data["policy"] = {"zero_tolerance": policy}
+    return AnalysisPlan.model_validate(data)
+
+
+def test_a_named_zero_tolerance_column_must_be_in_the_manifest(tmp_path: Path) -> None:
+    path = tmp_path / "design.csv"
+    path.write_text("prompt_id,task_id\np1,t1\n", encoding="utf-8")
+    manifest = load_manifest(path, ["prompt_id", "task_id"])
+    plan = _zero_tolerance_plan({"manifest_field": "must_not_fail"})
+    with pytest.raises(ValueError, match="no column 'must_not_fail'"):
+        check_zero_tolerance_field(plan, manifest)
+    # The default field is optional, and a disabled gate needs no column.
+    check_zero_tolerance_field(_zero_tolerance_plan({}), manifest)
+    check_zero_tolerance_field(
+        _zero_tolerance_plan({"enabled": False, "manifest_field": "must_not_fail"}), manifest
+    )
+    manifest["must_not_fail"] = False
+    check_zero_tolerance_field(plan, manifest)
