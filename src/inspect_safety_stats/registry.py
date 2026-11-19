@@ -2100,6 +2100,26 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
     ),
     CodeEntry(
+        code="PLAN_SAMPLED_FRONTIER_UNSUPPORTED",
+        severities=("ERROR",),
+        source="plan",
+        effect="invalid",
+        assumption=(
+            "Under frontier_sidak, the intervals of the hierarchy nodes of one level are "
+            "independent, each node's drawn frame items forming blocks no other node shares. "
+            "Under a sampled design a frame item that was not drawn forms no block, and a "
+            "fixed-size draw makes the nodes that share a stratum dependent."
+        ),
+        consequence=(
+            "The plan is refused: frontier_sidak calibration is not yet supported under a "
+            "sampled design, and the error makes the integrity status invalid."
+        ),
+        remedy=(
+            "Set outputs.direct_mean_intervals.hierarchy_calibration to flat_bonferroni, which "
+            "holds whatever the dependence between nodes, or set hierarchy_nodes to false."
+        ),
+    ),
+    CodeEntry(
         code="PLAN_SAMPLED_MEASURE_UNSUPPORTED",
         severities=("ERROR",),
         source="plan",
