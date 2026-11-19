@@ -698,8 +698,8 @@ described in their pull requests.
   slices and an unequally weighted root, for example under `minimum_rewrites_per_stratum`,
   are `diagnostic`, with a warning that names the reason. Corrected estimates also no longer
   shrink units with no judge verdict by `rho_1`: they keep their worst case, as on the
-  fixed-design path (#97), so corrected upper bounds can rise. Each node and slice reports the
-  design weight on those units as `unclassified_share`. See
+  fixed-design path (#97), so corrected upper bounds can rise. Each node, slice and comparison
+  arm in `report.json` reports the design weight on those units as `unclassified_share`. See
   [judge misclassification](docs/judge-misclassification.md#on-the-generative-path).
 
 - **Unscored pairs are bounded, not a broken pairing (changes results).** With `pair_key`, one

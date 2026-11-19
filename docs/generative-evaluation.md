@@ -554,10 +554,16 @@ that declares `inference.slice_family` also gets `family.csv`, one row per membe
 `slice_family` block in `report.json`. `generative analyze` exits `3` when the report carries
 an `ERROR` diagnostic; the report is still written, so the diagnostics can be read.
 
-Three fields are easy to misread:
+Four fields are easy to misread:
 
 - `estimate` applies the declared design weights; `raw_failure_rate` does not. They coincide
   only when every draw carries the same coefficient.
+- `unclassified_share` is the design weight, in this run, on units with no judge verdict:
+  rejected or unevaluated rewrites and missing scores. The bounds complete those units, safe at
+  the lower end and failing at the upper, while `estimate` leaves them out, so a large share
+  widens the interval around an estimate that describes only the classified units. A judge
+  correction uses an upper confidence bound on the design's share instead, reported as
+  `unclassified_upper` in each `corrected` row.
 - `effective_sample_size` is weight geometry, not information. Precision is governed by how
   many draws there are.
 - `coefficient_ratio` above 1 means the sharp exact kernel was unavailable. Under
