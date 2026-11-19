@@ -12,7 +12,6 @@ from typing import Any
 
 import pytest
 
-from inspect_safety_stats.analysis.claims import _classified_by_policy
 from inspect_safety_stats.schema.observations import Observation
 from tests.diagnostic_codes.harness import (
     Inputs,
@@ -347,6 +346,9 @@ def test_a_row_with_rollouts_a_plan_policy_classified_is_not_stressed(
 def test_every_policy_classification_is_recognised(
     fields: dict[str, Any], by_policy: bool
 ) -> None:
+    # Imported here, so that the module's other tests still collect against a tree without it.
+    from inspect_safety_stats.analysis.claims import _classified_by_policy
+
     row = Observation(
         observation_id="o",
         source="s",
