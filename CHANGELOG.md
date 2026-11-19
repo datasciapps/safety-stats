@@ -558,8 +558,13 @@ described in their pull requests.
   largest whose upper bound falls at or below `--margin`, and the smallest whose lower bound
   reaches it, each at the target power. It reads the design manifest as `plan fixed-design`
   does, takes rollout counts per arm, and plans unpaired arms, pairs of rollouts with the same
-  prompt and repeat, or prompt clusters. The guarantee is Hoeffding's, for the
-  `weighted_hoeffding` comparison. In Python:
+  prompt and repeat, or prompt clusters. The guarantee is Hoeffding's, for a `comparisons`
+  entry with `method: weighted_hoeffding` only: a `comparison_sets` entry bounds each arm
+  separately, which is usually wider, and `weighted_kl_chernoff` and
+  `weighted_empirical_bernstein` can be wider with uneven prompt weights or at moderate
+  failure rates, so the numbers do not hold for them. The setup `init` writes, a
+  `comparison_sets` entry with `weighted_kl_chernoff`, is therefore not covered; the output's
+  `Interval method` line says so. In Python:
   `stats.planning.comparison_resolvable_differences`. See
   [Planning a comparison](docs/model-comparisons.md#planning-a-comparison-experimental).
 

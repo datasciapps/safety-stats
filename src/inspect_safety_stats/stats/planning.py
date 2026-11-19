@@ -493,11 +493,12 @@ def comparison_resolvable_differences(
     """Return Hoeffding-guaranteed resolvable risk differences for a two-arm design.
 
     The guarantee is that of the ``weighted_hoeffding`` risk difference which ``analyze``
-    builds on ``Q = (1 + candidate - baseline) / 2``: with no unclassified outcomes, a true
-    difference at or below ``maximum_supportable_difference`` gives an upper bound at or below
-    ``margin``, and one at or above ``minimum_detectable_difference`` a lower bound at or
-    above ``margin``, each with probability at least ``power`` (Hoeffding, 1963). Prompt
-    probabilities may differ. The independence unit names the blocks of ``Q``:
+    builds on ``Q = (1 + candidate - baseline) / 2`` for a ``comparisons`` entry: with no
+    unclassified outcomes, a true difference at or below ``maximum_supportable_difference``
+    gives an upper bound at or below ``margin``, and one at or above
+    ``minimum_detectable_difference`` a lower bound at or above ``margin``, each with
+    probability at least ``power`` (Hoeffding, 1963). Prompt probabilities may differ. The
+    independence unit names the blocks of ``Q``:
 
     - ``rollout``: every rollout of either arm is independent (unpaired arms; an
       independence profile ``block_by: [rollout]``).
@@ -507,8 +508,14 @@ def comparison_resolvable_differences(
     - ``prompt_cluster``: all rollouts of both arms on a prompt form one block
       (``block_by: [prompt_id]`` with ``comparison_coupling: joint``).
 
-    The guarantee does not extend to the KL/Chernoff or empirical-Bernstein differences,
-    which are usually, not always, narrower.
+    The guarantee does not extend to a ``comparison_sets`` entry, whatever its method, nor
+    to ``weighted_kl_chernoff``: both bound each arm at half the alpha and subtract the
+    endpoints, which under ``weighted_hoeffding`` is usually wider (about 1.5 times for
+    unpaired arms at equal counts and a one-sided alpha of 0.025).
+    Nor does it extend to ``weighted_empirical_bernstein``. The KL/Chernoff and
+    empirical-Bernstein differences are often narrower on sparse failures when prompt
+    weights are even; with uneven weights, or at moderate failure rates, either can be
+    wider.
     """
 
     nc = np.asarray(candidate_trials)

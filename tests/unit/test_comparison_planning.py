@@ -10,8 +10,14 @@ import pytest
 
 from inspect_safety_stats.config.models import IndependenceProfileSpec
 from inspect_safety_stats.schema.observations import Observation
-from inspect_safety_stats.stats.comparisons import direct_risk_difference_bounds
-from inspect_safety_stats.stats.direct_mean import weighted_bounded_hoeffding_mean_bounds
+from inspect_safety_stats.stats.comparisons import (
+    DirectComparisonBounds,
+    direct_risk_difference_bounds,
+)
+from inspect_safety_stats.stats.direct_mean import (
+    DirectMeanBounds,
+    weighted_bounded_hoeffding_mean_bounds,
+)
 from inspect_safety_stats.stats.independence import comparison_contrast_blocks
 from inspect_safety_stats.stats.planning import comparison_resolvable_differences
 
@@ -111,6 +117,26 @@ def _observation(cohort: str, prompt: str, repeat: int) -> Observation:
     )
 
 
+# Unequal alphas, so a gap computed at the other direction's alpha fails the tests below.
+ALPHA_LOWER = 0.01
+ALPHA_UPPER = 0.04
+MARGIN = 0.02
+
+
+def _uneven_design() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """36 prompts with uneven weights and unequal, uneven counts per arm.
+
+    There are enough prompts that every gap stays finite at ``MARGIN``, prompt clusters
+    included, so the gap assertions cannot pass on ``None``.
+    """
+
+    index = np.arange(36)
+    weights = (1 + index % 3) / np.sum(1 + index % 3)
+    candidate = np.asarray([4, 9, 2, 6])[index % 4]
+    baseline = np.asarray([6, 1, 7, 3])[index % 4]
+    return candidate, baseline, weights
+
+
 @pytest.mark.parametrize(
     ("profile", "unit"),
     [
@@ -125,21 +151,20 @@ def _observation(cohort: str, prompt: str, repeat: int) -> Observation:
         ),
     ],
 )
-def test_radii_are_those_of_the_analysis_hoeffding_difference(
+def test_gaps_are_the_analysis_hoeffding_half_widths_plus_the_power_radius(
     profile: IndependenceProfileSpec, unit: str
 ) -> None:
     # Unequal and uneven counts, as analyze would see them, through analyze's own blocks.
-    candidate_counts = {"p1": 3, "p2": 5, "p3": 2}
-    baseline_counts = {"p1": 3, "p2": 2, "p3": 4}
-    weights = np.asarray([0.5, 0.3, 0.2])
+    candidate, baseline, weights = _uneven_design()
+    prompts = [f"p{index}" for index in range(len(weights))]
     observations = [
         _observation(cohort, prompt, repeat)
-        for cohort, counts in (("candidate", candidate_counts), ("baseline", baseline_counts))
-        for prompt, count in counts.items()
-        for repeat in range(1, count + 1)
+        for cohort, counts in (("candidate", candidate), ("baseline", baseline))
+        for prompt, count in zip(prompts, counts, strict=True)
+        for repeat in range(1, int(count) + 1)
     ]
     manifest = pd.DataFrame(
-        [{"prompt_id": p, "question_id": p, "task_id": "task"} for p in candidate_counts]
+        [{"prompt_id": p, "question_id": p, "task_id": "task"} for p in prompts]
     )
     blocks = comparison_contrast_blocks(
         observations,
@@ -147,70 +172,94 @@ def test_radii_are_those_of_the_analysis_hoeffding_difference(
         profile,
         candidate="candidate",
         baseline="baseline",
-        prompt_ids=list(candidate_counts),
+        prompt_ids=prompts,
         prompt_weights=weights,
     )
-    analysis = weighted_bounded_hoeffding_mean_bounds(
-        blocks.lower,
-        blocks.upper,
-        blocks.weights,
-        alpha_lower=0.01,
-        alpha_upper=ALPHA,
-        independence_profile=unit,
-    )
+
+    def hoeffding_on_q(alpha_lower: float, alpha_upper: float) -> DirectMeanBounds:
+        return weighted_bounded_hoeffding_mean_bounds(
+            blocks.lower,
+            blocks.upper,
+            blocks.weights,
+            alpha_lower=alpha_lower,
+            alpha_upper=alpha_upper,
+            independence_profile=unit,
+        )
+
+    analysis = hoeffding_on_q(ALPHA_LOWER, ALPHA_UPPER)
+    # The deviation of the estimate that power must absorb is the analysis's own radius at
+    # one minus the power.
+    power_radius = hoeffding_on_q(1 - POWER, 1 - POWER).half_width_upper
     plan = comparison_resolvable_differences(
-        list(candidate_counts.values()),
-        list(baseline_counts.values()),
+        candidate,
+        baseline,
         weights,
-        margin=0.0,
-        alpha_lower=0.01,
-        alpha_upper=ALPHA,
+        margin=MARGIN,
+        alpha_lower=ALPHA_LOWER,
+        alpha_upper=ALPHA_UPPER,
         power=POWER,
         independence_unit=unit,  # type: ignore[arg-type]
     )
-    # The difference is 2Q - 1, so its variance proxy is four times that of Q, and every
-    # radius on it is twice the analysis's half-width on Q.
+    # The difference is 2Q - 1, so every radius on it is twice the analysis's on Q. The upper
+    # bound, and so the supportable difference, spends alpha_upper; the lower one alpha_lower.
+    support_gap = 2 * analysis.half_width_upper + 2 * power_radius
+    rejection_gap = 2 * analysis.half_width_lower + 2 * power_radius
+    assert plan.support_gap == pytest.approx(support_gap, rel=1e-12, abs=0)
+    assert plan.rejection_gap == pytest.approx(rejection_gap, rel=1e-12, abs=0)
+    assert plan.maximum_supportable_difference == pytest.approx(
+        MARGIN - support_gap, rel=1e-12, abs=0
+    )
+    assert plan.minimum_detectable_difference == pytest.approx(
+        MARGIN + rejection_gap, rel=1e-12, abs=0
+    )
     assert plan.concentration_variance == pytest.approx(
         4 * analysis.concentration_variance, rel=1e-12, abs=0
-    )
-    assert 2 * _radius(plan.concentration_variance / 4, ALPHA) == pytest.approx(
-        2 * analysis.half_width_upper, rel=1e-12, abs=0
     )
     assert plan.block_count == blocks.count
 
 
 @pytest.mark.parametrize("unit", ["rollout", "prompt_cluster"])
-def test_radii_match_the_direct_hoeffding_difference(unit: str) -> None:
-    candidate = np.asarray([4, 9, 2])
-    baseline = np.asarray([6, 1, 7])
-    weights = np.asarray([0.2, 0.5, 0.3])
-    analysis = direct_risk_difference_bounds(
-        np.zeros(3, dtype=int),
-        np.zeros(3, dtype=int),
-        candidate,
-        np.zeros(3, dtype=int),
-        np.zeros(3, dtype=int),
-        baseline,
-        weights,
-        alpha_lower=ALPHA,
-        alpha_upper=ALPHA,
-        method="weighted_hoeffding",
-        independence_unit=unit,  # type: ignore[arg-type]
-    )
+def test_gaps_match_the_direct_hoeffding_difference(unit: str) -> None:
+    candidate, baseline, weights = _uneven_design()
+    none = np.zeros(len(weights), dtype=int)
+
+    def hoeffding_difference(alpha_lower: float, alpha_upper: float) -> DirectComparisonBounds:
+        return direct_risk_difference_bounds(
+            none,
+            none,
+            candidate,
+            none,
+            none,
+            baseline,
+            weights,
+            alpha_lower=alpha_lower,
+            alpha_upper=alpha_upper,
+            method="weighted_hoeffding",
+            independence_unit=unit,  # type: ignore[arg-type]
+        )
+
+    analysis = hoeffding_difference(ALPHA_LOWER, ALPHA_UPPER)
+    power_radius = hoeffding_difference(1 - POWER, 1 - POWER).half_width_upper
     plan = comparison_resolvable_differences(
         candidate,
         baseline,
         weights,
-        margin=0.0,
-        alpha_lower=ALPHA,
-        alpha_upper=ALPHA,
+        margin=MARGIN,
+        alpha_lower=ALPHA_LOWER,
+        alpha_upper=ALPHA_UPPER,
         power=POWER,
         independence_unit=unit,  # type: ignore[arg-type]
+    )
+    # This function reports half-widths on the difference itself.
+    assert plan.support_gap == pytest.approx(
+        analysis.half_width_upper + power_radius, rel=1e-12, abs=0
+    )
+    assert plan.rejection_gap == pytest.approx(
+        analysis.half_width_lower + power_radius, rel=1e-12, abs=0
     )
     assert plan.concentration_variance == pytest.approx(
         analysis.concentration_variance, rel=1e-12, abs=0
     )
-    assert plan.support_gap is None or plan.support_gap >= 2 * analysis.half_width_upper
     assert plan.effective_sample_size == pytest.approx(
         analysis.effective_sample_size, rel=1e-12, abs=0
     )
