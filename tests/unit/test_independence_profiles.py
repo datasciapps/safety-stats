@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -15,6 +17,7 @@ from inspect_safety_stats.stats.independence import (
     block_index,
     comparison_contrast_blocks,
     direct_bounded_blocks,
+    prompt_level_block_ids,
     validate_profile_fields,
 )
 
@@ -254,3 +257,86 @@ def test_a_legacy_observation_field_blocks_like_its_neutral_name(
         for name in (legacy, neutral)
     }
     assert _same(blocks[legacy], blocks[neutral])
+
+
+def _ledger() -> tuple[list[Observation], pd.DataFrame]:
+    """Two arms with two rollouts of four prompts, taking question and task as normalization does.
+
+    The manifest's question ids are numbers here, which the observations hold as text.
+    """
+
+    manifest = pd.DataFrame(
+        [
+            {"prompt_id": "p1", "question_id": 1, "task_id": "t1", "domain": "a", "level": 1},
+            {"prompt_id": "p2", "question_id": 1, "task_id": "t1", "domain": "b", "level": 1},
+            {"prompt_id": "p3", "question_id": 2, "task_id": "t2", "domain": "a", "level": 2},
+            {"prompt_id": "p4", "question_id": 3, "task_id": "t2", "domain": "b", "level": 2},
+        ]
+    )
+    observations = []
+    for cohort in ("candidate", "baseline"):
+        for row in manifest.itertuples():
+            for repeat in (1, 2):
+                observation = _observation(cohort, str(row.prompt_id), repeat, failure=False)
+                observations.append(
+                    observation.model_copy(
+                        update={"question_id": str(row.question_id), "task_id": row.task_id}
+                    )
+                )
+    return observations, manifest
+
+
+@pytest.mark.parametrize(
+    "block_by",
+    [["prompt_id"], ["question_id"], ["task_id"], ["domain"], ["level"], ["task_id", "domain"]],
+)
+@pytest.mark.parametrize("coupling", ["independent", "joint"])
+def test_prompt_level_blocks_are_those_a_complete_ledger_forms(
+    block_by: list[str], coupling: str
+) -> None:
+    observations, manifest = _ledger()
+    index = block_index(observations, manifest)
+    profile = IndependenceProfileSpec(block_by=block_by, comparison_coupling=coupling)
+    # p2 has no weight, so it forms no block.
+    prompts: dict[str, Any] = {
+        "prompt_ids": ["p1", "p2", "p3", "p4"],
+        "prompt_weights": np.asarray([0.5, 0, 0.25, 0.25]),
+    }
+    direct = direct_bounded_blocks(
+        observations, manifest, profile, cohort_id="candidate", index=index, **prompts
+    )
+    contrast = comparison_contrast_blocks(
+        observations,
+        manifest,
+        profile,
+        candidate="candidate",
+        baseline="baseline",
+        index=index,
+        **prompts,
+    )
+    assert prompt_level_block_ids(profile, index.manifest_values, **prompts) == frozenset(
+        direct.block_ids
+    )
+    assert prompt_level_block_ids(
+        profile, index.manifest_values, comparison_arms=("candidate", "baseline"), **prompts
+    ) == frozenset(contrast.block_ids)
+
+
+@pytest.mark.parametrize(
+    "block_by",
+    [["rollout"], ["run_key"], ["repeat"], ["epoch"], ["item_id"], ["question_id", "repeat"]],
+)
+def test_blocks_that_depend_on_the_rollouts_are_not_known_before_them(
+    block_by: list[str],
+) -> None:
+    observations, manifest = _ledger()
+    index = block_index(observations, manifest)
+    assert (
+        prompt_level_block_ids(
+            IndependenceProfileSpec(block_by=block_by),
+            index.manifest_values,
+            prompt_ids=["p1", "p2"],
+            prompt_weights=np.asarray([0.5, 0.5]),
+        )
+        is None
+    )

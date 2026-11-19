@@ -168,6 +168,58 @@ def _serialized_key(key: tuple[Any, ...]) -> str:
     return "\x1f".join("<null>" if value is None else str(value) for value in key)
 
 
+# The observation fields that normalization copies from the prompt's manifest row, as text, so
+# that every rollout of a prompt carries the same value.
+_PROMPT_LEVEL_OBSERVATION_FIELDS = frozenset({"prompt_id", "question_id", "task_id"})
+
+
+def prompt_level_block_ids(
+    profile: IndependenceProfileSpec,
+    manifest_values: Mapping[str, Mapping[str, Any]],
+    *,
+    prompt_ids: Sequence[str],
+    prompt_weights: np.ndarray,
+    comparison_arms: tuple[str, str] | None = None,
+) -> frozenset[str] | None:
+    """The blocks that any complete ledger of these prompts forms, when the prompts decide them.
+
+    A profile that blocks only by manifest columns and by ``prompt_id``, ``question_id`` or
+    ``task_id``, which normalization copies from the manifest, puts every rollout of a prompt in
+    the block its manifest row names. The blocks of a ledger that has a row of every prompt are
+    then known before any rollout is: they are the ``block_ids`` that ``direct_bounded_blocks``
+    gives for one cohort or, with ``comparison_arms`` as (candidate, baseline), that
+    ``comparison_contrast_blocks`` gives. Prompts of zero weight form no block, as there. Under
+    any other profile a block depends on the rollouts themselves (their identity, run or
+    repeat), and the result is None. ``manifest_values`` is ``BlockIndex.manifest_values``.
+    """
+
+    if profile.block_by == ["rollout"] or any(
+        observation_field(field) in _BLOCK_OBSERVATION_FIELDS
+        and observation_field(field) not in _PROMPT_LEVEL_OBSERVATION_FIELDS
+        for field in profile.block_by
+    ):
+        return None
+    prefixes: list[tuple[Any, ...]] = [()]
+    if comparison_arms is not None and profile.comparison_coupling == "independent":
+        prefixes = [(cohort,) for cohort in comparison_arms]
+    keys: set[str] = set()
+    weights = np.asarray(prompt_weights, dtype=float)
+    for prompt_id, weight in zip(prompt_ids, weights, strict=True):
+        if weight == 0:
+            continue
+        values = manifest_values[prompt_id]
+        # As block_key reads them: a prompt-level observation field as the observation holds
+        # it, the manifest's value as text, and any other field as the manifest holds it.
+        key = tuple(
+            str(values[observation_field(field)])
+            if observation_field(field) in _PROMPT_LEVEL_OBSERVATION_FIELDS
+            else values[field]
+            for field in profile.block_by
+        )
+        keys.update(_serialized_key((*prefix, *key)) for prefix in prefixes)
+    return frozenset(keys)
+
+
 def direct_bounded_blocks(
     observations: list[Observation],
     manifest: pd.DataFrame,
