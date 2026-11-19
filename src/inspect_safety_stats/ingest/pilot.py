@@ -45,6 +45,8 @@ from collections.abc import Sequence
 
 import pandas as pd
 
+from inspect_safety_stats.ingest.manifest import MISSING_MARKERS
+
 STRATUM_COLUMN = "pilot_stratum"
 PROBABILITY_COLUMN = "pilot_inclusion_probability"
 SELECTED_COLUMN = "pilot_selected"
@@ -69,8 +71,9 @@ def _check_strata_read_back(labels: pd.Series) -> None:
     """Refuse strata labels that analyze refuses, or that a reader of the frame would merge.
 
     The draw treats stratum labels as text, and so does analyze, which reads `pilot_stratum`
-    exactly as written (`load_manifest`). Analyze refuses a label that pandas reads as a
-    missing value, such as `N/A` or `None`, so the draw refuses it too, rather than write a
+    exactly as written (`load_manifest`). Analyze refuses a label that marks a missing value,
+    one of `MISSING_MARKERS` such as `N/A` or `None`, ignoring surrounding spaces, so the draw
+    refuses it too, and any other label that pandas reads as missing, rather than write a
     frame that analyze will not take. It also refuses labels that pandas' default type
     inference reads as the same number or boolean, such as `1` and `01` or `true` and `True`.
     Analyze keeps them apart, but a spreadsheet or a pandas reader with its defaults, with
@@ -79,11 +82,12 @@ def _check_strata_read_back(labels: pd.Series) -> None:
 
     text = labels.rename(STRATUM_COLUMN).to_csv(index=False, lineterminator="\n")
     read = pd.read_csv(io.StringIO(text))[STRATUM_COLUMN]
-    missing = sorted(set(labels.to_numpy()[read.isna().to_numpy()]))
+    marked = labels.str.strip().isin(MISSING_MARKERS).to_numpy()
+    missing = sorted(set(labels.to_numpy()[marked | read.isna().to_numpy()]))
     if missing:
         raise ValueError(
-            "analyze refuses these strata labels, which pandas and analyze read as missing "
-            f"values: {missing[:10]!r}. Recode those strata values, for example as 'none'"
+            "analyze refuses these strata labels, which it reads as missing values: "
+            f"{missing[:10]!r}. Recode those strata values, for example as 'none'"
         )
     pairs = pd.DataFrame({"drawn": labels.to_numpy(), "read": read.astype(str).to_numpy()})
     groups = pairs.drop_duplicates().groupby("read")["drawn"].agg(sorted)

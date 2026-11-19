@@ -183,9 +183,10 @@ def test_strata_that_analyze_would_merge_are_rejected(
         draw_pilot(manifest, per_stratum=1, strata=["category"], seed=1)
 
 
-@pytest.mark.parametrize("label", ["N/A", "None", "NA", "null", "nan"])
+@pytest.mark.parametrize("label", ["N/A", "None", "NA", "null", "nan", " NA", "None ", "#N/A"])
 def test_strata_that_analyze_would_read_as_missing_are_rejected(label: str) -> None:
-    """analyze refuses a stratum label that marks a missing value."""
+    """analyze refuses a stratum label that marks a missing value, ignoring surrounding spaces,
+    which pandas does not ignore: the draw accepted ` NA`, which analyze then refused."""
     manifest = _manifest({"a": 4, "b": 4})
     manifest["category"] = ["kept"] * 4 + [label] * 4
     with pytest.raises(ValueError, match=re.escape(f"as missing values: [{label!r}]")):
