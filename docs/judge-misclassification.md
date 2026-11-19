@@ -237,11 +237,12 @@ labelling stopped where it did:
 | `data_dependent` | possibly because of the labels, such as once the corrected bound cleared a threshold | anytime-valid confidence sequences instead of Clopper-Pearson |
 
 A confidence sequence holds at every number of labels at once, so it stays valid whenever
-labelling stops. When a small share of a stratum is labelled it is wider than
-Clopper-Pearson at the same number of labels (60 labels with one unsafe in a stratum of
-2,000 give an upper bound of 0.165 against 0.102 at the same budget). It counts a stratum's
-size, though, so when most of a stratum is labelled it can be narrower, and a stratum
-labelled in full is known exactly. The derivation is in
+labelling stops. It bounds the judge's accuracy in a stratum, the probability that one of its
+rollouts is truly unsafe, which the run's rollouts only sample. The stratum's size therefore
+does not enter, and even a stratum labelled in full keeps a width. The sequence is wider than
+Clopper-Pearson at the same labels (60 labels with one unsafe give an upper bound of 0.167
+against 0.102 at the same budget), so declare `data_dependent` only when labelling may
+really have stopped on results. The derivation is in
 [Statistical methods, section 6.9](statistical-methods.md#69-implemented-human-labels-for-a-judge-calibration-experimental).
 It spends the same budget per endpoint, so the coverage the corrected interval states is
 unchanged. `data_dependent` requires `sampling: simple_random_within_judge_stratum`, because

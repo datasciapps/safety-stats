@@ -701,7 +701,8 @@ def _judge_corrected_interval(
     elif validated:
         sequence = calibration.bound == "confidence_sequence"
         method = (
-            "anytime-valid hypergeometric confidence sequence (Waudby-Smith and Ramdas, 2020)"
+            "anytime-valid binomial confidence sequence (a prior-posterior ratio, "
+            "Waudby-Smith and Ramdas, 2020)"
             if sequence
             else "exact Clopper-Pearson bound"
         )
@@ -720,6 +721,18 @@ def _judge_corrected_interval(
                 if sequence
                 else "Those two ranges are exact Clopper-Pearson bounds from human labels "
                 "drawn within each judge stratum."
+            )
+        if sequence:
+            assumptions.extend(
+                [
+                    "Each sequence bounds the judge stratum's conditional probability, which "
+                    "the stratum's rollouts only sample, not the share of them that is truly "
+                    "unsafe; it does not use the stratum's size, and even a census leaves the "
+                    "probability uncertain.",
+                    "Given a judge stratum's size, its rollouts are independent and each is "
+                    "truly unsafe with the stratum's conditional probability, so its labels, "
+                    "in the queue's random order, are independent draws at that probability.",
+                ]
             )
         assumptions.extend(
             [
