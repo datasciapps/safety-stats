@@ -854,7 +854,7 @@ breaks the `rollout` profile:
 
 Whether outcomes are coupled is a fact about how the evaluation ran; the bounds do not reveal
 it. `CLUSTER_DESIGN_EFFECT` can hint at it, but under a fixed design its correlation also counts
-differences in rate between base prompts (see
+differences in rate between base prompts, which can raise or lower it (see
 [its limits](independence-profiles.md#how-much-the-grouping-matters-cluster_design_effect)).
 
 A claim's status, and the report's decision, are the primary profile's verdict alone (see
