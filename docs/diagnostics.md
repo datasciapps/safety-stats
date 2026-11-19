@@ -958,6 +958,17 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
   when that matches where the errors come from.
 - **Checks:** [`sample_errors`](#assumption-sample_errors)
 
+#### `SAMPLE_SELECTION_MISMATCH`
+
+- **Severity:** ERROR
+- **Effect:** [invalid](#effects)
+- **Assumption:** With design.selection_column, each cohort has observations for exactly the frame
+  items that column marks as selected by the draw.
+- **Consequence:** Integrity is invalid and every bound of the cohort is withheld: the items
+  evaluated are not the recorded draw, so the inclusion probabilities do not describe them.
+- **Remedy:** Evaluate every selected frame item and no other, or correct the selection column to
+  the draw actually made, at random and before any outcome was seen.
+
 #### `SAMPLE_SIZE_IMPLAUSIBLE`
 
 - **Severity:** ERROR

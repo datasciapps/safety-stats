@@ -2228,6 +2228,25 @@ _CODES: tuple[CodeEntry, ...] = (
         assumptions=("sample_errors",),
     ),
     CodeEntry(
+        code="SAMPLE_SELECTION_MISMATCH",
+        severities=("ERROR",),
+        source="logs",
+        effect="invalid",
+        assumption=(
+            "With design.selection_column, each cohort has observations for exactly the frame "
+            "items that column marks as selected by the draw."
+        ),
+        consequence=(
+            "Integrity is invalid and every bound of the cohort is withheld: the items "
+            "evaluated are not the recorded draw, so the inclusion probabilities do not "
+            "describe them."
+        ),
+        remedy=(
+            "Evaluate every selected frame item and no other, or correct the selection column "
+            "to the draw actually made, at random and before any outcome was seen."
+        ),
+    ),
+    CodeEntry(
         code="SAMPLE_SIZE_IMPLAUSIBLE",
         severities=("ERROR",),
         source="logs",
