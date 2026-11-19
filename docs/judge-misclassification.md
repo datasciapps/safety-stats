@@ -250,10 +250,14 @@ neither the noisy-but-valid test nor the stratified design's bounds have an anyt
 yet. With `groups`, the prefix check covers the whole manifest, and each calibration of a
 cohort and group bounds its own strata.
 
-The report's `provenance.judge_calibration.protocol` records the queue's SHA-256, its number
-of rows, the labelled prefix, the seed, the stopping rule and the bound used. The package
-cannot recompute the queue from the seed: that the queue's order is random is declared, and
-the hash lets an auditor check the queue against the one the labelling used. The protocol is
+The report's `provenance.judge_calibration.protocol` records the SHA-256 of the queue file's
+bytes as read, its number of rows, the labelled prefix, the seed, the stopping rule and the
+bound used. The analysis reads the file once, so the rows it checks are the bytes it hashes.
+The hash is of the file's bytes, not of its rows, so a copy whose line endings were converted,
+as a Windows checkout can do, hashes differently; hash and audit the file as the labelling
+used it. The package cannot recompute the queue from the seed: that the queue's order is
+random is declared, and the hash lets an auditor check the queue against the one the
+labelling used. The protocol is
 available in fixed-design plans; a generative plan does not accept it yet.
 
 ### Estimation and error budget

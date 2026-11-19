@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -101,6 +102,28 @@ def test_the_whole_queue_labelled_is_a_prefix(tmp_path: Path) -> None:
     path = _queue(tmp_path, "observation_id\na\nb\n")
     prefix = check_labelled_prefix(path, {"a": True, "b": False})
     assert (prefix.queue_rows, prefix.labelled) == (2, 2)
+
+
+def test_the_queue_hash_is_of_the_bytes_the_check_parsed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The queue is rewritten as soon as it has been read once: a check that hashed one read
+    # and parsed a second would record the first version's hash for the second's rows.
+    first = b"observation_id\na\nb\n"
+    path = tmp_path / "queue.csv"
+    path.write_bytes(first)
+    read_bytes = Path.read_bytes
+
+    def read_then_rewrite(self: Path) -> bytes:
+        content = read_bytes(self)
+        if self == path:
+            path.write_bytes(first + b"c\n")
+        return content
+
+    monkeypatch.setattr(Path, "read_bytes", read_then_rewrite)
+    prefix = check_labelled_prefix(path, {"a": True, "b": False})
+    assert prefix.queue_sha256 == hashlib.sha256(first).hexdigest()
+    assert prefix.queue_rows == 2
 
 
 @pytest.mark.parametrize(

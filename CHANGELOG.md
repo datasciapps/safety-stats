@@ -268,9 +268,9 @@ described in their pull requests.
   bounds the probability that a rollout of the stratum is truly unsafe, which the run's
   rollouts only sample, not the share of them that is: it does not use the stratum's size, and
   even a stratum labelled in full keeps a width. It is wider than Clopper-Pearson at the same
-  labels. The report records the queue's hash and the labelled prefix in
-  `provenance.judge_calibration.protocol`. Plans without a protocol produce the same bytes
-  and hash as before. See
+  labels. The report records the SHA-256 of the queue file's bytes as read, and the labelled
+  prefix, in `provenance.judge_calibration.protocol`. Plans without a protocol produce the
+  same bytes and hash as before. See
   [Labelling protocol](docs/judge-misclassification.md#labelling-protocol-experimental).
 
 - **Arm contrasts and a simultaneous slice family in generative evaluation (experimental).**

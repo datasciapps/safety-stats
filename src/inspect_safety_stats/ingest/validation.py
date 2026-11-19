@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -88,7 +89,11 @@ def load_validation_strata(path: str | Path) -> dict[str, str]:
 
 @dataclass(frozen=True)
 class LabelledPrefix:
-    """What the labelling-protocol check found: the queue, and how far down it labels reach."""
+    """What the labelling-protocol check found: the queue, and how far down it labels reach.
+
+    ``queue_sha256`` is the SHA-256 of the queue file's bytes as read, which are also the
+    bytes the check parsed.
+    """
 
     queue_rows: int
     labelled: int
@@ -109,11 +114,14 @@ def check_labelled_prefix(
     sample within each stratum, so a skipped row, or a label from outside the queue, would
     let the sample depend on which rollouts were easy or interesting to label. Either
     raises ``ValueError``, naming the first offending row.
+
+    The file is read once: the hash it reports is of the bytes the check parsed, so a queue
+    rewritten while the analysis reads it cannot be hashed in one version and checked in
+    another.
     """
 
-    path = Path(queue_path)
-    content = path.read_bytes()
-    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    content = Path(queue_path).read_bytes()
+    frame = pd.read_csv(io.BytesIO(content), dtype=str, keep_default_na=False)
     if "observation_id" not in frame.columns:
         raise ValueError("labelling queue is missing the observation_id column")
     where = "labelling queue"
