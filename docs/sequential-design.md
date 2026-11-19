@@ -95,9 +95,13 @@ of a short one, and the stream is well defined before its length is known.
 Phase 1 refuses `sampling.method: proportional_stratified`. Its allocation across strata comes
 from a largest-remainder split of `total_rewrites`, so the draws depend on the total.
 
-The manifest-based Inspect path is not a stream yet. Inspect runs samples in dataset order
-unless `sample_shuffle` is set, and it is off by default. A stream from that path needs the order
-seed recorded and checked against the log, and phase 1 refuses a run without one.
+The manifest-based Inspect path does not give this stream, with or without a recorded seed.
+Inspect runs samples in dataset order unless `sample_shuffle` is set, and it is off by default.
+With `sample_shuffle` set to a seed, the order is a seeded permutation: each sample runs once, so
+the draws are without replacement and outside the proposition above (with replacement only).
+Phase 1's sequences refuse that path. Its only anytime-valid route is the upper bound of #126
+([below](#runs-that-optstop-stopped-126)), which covers a permutation, and which in turn refuses
+a run whose seed and shuffled order the log does not record (`ANYTIME_ORDER_UNRECORDED`).
 
 ### Draw order, not completion order
 
