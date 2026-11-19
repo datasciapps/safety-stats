@@ -97,6 +97,18 @@ def test_a_conversation_primary_is_not_warned_about_its_own_blocks(tmp_path: Pat
     assert found.details["cohorts"][0]["design_effect"] == pytest.approx(83 / 13, abs=1e-12)
 
 
+def test_disabled_direct_intervals_name_no_primary(tmp_path: Path) -> None:
+    inputs = _inputs(CO_FAILING)
+    inputs.plan["outputs"]["direct_mean_intervals"]["enabled"] = False
+    (found,) = _found(run_analysis(inputs, tmp_path).diagnostics)
+    # The plan computes no result under 'item': no comparison, no anytime bound and no direct
+    # interval, so no primary splits the conversations, however much they fail together.
+    assert found.severity == "INFO"
+    assert found.details["primaries_splitting_blocks"] == []
+    assert "'item'" not in found.message
+    assert found.details["cohorts"][0]["design_effect"] == pytest.approx(83 / 13, abs=1e-12)
+
+
 def test_validate_reports_what_analyze_reports(tmp_path: Path) -> None:
     inputs = _inputs(CO_FAILING)
     analyzed = _found(run_analysis(inputs, tmp_path / "analyze").diagnostics)

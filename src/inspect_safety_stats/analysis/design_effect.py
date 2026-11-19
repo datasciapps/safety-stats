@@ -80,10 +80,14 @@ def design_effect(sizes: Sequence[int], correlation: float) -> float:
 
 
 def _primary_profiles(plan: AnalysisPlan) -> list[str]:
-    """Every profile the plan names as the primary of a result, sorted."""
+    """Every profile the plan names as the primary of a result it computes, sorted.
 
+    Disabled direct mean intervals compute no result, so their selection names no primary.
+    """
+
+    direct = plan.outputs.direct_mean_intervals
     selections = [
-        plan.outputs.direct_mean_intervals.independence,
+        direct.independence if direct.enabled else None,
         *(item.independence for item in plan.comparisons),
         *(item.independence for item in plan.comparison_sets),
     ]
