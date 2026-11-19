@@ -492,11 +492,32 @@ def _judge_claim_lines(
 _NULL_EFFECT = {"risk_difference": 0.0, "relative_risk_reduction": 0.0, "risk_ratio": 1.0}
 
 
-def _excludes_null(comparison: ComparisonResult) -> bool:
+def _shown(value: float, places: int) -> Decimal:
+    """``value`` as ``_number`` prints it."""
+    return Decimal(f"{value:.{places}f}")
+
+
+def _shown_above(value: float | None, bound: float, places: int) -> bool:
+    """Whether ``value`` prints above ``bound``.
+
+    Rounding never reverses an order, so a value that prints above the bound is above it. A
+    value within rounding of the bound prints equal to it, and does not count as above: the
+    page never says "above" beside two equal numbers.
+    """
+    return value is not None and _shown(value, places) > _shown(bound, places)
+
+
+def _shown_below(value: float | None, bound: float, places: int) -> bool:
+    return value is not None and _shown(value, places) < _shown(bound, places)
+
+
+def _excludes_null(comparison: ComparisonResult, places: int) -> bool:
     null = _NULL_EFFECT.get(comparison.estimand)
-    if null is None or comparison.lower is None or comparison.upper is None:
+    if null is None:
         return False
-    return comparison.lower > null or comparison.upper < null
+    return _shown_above(comparison.lower, null, places) or _shown_below(
+        comparison.upper, null, places
+    )
 
 
 def _path_text(report: SafetyReport, path: dict[str, str]) -> str:
@@ -519,12 +540,13 @@ def _node_label(report: SafetyReport, level: str | None, path: dict[str, str]) -
 def _localisation_lines(
     report: SafetyReport, places: int, include_decisions: bool
 ) -> list[str]:
-    """The hierarchy nodes where an effect or a limit exceedance sits, for the first page.
+    """The hierarchy nodes where an effect or a limit exceedance sits, right after the claims.
 
     Headline rows average over the hierarchy, so an effect concentrated in one node can look
     small there. This lists the nodes a reader would otherwise find only by reading every
     hierarchy row. The section appears only when there is something to look for: hierarchy
     comparison rows, or (with decisions shown) a claim whose evidence has hierarchy rows.
+    Nodes are selected on their values as printed.
     """
     node_comparisons = [item for item in report.comparisons if item.level is not None]
     claim_nodes = _claim_nodes(report) if include_decisions else []
@@ -532,7 +554,7 @@ def _localisation_lines(
         return []
     looked_for = []
     if node_comparisons:
-        looked_for.append("whose comparison interval excludes no difference")
+        looked_for.append("whose comparison interval excludes zero difference (a ratio of 1)")
     if claim_nodes:
         looked_for.append("whose estimate is above a claim's acceptable limit")
     lines = [
@@ -543,8 +565,8 @@ def _localisation_lines(
             "Headline rows average over the hierarchy, so an effect concentrated in one node "
             "can look small there. This section lists the hierarchy nodes "
             + ", and the nodes ".join(looked_for)
-            + ". Their intervals are those of the hierarchy rows below; they are not "
-            "separate claims."
+            + ", comparing values as printed. Their intervals are those of the hierarchy rows "
+            "below; they are not separate claims."
         ),
     ]
     if node_comparisons:
@@ -559,9 +581,11 @@ def _localisation_lines(
 def _effect_lines(
     report: SafetyReport, node_comparisons: list[ComparisonResult], places: int
 ) -> list[str]:
-    effects = [item for item in node_comparisons if _excludes_null(item)]
+    effects = [item for item in node_comparisons if _excludes_null(item, places)]
     if not effects:
-        return ["No hierarchy node's comparison interval excludes no difference."]
+        return [
+            "No hierarchy node's comparison interval excludes zero difference (a ratio of 1)."
+        ]
     overall = {item.comparison_id: item for item in report.comparisons if item.level is None}
     lines = [
         (
@@ -601,7 +625,7 @@ def _exceedance_lines(
         (claim, evidence, node)
         for claim, evidence, nodes in claim_nodes
         for node in nodes
-        if node.estimate is not None and node.estimate > claim.acceptable_upper
+        if _shown_above(node.estimate, claim.acceptable_upper, places)
     ]
     if not rows:
         return ["No hierarchy node's estimate is above a claim's acceptable limit."]
@@ -613,7 +637,7 @@ def _exceedance_lines(
         "|---|---|---|---:|---:|---:|---|---:|---:|---|",
     ]
     for claim, evidence, node in rows:
-        above = node.lower is not None and node.lower > claim.acceptable_upper
+        above = _shown_above(node.lower, claim.acceptable_upper, places)
         weight = (
             node.design_weight if isinstance(node, HierarchyRiskResult) else node.resolved_weight
         )
