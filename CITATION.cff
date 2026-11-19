@@ -3,7 +3,7 @@ message: "If you use this software, please cite it using the metadata from this 
 type: software
 title: "Inspect Safety Stats"
 abstract: "Fixed-design statistical risk analysis for Inspect AI safety evaluations."
-version: 0.15.0
+version: 0.16.0
 license: MIT
 authors:
   - given-names: Andrew

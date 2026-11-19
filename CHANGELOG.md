@@ -5,6 +5,8 @@ described in their pull requests.
 
 ## Unreleased
 
+## 0.16.0 - 2026-11-22
+
 ### Fixed
 
 - **A judge correction no longer states an assumption it does not make (changes report
