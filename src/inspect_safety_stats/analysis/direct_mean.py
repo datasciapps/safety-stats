@@ -327,8 +327,8 @@ def _direct_target_blocks(
 
     Where the cohort has no row of some prompt of a fixed design, the blocks a complete ledger
     would form (``_complete_ledger_blocks``). A sampled design's undrawn items have no rows
-    either, and ``direct_bounded_blocks`` refuses them, as before: how to calibrate the
-    frontiers of a sample is not settled here.
+    either; plan validation refuses frontier_sidak there (PLAN_SAMPLED_FRONTIER_UNSUPPORTED),
+    and ``_direct_mean_context`` forms no frontier for it.
     """
     if plan.design.type == "fixed" and not _has_rows(data, (cohort_id,), prompt_ids):
         return _complete_ledger_blocks(data, profile, prompt_ids, prompt_weights)
@@ -402,6 +402,11 @@ def _direct_mean_context(
                         )
                     )
     elif spec.hierarchy_calibration == "frontier_sidak" and spec.hierarchy_nodes:
+        if plan.design.type == "sampled":
+            # Plan validation refuses frontier_sidak under a sampled design
+            # (PLAN_SAMPLED_FRONTIER_UNSUPPORTED): its undrawn frame items form no blocks, so
+            # no frontier is formed and no direct interval is calibrated.
+            return _DirectMeanContext(selected, family.id, family.alpha, one_sided, joint, {})
         try:
             base_frontiers = _group_independent_frontiers(plan, data, hierarchy_nodes)
         except ValueError as exc:

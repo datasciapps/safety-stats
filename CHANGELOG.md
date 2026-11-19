@@ -7,6 +7,17 @@ described in their pull requests.
 
 ### Fixed
 
+- **A sampled design with `frontier_sidak` hierarchy calibration is refused, not crashed on.**
+  Under `design.type: sampled` with `outputs.direct_mean_intervals.hierarchy_nodes` and
+  `hierarchy_calibration: frontier_sidak`, `analyze` stopped with "independence blocks cannot
+  be formed" whenever a frame item was not drawn, which a sample nearly always has, and `validate`
+  accepted the plan. The frontier needs the nodes' intervals to be independent, which an undrawn
+  item (no block) and a fixed-size draw (nodes sharing a stratum) do not give. The plan is now
+  refused with `PLAN_SAMPLED_FRONTIER_UNSUPPORTED`, by `validate` as by `analyze`, whose report
+  is `invalid` with no direct interval calibrated; `flat_bonferroni` works as before. A sample
+  that drew every frame item, the one case that ran before, is refused too: analyse it as a
+  fixed design, or use `flat_bonferroni`.
+
 - **A rollout that an `exclude` score policy leaves out of the bounds is reported, and integrity
   is degraded (changes report bytes).** Under `inputs.score.missing: exclude` or
   `inputs.score.errors: exclude` an unscored or errored rollout was dropped with no diagnostic,

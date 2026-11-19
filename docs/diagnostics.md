@@ -511,6 +511,19 @@ The analysis plan: its fields, references and their combinations.
 - **Remedy:** Remove comparisons and comparison_sets from a plan with design.type: sampled, or
   analyse the prompts as a fixed design.
 
+#### `PLAN_SAMPLED_FRONTIER_UNSUPPORTED`
+
+- **Severity:** ERROR
+- **Effect:** [invalid](#effects)
+- **Assumption:** Under frontier_sidak, the intervals of the hierarchy nodes of one level are
+  independent, each node's drawn frame items forming blocks no other node shares. Under a sampled
+  design a frame item that was not drawn forms no block, and a fixed-size draw makes the nodes that
+  share a stratum dependent.
+- **Consequence:** The plan is refused: frontier_sidak calibration is not yet supported under a
+  sampled design, and the error makes the integrity status invalid.
+- **Remedy:** Set outputs.direct_mean_intervals.hierarchy_calibration to flat_bonferroni, which
+  holds whatever the dependence between nodes, or set hierarchy_nodes to false.
+
 #### `PLAN_SAMPLED_MEASURE_UNSUPPORTED`
 
 - **Severity:** ERROR

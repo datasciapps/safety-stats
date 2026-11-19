@@ -90,7 +90,7 @@ why the without-replacement reduction covers the betting capital.
 
 ### What a sampled design refuses
 
-Three checks reject configurations that a sample cannot support, and two warn:
+Four checks reject configurations that a sample cannot support, and two warn:
 
 - `PLAN_SAMPLED_MEASURE_UNSUPPORTED` -- only `weighted_mean` is available. Maximum, CVaR,
   top-k, entropic, and the threshold measures are nonlinear functionals of the whole frame's
@@ -99,6 +99,11 @@ Three checks reject configurations that a sample cannot support, and two warn:
   evaluated in both arms.
 - `PLAN_SAMPLED_REQUIRES_DIRECT_MEAN` -- the propagated prompt envelope has no bound for an
   item that was never drawn.
+- `PLAN_SAMPLED_FRONTIER_UNSUPPORTED` -- hierarchy-node intervals cannot use
+  `hierarchy_calibration: frontier_sidak`. A frontier multiplies the coverage of the nodes of one
+  level, which needs their intervals to be independent, but an item that was never drawn forms
+  no block, and a fixed-size draw makes nodes that share a stratum dependent. Use
+  `flat_bonferroni`, which holds whatever the dependence.
 - `PLAN_SAMPLED_PROMPT_BOUNDS` (warning) -- simultaneous prompt bounds cover the sampled
   items, not the frame.
 - `PLAN_SAMPLED_SENSITIVITY_PROFILES` (warning) -- the frame item is the independent block
@@ -354,3 +359,7 @@ pilot's prompts, whose outcomes already shaped the decision to run it and its si
 
 Comparisons across cohorts on a sampled frame. Correcting them means giving each arm its own
 design-based bounds and recombining, which is tractable but is a separate change.
+
+`frontier_sidak` calibration of hierarchy nodes. Under Poisson sampling the drawn items of
+disjoint nodes are independent, so a frontier over drawn items would hold; under a fixed-size
+draw it needs the dependence between strata-sharing nodes bounded first.
