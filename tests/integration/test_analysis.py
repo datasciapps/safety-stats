@@ -13,7 +13,12 @@ from inspect_safety_stats.config.loader import canonical_plan_hash
 from inspect_safety_stats.config.models import CohortSpec, PromptBoundsSpec, RiskMeasureSpec
 from inspect_safety_stats.ingest.inspect_logs import ErrorContext, NormalizedData
 from inspect_safety_stats.ingest.manifest import load_manifest
-from inspect_safety_stats.schema.reports import Diagnostic, RiskIntervalResult, SafetyReport
+from inspect_safety_stats.schema.reports import (
+    Diagnostic,
+    GroupRiskResult,
+    RiskIntervalResult,
+    SafetyReport,
+)
 
 
 def _write_inputs(tmp_path: Path) -> Path:
@@ -955,6 +960,103 @@ def test_assumed_judge_calibration_never_moves_a_claim(
             assert result.method != "assumed_judge_misclassification_correction"
     codes = {item.code for item in report.integrity.diagnostics}
     assert "JUDGE_CORRECTED_CLAIMS" not in codes
+
+
+_TRANSPORTED_CALIBRATION = (
+    "  judge_calibration:\n"
+    "    mode: transported\n"
+    "    published_set:\n"
+    "      name: Published judge validation set\n"
+    "      source: https://example.org/judge-validation\n"
+    "      judge: judge-model-v1\n"
+    "      rubric: harmful-behaviour rubric v2\n"
+    "      human_unsafe: 120\n"
+    "      judge_flagged_unsafe: 100\n"
+)
+
+
+def _analyze_with_calibration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, calibration: str
+) -> SafetyReport:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_path.write_text(
+        plan_text.replace("design:\n", calibration + "design:\n", 1), encoding="utf-8"
+    )
+    plan = load_plan(plan_path)
+    plan.outputs.direct_mean_intervals.hierarchy_nodes = True
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    return analyze(plan=plan, logs="ignored")
+
+
+def test_transported_judge_calibration_bounds_true_risk_by_the_published_sensitivity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from scipy.stats import beta
+
+    report = _analyze_with_calibration(monkeypatch, tmp_path, _TRANSPORTED_CALIBRATION)
+
+    # Independent computation of the one-sided Clopper-Pearson lower bound.
+    sensitivity_lower = float(beta.ppf(0.05, 100, 120 - 100 + 1))
+    assert report.provenance["judge_calibration"]["sensitivity_lower"] == pytest.approx(
+        sensitivity_lower, rel=1e-12, abs=0
+    )
+    corrected_rows = 0
+    for row in [*report.group_risks, *report.hierarchy_risks]:
+        transported = [i for i in row.intervals if i.interval_id == "judge_corrected_transported"]
+        # Entropic, worst-of-k and threshold measures are not judge-correctable.
+        if isinstance(row, GroupRiskResult) and row.measure_id in {
+            "entropic",
+            "worst_of_2",
+            "excess",
+        }:
+            assert not transported
+            continue
+        (interval,) = transported
+        corrected_rows += 1
+        assert interval.eligibility == "diagnostic"
+        assert interval.role == "sensitivity"
+        assert interval.varied_assumption == "judge_error"
+        assert interval.lower == 0.0
+        assert row.upper is not None
+        assert interval.upper == pytest.approx(
+            min(1.0, row.upper / sensitivity_lower), rel=1e-12, abs=0
+        )
+        assert interval.raw_upper == row.upper
+        assert any("Transport assumption" in text for text in interval.assumptions)
+        assert any("Experimental" in text for text in interval.warnings)
+    assert corrected_rows > 1
+
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "JUDGE_CALIBRATION_TRANSPORTED" in codes
+    assert "JUDGE_CORRECTED_CLAIMS" not in codes
+
+    markdown = (report.write(tmp_path / "judge-report") / "report.md").read_text(encoding="utf-8")
+    assert "## Judge misclassification sensitivity" in markdown
+    assert "Published validation set behind the transported sensitivity" in markdown
+    assert "Judge flagged 100 of 120 human-unsafe items" in markdown
+    assert "judge-model-v1" in markdown
+
+
+def test_transported_judge_calibration_never_moves_a_claim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    baseline = _analyze_with_calibration(monkeypatch, tmp_path / "plain", "")
+    transported = _analyze_with_calibration(
+        monkeypatch, tmp_path / "transported", _TRANSPORTED_CALIBRATION
+    )
+    assert baseline.claims
+    assert [claim.model_dump() for claim in transported.claims] == [
+        claim.model_dump() for claim in baseline.claims
+    ]
 
 
 def _two_cohort_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
