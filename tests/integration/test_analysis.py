@@ -8,12 +8,9 @@ import pandas as pd
 import pytest
 
 from inspect_safety_stats import analyze, load_plan, render_visualization, write_visualization
-from inspect_safety_stats.api import (
-    _alpha_by_prompt,
-    _profile_verdicts,
-    _prompt_blocked,
-    _scorer_configurations,
-)
+from inspect_safety_stats.analysis.claims import verdicts_by_profile
+from inspect_safety_stats.analysis.core import scorer_configurations
+from inspect_safety_stats.analysis.estimates import alpha_by_prompt, prompt_blocked
 from inspect_safety_stats.config.loader import canonical_plan_hash
 from inspect_safety_stats.config.models import CohortSpec, PromptBoundsSpec, RiskMeasureSpec
 from inspect_safety_stats.ingest.inspect_logs import (
@@ -541,12 +538,12 @@ def test_every_measure_is_classified_for_clipping_to_the_unit_interval() -> None
     """A new measure must say whether it is a probability, and so whether it is clipped."""
     from typing import get_args
 
-    from inspect_safety_stats.api import _PROBABILITY_MEASURES
+    from inspect_safety_stats.analysis.measures import PROBABILITY_MEASURES
     from inspect_safety_stats.config.models import RiskMeasureSpec
 
     types = set(get_args(RiskMeasureSpec.model_fields["type"].annotation))
-    assert types - _PROBABILITY_MEASURES == {"threshold_excess"}
-    assert _PROBABILITY_MEASURES <= types
+    assert types - PROBABILITY_MEASURES == {"threshold_excess"}
+    assert PROBABILITY_MEASURES <= types
 
 
 def test_judge_calibration_emits_assumed_correction_sensitivities(
@@ -1674,7 +1671,7 @@ def test_prompt_alpha_covers_every_cohort_endpoint() -> None:
     manifest = load_manifest(plan.inputs.design_manifest)
     data = NormalizedData([], manifest, [], [], [], {})
     diagnostics = []
-    allocation = _alpha_by_prompt(plan, data, diagnostics)
+    allocation = alpha_by_prompt(plan, data, diagnostics)
     assert diagnostics == []
     assert sum(allocation.values()) * len(plan.cohorts) == pytest.approx(0.025)
 
@@ -1686,7 +1683,7 @@ def test_per_direction_prompt_alpha_uses_full_family_budget() -> None:
     plan.cohorts["baseline"] = CohortSpec(match={"model": "baseline"})
     manifest = load_manifest(plan.inputs.design_manifest)
     data = NormalizedData([], manifest, [], [], [], {})
-    allocation = _alpha_by_prompt(plan, data, [])
+    allocation = alpha_by_prompt(plan, data, [])
     assert sum(allocation.values()) * len(plan.cohorts) == pytest.approx(0.05)
 
 
@@ -1702,7 +1699,7 @@ def test_explicit_prompt_alpha_is_split_across_cohorts() -> None:
     )
     manifest = load_manifest(plan.inputs.design_manifest)
     data = NormalizedData([], manifest, [], [], [], {})
-    allocation = _alpha_by_prompt(plan, data, [])
+    allocation = alpha_by_prompt(plan, data, [])
     assert allocation == {prompt: 0.0025 for prompt in prompts}
 
 
@@ -2295,7 +2292,7 @@ def test_an_error_about_one_prompt_does_not_block_a_prompt_whose_id_prefixes_it(
 def test_prompt_blocking_follows_the_prompt_an_error_names(
     diagnostic: Diagnostic, blocked: bool
 ) -> None:
-    assert _prompt_blocked([diagnostic], "candidate", "g1") is blocked
+    assert prompt_blocked([diagnostic], "candidate", "g1") is blocked
 
 
 def _patch_frames(
@@ -2647,10 +2644,10 @@ def test_inspect_runs_carry_the_scorers_their_log_records() -> None:
     examples = Path(__file__).resolve().parents[2] / "examples"
     log = examples / "real_simpleqa" / "simpleqa-8-real.eval"
     (run,) = read_inspect_source(str(log)).runs
-    configurations = _scorer_configurations(run.attributes["scorers"], "model_graded_qa")
+    configurations = scorer_configurations(run.attributes["scorers"], "model_graded_qa")
     assert configurations is not None and len(configurations) == 1
     assert configurations[0]["options"] == {}
-    assert _scorer_configurations(run.attributes["scorers"], "another_scorer") == []
+    assert scorer_configurations(run.attributes["scorers"], "another_scorer") == []
 
 
 def test_judge_claims_need_declared_judges(tmp_path: Path) -> None:
@@ -3468,9 +3465,9 @@ def test_worst_of_k_is_not_judge_correctable() -> None:
     # The affine correction R* = R*rho1 + (1-R)*rho0 commutes only with
     # positively homogeneous, translation-equivariant measures; 1-(1-p)^k is
     # neither, so worst_of_k must stay outside the correction whitelist.
-    from inspect_safety_stats.api import _JUDGE_CORRECTABLE_MEASURES
+    from inspect_safety_stats.analysis.judge_calibration import JUDGE_CORRECTABLE_MEASURES
 
-    assert "worst_of_k" not in _JUDGE_CORRECTABLE_MEASURES
+    assert "worst_of_k" not in JUDGE_CORRECTABLE_MEASURES
 
 
 def _two_arm_plan(tmp_path: Path, *, as_set: bool) -> Path:
@@ -3646,7 +3643,7 @@ def test_sensitivity_verdicts_certify_only_valid_confirmatory_evidence(
     )
 
     def statuses(confirmatory_and_valid: bool) -> list[str]:
-        rows = _profile_verdicts(
+        rows = verdicts_by_profile(
             claim,
             mean,
             status="PASS" if confirmatory_and_valid else "INCONCLUSIVE",

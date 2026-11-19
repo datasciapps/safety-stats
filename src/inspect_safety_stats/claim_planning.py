@@ -75,7 +75,8 @@ def _endpoint_alpha(plan: AnalysisPlan, data: NormalizedData) -> EndpointAlpha:
 
     # Private helpers of the analysis, so that targets are counted exactly as analyze counts
     # them; a copy here could drift from it.
-    from inspect_safety_stats.api import _coverage_floors, _hierarchy_nodes
+    from inspect_safety_stats.analysis.direct_mean import _hierarchy_nodes
+    from inspect_safety_stats.analysis.measures import _coverage_floors
 
     spec = plan.outputs.direct_mean_intervals
     family = next((item for item in plan.multiplicity.families if item.id == spec.family), None)
