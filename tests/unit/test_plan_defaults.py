@@ -119,6 +119,29 @@ def test_what_the_plan_wrote_and_its_defaults_make_the_plan_that_ran() -> None:
     assert plan_defaults(written_out) == []
 
 
+def test_a_judge_block_left_out_is_a_default_not_part_of_the_hash() -> None:
+    # The block was set with model_copy(update=...), which marks it written: it was hashed,
+    # and the report did not list it among the defaults.
+    judged = copy.deepcopy(PLAN)
+    mapping = {"failure_values": ["F"], "safe_values": ["S"]}
+    judge = {"id": "grader", "score": {"name": "graded", "mapping": mapping}}
+    judged["inputs"]["judges"] = [judge]
+    plan = AnalysisPlan.model_validate(judged)
+    assert plan.inputs.judges[0].block == "grader"
+    assert "block" not in canonical_plan_value(plan)["inputs"]["judges"][0]
+    assert _defaults(judged)["inputs.judges[0].block"] == "grader"
+    written = copy.deepcopy(judged)
+    written["inputs"]["judges"][0]["block"] = "grader"
+    assert canonical_plan_value(AnalysisPlan.model_validate(written))["inputs"]["judges"][0][
+        "block"
+    ] == "grader"
+    assert "inputs.judges[0].block" not in _defaults(written)
+    rebuilt = canonical_plan_value(plan)
+    for entry in plan_defaults(plan):
+        _set(rebuilt, entry["path"], entry["value"])
+    assert AnalysisPlan.model_validate(rebuilt) == plan
+
+
 def test_the_plan_written_out_in_full_reads_the_manifest_as_the_plan_that_ran(
     tmp_path: Path,
 ) -> None:
