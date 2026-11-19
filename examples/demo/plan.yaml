@@ -7,6 +7,12 @@
 # zero_tolerance column, so the gate would hold no prompt. To hold prompts to zero
 # tolerance, add a zero_tolerance column, true for those prompts, and set enabled: true.
 #
+# Each multiplicity family (prompt_bounds, risk, comparisons) spends alpha 0.05 on its
+# own: the intervals of one family hold together with probability at least 0.95, and all
+# of the plan's intervals hold together with probability at least 0.85. To make them all
+# hold together with a stated probability, split alpha between the families
+# (multiplicity.families).
+#
 # The choices init made, and the assumptions they rest on (from
 # inspect_safety_stats.registry):
 #
