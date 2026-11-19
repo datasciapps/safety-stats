@@ -813,9 +813,9 @@ _CODES: tuple[CodeEntry, ...] = (
             "after a duplicate rejection, out of the evaluable units."
         ),
         remedy=(
-            "To remove the dependence, set rewrite.deduplication.on_duplicate: accept or "
-            "rewrite.deduplication.scope: none in the frozen plan and materialize again; "
-            "otherwise report the count beside the intervals."
+            "To remove the dependence, set rewrite.deduplication.on_duplicate: accept, or "
+            "rewrite.deduplication.scope: none with near_duplicate: off, in the frozen plan "
+            "and materialize again; otherwise report the count beside the intervals."
         ),
     ),
     CodeEntry(

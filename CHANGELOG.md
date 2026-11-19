@@ -299,7 +299,8 @@ described in their pull requests.
   accepts. Its rejections enter the retry path. `rewrite.deduplication.near_duplicate:
   normalized_text` also treats rewrites that differ only in case, compatibility forms,
   punctuation, symbols, spacing or invisible format characters as duplicates, comparing their
-  letters, marks and digits alone. With either setting, materialization writes
+  letters, marks and digits alone; a plan that also sets `deduplication.scope: none`, which
+  compares nothing, is refused. With either setting, materialization writes
   `attempts.csv`, one row per kernel call without prompt text. Analysis then writes
   `fidelity.csv` and a `fidelity` section of `report.json`, which give for each arm why
   attempts failed. It also adds the diagnostics `GENERATIVE_FIDELITY_UNEVEN`,

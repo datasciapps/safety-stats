@@ -1429,9 +1429,9 @@ evaluated them.
   accepted for earlier units.
 - **Consequence:** Nothing is recomputed: the diagnostic gives how many units kept a rewrite only
   after a duplicate rejection, out of the evaluable units.
-- **Remedy:** To remove the dependence, set rewrite.deduplication.on_duplicate: accept or
-  rewrite.deduplication.scope: none in the frozen plan and materialize again; otherwise report the
-  count beside the intervals.
+- **Remedy:** To remove the dependence, set rewrite.deduplication.on_duplicate: accept, or
+  rewrite.deduplication.scope: none with near_duplicate: off, in the frozen plan and materialize
+  again; otherwise report the count beside the intervals.
 
 #### `GENERATIVE_ROLLOUT_OVERRUN`
 

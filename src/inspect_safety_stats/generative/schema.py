@@ -254,11 +254,23 @@ class RewriteDeduplicationSpec(StrictModel):
     after Unicode NFKC normalization and case folding: punctuation, symbols, whitespace and
     invisible format characters are removed. It makes materialization record every attempt
     in ``attempts.csv``. A near duplicate is handled by ``on_duplicate`` like an exact one.
+    ``scope: none`` compares nothing, so it is refused together with ``near_duplicate``.
     """
 
     scope: Literal["semantic_seed_path", "structural_path", "none"] = "semantic_seed_path"
     on_duplicate: Literal["retry", "accept"] = "retry"
     near_duplicate: Literal["off", "normalized_text"] = "off"
+
+    @model_validator(mode="after")
+    def near_duplicates_need_a_scope(self) -> RewriteDeduplicationSpec:
+        if self.near_duplicate != "off" and self.scope == "none":
+            raise ValueError(
+                f"rewrite.deduplication.near_duplicate: {self.near_duplicate} compares a "
+                "rewrite with those accepted within its deduplication scope, and scope: none "
+                "compares nothing, so it would detect nothing; set scope to "
+                "semantic_seed_path or structural_path, or near_duplicate to off"
+            )
+        return self
 
 
 def turn_count(level: str, value: str) -> int:

@@ -466,6 +466,26 @@ def test_near_duplicates_are_rejected_within_their_scope(tmp_path: Path) -> None
     assert {item.validator_status for item in result.attempts} == {"not_run"}
 
 
+def test_near_duplicate_detection_without_a_scope_is_refused(tmp_path: Path) -> None:
+    """With scope: none nothing is compared, so the setting would detect nothing."""
+
+    plan = materialize(tmp_path, near_plan(scope="none"), SEEDS_WITH_TEXT)
+    with pytest.raises(ValueError, match="scope: none compares nothing"):
+        load_generative_plan(plan)
+    result = runner.invoke(
+        app,
+        ["generative", "materialize", "--plan", str(plan), "--output", str(tmp_path / "run")],
+    )
+    assert result.exit_code == 3
+    assert "near_duplicate" in plain(result.output)
+    assert not (tmp_path / "run").exists()
+
+    load_generative_plan(materialize(tmp_path, near_plan(scope="structural_path")))
+    load_generative_plan(
+        materialize(tmp_path, plan_document(invoke=False, deduplication={"scope": "none"}))
+    )
+
+
 def test_without_near_duplicate_detection_restyled_text_is_new(tmp_path: Path) -> None:
     document = plan_document(invoke=False)
     plan, selections, fingerprint, texts = prepare(tmp_path, document)

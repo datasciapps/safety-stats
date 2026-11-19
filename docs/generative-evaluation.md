@@ -504,8 +504,9 @@ Punctuation, symbols, whitespace and invisible format characters such as a zero-
 are removed, not replaced, so "don't" matches "dont" and "step-by-step" matches "step by
 step". Where the words break does not count either: "a part" matches "apart". The letters,
 their order and their accents still distinguish two rewrites. `on_duplicate` handles a near
-duplicate like an exact repeat. Nothing compares embeddings, which would need a model the
-plan does not declare.
+duplicate like an exact repeat. The setting needs a deduplication scope: with `scope: none`
+nothing is compared, so the plan is refused. Nothing compares embeddings, which would need a
+model the plan does not declare.
 
 Either setting enters the kernel fingerprint, so runs with and without it cannot be pooled.
 Plans that use neither keep their fingerprints and their outputs byte for byte.
@@ -549,6 +550,8 @@ Three diagnostics read it:
 - a rewrite ledger and prompt store that disagree about which units were accepted;
 - a plan that invokes a validator materialized without `--validator`, or `--validator`
   without such a plan;
+- `rewrite.deduplication.near_duplicate` together with `deduplication.scope: none`, under
+  which nothing is compared, so near duplicates would go undetected;
 - a missing attempt ledger, or one that disagrees with the rewrite ledger, when the plan
   records attempts;
 - a log whose samples match no accepted rewrite, or the same sample twice;
