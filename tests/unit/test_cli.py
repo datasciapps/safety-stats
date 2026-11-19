@@ -636,6 +636,45 @@ def test_pilot_cli_will_not_overwrite_the_manifest(tmp_path: Path) -> None:
     assert manifest.read_bytes() == before
 
 
+@pytest.mark.parametrize("alias", ["hard link", "other case"])
+def test_pilot_cli_will_not_overwrite_the_manifest_by_another_name(
+    tmp_path: Path, alias: str
+) -> None:
+    """Another name for the manifest's file, which resolve() leaves distinct, is refused too."""
+    import os
+
+    manifest = _pilot_manifest(tmp_path)
+    before = manifest.read_bytes()
+    if alias == "hard link":
+        output = tmp_path / "frame.csv"
+        try:
+            os.link(manifest, output)
+        except OSError as exc:
+            pytest.skip(f"this filesystem has no hard links: {exc}")
+    else:
+        output = tmp_path / manifest.name.upper()
+        if not output.exists():
+            pytest.skip("this filesystem is case-sensitive")
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--per-stratum",
+            "1",
+            "--seed",
+            "1",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "must not overwrite" in plain(result.output)
+    assert manifest.read_bytes() == before
+
+
 def test_pilot_cli_requires_a_seed(tmp_path: Path) -> None:
     manifest = _pilot_manifest(tmp_path)
     result = runner.invoke(

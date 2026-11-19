@@ -926,7 +926,9 @@ def pilot_command(
     from inspect_safety_stats.ingest.manifest import REQUIRED_COLUMNS, load_manifest
     from inspect_safety_stats.ingest.pilot import draw_pilot
 
-    if output.resolve() == manifest.resolve():
+    # samefile also catches a path that differs only in case on a case-insensitive
+    # filesystem (macOS, Windows) and a hard link, which resolve() leaves distinct.
+    if output.resolve() == manifest.resolve() or (output.exists() and output.samefile(manifest)):
         raise typer.BadParameter("--output must not overwrite the design manifest")
     columns = [column.strip() for column in strata.split(",") if column.strip()]
     try:
