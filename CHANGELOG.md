@@ -340,8 +340,11 @@ described in their pull requests.
   interval was the propagated prompt envelope, which can be very wide. The interval is calibrated
   with the direct-mean intervals and needs a fixed design with rollout-level independence; other
   plans are refused, and their rows keep the propagated envelope with a warning that says why.
-  Plans without the field are unchanged. `worst_of_k_kl_chernoff_bounds` is exported from
-  `stats`. See
+  Plans without the field get the same results. `report.html` roots its hierarchy tree at the
+  weighted-mean row, where a worst-of-k row with a direct interval listed first could become the
+  root; this changes the page script, so every `report.html` and its `checksums.json` entry
+  differ in bytes, though a page of a plan without the field shows the same.
+  `worst_of_k_kl_chernoff_bounds` is exported from `stats`. See
   [Worst-of-k interval](docs/statistical-methods.md#worst-of-k-interval-experimental).
 
 - **Decision policies (experimental).** Claim thresholds can come from a decision policy kept
