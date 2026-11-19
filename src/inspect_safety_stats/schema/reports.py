@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 from typing import Any, Literal
 
@@ -567,6 +568,11 @@ class ReportPresentation(ResultModel):
     leaves out the overall decision and the claims' statuses when it is false, while
     ``report.json`` keeps both. A report that does not record it reads as the plan's default,
     false, here and in ``report.html``.
+
+    ``SafetyReport.presentation`` used to be a dictionary. Reading it as one
+    (``presentation["include_decisions"]``, ``presentation.get(...)``, ``in``) is deprecated:
+    it still works and raises a ``DeprecationWarning``. A field that is None reads as a
+    missing key, as ``report.json`` leaves it out.
     """
 
     include_decisions: bool = False
@@ -589,6 +595,34 @@ class ReportPresentation(ResultModel):
         # A field a report does not record stays out of report.json, rather than null.
         data: dict[str, Any] = handler(self)
         return {key: value for key, value in data.items() if value is not None}
+
+    def _deprecated_read(self, key: str) -> Any:
+        # stacklevel 3 names the code that called __getitem__, get or __contains__.
+        advice = (
+            f"read report.presentation.{key} instead"
+            if key in type(self).model_fields
+            else f"it has no field {key!r}"
+        )
+        warnings.warn(
+            "SafetyReport.presentation is a ReportPresentation, not a dictionary; "
+            f"{advice}. Reading it as a dictionary will be removed in a later release.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return getattr(self, key) if key in type(self).model_fields else None
+
+    def __getitem__(self, key: str) -> Any:
+        value = self._deprecated_read(key)
+        if value is None:
+            raise KeyError(key)
+        return value
+
+    def get(self, key: str, default: Any = None) -> Any:
+        value = self._deprecated_read(key)
+        return default if value is None else value
+
+    def __contains__(self, key: object) -> bool:
+        return isinstance(key, str) and self._deprecated_read(key) is not None
 
 
 class MappingSensitivityResult(ResultModel):

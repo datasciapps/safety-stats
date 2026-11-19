@@ -638,6 +638,9 @@ described in their pull requests.
   footer, which holds the scope caveat, before it renders the sections, so that an error in a
   section cannot leave the page without it. In Python, `SafetyReport.presentation` is a
   `ReportPresentation` rather than a dictionary: read `report.presentation.include_decisions`.
+  Reading it as a dictionary (`presentation["include_decisions"]`, `presentation.get(...)` or
+  `in`) still works, with a `DeprecationWarning`, and will be removed in a later release; a
+  field the report does not record reads as a missing key, as it did.
   `report.md` and the CSVs keep their bytes, and no number, status or decision changes.
   `visualize` on a report directory written before this still works: it takes the design rows
   and the primary profile from the files beside `report.json`. The schema version stays `3.0`.
