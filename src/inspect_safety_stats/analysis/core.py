@@ -37,7 +37,7 @@ from inspect_safety_stats.schema.reports import (
     HierarchyRiskResult,
     PromptEstimate,
 )
-from inspect_safety_stats.validate.plan import validate_plan_references
+from inspect_safety_stats.validate.plan import noisy_valid_test_supported, validate_plan_references
 
 
 @dataclass
@@ -129,9 +129,21 @@ def _judge_plan(plan: AnalysisPlan, judge: JudgeSpec) -> AnalysisPlan:
     """The plan as it would read with this judge as its only, primary outcome.
 
     The plan's judge calibration validates its primary outcome, not this judge, so it is
-    left out, and so is the panel, which a single judge's run has no use for.
+    left out, and so is the panel, which a single judge's run has no use for. A
+    ``noisy_valid_test`` claim's test needs that calibration's labels, so where the plan can
+    run the test the judge's run bounds the claim as a ``corrected_interval`` claim instead
+    (its row decides nothing under the validated calibration the test requires). Where the
+    plan cannot, the claim is kept, so the judge's run reports the primary's plan error.
     """
 
+    claims = plan.claims
+    if noisy_valid_test_supported(plan):
+        claims = [
+            claim.model_copy(update={"method": "corrected_interval"})
+            if claim.method == "noisy_valid_test"
+            else claim
+            for claim in plan.claims
+        ]
     inputs = plan.inputs.model_copy(
         update={
             "score": judge.score,
@@ -142,7 +154,7 @@ def _judge_plan(plan: AnalysisPlan, judge: JudgeSpec) -> AnalysisPlan:
         }
     )
     outputs = plan.outputs.model_copy(update={"judge_claims": False})
-    return plan.model_copy(update={"inputs": inputs, "outputs": outputs})
+    return plan.model_copy(update={"inputs": inputs, "outputs": outputs, "claims": claims})
 
 
 _UNCALIBRATED_JUDGE_REASON = (
@@ -150,9 +162,15 @@ _UNCALIBRATED_JUDGE_REASON = (
     "The calibration's labels validate the primary outcome, not this judge, so this judge's "
     "bounds are on its reported risk only and the claim is not decided on them."
 )
+_NOISY_VALID_TEST_REASON = (
+    "The claim's noisy_valid_test needs labels of this judge's verdicts, which the plan does "
+    "not have, so this judge's run bounds it as a corrected_interval claim."
+)
 
 
-def _judge_claim_row(claim: ClaimResult, *, validated_calibration: bool) -> dict[str, Any]:
+def _judge_claim_row(
+    claim: ClaimResult, *, validated_calibration: bool, noisy_valid_test: bool
+) -> dict[str, Any]:
     """One claim of a judge's run, as its row in the judge panel.
 
     A judge's run has no calibration, so its bounds are on judge-reported risk. Under a
@@ -163,6 +181,8 @@ def _judge_claim_row(claim: ClaimResult, *, validated_calibration: bool) -> dict
     status, reasons = claim.status, list(claim.reasons)
     if validated_calibration:
         status, reasons = "INCONCLUSIVE", [_UNCALIBRATED_JUDGE_REASON]
+        if noisy_valid_test:
+            reasons.append(_NOISY_VALID_TEST_REASON)
     return {
         "claim_id": claim.claim_id,
         "status": status,
@@ -180,13 +200,15 @@ def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeI
     Each judge's run is the analysis the plan would give with that judge as its primary
     outcome, over the same rollouts, so comparing judge configurations is one analysis. Its
     bounds are on that judge's reported risk; under a validated calibration its rows decide
-    nothing (``_judge_claim_row``).
+    nothing (``_judge_claim_row``). Beside its integrity status, each judge records how often
+    each diagnostic code occurred in its run, so the report says why a run is not valid.
     """
 
     validated_calibration = (
         plan.inputs.judge_calibration is not None
         and plan.inputs.judge_calibration.mode == "validated"
     )
+    noisy_claims = {claim.id for claim in plan.claims if claim.method == "noisy_valid_test"}
     by_id = {judge.id: judge for judge in plan.inputs.judges}
     for entry in panel["judges"]:
         judge_plan = _judge_plan(plan, by_id[entry["id"]])
@@ -202,8 +224,16 @@ def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeI
         diagnostics.extend(single_rollout_tail_claims(judge_plan, data))
         core = _analysis_core(judge_plan, data, diagnostics)
         entry["integrity"] = core.integrity_status
+        counts: dict[str, int] = {}
+        for item in diagnostics:
+            counts[item.code] = counts.get(item.code, 0) + 1
+        entry["diagnostic_counts"] = dict(sorted(counts.items()))
         entry["claims"] = [
-            _judge_claim_row(claim, validated_calibration=validated_calibration)
+            _judge_claim_row(
+                claim,
+                validated_calibration=validated_calibration,
+                noisy_valid_test=claim.claim_id in noisy_claims,
+            )
             for claim in sorted(core.claims, key=lambda item: item.claim_id)
         ]
 

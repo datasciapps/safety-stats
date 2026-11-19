@@ -475,6 +475,21 @@ def _judge_claim_lines(
     lines.extend(
         [
             "",
+            "Each judge's run's diagnostics, by code, with how often each occurred:",
+            "",
+            "| Judge | Integrity | Diagnostics |",
+            "|---|---|---|",
+        ]
+    )
+    for judge in judges:
+        counts = judge["diagnostic_counts"]
+        listed = "; ".join(f"`{_escape(code)}` ({count})" for code, count in counts.items())
+        lines.append(
+            f"| {_escape(judge['id'])} | `{judge['integrity']}` | {listed or 'none'} |"
+        )
+    lines.extend(
+        [
+            "",
             "The scorer configuration and model roles each cohort's runs record, by judge: the "
             "SHA-256 fingerprint of the scorer named like the judge's score, and each model "
             "role's model id. Neither shows the scorer's options or metadata.",

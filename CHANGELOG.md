@@ -412,12 +412,14 @@ described in their pull requests.
 - **Claims by judge (experimental).** With `outputs.judge_claims: true`, a plan with a judge
   panel also decides every claim on each declared judge's verdicts, as the plan would with that
   judge as its primary outcome, over the same rollouts. Each judge in
-  `provenance.judge_panel.judges` of `report.json` gains its run's `integrity`, its `claims`
-  rows (status, estimate, lower and upper bound, method, reasons) and the `configuration` its
-  cohorts' runs record: a SHA-256 fingerprint of the scorer named like the judge's score and the
-  model roles, `null` where none are recorded. The rows' bounds are on the judge's reported
-  risk; under a validated judge calibration, whose thresholds are about true risk, every row is
-  `INCONCLUSIVE`, as the primary outcome's claims are without a certifying correction. The
+  `provenance.judge_panel.judges` of `report.json` gains its run's `integrity` and
+  `diagnostic_counts`, its `claims` rows (status, estimate, lower and upper bound, method,
+  reasons) and the `configuration` its cohorts' runs record: a SHA-256 fingerprint of the
+  scorer named like the judge's score and the model roles, `null` where none are recorded. The
+  rows' bounds are on the judge's reported risk; under a validated judge calibration, whose
+  thresholds are about true risk, every row is `INCONCLUSIVE`, as the primary outcome's claims
+  are without a certifying correction. A judge's run bounds a `noisy_valid_test` claim as a
+  `corrected_interval` claim, since the test needs labels of that judge's verdicts. The
   scorer's options and metadata, which can hold request headers, tokens, endpoints and local
   paths, never reach the report. A model role keeps only its name and model id: its `base_url`,
   `args` and `extra_headers`, which can hold endpoints and credentials, never reach the report.

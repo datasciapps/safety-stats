@@ -9,6 +9,20 @@ def _duplicates(values: list[str]) -> set[str]:
     return {value for value in values if values.count(value) > 1}
 
 
+def noisy_valid_test_supported(plan: AnalysisPlan) -> bool:
+    """Whether the plan's judge calibration can run a ``noisy_valid_test`` claim's test.
+
+    The test needs a validated calibration whose labels are a simple random sample.
+    """
+
+    calibration = plan.inputs.judge_calibration
+    return (
+        calibration is not None
+        and calibration.mode == "validated"
+        and calibration.sampling == "simple_random"
+    )
+
+
 def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
     diagnostics: list[Diagnostic] = []
     expanded_comparisons = plan.expanded_comparisons()
@@ -158,12 +172,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
             )
     for claim in plan.claims:
         if claim.method == "noisy_valid_test":
-            calibration = plan.inputs.judge_calibration
-            if (
-                calibration is None
-                or calibration.mode != "validated"
-                or calibration.sampling != "simple_random"
-            ):
+            if not noisy_valid_test_supported(plan):
                 diagnostics.append(
                     Diagnostic(
                         code="PLAN_INVALID_CLAIM",

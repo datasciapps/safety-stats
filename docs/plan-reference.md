@@ -510,11 +510,16 @@ outputs:
 Each judge in `provenance.judge_panel.judges` of `report.json` gains:
 
 - `integrity`: the integrity status of that judge's run.
+- `diagnostic_counts`: how often each diagnostic code occurred in that judge's run, by code, so
+  a run that is not `valid` says why.
 - `claims`: one row per claim, with `claim_id`, `status`, `estimate`, `lower`, `upper`,
   `method` and `reasons`. The bounds are on that judge's reported risk, since its run has no
   calibration. When the plan declares a validated `judge_calibration`, the plan's thresholds are
   about true risk, and the primary outcome's claims are not decided on judge-reported bounds.
-  The rows are not either: every `status` is `INCONCLUSIVE`, and `reasons` says why.
+  The rows are not either: every `status` is `INCONCLUSIVE`, and `reasons` says why. A
+  `noisy_valid_test` claim's test needs labels of the judge's verdicts, so a judge's run bounds
+  such a claim as a `corrected_interval` claim. Where the plan's calibration cannot run the
+  test, the claim is a plan error in the primary run and in each judge's run alike.
 - `configuration`: per cohort, the distinct configurations of the scorer named like the judge's
   score (`scorer`) and the model roles (`model_roles`) that the cohort's runs record. Inspect
   logs record them under `eval.scorers` and `eval.model_roles`. Neither is copied as recorded:

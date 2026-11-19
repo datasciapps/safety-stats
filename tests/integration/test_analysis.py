@@ -3384,6 +3384,80 @@ def test_judge_claims_do_not_decide_on_judge_reported_risk_under_a_validated_cal
     assert "on that judge's reported risk" in section
 
 
+_SECOND_CLAIM = (
+    "  - id: mean_bounded\n"
+    "    title: Mean risk is acceptable on its corrected interval\n"
+    "    cohort: candidate\n"
+    "    group: cyber\n"
+    "    measure: mean\n"
+    "    family: gate\n"
+    "    acceptable_upper: 0.90\n"
+    "    unacceptable_lower: 0.95\n"
+)
+
+
+def _noisy_valid_judge_claims_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, sampling: str
+) -> Path:
+    plan_path = _validated_judge_claims_plan(
+        tmp_path, monkeypatch, claims=_SECOND_CLAIM, sampling=sampling
+    )
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "    mandatory: true\n", "    mandatory: true\n    method: noisy_valid_test\n", 1
+        ),
+        encoding="utf-8",
+    )
+    return plan_path
+
+
+def test_a_noisy_valid_test_claim_leaves_each_judges_run_valid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _noisy_valid_judge_claims_plan(tmp_path, monkeypatch, sampling="simple_random")
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert report.integrity.status != "invalid"
+    claims = {claim.claim_id: claim for claim in report.claims}
+    assert claims["mean_safe"].method == "noisy_valid_certification_test"
+    (judge,) = report.provenance["judge_panel"]["judges"]
+    # The test needs labels of this judge's verdicts, which the run does not have, so it
+    # bounds the claim as a corrected_interval claim instead of calling the plan invalid.
+    assert judge["integrity"] == report.integrity.status
+    assert "PLAN_INVALID_CLAIM" not in judge["diagnostic_counts"]
+    assert sum(judge["diagnostic_counts"].values()) > 0
+    rows = {row["claim_id"]: row for row in judge["claims"]}
+    assert rows["mean_safe"]["method"] == rows["mean_bounded"]["method"]
+    assert rows["mean_safe"]["lower"] is not None and rows["mean_safe"]["upper"] is not None
+    # Under the validated calibration the test requires, no row decides anything.
+    assert {row["status"] for row in rows.values()} == {"INCONCLUSIVE"}
+    assert any("noisy_valid_test" in reason for reason in rows["mean_safe"]["reasons"])
+
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert "| Judge | Integrity | Diagnostics |" in section
+
+
+def test_a_judges_run_keeps_the_primarys_noisy_valid_test_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _noisy_valid_judge_claims_plan(
+        tmp_path, monkeypatch, sampling="simple_random_within_judge_stratum"
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+
+    # The plan cannot run the test, which makes the primary invalid; each judge's run is the
+    # same plan, so it says the same, and the report names the code.
+    codes = {(item.code, item.severity) for item in report.integrity.diagnostics}
+    assert ("PLAN_INVALID_CLAIM", "ERROR") in codes
+    (judge,) = report.provenance["judge_panel"]["judges"]
+    assert judge["integrity"] == "invalid"
+    assert judge["diagnostic_counts"]["PLAN_INVALID_CLAIM"] == 1
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert "`PLAN_INVALID_CLAIM` (1)" in section
+
+
 def test_inspect_runs_carry_the_scorers_their_log_records() -> None:
     examples = Path(__file__).resolve().parents[2] / "examples"
     log = examples / "real_simpleqa" / "simpleqa-8-real.eval"
