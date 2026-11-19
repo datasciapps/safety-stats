@@ -83,6 +83,13 @@ described in their pull requests.
 
 ### Added
 
+- **Context files for coding agents.** `llms.txt` indexes the documentation for language-model
+  tools, `llms-full.txt` gives a single-file reference (entry points, estimator choice, the
+  standalone functions' signatures, the commands and their options, exit codes and runnable
+  recipes), and `skills/inspect-safety-stats/SKILL.md` gives a step-by-step workflow for a coding
+  agent. `tests/test_agent_context.py` checks them against the code: links, Python and YAML
+  blocks, signatures, import locations, and every command and option they name.
+
 - **A fixed-design template for prompt variants, and the profile that coupled wordings need.**
   `examples/fixed_design` has a plan, a manifest and an Inspect task in which each base prompt
   (`question_id`) is asked in several wordings (`prompt_id`). `nested_equal` weights count each
