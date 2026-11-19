@@ -64,8 +64,16 @@ class _AnalysisCore:
 
 
 def _analysis_core(
-    plan: AnalysisPlan, data: NormalizedData, diagnostics: list[Diagnostic]
+    plan: AnalysisPlan,
+    data: NormalizedData,
+    diagnostics: list[Diagnostic],
+    policy_claims: frozenset[str] = frozenset(),
 ) -> _AnalysisCore:
+    """Every result of the analysis of ``plan``, which carries any decision policy's thresholds.
+
+    ``policy_claims`` are the claims whose thresholds such a policy set.
+    """
+
     estimates = _prompt_estimates(plan, data, diagnostics)
     hierarchy_nodes = _hierarchy_nodes(plan, data)
     direct_context = _direct_mean_context(
@@ -114,6 +122,7 @@ def _analysis_core(
         diagnostics,
         judge_calibration_summary,
         coverage_events,
+        policy_claims,
     )
     return _AnalysisCore(
         estimates=estimates,

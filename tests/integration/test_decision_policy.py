@@ -809,3 +809,35 @@ def test_the_page_escapes_the_policy_text(tmp_path: Path) -> None:
     # The report's data is still inlined once, and the page keeps one audit section.
     assert page.count('<section aria-labelledby="audit-heading">') == 1
     assert page.count('<script id="inspect-safety-stats-data" type="application/json">{') == 1
+
+
+def test_an_exploratory_reason_names_the_thresholds_it_reads(tmp_path: Path) -> None:
+    groups = ["g1", "g2"]
+    plan = _gate_plan(groups, direct=None)
+    cast(dict[str, object], plan["analysis"])["intent"] = "exploratory"
+    for claim in cast(list[dict[str, object]], plan["claims"]):
+        claim["acceptable_upper"] = 0.5
+    plan_path = _gate_inputs(tmp_path, plan, groups)
+    policy = tmp_path / "policy.json"
+    policy.write_text(
+        json.dumps(
+            {
+                "inference_plan_sha256": inference_plan_hash(load_plan(plan_path)),
+                "versions": [
+                    {
+                        "id": "v1",
+                        "set_at": "2026-03-01T00:00:00Z",
+                        "thresholds": {
+                            "g1_mean": {"acceptable_upper": 0.6, "unacceptable_lower": 0.9}
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = _gate_analysis(plan_path, policy)
+    reasons = {item.claim_id: " ".join(item.reasons) for item in report.claims}
+    assert "at the decision policy's thresholds would give PASS" in reasons["g1_mean"]
+    assert "at the plan's thresholds would give PASS" in reasons["g2_mean"]
+    assert "plan's thresholds" not in reasons["g1_mean"]

@@ -60,6 +60,14 @@ def _apply_decision_policy(
     )
 
 
+def _policy_set_claims(application: _PolicyApplication | None) -> frozenset[str]:
+    """The claims whose thresholds an applied policy sets."""
+
+    if application is None or not application.applied:
+        return frozenset()
+    return frozenset(policy_thresholds(application.policy))
+
+
 def _revised_mandatory_claims(application: _PolicyApplication | None) -> list[str]:
     """The mandatory claims whose ``acceptable_upper`` an applied policy moved from the plan's.
 

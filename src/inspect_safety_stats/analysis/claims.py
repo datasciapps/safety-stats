@@ -440,11 +440,13 @@ def _claims(
     diagnostics: list[Diagnostic],
     judge_summary: dict[str, Any] | None = None,
     coverage_events: dict[str, str] | None = None,
+    policy_claims: frozenset[str] = frozenset(),
 ) -> list[ClaimResult]:
     """Decide every claim of the plan on its evidence.
 
     ``coverage_events``, when given, receives each claim's ``coverage_event`` key, for the
     overall decision under a decision policy (``analysis.policy._policy_roll_up``).
+    ``policy_claims`` are the claims whose thresholds in ``plan`` a decision policy set.
     """
 
     events: dict[str, str] = {} if coverage_events is None else coverage_events
@@ -480,7 +482,7 @@ def _claims(
         certifying = evidence is not None and evidence.eligibility == "certifying"
         exploratory = plan.analysis.intent == "exploratory"
         # An exploratory analysis certifies nothing, but its reader still needs what the bounds
-        # say at the plan's thresholds. Such a claim is decided as a confirmatory analysis would
+        # say at the claim's thresholds. Such a claim is decided as a confirmatory analysis would
         # decide it, the result is kept as its descriptive status, and the claim stays
         # INCONCLUSIVE below.
         eligible = bool(integrity_valid and certifying)
@@ -638,9 +640,10 @@ def _claims(
                 ]
                 if eligible:
                     descriptive_status = status
+                    source = "decision policy" if claim.id in policy_claims else "plan"
                     reasons.append(
                         f"Descriptive only, not a certification: a confirmatory analysis of "
-                        f"these bounds at the plan's thresholds would give {status}."
+                        f"these bounds at the {source}'s thresholds would give {status}."
                     )
                     reasons.extend(decided)
             else:

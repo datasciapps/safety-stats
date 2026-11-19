@@ -29,7 +29,8 @@ risk rather than judge-reported risk, and the claim records both intervals. See
 An analysis with `intent: exploratory` certifies nothing, so every claim and the report's
 decision are `INCONCLUSIVE`. When integrity is valid and a claim's bounds are certifying, the
 claim also has a descriptive status: the status a confirmatory analysis of the same bounds
-would give at the plan's thresholds. `report.json` records it as `descriptive_status`,
+would give at the claim's thresholds, the plan's or a [decision policy](decision-policy.md)'s.
+`report.json` records it as `descriptive_status`,
 and, with `report.include_decisions: true`, `report-full.md` shows it beside the status, for example
 `` `INCONCLUSIVE` (descriptive: `PASS`) ``, and `report.html` as a dashed badge. A claim without
 certifying bounds, or a report whose integrity is invalid, has none (`null`).

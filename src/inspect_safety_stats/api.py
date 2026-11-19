@@ -19,6 +19,7 @@ from inspect_safety_stats.analysis.policy import (
     _apply_decision_policy,
     _decision_policy_record,
     _policy_roll_up,
+    _policy_set_claims,
     _PolicyApplication,
 )
 from inspect_safety_stats.analysis.report import (
@@ -174,7 +175,7 @@ def _outcome_mapping_sensitivity(
         raise ValueError(f"outcome mapping sensitivity {spec.id!r}: {exc}") from exc
     diagnostics.extend(data.diagnostics)
     diagnostics.extend(single_rollout_tail_claims(alternative, data))
-    core = _analysis_core(alternative, data, diagnostics)
+    core = _analysis_core(alternative, data, diagnostics, _policy_set_claims(application))
     decision = roll_up(
         core.mandatory_statuses(),
         integrity_valid=core.integrity_status != "invalid",
@@ -299,7 +300,7 @@ def analyze(
     # ORDER MATTERS as well: a run without a recorded order must be an error before integrity
     # is read.
     anytime_bound_diagnostics(resolved, data, diagnostics, _order_reader(logs, source))
-    core = _analysis_core(resolved, data, diagnostics)
+    core = _analysis_core(resolved, data, diagnostics, _policy_set_claims(application))
     estimates = core.estimates
     tail_measure_precision(resolved, estimates, diagnostics)
     risks = core.risks
