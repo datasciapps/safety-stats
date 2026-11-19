@@ -53,6 +53,8 @@ translation = [
 dev = [
   "inspect-safety-stats[inspect]",
   "hypothesis>=6.100",
+  # Tests validate report.json against `inspect-safety-stats schema report`.
+  "jsonschema>=4.18",
   "mypy>=1.10",
   "pandas-stubs>=2.0",
   "pytest>=8.0",

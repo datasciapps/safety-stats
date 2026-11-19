@@ -12,20 +12,26 @@ is about 0.84, and the correction understates true risk.
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
 
 from inspect_safety_stats import analyze, load_plan
+from inspect_safety_stats.report.rounding import bound_text
+from inspect_safety_stats.report.summary import rate_interval_text
 from inspect_safety_stats.schema.reports import (
     ComparisonResult,
     GroupRiskResult,
     HierarchyRiskResult,
+    RiskIntervalResult,
     SafetyReport,
     VerdictRange,
 )
+from tests.summary_fixtures import section, table
 
 EPOCHS = 200
 PROMPTS = [("h1", "qh", "tH", "hard")] + [(f"e{i}", f"qe{i}", "tE", "easy") for i in range(1, 10)]
@@ -384,6 +390,116 @@ def test_a_self_weighting_whole_cohort_mean_is_still_certified(
     assert _corrected(_risk(report, "all", "worst")).eligibility == "diagnostic"
 
 
+def _headline(directory: Path, kind: str, group: str) -> dict[str, Any]:
+    """The candidate's headline of ``kind`` on ``group`` in the index of ``directory``."""
+
+    index = json.loads((directory / "index.json").read_text(encoding="utf-8"))
+    (item,) = [
+        item
+        for item in index["summary"]["headline"]
+        if item["kind"] == kind and item["cohort"] == "candidate" and item["group"] == group
+    ]
+    return dict(item)
+
+
+def test_the_headline_gives_the_true_risk_the_claim_is_decided_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With equal prompt weights the validated correction certifies the whole-cohort mean.
+
+    Here the judge misses 40% of the hard prompt's failures and flags nothing else, so the
+    judge-reported interval lies below the true risk, 0.03. The claim is decided on the
+    corrected interval, which covers it. The headline of index.json gave the judge-reported
+    bounds alone, marked certifying, while report.md gave both.
+    """
+
+    report = _analyze(
+        tmp_path,
+        monkeypatch,
+        weights="equal_prompt",
+        judge=lambda prompt_id, epoch: prompt_id == "h1" and epoch <= 36,
+    )
+    directory = report.write(tmp_path / "report")
+    risk = _risk(report, "all", "mean")
+    corrected = _corrected(risk)
+    assert isinstance(corrected, RiskIntervalResult)
+    assert corrected.lower is not None and corrected.upper is not None
+    true_risk = 0.30 / 10
+    assert risk.eligibility == "certifying"
+    assert risk.upper is not None and risk.upper < true_risk
+    assert corrected.eligibility == "certifying"
+    assert corrected.lower <= true_risk <= corrected.upper
+    claim = next(item for item in report.claims if item.claim_id == "mean_all")
+    assert (claim.lower, claim.upper) == (corrected.lower, corrected.upper)
+
+    headline = _headline(directory, "group_risk", "all")
+    assert (headline["lower"], headline["upper"]) == (risk.lower, risk.upper)
+    position = report.group_risks.index(risk)
+    assert headline["judge_corrected"] == {
+        "calibration": "validated",
+        "lower": corrected.lower,
+        "upper": corrected.upper,
+        "eligibility": "certifying",
+        "simultaneous_coverage": corrected.simultaneous_coverage,
+        "item": f"/group_risks/{position}/intervals/{risk.intervals.index(corrected)}",
+    }
+    assert corrected.simultaneous_coverage is not None
+
+    # index.md gives the same, and report.md's true risk column the same interval.
+    index_page = (directory / "index.md").read_text(encoding="utf-8")
+    (row,) = [
+        row
+        for row in table(section(index_page, "Headline estimates"))
+        if row["Pointer"] == f"`{headline['item']}`"
+    ]
+    assert row["True risk lower"] == bound_text(corrected.lower, 4, upper=False)
+    assert row["True risk upper"] == bound_text(corrected.upper, 4, upper=True)
+    assert row["True risk coverage"] == bound_text(
+        corrected.simultaneous_coverage, 4, upper=False
+    )
+    assert row["True risk eligibility"] == "certifying"
+    assert row["Judge calibration"] == "validated"
+    assert row["True risk pointer"] == f"`{headline['judge_corrected']['item']}`"
+    summary_page = (directory / "report.md").read_text(encoding="utf-8")
+    (row,) = [
+        row
+        for row in table(section(summary_page, "Failure risk"))
+        if (row["Model"], row["Group"]) == ("candidate", "all")
+    ]
+    assert row["True risk (judge-corrected)"] == rate_interval_text(
+        corrected.lower, corrected.upper
+    )
+
+    # The part of the cohort is a sensitivity of the correction, and says so.
+    hard = _headline(directory, "group_risk", "hard")
+    assert hard["judge_corrected"]["eligibility"] == "diagnostic"
+    assert hard["judge_corrected"]["simultaneous_coverage"] is None
+
+
+def test_report_md_marks_a_validated_correction_that_does_not_certify_as_a_sensitivity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The labels measure the judge on the whole cohort, so the hard group's is a sensitivity.
+
+    report.md marked it assumed, which its note says means declared rather than measured
+    judge accuracy, while the summary says the calibration is validated.
+    """
+
+    report = _analyze(tmp_path, monkeypatch, weights="equal_prompt")
+    directory = report.write(tmp_path / "report")
+    rows = {
+        row["Group"]: row["True risk (judge-corrected)"]
+        for row in table(section((directory / "report.md").read_text("utf-8"), "Failure risk"))
+    }
+    for group, mark in [("all", ""), ("hard", " (sensitivity)")]:
+        corrected = _corrected(_risk(report, group, "mean"))
+        assert isinstance(corrected, RiskIntervalResult)
+        assert rows[group] == rate_interval_text(corrected.lower, corrected.upper) + mark
+        assert _headline(directory, "group_risk", group)["judge_corrected"]["calibration"] == (
+            "validated"
+        )
+
+
 def test_noisy_valid_test_refuses_a_row_its_labels_do_not_measure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -492,6 +608,28 @@ def test_a_group_scoped_calibration_splits_the_judge_budget_over_cohorts_and_gro
     # Each arm also bounds its unclassified share at a quarter of its calibration's alpha.
     assert corrected.family_alpha == pytest.approx(2 * (0.0125 + 0.0125 / 4), rel=1e-12, abs=0)
     assert any("calibration for group 'hard'" in item for item in corrected.assumptions)
+
+
+def test_a_headline_comparison_gives_its_true_risk_difference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = _analyze(tmp_path, monkeypatch, compare=True, judge_groups="[all, hard]")
+    directory = report.write(tmp_path / "report")
+    comparison = next(item for item in report.comparisons if item.level is None)
+    corrected = _corrected(comparison)
+    assert isinstance(corrected, RiskIntervalResult)
+
+    headline = _headline(directory, "comparison", "hard")
+    assert (headline["lower"], headline["upper"]) == (comparison.lower, comparison.upper)
+    position = report.comparisons.index(comparison)
+    assert headline["judge_corrected"] == {
+        "calibration": "validated",
+        "lower": corrected.lower,
+        "upper": corrected.upper,
+        "eligibility": "certifying",
+        "simultaneous_coverage": corrected.simultaneous_coverage,
+        "item": f"/comparisons/{position}/intervals/{comparison.intervals.index(corrected)}",
+    }
 
 
 def test_a_refused_group_calibration_says_which_group_and_cohort(

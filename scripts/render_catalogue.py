@@ -202,8 +202,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     page = render()
     if args.check:
-        current = PAGE.read_text(encoding="utf-8") if PAGE.exists() else None
-        if current != page:
+        # Bytes, not text: reading text turns CRLF into LF, so a page checked out or edited
+        # with CRLF line ends would pass while differing from what this writes.
+        current = PAGE.read_bytes() if PAGE.exists() else None
+        if current != page.encode("utf-8"):
             print(
                 f"{PAGE.relative_to(ROOT).as_posix()} is stale: run "
                 "python scripts/render_catalogue.py",

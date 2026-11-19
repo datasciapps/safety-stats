@@ -78,8 +78,10 @@ scoped to a group, measure or node of the cohort withholds none.
 In a report, each diagnostic also has `item`: a JSON pointer into `report.json` to the record
 its scope names, such as `/claims/0` for `plan/claims/<claim>`, `/prompt_estimates/12` for
 `cohorts/<cohort>/prompts/<prompt>` or `/group_risks/3` for
-`cohorts/<cohort>/groups/<group>/measures/<measure>`. It is null when the report holds no
-record of the item, as for a plan setting or a run. `inspect_safety_stats.schema.pointers`
+`cohorts/<cohort>/groups/<group>/measures/<measure>`. A comparison's hierarchy node,
+`comparisons/<comparison>/levels/<level>/nodes/<node>`, has the row of that node, not the
+overall comparison's. It is null when the report holds no record of the item, as for a plan
+setting or a run. `inspect_safety_stats.schema.pointers`
 lists every scope that has one. The report computes `item` from the scope, also when a saved
 `report.json` is read back, so it always points into the report that holds the diagnostic.
 
@@ -115,8 +117,10 @@ checksum manifest. A non-empty destination is rejected unless
 
 `report.json` has a `summary` object: the integrity status, the headline estimates, the errors
 and warnings by code, and the decisions when `report.include_decisions` is true, each with a
-JSON pointer to its full record (`inspect_safety_stats.schema.summary`). `SafetyReport.summary`
-returns it. It is derived from the other fields, so reading a saved `report.json` back drops it
+JSON pointer to its full record (`inspect_safety_stats.schema.summary`). Where a judge correction
+applies, a headline estimate also gives the interval of the true failure risk
+(`judge_corrected`), which its own bounds, of the judge-reported rate, are not.
+`SafetyReport.summary` returns it. It is derived from the other fields, so reading a saved `report.json` back drops it
 and computes it again.
 
 `index.json` lists every file the report wrote and copies the summary; `index.md` holds the

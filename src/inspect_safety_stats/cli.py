@@ -345,21 +345,31 @@ def analyze_command(
                 )
         typer.echo(f"Decision: {report.decision}")
     from inspect_safety_stats.report.summary import rate_interval_text, rate_text
-    from inspect_safety_stats.schema.summary import is_headline_risk
 
-    # The headline is each weighted-mean failure rate, as in report.json's summary, printed as
-    # report.md prints it: each bound rounded outward.
-    headline = [risk for risk in report.group_risks if is_headline_risk(risk)]
+    # The headline is each weighted-mean failure rate of report.json's summary, printed as
+    # report.md prints it: each bound rounded outward, and where a judge correction applies
+    # the true risk after it.
+    summary = report.summary
+    headline = [item for item in summary.headline if item.kind == "group_risk"]
     if headline:
         typer.echo("Failure rate (weighted mean):")
-    for risk in headline:
+    for item in headline:
         interval = (
-            rate_interval_text(risk.lower, risk.upper)
-            if risk.lower is not None and risk.upper is not None
+            rate_interval_text(item.lower, item.upper)
+            if item.lower is not None and item.upper is not None
             else "interval unavailable"
         )
-        typer.echo(f"  {risk.cohort_id} / {risk.group_id}: {rate_text(risk.estimate)} {interval}")
-    _echo_warnings(report.summary.warnings, path / "index.md")
+        corrected = item.judge_corrected
+        true_risk = (
+            ""
+            if corrected is None
+            else f"; true risk {rate_interval_text(corrected.lower, corrected.upper)} "
+            f"(judge-corrected, {corrected.calibration} calibration, {corrected.eligibility})"
+        )
+        typer.echo(
+            f"  {item.cohort} / {item.group}: {rate_text(item.estimate)} {interval}{true_risk}"
+        )
+    _echo_warnings(summary.warnings, path / "index.md")
     typer.echo(f"Summary: {path / 'report.md'}")
     typer.echo(f"Index: {path / 'index.json'}")
     typer.echo(f"Report: {path}")
