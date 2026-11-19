@@ -404,10 +404,18 @@ described in their pull requests.
 
 - **Content-filter stops as policy blocks (experimental).** `inputs.score.content_filter_stops`
   decides before the run how a rollout counts when a provider's content filter stopped its
-  output before any content, as Claude 5-series models report a safety-classifier decline:
-  `safe` for a harm estimand, `failure` (a refusal) for an over-refusal estimand, or `score`,
-  the default, which keeps the previous behaviour. Inspect logs only. See
-  [the plan reference](docs/plan-reference.md#inputs).
+  output before the target delivered any content in the sample, as Claude 5-series models
+  report a safety-classifier decline: `safe` for a harm estimand, `failure` (a refusal) for an
+  over-refusal estimand, or `score`, the default, which keeps the previous behaviour. Text,
+  readable reasoning or a tool call in the stopped output or in any earlier generation of the
+  sample, such as an earlier turn of a conversation, counts as delivered content: such a stop
+  is scored as usual and reported in a `CONTENT_FILTER_STOP_SCORED` diagnostic, so harm that an
+  earlier turn delivered is never counted safe because a later turn was blocked. `safe`
+  replaces only a missing or safe score: a failure score, or one the mapping does not cover,
+  keeps deciding, with a `CONTENT_FILTER_STOP_SCORED` warning. `inputs.score` sets it for
+  every judge: each judge's run under `outputs.judge_claims` takes the primary's value (see
+  Claims by judge below), and a judge's score in `inputs.judges` that sets its own is refused.
+  Inspect logs only. See [the plan reference](docs/plan-reference.md#inputs).
 
 - **Group scopes for judge calibration, declared accuracies and the judge panel.** A cohort
   that holds several benchmarks no longer has to share one judge calibration and one panel
@@ -480,12 +488,12 @@ described in their pull requests.
   plan, its decision policy and its registration receipt were checked for, so a receipt for
   another plan or a failed decision policy makes it `invalid` as it does the primary analysis.
   An invalid report never shows a judge's run as anything but `invalid`, nor a row as anything
-  but `INCONCLUSIVE`. A judge's run takes the primary score's `content_filter_stops` and
-  `token_limit` where the judge leaves them at `score`, so it counts the rollouts the target's
-  provider stopped as the primary analysis does (an inherited `token_limit` also covers a
-  truncated rollout the judge left unscored for another reason, which can narrow its row;
-  `token_limit: missing` on the judge opts out); a plan whose judges' resulting
-  `content_filter_stops` misfit their `errors` or the estimand is refused when it is loaded.
+  but `INCONCLUSIVE`. A judge's run takes the primary score's `content_filter_stops`, which a
+  judge's score cannot set, and its `token_limit` where the judge leaves it at `score`, so it
+  counts the rollouts the target's provider stopped as the primary analysis does (an inherited
+  `token_limit` also covers a truncated rollout the judge left unscored for another reason,
+  which can narrow its row; `token_limit: missing` on the judge opts out); a plan whose
+  primary `content_filter_stops` misfits a judge's `errors` is refused when it is loaded.
   A judge whose own `score` asks for what the source cannot give, such as the stop reasons
   `token_limit` needs, gets an `invalid` run with `INGEST_FAILED` and rows that decide nothing,
   instead of stopping the analysis. `report-full.md` adds a "Claims by judge (experimental)"

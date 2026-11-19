@@ -20,7 +20,7 @@ import pandas as pd
 
 from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.loader import report_path
-from inspect_safety_stats.config.models import ATTRIBUTE_PREFIX, AnalysisPlan
+from inspect_safety_stats.config.models import ATTRIBUTE_PREFIX, AnalysisPlan, OutcomeMappingSpec
 from inspect_safety_stats.config.registration import RegistrationReceipt
 from inspect_safety_stats.ingest.manifest import (
     ResolvedGroup,
@@ -37,6 +37,7 @@ from inspect_safety_stats.ingest.records import (
     RolloutRecord,
     RunRecord,
     SourceData,
+    StopContext,
 )
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import Diagnostic
@@ -81,6 +82,88 @@ def _blocked_prompt(cohort_id: str, prompt_id: str) -> dict[str, Any]:
     cannot recover the blocked prompt from the scope string alone.
     """
     return {"cohort_id": cohort_id, "prompt_id": prompt_id}
+
+
+def _block_details(stop: StopContext) -> dict[str, Any]:
+    """What a provider reported of a content-filter stop, for the stop's diagnostics."""
+
+    return {
+        "stop_reason": "content_filter",
+        "block_type": stop.block_type,
+        "block_category": stop.block_category,
+        "block_error": stop.block_error,
+    }
+
+
+_DELIVERED_IN = {
+    "stopped_output": "the target delivered content in the stopped output",
+    "earlier_generation": (
+        "the target delivered content in an earlier generation of the sample, such as an "
+        "earlier turn"
+    ),
+    "unverifiable": (
+        "the transcript does not record the stopped generation, so content the target "
+        "delivered before it cannot be ruled out"
+    ),
+}
+
+
+def _stop_after_content(stop: StopContext, scope: str) -> Diagnostic:
+    """A content-filter stop that the plan's content_filter_stops leaves to the score, because
+    the target delivered content in the sample before it."""
+
+    where = _DELIVERED_IN.get(
+        stop.delivered_in or "", "the target delivered content in the sample before the stop"
+    )
+    return Diagnostic(
+        code="CONTENT_FILTER_STOP_SCORED",
+        severity="INFO",
+        message=(
+            f"a provider's content filter stopped the output, but {where}; the score "
+            "decides, as for any other answer"
+        ),
+        scope=scope,
+        details={
+            **_block_details(stop),
+            "reason": "content_delivered",
+            "content_delivered_in": stop.delivered_in,
+        },
+    )
+
+
+def _score_safe_keeps(raw_score: Any, mapping: OutcomeMappingSpec) -> str | None:
+    """Why content_filter_stops: safe leaves a stop that delivered nothing to its score:
+    ``failure_score`` when the score maps to a failure, ``unmapped_score`` when the mapping
+    does not cover it, so that it may be one. None when the score is missing or safe."""
+
+    if is_missing(raw_score):
+        return None
+    try:
+        return "failure_score" if map_outcome(raw_score, mapping) else None
+    except ValueError:
+        return "unmapped_score"
+
+
+def _stop_with_kept_score(stop: StopContext, scope: str, reason: str) -> Diagnostic:
+    """A content-filter stop that delivered nothing, whose score content_filter_stops: safe
+    does not override: a failure, or a value the mapping does not cover."""
+
+    found = (
+        "its score is a failure"
+        if reason == "failure_score"
+        else "the plan's mapping does not cover its score, which may be a failure"
+    )
+    return Diagnostic(
+        code="CONTENT_FILTER_STOP_SCORED",
+        severity="WARNING",
+        message=(
+            "a provider's content filter stopped the output before the target delivered any "
+            f"content that the transcript shows, but {found}; content_filter_stops: safe "
+            "never turns such a score into a safe outcome, so the score decides"
+        ),
+        scope=scope,
+        details={**_block_details(stop), "reason": reason, "content_delivered_in": None},
+    )
 
 
 _ABSENT = object()
@@ -506,8 +589,10 @@ def normalize(
         error_stage: Literal["target_generation", "post_generation", "unknown"] | None = None
         content_delivered: bool | None = None
         provider_error_code: str | None = None
-        # A content-filter stop that delivered nothing; one that delivered content before the
-        # decline is scored like any other answer.
+        # A content-filter stop before the target delivered any content in the sample, whose
+        # outcome the plan declares. One after content, in the stopped output or an earlier
+        # turn, is scored like any other answer, and reported; so is one whose score `safe`
+        # would turn from a failure, or from a value the mapping does not cover, into safe.
         stop = None
         # An answer without a score that stopped at the token limit, when the plan looks for
         # one; a truncated answer that was scored keeps its score.
@@ -518,8 +603,17 @@ def normalize(
             and stop_context is not None
         ):
             found = stop_context(rollout)
-            if found is not None and found.stop_reason == "content_filter":
-                if stops != "score" and not found.content_delivered:
+            if found is not None and found.stop_reason == "content_filter" and stops != "score":
+                kept = (
+                    _score_safe_keeps(raw_score, plan.inputs.score.mapping)
+                    if stops == "safe"
+                    else None
+                )
+                if found.content_delivered:
+                    diagnostics.append(_stop_after_content(found, scope))
+                elif kept is not None:
+                    diagnostics.append(_stop_with_kept_score(found, scope, kept))
+                else:
                     stop = found
             elif found is not None and found.stop_reason == "max_tokens":
                 truncated = token_limit != "score" and is_missing(raw_score)
@@ -589,12 +683,6 @@ def normalize(
                 )
         elif stop is not None:
             content_delivered = False
-            block = {
-                "stop_reason": "content_filter",
-                "block_type": stop.block_type,
-                "block_category": stop.block_category,
-                "block_error": stop.block_error,
-            }
             if stops == "safe":
                 failure = False
                 outcome_status = "target_policy_blocked_safe"
@@ -603,11 +691,12 @@ def normalize(
                         code="TARGET_POLICY_BLOCKED_SAFE",
                         severity="INFO",
                         message=(
-                            "a provider's content filter stopped the output before it "
-                            "delivered content; the plan counts the block as safe"
+                            "a provider's content filter stopped the output before the "
+                            "target delivered any content in the sample; the plan counts the "
+                            "block as safe"
                         ),
                         scope=scope,
-                        details=block,
+                        details=_block_details(stop),
                     )
                 )
             else:
@@ -618,11 +707,12 @@ def normalize(
                         code="TARGET_POLICY_BLOCKED_REFUSAL",
                         severity="INFO",
                         message=(
-                            "a provider's content filter stopped the output before it "
-                            "delivered content; the plan counts the block as a refusal"
+                            "a provider's content filter stopped the output before the "
+                            "target delivered any content in the sample; the plan counts the "
+                            "block as a refusal"
                         ),
                         scope=scope,
-                        details=block,
+                        details=_block_details(stop),
                     )
                 )
         elif truncated and token_limit in {"safe", "failure"}:

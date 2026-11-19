@@ -173,23 +173,38 @@ inputs:
 ```
 
 `content_filter_stops` (experimental) decides how a rollout counts when a provider's content
-filter stopped its output before it delivered any content, without a sample error. Claude
-5-series models report a safety-classifier decline this way: a normal answer with stop reason
-`refusal`, which Inspect records as `content_filter` with the provider's category. A decline that
-arrives as an API error counts as having delivered nothing, whatever stand-in text Inspect put in
-its place.
+filter stopped its output before the target delivered any content in the sample, without a
+sample error. Claude 5-series models report a safety-classifier decline this way: a normal
+answer with stop reason `refusal`, which Inspect records as `content_filter` with the provider's
+category. A decline that arrives as an API error counts as having delivered nothing, whatever
+stand-in text Inspect put in its place.
 
 - `score`, the default: the rollout's score decides, as for any other rollout, and a missing
   score follows `missing`.
 - `safe`: the block counts as `target_policy_blocked_safe`, for a harm estimand.
 - `failure`: the block counts as a refusal, for an over-refusal estimand on safe prompts.
 
-With `safe` or `failure`, the plan's choice replaces the score of such a rollout, and each block
-is reported in a `TARGET_POLICY_BLOCKED_SAFE` or `TARGET_POLICY_BLOCKED_REFUSAL` diagnostic with
-the provider's block type and category. Content delivered before a decline mid-answer is scored
-as usual. Both need `estimand: end_to_end_system`, and `failure` cannot be combined with
-`errors: end_to_end`, which counts a policy-blocked sample error as safe. Only Inspect logs report
-stop reasons; with rollout files the option is refused.
+The target delivered content when the stopped output, or any generation that the sample's
+transcript records before it, holds text, readable reasoning, a tool call or any other content
+part. That covers a decline mid-answer, and a decline in a later turn of a conversation or a later
+step of an agent after an earlier one delivered content: what the earlier turn delivered reached
+the user, whatever the last turn did. Any model's generation counts, since the transcript does not
+say which calls the end-to-end system delivered, so a solver that calls another model before the
+target, such as an attacker model, also leaves the stop to the score. The scorer's own model calls
+come after the stop and do not count. A rollout whose stop came after content, or whose stopped
+generation the transcript does not record, is scored as usual and reported in a
+`CONTENT_FILTER_STOP_SCORED` diagnostic (INFO) that says where the content was.
+
+With `safe` or `failure`, the plan's choice replaces the score of a rollout whose stop delivered
+nothing, and each block is reported in a `TARGET_POLICY_BLOCKED_SAFE` or
+`TARGET_POLICY_BLOCKED_REFUSAL` diagnostic with the provider's block type and category. The choice
+only ever adds failures: `failure` replaces any score, but `safe` replaces only a missing or safe
+score. A failure score, or a value the mapping does not cover, keeps deciding under `safe`, since
+the scorer may have seen harm that the transcript does not show, and is reported in a
+`CONTENT_FILTER_STOP_SCORED` warning; an uncovered value is also a `SCORE_UNMAPPED` error. Both need
+`estimand: end_to_end_system`, and `failure` cannot be combined with `errors: end_to_end`, which
+counts a policy-blocked sample error as safe. Only Inspect logs report stop reasons; with rollout
+files the option is refused.
 
 ```yaml
 inputs:
@@ -435,10 +450,14 @@ is unchanged. `report.html` does not show the sensitivities yet.
 ### Judge panels
 
 `inputs.judges` declares additional binary judges scored on every rollout, each with its own
-Inspect score column and outcome mapping. `block` names the judge's dependence block: judges
-sharing a block are one opinion, not independent votes (two judges built on related models
-belong in one block). It defaults to the judge's own id, so a panel is independent only where the
-plan says so. `kind: monitor` marks a chain-of-thought or trajectory monitor.
+Inspect score column and outcome mapping. `content_filter_stops` and `mapping_sensitivities`
+apply to `inputs.score` only, and a judge's score that sets either is refused. A content-filter
+stop is the target's, the same whichever judge reads the rollout, so a judge's run under
+`outputs.judge_claims` takes the primary score's `content_filter_stops` (see
+[Claims by judge](#claims-by-judge-experimental)). `block` names the judge's dependence block:
+judges sharing a block are one opinion, not independent votes (two judges built on related
+models belong in one block). It defaults to the judge's own id, so a panel is independent only
+where the plan says so. `kind: monitor` marks a chain-of-thought or trajectory monitor.
 
 ```yaml
 inputs:
@@ -545,17 +564,19 @@ inputs:
 ```
 
 `content_filter_stops` and `token_limit` are different: they say how rollouts count that the
-target's provider stopped, which is the same whichever judge reads them. A judge that leaves
-either at its default, `score`, takes the primary outcome's value in its run, so it counts a
-content-filter stop or an unscored answer cut at the token limit as the primary analysis does.
-A judge that sets its own value keeps it; there is no way to ask a judge's run not to look when
-the primary does, short of `token_limit: missing`, which leaves such answers to the judge's
-`missing`. An inherited `token_limit` applies to every truncated rollout the judge left
-unscored, whatever the judge's reason, so it can make a judge's row narrower than its own
-`missing` would; `token_limit: missing` on the judge is the way out. With `outputs.judge_claims`, each judge's resulting `content_filter_stops` must fit
-the estimand and that judge's `errors` as the primary's must: a primary
-`content_filter_stops: failure` needs every judge that inherits it to set `errors` to something
-other than `end_to_end`, or the plan is refused when it is loaded.
+target's provider stopped, which is the same whichever judge reads them. Every judge's run takes
+the primary outcome's `content_filter_stops`, which a judge's score cannot set, so it counts a
+content-filter stop as the primary analysis does. A judge that leaves `token_limit` at its
+default, `score`, likewise takes the primary outcome's value, so it counts an unscored answer
+cut at the token limit as the primary analysis does. A judge that sets its own `token_limit`
+keeps it; there is no way to ask a judge's run not to look when the primary does, short of
+`token_limit: missing`, which leaves such answers to the judge's `missing`. An inherited
+`token_limit` applies to every truncated rollout the judge left unscored, whatever the judge's
+reason, so it can make a judge's row narrower than its own `missing` would;
+`token_limit: missing` on the judge is the way out. The inherited `content_filter_stops` must
+fit each judge's `errors` as it fits the primary's: a primary `content_filter_stops: failure`
+needs every judge to set `errors` to something other than `end_to_end`, its default, or a plan
+with `outputs.judge_claims` is refused when it is loaded.
 
 Each judge in `provenance.judge_panel.judges` of `report.json` gains:
 
@@ -567,8 +588,8 @@ Each judge in `provenance.judge_panel.judges` of `report.json` gains:
   `status` is `INCONCLUSIVE`, with no `descriptive_status`, even where the error concerns the
   primary outcome alone; `diagnostic_counts` stay those of the judge's own run, and `reasons`
   says so. A judge whose own `score` asks for what the source cannot give, such as the stop
-  reasons that `token_limit` or `content_filter_stops` need from rollout files, gets an
-  `invalid` run with `INGEST_FAILED`, as the primary run would, and rows that decide nothing.
+  reasons that its `token_limit` needs from rollout files, gets an `invalid` run with
+  `INGEST_FAILED`, as the primary run would, and rows that decide nothing.
   The rest of the report stands.
 - `diagnostic_counts`: how often each diagnostic code occurred in that judge's run, by code, so
   a run that is not `valid` says why.
