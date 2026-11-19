@@ -173,3 +173,20 @@ def test_every_claim_bound_is_rounded_outward_at_the_reports_decimals(
         assert _outward(shown, claim.lower, claim.upper, step), claim.claim_id
         assert Decimal(row["Acceptable below"]) == Decimal(repr(claim.acceptable_upper))
         assert Decimal(row["Unacceptable above"]) == Decimal(repr(claim.unacceptable_lower))
+
+
+def test_the_median_rollouts_per_prompt_is_not_truncated(
+    confirmatory: tuple[SafetyReport, str],
+) -> None:
+    """Half the prompts with 31 valid rollouts and half with 30 have a median of 30.5."""
+
+    from inspect_safety_stats.report.summary import summary_markdown
+
+    report, summary = confirmatory
+    assert "· 30 rollouts per prompt (median) ·" in summary
+    estimates = [
+        item.model_copy(update={"n_valid": 30 + index % 2})
+        for index, item in enumerate(report.prompt_estimates)
+    ]
+    halfway = summary_markdown(report.model_copy(update={"prompt_estimates": estimates}))
+    assert "· 30.5 rollouts per prompt (median) ·" in halfway.splitlines()[2]

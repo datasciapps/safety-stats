@@ -204,11 +204,22 @@ def precision_target(report: SafetyReport) -> float:
 
 
 class _Budget:
-    """Rollouts per prompt, used to turn a flag into a budget."""
+    """Rollouts per prompt, used to turn a flag into a budget.
+
+    ``per_prompt`` is the median of the prompts' valid rollouts, which for an even number of
+    prompts can lie halfway between two counts; it is kept as it is, not truncated.
+    """
 
     def __init__(self, report: SafetyReport) -> None:
         counts = [item.n_valid for item in report.prompt_estimates if item.n_valid > 0]
-        self.per_prompt = int(median(counts)) if counts else 0
+        self.per_prompt: float = median(counts) if counts else 0
+
+    @property
+    def per_prompt_text(self) -> str:
+        """The median rollouts per prompt: a whole number, or one ending in .5."""
+
+        whole = int(self.per_prompt)
+        return str(whole) if whole == self.per_prompt else f"{self.per_prompt:.1f}"
 
     def advice(
         self,
@@ -574,7 +585,7 @@ def _other_measures_section(
             f"{flagged} tail or threshold intervals exceed ±{target:.2f}"
             + (
                 f"; per-prompt bounds that tight need about {needed} rollouts on every "
-                f"prompt (currently {budget.per_prompt})"
+                f"prompt (currently {budget.per_prompt_text})"
                 if needed
                 else ""
             )
@@ -937,7 +948,8 @@ def summary_markdown(report: SafetyReport) -> str:
         f"# {_escape(report.analysis.get('title') or report.analysis.get('id'))}",
         "",
         f"{_count(prompts, 'frame item' if sampled else 'fixed prompt')} · "
-        f"{_count(budget.per_prompt, 'rollout')} per prompt (median) · "
+        f"{budget.per_prompt_text} rollout{'' if budget.per_prompt == 1 else 's'} per prompt "
+        "(median) · "
         f"{_count(len(cohorts), 'model')} · data integrity "
         f"**{report.integrity.status}**" + (f" ({', '.join(counts)})" if counts else ""),
         "",

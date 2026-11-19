@@ -39,6 +39,11 @@ described in their pull requests.
   "Notes" line after the warnings now names each such code with its effect and count. Info
   codes that only record a fact stay in `report-full.md`.
 
+- **report.md no longer truncates the median rollouts per prompt (changes `report.md`).** With
+  an even number of prompts the median can lie halfway between two counts, as 30.5 does; the
+  header showed 30, and the rollout budgets under "Precision" were computed from 30. Both now
+  use the median as it is.
+
 - **report.md's prompt-level sensitivity is the prompt profile's (changes `report.md`).** The
   column showed the first sensitivity interval of the primary's method, whatever its profile:
   with a category profile listed before the prompt profile it showed the category interval,
