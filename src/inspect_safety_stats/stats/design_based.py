@@ -235,10 +235,17 @@ def fixed_size_mean_bounds(
     which items were drawn. Normalising by ``K`` gives an ordinary bounded weighted mean.
 
     Validity rests on Hoeffding's reduction (1963, Theorem 4): a convex function of a
-    without-replacement sum is dominated by the same function of a with-replacement sum.
-    Every engine here bounds a moment generating function, which is convex, so the bound
-    each computes under an independence assumption remains valid -- and is conservative,
-    since sampling without replacement has strictly smaller variance.
+    without-replacement sum is dominated in expectation by the same function of a
+    with-replacement sum. The Hoeffding, empirical-Bernstein and KL/Chernoff engines bound
+    a moment generating function, which is convex. The experimental betting engine bounds
+    none; it bounds the capital of each fixed betting fraction, a product over the drawn
+    items of wealth factors raised to a common exponent ``c <= 1`` within a stratum.
+    Averaged over the item outcomes, independent across items and of the draw, it is at
+    most ``exp(c * sum_j log E f_j)`` by Jensen's inequality, a convex function of a
+    without-replacement sum of fixed numbers, so the reduction applies to it and to the
+    fixed mixture over fractions. The bound each engine computes under an independence
+    assumption therefore remains valid -- and is conservative, since sampling without
+    replacement has strictly smaller variance.
     """
 
     engines = DIRECT_MEAN_ENGINES.get(method)

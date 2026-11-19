@@ -330,6 +330,10 @@ described in their pull requests.
   hierarchy nodes. It inverts a fixed mixture of common betting fractions, needs no estimated
   variance proxy, and is usually the tightest of the four when blocks are fractional rates, as
   under a prompt-level independence profile. It is fixed-horizon, not anytime-valid.
+  On a sampled design (`design.type: sampled`) its rows state the betting construction, mark
+  it experimental and report its `chernoff_kernel`, as on a fixed design; a fixed-size
+  design's row says why the without-replacement reduction covers it (see
+  [Fixed-size designs](docs/design-based-sampling.md#fixed-size-designs)).
   Comparisons do not accept it, and its functions are not exported from
   `inspect_safety_stats.stats`. Plans that do not name it are unaffected. See
   [Betting interval](docs/statistical-methods.md#betting-interval-from-a-fixed-mixture-of-common-bets-experimental).
