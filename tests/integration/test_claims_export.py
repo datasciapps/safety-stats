@@ -143,7 +143,7 @@ _JUDGE = (
     "    sampling: {sampling}\n"
 )
 _JUDGE_FAMILY = (
-    "    - {id: judge_error, purpose: simultaneous_intervals, method: bonferroni, alpha: 0.05}\n"
+    "    - {id: judge_error, purpose: simultaneous_intervals, method: bonferroni, alpha: 0.1}\n"
 )
 
 
@@ -388,13 +388,11 @@ def test_a_claim_the_validated_calibration_cannot_correct_is_flagged(tmp_path: P
     mean = records["mean_safe"]
     assert mean["judge_corrected"] is True
     assert mean["judge_correction_unavailable"] is False
-    # The correction's family_alpha is the calibration's budget, not the claim's: the claim's
-    # alpha adds the gate family's to it.
+    # The correction's family_alpha is the calibration's budget (the judge family's 0.1, with
+    # one cohort calibrated), not the claim's: the claim's alpha adds the gate family's 0.05.
     assert mean["evidence"]["interval_id"] == "judge_corrected_validated"
-    assert mean["evidence"]["family_alpha"] == pytest.approx(0.05, rel=1e-12, abs=0)
-    assert mean["bound"]["alpha"] == pytest.approx(
-        0.05 + mean["evidence"]["family_alpha"], rel=1e-12, abs=0
-    )
+    assert mean["evidence"]["family_alpha"] == pytest.approx(0.1, rel=1e-12, abs=0)
+    assert mean["bound"]["alpha"] == pytest.approx(0.15, rel=1e-12, abs=0)
     assert mean["reasons"] == claims["mean_safe"].reasons
     assert round_trip_differences(output) == []
 
