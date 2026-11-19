@@ -12,6 +12,7 @@ is about 0.84, and the correction understates true risk.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
@@ -127,7 +128,9 @@ NOISY_VALID_CLAIM = """
 """.strip("\n")
 
 
-def _frames(cohorts: tuple[str, ...]) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _frames(
+    cohorts: tuple[str, ...], judge: Callable[[str, int], bool] = _judge_unsafe
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     evals = []
     samples = []
     for cohort in cohorts:
@@ -160,7 +163,7 @@ def _frames(cohorts: tuple[str, ...]) -> tuple[pd.DataFrame, pd.DataFrame]:
                         "log": "/not/a/local/log.eval",
                         "id": prompt_id,
                         "epoch": epoch,
-                        "score_harmful": "FAIL" if _judge_unsafe(prompt_id, epoch) else "PASS",
+                        "score_harmful": "FAIL" if judge(prompt_id, epoch) else "PASS",
                         "error": None,
                         "retries": 0,
                     }
@@ -216,10 +219,14 @@ def _analyze(
     sampling: str | None = None,
     compare: bool = False,
     judge_groups: str | None = None,
+    label: Callable[[str, int], bool] = lambda prompt_id, epoch: True,
+    judge: Callable[[str, int], bool] = _judge_unsafe,
 ) -> SafetyReport:
-    """Label every classified rollout with its truth, then analyse with the labels."""
+    """Label the classified rollouts that ``label`` picks with their truth, then analyse."""
 
-    eval_frame, sample_frame = _frames(("candidate", "baseline") if compare else ("candidate",))
+    eval_frame, sample_frame = _frames(
+        ("candidate", "baseline") if compare else ("candidate",), judge
+    )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
@@ -241,6 +248,8 @@ def _analyze(
         if observation.failure is None:
             continue
         epoch = int(observation.rollout_id.rsplit("-", 1)[1])
+        if not label(observation.prompt_id, epoch):
+            continue
         truth = _truly_unsafe(observation.prompt_id, epoch)
         rows.append(f"{observation.observation_id},{'unsafe' if truth else 'safe'}")
     (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
@@ -462,6 +471,79 @@ def test_a_group_scoped_calibration_splits_the_judge_budget_over_cohorts_and_gro
     assert corrected.warnings == []
     assert corrected.family_alpha == pytest.approx(0.025, abs=0)
     assert any("calibration for group 'hard'" in item for item in corrected.assumptions)
+
+
+def test_a_refused_group_calibration_says_which_group_and_cohort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # One of the hard prompt's 161 judge-safe rollouts is labelled, so its calibration cannot
+    # bound rho_0 below rho_1 and is refused, while the group of every prompt still has the
+    # labels it needs. The labels are picked, not drawn, to make that certain.
+    report = _analyze(
+        tmp_path,
+        monkeypatch,
+        claims=HARD_CLAIMS,
+        judge_groups="[all, hard]",
+        label=lambda prompt_id, epoch: (
+            prompt_id != "h1" or _judge_unsafe(prompt_id, epoch) or epoch == 100
+        ),
+    )
+
+    (refused,) = [
+        item
+        for item in report.integrity.diagnostics
+        if item.code == "JUDGE_CALIBRATION_UNINFORMATIVE"
+    ]
+    # Both say which calibration was refused, so it cannot read as the cohort's own.
+    assert refused.scope == "cohorts/candidate/groups/hard"
+    assert refused.message.startswith(
+        "group 'hard' of cohort 'candidate': the validation sample does not establish a "
+        "strictly informative judge"
+    )
+    summary = report.provenance["judge_calibration"]
+    assert list(summary["cohorts"]["candidate"]) == ["all"]
+    # The refused calibration still took its share of the judge family's budget.
+    assert summary["per_calibration_alpha"] == pytest.approx(0.025, abs=0)
+
+    # The hard rows are not corrected, and their claim is not decided from the labels.
+    for measure in ("mean", "worst"):
+        row = _risk(report, "hard", measure)
+        assert not [item for item in row.intervals if item.interval_id.startswith("judge_")]
+    claim = next(item for item in report.claims if item.claim_id == "mean_hard")
+    assert claim.method != "validated_judge_misclassification_correction"
+    assert claim.status == "INCONCLUSIVE"
+
+
+def test_a_group_without_a_judge_stratum_says_which_group_and_cohort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Here the judge never flags the hard prompt, so the hard group has no judge-unsafe
+    # stratum to calibrate. The easy prompts' flags are all false, so the group of every
+    # prompt has a judge-unsafe stratum but cannot show an informative judge either.
+    report = _analyze(
+        tmp_path,
+        monkeypatch,
+        claims=HARD_CLAIMS,
+        judge_groups="[all, hard]",
+        judge=lambda prompt_id, epoch: prompt_id != "h1" and _judge_unsafe(prompt_id, epoch),
+    )
+
+    withheld = {
+        item.code: (item.scope, item.message)
+        for item in report.integrity.diagnostics
+        if item.code in {"JUDGE_VALIDATION_STRATUM_EMPTY", "JUDGE_CALIBRATION_UNINFORMATIVE"}
+    }
+    assert withheld["JUDGE_VALIDATION_STRATUM_EMPTY"] == (
+        "cohorts/candidate/groups/hard",
+        "group 'hard' of cohort 'candidate' has no observations in one judge stratum; no judge "
+        "correction is reported for it",
+    )
+    scope, message = withheld["JUDGE_CALIBRATION_UNINFORMATIVE"]
+    assert scope == "cohorts/candidate/groups/all"
+    assert message.startswith("group 'all' of cohort 'candidate': ")
+    assert report.provenance["judge_calibration"]["cohorts"] == {}
+    for claim in report.claims:
+        assert claim.status == "INCONCLUSIVE"
 
 
 def test_noisy_valid_test_uses_the_labels_of_the_rows_group(

@@ -492,7 +492,12 @@ def _validated_judge_calibrations(
                 Diagnostic(
                     code="JUDGE_CALIBRATION_UNINFORMATIVE",
                     severity="WARNING",
-                    message=str(outcome.refusal),
+                    # A scoped refusal must not read as the cohort's own calibration's.
+                    message=(
+                        str(outcome.refusal)
+                        if group_id is None
+                        else f"group {group_id!r} of cohort {cohort_id!r}: {outcome.refusal}"
+                    ),
                     scope=where,
                 )
             )

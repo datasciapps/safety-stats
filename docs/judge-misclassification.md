@@ -595,6 +595,10 @@ The module produces no correction, and says why, when:
 - a validation row references an observation absent from the analysed logs, or one whose
   outcome was never classified (`JUDGE_VALIDATION_UNMATCHED`, an error).
 
+With `groups`, each listed group of a cohort is refused on its own.
+`JUDGE_VALIDATION_STRATUM_EMPTY` and `JUDGE_CALIBRATION_UNINFORMATIVE` then name the group
+and the cohort, and their scope is `cohorts/<cohort>/groups/<group>`.
+
 ### Effect on threshold claims
 
 When a validated correction is available for a claim's evidence, the claim is decided from
