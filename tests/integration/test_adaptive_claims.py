@@ -9,13 +9,16 @@ from typing import Any
 import pandas as pd
 import pytest
 import yaml
+from typer.testing import CliRunner
 
 from inspect_safety_stats import analyze, load_plan
+from inspect_safety_stats.cli import app
 from inspect_safety_stats.config.loader import canonical_plan_hash
 from inspect_safety_stats.ingest.records import StopContext
 from inspect_safety_stats.schema.reports import SafetyReport
 from inspect_safety_stats.stats.adaptive import adaptive_lower_bound
 from inspect_safety_stats.validate.plan import validate_plan_references
+from tests.cli_output import plain
 
 PLAN: dict[str, Any] = {
     "schema_version": "2.0",
@@ -494,3 +497,32 @@ def test_a_plan_without_adaptive_claims_keeps_its_hash_and_report(
     _logs(monkeypatch, _verdicts(20))
     report = analyze(plan=path, logs="ignored")
     assert "adaptive_claims" not in report.model_dump(mode="json")
+
+
+def _analyze_cli(path: Path, output: Path) -> str:
+    result = CliRunner().invoke(
+        app, ["analyze", "--plan", str(path), "--logs", str(path), "--output", str(output)]
+    )
+    assert result.exit_code == 0, plain(result.output)
+    return plain(result.output)
+
+
+def test_the_cli_names_a_mandatory_adaptive_claim_as_experimental(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _logs(monkeypatch, _verdicts(20))
+    shown = {"include_decisions": True}
+    output = _analyze_cli(_write(tmp_path, adaptive=[ADAPTIVE], report=shown), tmp_path / "a")
+    assert f"FAIL: {ADAPTIVE['title']} (adaptive attacker, experimental, FAIL only)" in output
+    assert "Decision: FAIL" in output
+
+    # An optional adaptive claim does not enter the decision, and the CLI does not list it.
+    optional = {**ADAPTIVE, "mandatory": False}
+    output = _analyze_cli(_write(tmp_path, adaptive=[optional], report=shown), tmp_path / "b")
+    assert ADAPTIVE["title"] not in output
+    assert "Decision: FAIL" not in output
+
+    # Nor does it list one when the plan omits decisions.
+    output = _analyze_cli(_write(tmp_path, adaptive=[ADAPTIVE]), tmp_path / "c")
+    assert ADAPTIVE["title"] not in output and "Decision:" not in output
+

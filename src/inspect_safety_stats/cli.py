@@ -313,7 +313,10 @@ def analyze_command(
                 typer.echo(f"{claim.status}: {claim.title}")
         for adaptive in report.adaptive_claims:
             if adaptive.mandatory:
-                typer.echo(f"{adaptive.status}: {adaptive.title} (adaptive attacker, FAIL only)")
+                typer.echo(
+                    f"{adaptive.status}: {adaptive.title} "
+                    "(adaptive attacker, experimental, FAIL only)"
+                )
         typer.echo(f"Decision: {report.decision}")
     from inspect_safety_stats.schema.summary import is_headline_risk
 
