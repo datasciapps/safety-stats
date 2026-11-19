@@ -7,6 +7,15 @@ described in their pull requests.
 
 ### Fixed
 
+- **A judge correction no longer states an assumption it does not make (changes report
+  bytes).** A corrected row or comparison arm holding no rollout a plan policy classified, in a
+  plan that sets such a policy or a cohort that holds one, stated that its correction assumes
+  the population holds none either. The bound on the row's unclassified share already covers
+  them: in a run that saw none, it is computed from the count of both kinds together. The
+  interval now says so, and the bounds are unchanged. The panel-derived correction and the
+  noisy-but-valid test take no share bound, and still state or document the assumption.
+  Reports with such rows change in bytes, `report_hash` included.
+
 - **A sampled design with `frontier_sidak` hierarchy calibration is refused, not crashed on.**
   Under `design.type: sampled` with `outputs.direct_mean_intervals.hierarchy_nodes` and
   `hierarchy_calibration: frontier_sidak`, `analyze` stopped with "independence blocks cannot

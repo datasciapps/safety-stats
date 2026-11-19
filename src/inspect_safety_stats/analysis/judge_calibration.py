@@ -292,12 +292,13 @@ def _policy_assumption(safe: int, failures: int, excluded: bool = False) -> str:
 def _policy_cohorts(
     plan: AnalysisPlan, population: Mapping[str, Mapping[str, PromptRollouts]]
 ) -> frozenset[str]:
-    """The cohorts whose rows without policy-classified rollouts state what that assumes.
+    """The cohorts whose rows without policy-classified rollouts say what covers them.
 
     A correction is widened only for a row whose sample holds a rollout a plan policy
-    classified. A row whose sample holds none is corrected over the box as given, which
-    assumes that the population its rollouts are drawn from holds none either. The row says
-    so where that may fail: in every cohort when the plan sets a policy that classifies
+    classified. A row whose sample holds none is corrected over the box as given, and the
+    population its rollouts are drawn from may still hold some: the bound on the row's
+    unclassified share covers them (see ``_policy_absent_assumption``). The row says so where
+    the population may hold them: in every cohort when the plan sets a policy that classifies
     rollouts (a missing score or a sample error counted as a failure, or token-limit or
     content-filter stops classified), and in a cohort whose sample holds such a rollout in
     some row. Plans at the defaults whose samples hold none state it in the documentation only.
@@ -318,11 +319,22 @@ def _policy_cohorts(
 
 
 def _policy_absent_assumption() -> str:
+    """What covers the policy-classified rollouts a row's population may hold, its run none.
+
+    Read as judge verdicts, a policy failure would lower the corrected upper bound and a
+    policy-safe rollout raise the lower. The share bound is computed from the run's count of
+    unclassified rollouts, which in a run with no policy-classified rollout is also the count
+    of the two kinds together, so at its alpha it bounds their combined share. The correction
+    takes that share at its worst at each end, a failure at the upper and safe at the lower
+    (or moves each end by it under ``exclude``), which covers both kinds.
+    """
+
     return (
         "None of the row's rollouts was classified by a plan policy, so the correction uses "
-        "the box as given. That assumes the population the rollouts are drawn from holds none "
-        "either: there, a policy failure read as a judge verdict would lower the upper bound, "
-        "and a policy-safe rollout raise the lower."
+        "the box as given. The population the rollouts are drawn from may still hold such "
+        "rollouts, and the bound on the row's unclassified share covers them: it is computed "
+        "from the run's count of unclassified rollouts, which in this run is also the count "
+        "of both kinds together."
     )
 
 
