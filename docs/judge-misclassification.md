@@ -507,7 +507,9 @@ In `assumed` mode the same recombination runs once per declared scenario, with t
 scenario declares for each arm's cohort: the same box on both arms unless the scenario gives
 one of the cohorts a box of its own. Each corrected comparison is a sensitivity
 (`eligibility: diagnostic`, `role: sensitivity`, no `family_alpha`), and a scenario other
-than `primary` carries a warning that it is reported for sensitivity only.
+than `primary` carries a warning that it is reported for sensitivity only. The comparison
+sensitivity table of `report-full.md` and the interval tables of `report.html` name each
+corrected row's scenario and mark the primary one.
 
 This requires a primary interval that exposes both arm bounds -- the two-arm rectangle used
 by `weighted_kl_chernoff` and by every `comparison_sets` entry. A direct contrast

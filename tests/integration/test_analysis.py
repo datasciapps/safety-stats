@@ -35,6 +35,7 @@ from inspect_safety_stats.schema.reports import (
     VerdictRange,
 )
 from tests.claims_export import round_trip_differences
+from tests.page_script import node_or_skip, run_page
 from tests.report_rendering import rendering_differences
 from tests.template_functions import function_source
 
@@ -1592,6 +1593,131 @@ def test_each_comparison_arm_says_whether_it_took_a_cohort_box_or_the_default(
         "Each arm is corrected over its own declared box independently of the other"
         in " ".join(declared.assumptions)
     ) == (len(boxes) == 2)
+
+
+def _assumed_report_with_a_profile_sensitivity(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, assumed: bool = True
+) -> SafetyReport:
+    """The two-scenario comparison plan, its comparison also under the prompt profile."""
+    plan_path = _comparison_judge_plan(
+        tmp_path, method="weighted_kl_chernoff", calibrated=False, assumed=assumed
+    )
+    text = plan_path.read_text(encoding="utf-8")
+    primary = "    independence:\n      primary: rollout\nmultiplicity:\n"
+    assert text.count(primary) == 1
+    text = text.replace(
+        primary,
+        "    independence:\n      primary: rollout\n      sensitivities: [prompt]\nmultiplicity:\n",
+    )
+    plan_path.write_text(text, encoding="utf-8")
+    _patch_two_cohort_frames(monkeypatch)
+    return analyze(plan=load_plan(plan_path), logs="ignored")
+
+
+def _markdown_table(markdown: str, heading: str) -> list[list[str]]:
+    section = markdown.split(f"{heading}\n\n", 1)[1].split("\n\n", 1)[0]
+    return [line.strip("| ").split(" | ") for line in section.splitlines()]
+
+
+def test_the_comparison_sensitivity_table_names_each_assumed_scenario(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Each scenario's corrected comparison row names its scenario, and the primary is marked.
+
+    The scenarios' rows differ only in their bounds, and report-full.md listed them without
+    the scenario, as identical rows.
+    """
+    report = _assumed_report_with_a_profile_sensitivity(monkeypatch, tmp_path)
+
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+
+    table = _markdown_table(markdown, "### Comparison interval sensitivity")
+    assert table[0] == [
+        "Result",
+        "Role",
+        "Method",
+        "Scenario",
+        "Independence profile",
+        "Lower",
+        "Upper",
+        "Coverage scope",
+        "Bound status",
+    ]
+    rows = {(row[2], row[3]): row for row in table[2:]}
+    assert sorted(rows) == [
+        ("assumed_judge_misclassification_correction", "`declared` (primary)"),
+        ("assumed_judge_misclassification_correction", "`pessimistic`"),
+        ("weighted_kl_chernoff", "—"),
+    ]
+    # The scenarios' rows show their own bounds.
+    row = next(item for item in report.comparisons if item.level is None)
+    for scenario, label in (("declared", "`declared` (primary)"), ("pessimistic", "`pessimistic`")):
+        interval = next(
+            item for item in row.intervals if item.interval_id == f"judge_corrected_{scenario}"
+        )
+        cells = rows[("assumed_judge_misclassification_correction", label)]
+        assert cells[5:7] == [f"{interval.lower:.6f}", f"{interval.upper:.6f}"]
+
+
+def test_the_comparison_sensitivity_table_has_no_scenario_column_without_assumed_scenarios(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = _assumed_report_with_a_profile_sensitivity(monkeypatch, tmp_path, assumed=False)
+
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+
+    table = _markdown_table(markdown, "### Comparison interval sensitivity")
+    assert table[0] == [
+        "Result",
+        "Role",
+        "Method",
+        "Independence profile",
+        "Lower",
+        "Upper",
+        "Coverage scope",
+        "Bound status",
+    ]
+    assert [row[2] for row in table[2:]] == ["weighted_kl_chernoff"]
+
+
+def test_the_report_page_names_each_assumed_scenario_in_its_interval_tables(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """report.html names each scenario's row, in a comparison's and in a risk row's table.
+
+    The page listed the scenarios' corrected rows without their scenario, as identical rows.
+    """
+    node = node_or_skip()
+    report = _assumed_report_with_a_profile_sensitivity(monkeypatch, tmp_path)
+
+    run = run_page(node, render_visualization(report), tmp_path)
+
+    assert run.error is None, run.error
+    scenarios = ["declared (primary)", "pessimistic"]
+    # A comparison's sensitivity table, under the primary independence profile.
+    (alternatives,) = [
+        table for table in run.tables["comparisons"] if table[0][:2] == ["Role", "Method"]
+    ]
+    assert alternatives[0] == [
+        "Role",
+        "Method",
+        "Scenario",
+        "Independence profile",
+        "Lower",
+        "Upper",
+        "Coverage",
+    ]
+    assert [row[2] for row in alternatives[1:]] == scenarios
+    # A risk row's table of interval methods: only the corrected rows have a scenario.
+    (methods,) = [
+        table for table in run.tables["risk-table"] if table[0][:2] == ["Role", "Method"]
+    ]
+    assert methods[0][:4] == ["Role", "Method", "Scenario", "Independence profile"]
+    assert [(row[0], row[2]) for row in methods[1:]] == [
+        ("Primary", "—"),
+        ("Reference", "—"),
+        *(("Sensitivity (judge error)", scenario) for scenario in scenarios),
+    ]
 
 
 def test_contrast_only_comparisons_say_the_assumed_correction_is_unavailable(

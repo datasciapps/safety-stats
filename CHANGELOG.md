@@ -712,7 +712,11 @@ described in their pull requests.
   `judge_corrected_<scenario>` sensitivity interval with `diagnostic` eligibility. A
   comparison that cannot be corrected, such as a direct contrast interval, is named in
   `JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON`. No claim moves: assumed corrections never
-  decide one. See [Comparisons](docs/judge-misclassification.md#comparisons).
+  decide one. The "Comparison interval sensitivity" table of `report-full.md` gains a Scenario
+  column that names each corrected row's scenario and marks the primary one, and the interval
+  tables of `report.html`, for comparisons and for risk rows, do the same. Reports without
+  assumed scenarios show the same tables as before. See
+  [Comparisons](docs/judge-misclassification.md#comparisons).
 
 - **`report.include_decisions` hides decisions, and every reader defaults it to false (#58).**
   The option was read as true by `report.html` and by the Python report model when a report did

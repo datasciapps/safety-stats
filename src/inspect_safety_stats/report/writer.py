@@ -129,6 +129,16 @@ def _role_label(interval: RiskIntervalResult) -> str:
     return f"{interval.role} ({interval.varied_assumption.replace('_', ' ')})"
 
 
+def _assumed_scenario_label(interval: RiskIntervalResult, primary: str) -> str | None:
+    """The declared scenario an assumed judge correction applies, marked when it is the plan's
+    primary scenario, as the judge table labels it; None for any other interval."""
+
+    if interval.calibration_method != "assumed_judge_calibration":
+        return None
+    scenario = interval.interval_id.removeprefix("judge_corrected_")
+    return f"`{_escape(scenario)}`" + (" (primary)" if scenario == primary else "")
+
+
 def _coverage_label(risk: Any) -> str:
     if risk.simultaneous_coverage is None:
         return "—"
@@ -1877,19 +1887,35 @@ def _markdown(report: SafetyReport) -> str:
             if interval.role != "primary"
         ]
         if alternative_comparisons:
+            # Each declared scenario of an assumed judge calibration adds a row that differs
+            # from the other scenarios' rows only in its bounds, so the table names each row's
+            # scenario and marks the primary one, as the judge table does for group rows. A
+            # table without such a row has no Scenario column.
+            judge_calibration = report.presentation.judge_calibration
+            primary_scenario = (judge_calibration.primary if judge_calibration else None) or ""
+            scenario_labels = [
+                _assumed_scenario_label(interval, primary_scenario)
+                for _, interval in alternative_comparisons
+            ]
+            scenario_column = any(item is not None for item in scenario_labels)
             lines.extend(
                 [
                     "",
                     "### Comparison interval sensitivity",
                     "",
                     (
-                        "| Result | Role | Method | Independence profile | Lower | Upper | "
-                        "Coverage scope | Bound status |"
+                        "| Result | Role | Method | "
+                        + ("Scenario | " if scenario_column else "")
+                        + "Independence profile | Lower | Upper | Coverage scope | Bound status |"
                     ),
-                    "|---|---|---|---|---:|---:|---|---|",
+                    "|---|---|---|"
+                    + ("---|" if scenario_column else "")
+                    + "---|---:|---:|---|---|",
                 ]
             )
-            for comparison, interval in alternative_comparisons:
+            for (comparison, interval), scenario_label in zip(
+                alternative_comparisons, scenario_labels, strict=True
+            ):
                 lines.append(
                     "| "
                     + " | ".join(
@@ -1897,6 +1923,7 @@ def _markdown(report: SafetyReport) -> str:
                             _escape(comparison.result_id),
                             _escape(_role_label(interval)),
                             _escape(interval.method),
+                            *([scenario_label or "—"] if scenario_column else []),
                             _escape(interval.independence_profile),
                             _number(interval.lower, places),
                             _number(interval.upper, places),
