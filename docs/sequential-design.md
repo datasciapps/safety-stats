@@ -238,8 +238,9 @@ are ignored, so a rule that stops an item's later epochs on its results cannot b
    rollouts count as independent blocks, as they do at the fixed horizon.
 
 At \(t=N\) step 1 is exact, and only step 2 remains. The package's labelling protocol uses a
-related sequence, `hypergeometric_confidence_sequence`, for binary labels without weights
-(statistical methods, judge calibration); this one takes weighted outcomes in \([0,1]\).
+related sequence, `judge_accuracy_confidence_sequence`, a binomial prior-posterior ratio for
+binary labels without weights (statistical methods, judge calibration); this one takes
+weighted outcomes in \([0,1]\).
 
 Replacing an outcome by a larger value lowers every factor of the capital, and the fractions
 are fixed in advance, so the bound stays valid when unfinished or unclassified epochs before

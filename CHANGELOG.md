@@ -252,10 +252,14 @@ described in their pull requests.
   the labelling queue, the seed that ordered it, and why labelling stopped. The analysis
   checks that the labels are exactly the queue's first rows, and the declared size under
   `stopping: fixed_size`; a violation is the error `JUDGE_LABELLING_PROTOCOL_VIOLATED`.
-  `stopping: data_dependent` bounds each judge stratum with an anytime-valid confidence
-  sequence, so labelling may stop once the result is clear. The report records the queue's
-  hash and the labelled prefix in `provenance.judge_calibration.protocol`. Plans without a
-  protocol produce the same bytes and hash as before. See
+  `stopping: data_dependent` bounds each judge stratum's accuracy with an anytime-valid
+  binomial confidence sequence, so labelling may stop once the result is clear. The sequence
+  bounds the probability that a rollout of the stratum is truly unsafe, which the run's
+  rollouts only sample, not the share of them that is: it does not use the stratum's size, and
+  even a stratum labelled in full keeps a width. It is wider than Clopper-Pearson at the same
+  labels. The report records the queue's hash and the labelled prefix in
+  `provenance.judge_calibration.protocol`. Plans without a protocol produce the same bytes
+  and hash as before. See
   [Labelling protocol](docs/judge-misclassification.md#labelling-protocol-experimental).
 
 - **Arm contrasts and a simultaneous slice family in generative evaluation (experimental).**
