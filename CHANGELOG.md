@@ -618,6 +618,13 @@ described in their pull requests.
   Plans whose rollouts are all classified by the judge are unchanged. See
   [Workflow](docs/judge-misclassification.md#workflow).
 
+- **The noisy-but-valid test refuses a row that holds rollouts a plan policy classified
+  (changes claims).** The test inverts the judge-reported bounds over the judge's sensitivity
+  and false-positive rate, reading every classified rollout as a judge verdict, so a policy
+  block counted safe lowered the true-risk upper bound it certified against. Such a
+  `noisy_valid_test` claim is now INCONCLUSIVE, with the reason. A `corrected_interval` claim
+  on the same row is decided on the judge correction, which covers such rollouts.
+
 - **`report.include_decisions` hides decisions, and every reader defaults it to false (#58).**
   The option was read as true by `report.html` and by the Python report model when a report did
   not record it, and as false by the plan and the CLI. Every reader now reads it as false. The

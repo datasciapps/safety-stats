@@ -248,3 +248,41 @@ def test_a_strata_file_need_not_place_rollouts_a_policy_classified(tmp_path: Any
     assert not outcome.with_code("JUDGE_VALIDATION_POLICY_CLASSIFIED")
     corrected = _interval(_row(outcome), "judge_corrected_validated")
     assert corrected is not None and corrected.eligibility == "certifying"
+
+
+# --- The noisy-but-valid test refuses such a row --------------------------------------------
+
+
+@pytest.mark.parametrize("blocked", [True, False])
+def test_the_noisy_valid_test_does_not_read_policy_classifications_as_verdicts(
+    tmp_path: Any, blocked: bool
+) -> None:
+    def noisy_valid(inputs: Inputs, observations: list[Any]) -> None:
+        validated(inputs, judge_verdicts(observations), sampling="simple_random")
+        inputs.plan["claims"][0]["method"] = "noisy_valid_test"
+        # The test needs a certifying direct-mean bound with its own alpha.
+        inputs.plan["multiplicity"]["families"].append(
+            {"id": "direct", "purpose": "simultaneous_intervals", "method": "bonferroni",
+             "alpha": 0.05}
+        )
+        inputs.plan["outputs"]["direct_mean_intervals"] = {
+            "enabled": True,
+            "method": "weighted_kl_chernoff",
+            "family": "direct",
+            "independence": {"primary": "rollout"},
+        }
+        inputs.plan.setdefault("design", {}).setdefault(
+            "independence_profiles", {"rollout": {"block_by": ["rollout"]}}
+        )
+
+    outcome = judged(noisy_valid, policy_blocked if blocked else None)(tmp_path)
+
+    decided = claim(outcome)
+    assert decided.method == "noisy_valid_certification_test"
+    refused = any("classified by a plan policy" in item for item in decided.reasons)
+    assert refused is blocked
+    if blocked:
+        assert decided.status == "INCONCLUSIVE"
+        assert (decided.lower, decided.upper) == (None, None)
+    else:
+        assert decided.upper is not None

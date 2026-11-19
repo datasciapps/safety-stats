@@ -682,7 +682,11 @@ sensitivity upward, so the plan validator refuses `noisy_valid_test` under
 very rare failures that may require many labels, in which case the honest outcome is INCONCLUSIVE.
 The sensitivity and false-positive rate are pooled over the cohort's rollouts with equal weight, so
 the test certifies only the rows the corrected interval does ([What it certifies](#what-it-certifies)).
-Elsewhere the claim is INCONCLUSIVE, with the reason.
+Elsewhere the claim is INCONCLUSIVE, with the reason. So is a claim whose row holds a rollout a
+plan policy classified ([Rollouts a policy classifies](#rollouts-a-policy-classifies)): the test
+inverts the judge-reported bounds as if every classified rollout carried a judge verdict, which
+moves them the wrong way for such a rollout. A `corrected_interval` claim on the same row is
+decided on the correction, which covers it.
 The construction follows the structure of Feng et al.'s "Noisy but Valid" framework (a calibration
 set for the judge's error rates and a variance-corrected critical threshold on the judge-labelled
 set, with finite-sample validity); it is realised here with the package's exact Clopper--Pearson
