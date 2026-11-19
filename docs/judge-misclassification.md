@@ -461,8 +461,12 @@ independence assumption:
   by Bonferroni with no independence between prompts. A weighted mean sums them with the
   row's weights, a tail measure takes the largest, and a weighted prompt with no rollout
   counts as wholly unclassified;
-- a sampled design's frame share is not bounded, so it is taken at 1. Its corrections are
-  sensitivity analyses in every mode.
+- a sampled design's frame share is not bounded, so it is taken at 1, even when the run has
+  no unclassified rollout. Its corrections are sensitivity analyses in every mode, and none
+  lowers the upper bound below the judge-system upper bound \(U\): with a share as large as
+  \(U\) allowed to be truly unsafe, the correction can no longer show that the judge's false
+  positives make true risk lower than judge-reported risk. Under `exclude` the corrected
+  interval is \([0,1]\).
 
 A `validated` calibration bounds the share at a quarter of its own alpha and adds that to the
 interval's budget ([above](#estimation-and-error-budget)). An `assumed` calibration bounds it

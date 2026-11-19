@@ -587,6 +587,10 @@ described in their pull requests.
     between prompts. The lower end can fall by that times `rho_0` and the upper end rise by
     that times `1 - rho_1`, so a box whose `rho_1` reaches 1 and `rho_0` reaches 0 is
     unchanged.
+  - A sampled design's share is taken at 1, even when the run has no unclassified rollout.
+    Its judge corrections therefore no longer lower the upper bound below the judge-system
+    upper bound: they can no longer show that the judge's false positives make true risk
+    lower than judge-reported risk. Under an excluding policy they are `[0, 1]`.
   - Under `missing: exclude` or `errors: exclude` the judge-system bounds cover only the
     classified rollouts' rate. The correction now corrects that rate and lets the share move
     it at its worst case. A weighted mean's share bound holds only for the prompts' mean
