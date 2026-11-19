@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from inspect_safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
 from tests.diagnostic_codes.harness import Inputs, Outcome, claim
 from tests.diagnostic_codes.judge_analysis_cases import (
     DECLARED,
@@ -25,6 +26,7 @@ from tests.diagnostic_codes.judge_analysis_cases import (
     comparison,
     judge_verdicts,
     judged,
+    panel,
     policy_blocked,
     validated,
     with_labels,
@@ -286,3 +288,43 @@ def test_the_noisy_valid_test_does_not_read_policy_classifications_as_verdicts(
         assert (decided.lower, decided.upper) == (None, None)
     else:
         assert decided.upper is not None
+
+
+# --- The panel-derived correction ----------------------------------------------------------
+
+
+def _derived_bounds(interval: Any) -> tuple[float, float, float, float]:
+    """The derived sensitivity and specificity box an interval states."""
+
+    (text,) = [item for item in interval.assumptions if item.startswith("Derived sensitivity")]
+    (se_low, se_high), (sp_low, sp_high) = re.findall(r"\[([^,]+), ([^\]]+)\]", text)
+    return float(se_low), float(se_high), float(sp_low), float(sp_high)
+
+
+def test_the_panel_derived_correction_credits_no_panel_error_on_a_row_a_policy_classified(
+    tmp_path: Any,
+) -> None:
+    outcome = panel("any", None, None, policy_blocked)(tmp_path)
+
+    # Group all holds the blocked rollout: the inversion takes specificity 1 at the upper
+    # bound and sensitivity 1 at the lower.
+    row = _row(outcome)
+    widened = _interval(row, "judge_corrected_panel_derived")
+    sensitivity, _, specificity, _ = _derived_bounds(widened)
+    false_positive = 1 - specificity
+    assert widened.upper == pytest.approx(min(1.0, row.upper / sensitivity), abs=1e-12)
+    assert widened.lower == pytest.approx(
+        max(0.0, (row.lower - false_positive) / specificity), abs=1e-12
+    )
+    assert any("not by the panel" in item for item in widened.assumptions)
+    assert not widened.warnings
+    # Group b, p2 only, is inverted over the derived box itself.
+    row = _row(outcome, "b")
+    plain = _interval(row, "judge_corrected_panel_derived")
+    box = JudgeAccuracyBox(*_derived_bounds(plain))
+    expected = identified_risk_set(row.lower, row.upper, box)
+    assert (plain.lower, plain.upper) == pytest.approx((expected.lower, expected.upper), abs=0)
+    assert not any("plan policy" in item for item in plain.assumptions)
+    (found,) = outcome.with_code("JUDGE_CORRECTION_POLICY_CLASSIFIED")
+    assert found.details == {"groups": ["all"], "policy_safe": 1, "policy_failures": 0}
+

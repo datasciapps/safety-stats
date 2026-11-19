@@ -625,6 +625,15 @@ described in their pull requests.
   `noisy_valid_test` claim is now INCONCLUSIVE, with the reason. A `corrected_interval` claim
   on the same row is decided on the judge correction, which covers such rollouts.
 
+- **The panel-derived correction no longer reads rollouts a plan policy classified as panel
+  verdicts (changes `report.json`).** Its Rogan--Gladen inversion took a false alarm off a
+  policy block counted safe, and scaled a policy failure up for missed failures, which moved
+  both bounds of `judge_corrected_panel_derived` the wrong way. On a row or hierarchy node
+  holding such a rollout, the inversion now lets sensitivity and specificity reach 1, the
+  interval says so in its assumptions, and `JUDGE_CORRECTION_POLICY_CLASSIFIED` names the
+  groups. Rows without such rollouts are unchanged. See
+  [Rollouts a policy classifies](docs/judge-misclassification.md#rollouts-a-policy-classifies).
+
 - **`report.include_decisions` hides decisions, and every reader defaults it to false (#58).**
   The option was read as true by `report.html` and by the Python report model when a report did
   not record it, and as false by the plan and the CLI. Every reader now reads it as false. The

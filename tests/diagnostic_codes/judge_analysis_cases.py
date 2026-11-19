@@ -462,8 +462,16 @@ def _tail_recorded(triggered: Outcome, control: Outcome) -> None:
     assert triggered.report.claims == control.report.claims
 
 
-def panel(rule: str, groups_a: list[str] | None, groups_b: list[str] | None) -> Run:
-    """A composite primary of judges a and b, each with declared, optionally scoped, accuracy."""
+def panel(
+    rule: str,
+    groups_a: list[str] | None,
+    groups_b: list[str] | None,
+    data: Callable[[Inputs], None] | None = None,
+) -> Run:
+    """A composite primary of judges a and b, each with declared, optionally scoped, accuracy.
+
+    ``data`` changes the inputs after the panel is declared.
+    """
 
     def change(inputs: Inputs) -> None:
         _domains(inputs)
@@ -497,6 +505,8 @@ def panel(rule: str, groups_a: list[str] | None, groups_b: list[str] | None) -> 
     def run(directory: Path) -> Outcome:
         inputs = base_inputs()
         change(inputs)
+        if data is not None:
+            data(inputs)
         return run_analysis(inputs, directory)
 
     return run

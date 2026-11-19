@@ -96,7 +96,9 @@ def _analysis_core(
     judge_correction = apply_judge_correction(
         plan, data, hierarchy_nodes, projected, diagnostics
     )
-    panel_correction = apply_panel_derived_correction(plan, judge_correction.rows, diagnostics)
+    panel_correction = apply_panel_derived_correction(
+        plan, data, hierarchy_nodes, judge_correction.rows, diagnostics
+    )
     final = panel_correction.rows
     risks, hierarchy_risks, comparisons = final.risks, final.hierarchy_risks, final.comparisons
     judge_calibration_summary = judge_correction.summary

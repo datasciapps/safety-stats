@@ -492,6 +492,18 @@ missed true risk in 95% to 100% of runs on the side tested, for all four measure
 nominal 5%. The correction above missed in none
 (`tests/unit/test_judge_policy_correction.py`).
 
+The [panel-derived correction](#deriving-a-panels-accuracy-box) has the same problem and the same
+remedy. Its Rogan--Gladen inversion takes a false alarm off every rollout, a policy-safe one
+included, and scales every flagged rollout up for missed failures, a policy failure included. On
+a row that holds such a rollout, sensitivity and specificity may therefore reach 1: the upper
+bound is the inversion at specificity 1, \(U/\underline{Se}\), and the lower bound the inversion
+at sensitivity 1, \((L-\overline{FPR})/(1-\overline{FPR})\), each clipped to \([0,1]\). At
+specificity 1 a policy-safe rollout maps to 0 and a policy failure to at least 1; at sensitivity
+1 a policy failure maps to 1 and a policy-safe rollout to at most 0. So both hold whatever the
+policy's share, prompt by prompt. In the same kind of simulation, with a panel of specificity 0.8
+and up to 60% policy-safe rollouts, and one of sensitivity 0.6 with up to 40% policy failures,
+inverting over the box itself missed in 93% to 100% of runs, and the widened box in none.
+
 ### Comparisons
 
 A comparison is corrected by correcting **each arm with its own cohort's calibration** and
@@ -852,6 +864,10 @@ the identification result of the partial-identification literature made concrete
 dependent judges cannot substitute for calibration. Because declared boxes are assumptions, this
 interval is `diagnostic` and can never move a claim; the certifying route for a panel remains a
 `validated` calibration of the composite's own verdict strata.
+
+A row that holds rollouts a plan policy classified is inverted over a wider box, with
+sensitivity and specificity free to reach 1
+([Rollouts a policy classifies](#rollouts-a-policy-classifies)).
 
 A declaration can be scoped with `accuracy.groups` when a judge's ranges are known for some
 benchmarks only. The composite's box then holds only in the groups that every member's

@@ -1096,9 +1096,10 @@ _CODES: tuple[CodeEntry, ...] = (
             "the judge's error rates describe."
         ),
         consequence=(
-            "The judge corrections of rows holding rollouts a plan policy classified credit "
-            "the judge with no false alarm at the upper bound and no missed failure at the "
-            "lower, which widens them, and those rows have no asymptotic reference intervals."
+            "The judge corrections of rows holding rollouts a plan policy classified, the rho "
+            "corrections and the panel-derived one, credit the judge with no false alarm at the "
+            "upper bound and no missed failure at the lower, which widens them, and those rows "
+            "have no asymptotic reference intervals."
         ),
         remedy=(
             "None needed: the policy's classification is the truth the estimand defines. To "

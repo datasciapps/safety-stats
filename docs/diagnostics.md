@@ -1283,9 +1283,10 @@ cannot be computed, or a result it qualifies.
 - **Effect:** [adjusted](#effects)
 - **Assumption:** Every classified rollout of a judge-corrected row carries a judge verdict, which
   the judge's error rates describe.
-- **Consequence:** The judge corrections of rows holding rollouts a plan policy classified credit
-  the judge with no false alarm at the upper bound and no missed failure at the lower, which widens
-  them, and those rows have no asymptotic reference intervals.
+- **Consequence:** The judge corrections of rows holding rollouts a plan policy classified, the rho
+  corrections and the panel-derived one, credit the judge with no false alarm at the upper bound and
+  no missed failure at the lower, which widens them, and those rows have no asymptotic reference
+  intervals.
 - **Remedy:** None needed: the policy's classification is the truth the estimand defines. To narrow
   the correction, rescore the rollouts or classify them by their score, with inputs.score.errors,
   missing, content_filter_stops or token_limit.

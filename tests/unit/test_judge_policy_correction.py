@@ -1,5 +1,7 @@
 """Judge corrections of a row holding rollouts a plan policy classified: seeded Monte Carlo.
 
+The rho corrections come first, then the panel-derived correction.
+
 Each prompt's rollouts fall into four kinds: a plan policy counts some as failures and some
 safe, which is their true outcome; some go unclassified, with a true outcome of ``unknown``;
 and the judge classifies the rest, flagging each with probability ``flagged``. A judge-unsafe
@@ -19,7 +21,9 @@ import numpy as np
 import pytest
 
 from inspect_safety_stats.analysis.judge_calibration import _policy_free_box
+from inspect_safety_stats.analysis.judge_panel import _policy_free_accuracy_box
 from inspect_safety_stats.stats.binomial import missingness_robust_binomial_bounds
+from inspect_safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
 from inspect_safety_stats.stats.misclassification import JudgeCalibration, correct_judge_risk
 from inspect_safety_stats.stats.risk import maximum_risk, top_k_mean, weighted_cvar, weighted_mean
 
@@ -140,3 +144,89 @@ def test_the_widened_box_frees_only_the_ends_that_credit_the_judge_with_an_error
     )
     assert corrected.lower == pytest.approx(0.2 * 0.8, abs=1e-15)
     assert corrected.upper == pytest.approx(0.4 + 0.6 * 0.05, abs=1e-15)
+
+
+# --- The panel-derived correction ----------------------------------------------------------
+#
+# The panel classifies a rollout as unsafe with probability SE when it is truly unsafe and
+# 1 - SP when it is truly safe; ``prevalence`` is the share of truly unsafe rollouts among those
+# it classifies. The row is inverted over a point box at the panel's true accuracies. A policy-
+# safe rollout read as a panel verdict has a false alarm taken off it, which lowers the upper
+# bound: the upper side has a panel with many false alarms and many policy-safe rollouts. A
+# policy failure read as a verdict is scaled up for missed failures, which raises the lower
+# bound: the lower side has a panel that misses failures and many policy failures.
+_PANEL_UPPER = ((0.2, 0.0, 0.5, 0.0, 0.0), (0.3, 0.0, 0.5, 0.05, 1.0), (0.1, 0.0, 0.6, 0.0, 0.0))
+_PANEL_LOWER = ((0.1, 0.3, 0.0, 0.0, 0.0), (0.2, 0.4, 0.0, 0.0, 0.0), (0.05, 0.3, 0.1, 0.1, 0.0))
+_PANEL_ACCURACY = {"upper": (0.9, 0.8), "lower": (0.6, 0.98)}
+
+
+def _panel_true_risk(prompt: Prompt) -> float:
+    prevalence, failures, safe, unclassified, unknown = prompt
+    return (1 - failures - safe - unclassified) * prevalence + failures + unclassified * unknown
+
+
+def _panel_misses(
+    measure: str, prompts: tuple[Prompt, ...], side: str, seed: int
+) -> tuple[float, float]:
+    """As :func:`_misses`, for the Rogan-Gladen inversion of the panel-derived correction."""
+
+    rng = np.random.default_rng(seed)
+    aggregate = _MEASURES[measure]
+    sensitivity, specificity = _PANEL_ACCURACY[side]
+    truth = aggregate([_panel_true_risk(prompt) for prompt in prompts])
+    box = JudgeAccuracyBox(sensitivity, sensitivity, specificity, specificity)
+    widened = _policy_free_accuracy_box(box)
+    misses = naive_misses = 0
+    for _ in range(_REPLICATIONS):
+        lowers, uppers = [], []
+        for prevalence, failures, safe, unclassified, _ in prompts:
+            judged = 1 - failures - safe - unclassified
+            counts = rng.multinomial(_ROLLOUTS, [judged, failures, safe, unclassified])
+            flag = sensitivity * prevalence + (1 - specificity) * (1 - prevalence)
+            flagged = int(rng.binomial(int(counts[0]), flag))
+            bounds = missingness_robust_binomial_bounds(
+                flagged + int(counts[1]),
+                int(counts[0] + counts[1] + counts[2]),
+                _ROLLOUTS,
+                alpha_lower=_ALPHA_SIDE,
+                alpha_upper=_ALPHA_SIDE,
+            )
+            lowers.append(bounds.lower)
+            uppers.append(bounds.upper)
+        low, high = aggregate(lowers), aggregate(uppers)
+        corrected = identified_risk_set(low, high, widened)
+        naive = identified_risk_set(low, high, box)
+        if side == "upper":
+            misses += corrected.upper < truth
+            naive_misses += naive.upper < truth
+        else:
+            misses += corrected.lower > truth
+            naive_misses += naive.lower > truth
+    return misses / _REPLICATIONS, naive_misses / _REPLICATIONS
+
+
+_PANEL_SCENARIOS = [
+    (measure, side, prompts)
+    for side, prompts in (("upper", _PANEL_UPPER), ("lower", _PANEL_LOWER))
+    for measure in sorted(_MEASURES)
+]
+
+
+@pytest.mark.parametrize(("measure", "side", "prompts"), _PANEL_SCENARIOS)
+def test_the_panel_derived_correction_of_a_row_a_policy_classified_covers_at_its_nominal_rate(
+    measure: str, side: str, prompts: tuple[Prompt, ...]
+) -> None:
+    seed = 400 + _PANEL_SCENARIOS.index((measure, side, prompts))
+    misses, naive = _panel_misses(measure, prompts, side, seed)
+    allowance = 3 * math.sqrt(_NOMINAL * (1 - _NOMINAL) / _REPLICATIONS)
+    assert misses <= _NOMINAL + allowance, (measure, side, misses)
+    # Sharp: inverted over the box itself, the bound misses far more often than nominal.
+    assert naive >= 0.5, (measure, side, naive)
+
+
+def test_the_widened_panel_box_frees_only_the_ends_that_credit_the_panel_with_an_error() -> None:
+    widened = _policy_free_accuracy_box(JudgeAccuracyBox(0.8, 0.95, 0.9, 0.99))
+    assert widened == JudgeAccuracyBox(0.8, 1.0, 0.9, 1.0)
+    corrected = identified_risk_set(0.2, 0.4, widened)
+    assert corrected.lower == pytest.approx((0.2 - 0.1) / 0.9, abs=1e-15)
+    assert corrected.upper == pytest.approx(0.4 / 0.8, abs=1e-15)
