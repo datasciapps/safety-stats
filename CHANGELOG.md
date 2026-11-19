@@ -650,11 +650,11 @@ described in their pull requests.
   need `question_id` and `task_id` even when the plan never named them. Now `prompt_id` is
   always required, and `question_id` and `task_id` only when the plan names them, for example in
   `design.hierarchy` and `design.weights` (whose defaults name both), a weight hierarchy, a group
-  filter, an independence profile's `block_by` or a comparison's `pair_key` or `cluster_key`.
-  A level that the plan doesn't name and the manifest omits is set to each prompt's `prompt_id`, so each prompt counts as its own question or task.
-  `plan fixed-design --manifest` requires the levels that its `--weights` name. Manifests that
-  were accepted before give the same results. See
-  [`inputs`](docs/plan-reference.md#inputs).
+  filter, an independence profile's `block_by` or a comparison's `pair_key` or `cluster_key`. A
+  level that the plan doesn't name and the manifest omits is set to each prompt's `prompt_id`,
+  so each prompt counts as its own question or task. `plan fixed-design --manifest` requires the
+  levels that its `--weights` name. Manifests that were accepted before give the same results.
+  See [`inputs`](docs/plan-reference.md#inputs).
 
 - **A sampled design's report states the frame as its scope (changes report text).** Every
   report stated the fixed-design scope, `design: fixed` and "Results apply to the declared

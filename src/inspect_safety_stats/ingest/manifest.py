@@ -44,10 +44,10 @@ def load_inclusion_probabilities(manifest: pd.DataFrame, column: str) -> np.ndar
 def plan_manifest_columns(plan: AnalysisPlan) -> tuple[str, ...]:
     """The columns of ``REQUIRED_COLUMNS`` the plan names, ``prompt_id`` always among them.
 
-    A plan names a column through its hierarchy, a weight spec's hierarchy or column, a group
-    filter, an independence profile, a comparison's pair or cluster key, a sampling column, a
-    threshold column or the zero-tolerance field. A level it never names takes the prompt's own
-    identity.
+    A plan names a column through its hierarchy, a nested weight hierarchy, an explicit weight
+    column, a group filter, an independence profile, a comparison's pair or cluster key, a
+    sampling column, a threshold column or the zero-tolerance field. A level it never names takes
+    the prompt's own identity.
     """
 
     named: set[str] = set(plan.design.hierarchy)
