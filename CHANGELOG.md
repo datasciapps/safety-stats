@@ -58,6 +58,16 @@ described in their pull requests.
   `--runs` and `--rollouts` in place of `--logs`, and `source=RolloutFiles(...)` in place of
   `logs=` in Python. See [Rollout files](docs/rollout-files.md).
 
+- **Judge-error stress for threshold claims (experimental).** With
+  `report.judge_error_stress: true`, every claim in `report.json` gains a `judge_error_stress`
+  record, and `report.md` gains a section after the claims. For a claim decided on
+  judge-reported bounds, the record gives the sensitivity and specificity at which the PASS or
+  FAIL would no longer hold for true risk. When the primary outcome's judge, or its `any` or
+  `all` composite, declares accuracy ranges, it also gives the verdict over that box and whether
+  it matches the claim. It never changes a claim. Plans without the field keep their hash and
+  their output. See
+  [Stressing a threshold verdict](docs/judge-misclassification.md#stressing-a-threshold-verdict-experimental).
+
 - **A live rewrite kernel without an external API.** The live generative example runs with an
   open-weight model served locally through Inspect's `vllm/` provider:
   `examples/generative_live/plan-local.yaml` with the kernel factory `build_local_kernel`. The

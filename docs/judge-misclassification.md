@@ -524,6 +524,89 @@ dependent judges cannot substitute for calibration. Because declared boxes are a
 interval is `diagnostic` and can never move a claim; the certifying route for a panel remains a
 `validated` calibration of the composite's own verdict strata.
 
+## Stressing a threshold verdict (experimental)
+
+Without a validated calibration, a threshold claim is decided on judge-reported risk. Its
+verdict then says nothing about how good the judge must be for the same verdict to hold for
+true risk. A PASS whose upper bound sits just below the threshold may need a nearly perfect
+judge. The opt-in stress analysis reports that requirement beside each claim:
+
+```yaml
+report:
+  include_decisions: true
+  judge_error_stress: true
+```
+
+It is experimental: its fields and wording may change in a minor release. It is diagnostic
+only and never changes a claim's status.
+
+**Tipping lines.** Take the prevalence-free model of the
+[noisy-but-valid test](#certifying-a-threshold-directly-the-noisy-but-valid-test),
+\(q=\pi\,Se+(1-\pi)\,FPR\) with \(FPR=1-Sp\), applied unchanged to every prompt. Like the
+correction, it carries over to `weighted_mean`, `maximum`, `cvar` and `top_k_mean`. Write
+\([L,U]\) for the judge-reported bounds, \(a\) for `acceptable_upper`, \(b\) for
+`unacceptable_lower`, and \(s\) for the share of the row's weight on rollouts the judge never
+classified. The bounds complete those rollouts as judge-safe at the lower end and judge-unsafe
+at the upper. The stress analysis keeps the same completion on the true-risk scale and inverts
+only the classified mass. Then
+
+- the PASS (\(U\le a\)) holds for true risk if and only if \((a-s)\,Se+(1-a)\,FPR\ge U-s\);
+- the FAIL (\(L\ge b\)) holds for true risk if and only if \(b\,Se+(1-s-b)\,FPR\le L\).
+
+Each condition is a line in the \((Se,Sp)\) square. The report gives where each line meets the
+two perfect edges:
+
+| Field | Meaning |
+|---|---|
+| `pass_sensitivity_at_perfect_specificity` | With no false alarms, PASS holds iff \(Se\ge (U-s)/(a-s)\) |
+| `pass_specificity_at_perfect_sensitivity` | With no misses, PASS holds iff \(Sp\le (1-U)/(1-a)\) |
+| `fail_sensitivity_at_perfect_specificity` | With no false alarms, FAIL holds iff \(Se\le L/b\) |
+| `fail_specificity_at_perfect_sensitivity` | With no misses, FAIL holds iff \(Sp\ge 1-(L-b)/(1-s-b)\) |
+
+A value above 1 or below 0 means the condition holds along the whole edge or nowhere on it.
+`null` means the line never meets that edge. For example, a PASS with \(U=4.98\%\) against
+\(a=5\%\) and no unclassified rollouts needs \(Se\ge0.996\) even at perfect specificity. A
+false negative rate above 0.4% is enough to put true risk over the threshold.
+
+The two directions differ. Missed failures (low \(Se\)) undermine a PASS, because true risk is
+higher than reported. False alarms (low \(Sp\)) undermine a FAIL, because part of the reported
+risk is judge noise. A PASS survives any specificity at perfect sensitivity, and a FAIL any
+sensitivity at perfect specificity.
+
+**Declared box.** When the primary outcome's judge declares `accuracy` ranges, the record also
+gives the true-risk bounds over that box, the verdict they give (`stressed_status`), and
+whether it matches the claim's status (`robust`). That judge is either a judge in
+`inputs.judges` whose score is the primary score, or an `any` or `all` composite whose members
+all declare ranges, with its box [derived as above](#deriving-a-panels-accuracy-box).
+`accuracy_source` names it, as `judge:<id>` or `composite:<id>`. Both inversions are separately
+monotone in \(Se\) and \(FPR\), so the bounds over the box are attained at its vertices. When the
+box admits \(Se+Sp\le1\), or no accuracy in it can produce the observed bounds, true risk is not
+identified: the bounds are \([0,1]\), `identified` is false, and the stressed verdict is
+INCONCLUSIVE. Without a declared box these fields are `null`, and the lines are still reported.
+
+**Where it does not apply.** Every claim gets a `judge_error_stress` record. Where the analysis
+does not apply, the record has `applicable: false` and a `reason`. That is the case for:
+
+- comparison claims, because the judge's accuracy may differ between arms;
+- claims without complete bounds;
+- claims not decided on their bounds: non-certifying evidence, an exploratory analysis, or
+  invalid data integrity;
+- `noisy_valid_test` claims, and claims decided on a validated correction, which already
+  account for judge error;
+- claims that a validated calibration leaves INCONCLUSIVE;
+- measures other than `weighted_mean`, `maximum`, `cvar` and `top_k_mean`.
+
+`report.md` gains a **Judge-error stress (experimental)** section after the claims, with one row
+per claim, the declared box of each source, and the reasons for claims that were not stressed.
+When `report.include_decisions` is false, the section only points to `report.json`. With the
+switch off, the field is left out of the plan's dump and of every claim, so plans that do not
+opt in keep their hash and every artifact byte for byte.
+
+Two limits apply, as for the assumed mode. One \((Se,Sp)\) is applied to every prompt, so a
+judge whose accuracy varies with the prompt or with the model under test is not covered. And a
+declared box is an assumption, not evidence. The certifying route remains a `validated`
+calibration.
+
 ## Getting to evidence
 
 `mode: validated` supplies the machinery; the labels are the remaining cost. An anchor must

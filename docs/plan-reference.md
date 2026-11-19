@@ -566,6 +566,7 @@ claims:
 | `include_prompt_text` | false | Reserved; raw content remains omitted in v1 |
 | `include_observations` | true | Write normalized observation CSV |
 | `decimal_places` | 6 | Markdown display precision; JSON retains full precision |
+| `judge_error_stress` | false | Experimental. Add to every claim the judge accuracy at which its verdict would change for true risk, and the verdict over the primary judge's declared accuracy box; diagnostic only. See [Stressing a threshold verdict](judge-misclassification.md#stressing-a-threshold-verdict-experimental) |
 
 ## Generate JSON schemas
 
