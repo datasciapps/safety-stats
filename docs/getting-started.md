@@ -30,8 +30,7 @@ The script runs a 12-prompt refusal evaluation in Inspect for two simulated conf
 baseline and a candidate. It then analyzes the logs and prints the comparison. The whole run takes
 about half a minute, and the [demo README](../examples/demo/README.md) explains the simulation.
 
-The recordings show the same steps one command at a time. They were made with the demo's
-earlier, hand-written plan, so their numbers differ from what the demo prints now. Planning comes first: how many
+The recordings show the first steps one command at a time. Planning comes first: how many
 failure-free rollouts it takes to show that a failure rate is below 1%, and which rates 500
 rollouts can tell apart from a 5% threshold.
 
@@ -43,13 +42,8 @@ configuration.
 ![Running the evaluation in Inspect](media/demo/light/2-eval.gif)
 
 `validate` checks the logs against the plan and the design manifest. `analyze` then writes the
-report.
-
-![Validating and analyzing the logs](media/demo/light/3-analyze.gif)
-
-`show_results.py` prints the headline numbers from `report.json`.
-
-![The headline results](media/demo/light/4-results.gif)
+report, and `show_results.py` prints the headline numbers from `report.json`. The
+[demo README](../examples/demo/README.md#the-same-steps-one-at-a-time) has these commands.
 
 The full report is `reports/demo/report.html`, a single file that opens in any browser. It adds
 the bounds for every prompt and every level of the hierarchy, and the audit details.

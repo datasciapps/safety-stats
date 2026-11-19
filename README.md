@@ -78,8 +78,6 @@ about half a minute:
 python examples/demo/run_demo.py
 ```
 
-![Headline results of the demo](docs/media/demo/light/4-results.gif)
-
 The other guides and the examples are listed under [Documentation](#documentation).
 
 ## Current capabilities
