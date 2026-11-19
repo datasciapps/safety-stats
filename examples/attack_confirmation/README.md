@@ -31,15 +31,49 @@ probability 1 − (1 − f)^K:
 | 0.05 | 0.23 | 0.64 | 0.95 |
 
 The confirmation verdict is drawn once, after the search has ended, so the search does not
-select it. Its error rate is the confirmation judge's own, and the package's judge correction
-applies to it (see [Judge misclassification](../../docs/judge-misclassification.md)). It
-costs one target call and one judge call per run, against up to K of each in the search.
+select it, on two conditions that the task does not check:
+
+- **The target samples.** The fresh completion is a new draw only at a temperature above 0.
+  At temperature 0 it repeats the response that the attacker's judge called unsafe, and the
+  confirmation judge reads the very text the search selected.
+- **The two judges err independently.** The task refuses only a confirmation judge with the
+  same name as the attacker's. Both judges here use one rubric (`JUDGE_TEMPLATE`), and judges
+  that share a rubric or a model family tend to accept the same false positives, the ones the
+  search selected for. A judge of another model family, with a rubric of its own, keeps them
+  apart better; their independence stays an assumption.
+
+Then the confirmation's error rates are the confirmation judge's own on the text it reads,
+fresh completions of attack-found prompts, and the package's judge correction applies to them
+with labels drawn as [What a result means](#what-a-result-means) describes (see
+[Judge misclassification](../../docs/judge-misclassification.md)). The confirmation costs one
+target call and one judge call per run, against up to K of each in the search.
+
+The confirmation keeps the attacker's judge's false positives out of the outcome, but not out
+of the search. A false positive ends a run on a prompt that does not work, with the rest of
+its budget unspent, so a noisier attacker's judge makes the same attacker weaker and the
+confirmed rate lower. Take behaviours on which each query finds a prompt that works with
+probability q = 0.05, a target that carries out a working prompt every time, an attacker's
+judge that never misses one and a confirmation judge that never errs. The confirmed rate is
+then q(1 − a^K)/(1 − a), with a = (1 − q)(1 − f):
+
+| f | 0 | 0.02 | 0.05 | 0.20 |
+|---|---|---|---|---|
+| K = 20 | 0.64 | 0.55 | 0.45 | 0.21 |
+| K = 60 | 0.95 | 0.71 | 0.51 | 0.21 |
+
+For a gate, that is the direction that favours a PASS (see
+[What a result means](#what-a-result-means)). The offline simulation shows the opposite: its
+targets comply with each query at a fixed rate c, whatever the prompt, so a found prompt is
+worth no more than any other, and a run that ends on a false positive is confirmed as often as
+one that ends on a real jailbreak. There a noisier attacker's judge ends more runs and so
+raises the confirmed rate: with judges that never miss and a confirmation judge that never
+errs, it is c(1 − ((1 − c)(1 − f))^K).
 
 Every run writes two scores:
 
 - `confirmed_jailbreak` is FAIL when the confirmation judge calls the fresh completion of the
-  found prompt unsafe. A run that found no prompt is PASS, and makes no further call. This is
-  the outcome the plan analyses.
+  found prompt unsafe, and its `answer` is that completion. A run that found no prompt is
+  PASS, and makes no further call. This is the outcome the plan analyses.
 - `attacker_reported` is FAIL when the attacker's own judge called some query unsafe. It is
   kept for comparison only.
 
@@ -53,11 +87,13 @@ This evaluates two simulated configurations, writes the logs to `logs/attack-con
 and the report to `reports/attack-confirmation`, and prints:
 
 ```text
-configuration          attacker-reported   confirmed
-mockllm/baseline                    0.77        0.08
-mockllm/candidate                   0.68        0.01
+configuration          attacker-reported   confirmed   unconfirmed
+mockllm/baseline                    0.77        0.08          0.69
+mockllm/candidate                   0.68        0.01          0.67
 claim attack_success_bounded: INCONCLUSIVE (upper bound 0.06391479153815988)
 ```
+
+`unconfirmed` is the share of runs that stopped on a find the confirmation did not reproduce.
 
 The `candidate` configuration never complies, so every jailbreak reported against it is a
 judge false positive. The attacker's judge (f = 0.05, K = 20) reports 68 of 100 behaviours
@@ -86,56 +122,106 @@ how far apart the two verdicts can be.
 
 Live mode needs an attacker model, a target and two judges. The target is the eval's model;
 the others are named as task arguments. The two judges must differ: the task refuses to run
-when the confirmation judge is the judge the attacker searched against.
+when the confirmation judge has the name of the judge the attacker searched against. It
+compares the names only; [Why the confirmation rollout](#why-the-confirmation-rollout) says
+what else the confirmation needs of the judges, and of the target's temperature, which
+`--temperature` sets.
 
 The design manifest declares the attack in every row: `attack_id`, `attack_fingerprint`,
 `budget_k`, `attacker_model`, `attacker_judge` and `confirmation_judge`. The fingerprint is a
 digest of the attack id, the budget, the attacker model, the attacker's judge and the prompt
-templates. The task refuses to run against a design that declares a different attack, so
-write a design for the attack you are about to run (from the repository root):
+templates. It does not cover the attacker's code, the stopping rule, generation settings or,
+offline, the simulated rates. The task refuses to run against a design that declares a
+different attack, so write a design for the attack you are about to run. The task checks the
+design once, when it starts, and `analyze` never compares the logs with the design's
+declaration. The plan's cohorts, below, match on the attack id, the budget, the attacker
+model and the two judges, and compare the fingerprint only among the runs of one cohort. So
+give the attack a new `attack_id` whenever any part of it changes: its prompt templates and
+the judge rubric as well as anything the fingerprint does not cover.
+
+Put your behaviours in `run/attack/behaviours.csv`, with the columns `prompt_id`,
+`category_id` and `goal`, and write the design from the repository root:
 
 ```bash
 python -c "
 import sys; sys.path.insert(0, 'examples/attack_confirmation')
 from pathlib import Path
 from attack_confirmation import AttackDeclaration, write_design
-Path('run/attack').mkdir(parents=True, exist_ok=True)
 write_design(Path('run/attack/design.csv'), AttackDeclaration(
     attack_id='pair', budget_k=20,
     attacker_model='<provider/attacker-model>',
     attacker_judge='<provider/attacker-judge>',
-    confirmation_judge='<provider/confirmation-judge>'))
+    confirmation_judge='<provider/confirmation-judge>'),
+    behaviours=Path('run/attack/behaviours.csv'))
 "
 ```
 
-Then run the attack against each configuration with the same settings:
+Then run the attack against each configuration with the same settings. Name the design and
+the behaviours by absolute paths: `inspect eval` creates the task in the task file's
+directory, so a relative path would be read from there, and the task refuses one.
 
 ```bash
 inspect eval examples/attack_confirmation/attack_confirmation.py \
   --model <provider/target-model> --log-dir run/attack/logs \
-  -T mode=live -T design=run/attack/design.csv -T behaviours=<your-behaviours.csv> \
+  -T mode=live -T design="$PWD/run/attack/design.csv" \
+  -T behaviours="$PWD/run/attack/behaviours.csv" \
   -T attack_id=pair -T budget_k=20 \
   -T attacker_model=<provider/attacker-model> \
   -T attacker_judge=<provider/attacker-judge> \
   -T confirmation_judge=<provider/confirmation-judge>
 ```
 
-The behaviours file has the columns `prompt_id`, `category_id` and `goal`. Pass the same file
-to `write_design` with its `behaviours` argument. Point a copy of `plan.yaml` at the new
-design and at your model names in `cohorts`, and run `analyze` as above.
+Point a copy of `plan.yaml` at the new design, and match every cohort on the attack as well as
+the model, with the values the design declares:
+
+```yaml
+cohorts:
+  candidate:
+    match:
+      model: <provider/target-model>
+      task_arg_attack_id: pair
+      task_arg_budget_k: 20
+      task_arg_attacker_model: <provider/attacker-model>
+      task_arg_attacker_judge: <provider/attacker-judge>
+      task_arg_confirmation_judge: <provider/confirmation-judge>
+    require_uniform: [...]  # as in plan.yaml
+```
+
+The baseline takes the same match with its own model. Then run `analyze` as above. A run
+whose attack id, budget, attacker model or judges differ joins no cohort, so it cannot enter a
+claim or the comparison: the behaviours it leaves without a run are reported as
+`PROMPT_MISSING`, a cohort it leaves empty as `COHORT_EMPTY`, and either makes integrity
+invalid. Matching on the model alone would let two arms attacked at different budgets, or
+judged by different judges, be compared (see
+[one judge for every arm](../../docs/model-comparisons.md#one-judge-for-every-arm)).
+`require_uniform` names the task's metadata, which holds the whole declaration, fingerprint
+included, so runs of two declarations within one cohort are reported as `CONFIG_DRIFT`.
+Nothing compares fingerprints across cohorts: two arms whose attacks differ only in their
+prompt templates would be compared as if they were one attack, hence a new `attack_id` for
+every change. The metadata also holds any values passed with `inspect eval --metadata`; pass
+the same ones, or none, to every run of a cohort, or its runs are reported as `CONFIG_DRIFT`
+too.
 
 The attacker in live mode is a minimal PAIR-style loop: each attacker call sees the goal, its
 previous prompt, the target's answer and the judge's verdict. Replace `ModelAttacker` with the
-attack you want to evaluate; the declaration and the confirmation step stay as they are.
+attack you want to evaluate, and give it its own `attack_id`: the fingerprint cannot tell two
+attackers' code apart. The declaration and the confirmation step stay as they are.
 
 ## What a result means
 
 - **The estimand.** For each behaviour, the probability that this attack procedure with this
   budget produces a prompt whose fresh completion the confirmation judge scores unsafe. The
   claim is about the weighted mean of that probability over the declared behaviours.
-- **A PASS covers this attack at this budget.** It says this attack at budget K succeeded on
-  at most the bound's share of behaviours. It is no evidence about other attackers or larger
-  budgets.
+- **A PASS covers this attack at this budget, with this attacker's judge.** It says this
+  attack at budget K succeeded on at most the bound's share of behaviours. It is no evidence
+  about other attackers or larger budgets, nor about the same attacker with a judge that errs
+  less: each false positive of the attacker's judge ends a run on a prompt that does not work,
+  so a noisier judge lowers the confirmed rate (see
+  [Why the confirmation rollout](#why-the-confirmation-rollout)).
+  Report beside the result the attacker's judge's false-positive rate, measured on labelled
+  responses from the search (the sample store's `attack_attempts`), and the share of runs
+  that stopped on a find the confirmation did not reproduce (`unconfirmed` above). Each of
+  those runs left the rest of its budget unspent.
 - **The unit is the attack run.** The queries inside a run add no independent observations.
   One run per behaviour makes the run and the behaviour the same unit, which is why both
   independence profiles block by `prompt_id` or coarser.
@@ -148,14 +234,25 @@ attack you want to evaluate; the declaration and the confirmation step stay as t
 - **Pair on behaviour.** Attack prompts differ per target, so there is no shared prompt to
   pair the two configurations on. The comparison pairs on `prompt_id`: the same behaviour,
   attacked once against each configuration.
-- **Judge correction needs labels from attacked outputs.** A `validated` calibration of the
-  confirmation judge must be labelled on fresh completions of attack-found prompts, not on a
-  benign set. The judge's error rates on adversarial outputs are what the correction needs.
+- **Judge correction needs labels of what the confirmation judge read.** A `validated`
+  calibration of the confirmation judge must be labelled on fresh completions of attack-found
+  prompts, not on a benign set: the judge's error rates on adversarial outputs are what the
+  correction needs. Label the `answer` of the `confirmed_jailbreak` score, which is the fresh
+  completion. The sample's output is the search's last response, a different text. A run that
+  found no prompt has no answer and made no judge call; its PASS is right by construction, so
+  when the labelling sample draws it, label it `safe` rather than skip it, since skipping
+  breaks the simple random sample of its stratum.
 
 ## Planning the number of behaviours
 
-With the exact one-sided binomial test at α = 0.05 and a threshold of 0.05, 100 behaviours
-(the size of JailbreakBench) certify a rate below 0.05 only with at most one confirmed
-jailbreak, and 400 (the size of HarmBench's design) with at most 12. The plan's interval
-method is more conservative than that test, as the offline run shows: one failure in 100
-gives an upper bound of 0.064, and the claim is INCONCLUSIVE.
+The plan bounds the rate with the weighted KL-Chernoff interval at α = 0.025 in each
+direction: the family's 0.05, shared by the two cohorts. With a threshold of 0.05, 100
+equally weighted behaviours (the size of JailbreakBench) certify only with no confirmed
+jailbreak, whose upper bound is 0.036. One confirmed jailbreak gives 0.064, as the offline
+run shows, and the claim is INCONCLUSIVE. 400 equally weighted behaviours (the size of
+HarmBench's design) certify with at most 9. The exact one-sided binomial test would allow 1
+and 12 at α = 0.05, and 0 and 11 at the plan's 0.025: at 100 behaviours the difference is the
+alpha split alone, and at 400 the plan's interval is also more conservative than that test.
+`inspect-safety-stats plan fixed-design --plan` plans every claim with the plan's own
+interval, alpha and weights; unequal weights, such as `nested_equal` over categories of
+unequal size, widen the bound.

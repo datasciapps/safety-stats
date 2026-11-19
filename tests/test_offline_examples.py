@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -94,20 +95,59 @@ def test_the_demo_script_writes_a_valid_report(demo_run: tuple[Path, str]) -> No
     assert report["decision"] == "INCONCLUSIVE"
 
 
+def _prose(path: Path) -> str:
+    """The page's text with every run of whitespace, line breaks included, as one space."""
+    return " ".join(path.read_text(encoding="utf-8").split())
+
+
+def _interval_row(stdout: str, group: str) -> list[str]:
+    """The baseline and candidate estimate, lower and upper bound of one group, as printed."""
+    match = re.search(
+        rf"^  {group} +(\S+) \[(\S+), (\S+)\] +(\S+) \[(\S+), (\S+)\] *$", stdout, re.M
+    )
+    assert match, f"no {group} row in the demo output:\n{stdout}"
+    return list(match.groups())
+
+
 def test_the_demo_prints_the_numbers_its_readme_quotes(demo_run: tuple[Path, str]) -> None:
+    """The prose of the demo README and of Getting started quotes what the demo prints.
+
+    The numbers are read from the output, not written here, so a change on either side fails.
+    """
     _, stdout = demo_run
-    # examples/demo/README.md, "What to look at".
-    assert "  bio      0.050 [0.004, 0.182]    0.000 [0.000, 0.074]" in stdout
-    assert "  cyber    0.200 [0.077, 0.382]    0.000 [0.000, 0.074]" in stdout
-    assert "Candidate minus baseline, all prompts: -0.196 [-0.294, -0.088]" in stdout
+    readme = _prose(DEMO / "README.md")
+    guide = _prose(ROOT / "docs" / "getting-started.md")
+    bio = _interval_row(stdout, "bio")
+    cyber = _interval_row(stdout, "cyber")
+    difference = re.search(
+        r"^Candidate minus baseline, all prompts: (\S+) \[(\S+), (\S+)\]$", stdout, re.M
+    )
+    words = " ".join(stdout.split())
+    tail = re.search(r"bounded only at (\d\.\d+),", words)
+    needed = re.search(r"About (\d+) rollouts per prompt would be needed\.", words)
+    assert difference and tail and needed, stdout
     assert "The whole interval is below zero: the candidate fails less often." in stdout
     # One warning for each model; the script wraps each message over several lines.
     assert stdout.count("WARNING TAIL_MEASURES_UNINFORMATIVE:") == 2
-    words = " ".join(stdout.split())
     for cohort in ("baseline", "candidate"):
         assert f"In cohort '{cohort}', group 'all', cvar_90 and worst are built" in words
-    assert words.count("still bounded only at 0.291") == 2
-    assert words.count("About 134 rollouts per prompt would be needed.") == 2
+    assert words.count(f"still bounded only at {tail[1]}") == 2
+    assert words.count(f"About {needed[1]} rollouts per prompt would be needed.") == 2
+
+    # examples/demo/README.md, "What to look at".
+    assert f"The baseline fails on {float(bio[0]):.0%} of its bio rollouts" in readme
+    assert f"the interval runs from {bio[1]} to {bio[2]}" in readme
+    assert cyber[3:5] == ["0.000", "0.000"]
+    assert "The candidate never fails on a cyber prompt" in readme
+    assert f"its upper bound there is still {cyber[5]}" in readme
+    estimate, lower, upper = difference.groups()
+    assert f"the candidate-minus-baseline difference is {estimate}" in readme
+    assert f"with an interval from {lower} to {upper}" in readme
+    assert f"bounded only at {tail[1]}" in readme
+    assert f"About {needed[1]} rollouts per prompt would be needed" in readme
+    # docs/getting-started.md, "Reading the numbers".
+    assert f"the baseline fails on {float(bio[0]):.0%} of its 80 bio rollouts" in guide
+    assert f"its interval still reaches {float(bio[2]):.2f}" in guide
 
 
 def test_the_demo_report_keeps_the_comparison_and_warns_about_an_assumption(

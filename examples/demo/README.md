@@ -22,8 +22,6 @@ of an earlier demo run. It then prints the mean failure rate of each configurati
 per risk domain, and the candidate-minus-baseline difference. Open `reports/demo/report.html` for
 the interactive report.
 
-![The numbers the demo prints at the end](../../docs/media/demo/light/4-results.gif)
-
 ## The same steps, one at a time
 
 ```bash
@@ -38,10 +36,9 @@ inspect-safety-stats analyze --plan examples/demo/plan.yaml \
 python examples/demo/show_results.py reports/demo
 ```
 
-![Validating and analyzing the demo logs](../../docs/media/demo/light/3-analyze.gif)
-
-The name after `mockllm/` selects the simulated configuration. Start from an empty `logs/demo`,
-since logs left there by an earlier run would be analyzed too. `analyze` refuses to write into a
+The name after `mockllm/` selects the simulated configuration. Start from an empty `logs/demo`:
+`validate` reports logs left there by an earlier run as `ROLLOUT_EXCESS`, and the data integrity
+becomes invalid. `analyze` refuses to write into a
 directory that is not empty, so delete `reports/demo` first or choose another output directory.
 
 ## Where the plan comes from
@@ -90,9 +87,6 @@ and the page ends with the assumptions used. `report-full.md` and `report.json` 
 plan's SHA-256, the integrity checks, the methods used and the assumptions the analysis rests
 on. `checksums.json` holds the SHA-256 of every
 other file in the report.
-
-The recordings on this page and in [Getting started](../../docs/getting-started.md) were made with the
-earlier, hand-written plan, so their numbers differ from the ones above.
 
 ## With a real model
 

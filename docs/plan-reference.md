@@ -148,7 +148,10 @@ mapping:
     value: 0.5
 ```
 
-Mappings are type-sensitive: `true`, `1`, `1.0`, and `"1"` are distinct.
+Mappings are type-sensitive: `true`, `1`, `1.0`, and `"1"` are distinct. A score value that the
+mapping does not cover is an error for its rollout, `SCORE_UNMAPPED`, which withholds the bounds
+of that rollout's prompt. One `SCORE_MAPPING_MISMATCH` error lists every such value, with its
+type and how many rollouts have it.
 
 `missing` accepts `conservative_bounds`, `block`, `count_as_failure`, or `exclude`.
 `conservative_bounds` is the default: integrity becomes `degraded`, and exact bounds cover both
@@ -236,6 +239,17 @@ With any value but `score`, each such rollout is reported in a `TOKEN_LIMIT_REAC
 that stopped at the token limit but was scored keeps its score. Only Inspect logs report stop
 reasons; with rollout files the option is refused.
 
+Only the stop reason `max_tokens` is detected. Two other ends that look alike are not, and such
+a rollout counts by its score, and without a score follows `missing`, whatever `token_limit`
+says:
+
+- Inspect's stop reason `model_length`: the conversation outgrew the model's context window,
+  which a long prompt or long tool output can cause as well as the model's own answer.
+- A sample that hit one of Inspect's own sample limits, such as its token limit
+  (`--token-limit`, recorded as a sample limit of type `token`). That limit counts the tokens of
+  the whole sample, across turns and tool calls, and is a harness setting rather than a property
+  of one answer.
+
 ```yaml
 inputs:
   score:
@@ -301,11 +315,13 @@ The manifest holds `observation_id,human_label` with labels `safe` or `unsafe`; 
 come from the `observations.csv` of a prior run. `sampling` is
 `simple_random_within_judge_stratum` (the default) or `simple_random`; only the latter also
 estimates sensitivity and the false-positive rate by true class, which a claim with
-`method: noisy_valid_test` requires (the validator emits `PLAN_INVALID_CLAIM` otherwise). With those estimates, a whole-cohort `weighted_mean` row also carries
-diagnostic Lang-Reiczigel limits beside the exact box. Threshold claims whose evidence carries a
-validated correction are decided from the corrected bounds; an `assumed` correction never
-affects a claim. One calibration is estimated per cohort by
-exact Clopper-Pearson bounds within each judge stratum, and the corrected interval's coverage
+`method: noisy_valid_test` requires (the validator emits `PLAN_INVALID_CLAIM` otherwise). With
+those estimates, every group's `weighted_mean` row that the calibration corrects also carries
+diagnostic Lang-Reiczigel limits beside the exact box; tail measures, hierarchy nodes and rows
+that hold rollouts a plan policy classified do not.
+Threshold claims whose evidence carries a validated correction are decided from the corrected
+bounds; an `assumed` correction never affects a claim. One calibration is estimated per cohort
+by exact Clopper-Pearson bounds within each judge stratum, and the corrected interval's coverage
 is the union of its own family budget and the judge family budget. A plan declares one mode:
 `assumed`, `validated` or `transported` (below).
 
@@ -428,24 +444,33 @@ report shows every reading side by side:
   interval of every group risk, comparison and claim (with the claim's status), and
   `presentation.primary_outcome_mapping` records the primary mapping beside them;
 - `outcome-mapping-sensitivity.csv` holds one row per result and mapping, `primary` first,
-  with each result's readings adjacent, and is listed in `checksums.json`;
+  with each result's readings adjacent, and is listed in `checksums.json`. Its last column,
+  `descriptive`, is `True` on every row of an alternative, whose claim status certifies
+  nothing;
 - `report-full.md` has an "Outcome mapping sensitivity (experimental)" section. Claims and
-  decisions appear in it only when `report.include_decisions` is true.
+  decisions appear in it only when `report.include_decisions` is true, and an alternative's
+  are marked "(descriptive)".
 
 Only the primary mapping enters claims and the decision. Each alternative's intervals carry
 the coverage the plan declares for that mapping alone; the readings are not simultaneous
 across mappings, so the side-by-side view is a sensitivity analysis, not a set of tests to
 pick from. A mapping that leaves some observed value unmapped makes its own integrity
-`invalid` (`SCORE_UNMAPPED` in its diagnostic counts) without affecting the primary
-analysis. Each alternative carries what the plan itself, its decision policy and its
-registration receipt were checked for, so a receipt for another plan
+`invalid` (`SCORE_UNMAPPED` and `SCORE_MAPPING_MISMATCH` in its diagnostic counts) without
+affecting the primary analysis. Each alternative carries what the plan itself, its decision
+policy and its registration receipt were checked for, so a receipt for another plan
 (`PLAN_RECEIPT_MISMATCH`) or a decision policy that fails its checks makes every alternative
-`invalid`, as it does the primary analysis.
+`invalid`, as it does the primary analysis. The diagnostics that describe the outcomes, such as
+`TAIL_MEASURE_SINGLE_ROLLOUT`, `TAIL_MEASURES_UNINFORMATIVE` and `CLUSTER_DESIGN_EFFECT`, are
+counted for each alternative from its own reading. The anytime-valid bounds
+(`outputs.anytime_bounds`) and the judge flip rate (`inputs.judge_flip`) are computed for the
+primary mapping only.
 
 Identifiers must be unique and cannot be `primary`, which names the primary mapping in the
-outputs; an alternative may not repeat the primary mapping. Only `inputs.score` takes
-sensitivities, not a judge's score. A plan without the field keeps its hash, and its report
-is unchanged. `report.html` does not show the sensitivities yet.
+outputs; an alternative may not repeat the primary mapping. One that classifies every value as
+the primary mapping does is a repeat, whatever the order of its values and however often it
+lists one; values of another type are not, since mappings are type-sensitive. Only
+`inputs.score` takes sensitivities, not a judge's score. A plan without the field keeps its
+hash, and its report is unchanged. `report.html` does not show the sensitivities yet.
 
 ### Judge panels
 
@@ -486,14 +511,18 @@ when a missing vote could still change it or when `majority` ties. The report ga
 panel** section with per-judge counts, each composite's Kish **effective votes** over the declared
 blocks, and pairwise agreement with Cohen's kappa. Agreement is a diagnostic, not evidence: judges
 that share a blind spot agree and are both wrong. Missing judge columns and unmappable judge
-values are errors (`JUDGE_SCORE_MISSING`, `JUDGE_SCORE_UNMAPPED`).
+values are errors (`JUDGE_SCORE_MISSING`, `JUDGE_SCORE_UNMAPPED`), and one
+`JUDGE_SCORE_MAPPING_MISMATCH` per judge lists the values its mapping does not cover.
 
 A judge may declare prevalence-free accuracy ranges, `accuracy: {sensitivity: {lower, upper},
 specificity: {lower, upper}}`. When the primary outcome is an `any` or `all` composite whose judges
 all declare them, the report adds a diagnostic `judge_corrected_panel_derived` interval: the
 composite's box is derived by Fréchet bounds within blocks and products across blocks, and true
 risk is partially identified by inverting Rogan–Gladen over it (the whole unit interval when the
-box admits an uninformative panel). See [Judge misclassification](judge-misclassification.md).
+box admits an uninformative panel). The box describes the composite's verdict, so the primary
+mapping must read it as it is, `failure_values: [true]` and `safe_values: [false]`; otherwise no
+interval is added, and the warning `PANEL_CORRECTION_VERDICT_UNMATCHED` says so. See
+[Judge misclassification](judge-misclassification.md).
 
 `accuracy.groups` restricts a judge's declared ranges to the rollouts of the listed groups:
 
@@ -709,6 +738,7 @@ for what the rate shows.
 | `inclusion_probability_column` | Required with `type: sampled`; names a manifest column holding each frame item's inclusion probability in (0, 1] |
 | `sampling` | `poisson` (independent inclusion, default) or `fixed_size` (exact draws per stratum, without replacement) |
 | `stratum_column` | Optional with `sampling: fixed_size`; names the manifest column defining sampling strata |
+| `selection_column` | Experimental, optional with `type: sampled`; names a manifest column marking the frame items the draw selected (`true`/`false`). `analyze` and `validate` then check that each cohort observed exactly those items (`SAMPLE_SELECTION_MISMATCH`); without it only the number of items is checked. A plan without it keeps its hash and report bytes. See [Checking which items were evaluated](design-based-sampling.md#checking-which-items-were-evaluated-experimental) |
 | `hierarchy` | Creator-declared hierarchy ending in `prompt_id` |
 | `rollout_key` | Fields uniquely identifying one terminal rollout; see [Schema versions](#schema-versions) for the names and default. A field the rollout does not record is read from its run. A run's fields hold its configuration, so a `ROLLOUT_DUPLICATE` message names such a field, as `<model_base_url of the run>`, instead of showing its value |
 | `require_complete_manifest` | Require every fixed prompt in every cohort |
@@ -757,29 +787,115 @@ credential-theft wording weighs 1/6 and the authentication-bypass prompt weighs 
 `equal_prompt` would instead give each row 1/4, so the base prompt with more wordings would
 count three times as much.
 
-**Independence.** Wordings of one base prompt can fail together, so a profile that blocks by
-base prompt is a natural sensitivity:
+**Independence.** Wordings of one base prompt can be related in two ways, and only one of them
+breaks the `rollout` profile:
+
+- **Similar failure rates.** Wordings of one base prompt are often hard or easy together. In a
+  fixed design each wording's risk is a fixed quantity of the estimand, so similar risks do not
+  make rollouts dependent, and the `rollout` profile stays valid.
+- **Coupled outcomes.** Rollouts of different wordings are dependent when they share randomness
+  or state: a sampling seed shared by the same epoch of each wording, a sandbox or tool state,
+  or a batch that fails as a whole. The `rollout` and `prompt` profiles then count dependent
+  rollouts as independent ones, and their bounds can miss the risk more often than alpha
+  allows. In a simulation of 4 base prompts with 10 wordings each, 20 epochs and
+  risk 0.12, in which the wordings of a base prompt shared each epoch's outcome, the `rollout`
+  upper bound at one-sided level 0.025 fell below the risk in about 7% (Hoeffding), 14%
+  (empirical Bernstein) and 24% (KL/Chernoff) of runs, so a claim could pass on a risk above
+  its `acceptable_upper`.
+
+Whether outcomes are coupled is a fact about how the evaluation ran; the bounds do not reveal
+it. `CLUSTER_DESIGN_EFFECT` can hint at it, but under a fixed design its correlation also counts
+differences in rate between base prompts (see
+[its limits](independence-profiles.md#how-much-the-grouping-matters-cluster_design_effect)).
+
+A claim's status, and the report's decision, are the primary profile's verdict alone (see
+[Verdicts by profile](independence-profiles.md#verdicts-by-profile)). A sensitivity profile
+shows how far that verdict depends on rollout independence, but never changes it. When the
+wordings' outcomes can be coupled, the primary profile must therefore put all the rollouts that
+can share the coupling in one block:
+
+- `[question_id, repeat]` when the coupling stays within one epoch. The same epoch of every
+  wording of a base prompt forms one block, and the epochs stay independent of each other. In
+  the simulation above its upper bounds never fell below the risk under Hoeffding or empirical
+  Bernstein, and did so in about 0.25% of runs under KL/Chernoff.
+- `[question_id]` when the coupling can reach across epochs, for example through a sandbox or
+  tool state that persists between them. Every rollout of every wording of a base prompt forms
+  one block, so the block count is the number of base prompts.
+- A coarser key when the coupling reaches beyond one base prompt, such as `[repeat]` for a seed
+  shared by the same epoch of every prompt.
+
+The primary profile sets the blocks of the direct-mean intervals only. The prompt bounds treat
+the epochs of each wording as independent draws whatever the primary, and so does every interval
+built from them: the propagated envelope of every risk measure, which is the only interval of
+`maximum`, `cvar`, `top_k_mean`, `entropic`, the threshold measures and a `worst_of_k` without
+`direct_interval`. Coupling across the epochs of one wording therefore breaks the prompt bounds
+and these measures under any profile, and claims should then rest on the direct `weighted_mean`
+interval. This includes coupling confined to one wording's epochs, such as a response cache
+keyed on the exact input. For the direct mean that needs only `[prompt_id]` as the primary, which
+already puts each wording's epochs in one block, but the prompt bounds stay invalid. Coupling
+within one epoch across wordings, such as the shared seed above, leaves the prompt bounds and
+the measures built from them valid: each prompt bound needs independence only within its prompt,
+and the Bonferroni allocation across prompts holds under any dependence between them. A
+`worst_of_k` measure with `direct_interval: true` needs a primary that blocks by rollout, so
+making another profile primary makes such a plan invalid (`PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED`).
 
 ```yaml
 design:
   independence_profiles:
     rollout: {block_by: [rollout], comparison_coupling: independent}
     prompt: {block_by: [prompt_id], comparison_coupling: joint}
+    question_repeat: {block_by: [question_id, repeat], comparison_coupling: joint}
     question: {block_by: [question_id], comparison_coupling: joint}
 outputs:
   direct_mean_intervals:
     independence:
-      primary: rollout
-      sensitivities: [prompt, question]
+      primary: rollout  # question_repeat, question or coarser when wordings can be coupled
+      sensitivities: [prompt, question_repeat, question]
 ```
 
-The `question` profile puts every rollout of every wording of one base prompt in one block, so
-its block count is the number of base prompts. Its effective sample size,
+With independent rollouts, `rollout` stays the primary and the other profiles are
+sensitivities. The `question` profile's effective sample size,
 $\left(\sum_g A_g^2\right)^{-1}$ over the base-prompt weights $A_g$ (see
 [Statistical construction](independence-profiles.md#statistical-construction)), is no larger
-than the `prompt` profile's. With few base prompts its intervals can reach the whole range
-$[0, 1]$. Set `hierarchy_nodes: true` under `direct_mean_intervals` to report an interval for
-each base prompt as well as each task.
+than the `prompt` profile's. With the same number of epochs for every wording,
+`question_repeat`'s is that many times larger than `question`'s. With few base prompts the
+`question` intervals can reach the whole range $[0, 1]$.
+
+A block key is the raw value of each field, not a path in the hierarchy. If two tasks both have
+a base prompt with `question_id: q1`, `[question_id]` puts the two in one block. Keep base-prompt
+identifiers unique across tasks, or block by `[task_id, question_id]` and
+`[task_id, question_id, repeat]`.
+
+**Risk measures.** Measures that use the group weights, such as `weighted_mean`, `cvar` and
+`worst_of_k`, count each base prompt once under `nested_equal`, whatever its number of wordings.
+Two measures count wordings instead:
+
+- `maximum` ignores weights: it is the largest risk of any wording, not of any base prompt.
+  Its bounds come from the prompt bounds, and `alpha_allocation: equal_bonferroni` divides the
+  family alpha equally over every wording of every cohort. Each added wording therefore widens
+  every prompt bound, and with them the maximum's upper bound. With `nested_equal` as
+  `design.weights`, `alpha_allocation: weighted_bonferroni` instead gives each base prompt a
+  fixed share of the alpha, which its wordings split, so an added wording widens only the bounds
+  of its own base prompt's wordings.
+- `top_k_mean` needs equal prompt weights. On a group where `nested_equal` gives the wordings
+  unequal weights it is refused with `RISK_MEASURE_INVALID`, which makes integrity invalid.
+  Where it is accepted, under `equal_prompt` or under `nested_equal` on a group whose tasks all
+  have the same number of base prompts and whose base prompts all have the same number of
+  wordings, it averages the `k` riskiest wordings, so a base prompt with three wordings can fill
+  three of the `k` places.
+
+**Hierarchy nodes.** Set `hierarchy_nodes: true` under `direct_mean_intervals` to report an
+interval for each base prompt as well as each task. The nodes have two costs:
+
+- Under the `question` profile a base-prompt node is a single block, so its interval rests on
+  one independent value and is close to $[0, 1]$ whatever the data. Under `question_repeat` it
+  has one block per epoch.
+- Under the default `hierarchy_calibration: flat_bonferroni`, every node is one more target of
+  the direct-mean family, whose alpha is divided over all of them. Each node therefore widens
+  every interval of the family, including the group intervals that claims are decided on. In
+  the template below, each group interval's one-sided alpha is 0.0025 with the nodes and 0.0125
+  without them. `frontier_sidak` spends less where sibling nodes have disjoint blocks (see
+  [Direct fixed-design mean intervals](#direct-fixed-design-mean-intervals)).
 
 [`examples/fixed_design`](../examples/fixed_design/README.md#prompt-variants-of-one-base-prompt)
 has a complete template: `variant-design.csv`, `variant-plan.yaml` and the Inspect task
@@ -1184,7 +1300,9 @@ claims:
 A [decision policy](decision-policy.md) (experimental) can set or revise the thresholds of
 `corrected_interval` claims outside the plan, after the run if need be, without changing the
 plan's hash. `hash-plan --inference` prints the hash a policy names, which leaves those
-thresholds out.
+thresholds out. An overall `PASS` at thresholds a policy moves certifies only when one coverage
+event covers every mandatory claim; see
+[When the overall decision certifies](decision-policy.md#when-the-overall-decision-certifies).
 
 ## `adaptive_claims` (experimental)
 

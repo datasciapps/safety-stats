@@ -1426,6 +1426,48 @@ no rollout fails, and the planner reports \(R_A=1.7\times10^{-12}\); a simulated
 \(10^{-4}\) certifies in 91% of 400 draws. The `weighted_betting` interval reads the
 individual block values, so no boundary \(r^*\) exists, and its claims are not planned.
 
+### 5.8 Drawing a random pilot (experimental)
+
+A pilot informs the plan: how many rollouts the study needs, what they cost and roughly what
+the rates are. `plan pilot` ([user guide](design-based-sampling.md#drawing-a-random-pilot))
+draws it by stratified simple random sampling without replacement. In stratum \(h\), of
+\(N_h\) prompts, each prompt is ranked by the SHA-256 digest of the text `{seed}|{prompt_id}`
+in UTF-8, compared as bytes, and the \(k\) lowest-ranked prompts are drawn. Treating the
+digest as a random function of its input, the ranks order each stratum uniformly at random,
+independently across strata, so the draw is a simple random sample of \(k\) from each
+stratum with
+
+\[
+\pi_j=\frac{k}{N_h},\qquad
+\pi_{jl}=\frac{k(k-1)}{N_h(N_h-1)}\ \text{for } j\ne l \text{ in one stratum},\qquad
+\pi_{jl}=\pi_j\pi_l\ \text{across strata}.
+\]
+
+These are the inclusion probabilities of the fixed-size sampled design that analyses the pilot
+frame. Because \(\pi_j\) differs between strata of different size, the pilot's unweighted
+mean is biased for the frame's whenever the strata's means differ too, and the
+Horvitz–Thompson mean \(\frac1N\sum_{j\in S}y_j/\pi_j\) is unbiased whatever they are.
+
+The rank is a hash rather than a draw from `numpy.random.default_rng(seed)`, the generator
+the [contributing guide](../CONTRIBUTING.md#53-numerics) asks for, because a prompt's hash
+depends only on the seed and its own identifier. The draw is therefore the same whatever the
+order of the manifest's rows and whatever the other strata hold, and SHA-256 gives the same
+digest on every platform and library version, which numpy does not promise for a generator's
+methods. Draws with one seed on the same manifest and strata are nested, since the \(k\)
+lowest ranks contain the \(k'<k\) lowest; ranks drawn from a generator would nest as well,
+so nesting is not a reason for the hash. The seed is recorded as it would be for a
+generator: the pilot frame carries it in `pilot_seed`, and a report whose design manifest is
+that frame covers it with the manifest's hash. Choose the seed before drawing and draw once:
+trying seeds until the pilot looks favourable selects the prompts.
+
+The unit tests pin the prompts one seed draws, including identifiers outside ASCII, and check
+that over 2,000 seeds every prompt of a stratum of ten is drawn at a rate close to \(k/N_h\).
+
+A pilot enlarged after its outcomes were seen, and analysed again until a claim passes, is
+the repeated peeking of section 6.1 rather than a fixed-size design. Pilots are analysed as
+exploratory; the [user guide](design-based-sampling.md#what-a-pilot-can-show) gives a
+simulation of the inflated false-pass rate.
+
 ---
 
 ## 6. Stretch goal: Bernoulli confidence sequences
@@ -2006,7 +2048,7 @@ which risk differences \(\Delta=R_C-R_B\) a fixed two-arm design can resolve at 
   probability at least \(1-\beta\) (a regression of at least \(\delta\) is shown).
 
 The guarantee is that of the `weighted_hoeffding` difference of section 7.0, as `analyze`
-computes it, with no unclassified outcomes. That interval bounds
+computes it for a `comparisons` entry, with no unclassified outcomes. That interval bounds
 \(Q=(1+\Delta)/2\) by a weighted mean of independent blocks \(b\) with values in \([0,1]\) and
 masses \(m_b\). With \(c^2=\sum_bm_b^2\), Hoeffding's inequality [32] gives
 
@@ -2053,11 +2095,33 @@ under `per_direction`. \(M\) is the number of targets among which the family div
 alpha, as under `flat_bonferroni`. Hierarchy-node contrasts and `frontier_sidak` calibration
 are not planned.
 
-**Scope.** The guarantee is not one for the `weighted_kl_chernoff` or
-`weighted_empirical_bernstein` differences. Those are usually narrower on sparse failures, but
-not for every design, so a design planned here may resolve more than stated under those
-methods, and has no stated guarantee under them. Unclassified outcomes widen the analysis
-bounds and are not planned for.
+**Scope.** The guarantee holds only for a `comparisons` entry with
+`method: weighted_hoeffding`. A `comparison_sets` entry, whatever its method, and
+`weighted_kl_chernoff` in a `comparisons` entry bound each arm's weighted mean at
+\(\alpha_U/2\) and report \(U_\Delta=U_C-L_B\) (section 7.0). With per-arm masses \(c_C^2\),
+\(c_B^2\) and \(s_X(\gamma)=\sqrt{\tfrac12c_X^2\log(1/\gamma)}\), the confidence term of that
+rectangle under `weighted_hoeffding` is \(s_C(\alpha_U/2)+s_B(\alpha_U/2)\) rather than
+\(2s(\alpha_U)\). For unpaired arms at equal counts, \(c_C^2=c_B^2=2c^2\), so it is
+\(\sqrt{2\log(2/\alpha_U)/\log(1/\alpha_U)}\approx1.54\) times as large at
+\(\alpha_U=0.025\), and \(g_U\) no longer suffices. In the example of
+[Planning a comparison](model-comparisons.md#planning-a-comparison-experimental) (100 equally
+weighted prompts, 10 unpaired rollouts per arm, \(\delta=0.05\), \(\alpha_U=0.025\),
+\(1-\beta=0.9\)), `research/comparison_planning_scope.py` simulates 10,000 runs at the
+planned \(\Delta=\delta-g_U\approx-0.059\). \(U_\Delta\le\delta\) holds in 0.773 of them for
+the `weighted_hoeffding` rectangle at a baseline rate of 0.3, and in 0.755 at 0.5 (standard
+error at most 0.005); for the `weighted_empirical_bernstein` rectangle, in 0.582 at either
+rate. The `weighted_kl_chernoff` and `weighted_empirical_bernstein` differences are often
+narrower than the Hoeffding difference on sparse failures when prompt weights are even; with
+uneven weights, or at moderate rates, either can be wider. In the same example,
+KL/Chernoff's upper half-width equals Hoeffding's 0.061 when both arms observe a failure rate
+of 0.12 and is 0.093 at 0.5, and at a baseline rate of 0.5 the planned difference gives
+\(U_\Delta\le\delta\) in 0.756 of the runs. With `nested_equal` weights over tasks of 2 and
+98 prompts, 10 rollouts each, and one failure per arm on each of the first ten prompts (both
+of the small task's among them), the upper half-widths are 0.217 for Hoeffding, 0.243 for
+KL/Chernoff, which then uses its Poisson kernel, and 0.276 for empirical Bernstein; over tasks
+of 5, 10, 20, 25 and 40 prompts with 20 such failures, 0.078 for Hoeffding and 0.081 for
+KL/Chernoff. The planner states no guarantee for these methods, in either direction.
+Unclassified outcomes widen the analysis bounds and are not planned for.
 
 ### 7.8 Arm contrasts on a generative design (experimental)
 
@@ -2339,6 +2403,16 @@ and overall `PASS` occurs only when every component test rejects its unsafe null
 
 Correction is still required when the report asserts simultaneous coverage for every displayed interval, permits separate component-level safety claims, selects favorable claims after inspection, or uses “any significant result” logic. The analysis plan must record which decision semantics apply; the library must not apply multiplicity mechanically without first identifying the claim being protected.
 
+The argument needs the thresholds fixed before the data. Let claim \(j\) of the mandatory claims \(M\) pass when its upper bound \(U_j\) is at or below its threshold \(a_j\), and let \(E_j=\{R_j\le U_j\}\) be its coverage event, with \(\Pr(E_j^c)\le\alpha_j\). A false overall pass needs some claim with \(U_j\le a_j<R_j\), so it lies in \(E_j^c\) for that claim. With fixed thresholds the set \(W=\{j: R_j>a_j\}\) is fixed. When it is not empty, a pass needs \(E_{j_0}^c\) for any one \(j_0\in W\), and the bound is \(\alpha_{j_0}\).
+
+When a [decision policy](decision-policy.md) sets thresholds after the run, both the thresholds and the choice of which claims to move may depend on the data, so \(W\) is no longer fixed. What remains is that a false overall pass needs some claim, whichever the data make it, with \(R_j>a_j\ge U_j\):
+
+\[
+\Pr(\text{false overall pass})\le\Pr\Big(\textstyle\bigcup_{j\in M}E_j^c\Big).
+\]
+
+This is at most one budget \(\alpha\) when one simultaneous coverage event \(E\subseteq\bigcap_{j\in M}E_j\) with \(\Pr(E^c)\le\alpha\) covers every mandatory claim's bound. Otherwise it can reach the sum of the separate events' budgets. Setting each \(a_j\) at \(U_j\) reaches it: every claim then passes, and the pass is false whenever any bound misses. With ten independent claims at \(\alpha=0.05\) that is close to \(1-0.95^{10}\approx0.40\); exact binomial bounds, being conservative, give about 0.27. Moving one threshold reaches it as well, when the claim is chosen from the data: with the others at loose plan thresholds, tightening the claim with the lowest upper bound to that bound gives a false pass whenever any bound misses, since the lowest bound is then below its true risk too (the same 0.27 in the same setting). A set of moved claims fixed in advance would keep a sharper bound, but the analysis cannot tell such a set from one chosen after the run. The library therefore treats every threshold a decision policy moves as data-dependent, whatever time the policy states for it, and does not certify an overall pass when a policy moves any mandatory claim's `acceptable_upper` while the mandatory claims rest on more than one coverage event (`DECISION_POLICY_OVERALL_UNCERTIFIED`). Each claim's own verdict is unaffected: its error is bounded by \(\alpha_j\) at any threshold, because a wrong pass of claim \(j\) alone needs \(E_j^c\).
+
 ### 9.4 Holm step-down procedure
 
 Given valid p-values \(p_1,\ldots,p_m\), sort them:
@@ -2533,7 +2607,7 @@ Over a box, \(g(U)=(U-f)/(s-f)\) is monotone in \(s\) for fixed \(f\) and in \(f
 
 **Why no unclassified share.** The excess \(u_j\bigl((1-f)/D-\pi^u_j\bigr)\) could be taken back only with each prompt's \(u_j\). For a tail measure there is no single share: the largest prompt's share, subtracted from the inversion of a prompt that carries the maximum with fewer unclassified rollouts, moves the upper bound below true risk, and adding it to the lower bound moves that above. Under `exclude` the prompt bounds and the direct-mean intervals divide by different rollouts, so neither count's share is exact. With every share set to 0 the guarantee holds for every measure above.
 
-**Rollouts a policy classifies.** A rollout counted safe by a plan policy has true value 0 in the estimand, but contributes \(g(0)=-f/D<0\) when \(f>0\). One counted as a failure has true value 1, but contributes \(g(1)=(1-f)/D>1\) when \(s<1\). The first breaks the upper inequality and the second the lower one. The bounds do not carry the population share of such rollouts, so they cannot be corrected, and a claim whose row holds one is not stressed.
+**Rollouts a policy classifies.** A rollout counted safe by a plan policy has true value 0 in the estimand, but contributes \(g(0)=-f/D<0\) when \(f>0\). One counted as a failure has true value 1, but contributes \(g(1)=(1-f)/D>1\) when \(s<1\). The first breaks the upper inequality and the second the lower one. The bounds do not carry the population share of such rollouts, so they cannot be corrected, and a claim whose row holds one is not stressed. The panel-derived correction, a sensitivity analysis that does not decide, inverts such a row at \(f=0\) for the upper bound and at \(s=1\) for the lower, over the box's worst remaining end. At \(f=0\), \(g(0)=0\) and \(g(1)=1/s\ge1\); at \(s=1\), \(g(1)=1\) and \(g(0)=-f/(1-f)\le0\). Both inequalities then hold for every share of policy-classified rollouts.
 
 **Tipping lines.** PASS (\(U\le a\)) holds for true risk iff \(g(U)\le a\), that is \(as+(1-a)f\ge U\). FAIL (\(L\ge b\)) holds iff \(g(L)\ge b\), that is \(bs+(1-b)f\le L\). At \(f=0\) these give \(s\ge U/a\) and \(s\le L/b\); at \(s=1\) they give \(c\le(1-U)/(1-a)\) and \(c\ge(1-L)/(1-b)\). The coefficients are positive for thresholds inside \((0,1)\), so the side of a line on which a verdict holds is the side the box verdict finds.
 
@@ -2701,7 +2775,7 @@ The original Inspect logs should remain immutable; statistical reports should be
 | Core | Repeated attempts within declared groups | Design-respecting cluster summaries; bootstrap only with a justified sampling interpretation | Avoid pseudoreplication; optionally cluster-level sampling uncertainty | Declared hierarchy and source of randomness | Fixed groups are not automatically a sampled population |
 | Core | Multiple safety claims | Intersection-union logic, Holm tests, or Bonferroni simultaneous bounds as appropriate | Protect the declared global or simultaneous claim | Valid component methods and predeclared decision semantics | Correction is claim-dependent, not automatic |
 | Core | Exploratory discovery across many slices | Benjamini–Hochberg | False discovery rate | Standard BH dependence conditions | Must not drive deployment pass |
-| Core | Deployment gate | Two-threshold decision | Controlled false pass/fail | Valid bounds and predeclared thresholds | Inconclusive is a required outcome |
+| Core | Deployment gate | Two-threshold decision | Controlled false pass/fail | Valid bounds and predeclared thresholds; thresholds set later only when one simultaneous family decides every mandatory claim (section 9.3) | Inconclusive is a required outcome |
 | Experimental | Two values of one arm level of a generative design | Seed-matched arm contrast, simultaneous over a declared slice family (section 7.8) | Simultaneous coverage of declared slices and contrasts | Independent sampling units; family declared in the frozen plan | Not paired; widens with `maximum_ratio` when the declared weights skew a value across seeds |
 | Stretch | Continuously monitored or adaptively allocated rollouts | Bernoulli confidence sequence | Time-uniform coverage | Method-specific IID or martingale conditions | Adaptive selection can change the estimand |
 

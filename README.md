@@ -41,7 +41,9 @@ python examples/demo/run_demo.py
 
 The baseline fails at 0.204 [0.130, 0.295] over all prompts and the candidate at
 0.008 [0.000, 0.042]. Candidate minus baseline is -0.196 [-0.294, -0.088]. The whole interval
-is below zero, so on these prompts the candidate fails less often. The report also gives the
+is below zero, so on these prompts the candidate fails less often, provided the rollouts are
+independent of each other. The report's prompt-level sensitivity, which drops that assumption,
+spans zero; [the walkthrough](#the-summary) explains the difference. The report also gives the
 ratio of the two rates and the difference in each risk domain. With no threshold declared,
 there is no pass or fail verdict. [The walkthrough](#walkthrough-the-offline-demo) below reads
 this report in detail.
@@ -68,6 +70,15 @@ below 0.60, so the decision is `INCONCLUSIVE`. The command exits with code 2 to 
 wide to decide either way. [The example](examples/real_simpleqa/README.md) explains the numbers.
 Factual accuracy here only stands in for a safety outcome.
 
+The command also prints two warnings. `PLAN_SELF_DECLARED` says that the plan's freeze time is
+the author's own statement: nothing outside the plan shows it was fixed before the runs. Here
+the eight questions were extracted afterwards from a finished run, so only that statement says
+the limit came first. `TAIL_MEASURES_UNINFORMATIVE` says that one rollout per question cannot
+make the tail measures narrow. The wrong answers are also the verdicts of a model-graded scorer, taken as correct. A
+threshold check that others are to rely on registers the plan before the runs
+(`hash-plan --register`, then `analyze --registration-receipt`) and validates the judge, as
+[Judge misclassification](docs/judge-misclassification.md) describes.
+
 ## Start here
 
 New users should begin with [Getting started](docs/getting-started.md), which goes from
@@ -77,8 +88,6 @@ about half a minute:
 ```bash
 python examples/demo/run_demo.py
 ```
-
-![Headline results of the demo](docs/media/demo/light/4-results.gif)
 
 The other guides and the examples are listed under [Documentation](#documentation).
 
@@ -165,8 +174,9 @@ An analysis takes three inputs:
     --model mockllm/baseline,mockllm/candidate --log-dir logs/demo
   ```
 
-  Start from an empty `logs/demo`: logs left there by an earlier run would be analyzed as extra
-  rollouts.
+  Start from an empty `logs/demo`. Logs left there by an earlier run add rollouts the design
+  does not expect: `validate` reports them as `ROLLOUT_EXCESS`, and the data integrity becomes
+  invalid.
 - **A design manifest.** [design.csv](examples/demo/design.csv) has one row per prompt: its
   `prompt_id`, `question_id`, `task_id`, `risk_domain` and `expected_rollouts` (20).
 - **An analysis plan.** [plan.yaml](examples/demo/plan.yaml) says which score values count as
@@ -181,7 +191,8 @@ inspect-safety-stats init --logs logs/demo --failure-values FAIL \
   --group-by risk_domain --baseline mockllm/baseline
 ```
 
-`init` writes `safety-plan.yaml` (renamed to `plan.yaml` in the example) and `design.csv`. The
+`init` writes `safety-plan.yaml` (renamed to `plan.yaml` in the example) and `design.csv` into
+the current directory, or into the directory `--output` names. The
 header of the plan lists each choice `init` made and the assumption behind it. The plan breaks
 the rates down by risk domain and compares the candidate with the baseline as a risk difference
 and a risk ratio. One edit was made after `init`: two tail measures, `cvar_90` (the mean of the
@@ -292,8 +303,11 @@ warnings, one for each model, record a fact and change no result. Then come, in 
   depend on each other in any way. It is much wider, because it can rely on little more than the
   12 prompts being independent of each other.
 - **Comparisons.** Candidate minus baseline is −19.6 percentage points, from −29.4 to −8.8. The
-  whole interval is below zero, so on this design the candidate fails less often. The ratio of
-  the rates is 0.04, from 0.00 to 0.33.
+  whole interval is below zero, so on this design the candidate fails less often, as long as
+  the rollouts are independent of each other. The prompt-level sensitivity of the difference,
+  under "Comparison interval sensitivity" in `report-full.md`, runs from −65.3 to +36.2 points
+  and does not rule out that the candidate fails more. The ratio of the rates is 0.04, from
+  0.00 to 0.33.
 - **By risk_domain.** The same rates and differences within bio, cyber and privacy. With 80
   rollouts per domain the intervals are wide: the baseline's bio rate is 5.0%, from 0.4% to
   18.2%. The candidate never fails on a bio or cyber prompt, and its upper bound there is still
@@ -312,7 +326,8 @@ warnings, one for each model, record a fact and change no result. Then come, in 
 
 `index.json` is the file for agents and tools to open first; `index.md` holds the same in
 Markdown. Its headline table gives each failure rate and overall comparison with a pointer into
-`report.json`, and for comparisons the matching row of `comparisons.csv`:
+`report.json`, and for comparisons the matching row of `comparisons.csv`. Shown here without its
+Baseline, Group, Measure and Eligibility columns:
 
 | Kind | Model | Estimand | Estimate | Lower | Upper | Pointer | CSV row |
 |---|---|---|---:|---:|---:|---|---|
@@ -362,8 +377,8 @@ and does not change the integrity status: the interval keeps its coverage, and i
 Precision section names the rollouts that would narrow each marked interval, assuming the
 observed rate holds. The baseline's overall rate, 20.4% from 13.0% to 29.5%, would need about
 61 rollouts per prompt instead of 20. The comparison carries † too. Its interval excludes zero,
-so the direction is established, but the size of the difference is not pinned to within 5
-points.
+so with independent rollouts the direction is established, but the size of the difference is
+not pinned to within 5 points.
 
 ## Quick start
 

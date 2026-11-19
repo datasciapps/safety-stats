@@ -6,15 +6,24 @@ import itertools
 from dataclasses import dataclass
 from typing import Any
 
-from inspect_safety_stats.analysis.judge_calibration import JUDGE_CORRECTABLE_MEASURES
+from inspect_safety_stats.analysis.direct_mean import _HierarchyNode
+from inspect_safety_stats.analysis.judge_calibration import (
+    JUDGE_CORRECTABLE_MEASURES,
+    _labelled_population,
+    _policy_cohorts,
+    _policy_rollouts,
+    _row_weights,
+)
+from inspect_safety_stats.analysis.judge_correction import _policy_classified_diagnostics
 from inspect_safety_stats.analysis.results import RiskRows
 from inspect_safety_stats.config.models import (
     AnalysisPlan,
     JudgeAccuracySpec,
     JudgeSpec,
     OutcomeMappingSpec,
+    _same_classification,
 )
-from inspect_safety_stats.ingest.outcomes import _tag, map_outcome
+from inspect_safety_stats.ingest.outcomes import map_outcome
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.reports import (
     Diagnostic,
@@ -22,7 +31,7 @@ from inspect_safety_stats.schema.reports import (
     HierarchyRiskResult,
     RiskIntervalResult,
 )
-from inspect_safety_stats.schema.scopes import plan_scope
+from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope
 from inspect_safety_stats.stats.judges import (
     JudgeAccuracyBox,
     compose_verdicts,
@@ -237,18 +246,6 @@ class _DeclaredBox:
         return self.groups is None or group_id in self.groups
 
 
-def _same_classification(first: OutcomeMappingSpec, second: OutcomeMappingSpec) -> bool:
-    """Whether two mappings classify every score value alike, as ``map_outcome`` reads them."""
-
-    if first.failure_if is not None or second.failure_if is not None:
-        return first.failure_if == second.failure_if
-    return all(
-        {_tag(value) for value in getattr(first, field) or []}
-        == {_tag(value) for value in getattr(second, field) or []}
-        for field in ("failure_values", "safe_values")
-    )
-
-
 def _reads_verdict_as_is(mapping: OutcomeMappingSpec) -> bool:
     """Whether a mapping counts a composite's true verdict as failure and false as safe."""
 
@@ -348,19 +345,68 @@ class PanelCorrection:
 
 
 def apply_panel_derived_correction(
-    plan: AnalysisPlan, rows: RiskRows, diagnostics: list[Diagnostic]
+    plan: AnalysisPlan,
+    data: NormalizedData,
+    hierarchy_nodes: list[_HierarchyNode],
+    rows: RiskRows,
+    diagnostics: list[Diagnostic],
 ) -> PanelCorrection:
     """The rows with panel-derived intervals added. The rows given are left as they were."""
 
     corrected = rows.copy()
     summary = _add_panel_derived_correction(
-        plan, corrected.risks, corrected.hierarchy_risks, diagnostics
+        plan, data, hierarchy_nodes, corrected.risks, corrected.hierarchy_risks, diagnostics
     )
     return PanelCorrection(rows=corrected, summary=summary)
 
 
+def _policy_free_accuracy_box(box: JudgeAccuracyBox) -> JudgeAccuracyBox:
+    """The accuracy box a row holding policy-classified rollouts is inverted over.
+
+    The row's bounds count a rollout a policy classified as the policy says, beside the
+    panel's verdicts, and do not carry the share of such rollouts. Inverting them as if every
+    rollout were a verdict would take false alarms off the upper bound and add missed failures
+    to the lower. So sensitivity and specificity may reach 1. With panel-classified share K of
+    true risk T among them, the panel flags Se T + FPR (K - T) of the row, so T <= that / Se
+    and T >= (that - FPR K) / (1 - FPR). Adding policy failures P and unclassified rollouts V,
+    with L <= flagged + P and flagged + P + V <= U, and K <= 1 - P, true risk lies in
+    [(L - FPR) / (1 - FPR), U / Se]: the inversion at specificity 1 for the upper bound, and at
+    sensitivity 1 for the lower, each at the box's worst remaining end. Each is affine with a
+    positive slope, so it commutes with the weighted mean and with the tail measures, which are
+    monotone, translation equivariant and positively homogeneous: it holds prompt by prompt.
+    """
+
+    return JudgeAccuracyBox(
+        sensitivity_lower=box.sensitivity_lower,
+        sensitivity_upper=1.0,
+        specificity_lower=box.specificity_lower,
+        specificity_upper=1.0,
+    )
+
+
+def _panel_policy_assumption(safe: int, failures: int) -> str:
+    return (
+        f"{safe + failures} of the row's rollouts were classified by a plan policy, not by the "
+        f"panel ({safe} counted safe, {failures} counted as failures), and the row's bounds do "
+        "not carry their share. So the inversion credits the panel with no false alarm at the "
+        "upper bound and no missed failure at the lower: specificity and sensitivity may reach "
+        "1. That holds whatever the share of policy-classified rollouts."
+    )
+
+
+def _panel_policy_absent_assumption() -> str:
+    return (
+        "None of the row's rollouts was classified by a plan policy, so the inversion uses the "
+        "derived box as given. That assumes the population the rollouts are drawn from holds "
+        "none either: there, a policy-safe rollout read as a panel verdict would lower the "
+        "upper bound, and a policy failure raise the lower."
+    )
+
+
 def _add_panel_derived_correction(
     plan: AnalysisPlan,
+    data: NormalizedData,
+    hierarchy_nodes: list[_HierarchyNode],
     risks: list[GroupRiskResult],
     hierarchy_risks: list[HierarchyRiskResult],
     diagnostics: list[Diagnostic],
@@ -377,6 +423,12 @@ def _add_panel_derived_correction(
     A judge whose accuracy declaration is scoped to groups vouches only for those groups'
     rows, so the box holds, and a row is corrected, only in the groups every member's
     declaration covers.
+
+    A row holding rollouts a plan policy classified is inverted over the box with
+    sensitivity and specificity free to reach 1 (see :func:`_policy_free_accuracy_box`).
+
+    The box describes the composite's verdict, so it is applied only when the primary mapping
+    reads that verdict as it is: true as failure, false as safe.
     """
 
     composite = next(
@@ -399,6 +451,24 @@ def _add_panel_derived_correction(
                     "dependence; validate the composite's own verdict instead"
                 ),
                 scope=plan_scope("inputs", "composites", composite.id),
+            )
+        )
+        return None
+    if not _reads_verdict_as_is(plan.inputs.score.mapping):
+        # The box describes the composite's verdict. A mapping that inverts it, or reads it
+        # otherwise, makes the judge-reported rate another quantity, which the box does not
+        # describe.
+        diagnostics.append(
+            Diagnostic(
+                code="PANEL_CORRECTION_VERDICT_UNMATCHED",
+                severity="WARNING",
+                message=(
+                    f"the primary mapping does not count composite {composite.id!r}'s true "
+                    "verdict as failure and its false verdict as safe, so the derived accuracy "
+                    "box does not describe the primary outcome and no panel-derived correction "
+                    "is reported"
+                ),
+                scope=plan_scope("inputs", "score"),
             )
         )
         return None
@@ -433,14 +503,28 @@ def _add_panel_derived_correction(
         + ", ".join(repr(item) for item in scoped)
         + " only, the groups every judge's declaration covers"
     )
+    population = _labelled_population(plan, data)
+    row_weights = _row_weights(data, hierarchy_nodes)
+    # Per cohort, the groups of corrected rows that hold rollouts a plan policy classified.
+    policy_rows: dict[str, set[str]] = {}
+    policy_cohorts = _policy_cohorts(plan, population)
     for result in targets:
         if result.lower is None or result.upper is None:
             continue
         if scoped is not None and result.group_id not in scoped:
             continue
-        identified = identified_risk_set(result.lower, result.upper, box)
+        by_policy = _policy_rollouts(population.get(result.cohort_id, {}), row_weights(result))
+        row_box = box
+        policy_note: list[str] = []
+        if any(by_policy):
+            row_box = _policy_free_accuracy_box(box)
+            policy_rows.setdefault(result.cohort_id, set()).add(result.group_id)
+            policy_note = [_panel_policy_assumption(*by_policy)]
+        elif result.cohort_id in policy_cohorts:
+            policy_note = [_panel_policy_absent_assumption()]
+        identified = identified_risk_set(result.lower, result.upper, row_box)
         estimate_range = (
-            identified_risk_set(result.estimate, result.estimate, box)
+            identified_risk_set(result.estimate, result.estimate, row_box)
             if result.estimate is not None
             else None
         )
@@ -478,6 +562,7 @@ def _add_panel_derived_correction(
                     f"{where}; they carry no coverage guarantee.",
                     "True risk is the Rogan-Gladen inversion over the box; extrema sit at the box "
                     "vertices because the inversion is separately monotone in each argument.",
+                    *policy_note,
                 ],
                 eligibility="diagnostic",
                 warnings=(
@@ -497,6 +582,25 @@ def _add_panel_derived_correction(
                 ),
             )
         )
+    # A cohort whose rho correction already named its policy-classified rows is not named
+    # twice: the panel's groups join that diagnostic's, since the panel may correct groups the
+    # rho correction's scope leaves out.
+    named = {
+        item.scope: index
+        for index, item in enumerate(diagnostics)
+        if item.code == "JUDGE_CORRECTION_POLICY_CLASSIFIED"
+    }
+    unnamed: dict[str, set[str]] = {}
+    for cohort_id, groups in policy_rows.items():
+        index = named.get(cohort_scope(cohort_id))
+        if index is None:
+            unnamed[cohort_id] = groups
+            continue
+        found = diagnostics[index]
+        details = dict(found.details or {})
+        details["groups"] = sorted(set(details.get("groups", [])) | groups)
+        diagnostics[index] = found.model_copy(update={"details": details})
+    _policy_classified_diagnostics(population, unnamed, diagnostics)
     return {
         "composite": composite.id,
         "rule": composite.rule,

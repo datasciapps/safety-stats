@@ -334,6 +334,47 @@ def test_resume_drops_the_attempts_of_unfinished_units(tmp_path: Path) -> None:
     assert len(attempts) == sum(record.rewrite_attempts for record in rewrites)
 
 
+class ValidatorStopped(RuntimeError):
+    """Stands in for a validator whose provider stopped responding."""
+
+
+@dataclass
+class StoppingValidator:
+    """Rejects every odd call and accepts every even one, until it stops after ``survive``."""
+
+    survive: int = 10**6
+    validator_id: str = "fake-validator"
+    calls: int = 0
+
+    def validate(self, request: RewriteRequest, prompt: str) -> ValidationVerdict:
+        self.calls += 1
+        if self.calls > self.survive:
+            raise ValidatorStopped
+        return ValidationVerdict(status="invalid" if self.calls % 2 else "valid")
+
+
+def test_the_attempt_ledger_ends_every_line_with_lf_through_a_resume(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The rows a resume keeps and the rows it appends must not mix line endings (#31)."""
+
+    import inspect_safety_stats.generative.runner as runner_module
+
+    plan = write_run_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    monkeypatch.setattr(runner_module, "resolve_validator", lambda spec: StoppingValidator(41))
+    with pytest.raises(ValidatorStopped):
+        materialize_run(plan, artifacts, validator="stopping")
+    assert b"\r" not in (artifacts / "attempts.csv").read_bytes(), "a fresh ledger"
+
+    monkeypatch.setattr(runner_module, "resolve_validator", lambda spec: StoppingValidator())
+    materialize_run(plan, artifacts, validator="stopping", resume=True)
+    written = (artifacts / "attempts.csv").read_bytes()
+    assert b"\r" not in written, "a resumed ledger"
+    rewrites = read_rewrites(artifacts / "rewrites.csv")
+    assert written.count(b"\n") == 1 + sum(record.rewrite_attempts for record in rewrites)
+
+
 def test_resume_refuses_a_partial_run_without_an_attempt_ledger(tmp_path: Path) -> None:
     unvalidated = write_run_plan(tmp_path, invoke=False)
     artifacts = tmp_path / "run"
@@ -381,11 +422,90 @@ def test_normalized_text_ignores_case_punctuation_and_spacing(first: str, second
     assert normalized_text(first) == normalized_text(second)
 
 
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("don't", "dont"),
+        ("don’t", "dont"),
+        ("e-mail", "email"),
+        ("step-by-step", "step by step"),
+        ("word—word", "word — word"),
+        ("snake_case", "snakecase"),
+        ("zero​width", "zerowidth"),
+        ("soft­hyphen", "softhyphen"),
+        ("﻿byte order mark", "byte order mark"),
+    ],
+)
+def test_normalized_text_removes_punctuation_and_invisible_characters(
+    first: str, second: str
+) -> None:
+    """Removed, as the docs say, not replaced by a space that still tells the two apart."""
+
+    from inspect_safety_stats.generative.execution import normalized_text
+
+    assert normalized_text(first) == normalized_text(second)
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        pytest.param("\u26a0\ufe0f Warning", "\u26a0 Warning", id="emoji-selector"),
+        pytest.param("\u26a0\ufe0f Warning", "Warning", id="emoji-and-symbol"),
+        pytest.param("1\ufe0f\u20e3 step", "1 step", id="keycap"),
+        pytest.param("\u845b\U000e0100", "\u845b", id="ideographic-selector"),
+        pytest.param("e\ufe0f\u0301", "\u00e9", id="selector-before-an-accent"),
+        pytest.param("grapheme\u034fjoiner", "graphemejoiner", id="grapheme-joiner"),
+        pytest.param("\u1820\u180b\u1820\u180f", "\u1820\u1820", id="mongolian-selectors"),
+        pytest.param("khmer\u17b4\u17b5", "khmer", id="khmer-inherent-vowels"),
+        pytest.param("hangul\u3164filler", "hangulfiller", id="hangul-filler"),
+        pytest.param("hangul\uffa0filler", "hangulfiller", id="halfwidth-hangul-filler"),
+        pytest.param("\u115f\u1160\ud55c", "\ud55c", id="hangul-jamo-fillers"),
+        pytest.param(
+            "\u0645\u0640\u0640\u0631\u062d\u0628\u0627",
+            "\u0645\u0631\u062d\u0628\u0627",
+            id="tatweel",
+        ),
+        pytest.param("\u0628\ufe71", "\u0628\u064b", id="tatweel-from-a-presentation-form"),
+    ],
+)
+def test_normalized_text_removes_default_ignorable_code_points(first: str, second: str) -> None:
+    """Characters that render as nothing, or only stretch a word, do not tell rewrites apart."""
+
+    from inspect_safety_stats.generative.execution import normalized_text
+
+    assert normalized_text(first) == normalized_text(second)
+
+
+def test_normalized_text_keeps_what_the_ignored_characters_sit_beside() -> None:
+    from inspect_safety_stats.generative.execution import normalized_text
+
+    assert normalized_text("1\ufe0f\u20e3 step") != normalized_text("2\ufe0f\u20e3 step")
+    assert normalized_text("\u0628\ufe71") != normalized_text("\u0628"), "the vowel sign stays"
+    assert normalized_text("\u845b\U000e0100") != normalized_text("\u845c")
+    assert normalized_text("e\ufe0f\u0301") != normalized_text("e")
+
+
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [("Take 1.5 mg", "Take 15 mg"), ("10-20 people", "1020 people"), ("1,000", "1 000")],
+)
+def test_normalized_text_joins_digits_across_separators(first: str, second: str) -> None:
+    """Documented: a false match costs a retry, and never lets a duplicate through."""
+
+    from inspect_safety_stats.generative.execution import normalized_text
+
+    assert normalized_text(first) == normalized_text(second)
+    assert normalized_text(first) != normalized_text(first.replace("1", "2", 1))
+
+
 def test_normalized_text_keeps_wording_and_order() -> None:
     from inspect_safety_stats.generative.execution import normalized_text
 
     assert normalized_text("tell me how") != normalized_text("how tell me")
     assert normalized_text("tell me how") != normalized_text("tell us how")
+    assert normalized_text("résumé") != normalized_text("resume"), "marks are kept"
+    assert normalized_text("résumé") == normalized_text("résumé")
+    assert normalized_text("step 5") != normalized_text("step 6")
 
 
 def test_near_duplicates_are_rejected_within_their_scope(tmp_path: Path) -> None:
@@ -396,6 +516,26 @@ def test_near_duplicates_are_rejected_within_their_scope(tmp_path: Path) -> None
     assert len(repeats) == result.duplicates_rejected
     assert any(item.duplicate == "near" for item in repeats), "restyled text is caught"
     assert {item.validator_status for item in result.attempts} == {"not_run"}
+
+
+def test_near_duplicate_detection_without_a_scope_is_refused(tmp_path: Path) -> None:
+    """With scope: none nothing is compared, so the setting would detect nothing."""
+
+    plan = materialize(tmp_path, near_plan(scope="none"), SEEDS_WITH_TEXT)
+    with pytest.raises(ValueError, match="scope: none compares nothing"):
+        load_generative_plan(plan)
+    result = runner.invoke(
+        app,
+        ["generative", "materialize", "--plan", str(plan), "--output", str(tmp_path / "run")],
+    )
+    assert result.exit_code == 3
+    assert "near_duplicate" in plain(result.output)
+    assert not (tmp_path / "run").exists()
+
+    load_generative_plan(materialize(tmp_path, near_plan(scope="structural_path")))
+    load_generative_plan(
+        materialize(tmp_path, plan_document(invoke=False, deduplication={"scope": "none"}))
+    )
 
 
 def test_without_near_duplicate_detection_restyled_text_is_new(tmp_path: Path) -> None:

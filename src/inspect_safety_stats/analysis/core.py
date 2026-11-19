@@ -59,6 +59,8 @@ class _AnalysisCore:
     integrity_status: Literal["valid", "degraded", "invalid"]
     claims: list[ClaimResult]
     adaptive_claims: list[AdaptiveClaimResult]
+    # For each claim, the key of the coverage event its verdict rests on (claims.coverage_event).
+    coverage_events: dict[str, str]
 
     def mandatory_statuses(self) -> list[Decision]:
         """The statuses the overall decision rolls up: every mandatory claim's, of both kinds."""
@@ -67,8 +69,16 @@ class _AnalysisCore:
 
 
 def _analysis_core(
-    plan: AnalysisPlan, data: NormalizedData, diagnostics: list[Diagnostic]
+    plan: AnalysisPlan,
+    data: NormalizedData,
+    diagnostics: list[Diagnostic],
+    policy_claims: frozenset[str] = frozenset(),
 ) -> _AnalysisCore:
+    """Every result of the analysis of ``plan``, which carries any decision policy's thresholds.
+
+    ``policy_claims`` are the claims whose thresholds such a policy set.
+    """
+
     estimates = _prompt_estimates(plan, data, diagnostics)
     hierarchy_nodes = _hierarchy_nodes(plan, data)
     direct_context = _direct_mean_context(
@@ -101,12 +111,15 @@ def _analysis_core(
     judge_correction = apply_judge_correction(
         plan, data, hierarchy_nodes, projected, diagnostics
     )
-    panel_correction = apply_panel_derived_correction(plan, judge_correction.rows, diagnostics)
+    panel_correction = apply_panel_derived_correction(
+        plan, data, hierarchy_nodes, judge_correction.rows, diagnostics
+    )
     final = panel_correction.rows
     risks, hierarchy_risks, comparisons = final.risks, final.hierarchy_risks, final.comparisons
     judge_calibration_summary = judge_correction.summary
     comparison_sets = _comparison_set_results(plan, comparisons, risks)
     integrity_status = _integrity_status(diagnostics)
+    coverage_events: dict[str, str] = {}
     claims = _claims(
         plan,
         data,
@@ -115,6 +128,8 @@ def _analysis_core(
         integrity_status != "invalid",
         diagnostics,
         judge_calibration_summary,
+        coverage_events,
+        policy_claims,
     )
     return _AnalysisCore(
         estimates=estimates,
@@ -127,6 +142,7 @@ def _analysis_core(
         integrity_status=integrity_status,
         claims=claims,
         adaptive_claims=_adaptive_claims(plan, data, integrity_status != "invalid"),
+        coverage_events=coverage_events,
     )
 
 
@@ -257,6 +273,7 @@ def _add_judge_claims(
     plan_diagnostics: Sequence[Diagnostic],
     *,
     report_valid: bool,
+    policy_claims: frozenset[str] = frozenset(),
 ) -> None:
     """Decide every claim again on each declared judge's verdicts, beside the primary's.
 
@@ -272,7 +289,9 @@ def _add_judge_claims(
     each diagnostic code occurred in its run, so the report says why a run is not valid. A
     judge whose own ``score`` asks for what the source cannot give, such as the stop reasons
     its ``token_limit`` needs, gets an ``invalid`` run with ``INGEST_FAILED``, as the primary
-    would, and rows that decide nothing; the rest of the report stands.
+    would, and rows that decide nothing; the rest of the report stands. ``plan`` carries any
+    decision policy's thresholds, and ``policy_claims`` are the claims they set, so a row's
+    reasons say whose thresholds it was decided at, as the primary's claims do.
     """
 
     validated_calibration = (
@@ -306,7 +325,7 @@ def _add_judge_claims(
             continue
         diagnostics.extend(data.diagnostics)
         diagnostics.extend(single_rollout_tail_claims(judge_plan, data))
-        core = _analysis_core(judge_plan, data, diagnostics)
+        core = _analysis_core(judge_plan, data, diagnostics, policy_claims)
         # The counts stay the judge's own run's; the report's errors are in the report.
         entry["integrity"] = core.integrity_status if report_valid else "invalid"
         entry["diagnostic_counts"] = _code_counts(diagnostics)

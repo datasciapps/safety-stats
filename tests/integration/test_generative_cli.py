@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -173,6 +174,8 @@ def test_text_artifacts_have_the_same_bytes_on_every_platform(
     path = analyze_run(plan, artifacts, "logs", cohort="candidate").write(tmp_path / "report")
     written = [
         artifacts / "selections.csv",
+        artifacts / "rewrites.csv",
+        artifacts / "prompts.restricted.csv",
         *sorted((artifacts / "datasets").glob("*.jsonl")),
         *sorted(path.iterdir()),
     ]
@@ -686,7 +689,7 @@ def test_a_declared_slice_family_reaches_every_artifact(
     )
     output = plain(result.output)
     assert result.exit_code == 0, output
-    assert "Slice family (experimental, simultaneous):" in output
+    assert "Slice family (experimental, simultaneous, judge-reported scale):" in output
     assert "language=maltese: upper" in output
     assert "roleplay-vs-plain (roleplay - plain): upper" in output
 
@@ -762,6 +765,44 @@ def test_an_ill_formed_family_is_refused_at_load(
     plan = write_plan(tmp_path, inference={"slice_family": family})
     with pytest.raises(ValueError, match=message):
         load_generative_plan(plan)
+
+
+@pytest.mark.parametrize(
+    ("family", "total", "reason"),
+    [
+        # Three draws land on roleplay and nested only, though plain carries half the weight.
+        (FAMILY, 3, "no draw landed on wrapper=plain"),
+        ({"slices": [{"level": "language", "value": "maltse"}]}, 200,
+         "no terminal path carries language=maltse"),
+    ],
+)
+def test_a_family_the_analysis_could_not_estimate_is_refused_before_generation(
+    tmp_path: Path, family: dict[str, Any], total: int, reason: str
+) -> None:
+    plan = write_plan(tmp_path, total=total, inference={"slice_family": family})
+    message = f"inference.slice_family cannot be estimated on this design: {reason}"
+
+    compiled = runner.invoke(app, ["generative", "compile", "--plan", str(plan)])
+    assert compiled.exit_code == 3
+    assert message in plain(compiled.output)
+
+    output = tmp_path / "run"
+    with pytest.raises(ValueError, match=re.escape(message)):
+        materialize_run(plan, output)
+    # Refused before the first ledger row, so no rewrite was requested.
+    assert not (output / "selections.csv").exists()
+    assert not (output / "rewrites.csv").exists()
+
+
+def test_a_family_declared_after_materialization_is_refused_before_the_logs_are_read(
+    tmp_path: Path,
+) -> None:
+    plan = write_plan(tmp_path, total=3)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    plan = write_plan(tmp_path, total=3, inference={"slice_family": FAMILY})
+    with pytest.raises(ValueError, match="inference.slice_family cannot be estimated"):
+        analyze_run(plan, artifacts, str(tmp_path / "no-such-logs"))
 
 
 _GENERATIVE_CAVEAT = (

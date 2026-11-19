@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import functools
 import math
+from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -27,10 +28,11 @@ from inspect_safety_stats.ingest.manifest import (
     check_zero_tolerance_field,
     load_inclusion_probabilities,
     load_manifest,
+    load_selection,
     plan_manifest_columns,
     resolve_groups,
 )
-from inspect_safety_stats.ingest.outcomes import is_missing, map_outcome
+from inspect_safety_stats.ingest.outcomes import UnmappedScoreError, is_missing, map_outcome
 from inspect_safety_stats.ingest.records import (
     EvaluationSource,
     NormalizedData,
@@ -186,6 +188,105 @@ def _run_field(plan: AnalysisPlan, run: RunRecord, name: str) -> Any:
         "run_id": run.run_id,
     }
     return neutral.get(name, _ABSENT)
+
+
+# A message that lists the values found in the source names at most this many, the most
+# frequent first, and says how many more there are.
+_LISTED_VALUES = 10
+
+
+def _listing(counts: Counter[str], unit: str) -> str:
+    """Quoted values with how often each occurs, the most frequent first."""
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    listed = ", ".join(
+        f"{value} in {count} {unit}{'' if count == 1 else 's'}"
+        for value, count in ordered[:_LISTED_VALUES]
+    )
+    rest = len(ordered) - _LISTED_VALUES
+    return f"{listed}, and {rest} more" if rest > 0 else listed
+
+
+def _score_absent(column: str, path: str, names: set[str]) -> str:
+    """Say that a score column is absent, and which scores the plan path could name instead."""
+    message = f"score column {column!r} is absent from selected logs"
+    if not names:
+        return f"{message}, which have no scores"
+    listed = ", ".join(repr(name) for name in sorted(names))
+    return f"{message}; {path} must name a score they have: {listed}"
+
+
+def _match_value_shown(plan: AnalysisPlan, run: RunRecord, field: str, expected: Any) -> str:
+    """How a COHORT_EMPTY message shows a run's value of a field its cohort matches on.
+
+    Only the model is shown. Any other run field can hold the run's configuration, such as a
+    task argument, a base URL or the generate config's headers, and no diagnostic shows those
+    values (see ``_RunValue``), so the message says only whether the run has the value the
+    cohort requires.
+    """
+    value = _run_field(plan, run, field)
+    if value is _ABSENT:
+        return "(absent)"
+    if field == "model":
+        return repr(_native(value))
+    return "the required value" if _equal(value, expected) else "another value"
+
+
+def _cohort_empty_message(
+    plan: AnalysisPlan, cohort_id: str, match: dict[str, Any], runs: list[RunRecord]
+) -> str:
+    """Say what a cohort requires and what the selected evaluations have instead."""
+    message = f"cohort {cohort_id!r} contains no evaluations"
+    if not runs:
+        return f"{message}, and no evaluation was selected"
+    # An evaluation that matches several cohorts is put in none of them (COHORT_OVERLAP).
+    overlapping = sum(cohort_id in _match_cohorts(run, plan) for run in runs)
+    if overlapping:
+        return (
+            f"{message}: the {overlapping} evaluation(s) it matches also match another cohort "
+            "(COHORT_OVERLAP)"
+        )
+    required = " and ".join(f"{field} = {expected!r}" for field, expected in match.items())
+    observed = "; ".join(
+        f"{field} "
+        + _listing(
+            Counter(_match_value_shown(plan, run, field, expected) for run in runs),
+            "evaluation",
+        )
+        for field, expected in match.items()
+    )
+    return f"{message}: it requires {required}, and the selected evaluations have {observed}"
+
+
+def _unmapped_summary(
+    code: str, path: str, scope: str, mapping: OutcomeMappingSpec, counts: Counter[str]
+) -> Diagnostic:
+    """One error that lists the distinct unmapped score values and says how to map them.
+
+    Each unmapped rollout keeps its own error, which withholds its prompt's bounds. This one
+    is about the plan, so its scope is the plan path: an unscoped error would withhold the
+    bounds of every prompt. Its own code sorts it ahead of the rollouts' errors in reports.
+    """
+    total = sum(counts.values())
+    values = _listing(counts, "rollout")
+    if mapping.failure_if is not None:
+        message = (
+            f"{total} rollout(s) have a nonnumeric score, which {path}.failure_if cannot "
+            f"compare: {values}. Map categorical scores with failure_values and safe_values."
+        )
+    else:
+        message = (
+            f"{total} rollout(s) have a score value that {path} lists in neither "
+            f"failure_values {mapping.failure_values!r} nor safe_values "
+            f"{mapping.safe_values!r}: {values}. Add each value the scorer gives to one of "
+            "the two lists; matching is type-sensitive."
+        )
+    return Diagnostic(
+        code=code,
+        severity="ERROR",
+        message=message,
+        scope=scope,
+        details={"rollouts": total, "distinct_values": len(counts)},
+    )
 
 
 def _rollout_field(
@@ -345,7 +446,9 @@ def normalize(
                 Diagnostic(
                     code="COHORT_EMPTY",
                     severity="ERROR",
-                    message=f"cohort {cohort_id!r} contains no evaluations",
+                    message=_cohort_empty_message(
+                        plan, cohort_id, cohort.match, list(source.runs)
+                    ),
                     scope=cohort_scope(cohort_id),
                 )
             )
@@ -411,6 +514,7 @@ def normalize(
         (_utc(run.started_at) for run in run_records.values() if run.started_at is not None),
         default=None,
     )
+    start_unrecorded = any(run.started_at is None for run in run_records.values())
     if plan.analysis.intent == "confirmatory" and plan.analysis.plan_frozen_at is not None:
         observed = [
             run.started_at for run in run_records.values() if run.started_at is not None
@@ -475,15 +579,15 @@ def normalize(
                 Diagnostic(
                     code="JUDGE_SCORE_MISSING",
                     severity="ERROR",
-                    message=(
-                        f"judge {judge.id!r} score column {column!r} is absent from selected logs"
-                    ),
+                    message=f"judge {judge.id!r} "
+                    + _score_absent(column, f"inputs.judges.{judge.id}.score.name", score_names),
                     scope=plan_scope("inputs", "judges", judge.id),
                 )
             )
             judge_series[judge.id] = {id(rollout): None for _, rollout in selected}
             continue
         verdicts: dict[int, bool | None] = {}
+        judge_unmapped: Counter[str] = Counter()
         for _, rollout in selected:
             value = _native(scores[id(rollout)].get(judge.score.name))
             if is_missing(value):
@@ -492,6 +596,8 @@ def normalize(
             try:
                 verdicts[id(rollout)] = map_outcome(value, judge.score.mapping)
             except ValueError as exc:
+                if isinstance(exc, UnmappedScoreError):
+                    judge_unmapped[f"{exc.value!r} ({exc.type_name})"] += 1
                 diagnostics.append(
                     Diagnostic(
                         code="JUDGE_SCORE_UNMAPPED",
@@ -501,6 +607,16 @@ def normalize(
                     )
                 )
                 verdicts[id(rollout)] = None
+        if judge_unmapped:
+            diagnostics.append(
+                _unmapped_summary(
+                    "JUDGE_SCORE_MAPPING_MISMATCH",
+                    f"inputs.judges.{judge.id}.score.mapping",
+                    plan_scope("inputs", "judges", judge.id, "score", "mapping"),
+                    judge.score.mapping,
+                    judge_unmapped,
+                )
+            )
         judge_series[judge.id] = verdicts
     # Composites become ordinary scores, so a composite may serve as the primary outcome
     # and every downstream construction runs unchanged.
@@ -517,7 +633,7 @@ def normalize(
             Diagnostic(
                 code="SCORE_MISSING",
                 severity="ERROR",
-                message=f"score column {f'score_{score_name}'!r} is absent from selected logs",
+                message=_score_absent(f"score_{score_name}", "inputs.score.name", score_names),
             )
         )
     manifest_by_prompt = manifest.set_index("prompt_id", drop=False)
@@ -542,6 +658,8 @@ def normalize(
     source_names: dict[str, str] = {}
     # Transcripts that could not be read, by report name: the reason and how many errors.
     unread_transcripts: dict[str, tuple[str, int]] = {}
+    # Score values the plan's mapping does not cover, quoted with their type, and how often.
+    unmapped: Counter[str] = Counter()
     for collection_order, (_, rollout) in enumerate(selected, start=1):
         run_key = rollout.run_key
         prompt_id = rollout.item_id
@@ -748,6 +866,8 @@ def normalize(
                 failure = map_outcome(raw_score, plan.inputs.score.mapping)
                 outcome_status = "classified_failure" if failure else "classified_safe"
             except ValueError as exc:
+                if isinstance(exc, UnmappedScoreError):
+                    unmapped[f"{exc.value!r} ({exc.type_name})"] += 1
                 diagnostics.append(
                     Diagnostic(
                         code="SCORE_UNMAPPED",
@@ -814,6 +934,17 @@ def normalize(
                 configuration_fingerprint=sha256_value(config),
                 collection_order=collection_order,
                 token_limit_unscored=None if token_limit == "score" else truncated,
+            )
+        )
+
+    if unmapped:
+        diagnostics.append(
+            _unmapped_summary(
+                "SCORE_MAPPING_MISMATCH",
+                "inputs.score.mapping",
+                plan_scope("inputs", "score", "mapping"),
+                plan.inputs.score.mapping,
+                unmapped,
             )
         )
 
@@ -910,6 +1041,9 @@ def normalize(
             if plan.design.stratum_column
             else ["_all"] * len(prompt_ids)
         )
+        if plan.design.selection_column:
+            drawn = load_selection(manifest, plan.design.selection_column)
+            diagnostics.extend(_selection_mismatches(plan, prompt_ids, drawn, observed_counts))
         if plan.design.sampling == "fixed_size":
             # A fixed-size design must realize exactly its planned draws. Inferring the
             # plan from pi requires pi to be constant inside a stratum and to imply an
@@ -984,6 +1118,7 @@ def normalize(
                 judge_verdicts=judge_verdicts,
                 source_format=dict(source.source_format),
                 first_started_at=first_started_at,
+                start_unrecorded=start_unrecorded,
             )
         for cohort_id in plan.cohorts:
             realized = sum(
@@ -1033,7 +1168,61 @@ def normalize(
         judge_verdicts=judge_verdicts,
         source_format=dict(source.source_format),
         first_started_at=first_started_at,
+        start_unrecorded=start_unrecorded,
     )
+
+
+def _selection_mismatches(
+    plan: AnalysisPlan,
+    prompt_ids: list[str],
+    selected: np.ndarray,
+    observed_counts: dict[tuple[str, str], int],
+) -> list[Diagnostic]:
+    """An error for each cohort whose observed frame items are not the recorded selection.
+
+    The per-stratum counts a fixed-size design checks cannot tell a random draw from, say,
+    the first prompts of each stratum by identifier. The selection column records which
+    items the draw chose, so the items actually evaluated can be checked against it.
+    """
+
+    column = str(plan.design.selection_column)
+    diagnostics: list[Diagnostic] = []
+    for cohort_id in plan.cohorts:
+        observed = [observed_counts.get((cohort_id, prompt_id), 0) > 0 for prompt_id in prompt_ids]
+        unselected = sorted(
+            prompt_id
+            for prompt_id, chosen, seen in zip(prompt_ids, selected, observed, strict=True)
+            if seen and not chosen
+        )
+        unobserved = sorted(
+            prompt_id
+            for prompt_id, chosen, seen in zip(prompt_ids, selected, observed, strict=True)
+            if chosen and not seen
+        )
+        if not unselected and not unobserved:
+            continue
+        diagnostics.append(
+            Diagnostic(
+                code="SAMPLE_SELECTION_MISMATCH",
+                severity="ERROR",
+                message=(
+                    f"cohort {cohort_id!r} has observations for {len(unselected)} frame items "
+                    f"that {column!r} does not select and none for {len(unobserved)} that it "
+                    "selects; the declared inclusion probabilities describe the recorded draw, "
+                    "not the items evaluated"
+                ),
+                scope=cohort_scope(cohort_id),
+                details={
+                    "cohort_id": cohort_id,
+                    "selection_column": column,
+                    "observed_not_selected": len(unselected),
+                    "selected_not_observed": len(unobserved),
+                    "observed_not_selected_prompt_ids": unselected[:20],
+                    "selected_not_observed_prompt_ids": unobserved[:20],
+                },
+            )
+        )
+    return diagnostics
 
 
 def _receipt_timing(receipt: RegistrationReceipt, observed: list[Any]) -> list[Diagnostic]:

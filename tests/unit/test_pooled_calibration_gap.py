@@ -1,7 +1,7 @@
 """Which rows a cohort's pooled judge labels can certify (#95).
 
-The labels weight every classified rollout of the cohort equally, so they certify only a
-weighted mean, in a fixed design, that does the same.
+The labels weight every rollout the judge classified in the cohort equally, so they certify
+only a weighted mean, in a fixed design, that does the same.
 """
 
 from __future__ import annotations
