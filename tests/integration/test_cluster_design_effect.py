@@ -220,6 +220,28 @@ def test_noisy_units_in_small_conversations_do_not_warn_an_item_primary(
     assert (units["design_effect"], units["effective_units"]) == (1.0, 24.0)
 
 
+@pytest.mark.parametrize(("second", "severity"), [((10, 10), "WARNING"), ((10, 9), "INFO")])
+def test_the_warning_starts_at_a_design_effect_of_2(
+    tmp_path: Path, second: tuple[int, int], severity: str
+) -> None:
+    # Six conversations of two prompts with ten rollouts each. Both prompts of c0 and c1 fail
+    # every rollout, and both of each other conversation none, so the rates of the two units of
+    # a conversation agree: the pairwise correlation is 1, and the design effect 1 + (2 - 1) 1
+    # is exactly the warning level, 2. With c0's second prompt failing 9 of its 10 rollouts,
+    # it is just below.
+    conversations = [[(10, 10), second], [(10, 10)] * 2, *[[(10, 0)] * 2] * 4]
+    (found,) = _found(run_analysis(_layout_inputs(conversations), tmp_path).diagnostics)
+    (cohort,) = found.details["cohorts"]
+    (units,) = cohort["primaries"]
+    if severity == "WARNING":
+        assert units["design_effect"] == 2.0
+    else:
+        assert 1.99 < units["design_effect"] < 2.0
+    assert found.severity == severity
+    warned = ["item"] if severity == "WARNING" else []
+    assert found.details["primaries_splitting_blocks"] == warned
+
+
 def test_a_rollout_primary_gets_the_figures_on_rollouts(tmp_path: Path) -> None:
     (found,) = _found(
         run_analysis(_inputs(PROMPT_SPREAD, primary="rollout", rollouts=10), tmp_path).diagnostics
