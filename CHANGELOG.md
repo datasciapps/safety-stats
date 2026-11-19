@@ -321,8 +321,9 @@ described in their pull requests.
   See [Command-line interface](docs/api-reference.md#command-line-interface).
 
 - **Plan registration receipts (experimental).** `hash-plan --register RECEIPT.json` writes the
-  plan's hash with the current UTC time, for the author to anchor externally, for example in a
-  signed commit. `analyze` and `validate` check it with `--registration-receipt` (Python:
+  plan's hash with the current UTC time, rounded up to the whole second so that it never
+  precedes the registration, for the author to anchor externally, for example in a signed
+  commit. `analyze` and `validate` check it with `--registration-receipt` (Python:
   `registration_receipt=`): a receipt for another plan is `PLAN_RECEIPT_MISMATCH`, one later
   than the earliest evaluation start is `PLAN_RECEIPT_POSTHOC`, both errors; a receipt that
   passes reports `PLAN_REGISTERED` in place of the `PLAN_SELF_DECLARED` warning. Nothing changes
