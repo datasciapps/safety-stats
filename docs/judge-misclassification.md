@@ -534,8 +534,14 @@ Weighting the labels by the design, which would certify more rows, is future wor
 A cohort often holds several benchmarks, and a judge's accuracy can differ between them. The
 labels of one benchmark then say little about another's rows, yet a cohort-wide calibration
 pools them. `judge_calibration.groups` estimates one calibration per cohort and listed group
-instead, from the labels and judge-stratum sizes of that group's rollouts. Each listed group
-is then calibrated the way a cohort is otherwise:
+instead, from the labels and judge-stratum sizes of that group's rollouts.
+
+In `validated` mode the scope is **experimental**. It certifies rows, such as a mean over one
+benchmark of a cohort, that a cohort-wide calibration reports only as sensitivity analyses,
+so it is less conservative than leaving `groups` out. The report marks it with
+`experimental: true` under `provenance.judge_calibration`.
+
+Each listed group is calibrated the way a cohort is otherwise:
 
 - the conditions above apply with "the cohort" read as "the group". A `weighted_mean` over a
   whole listed group, in a fixed design, that weights every classified rollout of the group

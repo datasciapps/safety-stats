@@ -309,6 +309,8 @@ def test_a_pooled_calibration_never_certifies_a_row_it_does_not_measure(
         item for item in report.integrity.diagnostics if item.code == "JUDGE_CORRECTION_UNAVAILABLE"
     )
     assert unavailable.details["claim_ids"] == ["mean_all", "mean_hard", "worst_all"]
+    # A calibration over the whole cohort is not experimental.
+    assert "experimental" not in report.provenance["judge_calibration"]
 
     # The delta-method reference beside it is diagnostic anyway, and now says why too.
     delta = next(
@@ -395,6 +397,8 @@ def test_a_group_scoped_calibration_measures_its_group_and_certifies_its_mean(
     assert summary["groups"] == ["hard"]
     assert summary["per_calibration_alpha"] == pytest.approx(0.05, abs=0)
     assert "per_cohort_alpha" not in summary
+    # The scope certifies rows an unscoped calibration could not, so it is experimental.
+    assert summary["experimental"] is True
     assert summary["cohorts"] == {
         "candidate": {
             "hard": {
@@ -544,6 +548,8 @@ def test_an_assumed_calibration_scoped_to_a_group_corrects_only_its_rows(
         row = _risk(report, "all", measure)
         assert not [item for item in row.intervals if item.interval_id.startswith("judge_")]
     assert report.provenance["judge_calibration"]["groups"] == ["hard"]
+    # Scoping declared accuracies certifies nothing, so it is not experimental.
+    assert "experimental" not in report.provenance["judge_calibration"]
     # An assumed correction never moves a claim, scoped or not.
     claim = next(item for item in report.claims if item.claim_id == "mean_hard")
     assert claim.method != "assumed_judge_misclassification_correction"

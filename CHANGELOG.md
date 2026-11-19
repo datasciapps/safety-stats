@@ -375,10 +375,12 @@ described in their pull requests.
   that holds several benchmarks no longer has to share one judge calibration and one panel
   summary across them. Three optional plan fields:
   - `inputs.judge_calibration.groups` corrects only the listed groups' rows. In `validated`
-    mode it estimates one calibration per cohort and listed group from that group's labels,
-    and splits the judge family budget over those calibrations (`per_calibration_alpha`).
-    Such a calibration certifies a `weighted_mean` over a whole listed group. A claim on a
-    row outside the scope is INCONCLUSIVE in a validated plan, and labels outside it raise
+    mode, which is experimental with `groups`, it estimates one calibration per cohort and
+    listed group from that group's labels, and splits the judge family budget over those
+    calibrations (`per_calibration_alpha`). Such a calibration certifies a `weighted_mean`
+    over a whole listed group, a row that an unscoped calibration reports only as a
+    sensitivity analysis, and the report records `experimental: true` beside it. A claim on
+    a row outside the scope is INCONCLUSIVE in a validated plan, and labels outside it raise
     `JUDGE_VALIDATION_OUT_OF_SCOPE`. A `transported` calibration takes no `groups`.
   - `inputs.judges[].accuracy.groups` limits a judge's declared ranges to the listed groups.
     The panel-derived correction, and the judge-error stress box, then apply only where every
