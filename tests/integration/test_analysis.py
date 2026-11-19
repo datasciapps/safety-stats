@@ -288,11 +288,13 @@ def test_a_saved_report_json_alone_renders_the_report_again(
 def test_a_report_written_before_its_json_held_the_design_still_visualizes(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """An older report.json lacks design.prompts; the page takes them from design.resolved.csv."""
+    """An older report.json lacks design.prompts and the primary independence profile; the
+    page takes them from design.resolved.csv and plan.resolved.yaml beside it."""
     output = _written_report(monkeypatch, tmp_path)
     saved = json.loads((output / "report.json").read_text(encoding="utf-8"))
     prompts = saved["design"].pop("prompts")
     assert prompts
+    assert saved["presentation"].pop("primary_independence_profile") == "rollout"
     (output / "report.json").write_text(json.dumps(saved), encoding="utf-8", newline="\n")
 
     html = write_visualization(output, tmp_path / "older.html").read_text(encoding="utf-8")
@@ -305,6 +307,8 @@ def test_a_report_written_before_its_json_held_the_design_still_visualizes(
     assert [row["weight"] for row in shown] == pytest.approx(
         [row["weight"] for row in prompts], abs=0
     )
+    # The plan's outputs.direct_mean_intervals.independence.primary.
+    assert payload["report"]["presentation"]["primary_independence_profile"] == "rollout"
 
 
 def test_text_artifacts_have_the_same_bytes_on_every_platform(
