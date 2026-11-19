@@ -124,9 +124,10 @@ class FineStrataCounts:
 
     ``by_cohort`` maps a cohort to its :data:`FineStrata`. ``unmatched_labels`` are label
     keys no classified row matched, as :func:`count_judge_strata` reports them.
-    ``unstratified`` are classified rows the strata file does not place, and
+    ``unstratified`` are the keys of classified rows the strata file does not place, and
     ``unknown_strata`` are strata-file keys that name no classified row; either means the
-    file does not describe the design the labels were drawn from.
+    file does not describe the design the labels were drawn from. Both are bare keys, as the
+    labels and strata files name rows.
     """
 
     by_cohort: dict[str, FineStrata]
@@ -153,13 +154,14 @@ class FineStrataCounts:
 
 
 def count_fine_strata(
-    rows: Iterable[tuple[str, str | None, bool | None]],
+    rows: Iterable[tuple[str, str, bool | None]],
     labels: dict[str, bool],
     strata: dict[str, str],
 ) -> FineStrataCounts:
     """Cross human labels against judge verdicts within declared fine strata, per cohort.
 
-    Each row is ``(cohort_id, label_key, verdict)``, as for :func:`count_judge_strata`, and
+    Each row is ``(cohort_id, label_key, verdict)``, as for :func:`count_judge_strata` but
+    with a key on every row, since the strata file must place each classified row by it.
     ``strata`` maps a label key to its declared stratum. A fine stratum is the declared
     stratum within one cohort and one judge verdict, so declared strata need not respect the
     judge's verdicts: the counting nests them. An unclassified row belongs to no stratum.
@@ -174,8 +176,8 @@ def count_fine_strata(
     for cohort_id, label_key, verdict in rows:
         if verdict is None:
             continue
-        if label_key is None or label_key not in strata:
-            unstratified.append(f"{cohort_id}/{label_key}")
+        if label_key not in strata:
+            unstratified.append(label_key)
             continue
         declared = strata[label_key]
         seen_strata.add(label_key)

@@ -340,8 +340,10 @@ def test_a_strata_file_that_is_not_the_design_stops_the_correction(
     strata: dict[int, str] = {e: _stratum(e) for e in observations}
     if defect == "missing":
         del strata[500]
+        named = observations[500]
     else:
-        observations = {**observations, ROLLOUTS + 1: "not-an-observation"}
+        named = "not-an-observation"
+        observations = {**observations, ROLLOUTS + 1: named}
         strata[ROLLOUTS + 1] = "agree"
     report = _analyze(
         tmp_path / "run",
@@ -356,6 +358,9 @@ def test_a_strata_file_that_is_not_the_design_stops_the_correction(
         else "JUDGE_VALIDATION_STRATA_UNMATCHED"
     )
     assert _codes(report)[code] == "ERROR"
+    # Both name observations as the labels and strata files do, by bare identifier.
+    error = next(item for item in report.integrity.diagnostics if item.code == code)
+    assert error.details == {"observation_ids": [named]}
     assert _corrected(report) is None
 
 
