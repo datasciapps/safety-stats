@@ -344,16 +344,23 @@ described in their pull requests.
   [Worst-of-k interval](docs/statistical-methods.md#worst-of-k-interval-experimental).
 
 - **Decision policies (experimental).** Claim thresholds can come from a decision policy kept
-  apart from the plan, and be set or revised after the run, without changing the plan's hash
-  or voiding certification: thresholds never enter the bounds, so the error rate of a verdict
-  holds at any thresholds. `analyze` and `validate` take `--decision-policy` (Python:
+  apart from the plan, and be set or revised after the run, without changing the plan's hash:
+  thresholds never enter the bounds, so the error rate of each claim's verdict holds at any
+  thresholds. The overall decision's does not: when a policy moves any mandatory claim's
+  `acceptable_upper` while the mandatory claims' bounds rest on separate coverage events, a
+  threshold read off the data could make a wrong overall `PASS` as likely as the sum of their
+  error budgets, so an overall `PASS` becomes `INCONCLUSIVE` with the warning
+  `DECISION_POLICY_OVERALL_UNCERTIFIED`. Plans whose mandatory claims all rest on one
+  simultaneous family, such as the default prompt bounds, keep it. This holds whatever time the
+  policy states for its versions. `analyze` and `validate` take `--decision-policy` (Python:
   `decision_policy=`). A policy names its plan by the inference hash, which leaves out the
   thresholds of `corrected_interval` claims (`hash-plan --inference`); it cannot set
   `noisy_valid_test` claims, whose test uses their thresholds. `report.json` gains a
   `decision_policy` section with every version, its time and whether it came after the first
   evaluation started, and the thresholds each claim was decided at; `report.md` shows the same.
   New diagnostics: `DECISION_POLICY_MISMATCH`, `DECISION_POLICY_UNKNOWN_CLAIM`,
-  `DECISION_POLICY_FIXED_CLAIM` (errors) and `DECISION_POLICY_AFTER_GENERATION` (info).
+  `DECISION_POLICY_FIXED_CLAIM` (errors), `DECISION_POLICY_OVERALL_UNCERTIFIED` (warning) and
+  `DECISION_POLICY_AFTER_GENERATION` (info).
   `schema decision-policy` prints the policy schema. Analyses without a policy write the same
   bytes as before. See [Decision policies](docs/decision-policy.md).
 

@@ -54,6 +54,8 @@ class _AnalysisCore:
     integrity_status: Literal["valid", "degraded", "invalid"]
     claims: list[ClaimResult]
     adaptive_claims: list[AdaptiveClaimResult]
+    # For each claim, the key of the coverage event its verdict rests on (claims.coverage_event).
+    coverage_events: dict[str, str]
 
     def mandatory_statuses(self) -> list[Decision]:
         """The statuses the overall decision rolls up: every mandatory claim's, of both kinds."""
@@ -102,6 +104,7 @@ def _analysis_core(
     judge_calibration_summary = judge_correction.summary
     comparison_sets = _comparison_set_results(plan, comparisons, risks)
     integrity_status = _integrity_status(diagnostics)
+    coverage_events: dict[str, str] = {}
     claims = _claims(
         plan,
         data,
@@ -110,6 +113,7 @@ def _analysis_core(
         integrity_status != "invalid",
         diagnostics,
         judge_calibration_summary,
+        coverage_events,
     )
     return _AnalysisCore(
         estimates=estimates,
@@ -122,6 +126,7 @@ def _analysis_core(
         integrity_status=integrity_status,
         claims=claims,
         adaptive_claims=_adaptive_claims(plan, data, integrity_status != "invalid"),
+        coverage_events=coverage_events,
     )
 
 

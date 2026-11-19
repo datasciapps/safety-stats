@@ -15,7 +15,12 @@ from inspect_safety_stats.analysis.design_effect import cluster_design_effects
 from inspect_safety_stats.analysis.inputs import _coerce_plan, _JudgeInputs, _sorted_integrity
 from inspect_safety_stats.analysis.judge_flip import judge_flip_diagnostic
 from inspect_safety_stats.analysis.judge_panel import _judge_panel_summary
-from inspect_safety_stats.analysis.policy import _apply_decision_policy, _decision_policy_record
+from inspect_safety_stats.analysis.policy import (
+    _apply_decision_policy,
+    _decision_policy_record,
+    _policy_roll_up,
+    _PolicyApplication,
+)
 from inspect_safety_stats.analysis.report import (
     _design_frame,
     _policy_events,
@@ -144,9 +149,16 @@ def _mapping_plan(plan: AnalysisPlan, spec: OutcomeMappingSensitivitySpec) -> An
 
 
 def _outcome_mapping_sensitivity(
-    plan: AnalysisPlan, inputs: _JudgeInputs, spec: OutcomeMappingSensitivitySpec
+    plan: AnalysisPlan,
+    inputs: _JudgeInputs,
+    spec: OutcomeMappingSensitivitySpec,
+    application: _PolicyApplication | None = None,
 ) -> OutcomeMappingSensitivity:
-    """The analysis repeated under one alternative outcome mapping, on the same rollouts."""
+    """The analysis repeated under one alternative outcome mapping, on the same rollouts.
+
+    ``application`` is the decision policy the primary analysis applied, if any: ``plan``
+    already carries its thresholds, and its overall decision is held to the same roll-up.
+    """
 
     alternative = _mapping_plan(plan, spec)
     diagnostics = validate_plan_references(alternative)
@@ -169,6 +181,8 @@ def _outcome_mapping_sensitivity(
         zero_tolerance_failure=bool(_policy_events(alternative, data)),
         confirmatory=alternative.analysis.intent == "confirmatory",
     )
+    # ORDER MATTERS: before the integrity is summarised, which counts its diagnostic.
+    decision = _policy_roll_up(application, core.coverage_events, decision, diagnostics)
     integrity = _sorted_integrity(diagnostics)
     counts: dict[str, int] = {}
     for item in integrity.diagnostics:
@@ -255,7 +269,8 @@ def analyze(
     ``decision_policy`` (experimental) is a ``DecisionPolicy`` or the path of a policy file,
     read with ``load_decision_policy``. Its thresholds replace the plan's for the claims it
     sets, and the report records every version of it, while the plan and its hash stay as
-    frozen (docs/decision-policy.md).
+    frozen. When it moves any mandatory claim's acceptable_upper and the mandatory claims rest
+    on separate coverage events, an overall PASS becomes INCONCLUSIVE (docs/decision-policy.md).
 
     ``registration_receipt`` (experimental) is the path of a receipt written by
     ``hash-plan --register``. It is checked against the frozen plan's hash and the earliest
@@ -299,6 +314,8 @@ def analyze(
         zero_tolerance_failure=bool(events),
         confirmatory=resolved.analysis.intent == "confirmatory",
     )
+    # ORDER MATTERS: before the integrity is summarised, so that its diagnostic is reported.
+    decision = _policy_roll_up(application, core.coverage_events, decision, diagnostics)
     integrity = _sorted_integrity(diagnostics)
     judge_panel = _judge_panel_summary(resolved, data)
     if judge_panel is not None and core.panel_correction is not None:
@@ -359,7 +376,7 @@ def analyze(
     )
     if judge_inputs is not None:
         report.outcome_mapping_sensitivities = [
-            _outcome_mapping_sensitivity(resolved, judge_inputs, spec)
+            _outcome_mapping_sensitivity(resolved, judge_inputs, spec, application)
             for spec in resolved.inputs.score.mapping_sensitivities
         ]
     report._observations = data.observations

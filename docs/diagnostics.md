@@ -131,8 +131,8 @@ outcomes.
   coverage no longer holds.
 - **Remedy:** Freeze the plan before the runs, state analysis.plan_frozen_at, register its hash and
   pass the receipt with --registration-receipt; otherwise set analysis.intent: exploratory.
-- **Checked by:** [`PLAN_POSTHOC`](#plan_posthoc),
-  [`PLAN_RECEIPT_MISMATCH`](#plan_receipt_mismatch),
+- **Checked by:** [`DECISION_POLICY_OVERALL_UNCERTIFIED`](#decision_policy_overall_uncertified),
+  [`PLAN_POSTHOC`](#plan_posthoc), [`PLAN_RECEIPT_MISMATCH`](#plan_receipt_mismatch),
   [`PLAN_RECEIPT_POSTHOC`](#plan_receipt_posthoc), [`PLAN_SELF_DECLARED`](#plan_self_declared),
   [`START_TIME_UNOBSERVED`](#start_time_unobserved)
 
@@ -257,6 +257,21 @@ The analysis plan: its fields, references and their combinations.
   the plan's thresholds, and none can pass.
 - **Remedy:** Apply the policy to the plan it was written for, or set its inference_plan_sha256 to
   the hash `inspect-safety-stats hash-plan --inference` prints for this plan.
+
+#### `DECISION_POLICY_OVERALL_UNCERTIFIED`
+
+- **Severity:** WARNING
+- **Effect:** [adjusted](#effects)
+- **Assumption:** An overall PASS has the error bound of one claim only when every mandatory claim's
+  acceptable_upper was fixed before the data, or when one simultaneous coverage event covers every
+  mandatory claim's bound.
+- **Consequence:** The overall decision is INCONCLUSIVE where every mandatory claim passes, since a
+  wrong PASS is bounded only by the sum of the separate events' error budgets; a FAIL stays FAIL,
+  and every claim keeps its status.
+- **Remedy:** Set these thresholds in the plan before the runs, or decide every mandatory claim on
+  one simultaneous family, such as the default simultaneous prompt bounds or simultaneous
+  direct-mean intervals.
+- **Checks:** [`plan_fixed_in_advance`](#assumption-plan_fixed_in_advance)
 
 #### `DECISION_POLICY_UNKNOWN_CLAIM`
 
@@ -480,10 +495,12 @@ runs.
 
 - **Severity:** INFO
 - **Effect:** [recorded](#effects)
-- **Assumption:** A decision policy's thresholds do not enter the bounds, so a version set after the
-  first evaluation started leaves the verdicts at them certifying.
+- **Assumption:** A decision policy's thresholds were set before the evidence. They do not enter the
+  bounds, so each claim's verdict keeps its error bound at a later threshold, but such a threshold
+  may describe the bounds rather than a requirement fixed in advance.
 - **Consequence:** The policy's thresholds stay in force and the claims keep their status; the
-  versions set after the first evaluation started are listed in the diagnostic.
+  versions set after the first evaluation started are listed in the diagnostic. Whether the overall
+  decision still certifies is DECISION_POLICY_OVERALL_UNCERTIFIED's concern.
 - **Remedy:** No change is needed; to avoid the note, set the policy's versions before the runs
   start.
 

@@ -54,12 +54,17 @@ In an exploratory analysis the claim is `INCONCLUSIVE` at every threshold. Its r
 descriptive status, is what a confirmatory analysis of the same bounds would give, and it
 certifies nothing.
 
-The range shows how far the verdict is from changing. The error rate of a verdict read off it
-is bounded at any thresholds, because a wrong `PASS` or `FAIL` needs the true risk outside the
-bounds. A threshold chosen after seeing the bounds cannot show, though, that the requirement
-came before the evidence. To decide at revised thresholds and keep that visible, give the
-analysis a [decision policy](decision-policy.md) (experimental): it records each version of the
-thresholds with the time it was set, and leaves the plan and its hash as frozen.
+The range shows how far the verdict is from changing. The error rate of one claim's verdict
+read off it is bounded at any thresholds, because a wrong `PASS` or `FAIL` needs the true risk
+outside the bounds. That does not carry over to the overall decision: when mandatory claims' thresholds,
+or the choice of which thresholds to change, are read off the bounds, an overall `PASS` can be
+wrong whenever any one of those bounds misses, and across separate coverage events that can be
+far more often than one claim's error budget. A threshold chosen after seeing the bounds also cannot show that the
+requirement came before the evidence. To decide at revised thresholds and keep that visible,
+give the analysis a [decision policy](decision-policy.md) (experimental): it records each
+version of the thresholds with the time it was set, leaves the plan and its hash as frozen, and
+holds back an overall `PASS` that the revised thresholds leave uncertified (see
+[When the overall decision certifies](decision-policy.md#when-the-overall-decision-certifies)).
 
 ### Verdicts under sensitivity profiles
 

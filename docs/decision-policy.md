@@ -5,14 +5,16 @@ analysis computes each bound from the data, the methods, the weights, the groups
 independence profiles and the error budget of the claim's family, and only then compares it
 with the thresholds. A decision policy keeps those thresholds apart from the plan. The plan
 freezes everything that shapes the bounds and the family of claims. The policy sets the
-thresholds, and it may be written or revised after the run without changing the plan, its hash,
-or the certification of its verdicts.
+thresholds, and it may be written or revised after the run without changing the plan or its
+hash. Each claim's verdict keeps its error bound at the policy's thresholds. The overall
+decision keeps its own only on the condition described in
+[When the overall decision certifies](#when-the-overall-decision-certifies).
 
 Decision policies are experimental. An analysis uses one only when it is given one, and without
 one nothing changes: the plan's own thresholds decide, and the report has no `decision_policy`
 section.
 
-## Why a later threshold keeps the error bound
+## Why a later threshold keeps a claim's error bound
 
 An interval claim is `PASS` when its upper bound `U` is at or below `acceptable_upper`, and
 `FAIL` when its lower bound `L` is at or above `unacceptable_lower`. A wrong `PASS` needs a
@@ -29,6 +31,48 @@ one that describes the bounds.
 
 The `noisy_valid_test` method is the exception: it uses the thresholds inside its test, so its
 thresholds stay in the plan, and a policy cannot set them.
+
+## When the overall decision certifies
+
+The overall decision is `PASS` only when every mandatory claim passes. With every
+`acceptable_upper` fixed before the data, a wrong overall `PASS` needs one claim whose true risk
+is above its threshold to pass, and which claims those are does not depend on the data. The
+chance is at most that one claim's error budget, with no correction for the number of claims
+(the intersection-union argument in
+[statistical methods, section 9.3](statistical-methods.md#93-the-all-mandatory-claims-exception)).
+
+A threshold a policy sets may depend on the data. Set every `acceptable_upper` just above its
+own upper bound, and every claim passes. The overall `PASS` is then wrong whenever any one of
+those bounds misses its true risk. When the bounds rest on separate coverage events, for example
+direct-mean intervals with `simultaneous: false`, or means on the direct-mean family and maxima
+on the prompt family, that chance can reach the sum of their error budgets. In a simulation with
+ten such claims at `alpha` 0.05 it was about 0.27.
+
+Moving one threshold is enough, because which claim to move can be chosen from the data too.
+Tighten the claim with the lowest upper bound to that bound, leaving the others at the plan's
+thresholds: that claim is the likeliest to have missed its true risk, and in the same simulation
+about 0.28 of such overall `PASS` decisions were wrong.
+
+So the overall decision is held back when a policy moves `acceptable_upper` away from the plan's
+for any mandatory claim while the mandatory claims' bounds rest on more than one coverage event.
+A `PASS` becomes `INCONCLUSIVE`, with the `WARNING` diagnostic
+`DECISION_POLICY_OVERALL_UNCERTIFIED`, which lists the claims the policy moves and the coverage
+event of every mandatory claim. A `FAIL` stays `FAIL`, and every claim keeps its own status,
+whose error bound holds at any threshold. Integrity does not change.
+
+It applies to every version of the policy, whatever its `set_at`: that time is the policy
+author's statement, and nothing in the analysis confirms it. It does not apply when:
+
+- the policy moves no mandatory claim's `acceptable_upper`: it restates the plan's values, moves
+  only `unacceptable_lower`, which no `PASS` depends on, or sets only optional claims. The
+  thresholds an overall `PASS` depends on are then the plan's, fixed in advance;
+- one simultaneous family decides every mandatory claim: the default simultaneous prompt
+  bounds, simultaneous direct-mean intervals of one independence profile, sampled-design
+  intervals, or one comparison family. One coverage event then covers every bound, and a wrong
+  overall `PASS` needs that event to fail, whichever thresholds were moved.
+
+A claim decided on a judge-corrected interval, or by a test, counts as a coverage event of its
+own, since its calibration adds an event of its own.
 
 ## The inference hash
 
@@ -106,7 +150,10 @@ before the analysis starts, as an invalid plan is.
 
 When an applied version was set after the earliest start time of the selected evaluations, the
 report has the `INFO` diagnostic `DECISION_POLICY_AFTER_GENERATION`. It does not change
-integrity.
+integrity. When the policy's thresholds leave the overall decision uncertified, the report has
+the `WARNING` diagnostic `DECISION_POLICY_OVERALL_UNCERTIFIED`, and an overall `PASS` becomes
+`INCONCLUSIVE` (see [When the overall decision certifies](#when-the-overall-decision-certifies)).
+It does not change integrity either.
 
 ## What the report records
 

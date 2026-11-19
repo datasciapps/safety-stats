@@ -690,7 +690,10 @@ def _decision_policy_lines(report: SafetyReport, places: int) -> list[str]:
         summary = (
             "Claim thresholds come from a decision policy kept apart from the plan "
             "(experimental). Thresholds do not enter the bounds, so a policy set after the run "
-            "leaves the plan's hash and the verdicts' certification as they are."
+            "leaves the plan's hash as it is, and each claim's verdict keeps its error bound. "
+            "An overall PASS keeps its own only when the policy moves no mandatory claim's "
+            "acceptable_upper or one coverage event covers every mandatory claim (see "
+            "`DECISION_POLICY_OVERALL_UNCERTIFIED`)."
         )
     else:
         summary = (

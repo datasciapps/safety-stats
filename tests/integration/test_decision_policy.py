@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 import pytest
@@ -16,6 +18,7 @@ from inspect_safety_stats.cli import app
 from inspect_safety_stats.config.decision_policy import DecisionPolicy, inference_plan_hash
 from inspect_safety_stats.config.loader import canonical_plan_hash
 from inspect_safety_stats.config.registration import write_receipt
+from inspect_safety_stats.schema.reports import Diagnostic, SafetyReport
 from inspect_safety_stats.validate.decision_policy import validate_decision_policy
 from tests.cli_output import plain
 
@@ -363,3 +366,339 @@ def test_a_registration_receipt_matches_the_frozen_plan_under_a_policy(
     assert "PLAN_RECEIPT_MISMATCH" not in codes
     assert "PLAN_REGISTERED" in codes
     assert "PLAN_SELF_DECLARED" not in codes
+
+
+# --- The overall decision when a policy moves several mandatory claims' thresholds --------
+
+# A run that started on 2026-02-01; policies are set before or after it.
+_RUN = {"run_key": "r1", "model": "m", "status": "success", "started_at": "2026-02-01T00:00:00Z"}
+
+
+def _gate_plan(
+    groups: list[str], *, direct: dict[str, object] | None, measures: list[str] | None = None
+) -> dict[str, object]:
+    """One claim per group (and measure), each mandatory, in an intersection-union family."""
+
+    measures = measures or ["mean"]
+    families: list[dict[str, object]] = [
+        {"id": "displayed", "purpose": "simultaneous_intervals", "method": "bonferroni",
+         "alpha": 0.05},
+        {"id": "gate", "purpose": "all_mandatory", "method": "intersection_union",
+         "alpha": 0.05},
+    ]
+    outputs: dict[str, object] = {
+        "prompt_bounds": {"enabled": True, "family": "displayed"},
+        "risk_measures": [
+            {"id": "mean", "type": "weighted_mean"},
+            {"id": "worst", "type": "maximum"},
+        ],
+    }
+    if direct is not None:
+        families.append(
+            {"id": "direct", "purpose": "simultaneous_intervals", "method": "bonferroni",
+             "alpha": 0.05}
+        )
+        outputs["direct_mean_intervals"] = {
+            "enabled": True,
+            "family": "direct",
+            "independence": {"primary": "rollout"},
+            **direct,
+        }
+    return {
+        "schema_version": "3.0",
+        "analysis": {
+            "id": "gate",
+            "title": "Gate",
+            "intent": "confirmatory",
+            "plan_frozen_at": "2026-01-01T00:00:00Z",
+        },
+        "inputs": {
+            "design_manifest": "design.csv",
+            "score": {
+                "name": "harmful",
+                "mapping": {"failure_values": ["FAIL"], "safe_values": ["PASS"]},
+            },
+        },
+        "design": {"independence_profiles": {"rollout": {"block_by": ["rollout"]}}},
+        "cohorts": {"candidate": {"match": {"model": "m"}}},
+        "groups": [{"id": group, "filter": {"domain": group}} for group in groups],
+        "outputs": outputs,
+        "multiplicity": {"families": families},
+        "claims": [
+            {
+                "id": f"{group}_{measure}",
+                "title": f"{group} {measure} is acceptable",
+                "cohort": "candidate",
+                "group": group,
+                "measure": measure,
+                "family": "gate",
+                "acceptable_upper": 0.05,
+                "unacceptable_lower": 0.95,
+            }
+            for group in groups
+            for measure in measures
+        ],
+    }
+
+
+def _gate_inputs(tmp_path: Path, plan: dict[str, object], groups: list[str]) -> Path:
+    """Two prompts per group, 40 rollouts each, 4 of them failures."""
+
+    (tmp_path / "plan.yaml").write_text(json.dumps(plan), encoding="utf-8")
+    prompts = [(group, f"{group}-p{index}") for group in groups for index in (1, 2)]
+    (tmp_path / "design.csv").write_text(
+        "prompt_id,question_id,task_id,domain,expected_rollouts\n"
+        + "".join(f"{prompt},{prompt},t1,{group},40\n" for group, prompt in prompts),
+        encoding="utf-8",
+    )
+    (tmp_path / "runs.jsonl").write_text(json.dumps(_RUN) + "\n", encoding="utf-8")
+    (tmp_path / "rollouts.jsonl").write_text(
+        "".join(
+            json.dumps(
+                {
+                    "run_key": "r1",
+                    "item_id": prompt,
+                    "repeat": repeat,
+                    "score_harmful": "FAIL" if repeat <= 4 else "PASS",
+                }
+            )
+            + "\n"
+            for _, prompt in prompts
+            for repeat in range(1, 41)
+        ),
+        encoding="utf-8",
+    )
+    return tmp_path / "plan.yaml"
+
+
+def _gate_analysis(plan_path: Path, policy: Path | None = None) -> SafetyReport:
+    from inspect_safety_stats.ingest.rollout_files import RolloutFiles
+
+    directory = plan_path.parent
+    return analyze(
+        plan=plan_path,
+        source=RolloutFiles(runs=directory / "runs.jsonl", rollouts=directory / "rollouts.jsonl"),
+        decision_policy=policy,
+    )
+
+
+def _at_the_bounds(
+    plan_path: Path, report: SafetyReport, claims: list[str] | None = None, *,
+    set_at: str = "2026-03-01T00:00:00Z",
+) -> Path:
+    """A policy that sets each claim's acceptable_upper at its own upper bound, rounded up.
+
+    A threshold read off the bound it is compared with passes by construction: it is the
+    most data-dependent threshold there is.
+    """
+
+    chosen = [item for item in report.claims if claims is None or item.claim_id in claims]
+    version = {
+        "id": "at-the-bounds",
+        "set_at": set_at,
+        "thresholds": {
+            item.claim_id: {
+                "acceptable_upper": math.ceil(cast(float, item.upper) * 1e6) / 1e6,
+                "unacceptable_lower": 0.99,
+            }
+            for item in chosen
+        },
+    }
+    path = plan_path.parent / "policy.json"
+    path.write_text(
+        json.dumps(
+            {
+                "inference_plan_sha256": inference_plan_hash(load_plan(plan_path)),
+                "versions": [version],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _overall_warning(report: SafetyReport) -> Diagnostic | None:
+    return next(
+        (
+            item
+            for item in report.integrity.diagnostics
+            if item.code == "DECISION_POLICY_OVERALL_UNCERTIFIED"
+        ),
+        None,
+    )
+
+
+def test_thresholds_moved_on_separate_coverage_events_do_not_certify_an_overall_pass(
+    tmp_path: Path,
+) -> None:
+    groups = ["g1", "g2", "g3"]
+    plan = _gate_plan(groups, direct={"simultaneous": False})
+    plan_path = _gate_inputs(tmp_path, plan, groups)
+    frozen = _gate_analysis(plan_path)
+    assert {item.status for item in frozen.claims} == {"INCONCLUSIVE"}
+    # Loosened after the run, each to its own pointwise upper bound.
+    report = _gate_analysis(plan_path, _at_the_bounds(plan_path, frozen))
+
+    # Every claim passes, and keeps that verdict: its error bound holds at any threshold.
+    assert {item.status for item in report.claims} == {"PASS"}
+    # The overall PASS would rest on three separate coverage events, so it is not certified.
+    assert report.decision == "INCONCLUSIVE"
+    assert report.integrity.status == "valid"
+    warning = _overall_warning(report)
+    assert warning is not None and warning.severity == "WARNING"
+    assert warning.details["claims"] == ["g1_mean", "g2_mean", "g3_mean"]
+    assert len(set(warning.details["coverage_events"].values())) == 3
+
+
+def test_a_backdated_policy_version_does_not_restore_the_overall_pass(tmp_path: Path) -> None:
+    # set_at is the policy author's word, so a version dated before the run counts as well.
+    groups = ["g1", "g2"]
+    plan_path = _gate_inputs(tmp_path, _gate_plan(groups, direct={"simultaneous": False}), groups)
+    frozen = _gate_analysis(plan_path)
+    report = _gate_analysis(
+        plan_path, _at_the_bounds(plan_path, frozen, set_at="2025-12-01T00:00:00Z")
+    )
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "DECISION_POLICY_AFTER_GENERATION" not in codes
+    assert {item.status for item in report.claims} == {"PASS"}
+    assert report.decision == "INCONCLUSIVE"
+    assert _overall_warning(report) is not None
+
+
+@pytest.mark.parametrize(
+    "direct",
+    [{"simultaneous": True}, None],
+    ids=["simultaneous-direct-means", "simultaneous-prompt-bounds"],
+)
+def test_thresholds_moved_on_one_simultaneous_family_keep_the_overall_pass(
+    tmp_path: Path, direct: dict[str, object] | None
+) -> None:
+    groups = ["g1", "g2", "g3"]
+    plan_path = _gate_inputs(tmp_path, _gate_plan(groups, direct=direct), groups)
+    frozen = _gate_analysis(plan_path)
+    report = _gate_analysis(plan_path, _at_the_bounds(plan_path, frozen))
+    assert {item.status for item in report.claims} == {"PASS"}
+    # One event covers every bound, so a wrong overall PASS is as rare as one wrong claim.
+    assert report.decision == "PASS"
+    assert _overall_warning(report) is None
+
+
+def test_thresholds_moved_on_two_simultaneous_families_do_not_certify_an_overall_pass(
+    tmp_path: Path,
+) -> None:
+    # The means are decided on the direct-mean family, the worst prompts on the prompt family.
+    groups = ["g1"]
+    plan = _gate_plan(groups, direct={"simultaneous": True}, measures=["mean", "worst"])
+    plan_path = _gate_inputs(tmp_path, plan, groups)
+    frozen = _gate_analysis(plan_path)
+    report = _gate_analysis(plan_path, _at_the_bounds(plan_path, frozen))
+    assert {item.status for item in report.claims} == {"PASS"}
+    assert report.decision == "INCONCLUSIVE"
+    warning = _overall_warning(report)
+    assert warning is not None
+    events = warning.details["coverage_events"]
+    assert events["g1_mean"].endswith("of family direct")
+    assert events["g1_worst"].endswith("of family displayed")
+
+
+@pytest.mark.parametrize("simultaneous", [False, True], ids=["pointwise", "simultaneous"])
+def test_one_moved_threshold_keeps_an_overall_pass_only_on_one_coverage_event(
+    tmp_path: Path, simultaneous: bool
+) -> None:
+    groups = ["g1", "g2"]
+    plan = _gate_plan(groups, direct={"simultaneous": simultaneous})
+    for claim in cast(list[dict[str, object]], plan["claims"]):
+        claim["acceptable_upper"] = 0.5
+    plan_path = _gate_inputs(tmp_path, plan, groups)
+    frozen = _gate_analysis(plan_path)
+    assert frozen.decision == "PASS"
+
+    # g1 is tightened to its own bound, g2 keeps the plan's threshold. Which claim to move
+    # may itself be chosen from the bounds, as the one with the lowest bound, which is the
+    # likeliest to have missed; only one event covering both bounds keeps that in check.
+    report = _gate_analysis(plan_path, _at_the_bounds(plan_path, frozen, ["g1_mean"]))
+    assert {item.status for item in report.claims} == {"PASS"}
+    warning = _overall_warning(report)
+    if simultaneous:
+        assert report.decision == "PASS" and warning is None
+    else:
+        assert report.decision == "INCONCLUSIVE"
+        assert warning is not None and warning.details["claims"] == ["g1_mean"]
+        # Every mandatory claim's event is listed, the unmoved one's too.
+        assert sorted(warning.details["coverage_events"]) == ["g1_mean", "g2_mean"]
+
+
+def test_thresholds_an_overall_pass_does_not_read_keep_it(tmp_path: Path) -> None:
+    groups = ["g1", "g2"]
+    plan = _gate_plan(groups, direct={"simultaneous": False})
+    for claim in cast(list[dict[str, object]], plan["claims"]):
+        claim["acceptable_upper"] = 0.5
+    cast(list[dict[str, object]], plan["claims"])[1]["mandatory"] = False
+    plan_path = _gate_inputs(tmp_path, plan, groups)
+    frozen = _gate_analysis(plan_path)
+    assert frozen.decision == "PASS"
+    policy = plan_path.parent / "restated.json"
+    policy.write_text(
+        json.dumps(
+            {
+                "inference_plan_sha256": inference_plan_hash(load_plan(plan_path)),
+                "versions": [
+                    {
+                        "id": "restated",
+                        "set_at": "2026-03-01T00:00:00Z",
+                        "thresholds": {
+                            # The plan's acceptable_upper, restated; unacceptable_lower moves,
+                            # and no PASS depends on it.
+                            "g1_mean": {"acceptable_upper": 0.5, "unacceptable_lower": 0.8},
+                            # An optional claim, which the overall decision does not read.
+                            "g2_mean": {"acceptable_upper": 0.45, "unacceptable_lower": 0.9},
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    report = _gate_analysis(plan_path, policy)
+    assert report.decision == "PASS" and _overall_warning(report) is None
+
+
+def test_a_failing_claim_keeps_the_overall_fail(tmp_path: Path) -> None:
+    groups = ["g1", "g2", "g3"]
+    plan_path = _gate_inputs(tmp_path, _gate_plan(groups, direct={"simultaneous": False}), groups)
+    frozen = _gate_analysis(plan_path)
+    policy = _at_the_bounds(plan_path, frozen)
+    value = json.loads(policy.read_text(encoding="utf-8"))
+    # g3's limits are both at or below its lower bound, so it fails.
+    lower = next(item for item in frozen.claims if item.claim_id == "g3_mean").lower
+    value["versions"][0]["thresholds"]["g3_mean"] = {
+        "acceptable_upper": -0.5,
+        "unacceptable_lower": math.floor(cast(float, lower) * 1e6) / 1e6,
+    }
+    policy.write_text(json.dumps(value), encoding="utf-8")
+    report = _gate_analysis(plan_path, policy)
+    assert next(item for item in report.claims if item.claim_id == "g3_mean").status == "FAIL"
+    assert report.decision == "FAIL"
+    assert _overall_warning(report) is not None
+
+
+def test_outcome_mapping_sensitivities_are_held_to_the_same_overall_decision(
+    tmp_path: Path,
+) -> None:
+    groups = ["g1", "g2"]
+    plan = _gate_plan(groups, direct={"simultaneous": False})
+    score = cast(dict[str, object], cast(dict[str, object], plan["inputs"])["score"])
+    score["mapping_sensitivities"] = [
+        {
+            "id": "unsure_fails",
+            "title": "Unsure answers fail",
+            "mapping": {"failure_values": ["FAIL", "UNSURE"], "safe_values": ["PASS"]},
+        }
+    ]
+    plan_path = _gate_inputs(tmp_path, plan, groups)
+    frozen = _gate_analysis(plan_path)
+    report = _gate_analysis(plan_path, _at_the_bounds(plan_path, frozen))
+    assert report.decision == "INCONCLUSIVE"
+    (sensitivity,) = report.outcome_mapping_sensitivities
+    assert sensitivity.decision == "INCONCLUSIVE"
+    assert sensitivity.diagnostic_counts["DECISION_POLICY_OVERALL_UNCERTIFIED"] == 1

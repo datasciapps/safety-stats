@@ -2215,6 +2215,16 @@ and overall `PASS` occurs only when every component test rejects its unsafe null
 
 Correction is still required when the report asserts simultaneous coverage for every displayed interval, permits separate component-level safety claims, selects favorable claims after inspection, or uses “any significant result” logic. The analysis plan must record which decision semantics apply; the library must not apply multiplicity mechanically without first identifying the claim being protected.
 
+The argument needs the thresholds fixed before the data. Let claim \(j\) of the mandatory claims \(M\) pass when its upper bound \(U_j\) is at or below its threshold \(a_j\), and let \(E_j=\{R_j\le U_j\}\) be its coverage event, with \(\Pr(E_j^c)\le\alpha_j\). A false overall pass needs some claim with \(U_j\le a_j<R_j\), so it lies in \(E_j^c\) for that claim. With fixed thresholds the set \(W=\{j: R_j>a_j\}\) is fixed. When it is not empty, a pass needs \(E_{j_0}^c\) for any one \(j_0\in W\), and the bound is \(\alpha_{j_0}\).
+
+When a [decision policy](decision-policy.md) sets thresholds after the run, both the thresholds and the choice of which claims to move may depend on the data, so \(W\) is no longer fixed. What remains is that a false overall pass needs some claim, whichever the data make it, with \(R_j>a_j\ge U_j\):
+
+\[
+\Pr(\text{false overall pass})\le\Pr\Big(\textstyle\bigcup_{j\in M}E_j^c\Big).
+\]
+
+This is at most one budget \(\alpha\) when one simultaneous coverage event \(E\subseteq\bigcap_{j\in M}E_j\) with \(\Pr(E^c)\le\alpha\) covers every mandatory claim's bound. Otherwise it can reach the sum of the separate events' budgets. Setting each \(a_j\) at \(U_j\) reaches it: every claim then passes, and the pass is false whenever any bound misses. With ten independent claims at \(\alpha=0.05\) that is close to \(1-0.95^{10}\approx0.40\); exact binomial bounds, being conservative, give about 0.27. Moving one threshold reaches it as well, when the claim is chosen from the data: with the others at loose plan thresholds, tightening the claim with the lowest upper bound to that bound gives a false pass whenever any bound misses, since the lowest bound is then below its true risk too (about 0.28 in the same setting). A set of moved claims fixed in advance would keep a sharper bound, but the analysis cannot tell such a set from one chosen after the run. The library therefore treats every threshold a decision policy moves as data-dependent, whatever time the policy states for it, and does not certify an overall pass when a policy moves any mandatory claim's `acceptable_upper` while the mandatory claims rest on more than one coverage event (`DECISION_POLICY_OVERALL_UNCERTIFIED`). Each claim's own verdict is unaffected: its error is bounded by \(\alpha_j\) at any threshold, because a wrong pass of claim \(j\) alone needs \(E_j^c\).
+
 ### 9.4 Holm step-down procedure
 
 Given valid p-values \(p_1,\ldots,p_m\), sort them:
@@ -2551,7 +2561,7 @@ The original Inspect logs should remain immutable; statistical reports should be
 | Core | Repeated attempts within declared groups | Design-respecting cluster summaries; bootstrap only with a justified sampling interpretation | Avoid pseudoreplication; optionally cluster-level sampling uncertainty | Declared hierarchy and source of randomness | Fixed groups are not automatically a sampled population |
 | Core | Multiple safety claims | Intersection-union logic, Holm tests, or Bonferroni simultaneous bounds as appropriate | Protect the declared global or simultaneous claim | Valid component methods and predeclared decision semantics | Correction is claim-dependent, not automatic |
 | Core | Exploratory discovery across many slices | Benjamini–Hochberg | False discovery rate | Standard BH dependence conditions | Must not drive deployment pass |
-| Core | Deployment gate | Two-threshold decision | Controlled false pass/fail | Valid bounds and predeclared thresholds | Inconclusive is a required outcome |
+| Core | Deployment gate | Two-threshold decision | Controlled false pass/fail | Valid bounds and predeclared thresholds; thresholds set later only when one simultaneous family decides every mandatory claim (section 9.3) | Inconclusive is a required outcome |
 | Experimental | Two values of one arm level of a generative design | Seed-matched arm contrast, simultaneous over a declared slice family (section 7.8) | Simultaneous coverage of declared slices and contrasts | Independent sampling units; family declared in the frozen plan | Not paired; widens with `maximum_ratio` when the declared weights skew a value across seeds |
 | Stretch | Continuously monitored or adaptively allocated rollouts | Bernoulli confidence sequence | Time-uniform coverage | Method-specific IID or martingale conditions | Adaptive selection can change the estimand |
 
