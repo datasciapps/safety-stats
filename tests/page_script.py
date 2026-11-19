@@ -2,8 +2,9 @@
 
 A browser runs the page's inline script once, on load, and an uncaught error stops it there:
 every section after the failing one stays empty. ``run_page`` runs the whole script the same
-way and reports the first uncaught error, what the audit trail and the footer show, and any
-error raised when the page's own selection controls are changed.
+way and reports the first uncaught error, what the audit trail and the footer show, the
+tables of the risk and comparison sections as the page first shows them, and any error raised
+when the page's own selection controls are changed.
 
 The DOM is a stub with only what the page uses. A page that starts to use another DOM call
 fails here with a TypeError or a ReferenceError naming it; add it to ``_DRIVER``.
@@ -109,6 +110,20 @@ try {
   error = describe(caught);
 }
 
+// The tables of the risk and comparison sections, each as its rows of cell texts, nested
+// tables included, as the page shows them on load.
+const tablesIn = element => element.children.flatMap(
+  child => (child.tagName === "TABLE" ? [child, ...tablesIn(child)] : tablesIn(child))
+);
+const rowsOf = table => table.children
+  .flatMap(part => (part.tagName === "TR" ? [part] : part.children))
+  .filter(row => row.tagName === "TR")
+  .map(row => row.children.map(cell => cell.textContent));
+const tables = {};
+for (const id of ["risk-table", "comparisons"]) {
+  tables[id] = byId.has(id) ? tablesIn(byId.get(id)).map(rowsOf) : [];
+}
+
 // Change each selection control the script filled to each value it offers, as a reader would.
 const eventErrors = [];
 if (error === null) {
@@ -153,6 +168,7 @@ process.stdout.write(JSON.stringify({
   footer: byId.get("footer").textContent,
   links,
   texts: Object.fromEntries([...byId].map(([id, element]) => [id, element.textContent])),
+  tables,
 }));
 """
 
@@ -178,6 +194,9 @@ class PageRun:
     # The text each element with an id holds once the script has run, by id: the text a reader
     # sees there when the page loads, before any control is changed.
     texts: dict[str, str]
+    # The tables of the "risk-table" and "comparisons" sections on load, each a list of rows
+    # of cell texts, nested tables listed after the table that holds them.
+    tables: dict[str, list[list[list[str]]]]
 
 
 def node_or_skip() -> str:
@@ -230,4 +249,5 @@ def run_page(node: str, html: str, directory: Path) -> PageRun:
         footer=result["footer"],
         links=[(item["text"], item["href"]) for item in result["links"]],
         texts=result["texts"],
+        tables=result["tables"],
     )
