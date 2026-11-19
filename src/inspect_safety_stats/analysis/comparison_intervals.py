@@ -8,8 +8,12 @@ from typing import Any, Literal
 import numpy as np
 
 from inspect_safety_stats.analysis.direct_mean import (
+    _complete_ledger_blocks,
     _EndpointCalibration,
+    _frontier_overlaps,
     _frontier_signature,
+    _has_rows,
+    _own_blocks,
     _path_rows,
 )
 from inspect_safety_stats.analysis.estimates import _block_index
@@ -136,7 +140,18 @@ def _comparison_independent_frontiers(
         return []
     profile = plan.design.independence_profiles[profile_id]
 
-    def support(target: _ComparisonTarget) -> frozenset[str]:
+    def support(target: _ComparisonTarget) -> frozenset[str] | None:
+        """The target's contrast blocks, or those both arms would form with a complete ledger.
+
+        A sampled design's undrawn items have no rows either, and comparison_contrast_blocks
+        refuses them, as before (``_direct_target_blocks``).
+        """
+        arms = (spec.candidate, spec.baseline)
+        weights = np.asarray(target.weights)
+        if plan.design.type == "fixed" and not _has_rows(data, arms, target.prompt_ids):
+            return _complete_ledger_blocks(
+                data, profile, target.prompt_ids, weights, comparison_arms=arms
+            )
         return frozenset(
             comparison_contrast_blocks(
                 data.observations,
@@ -145,17 +160,24 @@ def _comparison_independent_frontiers(
                 candidate=spec.candidate,
                 baseline=spec.baseline,
                 prompt_ids=target.prompt_ids,
-                prompt_weights=np.asarray(target.weights),
+                prompt_weights=weights,
                 index=_block_index(data),
             ).block_ids
         )
+
+    def blocks_or_own(target: _ComparisonTarget, blocks: frozenset[str] | None) -> frozenset[str]:
+        if blocks is None:
+            return _own_blocks(target.prompt_ids, np.asarray(target.weights))
+        return blocks
 
     if spec.hierarchy_calibration == "flat_bonferroni":
         return [
             IndependentFrontier(
                 frontier_id=f"{profile_id}:{spec.id}:{target.result_id}",
                 targets={
-                    _comparison_target_key(spec.id, target.result_id, profile_id): support(target)
+                    _comparison_target_key(spec.id, target.result_id, profile_id): blocks_or_own(
+                        target, support(target)
+                    )
                 },
                 aliases={},
             )
@@ -214,8 +236,12 @@ def _comparison_independent_frontiers(
             _comparison_target_key(spec.id, target.result_id, profile_id): target
             for target in level_targets
         }
-        targets_by_id = {target_id: support(target_by_id[target_id]) for target_id, *_ in entries}
-        overlapping = any_overlap(targets_by_id.values())
+        known = {target_id: support(target_by_id[target_id]) for target_id, *_ in entries}
+        overlapping = _frontier_overlaps(known.values())
+        targets_by_id = {
+            target_id: blocks_or_own(target_by_id[target_id], blocks)
+            for target_id, blocks in known.items()
+        }
         if overlapping:
             for target_id, atoms in targets_by_id.items():
                 frontiers.append(

@@ -220,7 +220,10 @@ keys and permits cross-arm dependence within them. KL two-arm regions do not req
 independence, but the selected within-arm block partition still determines their concentration.
 For frontier Šidák calibration, sibling nodes must have disjoint resolved block supports;
 otherwise the compiler uses conservative between-node allocation. See
-[Configuring hierarchy and independence](independence-profiles.md).
+[Configuring hierarchy and independence](independence-profiles.md). A comparison whose arm has no
+rows of some prompt, such as an arm that matches no evaluation, gets no interval for the nodes
+that hold the prompt but keeps their alpha, so the family's other comparisons are calibrated as
+described in [Hierarchy compilation](hierarchy-simultaneous-inference.md#hierarchy-compilation).
 
 ## Common hierarchy confidence regions
 
