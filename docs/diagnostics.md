@@ -312,6 +312,17 @@ The analysis plan: its fields, references and their combinations.
 - **Remedy:** Validate the composite's own verdict with inputs.judge_calibration.mode: validated, or
   use inputs.composites[].rule: any or all.
 
+#### `PANEL_CORRECTION_VERDICT_UNMATCHED`
+
+- **Severity:** WARNING
+- **Effect:** [withheld](#effects)
+- **Assumption:** The primary mapping reads the primary composite's verdict as it is: true as
+  failure and false as safe, the verdict the derived accuracy box describes.
+- **Consequence:** No panel-derived judge correction is reported.
+- **Remedy:** Map the composite's verdict with failure_values: [true] and safe_values: [false] in
+  inputs.score.mapping, or validate the outcome the mapping defines with
+  inputs.judge_calibration.mode: validated.
+
 #### `PLAN_ANYTIME_BOUNDS_INVALID`
 
 - **Severity:** ERROR

@@ -869,6 +869,10 @@ A row that holds rollouts a plan policy classified is inverted over a wider box,
 sensitivity and specificity free to reach 1
 ([Rollouts a policy classifies](#rollouts-a-policy-classifies)).
 
+The box describes the composite's verdict. A primary mapping that does not read it as it is,
+true as failure and false as safe, defines another outcome, which the box does not describe, so
+no interval is added, and the warning `PANEL_CORRECTION_VERDICT_UNMATCHED` says so.
+
 A declaration can be scoped with `accuracy.groups` when a judge's ranges are known for some
 benchmarks only. The composite's box then holds only in the groups that every member's
 declaration covers, and only those groups' rows get the derived interval. If the members

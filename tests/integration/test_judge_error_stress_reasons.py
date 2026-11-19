@@ -268,6 +268,19 @@ def test_a_composite_the_primary_mapping_inverts_has_no_box(
     assert (stress.accuracy_source, stress.stressed_status) == (None, None)
     (found,) = outcome.with_code("JUDGE_STRESS_BOX_UNMATCHED")
     assert "composite 'panel'" in found.message
+    # Nor does the panel-derived correction apply the box to the outcome the mapping defines.
+    assert _panel_derived_rows(plain)
+    assert not _panel_derived_rows(outcome)
+    (found,) = outcome.with_code("PANEL_CORRECTION_VERDICT_UNMATCHED")
+    assert "composite 'panel'" in found.message
+
+
+def _panel_derived_rows(outcome: Outcome) -> list[str]:
+    return [
+        row.group_id
+        for row in outcome.report.group_risks
+        if any(item.interval_id == "judge_corrected_panel_derived" for item in row.intervals)
+    ]
 
 
 def _blocked(item: dict[str, Any]) -> None:

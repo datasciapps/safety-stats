@@ -456,7 +456,10 @@ specificity: {lower, upper}}`. When the primary outcome is an `any` or `all` com
 all declare them, the report adds a diagnostic `judge_corrected_panel_derived` interval: the
 composite's box is derived by Fréchet bounds within blocks and products across blocks, and true
 risk is partially identified by inverting Rogan–Gladen over it (the whole unit interval when the
-box admits an uninformative panel). See [Judge misclassification](judge-misclassification.md).
+box admits an uninformative panel). The box describes the composite's verdict, so the primary
+mapping must read it as it is, `failure_values: [true]` and `safe_values: [false]`; otherwise no
+interval is added, and the warning `PANEL_CORRECTION_VERDICT_UNMATCHED` says so. See
+[Judge misclassification](judge-misclassification.md).
 
 `accuracy.groups` restricts a judge's declared ranges to the rollouts of the listed groups:
 

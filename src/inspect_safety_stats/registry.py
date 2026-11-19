@@ -1547,6 +1547,22 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
     ),
     CodeEntry(
+        code="PANEL_CORRECTION_VERDICT_UNMATCHED",
+        severities=("WARNING",),
+        source="plan",
+        effect="withheld",
+        assumption=(
+            "The primary mapping reads the primary composite's verdict as it is: true as "
+            "failure and false as safe, the verdict the derived accuracy box describes."
+        ),
+        consequence="No panel-derived judge correction is reported.",
+        remedy=(
+            "Map the composite's verdict with failure_values: [true] and safe_values: [false] "
+            "in inputs.score.mapping, or validate the outcome the mapping defines with "
+            "inputs.judge_calibration.mode: validated."
+        ),
+    ),
+    CodeEntry(
         code="PLAN_ANYTIME_BOUNDS_INVALID",
         severities=("ERROR",),
         source="plan",

@@ -634,6 +634,13 @@ described in their pull requests.
   groups. Rows without such rollouts are unchanged. See
   [Rollouts a policy classifies](docs/judge-misclassification.md#rollouts-a-policy-classifies).
 
+- **The panel-derived correction needs the composite's verdict read as it is (changes
+  `report.json`).** The correction inverted the judge-reported bounds over the box derived for
+  the composite's verdict even when the primary mapping counted that verdict otherwise, for
+  example its false verdict as failure, where the box describes another outcome. Such a plan
+  now gets no `judge_corrected_panel_derived` interval, and the new warning
+  `PANEL_CORRECTION_VERDICT_UNMATCHED` says why. The judge-error stress already refused it.
+
 - **`report.include_decisions` hides decisions, and every reader defaults it to false (#58).**
   The option was read as true by `report.html` and by the Python report model when a report did
   not record it, and as false by the plan and the CLI. Every reader now reads it as false. The

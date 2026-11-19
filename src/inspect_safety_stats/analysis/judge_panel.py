@@ -412,6 +412,9 @@ def _add_panel_derived_correction(
 
     A row holding rollouts a plan policy classified is inverted over the box with
     sensitivity and specificity free to reach 1 (see :func:`_policy_free_accuracy_box`).
+
+    The box describes the composite's verdict, so it is applied only when the primary mapping
+    reads that verdict as it is: true as failure, false as safe.
     """
 
     composite = next(
@@ -434,6 +437,24 @@ def _add_panel_derived_correction(
                     "dependence; validate the composite's own verdict instead"
                 ),
                 scope=plan_scope("inputs", "composites", composite.id),
+            )
+        )
+        return None
+    if not _reads_verdict_as_is(plan.inputs.score.mapping):
+        # The box describes the composite's verdict. A mapping that inverts it, or reads it
+        # otherwise, makes the judge-reported rate another quantity, which the box does not
+        # describe.
+        diagnostics.append(
+            Diagnostic(
+                code="PANEL_CORRECTION_VERDICT_UNMATCHED",
+                severity="WARNING",
+                message=(
+                    f"the primary mapping does not count composite {composite.id!r}'s true "
+                    "verdict as failure and its false verdict as safe, so the derived accuracy "
+                    "box does not describe the primary outcome and no panel-derived correction "
+                    "is reported"
+                ),
+                scope=plan_scope("inputs", "score"),
             )
         )
         return None

@@ -635,6 +635,13 @@ def _panel_rows(outcome: Outcome) -> list[str]:
     )
 
 
+def _inverted_verdict(inputs: Inputs) -> None:
+    inputs.plan["inputs"]["score"]["mapping"] = {
+        "failure_values": [False],
+        "safe_values": [True],
+    }
+
+
 def _panel_withheld(triggered: Outcome, control: Outcome) -> None:
     # Withheld: no row gets a panel-derived correction.
     assert _panel_rows(triggered) == []
@@ -804,6 +811,13 @@ CASES += [
         code="PANEL_CORRECTION_NO_COMMON_GROUP",
         trigger=panel("any", ["all"], ["b"]),
         control=panel("any", ["all", "b"], ["b"]),
+        effect=_panel_withheld,
+    ),
+    Case(
+        # The primary mapping counts the composite's false verdict as failure.
+        code="PANEL_CORRECTION_VERDICT_UNMATCHED",
+        trigger=panel("any", None, None, _inverted_verdict),
+        control=panel("any", None, None),
         effect=_panel_withheld,
     ),
     Case(
