@@ -92,40 +92,44 @@ The design manifest declares the attack in every row: `attack_id`, `attack_finge
 `budget_k`, `attacker_model`, `attacker_judge` and `confirmation_judge`. The fingerprint is a
 digest of the attack id, the budget, the attacker model, the attacker's judge and the prompt
 templates. The task refuses to run against a design that declares a different attack, so
-write a design for the attack you are about to run (from the repository root). The task
-checks the design once, when it starts. `analyze` never compares the logs with the design's
-declaration; the plan's cohorts, below, keep runs of another attack out of the analysis.
+write a design for the attack you are about to run. The task checks the design once, when it
+starts. `analyze` never compares the logs with the design's declaration; the plan's cohorts,
+below, keep runs of another attack out of the analysis.
+
+Put your behaviours in `run/attack/behaviours.csv`, with the columns `prompt_id`,
+`category_id` and `goal`, and write the design from the repository root:
 
 ```bash
 python -c "
 import sys; sys.path.insert(0, 'examples/attack_confirmation')
 from pathlib import Path
 from attack_confirmation import AttackDeclaration, write_design
-Path('run/attack').mkdir(parents=True, exist_ok=True)
 write_design(Path('run/attack/design.csv'), AttackDeclaration(
     attack_id='pair', budget_k=20,
     attacker_model='<provider/attacker-model>',
     attacker_judge='<provider/attacker-judge>',
-    confirmation_judge='<provider/confirmation-judge>'))
+    confirmation_judge='<provider/confirmation-judge>'),
+    behaviours=Path('run/attack/behaviours.csv'))
 "
 ```
 
-Then run the attack against each configuration with the same settings:
+Then run the attack against each configuration with the same settings. Name the design and
+the behaviours by absolute paths: `inspect eval` creates the task in the task file's
+directory, so a relative path would be read from there, and the task refuses one.
 
 ```bash
 inspect eval examples/attack_confirmation/attack_confirmation.py \
   --model <provider/target-model> --log-dir run/attack/logs \
-  -T mode=live -T design=run/attack/design.csv -T behaviours=<your-behaviours.csv> \
+  -T mode=live -T design=$PWD/run/attack/design.csv \
+  -T behaviours=$PWD/run/attack/behaviours.csv \
   -T attack_id=pair -T budget_k=20 \
   -T attacker_model=<provider/attacker-model> \
   -T attacker_judge=<provider/attacker-judge> \
   -T confirmation_judge=<provider/confirmation-judge>
 ```
 
-The behaviours file has the columns `prompt_id`, `category_id` and `goal`. Pass the same file
-to `write_design` with its `behaviours` argument. Point a copy of `plan.yaml` at the new
-design, and match every cohort on the attack as well as the model, with the values the design
-declares:
+Point a copy of `plan.yaml` at the new design, and match every cohort on the attack as well as
+the model, with the values the design declares:
 
 ```yaml
 cohorts:

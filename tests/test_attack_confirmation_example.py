@@ -184,6 +184,39 @@ def test_live_mode_requires_a_declared_attack_and_a_separate_judge(tmp_path: Pat
         attack_confirmation(budget_k=5)
 
 
+def test_the_task_refuses_relative_paths_to_its_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``inspect eval`` creates the task in the task file's directory, not the caller's.
+
+    A relative path then names a file next to the task file, here the example's own design
+    and behaviours, whatever the working directory holds.
+    """
+
+    monkeypatch.chdir(tmp_path)
+    design = tmp_path / "design.csv"
+    behaviours = tmp_path / "behaviours.csv"
+    write_design(design, SIMULATED_DECLARATION)
+    behaviours.write_bytes((EXAMPLE_DIR / "behaviours.csv").read_bytes())
+
+    def evaluate(**task_args: str) -> list[Any]:
+        return inspect_eval(
+            str(EXAMPLE_DIR / "attack_confirmation.py"),
+            task_args=task_args,
+            model="mockllm/candidate",
+            log_dir=str(tmp_path / "logs"),
+            limit=2,
+            display="none",
+        )
+
+    for argument in ("design", "behaviours"):
+        with pytest.raises(ValueError, match=f"the {argument} path '{argument}.csv' is relative"):
+            evaluate(**{argument: f"{argument}.csv"})
+    [log] = evaluate(design=str(design), behaviours=str(behaviours))
+    assert log.status == "success"
+    assert log.eval.task_args["design"] == str(design)
+
+
 @pytest.mark.parametrize(("behaviours", "allowed"), [(100, 1), (400, 12)])
 def test_the_planning_numbers_in_the_readme(behaviours: int, allowed: int) -> None:
     assert maximum_certifying_failures(trials=behaviours, threshold=0.05, alpha=0.05) == allowed

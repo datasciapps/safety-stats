@@ -539,6 +539,26 @@ def confirmed_jailbreak(settings: Settings) -> Scorer:
     return score
 
 
+def given_path(argument: str, value: str | None, default: Path) -> Path:
+    """The file a task argument names, or ``default`` when it names none.
+
+    The path must be absolute. ``inspect eval`` creates the task with the task file's
+    directory as the working directory, so a relative path would be read from there and not
+    from where it was typed, and could silently name this example's own file.
+    """
+
+    if value is None:
+        return default
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        raise ValueError(
+            f"the {argument} path {value!r} is relative; pass an absolute path, such as "
+            f"-T {argument}=$PWD/{value}. inspect eval creates this task in the task file's "
+            "directory, so a relative path would not be read from where you typed it"
+        )
+    return path
+
+
 @task
 def attack_confirmation(
     mode: str = "simulated",
@@ -584,10 +604,8 @@ def attack_confirmation(
     else:
         raise ValueError(f"mode must be 'simulated' or 'live', not {mode!r}")
 
-    # Inspect resolves relative paths against the task file; these are read from the
-    # working directory instead, as a user typing them expects.
-    behaviours_path = BEHAVIOURS_PATH if behaviours is None else Path(behaviours).resolve()
-    design_path = DESIGN_PATH if design is None else Path(design).resolve()
+    behaviours_path = given_path("behaviours", behaviours, BEHAVIOURS_PATH)
+    design_path = given_path("design", design, DESIGN_PATH)
     check_design(design_path, declaration, behaviours_path)
     settings = Settings(mode=mode, declaration=declaration)
     return Task(
