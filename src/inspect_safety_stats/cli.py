@@ -1149,6 +1149,15 @@ def generative_analyze_command(
             f"  {comparison.candidate_cohort} - {comparison.baseline_cohort}: "
             f"upper {comparison.upper:+.5f} ({comparison.method})"
         )
+    if report.slice_family is not None:
+        typer.echo("Slice family (experimental, simultaneous):")
+        for member in report.slice_family.slices:
+            typer.echo(f"  {member.member_id}: upper {member.arm.upper:.5f}")
+        for contrast in report.slice_family.contrasts:
+            typer.echo(
+                f"  {contrast.id} ({contrast.candidate_value} - {contrast.baseline_value}): "
+                f"upper {contrast.upper:+.5f}"
+            )
     typer.echo(f"Nodes reported: {len(report.tree.nodes)}, unsampled: "
                f"{len(report.tree.unsampled_nodes)}")
     for diagnostic in report.diagnostics:

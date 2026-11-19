@@ -308,3 +308,22 @@ def comparison_refusal(cohort_pair: str) -> Diagnostic:
         ),
         scope=cohort_pair,
     )
+
+
+def slice_family_refusal() -> Diagnostic:
+    """The declared slice family stays on the judge-reported scale, and says so.
+
+    Correcting it would spend part of the family's error budget on the judge calibration
+    and map each member separately; the family's simultaneous calibration does not cover
+    that yet, so no member is corrected rather than some.
+    """
+
+    return Diagnostic(
+        code="JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY",
+        severity="WARNING",
+        message=(
+            "the declared slice family stays on the judge-reported scale: its simultaneous "
+            "calibration does not include judge correction"
+        ),
+        scope="slice_family",
+    )

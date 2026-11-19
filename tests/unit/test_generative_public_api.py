@@ -25,6 +25,7 @@ SURFACE = {
     # Results.
     "TreeEstimate", "NodeEstimate", "ComparisonResult", "ReweightedEstimate",
     "CorrectedEstimate", "AcceptanceRow", "FidelityRow",
+    "SliceFamilyResult", "FamilySlice", "ContrastResult", "ArmEstimate",
     # Composing a flow by hand.
     "SamplingDesign", "StratumAllocation", "plan_design", "draw_selections",
     "execute_rewrites", "ExecutionResult", "AcceptedRewrite", "load_seed_texts",
@@ -32,6 +33,7 @@ SURFACE = {
     "read_evaluated_samples", "samples_from_observations", "join_outcomes",
     "JoinResult", "EvaluatedSample", "UnitOutcome", "estimate_tree", "estimate_slice",
     "estimate_reweighted", "compare_cohorts",
+    "SliceMember", "ContrastMember", "estimate_slice_family",
     # Ledgers, for auditing a run.
     "SelectionRecord", "RewriteRecord", "read_selections", "read_rewrites",
     "AttemptRecord", "read_attempts",
