@@ -37,6 +37,22 @@ def test_a_calibration_without_a_protocol_dumps_as_before() -> None:
         ({"queue": "q.csv", "stopping": "fixed_size", "size": True}, {}, "not a boolean"),
         ({"queue": "q.csv", "stopping": "fixed_size", "size": 0}, {}, "greater than 0"),
         ({"queue": "q.csv", "stopping": "whenever"}, {}, "stopping"),
+        # The queue's tier cells are read stripped, so a padded tier would select nothing.
+        (
+            {"queue": "q.csv", "tier": " calibration", "stopping": "label_independent"},
+            {},
+            "tier ' calibration' begins or ends with whitespace",
+        ),
+        (
+            {"queue": "q.csv", "tier": "calibration\t", "stopping": "label_independent"},
+            {},
+            "begins or ends with whitespace",
+        ),
+        (
+            {"queue": "q.csv", "tier": "  ", "stopping": "label_independent"},
+            {},
+            "begins or ends with whitespace",
+        ),
         (
             {"queue": "q.csv", "stopping": "data_dependent"},
             {"sampling": "simple_random"},

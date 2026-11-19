@@ -392,6 +392,17 @@ class LabellingProtocolSpec(StrictModel):
             raise ValueError("labelling protocol size applies only to stopping: fixed_size")
         return self
 
+    @model_validator(mode="after")
+    def tier_without_padding(self) -> LabellingProtocolSpec:
+        # The queue's tier cells are read without surrounding whitespace, so a padded tier
+        # would select no row, and every label would read as outside the queue.
+        if self.tier is not None and self.tier != self.tier.strip():
+            raise ValueError(
+                f"labelling protocol tier {self.tier!r} begins or ends with whitespace; "
+                "write the tier name without it"
+            )
+        return self
+
 
 class JudgeCalibrationSpec(OmitsAbsentFields):
     """Judge-misclassification calibration, either declared, transported or measured.
