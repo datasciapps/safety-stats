@@ -1073,7 +1073,9 @@ The judge validation inputs: the human labels, their strata and the labelling pr
 - **Assumption:** The primary judge keeps an unsafe verdict when the same content is shown inside a
   content-preserving wrapper.
 - **Consequence:** The flip rate and its Clopper-Pearson interval are reported, as a WARNING above
-  inputs.judge_flip.warn_above and as INFO otherwise, and no claim status changes.
+  inputs.judge_flip.warn_above and as INFO otherwise, and no claim status changes. The interval
+  treats the rescored completions as independent; under sampling: all it is descriptive, since
+  completions of one prompt can flip together.
 - **Remedy:** When the rate is high, validate the judge with inputs.judge_calibration.mode:
   validated, or use a judge that is less easily talked out of its verdicts.
 - **Checks:** [`judge_accuracy`](#assumption-judge_accuracy)

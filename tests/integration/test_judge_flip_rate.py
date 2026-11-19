@@ -272,6 +272,10 @@ def test_the_written_report_carries_the_diagnostic(
     assert "JUDGE_FLIP_RATE" in (tmp_path / "out" / "report.html").read_text(encoding="utf-8")
     markdown = (tmp_path / "out" / "report-full.md").read_text(encoding="utf-8")
     assert "14 of 40 rescored judge-positive completions, from 1 prompt, flip" in markdown
+    # report.md shows the warning with the registry's consequence, which carries the caveat.
+    summary = (tmp_path / "out" / "report.md").read_text(encoding="utf-8")
+    assert "`JUDGE_FLIP_RATE` (warning)" in summary
+    assert "The interval treats the rescored completions as independent" in summary
 
 
 def test_the_manifest_path_is_plan_relative_in_the_hash_and_the_report(tmp_path: Path) -> None:

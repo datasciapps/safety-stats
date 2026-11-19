@@ -1189,7 +1189,9 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
         consequence=(
             "The flip rate and its Clopper-Pearson interval are reported, as a WARNING above "
-            "inputs.judge_flip.warn_above and as INFO otherwise, and no claim status changes."
+            "inputs.judge_flip.warn_above and as INFO otherwise, and no claim status changes. "
+            "The interval treats the rescored completions as independent; under sampling: all "
+            "it is descriptive, since completions of one prompt can flip together."
         ),
         remedy=(
             "When the rate is high, validate the judge with inputs.judge_calibration.mode: "
