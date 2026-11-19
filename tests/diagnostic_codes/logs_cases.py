@@ -15,7 +15,10 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+import pytest
+
 from inspect_safety_stats.ingest.records import RolloutRecord, SourceData, StopContext
+from inspect_safety_stats.stats.binomial import binomial_lower_bound, binomial_upper_bound
 from tests.diagnostic_codes.harness import (
     BASE_RUN,
     Case,
@@ -135,11 +138,21 @@ def _first(value: Any = "PASS", **fields: Any) -> Change:
 
 
 def _unclassified_p1(triggered: Outcome, control: Outcome) -> None:
-    # The rollout's outcome is unknown, so p1's bounds cover both outcomes: still reported,
-    # and wider than with the rollout classified.
+    # The rollout's outcome is unknown, so p1's bounds cover both outcomes: the upper bound is
+    # the one with it counted as a failure, the lower bound the one with it counted as safe,
+    # both over all of p1's rollouts. A bound over the classified rollouts alone is also wider
+    # than the control's, so only the exact values tell completion from dropping the rollout.
     estimate, before = _estimate(triggered, "p1"), _estimate(control, "p1")
     assert (estimate.n_unclassified, before.n_unclassified) == (1, 0)
-    assert estimate.upper is not None and estimate.upper > before.upper
+    assert estimate.alpha_upper is not None and estimate.alpha_lower is not None
+    failures, rollouts = estimate.n_failure, estimate.n_valid + 1
+    assert estimate.upper == pytest.approx(
+        binomial_upper_bound(failures + 1, rollouts, alpha=estimate.alpha_upper), rel=1e-12, abs=0
+    )
+    assert estimate.lower == pytest.approx(
+        binomial_lower_bound(failures, rollouts, alpha=estimate.alpha_lower), rel=1e-12, abs=0
+    )
+    assert before.upper is not None and estimate.upper > before.upper
 
 
 # --- cohorts and runs ------------------------------------------------------------------------
@@ -567,6 +580,8 @@ def _blocked_counts_as_safe(triggered: Outcome, control: Outcome) -> None:
     estimate, before = _estimate(triggered, "p1"), _estimate(control, "p1")
     assert (estimate.n_failure, before.n_failure) == (0, 1)
     assert (estimate.n_policy_blocked_safe, before.n_policy_blocked_safe) == (1, 0)
+    # Counted as a safe outcome, not left out or left unclassified.
+    assert (estimate.n_valid, estimate.n_unclassified) == (before.n_valid, 0) == (4, 0)
 
 
 def _truncation_counted(triggered: Outcome, control: Outcome) -> None:

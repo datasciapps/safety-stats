@@ -14,9 +14,10 @@ serve two uses at once without biasing either:
     python label_queue.py sheet --queue DIR --output FILE
     python label_queue.py manifest --queue DIR --labels FILE --output DIR
 
-`queue` and `manifest` read and write only content-free files: identifiers, verdicts and
-counts. `sheet` writes the prompts and answers people label, outside the repository only, into
-a folder no one else can open. The README's "Human labels" section explains the design.
+`queue` and `manifest` read and write only content-free files: identifiers, verdicts, counts,
+and the paths of the logs and reports, relative to the queue folder. `sheet` writes the
+prompts and answers people label, outside the repository only, into a folder no one else can
+open. The README's "Human labels" section explains the design.
 """
 
 from __future__ import annotations
@@ -128,7 +129,8 @@ def verdicts(report: Path) -> pd.DataFrame:
     """A report's rollouts with the judge's verdict: `unsafe`, `safe`, or `-` if unclassified.
 
     The report names each log relative to its plan's directory, which `run_open_weights.py`
-    writes beside the report; `source` here is the log's own path, which `sheet` reads.
+    writes beside the report; `source` here is the log's own path. `queue` writes it relative
+    to the queue folder, and `sheet` reads it from there.
     """
 
     frame = pd.read_csv(report / "observations.csv", dtype=str, keep_default_na=False)
@@ -140,6 +142,28 @@ def verdicts(report: Path) -> pd.DataFrame:
     if frame.duplicated(KEY).any():
         raise SystemExit(f"{report}: a rollout appears more than once")
     return frame
+
+
+def _relative(path: str | Path, folder: Path) -> str:
+    """``path`` relative to ``folder``, with forward slashes, as the queue's files hold it.
+
+    A URL is kept as it is. A path on another drive than ``folder`` (Windows) has no relative
+    form and is kept absolute.
+    """
+
+    if "://" in str(path):
+        return str(path)
+    target = Path(path).resolve()
+    try:
+        return Path(os.path.relpath(target, folder.resolve())).as_posix()
+    except ValueError:
+        return target.as_posix()
+
+
+def _from_queue(path: str, queue: Path) -> str:
+    """A path the queue's files hold, as one to open: relative to the queue folder."""
+
+    return path if "://" in path else str((queue / path).resolve())
 
 
 def plan_thresholds(report: Path) -> dict[tuple[str, str], float]:
@@ -465,13 +489,13 @@ def queue_command(args: argparse.Namespace) -> None:
     )
     design["inputs"] = {
         "primary": {
-            "report": str(args.primary),
+            "report": _relative(args.primary, output),
             "observations_sha256": _sha256(args.primary / "observations.csv"),
         },
         "judges": [
             {
                 "name": spec.name,
-                "report": str(spec.report),
+                "report": _relative(spec.report, output),
                 "tasks": list(spec.tasks),
                 "observations_sha256": _sha256(spec.report / "observations.csv"),
             }
@@ -479,6 +503,7 @@ def queue_command(args: argparse.Namespace) -> None:
         ],
         "cells": list(args.cell),
     }
+    queue["source"] = [_relative(source, output) for source in queue["source"]]
     output.mkdir(parents=True, exist_ok=True)
     queue.to_csv(output / "queue.csv", index=False, lineterminator="\n")
     (output / "queue.json").write_text(
@@ -537,7 +562,7 @@ def sheet_command(args: argparse.Namespace) -> None:
         for row in queue.itertuples(index=False):
             # By id and epoch, which reads one entry of the log; by uuid reads them all.
             sample = read_eval_log_sample(
-                row.source,
+                _from_queue(row.source, args.queue),
                 id=row.item_id,
                 epoch=int(row.repeat),
                 resolve_attachments=True,

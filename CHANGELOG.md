@@ -455,7 +455,9 @@ described in their pull requests.
   `generative materialize` before anything is generated. The family is written to
   `family.csv`, to a `slice_family` block in `report.json` and to a section of
   `report.html`, and `generative analyze` prints each member's upper bound under a heading
-  that says it is on the judge-reported scale. Plans without the block keep their
+  that says it is on the judge-reported scale. Under a judge calibration no member is
+  corrected for judge error, and a `JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY` warning
+  says so; the root, nodes and `--slice` cuts are corrected. Plans without the block keep their
   `report.json` and CSV bytes. Every generative `report.html` changes bytes, because it embeds
   the script of the new section, and so does `checksums.json`, which holds its digest. With
   the block, `checksums.json` also covers `family.csv`. See
@@ -556,7 +558,8 @@ described in their pull requests.
   `floor(n / k)` independent blocks, so the interval narrows as rollouts grow. Before, the only
   interval was the propagated prompt envelope, which can be very wide. The interval is calibrated
   with the direct-mean intervals and needs a fixed design with rollout-level independence; other
-  plans are refused, and their rows keep the propagated envelope with a warning that says why.
+  plans are refused with `PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED`, and their rows keep the
+  propagated envelope with a warning that says why.
   Plans without the field get the same results. `report.html` roots its hierarchy tree at the
   weighted-mean row, where a worst-of-k row with a direct interval listed first could become the
   root; this changes the page script, so every `report.html` and its `checksums.json` entry
@@ -605,7 +608,9 @@ described in their pull requests.
   decides before the run how a rollout counts when a provider's content filter stopped its
   output before the target delivered any content in the sample, as Claude 5-series models
   report a safety-classifier decline: `safe` for a harm estimand, `failure` (a refusal) for an
-  over-refusal estimand, or `score`, the default, which keeps the previous behaviour. Text,
+  over-refusal estimand, or `score`, the default, which keeps the previous behaviour. Each
+  such rollout is reported in a `TARGET_POLICY_BLOCKED_SAFE` or `TARGET_POLICY_BLOCKED_REFUSAL`
+  diagnostic. Text,
   readable reasoning or a tool call in the stopped output or in any earlier generation of the
   sample, such as an earlier turn of a conversation, counts as delivered content: such a stop
   is scored as usual and reported in a `CONTENT_FILTER_STOP_SCORED` diagnostic, so harm that an
