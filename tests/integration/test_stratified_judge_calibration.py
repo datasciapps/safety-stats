@@ -13,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 from pydantic import ValidationError
+from scipy.stats import binom
 
 from inspect_safety_stats import analyze, load_plan
 from inspect_safety_stats.config.loader import canonical_plan_hash
@@ -239,9 +240,14 @@ def test_stratified_labels_certify_a_correction_weighted_by_fine_stratum(
     assert f"[{expected.rho_1_lower:.6g}, {expected.rho_1_upper:.6g}]" in corrected.assumptions[1]
     assert f"[{expected.rho_0_lower:.6g}, {expected.rho_0_upper:.6g}]" in corrected.assumptions[2]
     assert any("hypergeometric" in text for text in corrected.assumptions)
-    assert not any("Clopper-Pearson" in text for text in corrected.assumptions)
-    # The judge-safe disagreements are a census: their ten truly unsafe rollouts are known.
-    assert expected.rho_0_lower == pytest.approx(10 / 900, rel=0, abs=1e-15)
+    assert any("Clopper-Pearson" in text for text in corrected.assumptions)
+    assert any("is binomial" in text for text in corrected.assumptions)
+    # The judge-safe disagreements are a census, so their ten truly unsafe rollouts are known,
+    # and no sampled judge-safe agreement is unsafe. The 900 judge-safe rollouts still only
+    # sample P(truly unsafe | judge said safe): its lower bound is the Clopper-Pearson bound at
+    # 10 of 900, at half of an endpoint's quarter of the family alpha, not 10 / 900.
+    assert binom.sf(9, 900, expected.rho_0_lower) == pytest.approx(0.05 / 8, rel=1e-9, abs=0)
+    assert expected.rho_0_lower < 10 / 900
 
     # The delta-method reference assumes simple random samples within judge strata.
     mean = next(row for row in report.group_risks if row.measure_id == "mean")
@@ -271,15 +277,16 @@ def test_stratified_labels_certify_a_correction_weighted_by_fine_stratum(
     )
 
     markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
-    assert "exact hypergeometric bounds over the declared fine strata" in markdown
+    assert "summing exact hypergeometric bounds over its declared fine strata" in markdown
+    assert "exact Clopper-Pearson bounds, since a run's rollouts only sample it" in markdown
     assert "| candidate | judge_safe | disagree | 30 / 30 | 10 | 10–10 |" in markdown
 
 
 def test_an_unlabelled_fine_stratum_is_completed_with_a_warning(
     tmp_path: Path, observations: dict[int, str]
 ) -> None:
-    # No judge-unsafe agreement is labelled.
-    labelled = {e for e in observations if _labelled(e) and not 21 <= e <= 40}
+    # No judge-unsafe disagreement is labelled.
+    labelled = {e for e in observations if _labelled(e) and not 1 <= e <= 20}
     report = _analyze(tmp_path / "run", observations, labelled=labelled)
 
     warning = next(
@@ -290,15 +297,18 @@ def test_an_unlabelled_fine_stratum_is_completed_with_a_warning(
     assert warning.severity == "WARNING"
     assert warning.scope == "cohorts/candidate"
     assert warning.details == {
-        "fine_strata": [{"judge_stratum": "judge_unsafe", "stratum": "agree", "stratum_size": 80}]
+        "fine_strata": [
+            {"judge_stratum": "judge_unsafe", "stratum": "disagree", "stratum_size": 20}
+        ]
     }
     fine = report.provenance["judge_calibration"]["cohorts"]["candidate"]["fine_strata"]
-    agree = next(
+    disagree = next(
         item
         for item in fine
-        if (item["judge_stratum"], item["stratum"]) == ("judge_unsafe", "agree")
+        if (item["judge_stratum"], item["stratum"]) == ("judge_unsafe", "disagree")
     )
-    assert (agree["truly_unsafe_lower"], agree["truly_unsafe_upper"]) == (0, 80)
+    assert (disagree["truly_unsafe_lower"], disagree["truly_unsafe_upper"]) == (0, 20)
+    assert _corrected(report) is not None
 
 
 @pytest.mark.parametrize("defect", ["missing", "extra"])

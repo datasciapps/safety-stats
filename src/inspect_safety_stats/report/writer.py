@@ -1052,10 +1052,12 @@ def _markdown(report: SafetyReport) -> str:
             )
             if transported
             else (
-                "Experimental. These accuracies sum exact hypergeometric bounds over the "
-                "declared fine strata of each judge stratum, each weighted by its size, from "
-                "human labels drawn without replacement within each fine stratum. The fine "
-                "strata weight every classified rollout of a cohort equally, so they certify "
+                "Experimental. These accuracies bound each judge stratum's truly unsafe count "
+                "by summing exact hypergeometric bounds over its declared fine strata, each "
+                "weighted by its size, from human labels drawn without replacement within "
+                "each fine stratum. They then bound the conditional accuracy at those counts "
+                "with exact Clopper-Pearson bounds, since a run's rollouts only sample it. The "
+                "fine strata weight every classified rollout of a cohort equally, so they certify "
                 "only a weighted mean that does the same, over the whole cohort in a fixed "
                 "design. Those rows are coverage-guaranteed at the union of the underlying "
                 "interval's budget and the calibration budget; every other corrected row is a "
@@ -1226,7 +1228,8 @@ def _markdown(report: SafetyReport) -> str:
                     [
                         "",
                         "Declared fine strata, with exact bounds on each one's truly unsafe "
-                        "count (a census is exact; an unlabelled stratum spans all its rows):",
+                        "count (a census knows its count; an unlabelled stratum spans all its "
+                        "rows). The accuracies are Clopper-Pearson bounds at the summed counts:",
                         "",
                         "| Cohort | "
                         + ("Group | " if scoped else "")

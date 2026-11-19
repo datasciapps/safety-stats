@@ -2585,7 +2585,7 @@ If an automated judge has false negatives, the observed binary outcome is a misc
 p_{\mathrm{obs}}=s p_{\mathrm{true}}+(1-c)(1-p_{\mathrm{true}}).
 \]
 
-Without knowledge or bounds on \(s\) and \(c\), \(p_{\mathrm{true}}\) is not identified from \(p_{\mathrm{obs}}\). [Judge misclassification](judge-misclassification.md) describes the corrections built on this identity: declared accuracy scenarios as a sensitivity analysis, validated corrections from human labels (with an experimental stratified, finite-population variant that bounds each declared stratum with exact hypergeometric bounds), the noisy-but-valid threshold test, and an experimental stress analysis. The stress analysis reports, for a threshold verdict reached on \(p_{\mathrm{obs}}\), the line in \((s,c)\) beyond which the same verdict no longer holds for \(p_{\mathrm{true}}\).
+Without knowledge or bounds on \(s\) and \(c\), \(p_{\mathrm{true}}\) is not identified from \(p_{\mathrm{obs}}\). [Judge misclassification](judge-misclassification.md) describes the corrections built on this identity: declared accuracy scenarios as a sensitivity analysis, validated corrections from human labels (with an experimental stratified variant that bounds each declared stratum's truly unsafe count with exact hypergeometric bounds, and the judge's accuracy at the summed counts with Clopper--Pearson bounds), the noisy-but-valid threshold test, and an experimental stress analysis. The stress analysis reports, for a threshold verdict reached on \(p_{\mathrm{obs}}\), the line in \((s,c)\) beyond which the same verdict no longer holds for \(p_{\mathrm{true}}\).
 
 ### 15.4 Distribution shift
 

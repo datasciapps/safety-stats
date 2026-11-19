@@ -510,9 +510,11 @@ def _validated_judge_calibrations(
                 severity="INFO",
                 message=(
                     "Experimental: the judge calibration reads its labels as a stratified "
-                    "sample without replacement within declared fine strata, with exact "
-                    "hypergeometric bounds; the asymptotic delta-method reference, which "
-                    "assumes simple random samples within the judge strata, is not reported"
+                    "sample without replacement within declared fine strata, bounds each judge "
+                    "stratum's truly unsafe count with exact hypergeometric bounds, and its "
+                    "conditional accuracy at those counts with Clopper-Pearson bounds; the "
+                    "asymptotic delta-method reference, which assumes simple random samples "
+                    "within the judge strata, is not reported"
                 ),
                 scope=plan_scope("inputs", "judge_calibration"),
             )
@@ -638,12 +640,20 @@ def _judge_corrected_interval(
             )
         assumptions.extend(
             [
-                "Experimental: each range sums exact hypergeometric bounds on the truly unsafe "
-                "count of every declared fine stratum within its judge stratum, weighted by "
-                "the fine stratum's size; a census is exact and a fine stratum without labels "
-                "is completed from none to all of its rollouts.",
-                "Each endpoint's budget is split equally over the fine strata that were "
+                "Experimental: each judge stratum's truly unsafe count is bounded by the sum "
+                "of exact hypergeometric bounds over its declared fine strata, so each fine "
+                "stratum counts by its size; a census gives its count exactly and a fine "
+                "stratum without labels counts from none to all of its rollouts.",
+                "Each range is the exact Clopper-Pearson bound on the conditional probability "
+                "at the lower and at the upper count, out of the judge stratum's size: the "
+                "stratum's rollouts only sample that probability, so even a census leaves it "
+                "uncertain.",
+                "Each endpoint's budget is halved: one half for its Clopper-Pearson bound, the "
+                "other split equally over the count bounds of the fine strata that were "
                 "sampled but not censused.",
+                "Given a judge stratum's size, its rollouts are independent and each is truly "
+                "unsafe with the stratum's conditional probability, so its truly unsafe count "
+                "is binomial.",
                 "The labelled rows of each fine stratum are a simple random sample without "
                 "replacement of it, of a size fixed independently of the labels; this is a "
                 "property of the declared collection protocol, not of the data.",

@@ -320,7 +320,8 @@ reject the field.
 design, such as one that labels the judges' disagreements more often. It requires
 `validation_strata`, a CSV of `observation_id,stratum` for every classified observation. The
 two fields go together, and both require `mode: validated`. Each declared stratum within a
-judge stratum is bounded exactly with hypergeometric bounds and weighted by its size. Plans
+judge stratum gets exact hypergeometric bounds on its truly unsafe count and is weighted by its
+size; the judge stratum's accuracy then gets Clopper-Pearson bounds at the summed counts. Plans
 without the field keep their hash. Generative plans do not offer this design. See
 [Stratified labels](judge-misclassification.md#stratified-labels-experimental).
 

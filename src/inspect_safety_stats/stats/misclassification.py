@@ -5,7 +5,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from inspect_safety_stats.stats.binomial import binomial_bounds, binomial_lower_bound
+from inspect_safety_stats.stats.binomial import (
+    binomial_bounds,
+    binomial_lower_bound,
+    binomial_upper_bound,
+)
 
 CalibrationBound = Literal["clopper_pearson", "confidence_sequence"]
 
@@ -430,10 +434,15 @@ class FineStratumBounds:
 
 @dataclass(frozen=True)
 class StratifiedJudgeCalibration:
-    """A validated calibration from labels drawn by a stratified design without replacement."""
+    """A validated calibration from labels drawn by a stratified design without replacement.
+
+    ``rate_alpha`` is the level each of the four one-sided Clopper-Pearson bounds spends in
+    turning a judge stratum's count bounds into a range for its conditional probability.
+    """
 
     calibration: JudgeCalibration
     fine_strata: tuple[FineStratumBounds, ...]
+    rate_alpha: float
 
     @property
     def unlabelled_fine_strata(self) -> tuple[FineStratumBounds, ...]:
@@ -454,21 +463,40 @@ def estimate_stratified_judge_calibration(
     Each fine stratum ``h`` of a judge stratum of size ``N`` holds ``N_h`` rollouts, of which
     ``n_h`` were labelled as a simple random sample without replacement whose size was fixed
     independently of the labels. Its truly unsafe count ``K_h`` then has exact hypergeometric
-    bounds, and the judge stratum's parameter is ``sum_h K_h / N``: each fine stratum is
-    weighted back by its own size, whatever share of it was labelled.
+    bounds, and their sums ``K_L`` and ``K_U`` bound the judge stratum's truly unsafe count
+    ``K = sum_h K_h``: each fine stratum is weighted back by its own size, whatever share of
+    it was labelled.
+
+    ``K / N`` is the share of this run's rollouts that are truly unsafe, not the conditional
+    probability rho that :func:`correct_judge_risk` needs. The run's rollouts only sample
+    rho, so even a census, which knows ``K`` exactly, leaves ``K / N`` about
+    ``sqrt(rho (1 - rho) / N)`` from it. Given ``N``, ``K`` is binomial with rate rho when the
+    judge stratum's rollouts are independent draws with that common conditional
+    probability, the rollout model under which the labels of
+    :func:`estimate_judge_calibration` are binomial too. The range of rho is therefore the
+    one-sided Clopper-Pearson lower bound at ``K_L`` and upper bound at ``K_U``, out of
+    ``N``. Both bounds are nondecreasing in the count, so rho falls below the range only if
+    ``K < K_L`` or rho falls below the Clopper-Pearson lower bound at ``K`` itself, and
+    likewise above it.
 
     ``alpha`` is split as in :func:`estimate_judge_calibration`: a quarter per endpoint of
-    the pair. An endpoint's quarter is split equally over the fine strata of its judge
-    stratum that are labelled but not censused, so a union bound over every count bound
-    spends no more than ``alpha``. A census is exact and an unlabelled fine stratum is
-    completed as ``[0, N_h]``; neither spends any of it. A judge stratum without any label
-    is completed as ``[0, 1]`` and named in ``completed_strata``; with both unlabelled the
-    estimate is refused.
+    the pair. Each endpoint's quarter is halved, always: one half is the level of its
+    Clopper-Pearson bound (``rate_alpha``), and the other is split equally over the count
+    bounds of the fine strata of its judge stratum that are labelled but not censused. A
+    union bound over all of them therefore spends no more than ``alpha``. The halves stay
+    fixed when no fine stratum is sampled: whether a design censuses a fine stratum can
+    depend on the stratum's size, which is not independent of ``K``, while the
+    Clopper-Pearson bound holds only over those sizes, not given them. A census gives its
+    count exactly and an unlabelled fine stratum is completed as ``[0, N_h]``; neither count
+    bound spends anything. A judge stratum without any label is completed as ``[0, 1]`` and
+    named in ``completed_strata``; with both unlabelled the estimate is refused.
     """
 
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     endpoint_alpha = alpha / 4
+    rate_alpha = endpoint_alpha / 2
+    count_alpha = endpoint_alpha - rate_alpha
     fine: list[FineStratumBounds] = []
 
     def bounds(judge_stratum: str, strata: Mapping[str, JudgeStratumCounts]) -> tuple[float, float]:
@@ -478,7 +506,7 @@ def estimate_stratified_judge_calibration(
         sampled = sum(
             1 for item in strata.values() if 0 < item.labelled < item.stratum_size
         )
-        level = endpoint_alpha / sampled if sampled else 0.0
+        level = count_alpha / sampled if sampled else 0.0
         lower = upper = 0
         for name in sorted(strata):
             item = strata[name]
@@ -496,7 +524,11 @@ def estimate_stratified_judge_calibration(
             fine.append(FineStratumBounds(judge_stratum, name, item, low, high, spent))
             lower += low
             upper += high
-        return lower / total, upper / total
+        # A judge stratum without labels has counts [0, N], and so the range [0, 1].
+        return (
+            binomial_lower_bound(lower, total, alpha=rate_alpha),
+            binomial_upper_bound(upper, total, alpha=rate_alpha),
+        )
 
     labelled = {
         name: sum(item.labelled for item in strata.values())
@@ -510,7 +542,9 @@ def estimate_stratified_judge_calibration(
     calibration = _validated_calibration(
         scenario_id=scenario_id, rho_1=rho_1, rho_0=rho_0, alpha=alpha, completed=completed
     )
-    return StratifiedJudgeCalibration(calibration=calibration, fine_strata=tuple(fine))
+    return StratifiedJudgeCalibration(
+        calibration=calibration, fine_strata=tuple(fine), rate_alpha=rate_alpha
+    )
 
 
 def completion_warning(calibration: JudgeCalibration) -> str | None:
