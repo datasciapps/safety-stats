@@ -304,11 +304,13 @@ interval that under-covers where failures are rare is not a better interval for 
 ### Lang--Reiczigel limits
 
 With `sampling: simple_random` the labels also estimate the judge's sensitivity \(Se\) and
-specificity \(Sp\) by true class, and a whole-cohort `weighted_mean` row gains a third interval,
-`judge_corrected_validated_lang_reiczigel`. It holds the confidence limits of Lang and Reiczigel
-(2014) for prevalence adjusted for estimated sensitivity and specificity. With \(z\) the normal
-quantile at \(1-\alpha/2\), the judge-reported rate \(q\) over \(n\) rollouts and the two
-truth-class counts are adjusted in the manner of Agresti and Coull,
+specificity \(Sp\) by true class, and every `weighted_mean` row the calibration corrects gains a
+third interval, `judge_corrected_validated_lang_reiczigel`. That is each group's row in each
+cohort, from the cohort's labels, or with `groups` each listed group's row, from that group's
+labels. Tail measures and hierarchy nodes get none. The interval holds the confidence limits of
+Lang and Reiczigel (2014) for prevalence adjusted for estimated sensitivity and specificity.
+With \(z\) the normal quantile at \(1-\alpha/2\), the judge-reported rate \(q\) over \(n\)
+rollouts and the two truth-class counts are adjusted in the manner of Agresti and Coull,
 
 \[
 q'=\frac{nq+z^2/2}{n+z^2},\qquad Se'=\frac{x_{Se}+1}{n_{Se}+2},\qquad
@@ -321,8 +323,8 @@ The Rogan--Gladen estimate \(P'=(q'+Sp'-1)/(Se'+Sp'-1)\) is then shifted by a bi
 clipped to \([0,1]\). The implementation reproduces the five worked examples of the paper. The
 judge-reported rate is the row's design-weighted mean, and \(n\) is its effective size
 \((\sum_j w_j)^2/\sum_j(w_j^2/n_j)\) under rollout independence. That is the classified count
-when every rollout weighs the same. The interval spends the cohort's share of the judge family
-alpha, as the delta reference does.
+when every rollout weighs the same. The interval spends its calibration's share of the judge
+family alpha, as the delta reference does.
 
 The interval is `diagnostic`. Like the delta reference, it never decides a claim.
 `research/judge_correction_lang_reiczigel.py` compares it with the exact box at nominal 95% over
@@ -342,11 +344,20 @@ The widths compare the box from judge-stratum labels with the limits from a simp
 of the same size. Where the box often refuses, its widths come only from the samples it
 accepted. The limits are not uniformly narrower. Where failures are rare and labels few, the
 regime most safety claims sit in, the limits miss their level, and the miss falls partly on the
-upper side, where it would let an unsafe model pass. They also refuse less often, since they
-need one truly unsafe label where the box needs both judge strata labelled and an informative
-calibration. When the judge reports far fewer failures than its estimated false-positive rate
-implies, the whole interval falls below zero and is clipped to the single point 0. The interval
-then warns that the data contradict the estimated accuracies.
+upper side, where it would let an unsafe model pass.
+
+Neither method refuses less often everywhere. The box refuses whenever the confidence bounds on
+its two judge strata fail to separate, which with few labels at low prevalence is almost always.
+The limits need only point estimates of \(Se\) and \(Sp\) that sum to more than 1, but they need
+a labelled rollout of each true class, and where failures are rare a small simple random sample
+often holds no truly unsafe one. At 0.5% prevalence with 30 labels the box refuses in every
+sample and the limits in 86--88%, nearly all for want of a truly unsafe label. For the better
+judge at 2% prevalence with 100 labels it is the other way round: the box refuses in 27 of 2,000
+samples and the limits in 350.
+
+When the judge reports far fewer failures than its estimated false-positive rate implies, the
+whole interval falls below zero and is clipped to the single point 0. The interval then warns
+that the data contradict the estimated accuracies.
 
 Labels drawn within judge strata (`simple_random_within_judge_stratum`) estimate \(\rho_1\) and
 \(\rho_0\), not \(Se\) and \(Sp\), and get no such interval. In that parameterisation the identity
