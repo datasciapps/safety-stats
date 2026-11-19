@@ -253,3 +253,35 @@ def test_judge_positive_means_the_judge_scored_it_unsafe(
         }
     )
     assert judge_positive(row) is positive
+
+
+@pytest.mark.parametrize("alpha", [0.05, 0.10])
+def test_a_sample_drawn_without_replacement_keeps_nominal_coverage_of_the_runs_share(
+    alpha: float,
+) -> None:
+    # sampling: simple_random draws n of the run's N judge-positive completions without
+    # replacement, so with K of them flipping the count is hypergeometric, not binomial. The
+    # binomial interval still covers K / N with probability at least 1 - alpha, exactly, for
+    # every run of up to 40 judge-positive completions and every sample size.
+    from scipy.stats import hypergeom
+
+    worst = 1.0
+    for n in range(1, 41):
+        ids = [f"o{i}" for i in range(n)]
+        lower, upper = [], []
+        for flipped in range(n + 1):
+            verdicts = {key: dict.fromkeys(WRAPPERS, i >= flipped) for i, key in enumerate(ids)}
+            rate = judge_flip_rate(
+                ids, verdicts, WRAPPERS, sampling="simple_random", alpha=alpha
+            )
+            assert rate.any_wrapper is not None
+            lower.append(rate.any_wrapper.lower)
+            upper.append(rate.any_wrapper.upper)
+        counts = np.arange(n + 1)
+        for population in range(n, 41):
+            for flipping in range(population + 1):
+                share = flipping / population
+                covers = (np.array(lower) <= share) & (share <= np.array(upper))
+                probability = hypergeom.pmf(counts, population, flipping, n)
+                worst = min(worst, float(probability[covers].sum()))
+    assert worst >= 1 - alpha

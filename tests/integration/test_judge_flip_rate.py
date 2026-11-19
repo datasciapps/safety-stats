@@ -271,7 +271,7 @@ def test_the_written_report_carries_the_diagnostic(
     assert "JUDGE_FLIP_RATE" in codes
     assert "JUDGE_FLIP_RATE" in (tmp_path / "out" / "report.html").read_text(encoding="utf-8")
     markdown = (tmp_path / "out" / "report-full.md").read_text(encoding="utf-8")
-    assert "14 of 40 rescored judge-positive completions flip" in markdown
+    assert "14 of 40 rescored judge-positive completions, from 1 prompt, flip" in markdown
 
 
 def test_the_manifest_path_is_plan_relative_in_the_hash_and_the_report(tmp_path: Path) -> None:
@@ -362,3 +362,65 @@ def test_rescoring_a_failure_a_plan_policy_classified_is_an_error(
     assert failures[41] in error.message and failures[43] in error.message
     assert failures[42] not in error.message
     assert report.integrity.status == "invalid"
+
+
+def test_a_census_interval_is_descriptive_and_a_sample_interval_is_for_the_run(
+    tmp_path: Path, positives: dict[int, str]
+) -> None:
+    _write_flips(tmp_path / "all", positives, sorted(positives))
+    _write_flips(tmp_path / "sample", positives, list(range(1, 21)))
+
+    census = _only(_analyze(tmp_path / "all", _flip_section(0.5)), "JUDGE_FLIP_RATE")
+    sample = _only(
+        _analyze(tmp_path / "sample", _flip_section(0.5, sampling="simple_random")),
+        "JUDGE_FLIP_RATE",
+    )
+
+    # Every judge-positive completion of the run was rescored, so the run's share is known; the
+    # interval assumes independent completions, which completions of one prompt need not be.
+    assert "the interval assumes the completions flip independently" in census.message
+    assert "so it is descriptive" in census.message
+    assert "for the run's" not in census.message
+    # A simple random sample of completions: the interval is for the run's share.
+    assert "for the run's 40 judge-positive completions" in sample.message
+    assert "descriptive" not in sample.message
+    assert census.details["prompts"] == sample.details["prompts"] == 1
+
+
+def test_the_diagnostic_counts_the_prompts_the_rescored_completions_come_from(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import inspect_safety_stats.ingest.inspect_logs as inspect_logs
+
+    # Even epochs belong to a second prompt, so the 40 judge-positive completions come from two.
+    samples = inspect_logs.samples_df("ignored").copy()
+    samples.loc[samples["epoch"] % 2 == 0, "id"] = "p2"
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: samples,
+    )
+
+    def analyze_two(directory: Path, flip: str) -> SafetyReport:
+        plan = _write_plan(directory, flip)
+        (directory / "design.csv").write_text(
+            "prompt_id,question_id,task_id,suite,expected_rollouts\n"
+            f"p1,q1,t1,s,{ROLLOUTS // 2}\n"
+            f"p2,q2,t1,s,{ROLLOUTS // 2}\n",
+            encoding="utf-8",
+        )
+        return analyze(plan=load_plan(plan), logs="ignored")
+
+    plain = analyze_two(tmp_path / "plain", "")
+    found = {
+        int(item.rollout_id.rsplit("-", 1)[1]): item.observation_id
+        for item in plain._observations
+        if item.failure is True
+    }
+    _write_flips(tmp_path / "flips", found, sorted(found))
+
+    diagnostic = _only(analyze_two(tmp_path / "flips", _flip_section(0.5)), "JUDGE_FLIP_RATE")
+
+    assert diagnostic.details["prompts"] == 2
+    assert "14 of 40 rescored judge-positive completions, from 2 prompts, flip" in (
+        diagnostic.message
+    )

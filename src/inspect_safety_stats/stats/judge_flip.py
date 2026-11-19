@@ -5,6 +5,16 @@ as a refusal prefix or a story frame. A verdict that becomes safe is a flip: sin
 did not change, it is a false negative the wrapper induced. The share of rescored completions
 that flip under at least one wrapper, and under each, is a binomial proportion over the
 rescored completions, bounded here with the exact Clopper-Pearson interval.
+
+The binomial model treats the rescored completions as independent. Under ``simple_random``
+the random sample makes them so for the run's share, however flips cluster by prompt.
+Drawing without replacement makes the count less variable than the binomial, and the
+interval's exact coverage of the run's share stays at or above ``1 - alpha`` (checked for
+every run of up to 40 judge-positive completions). Under ``all`` the rescored completions are
+all of the run's judge-positive completions, so the run's share is the estimate itself. The
+interval is then descriptive: read as a range for the rate of the process that produced the
+completions, it holds only if they flip independently. Completions of one prompt share their
+content and tend to flip together, and then the interval is too narrow for that rate.
 """
 
 from __future__ import annotations
@@ -64,8 +74,11 @@ def judge_flip_rate(
     completion must have been rescored, and with ``simple_random`` at least one. A design
     that breaks any of these raises ``ValueError``, since the proportion would not be the
     declared one. Each interval is two-sided at ``alpha``, split equally between its ends,
-    and holds for its own rate alone, not simultaneously with the others. A run without
-    judge-positive completions has no rate (``any_wrapper`` is None).
+    and holds for its own rate alone, not simultaneously with the others. It assumes the
+    rescored completions flip independently: under ``simple_random`` it is for the share of
+    the run's judge-positive completions, and under ``all``, where that share is known, it is
+    descriptive (see the module docstring). A run without judge-positive completions has no
+    rate (``any_wrapper`` is None).
     """
 
     if not 0 < alpha < 1:

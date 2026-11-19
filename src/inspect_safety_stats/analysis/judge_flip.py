@@ -39,6 +39,12 @@ def judge_flip_diagnostic(
     a WARNING above ``warn_above``, and degrades nothing, so it never changes a claim status.
     A manifest that cannot be read, or that does not fit the run and the declared design, is
     a ``JUDGE_FLIP_INVALID`` error, as an invalid validation manifest is.
+
+    The message says what the interval is about. Under ``simple_random`` it is for the run's
+    share, since the sample is drawn completion by completion. Under ``all`` the share is
+    known, and the interval is descriptive: it assumes the completions flip independently,
+    which completions of one prompt need not, so the details count the prompts the rescored
+    completions come from.
     """
 
     spec = plan.inputs.judge_flip
@@ -74,12 +80,15 @@ def judge_flip_diagnostic(
             Diagnostic(code="JUDGE_FLIP_INVALID", severity="ERROR", message=str(exc), scope=SCOPE)
         )
         return
+    prompt_of = {row.observation_id: row.prompt_id for row in data.observations}
+    prompts = len({prompt_of[key] for key in verdicts})
     details: dict[str, Any] = {
         "manifest": report_path(spec.manifest, plan),
         "sampling": spec.sampling,
         "wrappers": list(spec.wrappers),
         "judge_positive": result.judge_positive,
         "policy_classified_failures": len(policy_failures),
+        "prompts": prompts,
         "alpha": spec.alpha,
         "method": METHOD,
         "warn_above": spec.warn_above,
@@ -97,14 +106,23 @@ def judge_flip_diagnostic(
         return
     rate = result.any_wrapper
     above = rate.estimate > spec.warn_above
+    reading = (
+        f" for the run's {result.judge_positive} judge-positive completions"
+        if spec.sampling == "simple_random"
+        else (
+            "; the interval assumes the completions flip independently, which completions of "
+            "one prompt need not, so it is descriptive"
+        )
+    )
     diagnostics.append(
         Diagnostic(
             code="JUDGE_FLIP_RATE",
             severity="WARNING" if above else "INFO",
             message=(
-                f"{rate.flipped} of {rate.rescored} rescored judge-positive completions flip "
-                f"to safe under at least one wrapper (rate {rate.estimate:.4g}, "
-                f"{1 - spec.alpha:.4g} interval [{rate.lower:.4g}, {rate.upper:.4g}])"
+                f"{rate.flipped} of {rate.rescored} rescored judge-positive completions, from "
+                f"{prompts} prompt{'' if prompts == 1 else 's'}, flip to safe under at least "
+                f"one wrapper (rate {rate.estimate:.4g}, {1 - spec.alpha:.4g} interval "
+                f"[{rate.lower:.4g}, {rate.upper:.4g}]{reading})"
                 + (
                     f", above the declared warn_above {spec.warn_above:.4g}: the judge misses "
                     "unsafe content it is shown in another frame, so its PASS verdicts may "
