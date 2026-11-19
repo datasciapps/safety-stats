@@ -17,21 +17,24 @@ SURFACE = {
     # The rewrite kernel, which the caller supplies.
     "RewriteKernel", "RewriteRequest", "RewriteOutcome", "KernelFingerprint",
     "DeterministicFakeKernel", "resolve_kernel_fingerprint",
+    # The validator the plan declares, which the package invokes when asked to.
+    "RewriteValidator", "ValidationVerdict", "DeterministicFakeValidator",
     # The two-phase workflow.
     "MaterializedRun", "materialize_run", "analyze_run",
     "GenerativeReport", "render_generative_report",
     # Results.
     "TreeEstimate", "NodeEstimate", "ComparisonResult", "ReweightedEstimate",
-    "CorrectedEstimate", "AcceptanceRow",
+    "CorrectedEstimate", "AcceptanceRow", "FidelityRow",
     # Composing a flow by hand.
     "SamplingDesign", "StratumAllocation", "plan_design", "draw_selections",
     "execute_rewrites", "ExecutionResult", "AcceptedRewrite", "load_seed_texts",
-    "acceptance_by_level", "materialize_dataset", "materialize_for_cohorts",
+    "acceptance_by_level", "fidelity_by_level", "materialize_dataset", "materialize_for_cohorts",
     "read_evaluated_samples", "samples_from_observations", "join_outcomes",
     "JoinResult", "EvaluatedSample", "UnitOutcome", "estimate_tree", "estimate_slice",
     "estimate_reweighted", "compare_cohorts",
     # Ledgers, for auditing a run.
     "SelectionRecord", "RewriteRecord", "read_selections", "read_rewrites",
+    "AttemptRecord", "read_attempts",
 }
 
 

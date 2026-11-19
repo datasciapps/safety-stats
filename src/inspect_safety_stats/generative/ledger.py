@@ -61,8 +61,35 @@ class RewriteRecord(LedgerModel):
         return self.validation_status == "valid"
 
 
+AttemptValidatorStatus = Literal["valid", "invalid", "error", "not_run"]
+DuplicateKind = Literal["none", "exact", "near"]
+
+
+class AttemptRecord(LedgerModel):
+    """One call of the kernel for one sampling unit, and what became of its rewrite.
+
+    Written only when the plan asks the package to validate rewrites or to detect near
+    duplicates, so that fidelity can be reported per arm: the rewrite ledger keeps one row
+    per unit, which says how many attempts a unit took but not why each one failed.
+
+    ``validator_status`` is ``not_run`` when the kernel itself rejected the attempt, or when
+    it was rejected as a duplicate first: the validator is the costlier check, so it runs
+    last. ``accepted`` marks the attempt whose rewrite the unit kept.
+    """
+
+    sampling_unit_id: str = Field(min_length=1)
+    attempt: int = Field(ge=1)
+    kernel_status: ValidationStatus
+    duplicate: DuplicateKind = "none"
+    validator_id: str | None = None
+    validator_status: AttemptValidatorStatus = "not_run"
+    accepted: bool = False
+    prompt_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
 SELECTION_COLUMNS = tuple(SelectionRecord.model_fields)
 REWRITE_COLUMNS = tuple(RewriteRecord.model_fields)
+ATTEMPT_COLUMNS = tuple(AttemptRecord.model_fields)
 
 
 class IncrementalCsvWriter:
@@ -107,6 +134,36 @@ class IncrementalCsvWriter:
 
 def rewrite_ledger_writer(path: str | Path) -> IncrementalCsvWriter:
     return IncrementalCsvWriter(path, REWRITE_COLUMNS)
+
+
+def attempt_ledger_writer(path: str | Path) -> IncrementalCsvWriter:
+    return IncrementalCsvWriter(path, ATTEMPT_COLUMNS)
+
+
+def write_attempts(records: list[AttemptRecord], path: str | Path) -> None:
+    frame = pd.DataFrame(
+        [record.model_dump(mode="json") for record in records], columns=list(ATTEMPT_COLUMNS)
+    )
+    frame.to_csv(path, index=False, lineterminator="\n")
+
+
+def read_attempts(path: str | Path) -> list[AttemptRecord]:
+    """Read an attempt ledger (``attempts.csv``), refusing a unit's attempt recorded twice."""
+
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    records = []
+    for row in frame.to_dict("records"):
+        cleaned = _clean(row)
+        if cleaned.get("accepted") is not None:
+            text = str(cleaned["accepted"])
+            if text not in {"True", "False"}:
+                raise ValueError(f"attempt ledger {path} has accepted={text!r}")
+            cleaned["accepted"] = text == "True"
+        records.append(AttemptRecord.model_validate(cleaned))
+    keys = [(record.sampling_unit_id, record.attempt) for record in records]
+    if len(set(keys)) != len(keys):
+        raise ValueError(f"attempt ledger {path} repeats an attempt of a sampling unit")
+    return records
 
 
 def prompt_sha256(prompt: str) -> str:
