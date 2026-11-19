@@ -11,6 +11,7 @@ claims, without changing any claim's status.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
@@ -31,6 +32,22 @@ class _Refused(ValueError):
     def __init__(self, code: str, message: str) -> None:
         super().__init__(message)
         self.code = code
+
+
+@dataclass(frozen=True)
+class _Stream:
+    """A bounded cohort and group whose run's recorded order places every prompt once.
+
+    ``in_order`` holds the group's prompts in draw order, and ``observations`` the cohort's
+    observations of the plan's score.
+    """
+
+    cohort: str
+    group_id: str
+    scope: str
+    order: SampleOrder
+    in_order: list[str]
+    observations: list[Observation]
 
 
 def _log_location(plan: AnalysisPlan, source: str) -> str:
@@ -69,7 +86,16 @@ def _recorded_order(
         raise _Refused(
             "ANYTIME_ORDER_UNRECORDED",
             f"run {order.run_key!r} has no recorded random order: {why}. Run it with "
-            "sample_shuffle set to an integer seed",
+            "sample_shuffle set to a nonzero integer seed",
+        )
+    if shuffle == 0 and not order.shuffled:
+        # Inspect records the seed 0 but, as it shuffles only under a truthy seed, leaves the
+        # samples in dataset order.
+        raise _Refused(
+            "ANYTIME_ORDER_UNRECORDED",
+            f"run {order.run_key!r} has no recorded random order: its samples were not "
+            "shuffled, as Inspect does not shuffle under sample_shuffle 0. Run it with "
+            "sample_shuffle set to a nonzero integer seed",
         )
     if not order.shuffled or not order.sample_ids:
         raise _Refused(
@@ -146,31 +172,26 @@ def _bound(
     plan: AnalysisPlan,
     spec: AnytimeBoundsSpec,
     data: NormalizedData,
-    cohort: str,
-    group_id: str,
-    observations: list[Observation],
-    read_orders: OrderReader | None,
+    stream: _Stream,
     alpha: float,
 ) -> tuple[AnytimeUpperBound, dict[str, Any]]:
-    group = next(item for item in data.groups if item.id == group_id)
-    scoped = [row for row in observations if row.prompt_id in group.weights]
-    order = _recorded_order(plan, observations, read_orders)
-    in_order = _group_order(order, observations, group.prompt_ids)
-    shares, complete, filled = _stream(in_order, scoped, spec.rollouts_per_item)
+    group = next(item for item in data.groups if item.id == stream.group_id)
+    scoped = [row for row in stream.observations if row.prompt_id in group.weights]
+    shares, complete, filled = _stream(stream.in_order, scoped, spec.rollouts_per_item)
     position = {prompt: index for index, prompt in enumerate(group.prompt_ids)}
     weights = np.array([group.weights[prompt] for prompt in group.prompt_ids], dtype=float)
     profile = plan.design.independence_profiles[spec.independence_profile]
     independent_rollouts = spec.rollouts_per_item if profile.block_by == ["rollout"] else 1
     bound = anytime_upper_bound(
         shares,
-        np.array([position[prompt] for prompt in in_order[: len(shares)]], dtype=int),
+        np.array([position[prompt] for prompt in stream.in_order[: len(shares)]], dtype=int),
         weights / weights.sum(),
         alpha=alpha,
         independent_rollouts=independent_rollouts,
     )
     details = {
-        "run_key": order.run_key,
-        "sample_shuffle": order.shuffle,
+        "run_key": stream.order.run_key,
+        "sample_shuffle": stream.order.shuffle,
         "rollouts_per_item": spec.rollouts_per_item,
         "independence_profile": spec.independence_profile,
         "independent_rollouts": independent_rollouts,
@@ -182,44 +203,53 @@ def _bound(
     return bound, details
 
 
-def anytime_bound_diagnostics(
-    plan: AnalysisPlan,
-    data: NormalizedData,
-    diagnostics: list[Diagnostic],
-    read_orders: OrderReader | None,
-) -> None:
-    """Add the anytime-valid bounds the plan's ``outputs.anytime_bounds`` asks for, if any.
+def _requested(plan: AnalysisPlan) -> AnytimeBoundsSpec | None:
+    """The plan's ``outputs.anytime_bounds``, unless it is absent or the plan cannot serve it.
 
-    Each cohort and group gets an ``ANYTIME_UPPER_BOUND`` diagnostic (INFO) that carries the
-    bound and, for each weighted-mean claim on it, whether the bound lies at or below the
-    claim's ``acceptable_upper``. A run without a recorded random order is refused with an
-    ``ANYTIME_ORDER_UNRECORDED`` error, and any other reason the stream cannot be built with
-    an ``ANYTIME_BOUND_INVALID`` error. ``read_orders`` reads the runs' recorded orders, and is
-    None for a source that records none.
+    validate_plan_references reports what keeps a plan from serving it as
+    PLAN_ANYTIME_BOUNDS_INVALID.
     """
 
     spec = plan.outputs.anytime_bounds
-    if spec is None:
-        return
-    if anytime_bound_problems(plan):
-        # validate_plan_references has reported them as PLAN_ANYTIME_BOUNDS_INVALID.
-        return
-    family = next(item for item in plan.multiplicity.families if item.id == spec.family)
-    group_ids = spec.groups or [group.id for group in plan.groups]
-    cohorts = sorted(plan.cohorts)
-    alpha = family.alpha / (len(cohorts) * len(group_ids))
-    measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
+    if spec is None or anytime_bound_problems(plan):
+        return None
+    return spec
+
+
+def _bounded_groups(plan: AnalysisPlan, spec: AnytimeBoundsSpec) -> list[str]:
+    return spec.groups or [group.id for group in plan.groups]
+
+
+def _streams(
+    plan: AnalysisPlan,
+    spec: AnytimeBoundsSpec,
+    data: NormalizedData,
+    diagnostics: list[Diagnostic],
+    read_orders: OrderReader | None,
+) -> list[_Stream]:
+    """The stream of every bounded cohort and group, and an error for each that has none.
+
+    A run's order is read once per cohort, from its log's header.
+    """
+
     score = plan.inputs.score.name
-    for cohort in cohorts:
+    groups = {group.id: group for group in data.groups}
+    streams: list[_Stream] = []
+    for cohort in sorted(plan.cohorts):
         observations = [
             row for row in data.observations if row.cohort_id == cohort and row.score_name == score
         ]
-        for group_id in group_ids:
+        order: SampleOrder | _Refused
+        try:
+            order = _recorded_order(plan, observations, read_orders)
+        except _Refused as refusal:
+            order = refusal
+        for group_id in _bounded_groups(plan, spec):
             scope = cohort_scope(cohort, "groups", group_id, "outputs", "anytime_bounds")
             try:
-                bound, details = _bound(
-                    plan, spec, data, cohort, group_id, observations, read_orders, alpha
-                )
+                if isinstance(order, _Refused):
+                    raise order
+                in_order = _group_order(order, observations, groups[group_id].prompt_ids)
             except _Refused as refusal:
                 diagnostics.append(
                     Diagnostic(
@@ -231,54 +261,159 @@ def anytime_bound_diagnostics(
                     )
                 )
                 continue
-            weighted = [
-                claim
-                for claim in plan.claims
-                if claim.cohort == cohort
-                and claim.group == group_id
-                and measure_types.get(str(claim.measure)) == "weighted_mean"
-            ]
-            certified = [
-                claim.id for claim in weighted if bound.upper <= claim.acceptable_upper
-            ]
-            claims = [
-                {
-                    "claim_id": claim.id,
-                    "acceptable_upper": claim.acceptable_upper,
-                    "certified": claim.id in certified,
-                }
-                for claim in weighted
-            ]
-            diagnostics.append(
-                Diagnostic(
-                    code="ANYTIME_UPPER_BOUND",
-                    severity="INFO",
-                    message=(
-                        f"anytime-valid upper bound {bound.upper:.6g} on the weighted mean "
-                        f"failure probability at one-sided alpha {alpha:.6g}, after "
-                        f"{bound.draws} of {bound.population} prompts in the recorded order"
-                        + (
-                            f"; at or below acceptable_upper for {', '.join(certified)}"
-                            if certified
-                            else ""
-                        )
-                        + ". It holds wherever the run stopped; claims keep their "
-                        "fixed-horizon status"
-                    ),
-                    scope=scope,
-                    details={
-                        "cohort": cohort,
-                        "group": group_id,
-                        **details,
-                        "alpha": alpha,
-                        "alpha_sequence": bound.alpha_sequence,
-                        "alpha_population": bound.alpha_population,
-                        "estimate": bound.estimate,
-                        "realized_upper": bound.realized_upper,
-                        "upper": bound.upper,
-                        "sequence_kernel": bound.sequence_kernel,
-                        "population_kernel": bound.population_kernel,
-                        "claims": claims,
-                    },
-                )
+            streams.append(_Stream(cohort, group_id, scope, order, in_order, observations))
+    return streams
+
+
+def anytime_order_diagnostics(
+    plan: AnalysisPlan,
+    data: NormalizedData,
+    diagnostics: list[Diagnostic],
+    read_orders: OrderReader | None,
+) -> None:
+    """For ``validate``: the errors ``anytime_bounds`` would add, without computing a bound.
+
+    The same checks of the runs' recorded orders run, so ``validate`` refuses what
+    ``analyze`` refuses (CONTRIBUTING section 5.2).
+    """
+
+    spec = _requested(plan)
+    if spec is not None:
+        _streams(plan, spec, data, diagnostics, read_orders)
+
+
+@dataclass(frozen=True)
+class ComputedAnytimeBound:
+    """The anytime-valid bound of one cohort and group, before it is reported."""
+
+    cohort: str
+    group_id: str
+    scope: str
+    alpha: float
+    bound: AnytimeUpperBound
+    details: dict[str, Any]
+
+
+def anytime_bounds(
+    plan: AnalysisPlan,
+    data: NormalizedData,
+    diagnostics: list[Diagnostic],
+    read_orders: OrderReader | None,
+) -> list[ComputedAnytimeBound]:
+    """The anytime-valid bounds the plan's ``outputs.anytime_bounds`` asks for, if any.
+
+    A run without a recorded random order is refused with an ``ANYTIME_ORDER_UNRECORDED``
+    error, and any other reason the stream cannot be built with an ``ANYTIME_BOUND_INVALID``
+    error, each added to ``diagnostics``. ``read_orders`` reads the runs' recorded orders, and
+    is None for a source that records none. ``anytime_bound_diagnostics`` reports the bounds.
+    """
+
+    spec = _requested(plan)
+    if spec is None:
+        return []
+    group_ids = _bounded_groups(plan, spec)
+    cohorts = sorted(plan.cohorts)
+    family = next(item for item in plan.multiplicity.families if item.id == spec.family)
+    alpha = family.alpha / (len(cohorts) * len(group_ids))
+    computed: list[ComputedAnytimeBound] = []
+    for stream in _streams(plan, spec, data, diagnostics, read_orders):
+        bound, details = _bound(plan, spec, data, stream, alpha)
+        computed.append(
+            ComputedAnytimeBound(
+                stream.cohort, stream.group_id, stream.scope, alpha, bound, details
             )
+        )
+    return computed
+
+
+def _withheld(plan: AnalysisPlan, integrity_valid: bool) -> str | None:
+    """Why no claim may be certified by the bounds, as none may pass: None when they may."""
+
+    reasons = []
+    if not integrity_valid:
+        reasons.append("data integrity is invalid")
+    if plan.analysis.intent == "exploratory":
+        reasons.append("the analysis is exploratory")
+    return " and ".join(reasons) if reasons else None
+
+
+def anytime_bound_diagnostics(
+    plan: AnalysisPlan,
+    computed: list[ComputedAnytimeBound],
+    diagnostics: list[Diagnostic],
+    *,
+    integrity_valid: bool,
+) -> None:
+    """Report each computed bound as an ``ANYTIME_UPPER_BOUND`` diagnostic (INFO).
+
+    It carries the bound and, for each weighted-mean claim on its cohort and group, whether
+    the bound certifies the claim's ``acceptable_upper``: lies at or below it. A claim can
+    pass only in a confirmatory analysis whose integrity is valid, and the bound certifies
+    nothing elsewhere either: under invalid integrity (``integrity_valid`` false, as the
+    claims were decided) or exploratory intent, each claim's ``certified`` is None, and
+    ``certification_withheld`` says why.
+    """
+
+    measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
+    withheld = _withheld(plan, integrity_valid)
+    for item in computed:
+        bound, alpha = item.bound, item.alpha
+        weighted = [
+            claim
+            for claim in plan.claims
+            if claim.cohort == item.cohort
+            and claim.group == item.group_id
+            and measure_types.get(str(claim.measure)) == "weighted_mean"
+        ]
+        certified = [
+            claim.id
+            for claim in weighted
+            if withheld is None and bound.upper <= claim.acceptable_upper
+        ]
+        claims = [
+            {
+                "claim_id": claim.id,
+                "acceptable_upper": claim.acceptable_upper,
+                "certified": None if withheld is not None else claim.id in certified,
+            }
+            for claim in weighted
+        ]
+        if withheld is not None:
+            outcome = f"; it certifies no claim, because {withheld}"
+        elif certified:
+            outcome = f"; at or below acceptable_upper for {', '.join(certified)}"
+        else:
+            outcome = ""
+        diagnostics.append(
+            Diagnostic(
+                code="ANYTIME_UPPER_BOUND",
+                severity="INFO",
+                message=(
+                    f"experimental anytime-valid upper bound {bound.upper:.6g} on the "
+                    f"weighted mean failure probability at one-sided alpha {alpha:.6g}, after "
+                    f"{bound.draws} of {bound.population} prompts in the recorded order"
+                    + outcome
+                    + ". It holds wherever the run stopped; claims keep their "
+                    "fixed-horizon status"
+                ),
+                scope=item.scope,
+                details={
+                    "experimental": True,
+                    "cohort": item.cohort,
+                    "group": item.group_id,
+                    **item.details,
+                    "alpha": alpha,
+                    "alpha_sequence": bound.alpha_sequence,
+                    "alpha_population": bound.alpha_population,
+                    "estimate": bound.estimate,
+                    "realized_upper": bound.realized_upper,
+                    "upper": bound.upper,
+                    "sequence_kernel": bound.sequence_kernel,
+                    "population_kernel": bound.population_kernel,
+                    "claims": claims,
+                    **(
+                        {"certification_withheld": withheld} if withheld is not None else {}
+                    ),
+                },
+            )
+        )

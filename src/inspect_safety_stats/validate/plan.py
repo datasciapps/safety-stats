@@ -548,7 +548,12 @@ def _worst_of_k_interval_diagnostics(plan: AnalysisPlan) -> list[Diagnostic]:
 
 
 def anytime_bound_problems(plan: AnalysisPlan) -> list[Diagnostic]:
-    """What keeps the experimental anytime-valid bounds (#126) from being computed."""
+    """What keeps the experimental anytime-valid bounds (#126) from being computed.
+
+    Besides what the bound needs of the design, the family, the groups and the profile, no
+    judge calibration may cover a bounded group: the bound is on the judge-reported failure
+    probability, which is not what a claim on such a group is about.
+    """
 
     spec = plan.outputs.anytime_bounds
     if spec is None:
@@ -576,6 +581,35 @@ def anytime_bound_problems(plan: AnalysisPlan) -> list[Diagnostic]:
             f"{profile.block_by!r}: the bound needs independent items, so the profile must "
             "block by rollout or by prompt_id"
         )
+    calibration = plan.inputs.judge_calibration
+    if calibration is not None:
+        # The bound is on the judge-reported failure probability. Where a calibration covers
+        # a group, a validated one decides the group's claims on the corrected risk, and an
+        # assumed or transported one declares that the judge misclassifies, so a bound at or
+        # below a claim's threshold would certify the judge's risk in place of the model's.
+        covered = [
+            group_id
+            for group_id in spec.groups or [group.id for group in plan.groups]
+            if calibration.groups is None or group_id in calibration.groups
+        ]
+        outside = [
+            group.id
+            for group in plan.groups
+            if calibration.groups is not None and group.id not in calibration.groups
+        ]
+        if covered:
+            problems.append(
+                f"the {calibration.mode} judge calibration covers the bounded groups "
+                f"{covered!r}, and the bounds describe the judge's reported risk, not the "
+                "corrected risk the calibration is about; "
+                + (
+                    f"bound only groups it leaves out ({outside!r}) with "
+                    "outputs.anytime_bounds.groups"
+                    if outside
+                    else "remove outputs.anytime_bounds, since the calibration covers every "
+                    "group"
+                )
+            )
     return [
         Diagnostic(
             code="PLAN_ANYTIME_BOUNDS_INVALID",

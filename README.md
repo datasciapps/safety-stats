@@ -126,7 +126,9 @@ The other guides and the examples are listed under [Documentation](#documentatio
   primary outcome, Kish effective votes, and pairwise agreement diagnostics.
 - Deterministic JSON, Markdown, CSV, plan, and checksum sidecars.
 
-Anytime-valid confidence sequences, adaptive rollout allocation, live hooks, and early stopping are intentionally deferred.
+Anytime-valid confidence sequences, adaptive rollout allocation, live hooks, and early stopping are intentionally deferred,
+apart from two experimental pieces: a confidence sequence for the human labels of a judge calibration, and an
+anytime-valid upper bound for Inspect runs that a rule such as Optstop's stopped early.
 
 ## Install
 
