@@ -1389,6 +1389,58 @@ def test_two_arm_comparisons_are_judge_corrected_per_assumed_scenario(
     assert all(item.eligibility != "certifying" for item in row.intervals if item.role != "primary")
 
 
+@pytest.mark.parametrize("cohort_boxes", [False, True], ids=["one-box", "cohort-boxes"])
+def test_assumed_judge_calibration_never_moves_a_comparison_claim(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cohort_boxes: bool
+) -> None:
+    """A comparison claim is decided as if the plan declared no judge calibration.
+
+    Every declared scenario corrects the comparison, and a scenario's corrected effect would
+    decide the claim differently, but a declared sensitivity carries no coverage guarantee.
+    """
+    claim_text = (
+        "  - id: not_worse\n"
+        "    title: Candidate is not worse than baseline\n"
+        "    comparison: candidate_vs_baseline\n"
+        "    family: gate\n"
+        "    acceptable_upper: 0.2\n"
+        "    unacceptable_lower: 0.6\n"
+        "policy:\n"
+    )
+    reports: dict[bool, SafetyReport] = {}
+    for assumed in (False, True):
+        directory = tmp_path / ("assumed" if assumed else "uncalibrated")
+        directory.mkdir()
+        plan_path = _comparison_judge_plan(
+            directory,
+            method="weighted_kl_chernoff",
+            calibrated=False,
+            assumed=assumed,
+            cohort_boxes=assumed and cohort_boxes,
+        )
+        text = plan_path.read_text(encoding="utf-8")
+        assert text.count("policy:\n") == 1
+        plan_path.write_text(text.replace("policy:\n", claim_text), encoding="utf-8")
+        _patch_two_cohort_frames(monkeypatch)
+        reports[assumed] = analyze(plan=load_plan(plan_path), logs="ignored")
+
+    claim, uncalibrated = (
+        next(item for item in reports[assumed].claims if item.claim_id == "not_worse")
+        for assumed in (True, False)
+    )
+    assert uncalibrated.status == "PASS"
+    row = next(item for item in reports[True].comparisons if item.level is None)
+    corrected = [item for item in row.intervals if item.interval_id.startswith("judge_corrected_")]
+    assert len(corrected) == 2
+    # A scenario's corrected upper bound is above acceptable_upper, so a claim decided on it
+    # would not pass.
+    assert any(item.upper is not None and item.upper > 0.2 for item in corrected)
+    # Status, bounds, method, evidence and reasons: the claim is the uncalibrated plan's.
+    assert claim.model_dump(mode="json") == uncalibrated.model_dump(mode="json")
+    assert claim.evidence_refs == ["comparison:candidate_vs_baseline"]
+    assert reports[True].decision == reports[False].decision
+
+
 def test_assumed_scenarios_correct_each_cohort_and_arm_with_its_own_box(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
