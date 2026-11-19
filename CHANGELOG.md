@@ -7,6 +7,16 @@ described in their pull requests.
 
 ### Added
 
+- **`init`: a starter plan from completed logs, with its assumptions noted (experimental).**
+  `inspect-safety-stats init --logs LOGS --failure-values V` writes `design.csv` and
+  `safety-plan.yaml`: one cohort per model, the root failure risk with a prompt-level
+  sensitivity, an optional breakdown and a comparison of several models. The plan's header,
+  and the command's output, list each choice `init` made with the assumption it rests on from
+  `inspect_safety_stats.registry`, rollout independence first, what goes wrong if it does not
+  hold, and the remedy. The plan is exploratory; `--intent confirmatory` is refused, because
+  the plan is written after the logs exist. See
+  [Command-line interface](docs/api-reference.md#command-line-interface).
+
 - **A warning when tail measures cannot be informative.** Tail and threshold measures
   (`maximum`, `cvar`, `top_k_mean`, `entropic`, `threshold_exceedance`, `threshold_excess`, and
   `worst_of_k` without `direct_interval`) are propagated from simultaneous per-prompt bounds, so
