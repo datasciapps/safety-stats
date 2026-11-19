@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from inspect_safety_stats.registry import SourceKind
 from inspect_safety_stats.stats import JudgeCalibration, correct_judge_risk
 from inspect_safety_stats.stats.binomial import binomial_upper_bound
 from tests.diagnostic_codes.harness import (
@@ -728,6 +729,10 @@ def _panel_withheld(triggered: Outcome, control: Outcome) -> None:
     assert _panel_rows(control) != []
 
 
+# The kind of input, as inspect_safety_stats.registry.SOURCE_KINDS names them, that these
+# cases' triggers break. A case whose trigger breaks another kind names it as its source.
+SOURCE: SourceKind = "judge_labels"
+
 CASES = [
     Case(
         # Two labels per judge stratum cannot show that rho_1 exceeds rho_0.
@@ -741,6 +746,7 @@ CASES = [
         # A certifying validated correction retargets the claim to true risk.
         code="JUDGE_CORRECTED_CLAIMS",
         shows="adjusted",
+        source="analysis",
         trigger=judged(with_labels(census)),
         control=judged(lambda inputs, _: None),
         effect=_corrected_claims,
@@ -749,6 +755,7 @@ CASES = [
         # A claim on a maximum has no certifying validated correction.
         code="JUDGE_CORRECTION_UNAVAILABLE",
         shows="withheld",
+        source="analysis",
         trigger=judged(with_labels(census), _worst_claim),
         control=judged(with_labels(census), _with_worst),
         effect=_correction_unavailable,
@@ -765,6 +772,7 @@ CASES = [
         # The judge never says unsafe, so its unsafe stratum is empty.
         code="JUDGE_VALIDATION_STRATUM_EMPTY",
         shows="withheld",
+        source="logs",
         trigger=judged(with_labels(census), _no_judge_failures),
         control=judged(with_labels(census)),
         effect=_stratum_empty,
@@ -861,6 +869,7 @@ CASES = [
         # Prompt p3 of the row has no classified rollout.
         code="JUDGE_LANG_REICZIGEL_UNAVAILABLE",
         shows="withheld",
+        source="analysis",
         trigger=judged(with_labels(census, sampling="simple_random"), _p3(0)),
         control=judged(with_labels(census, sampling="simple_random"), _p3(1)),
         effect=_no_lang_reiczigel,
@@ -888,6 +897,7 @@ CASES += [
         # The plan counts a rollout the provider blocked safe; the judge never saw it.
         code="JUDGE_CORRECTION_POLICY_CLASSIFIED",
         shows="adjusted",
+        source="analysis",
         trigger=judged(assumed, policy_blocked),
         control=judged(assumed),
         effect=_policy_free,
@@ -896,6 +906,7 @@ CASES += [
         # The comparison's primary interval is a contrast bound without arm bounds.
         code="JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON",
         shows="withheld",
+        source="analysis",
         trigger=judged(with_labels(census), comparison("weighted_empirical_bernstein")),
         control=judged(with_labels(census), comparison("weighted_kl_chernoff")),
         effect=_comparison_uncorrected,
@@ -904,6 +915,7 @@ CASES += [
         # Twenty rollouts per prompt cannot bound a failure-free prompt below 0.05.
         code="TAIL_MEASURES_UNINFORMATIVE",
         shows="recorded",
+        source="analysis",
         trigger=judged(lambda inputs, _: None, _tail_target(None)),
         control=judged(lambda inputs, _: None, _tail_target(0.25)),
         effect=_tail_recorded,
@@ -912,6 +924,7 @@ CASES += [
         # A majority composite has no closed-form accuracy box.
         code="PANEL_CORRECTION_UNSUPPORTED_RULE",
         shows="withheld",
+        source="plan",
         trigger=panel("majority", None, None),
         control=panel("any", None, None),
         effect=_panel_withheld,
@@ -920,6 +933,7 @@ CASES += [
         # Judge a vouches for group all only, judge b for group b only.
         code="PANEL_CORRECTION_NO_COMMON_GROUP",
         shows="withheld",
+        source="plan",
         trigger=panel("any", ["all"], ["b"]),
         control=panel("any", ["all", "b"], ["b"]),
         effect=_panel_withheld,
@@ -928,6 +942,7 @@ CASES += [
         # The primary mapping counts the composite's false verdict as failure.
         code="PANEL_CORRECTION_VERDICT_UNMATCHED",
         shows="withheld",
+        source="plan",
         trigger=panel("any", None, None, _inverted_verdict),
         control=panel("any", None, None),
         effect=_panel_withheld,
@@ -937,6 +952,7 @@ CASES += [
         # as safe that the primary mapping does not know.
         code="JUDGE_STRESS_BOX_UNMATCHED",
         shows="withheld",
+        source="plan",
         trigger=stressed_judge({"failure_values": ["FAIL"], "safe_values": ["PASS", "MAYBE"]}),
         control=stressed_judge({"failure_values": ["FAIL"], "safe_values": ["PASS"]}),
         effect=_stress_box_withheld,
@@ -1029,6 +1045,7 @@ CASES += [
         # bound is reported whenever the plan asks for it, so the control does not.
         code="ANYTIME_UPPER_BOUND",
         shows="recorded",
+        source="analysis",
         trigger=_anytime(bounds=True),
         control=_anytime(bounds=False),
         effect=_anytime_recorded,

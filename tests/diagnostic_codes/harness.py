@@ -7,7 +7,11 @@ analysis on control inputs that differ only in keeping the assumption. The test 
 - the trigger emits the code and the control does not, so the code reports on the
   assumption the inputs differ in;
 - every emitted diagnostic has a severity, source and effect the code's registry entry lists,
-  in the report as written too;
+  in its JSON form, as ``report.json`` holds it, too;
+- the case's source, the kind of input its trigger breaks, is the source the registry gives
+  the code. Each case module holds the cases of one kind and says which in ``SOURCE``; a case
+  whose trigger breaks another kind says so in its own ``source``. Neither is read from the
+  registry, so an entry that moves a code to another kind of input fails the test;
 - the case's ``shows``, the effect its checks show the code has, is the effect the registry
   gives the code. It is written in the case, beside the checks that show it, and not read
   from the registry, so that a registry entry that says something other than what the code
@@ -34,7 +38,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from inspect_safety_stats.registry import Effect
+from inspect_safety_stats.registry import Effect, SourceKind
 from inspect_safety_stats.schema.reports import Diagnostic
 
 Status = str | None
@@ -71,7 +75,9 @@ class Case:
     Both get a directory of their own to write inputs in. ``effect`` gets the trigger's
     outcome, then the control's, and asserts what the code did to the results. ``shows`` is
     the effect, as ``inspect_safety_stats.registry.EFFECTS`` names them, that the integrity
-    status and ``effect`` show the code has.
+    status and ``effect`` show the code has. ``source`` is the kind of input the trigger
+    breaks, as ``inspect_safety_stats.registry.SOURCE_KINDS`` names them, when it is not the
+    ``SOURCE`` of the case's module.
     """
 
     code: str
@@ -79,6 +85,7 @@ class Case:
     trigger: Run
     control: Run
     effect: EffectCheck | None = None
+    source: SourceKind | None = None
 
 
 # The main analysis: one cohort, two prompts of four rollouts each, a claim on the mean.

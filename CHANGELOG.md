@@ -468,15 +468,18 @@ described in their pull requests.
   weighted mean failure probability that holds at every point of the run's sample order at
   once, and so wherever a rule such as optstop's stopped the run. The run must use Inspect's
   `sample_shuffle` with a nonzero integer seed; a run without a recorded order is refused with
-  an `ANYTIME_ORDER_UNRECORDED` error, by `validate` as by `analyze`. `analyze` adds an
-  `ANYTIME_UPPER_BOUND` diagnostic, marked experimental, with the bound and, for each
-  weighted-mean claim, whether it lies at or below the claim's `acceptable_upper`, or, under
-  exploratory intent or invalid integrity, where no claim can pass, `null` with the reason.
-  Claims and the decision keep their fixed-horizon status. The bound is on the judge-reported
-  failure probability, so a plan whose judge calibration, in any mode, covers a bounded group
-  is refused with `PLAN_ANYTIME_BOUNDS_INVALID`. Plans without the section keep their hash and
-  outputs. `research/optstop_coverage.py` simulates optstop's stopping rule: the bound misses
-  at most alpha, while Clopper-Pearson at the stop misses up to 0.208 at a nominal 0.05. See
+  an `ANYTIME_ORDER_UNRECORDED` error, by `validate` as by `analyze`. A cohort and group get no
+  bound, and an `ANYTIME_BOUND_INVALID` error, unless the cohort's observations come from one
+  run whose recorded order lists every prompt of the group exactly once and each sample joins
+  one prompt. `analyze` adds an `ANYTIME_UPPER_BOUND` diagnostic, marked experimental, with the
+  bound and, for each weighted-mean claim, whether it lies at or below the claim's
+  `acceptable_upper`, or, under exploratory intent or invalid integrity, where no claim can
+  pass, `null` with the reason. Claims and the decision keep their fixed-horizon status. The
+  bound is on the judge-reported failure probability, so a plan whose judge calibration, in any
+  mode, covers a bounded group is refused with `PLAN_ANYTIME_BOUNDS_INVALID`. Plans without the
+  section keep their hash and outputs. `research/optstop_coverage.py` simulates optstop's
+  stopping rule: the bound misses at most alpha, while Clopper-Pearson at the stop misses up to
+  0.208 at a nominal 0.05. See
   [Runs that optstop stopped](docs/sequential-design.md#runs-that-optstop-stopped-126).
 
 - **FAIL-only claims on attackers that adapt across behaviours (experimental, #125).** A plan
