@@ -1,0 +1,33 @@
+name: Formal proofs
+
+# Lean proofs of the statements the statistics rely on. Python contributors never need Lean, so
+# this runs only when formal/ changes, weekly against the pinned Mathlib, and on demand.
+on:
+  push:
+    branches: [main]
+    paths: ["formal/**", ".github/workflows/formal.yml"]
+  pull_request:
+    paths: ["formal/**", ".github/workflows/formal.yml"]
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: lake build and axiom audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: leanprover/lean-action@v1.6.1
+        with:
+          lake-package-directory: formal
+          # Fails if any theorem depends on sorry or on an axiom beyond the standard three. It
+          # audits the modules of the lakefile's first library, SafetyStatsFormal.
+          axiom-audit: "true"
+          # Mathlib's own cache server supplies the build; saving it again to the GitHub cache
+          # runs the runner out of disk.
+          use-github-cache: "false"
