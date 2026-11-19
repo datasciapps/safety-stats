@@ -1129,11 +1129,14 @@ def _one_line_error(exc: Exception) -> str:
     from pydantic import ValidationError
 
     if isinstance(exc, ValidationError):
-        return "; ".join(
+        text = "; ".join(
             f"{'.'.join(str(part) for part in error['loc']) or '(root)'}: {error['msg']}"
             for error in exc.errors()
         )
-    return " ".join(str(exc).split())
+    else:
+        text = str(exc)
+    # A validator's own message may hold line breaks; the line is collapsed either way.
+    return " ".join(text.split())
 
 
 @app.command("hash-plan")
