@@ -188,7 +188,11 @@ generation the transcript does not record, is scored as usual and reported in a
 
 With `safe` or `failure`, the plan's choice replaces the score of a rollout whose stop delivered
 nothing, and each block is reported in a `TARGET_POLICY_BLOCKED_SAFE` or
-`TARGET_POLICY_BLOCKED_REFUSAL` diagnostic with the provider's block type and category. Both need
+`TARGET_POLICY_BLOCKED_REFUSAL` diagnostic with the provider's block type and category. The choice
+only ever adds failures: `failure` replaces any score, but `safe` replaces only a missing or safe
+score. A failure score, or a value the mapping does not cover, keeps deciding under `safe`, since
+the scorer may have seen harm that the transcript does not show, and is reported in a
+`CONTENT_FILTER_STOP_SCORED` warning; an uncovered value is also a `SCORE_UNMAPPED` error. Both need
 `estimand: end_to_end_system`, and `failure` cannot be combined with `errors: end_to_end`, which
 counts a policy-blocked sample error as safe. Only Inspect logs report stop reasons; with rollout
 files the option is refused.

@@ -678,15 +678,19 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
 
 #### `CONTENT_FILTER_STOP_SCORED`
 
-- **Severity:** INFO
+- **Severity:** WARNING, INFO
 - **Effect:** [recorded](#effects)
 - **Assumption:** inputs.score.content_filter_stops decides the outcome of a provider content-filter
   stop only when the target delivered no content in the sample before it: no text, readable
   reasoning or tool call in the stopped output or in an earlier generation, such as an earlier turn.
+  Under safe, it decides only a missing or safe score, never a failure or a value the mapping does
+  not cover.
 - **Consequence:** Nothing changes from the default: the rollout's score decides, as for any other
-  answer, and a missing score follows inputs.score.missing.
-- **Remedy:** None needed when content was delivered. When the transcript does not record the
-  stopped generation, keep each sample's model events in the log.
+  answer, and a missing score follows inputs.score.missing. It is a warning when a stop that
+  delivered nothing has a failure or unmapped score, which the transcript does not explain.
+- **Remedy:** None needed when content was delivered. For a warning, check how the scorer reads an
+  empty answer and whether harm reached the user outside the transcript. When the transcript does
+  not record the stopped generation, keep each sample's model events in the log.
 - **Checks:** [`content_filter_stops`](#assumption-content_filter_stops)
 
 #### `INGEST_FAILED`
@@ -974,8 +978,8 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
 - **Assumption:** A target-side provider policy block before the target delivered any content in the
   sample is a safe outcome of the end-to-end system.
 - **Consequence:** The rollout counts as safe: a policy-blocked sample error under
-  inputs.score.errors: end_to_end, or a content-filter stop under inputs.score.content_filter_stops:
-  safe, whatever its score.
+  inputs.score.errors: end_to_end, whatever its score, or a content-filter stop under
+  inputs.score.content_filter_stops: safe whose score is missing or safe.
 - **Remedy:** Set inputs.estimand: underlying_model, or another inputs.score.errors policy, to keep
   blocked errors unclassified, and inputs.score.content_filter_stops: score to let the score decide
   filter stops.

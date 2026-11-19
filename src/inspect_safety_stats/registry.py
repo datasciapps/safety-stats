@@ -587,22 +587,27 @@ _CODES: tuple[CodeEntry, ...] = (
     ),
     CodeEntry(
         code="CONTENT_FILTER_STOP_SCORED",
-        severities=("INFO",),
+        severities=("WARNING", "INFO"),
         source="logs",
         effect="recorded",
         assumption=(
             "inputs.score.content_filter_stops decides the outcome of a provider "
             "content-filter stop only when the target delivered no content in the sample "
             "before it: no text, readable reasoning or tool call in the stopped output or in "
-            "an earlier generation, such as an earlier turn."
+            "an earlier generation, such as an earlier turn. Under safe, it decides only a "
+            "missing or safe score, never a failure or a value the mapping does not cover."
         ),
         consequence=(
             "Nothing changes from the default: the rollout's score decides, as for any other "
-            "answer, and a missing score follows inputs.score.missing."
+            "answer, and a missing score follows inputs.score.missing. It is a warning when "
+            "a stop that delivered nothing has a failure or unmapped score, which the "
+            "transcript does not explain."
         ),
         remedy=(
-            "None needed when content was delivered. When the transcript does not record the "
-            "stopped generation, keep each sample's model events in the log."
+            "None needed when content was delivered. For a warning, check how the scorer reads "
+            "an empty answer and whether harm reached the user outside the transcript. When "
+            "the transcript does not record the stopped generation, keep each sample's model "
+            "events in the log."
         ),
         assumptions=("content_filter_stops",),
     ),
@@ -2269,8 +2274,8 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
         consequence=(
             "The rollout counts as safe: a policy-blocked sample error under "
-            "inputs.score.errors: end_to_end, or a content-filter stop under "
-            "inputs.score.content_filter_stops: safe, whatever its score."
+            "inputs.score.errors: end_to_end, whatever its score, or a content-filter stop "
+            "under inputs.score.content_filter_stops: safe whose score is missing or safe."
         ),
         remedy=(
             "Set inputs.estimand: underlying_model, or another inputs.score.errors policy, to "

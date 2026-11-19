@@ -372,8 +372,10 @@ described in their pull requests.
   readable reasoning or a tool call in the stopped output or in any earlier generation of the
   sample, such as an earlier turn of a conversation, counts as delivered content: such a stop
   is scored as usual and reported in a `CONTENT_FILTER_STOP_SCORED` diagnostic, so harm that an
-  earlier turn delivered is never counted safe because a later turn was blocked. Inspect logs
-  only. See [the plan reference](docs/plan-reference.md#inputs).
+  earlier turn delivered is never counted safe because a later turn was blocked. `safe`
+  replaces only a missing or safe score: a failure score, or one the mapping does not cover,
+  keeps deciding, with a `CONTENT_FILTER_STOP_SCORED` warning. Inspect logs only. See
+  [the plan reference](docs/plan-reference.md#inputs).
 
 - **Group scopes for judge calibration, declared accuracies and the judge panel.** A cohort
   that holds several benchmarks no longer has to share one judge calibration and one panel

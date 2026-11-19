@@ -18,7 +18,7 @@ import pandas as pd
 
 from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.loader import report_path
-from inspect_safety_stats.config.models import ATTRIBUTE_PREFIX, AnalysisPlan
+from inspect_safety_stats.config.models import ATTRIBUTE_PREFIX, AnalysisPlan, OutcomeMappingSpec
 from inspect_safety_stats.config.registration import RegistrationReceipt
 from inspect_safety_stats.ingest.manifest import (
     ResolvedGroup,
@@ -120,7 +120,46 @@ def _stop_after_content(stop: StopContext, scope: str) -> Diagnostic:
             "decides, as for any other answer"
         ),
         scope=scope,
-        details={**_block_details(stop), "content_delivered_in": stop.delivered_in},
+        details={
+            **_block_details(stop),
+            "reason": "content_delivered",
+            "content_delivered_in": stop.delivered_in,
+        },
+    )
+
+
+def _score_safe_keeps(raw_score: Any, mapping: OutcomeMappingSpec) -> str | None:
+    """Why content_filter_stops: safe leaves a stop that delivered nothing to its score:
+    ``failure_score`` when the score maps to a failure, ``unmapped_score`` when the mapping
+    does not cover it, so that it may be one. None when the score is missing or safe."""
+
+    if is_missing(raw_score):
+        return None
+    try:
+        return "failure_score" if map_outcome(raw_score, mapping) else None
+    except ValueError:
+        return "unmapped_score"
+
+
+def _stop_with_kept_score(stop: StopContext, scope: str, reason: str) -> Diagnostic:
+    """A content-filter stop that delivered nothing, whose score content_filter_stops: safe
+    does not override: a failure, or a value the mapping does not cover."""
+
+    found = (
+        "its score is a failure"
+        if reason == "failure_score"
+        else "the plan's mapping does not cover its score, which may be a failure"
+    )
+    return Diagnostic(
+        code="CONTENT_FILTER_STOP_SCORED",
+        severity="WARNING",
+        message=(
+            "a provider's content filter stopped the output before the target delivered any "
+            f"content that the transcript shows, but {found}; content_filter_stops: safe "
+            "never turns such a score into a safe outcome, so the score decides"
+        ),
+        scope=scope,
+        details={**_block_details(stop), "reason": reason, "content_delivered_in": None},
     )
 
 
@@ -523,9 +562,10 @@ def normalize(
         error_stage: Literal["target_generation", "post_generation", "unknown"] | None = None
         content_delivered: bool | None = None
         provider_error_code: str | None = None
-        # A content-filter stop before the target delivered any content in the sample. One
-        # after content, in the stopped output or an earlier turn, is scored like any other
-        # answer, and reported.
+        # A content-filter stop before the target delivered any content in the sample, whose
+        # outcome the plan declares. One after content, in the stopped output or an earlier
+        # turn, is scored like any other answer, and reported; so is one whose score `safe`
+        # would turn from a failure, or from a value the mapping does not cover, into safe.
         stop = None
         # An answer without a score that stopped at the token limit, when the plan looks for
         # one; a truncated answer that was scored keeps its score.
@@ -536,11 +576,18 @@ def normalize(
             and stop_context is not None
         ):
             found = stop_context(rollout)
-            if found is not None and found.stop_reason == "content_filter":
-                if stops != "score" and not found.content_delivered:
-                    stop = found
-                elif stops != "score":
+            if found is not None and found.stop_reason == "content_filter" and stops != "score":
+                kept = (
+                    _score_safe_keeps(raw_score, plan.inputs.score.mapping)
+                    if stops == "safe"
+                    else None
+                )
+                if found.content_delivered:
                     diagnostics.append(_stop_after_content(found, scope))
+                elif kept is not None:
+                    diagnostics.append(_stop_with_kept_score(found, scope, kept))
+                else:
+                    stop = found
             elif found is not None and found.stop_reason == "max_tokens":
                 truncated = token_limit != "score" and is_missing(raw_score)
         if raw_error is not None:
