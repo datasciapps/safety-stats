@@ -91,10 +91,11 @@ def pooled_calibration_gap(estimate: NodeEstimate, *, root_id: str) -> str | Non
             "accuracy can differ from the pooled labels' average"
         )
     if not estimate.equal_coefficients:
-        return (
-            f"the root gives some units {estimate.coefficient_ratio:.3g} times the weight of "
-            "others"
-        )
+        ratio = f"{estimate.coefficient_ratio:.3g}"
+        if float(ratio) <= 1.0:
+            # Three digits round a ratio just above 1 to 1, which would read as equal weight.
+            ratio = f"{estimate.coefficient_ratio:.15g}"
+        return f"the root gives some units {ratio} times the weight of others"
     return None
 
 
