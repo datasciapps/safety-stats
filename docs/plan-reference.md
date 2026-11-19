@@ -151,7 +151,11 @@ mapping:
 Mappings are type-sensitive: `true`, `1`, `1.0`, and `"1"` are distinct. A score value that the
 mapping does not cover is an error for its rollout, `SCORE_UNMAPPED`, which withholds the bounds
 of that rollout's prompt. One `SCORE_MAPPING_MISMATCH` error lists every such value, with its
-type and how many rollouts have it.
+type and how many rollouts have it. `failure_values` and `safe_values` list text, numbers and
+booleans only, the values a score can match: a plan that lists a missing value (`null` or
+`.nan`), which never reaches the mapping since `missing` decides how it counts, or a list, an
+object or a date, which no score value matches, is refused when it loads. Quote a date, such
+as `"2024-01-01"`, to match it as text.
 
 `missing` accepts `conservative_bounds`, `block`, `count_as_failure`, or `exclude`.
 `conservative_bounds` is the default: integrity becomes `degraded`, and exact bounds cover both

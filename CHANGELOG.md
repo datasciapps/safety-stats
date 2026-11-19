@@ -758,6 +758,17 @@ described in their pull requests.
 
 ### Changed
 
+- **A mapping value that no score can match is refused when the plan loads.** An outcome
+  mapping's `failure_values` and `safe_values`, in `inputs.score`, a judge's score or an
+  outcome mapping sensitivity, now list text, numbers and booleans only. A list or an object
+  among them made reading the scores fail with a bare `unhashable type` message
+  (`INGEST_FAILED`), and in an outcome mapping sensitivity it stopped `analyze` with a
+  `TypeError` although `validate` passed the plan. A missing value (`null`, `.nan`), which
+  never reaches the mapping, and a date, which YAML reads from an unquoted `2024-01-01` and
+  no score value equals, were accepted and matched nothing. Each is now an error that names
+  the field and the value and says what a mapping can list. Plans that loaded before and list
+  none of these values are unchanged, and so are their hashes and reports.
+
 - **Errors about a plan that does not fit the logs say what the logs hold (changes
   diagnostics).** These errors named only what the plan asked for, so a user had to open the
   logs to see what the plan should say:
