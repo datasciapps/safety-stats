@@ -197,6 +197,20 @@ def test_runner_refuses_logs_inside_the_repository() -> None:
         run_open_weights.check_output_dir(EXAMPLE_DIR / "runs")
 
 
+def test_runner_refuses_logs_inside_the_source_tree_without_git(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # An sdist, a ZIP download or a git archive export has no .git, and a machine may have no
+    # git at all: the source tree is still refused, and a folder outside it still accepted.
+    def no_git(*args: object, **kwargs: object) -> object:
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(run_open_weights.subprocess, "run", no_git)
+    with pytest.raises(SystemExit, match="outside the repository"):
+        run_open_weights.check_output_dir(EXAMPLE_DIR / "runs")
+    assert run_open_weights.check_output_dir(tmp_path / "runs") == (tmp_path / "runs").resolve()
+
+
 @pytest.mark.parametrize(
     ("arms", "claims"),
     [
