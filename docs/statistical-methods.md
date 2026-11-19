@@ -2389,6 +2389,32 @@ Frontier-AI governance already relies on threshold-linked decisions. OpenAI's Pr
 
 The proposed `INCONCLUSIVE` status operationalizes that uncertainty explicitly. NVIDIA's model-comparison tooling is a closer software precedent: it exposes an inconclusive outcome when paired evidence is insufficient [22].
 
+### 10.9 Judge-error stress of a verdict (experimental)
+
+With `report.judge_error_stress`, each threshold claim decided on judge-reported bounds \([L,U]\) is also read as a statement about true risk. The stress is a diagnostic: it never changes a claim. The user-level description is in [Stressing a threshold verdict](judge-misclassification.md#stressing-a-threshold-verdict-experimental).
+
+**Model.** On every prompt \(j\), the judge classifies a truly unsafe rollout as unsafe with probability \(s\) and a truly safe one as unsafe with probability \(f=1-c\), with the same \(s\) and \(f\) on every prompt (prevalence-free). The judge is informative: \(D=s-f>0\).
+
+**Guarantee.** Let \(g(x)=(x-f)/D\). If \((s,f)\) lies in the declared box and \(P(\text{judge-reported row risk}\le U)\ge1-\alpha_U\), then \(P(\text{true row risk}\le\max_{\text{box}}g(U))\ge1-\alpha_U\), and likewise \(P(\text{true row risk}\ge\min_{\text{box}}g(L))\ge1-\alpha_L\). The row measure is `weighted_mean`, `maximum`, `cvar` or `top_k_mean`, and no rollout of the row is classified by a plan policy.
+
+**Derivation.** On prompt \(j\), let \(k_j\) be the share of rollouts the judge classified, with true risk \(\pi^k_j\) among them, and \(u_j=1-k_j\) the unclassified share, with true risk \(\pi^u_j\in[0,1]\). True risk is \(\pi_j=k_j\pi^k_j+u_j\pi^u_j\). The upper bound counts unclassified rollouts as judge-unsafe, so it bounds \(q^+_j=u_j+k_j(f+D\pi^k_j)\), and
+
+\[
+g(q^+_j)=u_j\frac{1-f}{D}+k_j\pi^k_j\ \ge\ u_j\pi^u_j+k_j\pi^k_j=\pi_j,
+\]
+
+because \((1-f)/D\ge1\). The lower bound counts them as judge-safe, so it bounds \(q^-_j=k_j(f+D\pi^k_j)\), and \(g(q^-_j)=-u_jf/D+k_j\pi^k_j\le\pi_j\). Under `exclude` the estimand is the risk of the scored rollouts and \(u_j=0\). The map \(g\) is affine and increasing. A measure \(M\) that is monotone and satisfies \(M(ax+b)=aM(x)+b\) for \(a>0\), as the four measures above do, gives \(M(\pi)\le M(g(q^+))=g(M(q^+))\le g(U)\) on the event \(M(q^+)\le U\), and \(M(\pi)\ge g(L)\) on the event \(M(q^-)\ge L\). The guarantee needs no error budget beyond the bounds' own. `worst_of_k` is not affine in the prompt risks, `entropic` is not positively homogeneous, and the threshold measures are not translation-equivariant, so none of them is stressed.
+
+Over a box, \(g(U)=(U-f)/(s-f)\) is monotone in \(s\) for fixed \(f\) and in \(f\) for fixed \(s\), so its maximum, and the minimum of \(g(L)\), are attained at the box's vertices. The results are clipped to \([0,1]\). When the box admits \(s+c\le1\), \(D\le0\) somewhere in it and true risk is not identified: the bounds are \([0,1]\). When \(\max g(U)<0\) or \(\min g(L)>1\), the data contradict the box, and the bounds are again \([0,1]\). This is the inversion of `identified_risk_set`, which the panel-derived correction uses too, so for a composite the stress reproduces the row's `judge_corrected_panel_derived` interval.
+
+**Why no unclassified share.** The excess \(u_j\bigl((1-f)/D-\pi^u_j\bigr)\) could be taken back only with each prompt's \(u_j\). For a tail measure there is no single share: the largest prompt's share, subtracted from the inversion of a prompt that carries the maximum with fewer unclassified rollouts, moves the upper bound below true risk, and adding it to the lower bound moves that above. Under `exclude` the prompt bounds and the direct-mean intervals divide by different rollouts, so neither count's share is exact. With every share set to 0 the guarantee holds for every measure above.
+
+**Rollouts a policy classifies.** A rollout counted safe by a plan policy has true value 0 in the estimand, but contributes \(g(0)=-f/D<0\) when \(f>0\). One counted as a failure has true value 1, but contributes \(g(1)=(1-f)/D>1\) when \(s<1\). The first breaks the upper inequality and the second the lower one. The bounds do not carry the population share of such rollouts, so they cannot be corrected, and a claim whose row holds one is not stressed.
+
+**Tipping lines.** PASS (\(U\le a\)) holds for true risk iff \(g(U)\le a\), that is \(as+(1-a)f\ge U\). FAIL (\(L\ge b\)) holds iff \(g(L)\ge b\), that is \(bs+(1-b)f\le L\). At \(f=0\) these give \(s\ge U/a\) and \(s\le L/b\); at \(s=1\) they give \(c\le(1-U)/(1-a)\) and \(c\ge(1-L)/(1-b)\). The coefficients are positive for thresholds inside \((0,1)\), so the side of a line on which a verdict holds is the side the box verdict finds.
+
+**Validation.** `tests/unit/test_judge_stress.py` checks the bounds by seeded Monte Carlo: three prompts of 300 rollouts with outcomes missing by true label, missingness-robust Clopper--Pearson prompt bounds at \(0.1/6\) per side, and a point box at the true accuracy. Each side's miss rate must stay within three Monte Carlo standard errors of \(3\times0.1/6=0.05\) for all four measures, and the uninverted bounds must miss at least half the time. The same simulation misses far more often than that with no inversion, with the forward map in place of the inversion, with \(s\) and \(c\) swapped, and, on tail rows, with an unclassified share taken out.
+
 ---
 
 ## 11. Stretch goal: combining sequential monitoring and multiplicity
@@ -2585,7 +2611,7 @@ If an automated judge has false negatives, the observed binary outcome is a misc
 p_{\mathrm{obs}}=s p_{\mathrm{true}}+(1-c)(1-p_{\mathrm{true}}).
 \]
 
-Without knowledge or bounds on \(s\) and \(c\), \(p_{\mathrm{true}}\) is not identified from \(p_{\mathrm{obs}}\). [Judge misclassification](judge-misclassification.md) describes the corrections built on this identity: declared accuracy scenarios as a sensitivity analysis, validated corrections from human labels (with an experimental stratified variant that bounds each declared stratum's truly unsafe count with exact hypergeometric bounds, and the judge's accuracy at the summed counts with Clopper--Pearson bounds), the noisy-but-valid threshold test, an experimental transported sensitivity (15.3.1), and an experimental stress analysis. The stress analysis reports, for a threshold verdict reached on \(p_{\mathrm{obs}}\), the line in \((s,c)\) beyond which the same verdict no longer holds for \(p_{\mathrm{true}}\).
+Without knowledge or bounds on \(s\) and \(c\), \(p_{\mathrm{true}}\) is not identified from \(p_{\mathrm{obs}}\). [Judge misclassification](judge-misclassification.md) describes the corrections built on this identity: declared accuracy scenarios as a sensitivity analysis, validated corrections from human labels (with an experimental stratified variant that bounds each declared stratum's truly unsafe count with exact hypergeometric bounds, and the judge's accuracy at the summed counts with Clopper--Pearson bounds), the noisy-but-valid threshold test, an experimental transported sensitivity (15.3.1), and an experimental stress analysis. The stress analysis reports, for a threshold verdict reached on \(p_{\mathrm{obs}}\), the line in \((s,c)\) beyond which the same verdict no longer holds for \(p_{\mathrm{true}}\); Section 10.9 derives it.
 
 #### 15.3.1 Transported sensitivity (experimental)
 
