@@ -54,12 +54,13 @@ own upper bound, and every claim passes. The overall `PASS` is then wrong whenev
 those bounds misses its true risk. When the bounds rest on separate coverage events, for example
 direct-mean intervals with `simultaneous: false`, or means on the direct-mean family and maxima
 on the prompt family, that chance can reach the sum of their error budgets. In a simulation with
-ten such claims at `alpha` 0.05 it was about 0.27.
+ten such claims at `alpha` 0.05, 200 rollouts each and a true risk of 0.10, it was about 0.27.
 
 Moving one threshold is enough, because which claim to move can be chosen from the data too.
 Tighten the claim with the lowest upper bound to that bound, leaving the others at the plan's
-thresholds: that claim is the likeliest to have missed its true risk, and in the same simulation
-about 0.28 of such overall `PASS` decisions were wrong.
+thresholds: that claim is the likeliest to have missed its true risk. In the same simulation,
+where every claim has the same true risk, such an overall `PASS` is wrong exactly when some
+bound misses, so the share of wrong ones was the same, about 0.27.
 
 So the overall decision is held back when a policy moves `acceptable_upper` away from the plan's
 for any mandatory claim while the mandatory claims' bounds rest on more than one coverage event.
@@ -75,9 +76,10 @@ author's statement, and nothing in the analysis confirms it. It does not apply w
   only `unacceptable_lower`, which no `PASS` depends on, or sets only optional claims. The
   thresholds an overall `PASS` depends on are then the plan's, fixed in advance;
 - one simultaneous family decides every mandatory claim: the default simultaneous prompt
-  bounds, simultaneous direct-mean intervals of one independence profile, sampled-design
-  intervals, or one comparison family. One coverage event then covers every bound, and a wrong
-  overall `PASS` needs that event to fail, whichever thresholds were moved.
+  bounds, simultaneous direct-mean intervals of one independence profile, simultaneous
+  sampled-design intervals, or one simultaneous comparison family. One coverage event then
+  covers every bound, and a wrong overall `PASS` needs that event to fail, whichever thresholds
+  were moved. Pointwise intervals, with `simultaneous: false`, are each an event of their own.
 
 A claim decided on a judge-corrected interval counts as a coverage event of its own, since its
 correction also needs its calibration to cover.
