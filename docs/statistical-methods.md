@@ -322,7 +322,7 @@ These nonlinear measures are defined on the latent prompt-level probabilities \(
 R(\widehat p;w)
 \]
 
-is a plug-in estimate and need not be unbiased for \(R(p;w)\); applying CVaR, a maximum, or entropic risk directly to one rollout per prompt can be especially misleading. The certified output must therefore emphasize uncertainty bounds, and the package should normally require repeated rollouts per item before allowing a nonlinear aggregate to drive a safety decision. A point estimate alone is descriptive. The package does not block such a claim, but `validate` and `analyze` degrade integrity with a `TAIL_MEASURE_SINGLE_ROLLOUT` warning when a claim on a CVaR, maximum or entropic measure has one classified rollout for the median prompt of its cohort and group.
+is a plug-in estimate and need not be unbiased for \(R(p;w)\); applying CVaR, a maximum, or entropic risk directly to one rollout per prompt can be especially misleading. The certified output must therefore emphasize uncertainty bounds, and the package should normally require repeated rollouts per item before allowing a nonlinear aggregate to drive a safety decision. A point estimate alone is descriptive. The same holds for a top-\(k\) mean, at one rollout an equal-weight CVaR, and for threshold exceedance and excess, which then count every prompt that failed its one trial as above any threshold below 1. The package does not block such a claim, but `validate` and `analyze` degrade integrity with a `TAIL_MEASURE_SINGLE_ROLLOUT` warning when a claim on a CVaR, maximum, top-\(k\) mean, entropic, threshold exceedance or threshold excess measure has one classified rollout for at least half the prompts of its cohort and group (its lower median prompt). Worst of \(k\) is not flagged: it gives no estimate below \(k\) rollouts per prompt, and at \(k=1\) it is the weighted mean.
 
 Suppose simultaneous prompt-level bounds satisfy
 
@@ -352,6 +352,14 @@ R_{\mathrm{exc}}(p;w,\tau)
 \]
 
 The report should also show the certified-safe weight \(\sum_jw_j\mathbf 1\{U_j\le\tau_j\}\) and unresolved weight. These classifications are conditional on the joint prompt-level coverage event.
+
+Because \(R(U;w)\) is built from per-prompt upper bounds, its width is set by the rollouts on each prompt, not by the total. A prompt with \(n\) rollouts and no failure has the one-sided Clopper-Pearson upper bound \(u_n=1-\alpha^{1/n}\), at its upper-bound level \(\alpha\). For each cohort and group whose prompts all have certifying bounds (otherwise the measures have no interval to be wide), `analyze` takes \(n\) as the lower median of the classified rollouts of its prompts, and \(\alpha\) as the smallest of their upper-bound levels. For each measure built only from the prompt bounds it computes the distance from estimate to upper bound that the measure would have if no prompt failed,
+
+\[
+d(n)=R(u_n\mathbf 1;w)-R(\mathbf 0;w).
+\]
+
+For a maximum, CVaR, top-\(k\) mean or entropic risk, \(d(n)=u_n\); for worst-of-\(k\), \(d(n)=1-(1-u_n)^k\); for exceedance, \(d(n)=\sum_jw_j\mathbf 1\{0\le\tau_j<u_n\}\), the weight whose threshold even a failure-free prompt's bound exceeds; and for excess, \(d(n)=\sum_jw_j[\max(u_n-\tau_j,0)-\max(-\tau_j,0)]\). Since \(u_n\) falls as \(n\) grows and \(R\) is coordinatewise monotone, \(d\) never increases. When \(d(n)\) exceeds `report.precision_target`, a `TAIL_MEASURES_UNINFORMATIVE` warning for the cohort and group names the measure, with the smallest \(n'\) at which \(d(n')\) meets the target, found by doubling and bisection up to \(10^9\). A measure that no such \(n'\) brings within the target, such as the exceedance of a zero threshold, is named without one. The check describes the interval a design without failures would have at this budget, not the interval on these data, and it leaves integrity unchanged.
 
 #### 2.4.10 Direct inference for the weighted mean
 

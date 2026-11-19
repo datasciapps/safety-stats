@@ -74,14 +74,15 @@ Over all prompts, the candidate-minus-baseline difference is -0.196, with an int
 to -0.088. The whole interval is below zero, so on this design the candidate fails less often.
 The report also holds the ratio of the two rates and the difference within each risk domain.
 
-The script ends with the report's warning, `TAIL_MEASURES_UNINFORMATIVE`. `cvar_90` and `worst`
-are built from a bound on each prompt, so their precision depends on the rollouts per prompt,
-not on the total. With 20 rollouts, a prompt that never fails is still bounded only at 0.291,
-above the plan's precision target of 0.05, and about 134 rollouts per prompt would be needed to
-get below it. The warning leaves the report valid. It says that these two measures cannot be
-narrow on this design, whatever the models do.
+The script ends with the report's warnings, `TAIL_MEASURES_UNINFORMATIVE`, one for each model.
+`cvar_90` and `worst` are built from a bound on each prompt, so their precision depends on the
+rollouts per prompt, not on the total. With 20 rollouts, a prompt that never fails is still
+bounded only at 0.291, so even if no prompt failed, the upper bounds of both measures would lie
+more than the plan's precision target of 0.05 above their estimates. About 134 rollouts per
+prompt would be needed. The warnings leave the report valid. They say that these two measures
+cannot be narrow on this design, whatever the models do.
 
-`report.md` is the one-page summary: the warning comes first, with the assumption it checks,
+`report.md` is the one-page summary: the warnings come first, with the assumption they check,
 and the page ends with the assumptions used. `report-full.md` and `report.json` also record the
 plan's SHA-256, the integrity checks, the methods used and the assumptions the analysis rests
 on. `checksums.json` holds the SHA-256 of every

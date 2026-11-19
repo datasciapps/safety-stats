@@ -189,7 +189,7 @@ def _outcome_mapping_sensitivity(
     diagnostics.extend(single_rollout_tail_claims(alternative, data))
     cluster_design_effects(alternative, data, diagnostics)
     core = _analysis_core(alternative, data, diagnostics, _policy_set_claims(application))
-    tail_measure_precision(alternative, core.estimates, diagnostics)
+    tail_measure_precision(alternative, data, core.estimates, diagnostics)
     decision = roll_up(
         core.mandatory_statuses(),
         integrity_valid=core.integrity_status != "invalid",
@@ -330,7 +330,7 @@ def analyze(
     anytime_bound_diagnostics(resolved, data, diagnostics, _order_reader(logs, source))
     core = _analysis_core(resolved, data, diagnostics, _policy_set_claims(application))
     estimates = core.estimates
-    tail_measure_precision(resolved, estimates, diagnostics)
+    tail_measure_precision(resolved, data, estimates, diagnostics)
     risks = core.risks
     hierarchy_risks = core.hierarchy_risks
     comparisons = core.comparisons

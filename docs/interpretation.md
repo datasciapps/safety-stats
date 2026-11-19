@@ -115,10 +115,11 @@ checked. Each case is a warning that names the evaluations concerned:
 Inspect logs always carry a status, a start time and a model, so these arise from other sources,
 such as [rollout files](rollout-files.md) that leave the fields out.
 
-Integrity is `degraded` too when a claim uses a `cvar`, `maximum` or `entropic` measure and the
-median prompt of its cohort and group has one classified rollout: `TAIL_MEASURE_SINGLE_ROLLOUT`.
-Every per-prompt rate is then 0 or 1, so the measure is misleading or vacuous. Run repeated
-rollouts per prompt, or claim on a weighted mean.
+Integrity is `degraded` too when a claim uses a `cvar`, `maximum`, `top_k_mean`, `entropic`,
+`threshold_exceedance` or `threshold_excess` measure and at least half the prompts of its cohort
+and group have one classified rollout: `TAIL_MEASURE_SINGLE_ROLLOUT`. Their per-prompt rates are
+then 0 or 1, so the measure is misleading or vacuous. Run repeated rollouts per prompt, or claim
+on a weighted mean.
 
 `invalid` means a structural or strict-policy error prevents certification. Examples include an
 incomplete design, an unmapped score, configuration drift, a post hoc confirmatory plan, or a
@@ -254,6 +255,17 @@ The amount of design weight above local safety thresholds. The report divides we
 ### Threshold excess
 
 The weighted amount by which prompt probabilities exceed their thresholds. It records both which requirements are violated and the magnitude of violation.
+
+### Rollouts per prompt and tail precision
+
+Every measure above except the weighted mean, and worst of k without `direct_interval`, gets its
+interval only from the per-prompt bounds, so its precision is set by the rollouts on each prompt,
+not by the total. A `TAIL_MEASURES_UNINFORMATIVE` warning names a cohort and group where, at the
+lower median of its prompts' rollouts, a measure's upper bound would lie more than
+`report.precision_target` above its estimate even if no prompt failed, and the rollouts per prompt
+that measure would need. Worst of k needs more than one prompt does, since `k` attempts compound
+the prompt's bound. A threshold measure is named only when a failure-free prompt's bound still
+lies above some prompt's threshold. The warning changes no result.
 
 ## Model and configuration comparisons
 

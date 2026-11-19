@@ -16,7 +16,9 @@ What these results establish, and what they do not: <https://github.com/aduncan0
 
 | Severity | Code | Scope | Message |
 |---|---|---|---|
-| WARNING | `TAIL_MEASURES_UNINFORMATIVE` | plan/outputs/risk_measures | cvar_75, entropic_5, worst are built from per-prompt bounds; with about 1 rollouts per prompt a prompt with no failures is still bounded only at 0.997, above the precision target 0.05. About 113 rollouts per prompt would be needed. |
+| WARNING | `TAIL_MEASURES_UNINFORMATIVE` | cohorts/published_gpt4_replay/groups/all-pairs | In cohort 'published_gpt4_replay', group 'all-pairs', cvar_75, entropic_5 and worst are built from per-prompt bounds; with about 1 rollouts per prompt a prompt with no failures is still bounded only at 0.997, so even if no prompt failed their upper bounds would lie more than the precision target 0.05 above their estimates. About 113 rollouts per prompt would be needed. |
+| WARNING | `TAIL_MEASURES_UNINFORMATIVE` | cohorts/published_gpt4_replay/groups/safe-prompts | In cohort 'published_gpt4_replay', group 'safe-prompts', cvar_75, entropic_5 and worst are built from per-prompt bounds; with about 1 rollouts per prompt a prompt with no failures is still bounded only at 0.997, so even if no prompt failed their upper bounds would lie more than the precision target 0.05 above their estimates. About 113 rollouts per prompt would be needed. |
+| WARNING | `TAIL_MEASURES_UNINFORMATIVE` | cohorts/published_gpt4_replay/groups/unsafe-prompts | In cohort 'published_gpt4_replay', group 'unsafe-prompts', cvar_75, entropic_5 and worst are built from per-prompt bounds; with about 1 rollouts per prompt a prompt with no failures is still bounded only at 0.997, so even if no prompt failed their upper bounds would lie more than the precision target 0.05 above their estimates. About 113 rollouts per prompt would be needed. |
 
 ## Fixed-design risk measures
 

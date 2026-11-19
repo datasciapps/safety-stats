@@ -2516,6 +2516,8 @@
       {
         "code": "TAIL_MEASURES_UNINFORMATIVE",
         "details": {
+          "cohort": "candidate",
+          "group": "all-eight",
           "measures": [
             "cvar_75",
             "entropic_5",
@@ -2523,12 +2525,17 @@
           ],
           "median_rollouts_per_prompt": 1,
           "rollouts_per_prompt_needed": 113,
+          "rollouts_per_prompt_needed_by_measure": {
+            "cvar_75": 113,
+            "entropic_5": 113,
+            "worst": 113
+          },
           "zero_failure_prompt_upper": 0.996875
         },
         "effect": "recorded",
         "item": null,
-        "message": "cvar_75, entropic_5, worst are built from per-prompt bounds; with about 1 rollouts per prompt a prompt with no failures is still bounded only at 0.997, above the precision target 0.05. About 113 rollouts per prompt would be needed.",
-        "scope": "plan/outputs/risk_measures",
+        "message": "In cohort 'candidate', group 'all-eight', cvar_75, entropic_5 and worst are built from per-prompt bounds; with about 1 rollouts per prompt a prompt with no failures is still bounded only at 0.997, so even if no prompt failed their upper bounds would lie more than the precision target 0.05 above their estimates. About 113 rollouts per prompt would be needed.",
+        "scope": "cohorts/candidate/groups/all-eight",
         "severity": "WARNING",
         "source": "analysis"
       }
@@ -3076,16 +3083,16 @@
         "source": "registration"
       },
       {
-        "assumption": "Each prompt has enough rollouts that its simultaneous bound can be tighter than report.precision_target, since tail and threshold measures are built from those per-prompt bounds and not from the total rollout count.",
+        "assumption": "Each prompt has enough rollouts that the tail and threshold measures built from the prompts' simultaneous bounds can lie within report.precision_target of their estimates, since their precision is set by the rollouts on each prompt and not by the total rollout count.",
         "code": "TAIL_MEASURES_UNINFORMATIVE",
-        "consequence": "The tail and threshold measures are reported as computed, but at the median rollout count even a prompt with no failures is bounded above the precision target, so their intervals can only be wide.",
+        "consequence": "The tail and threshold measures are reported as computed, but in the cohort and group named, at the lower median of the rollouts per prompt, even if no prompt failed the named measures' upper bounds would lie more than the precision target above their estimates, so their intervals can only be wide.",
         "count": 1,
         "effect": "recorded",
         "occurrences": [
           {
             "diagnostic": "/integrity/diagnostics/1",
             "item": null,
-            "scope": "plan/outputs/risk_measures"
+            "scope": "cohorts/candidate/groups/all-eight"
           }
         ],
         "severity": "WARNING",

@@ -120,7 +120,8 @@ def test_warnings_name_their_code_assumption_and_effect(mock_logs: Path, tmp_pat
     assert entry.assumption in row
     assert f"**{entry.effect}**" in row
     assert entry.consequence in row
-    assert "`plan/outputs/risk_measures`" in row
+    # One per cohort and group, each named where it applies.
+    assert "`cohorts/alpha/groups/all`, `cohorts/beta/groups/all`" in row
     # The warnings come before the results they qualify.
     assert summary.index("## Warnings") < summary.index("## Failure risk")
 

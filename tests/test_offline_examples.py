@@ -122,11 +122,17 @@ def test_the_demo_prints_the_numbers_its_readme_quotes(demo_run: tuple[Path, str
     difference = re.search(
         r"^Candidate minus baseline, all prompts: (\S+) \[(\S+), (\S+)\]$", stdout, re.M
     )
-    tail = re.search(r"bounded only at (\d\.\d+),", stdout)
-    needed = re.search(r"About (\d+) rollouts per prompt would be needed\.", stdout)
+    words = " ".join(stdout.split())
+    tail = re.search(r"bounded only at (\d\.\d+),", words)
+    needed = re.search(r"About (\d+) rollouts per prompt would be needed\.", words)
     assert difference and tail and needed, stdout
     assert "The whole interval is below zero: the candidate fails less often." in stdout
-    assert "WARNING TAIL_MEASURES_UNINFORMATIVE:" in stdout
+    # One warning for each model; the script wraps each message over several lines.
+    assert stdout.count("WARNING TAIL_MEASURES_UNINFORMATIVE:") == 2
+    for cohort in ("baseline", "candidate"):
+        assert f"In cohort '{cohort}', group 'all', cvar_90 and worst are built" in words
+    assert words.count(f"still bounded only at {tail[1]}") == 2
+    assert words.count(f"About {needed[1]} rollouts per prompt would be needed.") == 2
 
     # examples/demo/README.md, "What to look at".
     assert f"The baseline fails on {float(bio[0]):.0%} of its bio rollouts" in readme
@@ -138,7 +144,7 @@ def test_the_demo_prints_the_numbers_its_readme_quotes(demo_run: tuple[Path, str
     assert f"the candidate-minus-baseline difference is {estimate}" in readme
     assert f"with an interval from {lower} to {upper}" in readme
     assert f"bounded only at {tail[1]}" in readme
-    assert f"about {needed[1]} rollouts per prompt would be needed" in readme
+    assert f"About {needed[1]} rollouts per prompt would be needed" in readme
     # docs/getting-started.md, "Reading the numbers".
     assert f"the baseline fails on {float(bio[0]):.0%} of its 80 bio rollouts" in guide
     assert f"its interval still reaches {float(bio[2]):.2f}" in guide
@@ -158,7 +164,7 @@ def test_the_demo_report_keeps_the_comparison_and_warns_about_an_assumption(
     integrity = report["integrity"]
     assert isinstance(integrity, dict)
     warnings = [item for item in integrity["diagnostics"] if item["severity"] == "WARNING"]
-    assert [item["code"] for item in warnings] == ["TAIL_MEASURES_UNINFORMATIVE"]
+    assert [item["code"] for item in warnings] == ["TAIL_MEASURES_UNINFORMATIVE"] * 2
 
 
 def test_the_demo_plan_is_the_one_init_writes_plus_two_risk_measures(

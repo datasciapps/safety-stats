@@ -1081,12 +1081,12 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
 
 - **Severity:** WARNING
 - **Effect:** [degraded](#effects)
-- **Assumption:** A claim on a cvar, maximum or entropic measure rests on repeated rollouts per
-  prompt, since these measures are defined on each prompt's failure probability and one rollout
-  estimates it only as 0 or 1.
-- **Consequence:** Integrity is degraded: the claim is evaluated, but with one rollout for the
-  median prompt of its cohort and group the measure is driven by single trials and is misleading or
-  vacuous.
+- **Assumption:** A claim on a cvar, maximum, top_k_mean, entropic, threshold_exceedance or
+  threshold_excess measure rests on repeated rollouts per prompt, since these measures are nonlinear
+  in each prompt's failure probability and one rollout estimates it only as 0 or 1.
+- **Consequence:** Integrity is degraded: the claim is evaluated, but with one rollout for at least
+  half the prompts of its cohort and group the measure is driven by single trials and is misleading
+  or vacuous.
 - **Remedy:** Run repeated rollouts per prompt, or make the claim on a weighted_mean measure, whose
   interval handles one rollout per prompt.
 
@@ -1508,14 +1508,15 @@ cannot be computed, or a result it qualifies.
 
 - **Severity:** WARNING
 - **Effect:** [recorded](#effects)
-- **Assumption:** Each prompt has enough rollouts that its simultaneous bound can be tighter than
-  report.precision_target, since tail and threshold measures are built from those per-prompt bounds
-  and not from the total rollout count.
-- **Consequence:** The tail and threshold measures are reported as computed, but at the median
-  rollout count even a prompt with no failures is bounded above the precision target, so their
+- **Assumption:** Each prompt has enough rollouts that the tail and threshold measures built from
+  the prompts' simultaneous bounds can lie within report.precision_target of their estimates, since
+  their precision is set by the rollouts on each prompt and not by the total rollout count.
+- **Consequence:** The tail and threshold measures are reported as computed, but in the cohort and
+  group named, at the lower median of the rollouts per prompt, even if no prompt failed the named
+  measures' upper bounds would lie more than the precision target above their estimates, so their
   intervals can only be wide.
-- **Remedy:** Run about the rollouts per prompt the diagnostic names, or read the tail measures as
-  uninformative at this budget.
+- **Remedy:** Run about the rollouts per prompt the diagnostic names for each measure, or read the
+  named measures as uninformative at this budget.
 
 ### `generation` codes
 
