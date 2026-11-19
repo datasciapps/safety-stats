@@ -304,9 +304,13 @@ the result.
 The pilot frame is the frame of a fixed-size sampled design, so the pilot's rates can be
 analysed as a sample of the whole manifest without editing any column. Name
 `pilot_selected` as the selection column, so that the analysis checks that the prompts run
-are the ones drawn and not only that their number per stratum is right:
+are the ones drawn and not only that their number per stratum is right. Declare the analysis
+exploratory: `analysis.intent` defaults to `confirmatory`, under which the pilot could pass a
+claim it cannot support (see [What a pilot can show](#what-a-pilot-can-show)):
 
 ```yaml
+analysis:
+  intent: exploratory
 design:
   type: sampled
   sampling: fixed_size
@@ -334,9 +338,10 @@ frame and the plan say.
 
 A confirmatory analysis uses fresh rollouts under a plan frozen before they ran: of the whole
 manifest as a fixed design, or of a new draw, with a new seed, whose size the frozen plan
-fixes. Do not enlarge the pilot's own draw for it: with the same seed, the larger sample
-would contain the pilot's prompts, whose outcomes already shaped the decision to run it and
-its size.
+fixes. Fix that seed before drawing, as the plan fixes the size, and draw once: drawing with
+several seeds and keeping the draw whose prompts look easiest selects the sample. Do not
+enlarge the pilot's own draw for it: with the same seed, the larger sample would contain the
+pilot's prompts, whose outcomes already shaped the decision to run it and its size.
 
 ## Not yet supported
 
