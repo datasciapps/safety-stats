@@ -12,6 +12,7 @@ import shutil
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -20,6 +21,14 @@ from inspect_safety_stats import analyze, validate
 from inspect_safety_stats.config.models import DesignSpec
 from inspect_safety_stats.ingest.pilot import draw_pilot
 from inspect_safety_stats.report import visualization
+from tests.diagnostic_codes.harness import (
+    BASE_RUN,
+    Inputs,
+    Outcome,
+    base_inputs,
+    rollout,
+    run_analysis,
+)
 from tests.template_functions import function_source
 
 FRAME_SIZE = 200
@@ -609,6 +618,116 @@ def test_the_selection_column_is_recorded_only_when_a_plan_sets_it() -> None:
     assert declared.model_dump()["selection_column"] == "drawn"
     with pytest.raises(ValueError, match="selection_column requires design.type: sampled"):
         DesignSpec.model_validate({"selection_column": "drawn"})
+
+
+def _poisson_selection(
+    selected: tuple[bool, bool], observed: dict[str, tuple[str, ...]]
+) -> Inputs:
+    """A Poisson sample of the two-prompt harness frame, each prompt with probability 0.5.
+
+    The manifest column ``drawn``, the plan's selection column, marks p1 and p2 as
+    ``selected``. ``observed`` maps each cohort to the prompts its run evaluated: cohort
+    ``candidate`` matches model ``m``, and any other cohort a model of its own name.
+    """
+
+    inputs = base_inputs()
+    inputs.plan["design"] = {
+        "type": "sampled",
+        "inclusion_probability_column": "inclusion",
+        "selection_column": "drawn",
+        "independence_profiles": {
+            "rollout": {"block_by": ["rollout"], "comparison_coupling": "independent"}
+        },
+    }
+    inputs.plan["outputs"]["prompt_bounds"] = {"enabled": False}
+    inputs.plan["outputs"]["direct_mean_intervals"] = {
+        "enabled": True,
+        "method": "weighted_kl_chernoff",
+        "family": "displayed",
+        "independence": {"primary": "rollout"},
+    }
+    for row, chosen in zip(inputs.manifest, selected, strict=True):
+        row["inclusion"] = 0.5
+        row["drawn"] = chosen
+    inputs.runs, inputs.rollouts = [], []
+    for index, (cohort, prompts) in enumerate(observed.items(), start=1):
+        model = "m" if cohort == "candidate" else cohort
+        inputs.plan["cohorts"][cohort] = {"match": {"model": model}}
+        inputs.runs.append({**BASE_RUN, "run_key": f"r{index}", "model": model})
+        inputs.rollouts += [
+            rollout(prompt, repeat, run_key=f"r{index}")
+            for prompt in prompts
+            for repeat in range(1, 5)
+        ]
+    return inputs
+
+
+def _selection_mismatches(outcome: Outcome) -> dict[str, dict[str, Any]]:
+    """The details of each SAMPLE_SELECTION_MISMATCH, by cohort."""
+
+    found = outcome.with_code("SAMPLE_SELECTION_MISMATCH")
+    by_cohort = {item.details["cohort_id"]: item.details for item in found}
+    assert len(by_cohort) == len(found), "a cohort has two selection mismatches"
+    return by_cohort
+
+
+def _cohort_mean_withheld(outcome: Outcome, cohort: str) -> bool:
+    (mean,) = [
+        row
+        for row in outcome.report.group_risks
+        if row.cohort_id == cohort and row.group_id == "all" and row.measure_id == "mean"
+    ]
+    return (mean.lower, mean.upper) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("selected", "observed", "evaluated_not_drawn", "drawn_not_evaluated"),
+    [
+        ((True, False), ("p1", "p2"), ["p2"], []),
+        ((True, True), ("p1",), [], ["p2"]),
+    ],
+    ids=["evaluated_not_drawn", "drawn_not_evaluated"],
+)
+def test_each_direction_of_a_selection_mismatch_is_reported_on_its_own(
+    tmp_path: Path,
+    selected: tuple[bool, bool],
+    observed: tuple[str, ...],
+    evaluated_not_drawn: list[str],
+    drawn_not_evaluated: list[str],
+) -> None:
+    """An item evaluated but not drawn, or drawn but not evaluated, is a mismatch by itself.
+
+    The design is Poisson, so no count check catches either run: only the selection does.
+    """
+
+    outcome = run_analysis(_poisson_selection(selected, {"candidate": observed}), tmp_path)
+
+    details = _selection_mismatches(outcome)["candidate"]
+    assert details["observed_not_selected"] == len(evaluated_not_drawn)
+    assert details["observed_not_selected_prompt_ids"] == evaluated_not_drawn
+    assert details["selected_not_observed"] == len(drawn_not_evaluated)
+    assert details["selected_not_observed_prompt_ids"] == drawn_not_evaluated
+    assert outcome.status == "invalid"
+    assert _cohort_mean_withheld(outcome, "candidate")
+
+
+@pytest.mark.parametrize("mismatched", ["candidate", "baseline"])
+def test_only_the_cohort_whose_items_differ_from_the_selection_is_withheld(
+    tmp_path: Path, mismatched: str
+) -> None:
+    """Every cohort is checked against the selection, and its error withholds only its own.
+
+    The mismatching cohort is first in the plan in one case and last in the other.
+    """
+
+    observed = {"candidate": ("p1",), "baseline": ("p1",)}
+    observed[mismatched] = ("p1", "p2")
+
+    outcome = run_analysis(_poisson_selection((True, False), observed), tmp_path)
+
+    assert set(_selection_mismatches(outcome)) == {mismatched}
+    for cohort in observed:
+        assert _cohort_mean_withheld(outcome, cohort) == (cohort == mismatched), cohort
 
 
 @pytest.mark.parametrize("fixed_size", [False, True], ids=["poisson", "fixed_size"])
