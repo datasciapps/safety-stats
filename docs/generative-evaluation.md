@@ -201,7 +201,10 @@ interrupted run would have gone on to draw.
 A unit whose retries were **exhausted** is not retried. It is part of the accepted distribution
 the estimand is defined against, and re-running it would grant it more than `maximum_attempts`.
 A unit that **errored** is retried, because an operational failure says nothing about the
-kernel. Both artifacts are append-only, so resuming cannot destroy the work it builds on.
+kernel. Before it runs anything, `--resume` drops the errored units' rows from `rewrites.csv`,
+so each unit keeps one row, and the attempts of every unit that will run again from
+`attempts.csv`. Each file is replaced in one step and keeps every finished unit, and after
+that the ledgers are only appended to, so resuming cannot destroy the work it builds on.
 
 The plan is re-compiled and checked against the recorded selection ledger first, so a directory
 belonging to a different design is refused rather than silently continued.

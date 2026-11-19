@@ -12,6 +12,13 @@ described in their pull requests.
   silently held no prompt to zero tolerance. It now stops with an error that names the column.
   The default field `zero_tolerance` stays optional.
 
+- **A generative run resumed after errors can be analyzed.** `generative materialize --resume`
+  reruns the units whose rewrite hit an operational error, from the kernel or from the
+  validator, but left each one's error row in `rewrites.csv` beside the row of its rerun. The
+  ledger then recorded those units twice, and `generative analyze`, like any later resume,
+  refused it. A resume now drops the error rows before it runs anything, replacing the file in
+  one step. Resuming a directory an earlier version left in that state repairs it.
+
 ### Added
 
 - **An offline example compares two versions of a harness around the same model.**

@@ -233,3 +233,57 @@ def test_resume_through_the_cli(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.stdout
     assert "Resumed: 60 units carried over, 40 executed" in result.stdout
+
+
+def test_a_rerun_errored_unit_is_recorded_once(tmp_path: Path) -> None:
+    """The error row a unit leaves must not stay beside the row of its rerun."""
+
+    plan = write_plan(tmp_path, total=60)
+    artifacts = tmp_path / "run"
+    run_with(ScriptedKernel(error_every=5), plan, artifacts)
+    before = (artifacts / "rewrites.csv").read_bytes().splitlines(keepends=True)
+    finished = [line for line in before if b",error," not in line]
+    assert len(before) - len(finished) == 12
+
+    resumed = run_with(ScriptedKernel(), plan, artifacts, resume=True)
+    assert resumed is not None and resumed.accepted == 60
+    records = read_rewrites(artifacts / "rewrites.csv")
+    assert len(records) == 60
+    assert {record.validation_status for record in records} == {"valid"}
+    after = (artifacts / "rewrites.csv").read_bytes().splitlines(keepends=True)
+    assert after[: len(finished)] == finished, "the finished rows are kept byte for byte"
+
+
+def test_an_interrupted_rerun_of_errored_units_leaves_a_readable_ledger(tmp_path: Path) -> None:
+    plan = write_plan(tmp_path, total=60)
+    artifacts = tmp_path / "run"
+    run_with(ScriptedKernel(error_every=5), plan, artifacts)
+    run_with(ScriptedKernel(survive=5), plan, artifacts, resume=True)
+    records = read_rewrites(artifacts / "rewrites.csv")
+    assert len(records) == 48 + 5
+    assert not (artifacts / "rewrites.csv.partial").exists()
+
+    run = run_with(ScriptedKernel(), plan, artifacts, resume=True)
+    assert run is not None and run.resumed == 53 and run.accepted == 60
+    assert len(read_rewrites(artifacts / "rewrites.csv")) == 60
+
+
+def test_resume_repairs_a_ledger_that_kept_error_rows_beside_their_reruns(
+    tmp_path: Path,
+) -> None:
+    """Earlier versions appended a rerun's row after the unit's error row."""
+
+    plan = write_plan(tmp_path, total=60)
+    artifacts = tmp_path / "run"
+    run_with(ScriptedKernel(error_every=5), plan, artifacts)
+    lines = (artifacts / "rewrites.csv").read_bytes().splitlines(keepends=True)
+    errors = [line for line in lines if b",error," in line]
+    run_with(ScriptedKernel(), plan, artifacts, resume=True)
+    lines = (artifacts / "rewrites.csv").read_bytes().splitlines(keepends=True)
+    (artifacts / "rewrites.csv").write_bytes(b"".join([lines[0], *errors, *lines[1:]]))
+    with pytest.raises(ValueError, match="repeats a sampling_unit_id"):
+        read_rewrites(artifacts / "rewrites.csv")
+
+    run = run_with(ScriptedKernel(), plan, artifacts, resume=True)
+    assert run is not None and run.resumed == 60 and run.accepted == 60
+    assert len(read_rewrites(artifacts / "rewrites.csv")) == 60

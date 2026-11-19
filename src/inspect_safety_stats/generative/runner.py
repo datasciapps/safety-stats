@@ -71,6 +71,7 @@ from inspect_safety_stats.generative.ledger import (
     SelectionRecord,
     attempt_ledger_writer,
     read_attempts,
+    read_rewrite_rows,
     read_rewrites,
     read_selections,
     rewrite_ledger_writer,
@@ -249,6 +250,10 @@ def _prior_work(
     accepted distribution the estimand is defined against, so re-running it would grant it
     more attempts than the plan allows. A unit recorded as ``error`` is not final: an
     operational failure says nothing about the kernel, so it is left out and runs again.
+
+    Error rows are left out before the ledger is checked for a unit recorded twice. A resume
+    by an earlier version kept a unit's error row beside the row of its rerun, and such a
+    directory then resumes like any other.
     """
 
     ledger = directory / REWRITE_LEDGER
@@ -268,9 +273,11 @@ def _prior_work(
     prompts = read_prompt_store(store, conversations=conversations) if store.exists() else {}
     completed: dict[str, RewriteRecord] = {}
     accepted: dict[str, AcceptedRewrite] = {}
-    for record in read_rewrites(ledger):
+    for record in read_rewrite_rows(ledger):
         if record.validation_status == "error":
             continue
+        if record.sampling_unit_id in completed:
+            raise ValueError(f"rewrite ledger {ledger} repeats a sampling_unit_id")
         completed[record.sampling_unit_id] = record
         if record.is_evaluable():
             entry = prompts.get(record.sampling_unit_id)
@@ -368,15 +375,21 @@ def materialize_run(
     )
     resumed = len(completed)
     attempts_path = directory / ATTEMPT_LEDGER
+    # ORDER MATTERS: the ledgers are pruned after _prior_work has read them and before the
+    # writers below open them. Pruned once rows were appended, those rows would be lost
+    # with the stale ones, and Windows cannot replace a file that is open.
+    if resume:
+        _keep_finished_rewrites(directory / REWRITE_LEDGER, completed)
     if plan.rewrite.records_attempts:
         _keep_finished_attempts(attempts_path, completed)
     # Selections are known before any kernel call, so they are persisted first: an
     # interrupted run then still records what it set out to evaluate.
     write_selections(selections, directory / SELECTION_LEDGER)
 
-    # Both artifacts are appended to, never rewritten. Resuming therefore cannot destroy
-    # the work it is building on, even if the resumed run is itself interrupted. Rows land
-    # in completion order rather than selection order; nothing downstream reads order.
+    # From here the artifacts are only appended to, and pruning replaced each in one step,
+    # keeping every finished unit. Resuming therefore cannot destroy the work it is
+    # building on, even if the resumed run is itself interrupted. Rows land in completion
+    # order rather than selection order; nothing downstream reads order.
     ledger = rewrite_ledger_writer(directory / REWRITE_LEDGER)
     prompts_out = prompt_store_writer(directory / PROMPT_STORE)
     attempts_out = attempt_ledger_writer(attempts_path)
@@ -428,6 +441,21 @@ def materialize_run(
         first_error=result.first_error,
         validator_id=checking,
         validator_mismatch=validator_mismatch,
+    )
+
+
+def _keep_finished_rewrites(path: Path, completed: dict[str, RewriteRecord]) -> None:
+    """Leave in the rewrite ledger only the rows of units that will not run again.
+
+    A unit recorded as ``error`` runs again, and its new row is appended. Left in place, its
+    old row would record the unit twice, which the analysis refuses. A ledger with no such
+    row is left untouched.
+    """
+
+    if not path.exists() or len(read_rewrite_rows(path)) == len(completed):
+        return
+    rewrite_ledger_writer(path).replace(
+        record.model_dump(mode="json") for record in completed.values()
     )
 
 

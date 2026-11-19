@@ -212,3 +212,43 @@ def test_an_attempt_ledger_that_disagrees_is_refused(
     write_attempts(attempts[1:], artifacts / "attempts.csv")
     with pytest.raises(ValueError, match="disagree"):
         analyze_run(plan, artifacts, "logs")
+
+
+@dataclass
+class FailsEveryFifth:
+    """Reports an operational error on every fifth call, and accepts every other rewrite."""
+
+    validator_id: str = "fake-validator"
+    calls: int = 0
+
+    def validate(self, request: RewriteRequest, prompt: str) -> ValidationVerdict:
+        self.calls += 1
+        if self.calls % 5 == 0:
+            return ValidationVerdict(status="error", detail="validator unavailable")
+        return ValidationVerdict(status="valid")
+
+
+def test_a_run_resumed_after_validator_errors_can_be_analyzed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Resume reruns the errored units; their old rows must not block the analysis."""
+
+    import inspect_safety_stats.generative.runner as runner_module
+
+    plan = plan_path(tmp_path)
+    artifacts = tmp_path / "run"
+    monkeypatch.setattr(runner_module, "resolve_validator", lambda spec: FailsEveryFifth())
+    first = materialize_run(plan, artifacts, validator="stub")
+    assert first.errored == 24
+
+    monkeypatch.setattr(runner_module, "resolve_validator", lambda spec: DislikesMaltese())
+    resumed = materialize_run(plan, artifacts, validator="stub", resume=True)
+    assert resumed.errored == 0 and resumed.accepted == 120
+    stub_logs(monkeypatch, artifacts)
+    report = analyze_run(plan, artifacts, "logs")
+    assert report.tree.root.draws == 120
+    attempts = read_attempts(artifacts / "attempts.csv")
+    assert len(attempts) == sum(
+        record.rewrite_attempts for record in read_rewrites(artifacts / "rewrites.csv")
+    )
+    assert not any(item.validator_status == "error" for item in attempts)
