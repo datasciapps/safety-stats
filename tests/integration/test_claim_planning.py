@@ -549,6 +549,19 @@ def test_cli_without_a_plan_still_needs_manifest_and_threshold(tmp_path: Path) -
     assert "give --manifest and --threshold, or --plan" in plain(result.output)
 
 
+def test_cli_refuses_a_design_manifest_it_cannot_read(tmp_path: Path) -> None:
+    """A missing manifest is a usage error naming the plan field, not exit 1 with a traceback."""
+    plan_path = _write(tmp_path)
+    (tmp_path / "design.csv").unlink()
+    result = runner.invoke(app, ["plan", "fixed-design", "--plan", str(plan_path)])
+    output = plain(result.output)
+    # Exit 1 would read as "no claim could be planned".
+    assert result.exit_code == 2, output
+    assert isinstance(result.exception, SystemExit)
+    assert "cannot read the design manifest" in output
+    assert "which inputs.design_manifest names" in output
+
+
 def test_cli_fails_when_no_claim_can_be_planned(tmp_path: Path) -> None:
     disabled = PLAN.replace(
         "direct_mean_intervals:\n    enabled: true", "direct_mean_intervals:\n    enabled: false"

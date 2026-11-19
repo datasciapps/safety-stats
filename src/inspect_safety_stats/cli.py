@@ -741,7 +741,21 @@ def _plan_fixed_design_from_plan(
 
     try:
         plan = load_plan(plan_path)
-        design = plan_design(plan, power=power, manifest=manifest, rollouts=rollouts)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    source, named_by = (
+        (plan.inputs.design_manifest, "inputs.design_manifest")
+        if manifest is None
+        else (manifest, "--manifest")
+    )
+    try:
+        design = plan_design(plan, power=power, manifest=source, rollouts=rollouts)
+    except OSError as exc:
+        # The design manifest is the only file plan_design reads.
+        raise typer.BadParameter(
+            f"cannot read the design manifest {source}, which {named_by} names: "
+            f"{exc.strerror or exc}"
+        ) from exc
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     claims = design.claims
