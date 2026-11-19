@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import shutil
@@ -3105,20 +3106,84 @@ def test_judge_claims_record_each_judges_scorer_configuration(
     _patch_frames(monkeypatch, _judge_frames_with_configuration())
     report = analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
     judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    recorded = {
+        "name": "harmful_a",
+        "options": {"model": "grader/x", "thinking": True},
+        "metrics": [],
+        "metadata": {},
+    }
     assert judges["judge_a"]["configuration"] == {
         "candidate": {
-            "scorer": [
-                {
-                    "metadata": {},
-                    "metrics": [],
-                    "options": {"model": "grader/x", "thinking": True},
-                }
-            ],
+            "scorer": [{"name": "harmful_a", "sha256": _fingerprint(recorded)}],
             "model_roles": [{"grader": {"model": "grader/x"}}],
         }
     }
     # The log names no scorer harmful_b: its configuration is not recorded, and says so.
     assert judges["judge_b"]["configuration"]["candidate"]["scorer"] is None
+
+
+def _fingerprint(entry: dict[str, Any]) -> str:
+    """The SHA-256 of a scorer entry as canonical JSON, computed without the package."""
+
+    text = json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+# Values a scorer's options and metadata can hold that must never reach a report: a request
+# header, a token, an internal endpoint and local paths, POSIX and Windows.
+_PLANTED_SCORER_SECRETS = (
+    "sk-planted-header-4d1e",
+    "planted-token-77b0",
+    "10.9.8.7",
+    "planted-user",
+    "planted-models",
+    "planted-metadata-secret-0c3f",
+)
+
+
+def test_judge_claims_never_copy_scorer_options_or_metadata_into_any_artifact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    options = {
+        "model": "grader/x",
+        "extra_headers": {"Authorization": "Bearer sk-planted-header-4d1e"},
+        "azure_ad_token": "planted-token-77b0",
+        "base_url": "http://10.9.8.7:8000/v1",
+        "template": "/home/planted-user/private/grader-template.txt",
+        "instructions": "C:\\Users\\planted-user\\instructions.txt",
+    }
+    metadata = {
+        "model_path": "/srv/planted-models/grader",
+        "api_token": "planted-metadata-secret-0c3f",
+    }
+    scorers = [
+        {"name": "harmful", "options": options, "metrics": [], "metadata": metadata},
+        {"name": "harmful_a", "options": options, "metrics": [], "metadata": metadata},
+    ]
+    eval_frame, sample_frame = _judge_frames_with_configuration()
+    eval_frame = eval_frame.assign(scorers=json.dumps(scorers))
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+
+    report = analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
+
+    out = report.write(tmp_path / "report")
+    written = sorted(path for path in out.rglob("*") if path.is_file())
+    names = {path.name for path in written}
+    assert {"report.json", "report.md", "report-full.md", "report.html", "checksums.json"} <= (
+        names
+    )
+    for path in written:
+        text = path.read_bytes().decode("utf-8", errors="replace")
+        for secret in _PLANTED_SCORER_SECRETS:
+            assert secret not in text, (path.name, secret)
+    dumped = json.dumps(report.model_dump(mode="json"))
+    for secret in _PLANTED_SCORER_SECRETS:
+        assert secret not in dumped, secret
+    # What is recorded instead identifies the configuration without showing it.
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    assert judges["judge_a"]["configuration"]["candidate"]["scorer"] == [
+        {"name": "harmful_a", "sha256": _fingerprint(scorers[1])}
+    ]
 
 
 def test_judge_claims_keep_only_each_model_roles_name_and_model(
@@ -3202,9 +3267,11 @@ def test_judge_claims_have_a_report_section(
     assert "| Judge | Integrity | Claim | Estimate |" in section
     assert f"| judge_a | `valid` | {claim.claim_id} | 0.250000 |" in section
     assert "| judge_b | `degraded` |" in section
+    (scorer,) = report.provenance["judge_panel"]["judges"][0]["configuration"]["candidate"][
+        "scorer"
+    ]
     assert (
-        '| judge_a | candidate | `{"metadata":{},"metrics":[],'
-        '"options":{"model":"grader/x","thinking":true}}` | '
+        f'| judge_a | candidate | `{{"name":"harmful_a","sha256":"{scorer["sha256"]}"}}` | '
         '`{"grader":{"model":"grader/x"}}` |'
     ) in section
     assert "| judge_b | candidate | not recorded |" in section
@@ -3229,7 +3296,8 @@ def test_inspect_runs_carry_the_scorers_their_log_records() -> None:
     (run,) = read_inspect_source(str(log)).runs
     configurations = scorer_configurations(run.attributes["scorers"], "model_graded_qa")
     assert configurations is not None and len(configurations) == 1
-    assert configurations[0]["options"] == {}
+    assert configurations[0]["name"] == "model_graded_qa"
+    assert len(configurations[0]["sha256"]) == 64
     assert scorer_configurations(run.attributes["scorers"], "another_scorer") == []
 
 

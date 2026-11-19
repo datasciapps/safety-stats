@@ -514,10 +514,18 @@ Each judge in `provenance.judge_panel.judges` of `report.json` gains:
   `method`.
 - `configuration`: per cohort, the distinct configurations of the scorer named like the judge's
   score (`scorer`) and the model roles (`model_roles`) that the cohort's runs record. Inspect
-  logs record them under `eval.scorers` and `eval.model_roles`. Each model role keeps only its
-  name and model id, as `{"<role>": {"model": "<model id>"}}`. The rest of its configuration
-  (`base_url`, `args` and the generate config with its `extra_headers`) can hold endpoints and
-  credentials, so it never reaches the report. A role recorded without a model id is an error.
+  logs record them under `eval.scorers` and `eval.model_roles`. Neither is copied as recorded:
+  - Each scorer is `{"name": "<score name>", "sha256": "<fingerprint>"}`. The fingerprint is
+    the SHA-256 of the scorer's whole entry in `eval.scorers` (name, options, metrics and
+    metadata) as JSON with sorted keys, no whitespace and UTF-8 text. Equal fingerprints mean
+    equal recorded configurations. The options and metadata themselves can hold request
+    headers, tokens, endpoints and local paths, such as a template file, and Inspect redacts
+    only some of them, so they never reach the report.
+  - Each model role keeps only its name and model id, as `{"<role>": {"model": "<model id>"}}`.
+    The rest of its configuration (`base_url`, `args` and the generate config with its
+    `extra_headers`) can hold endpoints and credentials, so it never reaches the report. A role
+    recorded without a model id is an error.
+
   Where the runs record none, the value is `null`.
 
 `report-full.md` shows the same rows under **Claims by judge (experimental)** in the judge panel

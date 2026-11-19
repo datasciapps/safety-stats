@@ -474,7 +474,8 @@ def _judge_claim_lines(
         [
             "",
             "The scorer configuration and model roles each cohort's runs record, by judge: the "
-            "options of the scorer named like the judge's score.",
+            "SHA-256 fingerprint of the scorer named like the judge's score, and each model "
+            "role's model id. Neither shows the scorer's options or metadata.",
             "",
             "| Judge | Cohort | Scorer | Model roles |",
             "|---|---|---|---|",

@@ -180,9 +180,14 @@ def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeI
         ]
 
 
-def scorer_configurations(value: Any, score_name: str) -> list[Any] | None:
-    """The configurations a run records for the scorer named like a judge's score.
+def scorer_configurations(value: Any, score_name: str) -> list[dict[str, str]] | None:
+    """Fingerprints of the configurations a run records for the scorer named like a judge's score.
 
+    Each is ``{"name": <score name>, "sha256": <digest>}``, the digest being the SHA-256 of
+    the scorer's whole recorded entry (name, options, metrics and metadata) as canonical JSON.
+    The entry itself is never copied: scorer options and metadata can hold credentials,
+    endpoints and local paths, such as a request header, a token or a template file, and
+    Inspect redacts only some of them. Equal fingerprints mean equal recorded configurations.
     None when the run records no scorers at all, an empty list when none has that name.
     """
 
@@ -192,7 +197,7 @@ def scorer_configurations(value: Any, score_name: str) -> list[Any] | None:
     if not isinstance(scorers, list):
         return None
     return [
-        {key: item[key] for key in sorted(item) if key != "name"}
+        {"name": score_name, "sha256": sha256_value(item)}
         for item in scorers
         if isinstance(item, dict) and item.get("name") == score_name
     ]
@@ -221,10 +226,11 @@ def _role_models(roles: dict[str, Any], run_key: str) -> dict[str, Any]:
 def _add_judge_configurations(
     panel: dict[str, Any], plan: AnalysisPlan, data: NormalizedData, source_data: SourceData
 ) -> None:
-    """Record, per judge and cohort, the scorer configurations and model roles of its runs.
+    """Record, per judge and cohort, the scorer fingerprints and model roles of its runs.
 
     The values are the distinct ones the cohort's runs record, sorted by their canonical
-    form; a cohort whose runs record none says so with null.
+    form; a cohort whose runs record none says so with null. Neither copies a configuration
+    value other than a role's model id, so no credential, endpoint or path reaches a report.
     """
 
     runs_by_key = {run.run_key: run for run in source_data.runs}
@@ -240,7 +246,7 @@ def _add_judge_configurations(
                 found = scorer_configurations(attributes.get("scorers"), score_name)
                 if found is not None:
                     for item in found:
-                        scorers[sha256_value(item)] = item
+                        scorers[item["sha256"]] = item
                 role_value = attributes.get("model_roles")
                 if isinstance(role_value, str):
                     role_value = json.loads(role_value)
