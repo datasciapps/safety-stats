@@ -247,6 +247,19 @@ described in their pull requests.
 
 ### Changed
 
+- **`report.json` holds everything the report shows (changes `report.json` and
+  `report.html`).** `report.md`, `report.html` and the CSVs are rendered from the report model
+  alone, so a saved `report.json` renders them again without the plan or the design CSV.
+  `report.json` gains `design.prompts`, the rows of `design.resolved.csv`, and a typed
+  `presentation` that adds `decimal_places`, `primary_independence_profile`, `claim_evidence`
+  (each claim's comparison, or cohort, group, measure and measure type) and, when the plan has
+  one, `judge_calibration` (mode, sampling, primary scenario, groups, scenarios). The HTML
+  page embeds the report alone. In Python, `SafetyReport.presentation` is a
+  `ReportPresentation` rather than a dictionary: read `report.presentation.include_decisions`.
+  `report.md` and the CSVs keep their bytes, and no number, status or decision changes.
+  `visualize` on a report directory written before this still works: it takes the design rows
+  and the primary profile from the files beside `report.json`. The schema version stays `3.0`.
+
 - **A manifest needs only the identifier columns the plan uses.** The design manifest used to
   need `question_id` and `task_id` even when the plan never named them. Now `prompt_id` is
   always required, and `question_id` and `task_id` only when the plan names them, for example in

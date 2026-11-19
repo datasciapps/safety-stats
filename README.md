@@ -148,7 +148,8 @@ multi-arm risk tables, simultaneous rank sets, pairwise matrices, one collapsibl
 selector for within-configuration risks and across-configuration effects, prompt search, and audit
 details.
 
-Regenerate or relocate a visualization from any existing report directory:
+Regenerate or relocate a visualization from any existing report directory, or from a
+`report.json` on its own, which holds everything the report shows:
 
 ```bash
 inspect-safety-stats visualize \

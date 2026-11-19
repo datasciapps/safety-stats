@@ -10,9 +10,14 @@ from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.decision.engine import roll_up
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.reports import (
+    ClaimEvidenceRecord,
     ClaimResult,
     DecisionPolicyRecord,
     Diagnostic,
+    JudgeCalibrationPresentation,
+    JudgeScenarioRecord,
+    RateRangeRecord,
+    ReportPresentation,
     SafetyReport,
     VerdictRange,
 )
@@ -91,6 +96,48 @@ def _scope(plan: AnalysisPlan) -> dict[str, Any]:
     }
 
 
+def _presentation(plan: AnalysisPlan) -> ReportPresentation:
+    """What the rendered report needs from the plan, so that it renders from the report alone."""
+
+    independence = plan.outputs.direct_mean_intervals.independence
+    measure_types = {measure.id: str(measure.type) for measure in plan.outputs.risk_measures}
+    calibration = plan.inputs.judge_calibration
+    return ReportPresentation(
+        include_decisions=plan.report.include_decisions,
+        decimal_places=plan.report.decimal_places,
+        primary_independence_profile=independence.primary if independence else None,
+        claim_evidence=[
+            ClaimEvidenceRecord(
+                claim_id=claim.id,
+                comparison=claim.comparison,
+                cohort=claim.cohort,
+                group=claim.group,
+                measure=claim.measure,
+                measure_type=measure_types.get(claim.measure) if claim.measure else None,
+            )
+            for claim in sorted(plan.claims, key=lambda item: item.id)
+        ],
+        judge_calibration=(
+            None
+            if calibration is None
+            else JudgeCalibrationPresentation(
+                mode=calibration.mode,
+                sampling=calibration.sampling,
+                primary=calibration.primary,
+                groups=calibration.groups,
+                scenarios=[
+                    JudgeScenarioRecord(
+                        id=item.id,
+                        rho_1=RateRangeRecord(lower=item.rho_1.lower, upper=item.rho_1.upper),
+                        rho_0=RateRangeRecord(lower=item.rho_0.lower, upper=item.rho_0.upper),
+                    )
+                    for item in calibration.scenarios
+                ],
+            )
+        ),
+    )
+
+
 def _report_frame(plan: AnalysisPlan) -> dict[str, Any]:
     """The report fields that come from the plan alone, whether or not its input was read."""
 
@@ -101,7 +148,7 @@ def _report_frame(plan: AnalysisPlan) -> dict[str, Any]:
             "plan_sha256": canonical_plan_hash(plan),
         },
         "scope": _scope(plan),
-        "presentation": {"include_decisions": plan.report.include_decisions},
+        "presentation": _presentation(plan),
         "multiplicity": [family.model_dump(mode="json") for family in plan.multiplicity.families],
     }
 
@@ -166,6 +213,7 @@ def _unread_input_report(
             "manifest_sha256": None,
             "prompt_count": None,
             "groups": [],
+            "prompts": [],
         },
         cohorts=[],
         prompt_estimates=[],

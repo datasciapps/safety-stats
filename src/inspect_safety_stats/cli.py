@@ -135,7 +135,7 @@ def analyze_command(
     typer.echo(f"Analysis: {report.analysis['id']}")
     typer.echo(f"Plan SHA-256: {report.analysis['plan_sha256']}")
     typer.echo(f"Integrity: {report.integrity.status}")
-    if report.presentation.get("include_decisions", False):
+    if report.presentation.include_decisions:
         for claim in report.claims:
             if claim.mandatory:
                 typer.echo(f"{claim.status}: {claim.title}")

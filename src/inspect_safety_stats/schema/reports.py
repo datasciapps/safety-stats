@@ -421,6 +421,63 @@ class DecisionPolicyRecord(ResultModel):
     claims: list[ClaimThresholdsRecord]
 
 
+class RateRangeRecord(ResultModel):
+    lower: float
+    upper: float
+
+
+class JudgeScenarioRecord(ResultModel):
+    """A declared judge-accuracy scenario: ``rho_1`` is P(truly unsafe | judge said unsafe)
+    and ``rho_0`` is P(truly unsafe | judge said safe)."""
+
+    id: str
+    rho_1: RateRangeRecord
+    rho_0: RateRangeRecord
+
+
+class JudgeCalibrationPresentation(ResultModel):
+    """The plan's judge calibration, as far as the report's text depends on it."""
+
+    mode: Literal["assumed", "validated", "transported"]
+    sampling: str | None = None
+    primary: str | None = None
+    # The groups the calibration is scoped to; None when it applies to every group.
+    groups: list[str] | None = None
+    scenarios: list[JudgeScenarioRecord] = Field(default_factory=list)
+
+
+class ClaimEvidenceRecord(ResultModel):
+    """The result a claim was decided on: a comparison, or a cohort's measure on a group."""
+
+    claim_id: str
+    comparison: str | None = None
+    cohort: str | None = None
+    group: str | None = None
+    measure: str | None = None
+    # The plan's type of that measure, such as ``weighted_mean``.
+    measure_type: str | None = None
+
+
+class ReportPresentation(ResultModel):
+    """What the rendered report (Markdown, HTML, CSV) needs beyond the results.
+
+    A report is rendered from ``report.json`` alone. Fields that are None were not recorded,
+    in reports written before they existed.
+    """
+
+    include_decisions: bool = True
+    decimal_places: int | None = None
+    primary_independence_profile: str | None = None
+    claim_evidence: list[ClaimEvidenceRecord] | None = None
+    judge_calibration: JudgeCalibrationPresentation | None = None
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_fields(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # A field a report does not record stays out of report.json, rather than null.
+        data: dict[str, Any] = handler(self)
+        return {key: value for key, value in data.items() if value is not None}
+
+
 class SafetyReport(ResultModel):
     """The result of ``analyze``: estimates, bounds, comparisons, claims and the decision.
 
@@ -434,7 +491,7 @@ class SafetyReport(ResultModel):
     analysis: dict[str, Any]
     provenance: dict[str, Any]
     scope: dict[str, Any]
-    presentation: dict[str, Any] = Field(default_factory=dict)
+    presentation: ReportPresentation = Field(default_factory=ReportPresentation)
     integrity: IntegritySummary
     design: dict[str, Any]
     cohorts: list[dict[str, Any]]
@@ -449,8 +506,10 @@ class SafetyReport(ResultModel):
     decision: Decision
     # Present only when the analysis was given a decision policy.
     decision_policy: DecisionPolicyRecord | None = None
+    # Copies of the analysis input, written beside the report as observations.csv and
+    # plan.resolved.yaml. No rendering reads them: everything report.md, report.html and the
+    # other CSVs show is in the fields above.
     _observations: list[Any] = PrivateAttr(default_factory=list)
-    _resolved_design: list[dict[str, Any]] = PrivateAttr(default_factory=list)
     _resolved_plan: dict[str, Any] = PrivateAttr(default_factory=dict)
 
     @model_serializer(mode="wrap")
