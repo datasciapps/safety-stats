@@ -11,12 +11,14 @@ from inspect_safety_stats.config.canonicalize import canonical_value
 from inspect_safety_stats.config.models import PRIMARY_MAPPING_ID
 from inspect_safety_stats.report.artifacts import (
     csv_text,
+    json_text,
     write_checksums,
     write_csv,
     write_csv_text,
     write_json,
     write_text,
 )
+from inspect_safety_stats.report.claims import CLAIMS_JSON, claims_export
 from inspect_safety_stats.schema.reports import (
     ClaimResult,
     ComparisonResult,
@@ -1675,6 +1677,15 @@ def _rendered(report: SafetyReport) -> dict[str, str]:
             if report.outcome_mapping_sensitivities
             else {}
         ),
+        **(
+            {
+                CLAIMS_JSON: json_text(
+                    canonical_value(claims_export(report).model_dump(mode="json"))
+                )
+            }
+            if report.presentation.claims_export
+            else {}
+        ),
     }
 
 
@@ -1727,5 +1738,10 @@ def write_report(report: SafetyReport, output: str | Path, *, overwrite: bool = 
         generated_names.append(MAPPING_SENSITIVITY_CSV)
     elif (directory / MAPPING_SENSITIVITY_CSV).exists():
         (directory / MAPPING_SENSITIVITY_CSV).unlink()
+    if report.presentation.claims_export:
+        write_text(directory / CLAIMS_JSON, rendered[CLAIMS_JSON])
+        generated_names.append(CLAIMS_JSON)
+    elif (directory / CLAIMS_JSON).exists():
+        (directory / CLAIMS_JSON).unlink()
     write_checksums(directory, generated_names)
     return directory

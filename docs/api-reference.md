@@ -507,6 +507,7 @@ inspect-safety-stats plan pilot --manifest DESIGN.csv --per-stratum K --seed S -
 inspect-safety-stats hash-plan --plan PLAN [--inference | --register RECEIPT.json]
 inspect-safety-stats schema plan
 inspect-safety-stats schema report
+inspect-safety-stats schema claims
 inspect-safety-stats schema decision-policy
 inspect-safety-stats version
 ```

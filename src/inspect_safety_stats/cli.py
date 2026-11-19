@@ -904,6 +904,15 @@ def report_schema_command() -> None:
     typer.echo(json.dumps(SafetyReport.model_json_schema(), indent=2, sort_keys=True))
 
 
+@schema_app.command("claims")
+def claims_schema_command() -> None:
+    """Print the JSON schema for claims.json (experimental)."""
+
+    from inspect_safety_stats.schema.claims import ClaimsExport
+
+    typer.echo(json.dumps(ClaimsExport.model_json_schema(), indent=2, sort_keys=True))
+
+
 @schema_app.command("decision-policy")
 def decision_policy_schema_command() -> None:
     """Print the JSON schema for decision policies (experimental)."""

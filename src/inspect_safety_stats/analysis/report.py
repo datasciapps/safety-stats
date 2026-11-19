@@ -135,6 +135,7 @@ def _presentation(plan: AnalysisPlan) -> ReportPresentation:
                 ],
             )
         ),
+        claims_export=True if plan.report.claims_export else None,
         primary_outcome_mapping=(
             plan.inputs.score.mapping.model_dump(mode="json", exclude_none=True)
             if plan.inputs.score.mapping_sensitivities

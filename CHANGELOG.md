@@ -7,6 +7,17 @@ described in their pull requests.
 
 ### Added
 
+- **`claims.json`, a machine-readable record of every claim (experimental, #11).** With
+  `report.claims_export: true`, `analyze` also writes `claims.json`: for each claim its status,
+  estimand and thresholds, the bound it was decided on with its alpha, the interval and
+  assumptions behind that bound, and JSON pointers to each value's place in `report.json`,
+  with the analysis's plan hash and input hashes once for the document. Every value is copied
+  from `report.json`; a judge-corrected claim exports the corrected bound and the combined
+  alpha. `checksums.json` covers the file, and `inspect-safety-stats schema claims` prints its
+  schema. The option needs `report.include_decisions: true`. Plans without it keep their hash
+  and every artifact's bytes. See
+  [claims.json](docs/plan-reference.md#claimsjson-experimental).
+
 - **Labelling protocol for a validated judge calibration (experimental).** A plan can
   declare how its human labels were collected, under `inputs.judge_calibration.protocol`:
   the labelling queue, the seed that ordered it, and why labelling stopped. The analysis
