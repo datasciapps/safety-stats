@@ -872,11 +872,23 @@ judge-safe at the lower end and judge-unsafe at the upper, and the inversion tre
 completion as a verdict. That is conservative on both sides. A rollout completed as
 judge-unsafe adds \((1-FPR)/(Se-FPR)\ge1\) of its weight to the upper bound, at least the 1 it
 can add to true risk. One completed as judge-safe adds \(-FPR/(Se-FPR)\le0\) to the lower
-bound. The argument holds prompt by prompt, so it holds for the tail measures and under every
-`missing` and `errors` policy. Taking the unclassified share out of the inversion would tighten
-the bounds only where that share is exact. A tail row has no single share, and under `exclude`
-the prompt bounds and the direct-mean intervals divide by different rollouts, so a share used
-there can move both bounds the wrong way.
+bound. The argument holds prompt by prompt, so it holds for the tail measures, and under
+`exclude` as under `conservative_bounds`. Taking the unclassified share out of the inversion
+would tighten the bounds only where that share is exact. A tail row has no single share, and
+under `exclude` the prompt bounds and the direct-mean intervals divide by different rollouts, so
+a share used there can move both bounds the wrong way.
+
+**Rollouts a policy classifies.** Some rollouts are classified by a plan policy rather than by
+the judge: a target-side policy block counted safe under `errors: end_to_end`, a sample error
+or a missing score counted as a failure under `count_as_failure`, and content-filter stops or
+unscored truncated answers under `content_filter_stops` or `token_limit`. The policy defines the
+estimand, so its classification is the truth, but the inversion would read it as a judge
+verdict. A rollout counted safe would take \(FPR/(Se-FPR)\) off the true-risk upper bound, and
+one counted as a failure would add \((1-FPR)/(Se-FPR)\), more than 1 whenever \(Se<1\), to the
+lower bound. Both are the wrong way, and the bounds do not carry the share of such rollouts in the population behind
+them, so it cannot be taken back out. A claim whose row holds any such rollout is therefore not
+stressed. In a seeded simulation of three prompts of 300 rollouts with a 30% policy share, the
+inverted bound of the weighted mean missed true risk in 97% of runs against a nominal 5%.
 
 The two directions differ. Missed failures (low \(Se\)) undermine a PASS, because true risk is
 higher than reported. False alarms (low \(Sp\)) undermine a FAIL, because part of the reported
@@ -910,7 +922,8 @@ does not apply, the record has `applicable: false` and a `reason`. That is the c
 - `noisy_valid_test` claims, and claims decided on a validated correction, which already
   account for judge error;
 - claims that a validated calibration leaves INCONCLUSIVE;
-- measures other than `weighted_mean`, `maximum`, `cvar` and `top_k_mean`.
+- measures other than `weighted_mean`, `maximum`, `cvar` and `top_k_mean`;
+- claims whose row holds a rollout that a plan policy classified (see above).
 
 `report-full.md` gains a **Judge-error stress (experimental)** section after the claims, with one row
 per claim, the declared box of each source, and the reasons for claims that were not stressed.

@@ -529,8 +529,11 @@ described in their pull requests.
   ranges that reads the primary score with the primary mapping; otherwise the warning
   `JUDGE_STRESS_BOX_UNMATCHED` says why no box applies. The true-risk bounds over the box invert the claim's judge-reported
   bounds as the panel-derived correction does, with unclassified rollouts inverted in their
-  conservative completion, which keeps the bounds valid for tail measures and under every
-  missing-outcome policy. It never changes a claim. Plans without the field keep their hash and
+  conservative completion, which keeps the bounds valid for tail measures and under
+  `conservative_bounds` and `exclude`. A claim whose row holds a rollout classified by a plan
+  policy, such as a policy block counted safe or a missing score counted as a failure, is not
+  stressed, because the inversion would read that rollout as a judge verdict. It never changes
+  a claim. Plans without the field keep their hash and
   their output. See
   [Stressing a threshold verdict](docs/judge-misclassification.md#stressing-a-threshold-verdict-experimental).
 

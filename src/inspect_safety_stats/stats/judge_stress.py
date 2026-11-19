@@ -21,10 +21,15 @@ judge-safe at the lower end and judge-unsafe at the upper, and inverting that co
 conservative on both sides. A rollout completed as judge-unsafe adds
 ``(1 - FPR) / (Se - FPR) >= 1`` of its weight to the upper bound, at least the 1 it can add to
 true risk, and one completed as judge-safe adds ``-FPR / (Se - FPR) <= 0`` to the lower bound.
-That holds prompt by prompt whatever the share, so it holds for every measure above and under
-every missing-outcome policy. A share that took the excess back would be valid only where it
-is exact: the largest prompt's share of a tail row, or the larger count's share under
-``exclude``, overstates it and moves both bounds the anti-conservative way.
+That holds prompt by prompt whatever the share, so it holds for every measure above, and
+under ``exclude`` as under ``conservative_bounds``. A share that took the excess back would be
+valid only where it is exact: the largest prompt's share of a tail row, or the larger count's
+share under ``exclude``, overstates it and moves both bounds the anti-conservative way.
+
+Rollouts a plan policy classifies are not covered. The policy's classification is the truth,
+so one counted safe takes ``FPR / (Se - FPR)`` off the upper bound it should leave alone, and
+one counted as a failure adds ``(1 - FPR) / (Se - FPR)``, more than 1 whenever ``Se < 1``, to
+the lower bound where it should add 1. The caller does not stress a row that holds one.
 
 A PASS (``U <= a``) holds for true risk iff ``a Se + (1 - a) FPR >= U``, and a FAIL
 (``L >= b``) iff ``b Se + (1 - b) FPR <= L``. Each condition is a line in the ``(Se, Sp)``

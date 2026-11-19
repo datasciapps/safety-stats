@@ -23,7 +23,9 @@ from inspect_safety_stats.decision.engine import (
     decide_claim,
     noisy_valid_verdict_range,
 )
+from inspect_safety_stats.ingest.outcomes import is_missing
 from inspect_safety_stats.ingest.records import NormalizedData
+from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import (
     ClaimProfileVerdict,
     ClaimResult,
@@ -305,6 +307,46 @@ def _has_sensitivity_profiles(evidence: ComparisonResult | GroupRiskResult | Non
     )
 
 
+def _classified_by_policy(row: Observation) -> bool:
+    """Whether a plan policy, not the primary score's mapping, classified the rollout.
+
+    That is a policy block counted safe, a sample error counted as a failure, a content-filter
+    stop or an unscored truncated answer the plan classifies, or a missing score counted as a
+    failure. Each leaves its mark on the observation: a sample error, a content-filter stop's
+    undelivered content, the token-limit flag, or a missing score.
+    """
+
+    return row.failure is not None and (
+        row.outcome_status == "target_policy_blocked_safe"
+        or row.error is not None
+        or row.content_delivered is False
+        or bool(row.token_limit_unscored)
+        or is_missing(row.score_raw)
+    )
+
+
+def _policy_classified(data: NormalizedData) -> dict[tuple[str, str], tuple[int, int]]:
+    """Per cohort and prompt, the rollouts a plan policy counted safe and as failures."""
+
+    counts: dict[tuple[str, str], list[int]] = {}
+    for row in data.observations:
+        if _classified_by_policy(row):
+            tally = counts.setdefault((row.cohort_id, row.prompt_id), [0, 0])
+            tally[1 if row.failure else 0] += 1
+    return {key: (safe, failures) for key, (safe, failures) in counts.items()}
+
+
+def _row_policy_classified(
+    counts: Mapping[tuple[str, str], tuple[int, int]],
+    cohort_id: str,
+    prompt_ids: tuple[str, ...] | None,
+) -> tuple[int, int]:
+    """The policy-classified rollouts of a cohort's row over ``prompt_ids``."""
+
+    found = [counts.get((cohort_id, prompt_id), (0, 0)) for prompt_id in prompt_ids or ()]
+    return sum(safe for safe, _ in found), sum(failures for _, failures in found)
+
+
 def _claim_judge_error_stress(
     *,
     claim: ClaimSpec,
@@ -313,11 +355,13 @@ def _claim_judge_error_stress(
     why_not: str | None,
     measure_types: Mapping[str, str],
     accuracy: _DeclaredBox | None,
+    policy_classified: tuple[int, int],
 ) -> JudgeErrorStressResult:
     """Where a claim decided on judge-reported bounds tips, and whether a declared box holds it.
 
     Diagnostic only: the result is reported beside the claim and never changes its status. A
     box declared for groups that leave the claim's group out is not applied to it.
+    ``policy_classified`` counts the row's rollouts a plan policy counted safe and as failures.
     """
 
     def skipped(reason: str) -> JudgeErrorStressResult:
@@ -340,6 +384,20 @@ def _claim_judge_error_stress(
         return skipped(
             f"a {measure_type} measure does not carry the judge's per-prompt error model over "
             "to the row"
+        )
+    # The inversion reads every classified rollout as a judge verdict. A rollout a policy
+    # counted safe is truly safe, yet it takes FPR / (Se - FPR) off the true-risk upper bound;
+    # one counted as a failure is truly one, yet it adds (1 - FPR) / (Se - FPR), more than 1
+    # whenever Se < 1, to the lower bound. Neither can be taken back out of a row's bounds
+    # without the share of such rollouts in the population behind them, which the bounds do
+    # not carry.
+    safe, failures = policy_classified
+    if safe or failures:
+        return skipped(
+            f"{safe + failures} of the row's rollouts were classified by a plan policy, not by "
+            f"the judge ({safe} counted safe, {failures} counted as failures), and the "
+            "inversion would read them as judge verdicts, which can understate the true-risk "
+            "upper bound or overstate its lower bound"
         )
     # The bounds are inverted whole, with their unclassified rollouts completed as they are:
     # that is conservative on both sides for every measure here, and a share taken out of
@@ -410,6 +468,8 @@ def _claims(
     stress_box = (
         _primary_accuracy_box(plan, diagnostics) if plan.report.judge_error_stress else None
     )
+    policy_classified = _policy_classified(data) if plan.report.judge_error_stress else {}
+    group_prompts = {group.id: group.prompt_ids for group in data.groups}
     results: list[ClaimResult] = []
     corrected_claims: list[str] = []
     uncorrected_claims: list[str] = []
@@ -611,6 +671,11 @@ def _claims(
                 ),
                 measure_types=measure_types,
                 accuracy=stress_box,
+                policy_classified=(
+                    _row_policy_classified(
+                        policy_classified, str(claim.cohort), group_prompts.get(str(claim.group))
+                    )
+                ),
             )
         if correction_note is not None:
             reasons.insert(0, correction_note)

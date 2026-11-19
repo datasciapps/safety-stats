@@ -12,6 +12,8 @@ from typing import Any
 
 import pytest
 
+from inspect_safety_stats.analysis.claims import _classified_by_policy
+from inspect_safety_stats.schema.observations import Observation
 from tests.diagnostic_codes.harness import (
     Inputs,
     Outcome,
@@ -267,3 +269,99 @@ def test_a_composite_the_primary_mapping_inverts_has_no_box(
     assert (stress.accuracy_source, stress.stressed_status) == (None, None)
     (found,) = outcome.with_code("JUDGE_STRESS_BOX_UNMATCHED")
     assert "composite 'panel'" in found.message
+
+
+def _blocked(item: dict[str, Any]) -> None:
+    """A rollout the provider blocked before it delivered content: safe under `end_to_end`."""
+
+    item.update(
+        score_harmful=None,
+        error="blocked by the provider",
+        error_stage="target_generation",
+        content_delivered=False,
+        provider_error_code="content_filter",
+    )
+
+
+@pytest.mark.parametrize("policy", ["blocked_safe", "missing_as_failure", "error_as_failure"])
+def test_a_row_with_rollouts_a_plan_policy_classified_is_not_stressed(
+    tmp_path: Path, policy: str
+) -> None:
+    # The inversion reads every classified rollout as a judge verdict. One a policy counted
+    # safe is truly safe, but inverting it subtracts FPR / (Se - FPR) from the upper bound;
+    # one a policy counted as a failure is truly one, but inverting it adds more than 1 to
+    # the lower bound whenever Se < 1. Only p1, in group all and not in group b, has such a rollout.
+    def change(inputs: Inputs) -> None:
+        inputs.manifest[0]["domain"], inputs.manifest[1]["domain"] = "a", "b"
+        inputs.plan["groups"].append({"id": "b", "filter": {"domain": "b"}})
+        inputs.plan["claims"].append({**inputs.plan["claims"][0], "id": "b_only", "group": "b"})
+        first = inputs.rollouts[0]
+        assert first["item_id"] == "p1"
+        if policy == "blocked_safe":
+            _blocked(first)
+        elif policy == "missing_as_failure":
+            inputs.plan["inputs"]["score"]["missing"] = "count_as_failure"
+            first["score_harmful"] = None
+        else:
+            inputs.plan["inputs"]["score"]["errors"] = "count_as_failure"
+            _blocked(first)
+
+    outcome = _run(tmp_path, change)
+
+    stress = _stress(outcome)
+    assert not stress.applicable
+    assert "1 of the row's rollouts" in str(stress.reason)
+    assert "plan policy" in str(stress.reason)
+    assert _stress(outcome, "b_only").applicable
+
+
+@pytest.mark.parametrize(
+    ("fields", "by_policy"),
+    [
+        ({"score_raw": "FAIL", "failure": True, "outcome_status": "classified_failure"}, False),
+        ({"score_raw": "PASS", "failure": False, "outcome_status": "classified_safe"}, False),
+        ({"score_raw": None, "failure": None}, False),
+        # errors: end_to_end, a target-side policy block; content_filter_stops: safe.
+        ({"failure": False, "outcome_status": "target_policy_blocked_safe"}, True),
+        # errors: count_as_failure.
+        ({"failure": True, "outcome_status": "classified_failure", "error": "boom"}, True),
+        # content_filter_stops: failure, on a stop that delivered nothing.
+        (
+            {
+                "score_raw": "PASS",
+                "failure": True,
+                "outcome_status": "classified_failure",
+                "content_delivered": False,
+            },
+            True,
+        ),
+        # token_limit: safe, on an unscored truncated answer.
+        (
+            {"failure": False, "outcome_status": "classified_safe", "token_limit_unscored": True},
+            True,
+        ),
+        # missing: count_as_failure.
+        ({"score_raw": None, "failure": True, "outcome_status": "classified_failure"}, True),
+    ],
+)
+def test_every_policy_classification_is_recognised(
+    fields: dict[str, Any], by_policy: bool
+) -> None:
+    row = Observation(
+        observation_id="o",
+        source="s",
+        run_key="r1",
+        rollout_id="x",
+        item_id="p1",
+        repeat=1,
+        prompt_id="p1",
+        question_id="q1",
+        task_id="t1",
+        cohort_id="candidate",
+        score_name="harmful",
+        model="m",
+        configuration_fingerprint="f",
+        collection_order=0,
+        **fields,
+    )
+    assert _classified_by_policy(row) is by_policy
