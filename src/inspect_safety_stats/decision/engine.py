@@ -42,8 +42,11 @@ def noisy_valid_verdict_range(result: NoisyValidCertification) -> VerdictRange:
     ``c_pass = a * Se_L + (1 - a) * FPR_L``, which rises in ``a`` for an informative judge, so
     it passes for every ``acceptable_upper`` strictly above
     ``(judge_upper - FPR_L) / (Se_L - FPR_L)``. FAIL mirrors this with the upper calibration
-    endpoints. The test takes thresholds in [0, 1] only. None of this depends on the
-    thresholds except the critical values, so an unidentified judge gives no range.
+    endpoints. None of this depends on the thresholds except the critical values, so an
+    unidentified judge gives no range.
+
+    The test takes thresholds in [0, 1] only, and the range speaks only of those. Its FAIL
+    boundary reads as a half-line, but below it the test still needs ``acceptable_upper >= 0``.
     """
 
     if not result.identified:

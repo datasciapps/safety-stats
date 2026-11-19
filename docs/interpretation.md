@@ -47,8 +47,26 @@ Each claim also records `verdict_range`: the thresholds at which the same bounds
 excluded. Every other pair of thresholds gives `INCONCLUSIVE`. A `null` boundary means that no
 threshold the plan allows gives that verdict. For an interval claim the boundaries are the upper
 and lower bounds. For the noisy-but-valid test they are the thresholds at which its critical
-values meet the judge-reported bounds. The report's claims table states the same range, with
-each boundary rounded so that the statement still holds.
+values meet the judge-reported bounds. That test takes thresholds in [0, 1] only, and its range
+speaks only of those: with a negative `acceptable_upper` the test does not run, and the claim is
+`INCONCLUSIVE`.
+
+`verdict_range` is `null` when the claim's test cannot run at the plan's thresholds, as the
+noisy-but-valid test cannot at a negative `acceptable_upper`, and in reports written before
+verdict ranges were reported. The range is then unknown. That differs from a range whose
+boundaries are both `null`, which means `INCONCLUSIVE` at every threshold.
+
+The report's claims table states the same range, with each boundary rounded so that the
+statement still holds. It shows an unknown range as `—`, and one whose boundaries are both
+`null` as `INCONCLUSIVE at every threshold`. Rounding outward can print a boundary that no
+allowed threshold reaches, such as `≥ 1.0000` for an upper bound just below 1. `report.json`
+holds the exact boundary.
+
+A risk measure is never negative, so on a claim about one (rather than a comparison) a `FAIL`
+boundary at or below 0 is reached only with a negative `acceptable_upper`, and there it holds
+whatever the data. A lower bound of 0, as with no observed failures, gives such a boundary. In
+the table, so does any lower bound that rounds down to 0, for example
+`FAIL at unacceptable ≤ 0.0000`. That part of the range says nothing about the evidence.
 
 In an exploratory analysis the claim is `INCONCLUSIVE` at every threshold. Its range, like its
 descriptive status, is what a confirmatory analysis of the same bounds would give, and it

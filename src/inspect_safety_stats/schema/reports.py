@@ -382,6 +382,9 @@ class VerdictRange(ResultModel):
     ``fail_unacceptable_lower`` (strictly below when ``fail_strict``). Each holds whatever the
     other threshold of a valid pair is. A ``None`` boundary means that no threshold the plan
     allows gives that verdict. Every other pair of thresholds gives INCONCLUSIVE.
+
+    The noisy-but-valid test takes thresholds in [0, 1] only, so its range speaks only of pairs
+    in [0, 1]: with a negative ``acceptable_upper`` the test does not run.
     """
 
     pass_acceptable_upper: float | None = None

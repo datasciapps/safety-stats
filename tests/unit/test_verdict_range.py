@@ -122,19 +122,28 @@ def test_noisy_valid_range_agrees_with_the_test_at_every_threshold(
         for value in (verdict_range.pass_acceptable_upper, verdict_range.fail_unacceptable_lower)
         if value is not None
     ]
-    checked = 0
-    for acceptable, unacceptable in _pairs(0.0, 1.0):
+    checked = refused = 0
+    unit = tuple(np.round(np.linspace(0.0, 1.0, 41), 12).tolist())
+    # Every pair a plan allows. The test takes only pairs in [0, 1], and the range speaks only
+    # of those: elsewhere the test does not run, and the claim is INCONCLUSIVE with no range.
+    for acceptable, unacceptable in _pairs(-1.0, 1.0, unit):
         # A boundary is a quotient, so its own grid point is left to rounding.
         if any(abs(value - boundary) < 1e-9 for value in (acceptable, unacceptable)
                for boundary in boundaries):
             continue
-        decided = certify(acceptable, unacceptable).decision
+        try:
+            decided = certify(acceptable, unacceptable).decision
+        except ValueError:
+            assert acceptable < 0, (acceptable, unacceptable)
+            refused += 1
+            continue
         assert _predicted(verdict_range, acceptable, unacceptable) == decided, (
             acceptable,
             unacceptable,
         )
         checked += 1
     assert checked > 700
+    assert refused > 0
 
 
 def test_noisy_valid_range_inverts_the_critical_thresholds() -> None:
