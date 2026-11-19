@@ -267,13 +267,17 @@ described in their pull requests.
 - **A warning when tail measures cannot be informative.** Tail and threshold measures
   (`maximum`, `cvar`, `top_k_mean`, `entropic`, `threshold_exceedance`, `threshold_excess`, and
   `worst_of_k` without `direct_interval`) are propagated from simultaneous per-prompt bounds, so
-  their precision is set by the rollouts on each prompt, not the total. When, at the median
-  rollouts per prompt, a prompt with no failures is still bounded above the new
-  `report.precision_target` (default 0.05), `analyze` adds a `TAIL_MEASURES_UNINFORMATIVE`
-  warning with the rollouts per prompt that would be needed. Integrity is unchanged, and plans
-  that leave `precision_target` out keep their hash. Reports of plans that declare such
-  measures on few rollouts per prompt gain the warning. The default direct-mean interval method
-  stays `weighted_empirical_bernstein`.
+  their precision is set by the rollouts on each prompt, not the total. For each cohort and
+  group, `analyze` takes the lower median of the rollouts of its prompts whose bounds certify,
+  and asks how far above its estimate each such measure's upper bound would lie if no prompt
+  failed: by a failure-free prompt's bound for a maximum, CVaR, top-k mean or entropic risk, by
+  `1 - (1 - bound) ** k` for `worst_of_k`, and, for a threshold measure, only through the
+  prompts whose threshold lies below that bound. When that exceeds the new
+  `report.precision_target` (default 0.05), a `TAIL_MEASURES_UNINFORMATIVE` warning names the
+  cohort, the group and the measures, with the rollouts per prompt each would need. Integrity
+  is unchanged, and plans that leave `precision_target` out keep their hash. Reports of plans
+  that declare such measures on few rollouts per prompt gain the warning, once for each cohort
+  and group. The default direct-mean interval method stays `weighted_empirical_bernstein`.
 
 - **Catalogue of diagnostic codes and assumptions.** [Diagnostic codes and
   assumptions](docs/diagnostics.md) lists every diagnostic code a report can carry, with its
@@ -860,14 +864,16 @@ described in their pull requests.
   diagnostic's scope still names the run. Keys made of rollout fields only, such as the
   default, give the same message as before.
 
-- **A claim on cvar, maximum or entropic risk over one rollout per prompt degrades integrity
+- **A claim on a tail or threshold measure over one rollout per prompt degrades integrity
   (changes `report.json`).** At one rollout per prompt every per-prompt rate is 0 or 1, and
-  [the statistical methods](docs/statistical-methods.md#249-statistical-uncertainty) call these
-  measures misleading or vacuous there. `validate` and `analyze` passed such a plan as valid
-  without a word. They now give a `TAIL_MEASURE_SINGLE_ROLLOUT` warning on each such claim
-  whose median prompt, in its cohort and group, has one classified rollout, and integrity is
-  `degraded`. The claim is still evaluated. Claims on the weighted mean, whose interval handles
-  one rollout per prompt, are not affected.
+  [the statistical methods](docs/statistical-methods.md#249-statistical-uncertainty) call the
+  measures nonlinear in it misleading or vacuous there. `validate` and `analyze` passed such a
+  plan as valid without a word. They now give a `TAIL_MEASURE_SINGLE_ROLLOUT` warning on each
+  claim on a `cvar`, `maximum`, `top_k_mean`, `entropic`, `threshold_exceedance` or
+  `threshold_excess` measure when at least half the prompts of its cohort and group have one
+  classified rollout, and integrity is `degraded`. The claim is still evaluated. Claims on the
+  weighted mean, whose interval handles one rollout per prompt, and on `worst_of_k`, which gives
+  no estimate below `k` rollouts per prompt, are not affected.
 
 - **Assumed judge calibration corrects comparisons too (changes `report.json`).** In
   `judge_calibration.mode: assumed`, each declared scenario corrected the group risks but left
@@ -949,8 +955,8 @@ described in their pull requests.
   The demo task records each prompt's risk domain in its sample metadata so that `init` can
   group by it. The demo still compares the candidate with the baseline (now through a
   comparison set, as a risk difference and a risk ratio), and its report now emits a
-  `TAIL_MEASURES_UNINFORMATIVE` warning, which `show_results.py` prints. The numbers the demo
-  prints change; the demo README explains them and the warning.
+  `TAIL_MEASURES_UNINFORMATIVE` warning for each model, which `show_results.py` prints. The
+  numbers the demo prints change; the demo README explains them and the warnings.
 
 - **The plan hash covers only what the author wrote (#56).** `hash-plan`, `plan_sha256` and
   the inference hash leave out every field the plan does not write, so a release that adds a

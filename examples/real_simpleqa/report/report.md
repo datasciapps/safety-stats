@@ -7,7 +7,7 @@
 | Code | Where | Assumption | Effect |
 |---|---|---|---|
 | `PLAN_SELF_DECLARED` (warning) | — | The confirmatory plan's freeze time is backed by an external registration, not only by the time its author wrote in analysis.plan_frozen_at. | **recorded**. Nothing is computed differently and integrity is unchanged; the report records that the plan's timing rests on its author's word. |
-| `TAIL_MEASURES_UNINFORMATIVE` (warning) | `plan/outputs/risk_measures` | Each prompt has enough rollouts that its simultaneous bound can be tighter than report.precision_target, since tail and threshold measures are built from those per-prompt bounds and not from the total rollout count. | **recorded**. The tail and threshold measures are reported as computed, but at the median rollout count even a prompt with no failures is bounded above the precision target, so their intervals can only be wide. |
+| `TAIL_MEASURES_UNINFORMATIVE` (warning) | `cohorts/candidate/groups/all-eight` | Each prompt has enough rollouts that the tail and threshold measures built from the prompts' simultaneous bounds can lie within report.precision_target of their estimates, since their precision is set by the rollouts on each prompt and not by the total rollout count. | **recorded**. The tail and threshold measures are reported as computed, but in the cohort and group named, at the lower median of the rollouts per prompt, even if no prompt failed the named measures' upper bounds would lie more than the precision target above their estimates, so their intervals can only be wide. |
 
 Each code's message for this analysis is under Data integrity in `report-full.md`; `docs/diagnostics.md` gives the remedy for each.
 
