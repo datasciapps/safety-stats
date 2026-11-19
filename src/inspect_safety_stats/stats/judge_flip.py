@@ -100,9 +100,12 @@ def judge_flip_rate(
         if found != declared:
             missing = sorted(declared - found)
             extra = sorted(found - declared)
+            faults = ([f"under undeclared wrappers {extra}"] if extra else []) + (
+                [f"not under declared wrappers {missing}"] if missing else []
+            )
             raise ValueError(
-                f"the judge flip manifest rescores {observation_id!r} under "
-                + (f"undeclared wrappers {extra}" if extra else f"no {missing} wrapper")
+                f"the judge flip manifest rescores {observation_id!r} "
+                + " and ".join(faults)
                 + "; every rescored completion needs exactly the declared wrappers"
             )
     if sampling == "all":

@@ -157,6 +157,17 @@ def test_a_manifest_that_breaks_the_design_fails_loudly(
         judge_flip_rate(positive, verdicts, WRAPPERS, sampling=sampling, alpha=0.05)  # type: ignore[arg-type]
 
 
+def test_a_manifest_with_extra_and_missing_wrappers_names_both() -> None:
+    found = {**dict.fromkeys(WRAPPERS[:-1], True), "other": True}
+
+    with pytest.raises(ValueError) as raised:
+        judge_flip_rate(["a"], {"a": found}, WRAPPERS, sampling="all", alpha=0.05)
+
+    message = str(raised.value)
+    assert "under undeclared wrappers ['other']" in message
+    assert "not under declared wrappers ['story']" in message
+
+
 def _write(tmp_path: Path, body: str) -> Path:
     path = tmp_path / "flips.csv"
     path.write_text(body, encoding="utf-8")
