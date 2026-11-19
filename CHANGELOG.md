@@ -265,6 +265,23 @@ described in their pull requests.
   every platform, like the other text artifacts. A resume writes them afresh before it runs
   anything, which converts the files a development version left with CRLF.
 
+- **A generative run killed between a unit's two ledger rows can be resumed.** An accepted unit
+  was appended to `rewrites.csv` before its text reached `prompts.restricted.csv`, so a kill
+  between the two left a unit recorded as accepted without its text, and every `--resume`
+  refused the directory. The text is now written first, and a resume drops a text that no
+  finished unit claims before it reruns the unit.
+
+- **An interrupted resume leaves `selections.csv` whole.** `generative materialize --resume`
+  wrote the selection ledger again in place, so a failure midway left a truncated ledger that
+  blocked every later resume and analysis. It is now written to a sibling file that replaces it
+  in one step, as the other ledgers already were. The bytes written are unchanged.
+
+- **A rewrite ledger that kept error rows names its repair.** `generative analyze` refused a
+  `rewrites.csv` that an earlier version's resume left with a unit's error row beside its
+  rerun, saying only that it repeats a `sampling_unit_id`. The message now names the unit and,
+  when every repeat is such an error row, says that running `generative materialize --resume`
+  again with the same plan and directory drops them.
+
 - **A generative report whose plan no longer describes its rewrites says so.** Each row of
   `rewrites.csv` records the kernel fingerprint of the rewrite procedure that produced it, and the
   report gives the plan's as `kernel_sha256`, but nothing compared the two. A plan whose rewrite
