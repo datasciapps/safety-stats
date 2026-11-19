@@ -3830,6 +3830,106 @@ def test_judge_claims_need_declared_judges(tmp_path: Path) -> None:
         load_plan(plan_path)
 
 
+def _with_judge_score_options(plan_path: Path, primary: str, **judges: str) -> None:
+    """Add options to the primary score and to the named judges' scores of a judge plan."""
+
+    text = plan_path.read_text(encoding="utf-8").replace(
+        "    missing: block\n    errors: block", f"    missing: block\n    errors: block{primary}"
+    )
+    for name, options in judges.items():
+        text = text.replace(
+            f"score: {{name: {name}, mapping: {{failure_values: [FAIL], safe_values: [PASS]}}}}",
+            f"score: {{name: {name}, mapping: {{failure_values: [FAIL], safe_values: [PASS]}}, "
+            f"{options}}}",
+            1,
+        )
+    plan_path.write_text(text, encoding="utf-8")
+
+
+def test_a_judges_run_counts_truncated_answers_as_the_primary_does_unless_it_says_otherwise(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    # The primary counts an unscored answer that ran out of tokens as safe; judge a says
+    # nothing about such answers, judge b counts them as failures.
+    _with_judge_score_options(
+        plan_path, "\n    token_limit: safe", harmful_b="token_limit: failure"
+    )
+    _truncated_first_rollout(monkeypatch)
+    eval_frame, sample_frame = _frames(missing_score=True)
+    # Both judges give the primary outcome's verdicts, and none for the truncated answer.
+    sample_frame = sample_frame.assign(
+        score_harmful_a=sample_frame["score_harmful"], score_harmful_b=sample_frame["score_harmful"]
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert report.integrity.status != "invalid"
+    (primary,) = report.claims
+    assert primary.status == "PASS"
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    (row_a,) = judges["judge_a"]["claims"]
+    # Judge a's run differs from the primary's in the judge's verdicts alone, here none.
+    assert (row_a["status"], row_a["estimate"], row_a["lower"], row_a["upper"]) == (
+        primary.status,
+        primary.estimate,
+        primary.lower,
+        primary.upper,
+    )
+    assert "SCORE_MISSING" not in judges["judge_a"]["diagnostic_counts"]
+    # Judge b's own choice counts the truncated answer as a failure.
+    (row_b,) = judges["judge_b"]["claims"]
+    assert row_b["estimate"] > primary.estimate  # type: ignore[operator]
+
+
+def test_judge_claims_reject_a_judge_whose_inherited_content_filter_stops_misfit_its_errors(
+    tmp_path: Path,
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    # Fine for the primary, whose errors block; judge a leaves errors at end_to_end.
+    _with_judge_score_options(plan_path, "\n    content_filter_stops: failure")
+    with pytest.raises(ValueError, match=r"judge 'judge_a'.*takes failure from inputs\.score"):
+        load_plan(plan_path)
+
+    # Without judge claims no run reads the judge's stop reasons, and the plan loads.
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace("  judge_claims: true\n", "", 1),
+        encoding="utf-8",
+    )
+    load_plan(plan_path)
+
+    # Judges whose own errors fit the inherited stops load with judge claims too.
+    fitting = tmp_path / "fitting"
+    fitting.mkdir()
+    plan_path = _judge_claims_plan(fitting)
+    _with_judge_score_options(
+        plan_path,
+        "\n    content_filter_stops: failure",
+        harmful_a="errors: count_as_failure",
+        harmful_b="errors: block",
+    )
+    load_plan(plan_path)
+
+
+def test_judge_claims_reject_a_judges_own_content_filter_stops_that_misfit_the_estimand(
+    tmp_path: Path,
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    _with_judge_score_options(plan_path, "", harmful_b="content_filter_stops: safe")
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "inputs:\n", "inputs:\n  estimand: underlying_model\n", 1
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"judge 'judge_b'.*needs estimand end_to_end_system"):
+        load_plan(plan_path)
+
+
 _ACCURACY_PLAN_BLOCK = (
     "  judges:\n"
     "    - id: judge_a\n"

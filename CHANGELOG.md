@@ -435,12 +435,16 @@ described in their pull requests.
   plan, its decision policy and its registration receipt were checked for, so a receipt for
   another plan or a failed decision policy makes it `invalid` as it does the primary analysis.
   An invalid report never shows a judge's run as anything but `invalid`, nor a row as anything
-  but `INCONCLUSIVE`. A judge whose own `score` asks for what the source cannot give, such as
-  the stop reasons `token_limit` needs, gets an `invalid` run with `INGEST_FAILED` and rows that
-  decide nothing, instead of stopping the analysis. `report-full.md` adds a "Claims by judge
-  (experimental)" table to the judge panel section. The rows do not enter the decision. The
-  option requires `inputs.judges`. Plans that leave it off keep their hash and write the same
-  report bytes as before. See
+  but `INCONCLUSIVE`. A judge's run takes the primary score's `content_filter_stops` and
+  `token_limit` where the judge leaves them at `score`, so it counts the rollouts the target's
+  provider stopped as the primary analysis does; a plan whose judges' resulting
+  `content_filter_stops` misfit their `errors` or the estimand is refused when it is loaded.
+  A judge whose own `score` asks for what the source cannot give, such as the stop reasons
+  `token_limit` needs, gets an `invalid` run with `INGEST_FAILED` and rows that decide nothing,
+  instead of stopping the analysis. `report-full.md` adds a "Claims by judge (experimental)"
+  table to the judge panel section. The rows do not enter the decision. The option requires
+  `inputs.judges`. Plans that leave it off keep their hash and write the same report bytes as
+  before. See
   [Claims by judge](docs/plan-reference.md#claims-by-judge-experimental).
 
 - **Transported judge calibration (experimental).** `inputs.judge_calibration.mode:

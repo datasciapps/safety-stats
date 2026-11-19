@@ -510,11 +510,11 @@ outputs:
   judge_claims: true
 ```
 
-A judge's run takes the whole of that judge's `score`, including its `missing` and `errors`
-policies, not the primary outcome's. A judge that leaves them out gets their defaults,
-`conservative_bounds` and `end_to_end`, so with a primary `score` set to `missing: block` and
-`errors: block`, the rows also differ by how missing and errored verdicts are handled. To compare
-judges alone, give each judge the primary outcome's policies:
+A judge's run takes that judge's `score`, including its `missing` and `errors` policies, not
+the primary outcome's. A judge that leaves them out gets their defaults, `conservative_bounds`
+and `end_to_end`, so with a primary `score` set to `missing: block` and `errors: block`, the rows
+also differ by how missing and errored verdicts are handled. To compare judges alone, give each
+judge the primary outcome's policies:
 
 ```yaml
 inputs:
@@ -523,6 +523,17 @@ inputs:
     - id: judge_a
       score: {name: harmful_a, mapping: {...}, missing: block, errors: block}
 ```
+
+`content_filter_stops` and `token_limit` are different: they say how rollouts count that the
+target's provider stopped, which is the same whichever judge reads them. A judge that leaves
+either at its default, `score`, takes the primary outcome's value in its run, so it counts a
+content-filter stop or an unscored answer cut at the token limit as the primary analysis does.
+A judge that sets its own value keeps it; there is no way to ask a judge's run not to look when
+the primary does, short of `token_limit: missing`, which leaves such answers to the judge's
+`missing`. With `outputs.judge_claims`, each judge's resulting `content_filter_stops` must fit
+the estimand and that judge's `errors` as the primary's must: a primary
+`content_filter_stops: failure` needs every judge that inherits it to set `errors` to something
+other than `end_to_end`, or the plan is refused when it is loaded.
 
 Each judge in `provenance.judge_panel.judges` of `report.json` gains:
 
@@ -533,10 +544,10 @@ Each judge in `provenance.judge_panel.judges` of `report.json` gains:
   `invalid`, for whatever reason, every judge's `integrity` is `invalid` and every row's
   `status` is `INCONCLUSIVE`, with no `descriptive_status`, even where the error concerns the
   primary outcome alone; `diagnostic_counts` stay those of the judge's own run, and `reasons`
-  says so. A judge whose own `score` asks for
-  what the source cannot give, such as the stop reasons that `token_limit` or
-  `content_filter_stops` need from rollout files, gets an `invalid` run with `INGEST_FAILED`, as
-  the primary run would, and rows that decide nothing. The rest of the report stands.
+  says so. A judge whose own `score` asks for what the source cannot give, such as the stop
+  reasons that `token_limit` or `content_filter_stops` need from rollout files, gets an
+  `invalid` run with `INGEST_FAILED`, as the primary run would, and rows that decide nothing.
+  The rest of the report stands.
 - `diagnostic_counts`: how often each diagnostic code occurred in that judge's run, by code, so
   a run that is not `valid` says why.
 - `claims`: one row per claim, with `claim_id`, `status`, `descriptive_status`, `estimate`,

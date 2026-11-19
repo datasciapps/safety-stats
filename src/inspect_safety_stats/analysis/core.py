@@ -25,7 +25,7 @@ from inspect_safety_stats.analysis.results import RiskRows
 from inspect_safety_stats.analysis.risks import _group_risks, _hierarchy_risks
 from inspect_safety_stats.analysis.tail_precision import single_rollout_tail_claims
 from inspect_safety_stats.config.canonicalize import sha256_value
-from inspect_safety_stats.config.models import AnalysisPlan, JudgeSpec
+from inspect_safety_stats.config.models import AnalysisPlan, JudgeSpec, judge_run_score
 from inspect_safety_stats.decision.engine import mandatory_statuses
 from inspect_safety_stats.ingest.normalize import normalize
 from inspect_safety_stats.ingest.outcomes import is_missing
@@ -151,7 +151,10 @@ def _judge_plan(plan: AnalysisPlan, judge: JudgeSpec) -> AnalysisPlan:
     ``noisy_valid_test`` claim's test needs that calibration's labels, so where the plan can
     run the test the judge's run bounds the claim as a ``corrected_interval`` claim instead
     (its row decides nothing under the validated calibration the test requires). Where the
-    plan cannot, the claim is kept, so the judge's run reports the primary's plan error.
+    plan cannot, the claim is kept, so the judge's run reports the primary's plan error. The
+    judge's score takes the stop reasons it leaves at ``score`` from the primary score
+    (``judge_run_score``), so its run differs from the primary's in the judge's verdicts and
+    its own ``missing`` and ``errors`` only.
     """
 
     remapped = _corrected_interval_claims(plan)
@@ -163,7 +166,7 @@ def _judge_plan(plan: AnalysisPlan, judge: JudgeSpec) -> AnalysisPlan:
     ]
     inputs = plan.inputs.model_copy(
         update={
-            "score": judge.score,
+            "score": judge_run_score(plan.inputs.score, judge.score),
             "judges": [],
             "composites": [],
             "judge_calibration": None,
