@@ -115,7 +115,9 @@ def test_tail_measures_warn_when_rollouts_cannot_support_them(tmp_path: Path) ->
     (warning,) = _warnings(report)
     assert warning.severity == "WARNING"
     assert warning.scope == "plan/outputs/risk_measures"
-    # The mean has a direct interval route of its own; only the propagated measure is named.
+    # Only the tail measure is named. With direct_mean_intervals off, as here, the mean's
+    # interval is propagated from the same per-prompt bounds, but the warning covers tail and
+    # threshold measures only; the summary marks a wide interval of any measure with a dagger.
     assert warning.details["measures"] == ["cvar_90"]
     assert warning.details["median_rollouts_per_prompt"] == ROLLOUTS
     alpha = report.prompt_estimates[0].alpha_upper
