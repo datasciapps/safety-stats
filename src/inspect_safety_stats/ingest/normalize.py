@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import functools
 import math
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -958,9 +958,17 @@ def _receipt_timing(receipt: RegistrationReceipt, observed: list[Any]) -> list[D
     ]
 
 
-def read_inputs(
-    plan: AnalysisPlan, source: EvaluationSource
-) -> tuple[pd.DataFrame, list[ResolvedGroup], SourceData]:
+@dataclass(frozen=True)
+class RawInputs:
+    """The plan's design manifest and groups and the source's runs and rollouts, as read and
+    before :func:`normalize` applies the plan to them."""
+
+    manifest: pd.DataFrame
+    groups: list[ResolvedGroup]
+    source: SourceData
+
+
+def read_inputs(plan: AnalysisPlan, source: EvaluationSource) -> RawInputs:
     """Load the plan's design manifest and groups, and read the source, without normalizing.
 
     Split from ``ingest`` so a caller can normalize what was read more than once. Each
@@ -973,10 +981,15 @@ def read_inputs(
     manifest = load_manifest(plan.inputs.design_manifest, plan_manifest_columns(plan))
     groups = resolve_groups(plan, manifest)
     read = source.read()
-    return manifest, groups, replace(read, source_sha256=functools.cache(read.source_sha256))
+    return RawInputs(
+        manifest=manifest,
+        groups=groups,
+        source=replace(read, source_sha256=functools.cache(read.source_sha256)),
+    )
 
 
 def ingest(plan: AnalysisPlan, source: EvaluationSource) -> NormalizedData:
     """Load the plan's design manifest, read the source and normalize it."""
 
-    return normalize(plan, *read_inputs(plan, source))
+    raw = read_inputs(plan, source)
+    return normalize(plan, raw.manifest, raw.groups, raw.source)

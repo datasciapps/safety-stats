@@ -112,16 +112,16 @@ def _read_input(
     if source is not None and logs is not None:
         raise ValueError("pass either logs or source, not both")
     try:
-        manifest, groups, source_data = read_inputs(plan, _source(logs, parallel, source))
+        raw = read_inputs(plan, _source(logs, parallel, source))
         # ORDER MATTERS: the per-judge runs and the outcome mapping sensitivities take copies
         # made before the primary run normalizes the manifest and groups, so nothing that run
         # does can reach them.
         judge_inputs = (
-            _JudgeInputs(manifest.copy(), copy.deepcopy(groups), source_data, receipt)
+            _JudgeInputs(raw.manifest.copy(), copy.deepcopy(raw.groups), raw.source, receipt)
             if plan.outputs.judge_claims or plan.inputs.score.mapping_sensitivities
             else None
         )
-        data = normalize(plan, manifest, groups, source_data, receipt)
+        data = normalize(plan, raw.manifest, raw.groups, raw.source, receipt)
         validate_profile_fields(plan.design.independence_profiles, data.manifest)
     except Exception as exc:
         diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=str(exc)))
