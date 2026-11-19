@@ -1,7 +1,8 @@
 """Every example that runs without a provider runs end to end here, as its README tells a reader to.
 
-Three examples need no API key: the simulated demo (``examples/demo``), the eight-sample SimpleQA
-log (``examples/real_simpleqa``) and the simulated multilingual generative example
+Four examples need no API key: the simulated demo (``examples/demo``), the simulated harness
+comparison (``examples/harness_versions``), the eight-sample SimpleQA log
+(``examples/real_simpleqa``) and the simulated multilingual generative example
 (``examples/generative_multilingual``). The scripts run as a reader runs them, in a fresh
 interpreter from a scratch directory, so a broken import, a path that only resolves from the
 repository root or a script that no longer matches the package fails here and not on a reader's
@@ -30,6 +31,7 @@ from tests.cli_output import plain
 
 ROOT = Path(__file__).resolve().parents[1]
 DEMO = ROOT / "examples" / "demo"
+HARNESS = ROOT / "examples" / "harness_versions"
 SIMPLEQA = ROOT / "examples" / "real_simpleqa"
 MULTILINGUAL = ROOT / "examples" / "generative_multilingual"
 
@@ -184,6 +186,52 @@ def test_the_demo_steps_one_at_a_time_agree_with_the_script(
     assert shown.replace(output.as_posix(), "reports/demo") in stdout
 
 
+# The harness-versions example ----------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def harness_run(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, str]:
+    """Run ``python examples/harness_versions/run_example.py`` once, from a scratch directory."""
+    workspace = tmp_path_factory.mktemp("harness-versions")
+    stdout = _completed(_run_script(HARNESS / "run_example.py", cwd=workspace))
+    return workspace, stdout
+
+
+def test_the_harness_example_prints_the_numbers_its_readme_quotes(
+    harness_run: tuple[Path, str],
+) -> None:
+    workspace, stdout = harness_run
+    report = _report(workspace / "reports" / "harness-versions")
+    assert _integrity_status(report) == "valid"
+    # examples/harness_versions/README.md, "Run it": the block it shows is printed verbatim.
+    readme = (HARNESS / "README.md").read_text(encoding="utf-8")
+    quoted = readme.split("```text\n", 1)[1].split("```", 1)[0]
+    assert quoted in stdout
+    assert "v2 minus v1, all prompts: +0.067 [-0.046, +0.176]" in quoted
+
+
+def test_the_harness_example_steps_one_at_a_time_agree_with_the_script(
+    harness_run: tuple[Path, str], tmp_path: Path
+) -> None:
+    """The README's analyze command, on the logs the script wrote, gives the same report."""
+    workspace, _ = harness_run
+    output = tmp_path / "harness-versions"
+    result = CliRunner().invoke(
+        app,
+        [
+            "analyze",
+            "--plan",
+            str(HARNESS / "plan.yaml"),
+            "--logs",
+            str(workspace / "logs" / "harness-versions"),
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0, plain(result.output)
+    assert _report(output) == _report(workspace / "reports" / "harness-versions")
+
+
 # The SimpleQA log ---------------------------------------------------------------------------
 
 
@@ -278,3 +326,61 @@ def test_the_multilingual_coverage_check_runs(tmp_path: Path) -> None:
         _run_script(MULTILINGUAL / "validate_coverage.py", "--replicates", "3", cwd=tmp_path)
     )
     assert "empirical coverage" in stdout
+
+
+# README.md, "What it is for" -----------------------------------------------------------------
+
+
+def _what_it_is_for() -> str:
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    return readme.split("## What it is for\n", 1)[1].split("\n## ", 1)[0]
+
+
+def _risk(report: dict[str, object], cohort: str) -> str:
+    risks = report["group_risks"]
+    assert isinstance(risks, list)
+    (risk,) = [r for r in risks if r["cohort_id"] == cohort and r["measure_id"] == "mean"]
+    return f"{risk['estimate']:.3f} [{risk['lower']:.3f}, {risk['upper']:.3f}]"
+
+
+def _difference(report: dict[str, object]) -> str:
+    comparisons = report["comparisons"]
+    assert isinstance(comparisons, list)
+    (item,) = [c for c in comparisons if not c["path"] and c["estimand"] == "risk_difference"]
+    return f"{item['estimate']:+.3f} [{item['lower']:+.3f}, {item['upper']:+.3f}]"
+
+
+def test_what_it_is_for_quotes_the_harness_and_demo_numbers(
+    harness_run: tuple[Path, str], demo_run: tuple[Path, str]
+) -> None:
+    section = " ".join(_what_it_is_for().split())
+    harness = _report(harness_run[0] / "reports" / "harness-versions")
+    assert f"{_risk(harness, 'v1')} and {_risk(harness, 'v2')}" in section
+    assert f"v2 minus v1 is {_difference(harness)}" in section
+    demo = _report(demo_run[0] / "reports" / "demo")
+    assert f"baseline fails at {_risk(demo, 'baseline')}" in section
+    assert f"candidate at {_risk(demo, 'candidate')}" in section
+    assert f"Candidate minus baseline is {_difference(demo).replace('+', '')}" in section
+
+
+def test_what_it_is_for_runs_the_threshold_command_as_written(tmp_path: Path) -> None:
+    """The SimpleQA command of the section, from a directory standing in for the root."""
+    section = _what_it_is_for()
+    command = section.split("### Does one system meet a threshold?", 1)[1]
+    command = command.split("```bash\n", 1)[1].split("```", 1)[0]
+    arguments = command.replace("\\\n", " ").split()
+    assert arguments[:2] == ["inspect-safety-stats", "analyze"]
+    arguments = [
+        str(ROOT / argument) if argument.startswith("examples/") else argument
+        for argument in arguments[1:]
+    ]
+    output = tmp_path / "reports" / "simpleqa"
+    arguments[arguments.index("reports/simpleqa")] = str(output)
+    result = CliRunner().invoke(app, arguments)
+    # 2 is ExitCode.INCONCLUSIVE in inspect_safety_stats.cli, and also Click's code for a usage
+    # error, so the report's headline is required as well.
+    assert result.exit_code == 2, plain(result.output)
+    assert "Integrity: valid" in plain(result.output)
+    report = _report(output)
+    assert report["decision"] == "INCONCLUSIVE"
+    assert f"the mean is {_risk(report, 'candidate')}" in " ".join(section.split())
