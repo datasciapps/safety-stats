@@ -409,6 +409,7 @@ def _sampled_sensitivities_withheld(triggered: Outcome, control: Outcome) -> Non
 CASES = [
     Case(
         code="ALPHA_ALLOCATION_INVALID",
+        shows="invalid",
         # Explicit alpha must name every manifest prompt; the trigger leaves out p2.
         trigger=analysis(
             lambda inputs: _outputs(inputs)["prompt_bounds"].update(
@@ -424,6 +425,7 @@ CASES = [
     ),
     Case(
         code="COHORT_OVERLAP",
+        shows="invalid",
         # Run r1 is red like r2, so a cohort of red runs takes it as well as candidate does.
         trigger=analysis(_changes(_red_r1, _baseline({"attributes.team": "red"}, team="red"))),
         control=analysis(
@@ -433,6 +435,7 @@ CASES = [
     ),
     Case(
         code="DECISION_POLICY_AFTER_GENERATION",
+        shows="recorded",
         # The policy's version is set after r1 started, on 2026-02-01.
         trigger=analysis(_policy(set_at="2026-02-02T00:00:00Z")),
         control=analysis(_policy(set_at="2026-01-15T00:00:00Z")),
@@ -443,6 +446,7 @@ CASES = [
     ),
     Case(
         code="DECISION_POLICY_OVERALL_UNCERTIFIED",
+        shows="adjusted",
         # The policy moves one claim's acceptable_upper, and the two mandatory claims rest on
         # two coverage events; the control's policy restates the plan's thresholds.
         trigger=analysis(_two_gates_loosened("low")),
@@ -451,6 +455,7 @@ CASES = [
     ),
     Case(
         code="DECISION_POLICY_SELF_DECLARED",
+        shows="recorded",
         # The policy's version states a time before r1 started, on 2026-02-01, which nothing
         # checks; the control's states a time after it.
         trigger=analysis(_policy(set_at="2026-01-15T00:00:00Z")),
@@ -462,6 +467,7 @@ CASES = [
     ),
     Case(
         code="DECISION_POLICY_MISMATCH",
+        shows="invalid",
         # The policy names another plan's inference hash.
         trigger=analysis(_policy(sha="0" * 64)),
         control=analysis(_policy()),
@@ -469,11 +475,13 @@ CASES = [
     ),
     Case(
         code="DECISION_POLICY_UNKNOWN_CLAIM",
+        shows="invalid",
         trigger=analysis(_policy(claim_id="missing")),
         control=analysis(_policy()),
     ),
     Case(
         code="DECISION_POLICY_FIXED_CLAIM",
+        shows="invalid",
         # The policy sets thresholds of a noisy_valid_test claim; the control's claim is a
         # corrected interval, whose thresholds a policy may set.
         trigger=judged(_fixed_claim("noisy_valid_test")),
@@ -482,6 +490,7 @@ CASES = [
     ),
     Case(
         code="PLAN_ANYTIME_BOUNDS_INVALID",
+        shows="invalid",
         # The anytime bounds name a family the plan does not declare. Only Inspect logs of a
         # shuffled run record the order the bounds need, so both run on such logs.
         trigger=_anytime_logs("undeclared"),
@@ -490,6 +499,7 @@ CASES = [
     ),
     Case(
         code="PLAN_DIAGNOSTIC_GATE",
+        shows="invalid",
         # The claim gates on a measure the plan declares diagnostic only.
         trigger=analysis(
             _changes(_measures(MEAN, {**WORST, "diagnostic_only": True}), _claim(measure="worst"))
@@ -499,24 +509,28 @@ CASES = [
     ),
     Case(
         code="PLAN_DUPLICATE_ID",
+        shows="invalid",
         trigger=analysis(lambda inputs: inputs.plan["groups"].append({"id": "all"})),
         control=analysis(lambda inputs: inputs.plan["groups"].append({"id": "every"})),
         effect=_claim_undecided,
     ),
     Case(
         code="PLAN_INVALID_CLAIM",
+        shows="invalid",
         # noisy_valid_test needs validated judge calibration, which the plan does not have.
         trigger=analysis(_claim(method="noisy_valid_test")),
         control=analysis(_claim(method="corrected_interval")),
     ),
     Case(
         code="PLAN_INVALID_COMPARISON",
+        shows="invalid",
         # The comparison puts the baseline cohort in both arms.
         trigger=analysis(_changes(_baseline(), _comparison(candidate="baseline"))),
         control=analysis(_changes(_baseline(), _comparison())),
     ),
     Case(
         code="PLAN_INVALID_MULTIPLICITY",
+        shows="invalid",
         # Simultaneous prompt bounds take their alpha from an intersection-union family.
         trigger=analysis(
             lambda inputs: inputs.plan["multiplicity"]["families"][0].update(
@@ -531,6 +545,7 @@ CASES = [
     ),
     Case(
         code="PLAN_METHOD_UNUSED",
+        shows="recorded",
         # Direct mean intervals are on, but the plan asks for no weighted mean.
         trigger=analysis(
             _changes(_direct_means(), _measures(WORST), _claim(measure="worst"))
@@ -542,12 +557,14 @@ CASES = [
     ),
     Case(
         code="PLAN_NO_RISK_MEASURES",
+        shows="recorded",
         trigger=analysis(_changes(_measures(), lambda inputs: inputs.plan.update(claims=[]))),
         control=analysis(lambda inputs: inputs.plan.update(claims=[])),
         effect=_no_group_risks,
     ),
     Case(
         code="PLAN_POSTHOC",
+        shows="invalid",
         # The plan was frozen after r1 started.
         trigger=analysis(_frozen_at("2026-03-01T00:00:00Z")),
         control=analysis(_frozen_at("2026-01-31T00:00:00Z")),
@@ -555,12 +572,14 @@ CASES = [
     ),
     Case(
         code="PLAN_RECEIPT_MISMATCH",
+        shows="invalid",
         trigger=analysis(_receipt(sha="0" * 64)),
         control=analysis(_receipt()),
         effect=_claim_undecided,
     ),
     Case(
         code="PLAN_RECEIPT_POSTHOC",
+        shows="invalid",
         # The receipt was written after r1 started.
         trigger=analysis(_receipt(registered_at="2026-02-01T00:00:01+00:00")),
         control=analysis(_receipt()),
@@ -568,22 +587,26 @@ CASES = [
     ),
     Case(
         code="PLAN_REGISTERED",
+        shows="recorded",
         trigger=analysis(_changes(_self_declared, _receipt())),
         control=analysis(_self_declared),
         effect=_registered_timing_recorded,
     ),
     Case(
         code="PLAN_SAMPLED_COMPARISON_UNSUPPORTED",
+        shows="invalid",
         trigger=analysis(_changes(_sampled, _baseline(), _comparison())),
         control=analysis(_changes(_sampled, _baseline())),
     ),
     Case(
         code="PLAN_SAMPLED_MEASURE_UNSUPPORTED",
+        shows="invalid",
         trigger=analysis(_changes(_sampled, _measures(MEAN, WORST))),
         control=analysis(_changes(_sampled, _measures(MEAN))),
     ),
     Case(
         code="PLAN_SAMPLED_PROMPT_BOUNDS",
+        shows="recorded",
         trigger=analysis(
             _changes(
                 _sampled, lambda inputs: _outputs(inputs)["prompt_bounds"].update(simultaneous=True)
@@ -594,17 +617,20 @@ CASES = [
     ),
     Case(
         code="PLAN_SAMPLED_SENSITIVITY_PROFILES",
+        shows="withheld",
         trigger=analysis(_sampled_prompt_sensitivity),
         control=analysis(_sampled),
         effect=_sampled_sensitivities_withheld,
     ),
     Case(
         code="PLAN_SAMPLED_REQUIRES_DIRECT_MEAN",
+        shows="invalid",
         trigger=analysis(_sampled_without_direct_means),
         control=analysis(_sampled),
     ),
     Case(
         code="PLAN_SELF_DECLARED",
+        shows="recorded",
         # Without an external registration, the freeze time is the plan's own word.
         trigger=analysis(_self_declared),
         control=analysis(),
@@ -612,6 +638,7 @@ CASES = [
     ),
     Case(
         code="PLAN_SINGLE_VALUED_BOUND_UNSUPPORTED",
+        shows="invalid",
         trigger=analysis(
             _changes(
                 _sampled,
@@ -624,18 +651,21 @@ CASES = [
     ),
     Case(
         code="PLAN_UNKNOWN_REFERENCE",
+        shows="invalid",
         trigger=analysis(_claim(group="nowhere")),
         control=analysis(_claim(group="all")),
         effect=_claim_undecided,
     ),
     Case(
         code="PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED",
+        shows="invalid",
         # The direct worst-of-k interval is calibrated in the direct-mean family, which is off.
         trigger=analysis(_measures(MEAN, WORST_OF_2)),
         control=analysis(_changes(_direct_means(), _measures(MEAN, WORST_OF_2))),
     ),
     Case(
         code="RISK_MEASURE_INVALID",
+        shows="invalid",
         # The mean of the top three prompts, of two.
         trigger=analysis(_measures(MEAN, {"id": "top", "type": "top_k_mean", "k": 3})),
         control=analysis(_measures(MEAN, {"id": "top", "type": "top_k_mean", "k": 2})),

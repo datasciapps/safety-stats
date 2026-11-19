@@ -385,6 +385,7 @@ CASES = [
     # The kernel exhausts every Maltese unit and no English one.
     Case(
         code="GENERATIVE_ACCEPTANCE_UNEVEN",
+        shows="recorded",
         trigger=generative(kernel=f"{MODULE}:EXHAUSTS_MALTESE"),
         control=generative(kernel=f"{MODULE}:EXHAUSTS_NOTHING"),
         effect=exhaustion_recorded,
@@ -392,6 +393,7 @@ CASES = [
     # Two cohorts declare the model the only evaluation ran.
     Case(
         code="GENERATIVE_COHORT_AMBIGUOUS",
+        shows="invalid",
         trigger=generative(cohorts(baseline="model-a", candidate="model-a")),
         control=generative(cohorts(baseline="model-a", candidate="model-b")),
         effect=all_unclassified,
@@ -399,6 +401,7 @@ CASES = [
     # The analysed cohort's model has no evaluation among the logs.
     Case(
         code="GENERATIVE_COHORT_NOT_EVALUATED",
+        shows="invalid",
         trigger=generative(
             cohorts(baseline="model-a", candidate="model-b"), cohort="candidate"
         ),
@@ -412,6 +415,7 @@ CASES = [
     # A second evaluation ran a model no cohort declares.
     Case(
         code="GENERATIVE_EVAL_UNMATCHED",
+        shows="recorded",
         trigger=generative(
             logs=together(evaluation(), evaluation("eval-z", "model-z", value=lambda i: "FAIL"))
         ),
@@ -421,6 +425,7 @@ CASES = [
     # The validator rejects the first attempt of every Maltese rewrite and of nothing else.
     Case(
         code="GENERATIVE_FIDELITY_UNEVEN",
+        shows="recorded",
         trigger=generative(validated(), validator=f"{MODULE}:REJECTS_MALTESE"),
         control=generative(validated(), validator=f"{MODULE}:REJECTS_NOTHING"),
         effect=rejection_recorded,
@@ -428,6 +433,7 @@ CASES = [
     # The evaluation stopped with status error; the control's same log finished.
     Case(
         code="GENERATIVE_LOG_INCOMPLETE",
+        shows="invalid",
         trigger=generative(
             logs=together(evaluation(status="error"), change=_first_half)
         ),
@@ -437,6 +443,7 @@ CASES = [
     # Near-duplicate first attempts are rejected and retried; the control accepts them.
     Case(
         code="GENERATIVE_RETRY_DEPENDENCE",
+        shows="recorded",
         trigger=generative(
             deduplicated(near_duplicate="normalized_text"), kernel=f"{MODULE}:RESTYLING"
         ),
@@ -449,6 +456,7 @@ CASES = [
     # Two epochs were evaluated where the plan declares one rollout per rewrite.
     Case(
         code="GENERATIVE_ROLLOUT_OVERRUN",
+        shows="invalid",
         trigger=generative(rollouts(1), logs=evaluation(epochs=(1, 2))),
         control=generative(rollouts(2), logs=evaluation(epochs=(1, 2))),
         effect=all_rollouts_trials,
@@ -456,6 +464,7 @@ CASES = [
     # A retried log of the same model holds every sample again, now failing.
     Case(
         code="GENERATIVE_SAMPLE_DUPLICATE",
+        shows="invalid",
         trigger=generative(
             logs=together(evaluation(), evaluation("eval-retry", value=lambda i: "FAIL"))
         ),
@@ -465,6 +474,7 @@ CASES = [
     # The cohort's log holds a sample no accepted rewrite wrote.
     Case(
         code="GENERATIVE_SAMPLE_UNMATCHED",
+        shows="invalid",
         trigger=generative(
             logs=together(
                 evaluation(),
@@ -480,6 +490,7 @@ CASES = [
     # The logs were scored by another scorer than target.score.name.
     Case(
         code="GENERATIVE_SCORE_ABSENT",
+        shows="invalid",
         trigger=generative(logs=evaluation(score="score_other")),
         control=generative(),
         effect=all_unclassified,
@@ -487,6 +498,7 @@ CASES = [
     # Five samples carry a score value the mapping does not list.
     Case(
         code="GENERATIVE_SCORE_UNMAPPED",
+        shows="adjusted",
         trigger=generative(logs=evaluation(value=_unmapped)),
         control=generative(logs=evaluation(value=_safe)),
         effect=completed_and_widened(5),
@@ -494,6 +506,7 @@ CASES = [
     # Five accepted rewrites were never evaluated.
     Case(
         code="GENERATIVE_UNIT_UNEVALUATED",
+        shows="adjusted",
         trigger=generative(logs=together(evaluation(value=_safe), change=lambda rows: rows[5:])),
         control=generative(logs=evaluation(value=_safe)),
         effect=completed_and_widened(5),
@@ -501,6 +514,7 @@ CASES = [
     # The plan names another validator than the one that judged the rewrites.
     Case(
         code="GENERATIVE_VALIDATOR_MISMATCH",
+        shows="recorded",
         trigger=generative(validated("semantic-equivalence-v1"), validator="fake"),
         control=generative(validated("fake-validator"), validator="fake"),
         effect=validators_named,
@@ -508,6 +522,7 @@ CASES = [
     # A judge calibration is declared together with a slice family.
     Case(
         code="JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY",
+        shows="withheld",
         trigger=generative(judged(family=True), slices=("language=maltese",)),
         control=generative(judged(family=False), slices=("language=maltese",)),
         effect=family_uncorrected,

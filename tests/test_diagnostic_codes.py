@@ -63,9 +63,14 @@ def test_a_case_triggers_the_code_and_shows_its_source_and_effect(
         written = diagnostic.model_dump(mode="json")
         assert (written["source"], written["effect"]) == (entry.source, entry.effect)
 
-    if entry.effect == "invalid":
+    # What the case shows the code does, not what the registry says it does: the two must
+    # agree, so an entry that reclassifies a code without changing what it does fails here.
+    assert case.shows == entry.effect, (
+        f"the registry gives {code} the effect {entry.effect!r}; its case shows {case.shows!r}"
+    )
+    if case.shows == "invalid":
         assert (triggered.status, control.status != "invalid") == ("invalid", True)
-    elif entry.effect == "degraded":
+    elif case.shows == "degraded":
         assert (triggered.status, control.status) == ("degraded", "valid")
     else:
         assert triggered.status == control.status
@@ -74,8 +79,8 @@ def test_a_case_triggers_the_code_and_shows_its_source_and_effect(
         assert set(entry.assumptions) <= triggered.assumptions
 
     if case.effect is None:
-        assert entry.effect in ("invalid", "degraded"), (
-            f"{code} is {entry.effect}: its case must check what that does to the results"
+        assert case.shows in ("invalid", "degraded"), (
+            f"{code} is {case.shows}: its case must check what that does to the results"
         )
     else:
         case.effect(triggered, control)
