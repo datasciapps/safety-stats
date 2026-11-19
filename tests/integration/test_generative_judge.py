@@ -242,9 +242,12 @@ def test_comparisons_are_refused_rather_than_silently_corrected(
     report = analyze_run(
         plan, artifacts, "logs", cohort="candidate", comparisons=("candidate:baseline",)
     )
-    assert any(
-        i.code == "JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON" for i in report.diagnostics
-    )
+    # A comparison belongs to no one cohort; its scope is the candidate:baseline it was asked for.
+    assert [
+        item.scope
+        for item in report.diagnostics
+        if item.code == "JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON"
+    ] == ["comparisons/candidate:baseline"]
     assert all(item.node_id != "comparison" for item in report.corrected)
 
 

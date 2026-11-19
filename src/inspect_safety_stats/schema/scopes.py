@@ -11,7 +11,14 @@ A scope is a ``/``-separated path. Its first segment names what it points into:
   are the design manifest's, before any cohort; a cohort's own sit under it.
 - ``comparisons``, ``comparison_sets``, ``families``: results that belong to no one cohort,
   as in ``comparisons/c1/methods/m/units/prompt``. Results of one cohort sit under it:
-  ``cohorts/candidate/groups/g1/measures/worst_of_k``.
+  ``cohorts/candidate/groups/g1/measures/worst_of_k``. A hierarchy node is
+  ``levels/<level>/nodes/<node>`` below its group or comparison, its id written by
+  :func:`node_id`.
+
+A scope names the item a finding concerns down to the result row, method and profile it is
+about, so that two findings of one code have two scopes: a report sorts its diagnostics by
+severity, code and scope, and two that tie keep the order they were emitted in, which no
+output order may depend on.
 
 Below every root but ``plan`` and ``decision_policy`` the segments are an id, then
 collection/id pairs; the root alone means every item of it (``comparisons``: every
@@ -24,6 +31,8 @@ Build a scope with :func:`scope_path` (or the shorthands below it) and read one 
 """
 
 from __future__ import annotations
+
+from collections.abc import Mapping
 
 PLAN_ROOT = "plan"
 DECISION_POLICY_ROOT = "decision_policy"
@@ -98,6 +107,15 @@ def cohort_scope(cohort_id: object, *pairs: object) -> str:
 
 def prompt_scope(cohort_id: object, prompt_id: object) -> str:
     return cohort_scope(cohort_id, "prompts", prompt_id)
+
+
+def node_id(path: Mapping[str, object]) -> str:
+    """A hierarchy node's id in a scope: its ``level=value`` pairs, root level first.
+
+    The pairs are joined by ``/``, which the scope encodes, so the node is one segment:
+    ``.../levels/question_id/nodes/task_id=t1%2Fquestion_id=q1``.
+    """
+    return "/".join(f"{key}={value}" for key, value in path.items())
 
 
 def cohort_of(scope: str) -> str | None:

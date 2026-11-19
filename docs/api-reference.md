@@ -66,7 +66,13 @@ of where the finding sits: `plan/claims/<claim>` for a place in the plan,
 `cohorts/<cohort>/prompts/<prompt>` or `runs/<run key>` for the data,
 `comparisons/<comparison>/methods/<method>/units/<unit>` for a result. After the root, segments
 come in collection/id pairs, and each id has `%` written as `%25` and `/` as `%2F`, so a path
-splits back into its ids. `inspect_safety_stats.schema.scopes` builds and reads them.
+splits back into its ids. `inspect_safety_stats.schema.scopes` builds and reads them. A
+scope goes down to the result row, method and profile the finding concerns, and a hierarchy
+node is `levels/<level>/nodes/<node>` below its group or comparison, the node written as its
+`level=value` pairs joined by `/`, as in
+`cohorts/candidate/groups/all/levels/question_id/nodes/task_id=t1%2Fquestion_id=q1`. An ERROR
+scoped to a whole cohort, `cohorts/<cohort>`, withholds the bounds of every prompt in it; one
+scoped to a group, measure or node of the cohort withholds none.
 
 In a report, each diagnostic also has `item`: a JSON pointer into `report.json` to the record
 its scope names, such as `/claims/0` for `plan/claims/<claim>`, `/prompt_estimates/12` for

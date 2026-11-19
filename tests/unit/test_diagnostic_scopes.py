@@ -14,6 +14,7 @@ from inspect_safety_stats.schema.reports import STORED_REPORT, Diagnostic, Integ
 from inspect_safety_stats.schema.scopes import (
     cohort_of,
     cohort_scope,
+    node_id,
     plan_scope,
     prompt_scope,
     scope_path,
@@ -30,6 +31,8 @@ from inspect_safety_stats.schema.scopes import (
         (prompt_scope("candidate", "p1"), ["cohorts", "candidate", "prompts", "p1"]),
         (scope_path("comparisons"), ["comparisons"]),
         (scope_path("runs", "r1", "prompts", "p1", "repeats", 2), ["runs", "r1", "prompts", "p1", "repeats", "2"]),  # noqa: E501
+        # A hierarchy node is one segment, its level=value pairs root level first.
+        (cohort_scope("c", "groups", "g", "levels", "q", "nodes", node_id({"t": "t1", "q": "a/b"})), ["cohorts", "c", "groups", "g", "levels", "q", "nodes", "t=t1/q=a/b"]),  # noqa: E501
     ],
 )
 def test_a_scope_splits_into_the_segments_it_was_built_from(

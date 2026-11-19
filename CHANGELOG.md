@@ -175,7 +175,11 @@ described in their pull requests.
   any id splits back out. Scopes were free text before (`candidate:p1`,
   `inputs.judges.j1`), and an error whose scope was a stratum, claim or prompt id equal to a
   cohort's id withheld that cohort's prompt bounds; an error now withholds a cohort's bounds
-  only when its scope is `cohorts/<id>`. Every `report.json`, `report.md`, `report.html` and
+  only when its scope is `cohorts/<id>`. A scope goes down to the result row, method, profile
+  and hierarchy node a finding concerns, a node as `levels/<level>/nodes/<node>`, so two
+  findings of one code have two scopes, and an error about a group's measure, node or anytime
+  bound, scoped below `cohorts/<id>/groups/<group>`, withholds none of the cohort's prompt
+  bounds. Every `report.json`, `report.md`, `report.html` and
   diagnostics CSV with a scoped diagnostic changes bytes, and so does the CLI's diagnostic
   listing. A `report.json` written before still renders with `visualize`.
 
