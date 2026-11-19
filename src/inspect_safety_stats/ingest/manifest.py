@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from inspect_safety_stats.config.models import AnalysisPlan, GroupSpec, WeightSpec
+from inspect_safety_stats.schema.observations import observation_field
 
 REQUIRED_COLUMNS = ("prompt_id", "question_id", "task_id")
 # Every observation and prompt estimate carries a question and a task. A manifest that omits
@@ -43,9 +44,10 @@ def load_inclusion_probabilities(manifest: pd.DataFrame, column: str) -> np.ndar
 def plan_manifest_columns(plan: AnalysisPlan) -> tuple[str, ...]:
     """The columns of ``REQUIRED_COLUMNS`` the plan names, ``prompt_id`` always among them.
 
-    A plan names a column through its hierarchy, a nested weight hierarchy, a group filter, an
-    independence profile, a sampling column, an explicit weight column, a threshold column or
-    the zero-tolerance field. A level it never names takes the prompt's own identity.
+    A plan names a column through its hierarchy, a weight spec's hierarchy or column, a group
+    filter, an independence profile, a comparison's pair or cluster key, a sampling column, a
+    threshold column or the zero-tolerance field. A level it never names takes the prompt's own
+    identity.
     """
 
     named: set[str] = set(plan.design.hierarchy)
@@ -60,6 +62,11 @@ def plan_manifest_columns(plan: AnalysisPlan) -> tuple[str, ...]:
         named.update(group.filter)
     for profile in plan.design.independence_profiles.values():
         named.update(profile.block_by)
+    for comparison in plan.expanded_comparisons():
+        # A pair or cluster key may name an identifier the observations carry.
+        named.update(observation_field(name) for name in comparison.pair_key or [])
+        if comparison.cluster_key:
+            named.add(observation_field(comparison.cluster_key))
     for column in (
         plan.design.inclusion_probability_column,
         plan.design.stratum_column,

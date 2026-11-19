@@ -73,6 +73,19 @@ claims: []
 """
 
 
+def _comparison(**keys: object) -> dict[str, object]:
+    return {
+        "id": "c",
+        "group": "all",
+        "candidate": "candidate",
+        "baseline": "candidate",
+        "family": "f",
+        "independence": {"primary": "p"},
+        "measure": "m",
+        **keys,
+    }
+
+
 def _plan(edit: str = "") -> AnalysisPlan:
     data = yaml.safe_load(_PLAN)
     if edit == "default_hierarchy":
@@ -80,6 +93,24 @@ def _plan(edit: str = "") -> AnalysisPlan:
         del data["design"]["weights"]
     elif edit == "group_filter":
         data["groups"] = [{"id": "q1", "filter": {"question_id": "q1"}}]
+    elif edit == "design_weights":
+        data["design"]["weights"] = {"strategy": "nested_equal"}
+    elif edit == "group_weights":
+        data["groups"] = [
+            {
+                "id": "all",
+                "filter": {},
+                "weights": {
+                    "strategy": "nested_equal",
+                    "hierarchy": ["task_id", "question_id", "prompt_id"],
+                },
+            }
+        ]
+    elif edit in {"pair_key", "cluster_key"}:
+        data["design"]["independence_profiles"] = {"p": {"block_by": ["prompt_id"]}}
+        data["groups"] = [{"id": "all", "filter": {}}]
+        key = {"pair_key": ["question_id", "prompt_id"], "cluster_key": "question_id"}
+        data["comparisons"] = [_comparison(**{edit: key[edit]})]
     elif edit == "block_by":
         data["design"]["independence_profiles"] = {"question": {"block_by": ["question_id"]}}
     return AnalysisPlan.model_validate(data)
@@ -89,6 +120,18 @@ def test_a_plan_requires_only_the_identifier_columns_it_names() -> None:
     assert plan_manifest_columns(_plan()) == ("prompt_id", "task_id")
 
 
-@pytest.mark.parametrize("edit", ["default_hierarchy", "group_filter", "block_by"])
+@pytest.mark.parametrize(
+    "edit",
+    [
+        "default_hierarchy",
+        "group_filter",
+        "block_by",
+        "design_weights",
+        "group_weights",
+        "pair_key",
+        "cluster_key",
+    ],
+)
 def test_a_plan_that_names_question_id_anywhere_requires_it(edit: str) -> None:
     assert plan_manifest_columns(_plan(edit)) == ("prompt_id", "question_id", "task_id")
+

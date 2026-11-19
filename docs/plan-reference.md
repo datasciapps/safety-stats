@@ -111,11 +111,14 @@ schema 3.0 removes the field.
 
 The manifest always needs a `prompt_id` column. It needs `question_id` and `task_id` only when
 the plan names them: in `design.hierarchy`, whose default `[task_id, question_id, prompt_id]`
-names both, in a weight `hierarchy` or `column`, a group `filter`, an independence profile's
-`block_by`, or any other field that names a manifest column. A level that the plan doesn't name
-and the manifest omits is set to each prompt's `prompt_id`, so each prompt counts as its own
-question or task in the report's prompt estimates. A plan with `hierarchy: [task_id, prompt_id]`
-can therefore use a manifest without a `question_id` column.
+names both, in `design.weights` or a group's `weights`, whose default `nested_equal` hierarchy
+names both too, in a weight `column`, a group `filter`, an independence profile's `block_by`, a
+comparison's `pair_key` or `cluster_key`, or any other field that names a manifest column. A level
+that the plan doesn't name and the manifest omits is set to each prompt's `prompt_id`, so each
+prompt counts as its own question or task in the report's prompt estimates. A plan that sets
+both `design.hierarchy` and `design.weights.hierarchy` to `[task_id, prompt_id]` can therefore
+use a manifest without a `question_id` column; setting only `design.hierarchy` does not, because
+the weights still name it.
 
 `estimand` is `end_to_end_system` by default. In this mode, an explicit provider policy block is
 safe only if it occurred during target generation and no content was delivered. Set
