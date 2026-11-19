@@ -372,6 +372,26 @@ def _shared_seed_weights(geometry: _Geometry, member: ContrastMember) -> dict[st
     return {seed: geometry.seed[seed] / mass for seed in shared}
 
 
+def check_slice_family(
+    taxonomy: CompiledTaxonomy,
+    design: SamplingDesign,
+    selections: Sequence[SelectionRecord],
+    *,
+    slices: Sequence[SliceMember] = (),
+    contrasts: Sequence[ContrastMember] = (),
+) -> None:
+    """Raise what :func:`estimate_slice_family` would raise on these selections.
+
+    Whether a member can be estimated depends on the compiled taxonomy and the selected
+    paths alone: an unknown value, an arm no draw lands on, two values that share no seed.
+    Outcomes never decide it, because a unit without one is read as unevaluated. Running
+    the family over the selections with every unit unevaluated therefore refuses exactly
+    what the analysis of the evaluated run would, and can run before anything is generated.
+    """
+
+    estimate_slice_family(taxonomy, design, selections, (), slices=slices, contrasts=contrasts)
+
+
 def estimate_slice_family(
     taxonomy: CompiledTaxonomy,
     design: SamplingDesign,
@@ -388,7 +408,7 @@ def estimate_slice_family(
     Coverage is per direction under ``two_sided``, as for the simultaneous tree. A member
     that cannot be estimated -- an unknown value, no draw in an arm, no shared seed -- is an
     error, never a silent omission, because dropping it would change the family the error
-    budget was spent on.
+    budget was spent on. :func:`check_slice_family` raises the same error before generation.
     """
 
     if not 0.0 < alpha < 1.0:

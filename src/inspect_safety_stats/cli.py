@@ -1217,9 +1217,14 @@ def hash_plan_command(
 def generative_compile_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
 ) -> None:
-    """Compile a generative plan and report what the canonical taxonomy contains."""
+    """Compile a generative plan and report what the canonical taxonomy contains.
 
-    from inspect_safety_stats.generative.sampling import plan_design
+    A declared slice family is checked against the paths materialize will select, so a
+    member the analysis could not estimate is refused before anything is generated.
+    """
+
+    from inspect_safety_stats.generative.runner import check_declared_slice_family
+    from inspect_safety_stats.generative.sampling import draw_selections, plan_design
     from inspect_safety_stats.generative.schema import load_generative_plan
     from inspect_safety_stats.generative.taxonomy import compile_taxonomy
 
@@ -1227,6 +1232,12 @@ def generative_compile_command(
         parsed = load_generative_plan(plan)
         taxonomy = compile_taxonomy(parsed, base_path=plan.parent)
         design = plan_design(taxonomy, parsed)
+        if parsed.inference.slice_family is not None:
+            # The selected paths do not depend on the stage: these are the ones materialize
+            # selects under --stage pilot or main.
+            check_declared_slice_family(
+                parsed, taxonomy, design, draw_selections(taxonomy, design)
+            )
     except Exception as exc:
         typer.echo(f"Compilation failed: {exc}", err=True)
         raise typer.Exit(code=ExitCode.ERROR) from exc
