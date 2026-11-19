@@ -633,7 +633,10 @@ described in their pull requests.
   `presentation` that adds `decimal_places`, `primary_independence_profile`, `claim_evidence`
   (each claim's comparison, or cohort, group, measure and measure type) and, when the plan has
   one, `judge_calibration` (mode, sampling, primary scenario, groups, scenarios). The HTML
-  page embeds the report alone. In Python, `SafetyReport.presentation` is a
+  page embeds the report alone, so its audit trail no longer shows the resolved plan: the
+  "Resolved plan" panel points to `plan.resolved.yaml` beside `report.json`. The page sets its
+  footer, which holds the scope caveat, before it renders the sections, so that an error in a
+  section cannot leave the page without it. In Python, `SafetyReport.presentation` is a
   `ReportPresentation` rather than a dictionary: read `report.presentation.include_decisions`.
   `report.md` and the CSVs keep their bytes, and no number, status or decision changes.
   `visualize` on a report directory written before this still works: it takes the design rows
