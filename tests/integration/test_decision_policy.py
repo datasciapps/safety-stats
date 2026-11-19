@@ -227,6 +227,14 @@ def test_thresholds_revised_after_the_run_decide_without_voiding_certification(
         if item.code == "DECISION_POLICY_AFTER_GENERATION"
     )
     assert note.severity == "INFO" and note.details == {"versions": ["v2"]}
+    # v1 states a time before the run, which only the policy's author vouches for.
+    self_declared = next(
+        item
+        for item in report.integrity.diagnostics
+        if item.code == "DECISION_POLICY_SELF_DECLARED"
+    )
+    assert self_declared.severity == "WARNING"
+    assert self_declared.details == {"versions": ["v1"]}
     # An unrevised claim keeps the plan's thresholds and verdict.
     strict = next(item for item in report.claims if item.claim_id == "mean_strict")
     assert (strict.acceptable_upper, strict.status) == (0.40, "PASS")
@@ -254,6 +262,9 @@ def test_thresholds_revised_after_the_run_decide_without_voiding_certification(
     markdown = (output / "report-full.md").read_text("utf-8")
     assert "## Decision policy" in markdown
     assert "| `v2` | 2026-02-01T00:00:00+01:00 | yes | `mean_safe` | v2 reason |" in markdown
+    assert "Each version's time is as the policy states it; nothing in the analysis checks it." in (
+        markdown
+    )
 
 
 def test_a_policy_for_another_plan_is_an_error_and_is_not_applied(plan_path: Path) -> None:

@@ -217,6 +217,26 @@ def _decision_policy_record(
         )
         for claim in sorted(application.frozen.claims, key=lambda item: item.id)
     ]
+    earlier = [
+        version.id for version in versions if version.set_after_first_evaluation is False
+    ]
+    if application.applied and earlier:
+        diagnostics.append(
+            Diagnostic(
+                code="DECISION_POLICY_SELF_DECLARED",
+                severity="WARNING",
+                message=(
+                    "decision policy version(s) "
+                    + ", ".join(repr(item) for item in earlier)
+                    + " state a set_at before the first evaluation started. That time is the "
+                    "policy author's statement, and nothing in the analysis confirms it, so "
+                    "the report cannot show that these thresholds were fixed before the "
+                    "outcomes were seen. Each claim's verdict keeps its error bound at any "
+                    "threshold, and the overall decision does not rely on set_at"
+                ),
+                details={"versions": earlier},
+            )
+        )
     later = [version.id for version in versions if version.set_after_first_evaluation]
     if application.applied and later:
         diagnostics.append(

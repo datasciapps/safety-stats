@@ -360,7 +360,9 @@ described in their pull requests.
   evaluation started (`null` when that cannot be told, as when a run reports no start time),
   and the thresholds each claim was decided at; `report.md` shows the same.
   New diagnostics: `DECISION_POLICY_MISMATCH`, `DECISION_POLICY_UNKNOWN_CLAIM`,
-  `DECISION_POLICY_FIXED_CLAIM` (errors), `DECISION_POLICY_OVERALL_UNCERTIFIED` (warning) and
+  `DECISION_POLICY_FIXED_CLAIM` (errors), `DECISION_POLICY_OVERALL_UNCERTIFIED` and
+  `DECISION_POLICY_SELF_DECLARED` (warnings: the second says that a version's stated time,
+  which nothing checks, is all that shows it came before the run) and
   `DECISION_POLICY_AFTER_GENERATION` (info).
   `schema decision-policy` prints the policy schema. Analyses without a policy write the same
   bytes as before. See [Decision policies](docs/decision-policy.md).

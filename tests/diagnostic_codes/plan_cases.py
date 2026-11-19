@@ -424,6 +424,17 @@ CASES = [
         effect=_overall_pass_withheld,
     ),
     Case(
+        code="DECISION_POLICY_SELF_DECLARED",
+        # The policy's version states a time before r1 started, on 2026-02-01, which nothing
+        # checks; the control's states a time after it.
+        trigger=analysis(_policy(set_at="2026-01-15T00:00:00Z")),
+        control=analysis(_policy(set_at="2026-02-02T00:00:00Z")),
+        effect=lambda triggered, control: (
+            _policy_applied(True)(triggered, control),
+            _claim_unchanged(triggered, control),
+        ),
+    ),
+    Case(
         code="DECISION_POLICY_MISMATCH",
         # The policy names another plan's inference hash.
         trigger=analysis(_policy(sha="0" * 64)),

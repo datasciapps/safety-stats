@@ -132,6 +132,7 @@ outcomes.
 - **Remedy:** Freeze the plan before the runs, state analysis.plan_frozen_at, register its hash and
   pass the receipt with --registration-receipt; otherwise set analysis.intent: exploratory.
 - **Checked by:** [`DECISION_POLICY_OVERALL_UNCERTIFIED`](#decision_policy_overall_uncertified),
+  [`DECISION_POLICY_SELF_DECLARED`](#decision_policy_self_declared),
   [`PLAN_POSTHOC`](#plan_posthoc), [`PLAN_RECEIPT_MISMATCH`](#plan_receipt_mismatch),
   [`PLAN_RECEIPT_POSTHOC`](#plan_receipt_posthoc), [`PLAN_SELF_DECLARED`](#plan_self_declared),
   [`START_TIME_UNOBSERVED`](#start_time_unobserved)
@@ -271,6 +272,19 @@ The analysis plan: its fields, references and their combinations.
 - **Remedy:** Set these thresholds in the plan before the runs, or decide every mandatory claim on
   one simultaneous family, such as the default simultaneous prompt bounds or simultaneous
   direct-mean intervals.
+- **Checks:** [`plan_fixed_in_advance`](#assumption-plan_fixed_in_advance)
+
+#### `DECISION_POLICY_SELF_DECLARED`
+
+- **Severity:** WARNING
+- **Effect:** [recorded](#effects)
+- **Assumption:** A decision policy version's set_at, which only its author states, is when its
+  thresholds were decided.
+- **Consequence:** The report records the versions listed in the diagnostic as set before the first
+  evaluation, as they state; no result changes, and the overall decision does not rely on the stated
+  time.
+- **Remedy:** Keep the policy file where others can check when each version was written, such as a
+  version-controlled repository or a registry, and say where in each version's reason.
 - **Checks:** [`plan_fixed_in_advance`](#assumption-plan_fixed_in_advance)
 
 #### `DECISION_POLICY_UNKNOWN_CLAIM`

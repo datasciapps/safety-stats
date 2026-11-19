@@ -27,7 +27,15 @@ What a later threshold cannot show is that the requirement existed before the ev
 threshold set just above a known upper bound passes by construction. The report therefore
 records every version of the policy with the time it was set, and says which versions came after
 the first evaluation started. A reader can then tell a threshold that was fixed in advance from
-one that describes the bounds.
+one that describes the bounds, as far as the stated times can be trusted.
+
+Those times are the policy author's statement. Nothing in the analysis confirms a `set_at`:
+unlike a plan, a policy has no registration receipt. A version that states a time before the
+first evaluation started therefore gets the `WARNING` diagnostic
+`DECISION_POLICY_SELF_DECLARED`, and the overall decision never relies on a stated time. To make
+the times checkable, keep the policy file where others can see when each version was written,
+such as a version-controlled repository or a registry, and say where in each version's
+`reason`.
 
 The `noisy_valid_test` method is the exception: it uses the thresholds inside its test, so its
 thresholds stay in the plan, and a policy cannot set them.
@@ -115,7 +123,7 @@ versions:
 | `inference_plan_sha256` | yes | The plan's inference hash, as `hash-plan --inference` prints it |
 | `versions` | yes | At least one version, in the order they were set |
 | `versions[].id` | yes | A unique name for the version |
-| `versions[].set_at` | yes | When the version was decided, with a timezone |
+| `versions[].set_at` | yes | When the version was decided, with a timezone, as its author states it |
 | `versions[].reason` | no | Why it was set |
 | `versions[].thresholds` | yes | For each claim it sets, by claim id, `acceptable_upper` below `unacceptable_lower`, both in [-1, 1] |
 
@@ -149,11 +157,13 @@ A file that is not a valid policy, for example one whose versions are out of ord
 before the analysis starts, as an invalid plan is.
 
 When an applied version was set after the earliest start time of the selected evaluations, the
-report has the `INFO` diagnostic `DECISION_POLICY_AFTER_GENERATION`. It does not change
-integrity. When the policy's thresholds leave the overall decision uncertified, the report has
-the `WARNING` diagnostic `DECISION_POLICY_OVERALL_UNCERTIFIED`, and an overall `PASS` becomes
-`INCONCLUSIVE` (see [When the overall decision certifies](#when-the-overall-decision-certifies)).
-It does not change integrity either.
+report has the `INFO` diagnostic `DECISION_POLICY_AFTER_GENERATION`. When one states a time
+before it, the report has the `WARNING` diagnostic `DECISION_POLICY_SELF_DECLARED`, since nothing
+checks that time. Neither changes integrity. When the policy's thresholds leave the overall
+decision uncertified, the report has the `WARNING` diagnostic
+`DECISION_POLICY_OVERALL_UNCERTIFIED`, and an overall `PASS` becomes `INCONCLUSIVE` (see
+[When the overall decision certifies](#when-the-overall-decision-certifies)). It does not change
+integrity either.
 
 ## What the report records
 

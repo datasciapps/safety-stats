@@ -666,6 +666,27 @@ _CODES: tuple[CodeEntry, ...] = (
         assumptions=("plan_fixed_in_advance",),
     ),
     CodeEntry(
+        code="DECISION_POLICY_SELF_DECLARED",
+        severities=("WARNING",),
+        source="plan",
+        effect="recorded",
+        assumption=(
+            "A decision policy version's set_at, which only its author states, is when its "
+            "thresholds were decided."
+        ),
+        consequence=(
+            "The report records the versions listed in the diagnostic as set before the first "
+            "evaluation, as they state; no result changes, and the overall decision does not "
+            "rely on the stated time."
+        ),
+        remedy=(
+            "Keep the policy file where others can check when each version was written, such "
+            "as a version-controlled repository or a registry, and say where in each "
+            "version's reason."
+        ),
+        assumptions=("plan_fixed_in_advance",),
+    ),
+    CodeEntry(
         code="DECISION_POLICY_UNKNOWN_CLAIM",
         severities=("ERROR",),
         source="plan",

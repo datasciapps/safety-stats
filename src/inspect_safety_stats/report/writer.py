@@ -709,6 +709,8 @@ def _decision_policy_lines(report: SafetyReport, places: int) -> list[str]:
         f"**Inference plan SHA-256:** `{_escape(record.inference_plan_sha256)}`  ",
         f"**Policy SHA-256:** `{_escape(record.policy_sha256)}`",
         "",
+        "Each version's time is as the policy states it; nothing in the analysis checks it.",
+        "",
         "| Version | Set at | After first evaluation | Claims | Reason |",
         "|---|---|---|---|---|",
     ]
