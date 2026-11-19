@@ -139,6 +139,14 @@ described in their pull requests.
   hierarchy rows. See
   [Where effects sit](docs/interpretation.md#where-effects-sit).
 
+- **The fixed-design planner reads the plan.** `plan fixed-design --plan PLAN` takes groups,
+  weights, hierarchy, independence profile, multiplicity family and thresholds from the
+  analysis plan and reports detectable rates for every claim, at the endpoint alpha `analyze`
+  will use. Before, they had to be repeated on the command line, and the default hierarchy
+  could silently plan a different design. Claims it cannot plan are listed with the reason.
+  The rates are guaranteed for `weighted_hoeffding`; the output names the plan's primary
+  method. See [Command-line interface](docs/api-reference.md#command-line-interface).
+
 - **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory
   analysis makes every claim `INCONCLUSIVE`, so a reader had to compare its bounds with the
   thresholds by hand. Each claim in `report.json` now has `descriptive_status`: in an
