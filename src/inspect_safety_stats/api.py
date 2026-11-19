@@ -32,7 +32,12 @@ from inspect_safety_stats.config.models import (
     PublishedValidationSetSpec,
     RiskMeasureSpec,
 )
-from inspect_safety_stats.decision.engine import decide_claim, roll_up
+from inspect_safety_stats.decision.engine import (
+    claim_verdict_range,
+    decide_claim,
+    noisy_valid_verdict_range,
+    roll_up,
+)
 from inspect_safety_stats.ingest.manifest import (
     ResolvedGroup,
     load_inclusion_probabilities,
@@ -62,6 +67,7 @@ from inspect_safety_stats.schema.reports import (
     PromptEstimate,
     RiskIntervalResult,
     SafetyReport,
+    VerdictRange,
 )
 from inspect_safety_stats.stats.binomial import (
     binomial_bounds,
@@ -5130,11 +5136,14 @@ def _noisy_valid_claim(
     judge_summary: dict[str, Any] | None,
     gap: str | None,
     scope: _JudgeScope | None = None,
-) -> tuple[Decision, list[str], float | None, float | None, str, float]:
+) -> tuple[Decision, list[str], float | None, float | None, str, float, VerdictRange | None]:
     """Decide an aggregate claim with the finite-sample noisy-but-valid test.
 
     ``scope`` is the calibration the claim's row is corrected with; None when the
     calibration is scoped to groups that leave the row out.
+
+    The verdict range is None when the test could not run at the plan's thresholds, which
+    leaves the thresholds at which it would decide unknown.
     """
 
     method = "noisy_valid_certification_test"
@@ -5149,6 +5158,7 @@ def _noisy_valid_claim(
             None,
             method,
             family_alpha,
+            VerdictRange(),
         )
     if scope is None:
         return (
@@ -5158,6 +5168,7 @@ def _noisy_valid_claim(
             None,
             method,
             family_alpha,
+            VerdictRange(),
         )
     if gap is not None:
         # The truth strata pool the cohort's labels exactly as the judge strata do.
@@ -5176,6 +5187,7 @@ def _noisy_valid_claim(
             None,
             method,
             family_alpha,
+            VerdictRange(),
         )
     summary = judge_summary or {}
     strata = (summary.get("truth_strata") or {}).get(evidence.cohort_id) or {}
@@ -5208,6 +5220,7 @@ def _noisy_valid_claim(
             None,
             method,
             family_alpha,
+            VerdictRange(),
         )
     try:
         # A projected upper endpoint misses whenever the joint event fails, so its error is the
@@ -5228,7 +5241,7 @@ def _noisy_valid_claim(
             unacceptable_lower=claim.unacceptable_lower,
         )
     except ValueError as exc:
-        return "INCONCLUSIVE", [str(exc)], None, None, method, family_alpha
+        return "INCONCLUSIVE", [str(exc)], None, None, method, family_alpha, None
     reasons = [
         "Noisy-but-valid certification on true failure risk: judge-reported interval "
         f"[{result.judge_reported_lower:.12g}, {result.judge_reported_upper:.12g}]; PASS "
@@ -5261,6 +5274,7 @@ def _noisy_valid_claim(
         result.true_risk_upper,
         method,
         family_alpha + float(judge_alpha),
+        noisy_valid_verdict_range(result),
     )
 
 
@@ -5413,6 +5427,7 @@ def _claims(
                     upper=upper,
                     acceptable_upper=claim.acceptable_upper,
                     unacceptable_lower=claim.unacceptable_lower,
+                    verdict_range=VerdictRange(),
                     alpha=None,
                     multiplicity_family=claim.family,
                     method=method,
@@ -5471,7 +5486,7 @@ def _claims(
                 if isinstance(evidence, GroupRiskResult) and scope is not None
                 else None
             )
-            status, reasons, lower, upper, method, alpha = _noisy_valid_claim(
+            status, reasons, lower, upper, method, alpha, verdict_range = _noisy_valid_claim(
                 claim=claim,
                 evidence=evidence,
                 eligible=eligible,
@@ -5488,6 +5503,7 @@ def _claims(
             # certifying correction only judge-reported risk remains, and the labels may show
             # the judge missing failures: a refused calibration used to pass claims that way.
             status = "INCONCLUSIVE"
+            verdict_range = VerdictRange()
             # A correction the labels cannot certify for this estimand says why itself.
             why = [
                 warning
@@ -5511,6 +5527,7 @@ def _claims(
                 unacceptable_lower=claim.unacceptable_lower,
                 eligible=eligible,
             )
+            verdict_range = claim_verdict_range(lower=lower, upper=upper, eligible=eligible)
         if not integrity_valid and lower is not None and upper is not None:
             reasons = [
                 "Bounds were computed but are ineligible for certification because data "
@@ -5582,6 +5599,7 @@ def _claims(
                 upper=upper,
                 acceptable_upper=claim.acceptable_upper,
                 unacceptable_lower=claim.unacceptable_lower,
+                verdict_range=verdict_range,
                 alpha=alpha,
                 multiplicity_family=claim.family,
                 method=method,
@@ -5717,6 +5735,7 @@ def _unread_input_report(plan: AnalysisPlan, diagnostics: list[Diagnostic]) -> S
             policy_status="INCONCLUSIVE",
             acceptable_upper=claim.acceptable_upper,
             unacceptable_lower=claim.unacceptable_lower,
+            verdict_range=VerdictRange(),
             alpha=families[claim.family].alpha if claim.family in families else None,
             multiplicity_family=claim.family,
             method="unavailable",

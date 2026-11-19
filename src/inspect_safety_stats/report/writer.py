@@ -3,13 +3,14 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from inspect_safety_stats.config.canonicalize import canonical_value
-from inspect_safety_stats.schema.reports import RiskIntervalResult, SafetyReport
+from inspect_safety_stats.schema.reports import RiskIntervalResult, SafetyReport, VerdictRange
 
 
 def _sha256(path: Path) -> str:
@@ -53,6 +54,44 @@ def _number(value: float | None, places: int) -> str:
     if value is None:
         return "—"
     return f"{value:.{places}f}"
+
+
+def _verdict_range(verdict_range: VerdictRange | None, places: int) -> str:
+    """State a claim's verdict range, with each boundary rounded so that the statement holds.
+
+    The PASS boundary rounds up and the FAIL boundary down. A boundary that rounding moves is
+    no longer attained, so it reads as inclusive.
+    """
+
+    if verdict_range is None:
+        return "—"
+    step = Decimal(1).scaleb(-places)
+    parts = []
+    for verdict, value, strict, name, rounding, symbols in (
+        (
+            "PASS",
+            verdict_range.pass_acceptable_upper,
+            verdict_range.pass_strict,
+            "acceptable",
+            ROUND_CEILING,
+            (">", "≥"),
+        ),
+        (
+            "FAIL",
+            verdict_range.fail_unacceptable_lower,
+            verdict_range.fail_strict,
+            "unacceptable",
+            ROUND_FLOOR,
+            ("<", "≤"),
+        ),
+    ):
+        if value is None:
+            continue
+        exact = Decimal(repr(value))
+        shown = exact.quantize(step, rounding=rounding)
+        symbol = symbols[0] if strict and shown == exact else symbols[1]
+        parts.append(f"{verdict} at {name} {symbol} {shown}")
+    return "; ".join(parts) if parts else "INCONCLUSIVE at every threshold"
 
 
 def _percent(value: float | None, places: int = 1) -> str:
@@ -335,8 +374,11 @@ def _markdown(report: SafetyReport) -> str:
                 "",
                 "## Mandatory claims",
                 "",
-                "| Claim | Status | Estimate | Lower | Upper | Acceptable | Unacceptable |",
-                "|---|---|---:|---:|---:|---:|---:|",
+                (
+                    "| Claim | Status | Estimate | Lower | Upper | Acceptable | Unacceptable | "
+                    "Verdict at other thresholds |"
+                ),
+                "|---|---|---:|---:|---:|---:|---:|---|",
             ]
         )
         mandatory = [claim for claim in report.claims if claim.mandatory]
@@ -353,12 +395,13 @@ def _markdown(report: SafetyReport) -> str:
                             _number(claim.upper, places),
                             _number(claim.acceptable_upper, places),
                             _number(claim.unacceptable_lower, places),
+                            _verdict_range(claim.verdict_range, places),
                         ]
                     )
                     + " |"
                 )
         else:
-            lines.append("| _No mandatory claims_ | `INCONCLUSIVE` | — | — | — | — | — |")
+            lines.append("| _No mandatory claims_ | `INCONCLUSIVE` | — | — | — | — | — | — |")
         if any(claim.descriptive_status is not None for claim in mandatory):
             lines.extend(
                 [
@@ -366,7 +409,8 @@ def _markdown(report: SafetyReport) -> str:
                     (
                         "This analysis is exploratory, so no claim is certified. A descriptive "
                         "status is what a confirmatory analysis of the same bounds would give at "
-                        "the plan's thresholds. It is shown for reading the bounds and certifies "
+                        "the plan's thresholds, and the verdict at other thresholds is what it "
+                        "would give at those. Both are shown for reading the bounds and certify "
                         "nothing."
                     ),
                 ]
