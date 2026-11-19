@@ -287,8 +287,8 @@ The hash is of the file's bytes, not of its rows, so a copy whose line endings w
 as a Windows checkout can do, hashes differently; hash and audit the file as the labelling
 used it. The package cannot recompute the queue from the seed: that the queue's order is
 random is declared, and the hash lets an auditor check the queue against the one the
-labelling used. The protocol is
-available in fixed-design plans; a generative plan does not accept it yet.
+labelling used. The protocol is available in fixed-design plans; a generative plan does not
+accept it yet.
 
 ### Estimation and error budget
 
