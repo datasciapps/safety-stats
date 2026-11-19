@@ -45,13 +45,18 @@ def test_the_link_names_a_tracked_page_on_main() -> None:
     prefix = "https://github.com/aduncan001/safety_stats/blob/main/"
     assert RESULTS_ESTABLISH_URL.startswith(prefix)
     page = RESULTS_ESTABLISH_URL.removeprefix(prefix)
-    tracked = subprocess.run(
-        ["git", "ls-files", "--error-unmatch", page],
-        cwd=ROOT,
-        capture_output=True,
-        check=False,
-    )
-    assert tracked.returncode == 0, f"{page} is not a tracked file"
+    try:
+        tracked = subprocess.run(
+            ["git", "ls-files", "--", page],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+    except (OSError, subprocess.CalledProcessError):  # pragma: no cover - no git checkout
+        # As in test_repository_consistency: a copy of the tree without .git has no index.
+        pytest.skip("the tracked-page check requires a git checkout")
+    assert tracked == [page], f"{page} is not a tracked file"
 
 
 @pytest.mark.parametrize(
