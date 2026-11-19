@@ -55,6 +55,39 @@ def test_strata_combine_several_columns() -> None:
     assert frame.groupby("pilot_stratum")["pilot_selected"].sum().tolist() == [2, 2, 2, 2]
 
 
+def test_the_draw_is_pinned() -> None:
+    """The prompts a seed draws never change: a recorded seed must reproduce its pilot.
+
+    The identifiers include non-ASCII ones, whose rank depends on how they are encoded before
+    hashing. Changing the hash, its input or the encoding changes these lists.
+    """
+    manifest = pd.DataFrame(
+        [
+            {"prompt_id": prompt_id, "category": category}
+            for category, prompt_ids in {
+                "harm": [f"h-{index:03d}" for index in range(1, 9)],
+                "privé": ["prompt-é", "prompt-ü", "提示-1", "提示-2", "p-🙂", "p-plain"],
+            }.items()
+            for prompt_id in prompt_ids
+        ]
+    )
+    drawn = {
+        per_stratum: draw_pilot(
+            manifest, per_stratum=per_stratum, strata=["category"], seed=20261119
+        )
+        for per_stratum in (1, 2, 3)
+    }
+    selected = {
+        per_stratum: frame.loc[frame["pilot_selected"], "prompt_id"].tolist()
+        for per_stratum, frame in drawn.items()
+    }
+    assert selected == {
+        1: ["h-005", "prompt-ü"],
+        2: ["h-002", "h-005", "prompt-ü", "提示-2"],
+        3: ["h-001", "h-002", "h-005", "prompt-ü", "提示-1", "提示-2"],
+    }
+
+
 def test_the_draw_ignores_row_order() -> None:
     manifest = _manifest({"a": 30, "b": 30})
     shuffled = manifest.sample(frac=1.0, random_state=11).reset_index(drop=True)
