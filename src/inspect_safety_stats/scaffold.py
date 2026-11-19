@@ -76,6 +76,9 @@ class ScaffoldResult:
     group_by: str | None
     notes: list[str] = field(default_factory=list)
     assumptions: list[AssumptionNote] = field(default_factory=list)
+    # The logs to analyze the plan with: those given, or, when init ignored some, only the
+    # evaluation logs it used, since analyze would report the ignored ones incomplete.
+    logs: list[str] = field(default_factory=list)
 
 
 def _native(value: Any) -> Any:
@@ -373,12 +376,21 @@ def scaffold_plan(
     notes: list[str] = []
 
     status = evaluations.get("status", pd.Series(["success"] * len(evaluations)))
-    successful = evaluations.loc[status.astype(str) == "success"].copy()
-    skipped = len(evaluations) - len(successful)
-    if skipped:
-        notes.append(f"ignored {skipped} evaluation log(s) that did not finish successfully")
+    finished = (status.astype(str) == "success").to_numpy()
+    successful = evaluations.loc[finished].copy()
     if successful.empty:
         raise ValueError("none of the evaluation logs finished successfully")
+    given = log_input if isinstance(log_input, list) else [log_input]
+    analyze_logs = given
+    if not finished.all():
+        ignored = sorted(evaluations.loc[~finished, "log"].astype(str))
+        notes.append(
+            f"ignored {len(ignored)} evaluation log(s) that did not finish successfully: "
+            + ", ".join(ignored)
+            + ". analyze would report them incomplete, so give it only the logs init used, "
+            "as Next: does"
+        )
+        analyze_logs = sorted(successful["log"].astype(str).unique())
 
     per_model = successful.groupby(successful["model"].astype(str))["eval_id"].nunique()
     repeated = sorted(str(model) for model, count in per_model.items() if count > 1)
@@ -663,4 +675,5 @@ def scaffold_plan(
         group_by=group_by,
         notes=notes,
         assumptions=assumptions,
+        logs=analyze_logs,
     )

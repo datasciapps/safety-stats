@@ -553,12 +553,15 @@ them with `--failure-values` or `--failure-threshold`. Nor does it take a value 
 safe: when the score has more than two values, name the safe ones with `--safe-values`, or
 `init` refuses and lists the values left over. With two, the one `--failure-values` does not
 name is safe, and `init` says so. `design.csv` has no `zero_tolerance` column, so the plan turns
-the zero-tolerance gate off, and its header says how to turn it on. The plan's header lists each
-choice `init` made and the assumption it rests on, from `inspect_safety_stats.registry`: rollout
-independence first, then the rest. Each note says what goes wrong if the assumption does not
-hold and how to change it. The command prints the same list. A plan written after the logs
-exist cannot be confirmatory, so `--intent confirmatory` is refused with exit status `3`;
-the plan is `exploratory`. For a confirmatory analysis, write the plan before the runs.
+the zero-tolerance gate off, and its header says how to turn it on. `init` uses only the
+evaluations that finished successfully and names the logs it ignored; its suggested `analyze`
+command then lists the logs it used, since `analyze` would report the others incomplete. The
+plan's header lists each choice `init` made and the assumption it rests on, from
+`inspect_safety_stats.registry`: rollout independence first, then the rest. Each note says what
+goes wrong if the assumption does not hold and how to change it. The command prints the same
+list. A plan written after the logs exist cannot be confirmatory, so `--intent confirmatory` is
+refused with exit status `3`; the plan is `exploratory`. For a confirmatory analysis, write the
+plan before the runs.
 
 Every `plan` subcommand except `pilot` accepts `--family-size M`, which plans at the Bonferroni share
 `alpha / M`. Use it to match the `equal_bonferroni` allocation that `analyze` applies to a

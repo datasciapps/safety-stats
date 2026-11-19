@@ -240,7 +240,7 @@ def init_command(
         typer.echo(f"  {assumption.assumption}: {assumption.choice}")
     typer.echo(f"Manifest: {result.manifest_path}")
     typer.echo(f"Plan: {result.plan_path}")
-    log_args = " ".join(f"--logs {path}" for path in logs)
+    log_args = " ".join(f"--logs {path}" for path in result.logs)
     typer.echo(
         f"Next: inspect-safety-stats analyze --plan {result.plan_path} {log_args} "
         "--output <report-dir>"

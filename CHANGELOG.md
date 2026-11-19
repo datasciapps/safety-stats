@@ -266,7 +266,9 @@ described in their pull requests.
   as safe that nobody named: a score with more than two values needs `--safe-values`, and
   without it `init` refuses and lists the values left over. `design.csv` has no
   `zero_tolerance` column, so the plan turns the zero-tolerance gate off and its header says
-  how to turn it on; left at its default, the gate could hold no prompt. The plan's header,
+  how to turn it on; left at its default, the gate could hold no prompt. `init` names the logs
+  of evaluations that did not finish successfully, which it ignores, and its suggested
+  `analyze` command then lists only the logs it used. The plan's header,
   and the command's output, list each choice `init` made with the assumption it rests on from
   `inspect_safety_stats.registry`, rollout independence first, what goes wrong if it does not
   hold, and the remedy. The plan is exploratory; `--intent confirmatory` is refused, because

@@ -12,7 +12,7 @@ from inspect_safety_stats.cli import app
 from inspect_safety_stats.registry import ASSUMPTIONS
 from inspect_safety_stats.scaffold import scaffold_plan
 from tests.cli_output import plain
-from tests.mock_inspect_logs import mock_task, write_mock_logs
+from tests.mock_inspect_logs import DEFAULT_METADATA, mock_task, write_mock_logs
 
 
 @pytest.fixture(scope="module")
@@ -67,6 +67,45 @@ def test_init_takes_the_other_value_of_a_two_valued_score_as_safe_and_says_so(
     result = scaffold_plan(mock_logs, tmp_path, failure_values=["FAIL"])
     assert result.safe_values == ["PASS"]
     assert any("'PASS', the one --failure-values does not name" in note for note in result.notes)
+
+
+def test_init_names_the_logs_it_ignored_and_analyzes_only_those_it_used(
+    tmp_path_factory: pytest.TempPathFactory, tmp_path: Path
+) -> None:
+    # The Next: line repeated the --logs directory, so analyze read the failed run as well
+    # and exited 3 with LOG_INCOMPLETE.
+    logs = tmp_path_factory.mktemp("failed-run") / "logs"
+    failing = [dict(item, error=index == 0) for index, item in enumerate(DEFAULT_METADATA)]
+    write_mock_logs(logs, models=("mockllm/alpha",), tasks=[mock_task(metadata=failing)],
+                    succeed=False)
+    failed = {path.name for path in logs.glob("*.eval")}
+    write_mock_logs(logs, models=("mockllm/alpha",))
+    kept = {path.name for path in logs.glob("*.eval")} - failed
+    assert len(failed) == len(kept) == 1
+
+    result = CliRunner().invoke(
+        app, ["init", "--logs", str(logs), "--failure-values", "FAIL", "--output", str(tmp_path)]
+    )
+    assert result.exit_code == 0, result.output
+    output = plain(result.output)
+    note = re.search(r"Note: ignored 1 evaluation log\(s\) that did not \D+: (\S+)\. ", output)
+    assert note is not None and Path(note.group(1)).name in failed
+    command = re.search(r"Next: inspect-safety-stats analyze --plan \S+ (.*) --output ", output)
+    assert command is not None
+    used = re.findall(r"--logs (\S+)", command.group(1))
+    assert [Path(path).name for path in used] == sorted(kept)
+
+    def analyze_with(*paths: str) -> int:
+        arguments = [part for path in paths for part in ("--logs", path)]
+        plan = str(tmp_path / "safety-plan.yaml")
+        output = str(tmp_path / f"report-{len(paths)}-{Path(paths[0]).name}")
+        return CliRunner().invoke(
+            app, ["analyze", "--plan", plan, *arguments, "--output", output]
+        ).exit_code
+
+    assert analyze_with(*used) == 0
+    # The whole directory holds the failed run too, which analyze reports incomplete.
+    assert analyze_with(str(logs)) == 3
 
 
 def test_init_plan_analyzes_end_to_end(mock_logs: Path, tmp_path: Path) -> None:
