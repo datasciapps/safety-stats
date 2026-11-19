@@ -723,6 +723,13 @@ coverage is at least one minus the sum of the row's own alpha and `sensitivity_a
 - **Transport.** The same judge and rubric, applied to this run's outputs, is at least as
   sensitive on every prompt as on the published set. Nothing in the run checks this, and a
   judge under attack can fail it.
+- **Independent items.** The Clopper--Pearson bound treats the published set's `human_unsafe`
+  items as independent draws that share one sensitivity, and the coverage stated above rests
+  on it. A set with several completions of each behaviour, such as HarmBench's classifier
+  validation set, does not meet it: completions of one behaviour tend to be caught or missed
+  together, so counts over all of them overstate the bound's precision. Enter counts over
+  independent items instead, for example one human-unsafe completion per behaviour, chosen
+  without looking at the judge's verdict.
 - Human adjudication on the published set is the ground truth.
 
 Each interval lists these assumptions, together with the published set and the sensitivity

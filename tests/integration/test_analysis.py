@@ -1045,6 +1045,8 @@ def test_transported_judge_calibration_bounds_true_risk_by_the_published_sensiti
         )
         assert interval.raw_upper == row.upper
         assert any("Transport assumption" in text for text in interval.assumptions)
+        # The Clopper-Pearson bound's own assumption, on which the coverage rests.
+        assert any("independent draws" in text for text in interval.assumptions)
         assert any("Experimental" in text for text in interval.warnings)
     assert corrected_rows > 1
 
