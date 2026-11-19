@@ -122,6 +122,26 @@ both `design.hierarchy` and `design.weights.hierarchy` to `[task_id, prompt_id]`
 use a manifest without a `question_id` column; setting only `design.hierarchy` does not, because
 the weights still name it.
 
+The identifier columns `prompt_id`, `question_id` and `task_id`, and every column the plan
+groups prompts by (the levels of `design.hierarchy` and of a `nested_equal` weight hierarchy,
+a group `filter` column, a manifest column in a `block_by` and `design.stratum_column`), are
+read as text, exactly as written. `1`, `01` and `1.0` are three labels, `true` and `True` are
+two, and `0001` stays `0001`. Write each `prompt_id` as the logs record the sample's id:
+`0001` does not match the id `1`, and the `PROMPT_UNEXPECTED` and `PROMPT_MISSING` errors name
+the other spelling when an identifier in the logs and one in the manifest spell the same number.
+A cell in one of these columns has no value when it is blank or holds, ignoring surrounding
+spaces, a marker that R, spreadsheets, databases and pandas write for a missing value: `NA`,
+`N/A`, `n/a`, `None`, `null`, `NULL`, `nan`, `NaN`, `-nan`, `-NaN`, `<NA>`, `#N/A`, `#N/A N/A`,
+`#NA`, `1.#IND`, `-1.#IND`, `1.#QNAN` or `-1.#QNAN`. Such a cell stops the analysis with an
+error that names the column and the rows. Recode a label meant literally, such as `NA` for "not
+applicable", for example as `none`.
+
+The other columns keep the types pandas infers, and so do the columns the plan reads as numbers
+or booleans even when it also groups prompts by them: a weight `column`, the
+`inclusion_probability_column`, a `threshold_column`, an adaptive claim's `order_field` and
+`expected_rollouts` are numbers, and the `selection_column`, `mandatory` and the zero-tolerance
+field are booleans.
+
 When `policy.zero_tolerance.manifest_field` is set in the plan and zero tolerance is enabled, the
 manifest must have that column, and an analysis without it stops with an error. The default
 field `zero_tolerance` stays optional.
@@ -947,7 +967,13 @@ Every selected evaluation must match at most one cohort.
 
 ## `groups`
 
-Groups use exact manifest filters and one weight strategy:
+Groups use exact manifest filters and one weight strategy. A filter value matches the
+manifest's text as written, so quote one that YAML would read as a number or a boolean, as in
+`filter: {tier: '01'}`: an unquoted `01`, `1`, `1.0` or `true` is an error, because YAML has
+already lost how it was written. A filter on `mandatory` or `zero_tolerance`, which are read as
+booleans, takes `true` or `false` unquoted.
+
+The weight strategies are:
 
 - `equal_prompt`;
 - `nested_equal`;

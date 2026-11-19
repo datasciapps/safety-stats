@@ -151,6 +151,10 @@ design:
   inclusion_probability_column: inclusion_probability
 ```
 
+Stratum labels are read as text, as written: `1` and `01`, or `true` and `True`, are two
+strata. A label that is blank or marks a missing value, such as `NA` or `None`, stops the
+analysis with an error that names the rows.
+
 Drawing exactly \(n_h\) of stratum \(h\)'s \(N_h\) frame items makes the inclusion
 indicators **negatively correlated** -- they must sum to \(n_h\) -- so the independence the
 concentration engines assume does not hold.
@@ -274,11 +278,12 @@ and a report whose design manifest is the frame covers them with the manifest's 
 command refuses a stratum with fewer prompts than `--per-stratum`, a missing value in a
 strata column, strata values that would share a label once joined, a manifest that already
 has the added columns, and an `--output` that would overwrite the manifest. Values are
-written back as they appear in the manifest. The draw reads strata as text, but `analyze`
-reads the pilot frame with pandas' type inference, so the command also refuses a stratum
-label that pandas reads as missing (`N/A`, `None`, `NA`) and labels that it reads as one
-value (`1` and `01`, `true` and `True`): `analyze` would otherwise check the draw against
-strata it did not use.
+written back as they appear in the manifest. The draw and `analyze` both read strata as text.
+`analyze` refuses a stratum label that marks a missing value, such as `N/A`, `None` or `NA`
+(the full list is under [`inputs`](plan-reference.md#inputs)), so the command refuses such a
+label too. It also refuses labels that pandas' default type inference reads as one value
+(`1` and `01`, `true` and `True`): `analyze` keeps them apart, but a spreadsheet or a pandas
+reader with its defaults would show them as one stratum to anyone who checks the draw.
 
 In Python, `draw_pilot(manifest, per_stratum=..., strata=[...], seed=...)` in
 `inspect_safety_stats.ingest.pilot` returns the same frame as a DataFrame. Read the manifest

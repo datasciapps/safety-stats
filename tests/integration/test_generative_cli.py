@@ -184,6 +184,24 @@ def test_text_artifacts_have_the_same_bytes_on_every_platform(
         assert b"\r" not in item.read_bytes(), item.name
 
 
+def test_seed_identifiers_that_read_as_numbers_survive_the_ledgers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The seed manifest is read as text, but its ledgers were read back with pandas' type
+    inference: a semantic seed `001` became the number 1, and analysis of the run failed."""
+
+    plan = write_plan(tmp_path)
+    seeds = SEEDS_WITH_TEXT.replace("s001", "001").replace("s002", "002").replace("s003", "1.0")
+    (tmp_path / "seeds.csv").write_text(seeds, encoding="utf-8")
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts)
+
+    report = analyze_run(plan, artifacts, "logs", cohort="candidate")
+    assert report.tree.root.draws == 200
+    assert not report.has_errors
+
+
 def test_analyze_command_end_to_end(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     plan = write_plan(tmp_path)
     artifacts = tmp_path / "run"
