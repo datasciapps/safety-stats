@@ -403,12 +403,14 @@ class LabellingProtocolSpec(StrictModel):
     """Experimental: how the human labels of a validated calibration were collected.
 
     ``queue`` is a CSV whose ``observation_id`` column lists the rollouts in the order they
-    are to be labelled. A queue that lists, within each judge stratum, all of its classified
-    rollouts or a simple random sample of them, in a seeded random order, makes every prefix a
-    simple random sample within each stratum. ``tier`` keeps only the queue rows whose
-    ``tier`` column has that value, for a queue that also holds rows the calibration does not
-    use. ``seed`` records the permutation's seed for an audit; the package cannot recompute
-    the queue from it.
+    are to be labelled. A queue that lists, within each of the calibration's judge strata (per
+    cohort, and per group when it is scoped to groups), all of its classified rollouts or a
+    simple random sample of them, in a seeded random order, makes every prefix a simple random
+    sample within each stratum. A queue ordered within finer strata, interleaved in shares
+    other than their sizes, is such a queue only for a calibration of those strata, and the
+    analysis cannot tell. ``tier`` keeps only the queue rows whose ``tier`` column has that
+    value, for a queue that also holds rows the calibration does not use. ``seed`` records the
+    permutation's seed for an audit; the package cannot recompute the queue from it.
 
     The analysis checks that the queue lists only classified rollouts of the analysed run and
     that the validation manifest labels exactly its first rows, and warns when the queue lists

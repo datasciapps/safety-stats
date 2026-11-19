@@ -219,12 +219,27 @@ inputs:
       stopping: label_independent
 ```
 
-The queue lists rollouts in the order people label them. Within each judge stratum it lists
-all of the stratum's classified rollouts, or a simple random sample of them drawn before
-labelling, in a seeded random order. With the strata interleaved on a pattern fixed in
-advance, every prefix of the queue is then a simple random sample within each stratum. `tier`
-is for a queue that also holds rows the calibration does not use, such as rows oversampled to
-study where the judge goes wrong; the manifest then holds the calibration tier's labels only.
+The queue lists rollouts in the order people label them. Within each of the calibration's
+judge strata (a cohort's judge-unsafe and judge-safe rollouts, or those of one listed group
+when the calibration is scoped by `groups`), it lists all of the stratum's classified
+rollouts, or a simple random sample of them drawn before labelling, in a seeded random order.
+With the strata interleaved on a pattern fixed in advance, every prefix of the queue is then a
+simple random sample within each stratum.
+
+The order must be random over each of those strata as a whole. A queue that shuffles finer
+strata, such as each task's rollouts, separately and interleaves them in shares other than
+their sizes, as an allocation by expected precision does, labels some of them sooner than
+others: its prefixes are simple random samples of each finer stratum, not of the judge
+stratum, even when it lists every rollout. Such a queue is valid only for a calibration at the
+finer level: scoped by `groups` to those strata, one plan for each, or a
+[stratified design](#stratified-labels-experimental) that declares them. The analysis cannot
+tell it from a valid queue, and gives no warning. The calibration tier of
+[`examples/open_weights/label_queue.py`](../examples/open_weights/README.md#human-labels) is
+such a queue, by cohort, task and verdict.
+
+`tier` is for a queue that also holds rows the calibration does not use, such as rows
+oversampled to study where the judge goes wrong; the manifest then holds the calibration
+tier's labels only.
 
 The analysis checks that the manifest labels exactly the first rows of the queue (or of its
 tier), and that every row of the queue (or of its tier) names a classified rollout of the
