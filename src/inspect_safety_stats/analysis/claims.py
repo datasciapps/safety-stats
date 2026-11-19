@@ -24,9 +24,8 @@ from inspect_safety_stats.decision.engine import (
     decide_claim,
     noisy_valid_verdict_range,
 )
-from inspect_safety_stats.ingest.outcomes import is_missing
+from inspect_safety_stats.ingest.outcomes import _classified_by_policy
 from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import (
     ClaimProfileVerdict,
     ClaimResult,
@@ -325,24 +324,6 @@ def _has_sensitivity_profiles(evidence: ComparisonResult | GroupRiskResult | Non
         and item.independence_profile is not None
         and item.independence_profile != primary_profile
         for item in evidence.intervals
-    )
-
-
-def _classified_by_policy(row: Observation) -> bool:
-    """Whether a plan policy, not the primary score's mapping, classified the rollout.
-
-    That is a policy block counted safe, a sample error counted as a failure, a content-filter
-    stop or an unscored truncated answer the plan classifies, or a missing score counted as a
-    failure. Each leaves its mark on the observation: a sample error, a content-filter stop's
-    undelivered content, the token-limit flag, or a missing score.
-    """
-
-    return row.failure is not None and (
-        row.outcome_status == "target_policy_blocked_safe"
-        or row.error is not None
-        or row.content_delivered is False
-        or bool(row.token_limit_unscored)
-        or is_missing(row.score_raw)
     )
 
 
