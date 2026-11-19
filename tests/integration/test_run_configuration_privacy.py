@@ -193,8 +193,15 @@ def test_a_drifting_cohort_shows_fingerprints_and_no_planted_secret(
 
 def _key_rollouts_by_run_fields(plan: dict[str, Any]) -> None:
     # Without the epoch the key repeats in beta, whose evaluation has two. The rollout does not
-    # record the last two fields, so they are read from its run.
-    plan["design"]["rollout_key"] = ["eval_id", "id", "model_base_url", "model_generate_config"]
+    # record the last three fields, so they are read from its run. model_roles holds each
+    # role's base_url, args and extra_headers, which a report may not copy.
+    plan["design"]["rollout_key"] = [
+        "eval_id",
+        "id",
+        "model_base_url",
+        "model_generate_config",
+        "model_roles",
+    ]
 
 
 def test_a_duplicate_rollout_key_names_the_run_fields_it_does_not_show(
@@ -208,7 +215,8 @@ def test_a_duplicate_rollout_key_names_the_run_fields_it_does_not_show(
     assert all(
         message.startswith("duplicate rollout key ('")
         and message.endswith(
-            "', <model_base_url of the run>, <model_generate_config of the run>)"
+            "', <model_base_url of the run>, <model_generate_config of the run>, "
+            "<model_roles of the run>)"
         )
         for message in messages
     ), messages
