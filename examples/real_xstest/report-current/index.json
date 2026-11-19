@@ -78,7 +78,7 @@
   ],
   "guide": "https://github.com/aduncan001/safety_stats/blob/main/docs/agent-guide.md",
   "index_version": "1",
-  "package_version": "0.15.0",
+  "package_version": "0.16.0",
   "pointers_into": "report.json",
   "report_schema_version": "3.0",
   "summary": {

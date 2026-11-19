@@ -2562,7 +2562,7 @@
       "purpose": "all_mandatory"
     }
   ],
-  "package_version": "0.15.0",
+  "package_version": "0.16.0",
   "plan_defaults": [
     {
       "path": "analysis.registration",
