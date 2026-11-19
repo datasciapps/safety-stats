@@ -32,6 +32,13 @@ described in their pull requests.
   claims, and one names the prompts with a zero-tolerance failure and the models that
   failed them.
 
+- **report.md names the info codes that change a result (changes `report.md`).** Its
+  warnings block lists errors and warnings only, so an info code that adjusts a result, such
+  as `TOKEN_LIMIT_REACHED` counting an answer cut off at the token limit as the plan says, or
+  that withholds one, such as `JUDGE_LANG_REICZIGEL_UNAVAILABLE`, left no trace on the page. A
+  "Notes" line after the warnings now names each such code with its effect and count. Info
+  codes that only record a fact stay in `report-full.md`.
+
 - **report.md's prompt-level sensitivity is the prompt profile's (changes `report.md`).** The
   column showed the first sensitivity interval of the primary's method, whatever its profile:
   with a category profile listed before the prompt profile it showed the category interval,

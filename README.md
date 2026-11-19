@@ -424,12 +424,13 @@ reports/example/
   checksums.json
 ```
 
-`report.md` is a one-page summary: warnings first, then, when decisions are shown, the overall
-decision with the reason for it and every claim; then the failure rates, comparisons and
-breakdown, the intervals too wide for `report.precision_target` with the rollouts that would
-narrow them, and the assumptions used. Its bounds are rounded outward, a lower bound down and an
-upper bound up, so that none reads tighter than the analysis gives. `report-full.md` is the full report, with every
-interval construction, sensitivity and diagnostic.
+`report.md` is a one-page summary: warnings first, with any info code that adjusts or withholds
+a result; then, when decisions are shown, the overall decision with the reason for it and every
+claim; then the failure rates, comparisons and breakdown, the intervals too wide for
+`report.precision_target` with the rollouts that would narrow them, and the assumptions used.
+Its bounds are rounded outward, a lower bound down and an upper bound up, so that none reads
+tighter than the analysis gives. `report-full.md` is the full report, with every interval
+construction, sensitivity and diagnostic.
 
 A plan that declares
 [outcome mapping sensitivities](docs/plan-reference.md#outcome-mapping-sensitivities-experimental)

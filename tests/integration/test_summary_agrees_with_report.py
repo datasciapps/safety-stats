@@ -460,3 +460,60 @@ def test_the_written_page_is_the_one_report_json_renders(
 
     for report, page in rendered.values():
         assert summary_markdown(report) == page
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_only_info_codes_that_change_a_result_are_noted(
+    rendered: dict[str, tuple[SafetyReport, str]], name: str
+) -> None:
+    report, page = _case(rendered, name)
+    noted = [
+        item
+        for item in report.integrity.diagnostics
+        if item.severity == "INFO" and item.effect in {"adjusted", "withheld"}
+    ]
+    assert ("## Notes" in page) == bool(noted)
+
+
+def test_info_codes_that_adjust_or_withhold_a_result_are_named(
+    rendered: dict[str, tuple[SafetyReport, str]],
+) -> None:
+    """The summary names them in one line, after the warnings, whether or not there are any.
+
+    An info code that only records a fact is not named.
+    """
+
+    from inspect_safety_stats.report.summary import summary_markdown
+
+    report, _ = _case(rendered, "passing")
+    added = [
+        Diagnostic(severity="INFO", code="CLUSTER_DESIGN_EFFECT", message="recorded only"),
+    ] + [
+        Diagnostic(severity="INFO", code="TOKEN_LIMIT_REACHED", message="cut off", scope=scope)
+        for scope in ("cohorts/candidate/prompts/p00", "cohorts/candidate/prompts/p01")
+    ] + [
+        Diagnostic(
+            severity="INFO", code="JUDGE_LANG_REICZIGEL_UNAVAILABLE", message="not computed"
+        )
+    ]
+    warned = Diagnostic(severity="WARNING", code="DECISION_POLICY_SELF_DECLARED", message="")
+    for warning in ([], [warned]):
+        noted = report.model_copy(
+            update={
+                "integrity": report.integrity.model_copy(
+                    update={"diagnostics": [*warning, *added]}
+                )
+            }
+        )
+        page = summary_markdown(noted)
+        notes = section(page, "Notes")
+        assert notes.strip().splitlines()[0] == (
+            "Info diagnostics that change a result: `TOKEN_LIMIT_REACHED` (adjusted, 2×), "
+            "`JUDGE_LANG_REICZIGEL_UNAVAILABLE` (withheld). An adjusted result is computed "
+            "differently, for example with a wider bound or another method, and reported; a "
+            "withheld one is not reported. Each code's message is under Data integrity in "
+            "`report-full.md`."
+        )
+        assert "CLUSTER_DESIGN_EFFECT" not in page.split("## Claims", 1)[0]
+        assert ("## Warnings" in page) == bool(warning)
+        assert page.index("## Notes") < page.index("## Claims")

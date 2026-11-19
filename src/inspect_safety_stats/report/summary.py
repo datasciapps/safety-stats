@@ -56,6 +56,8 @@ _MEASURE_PLACES = 3
 _DEFAULT_DECIMAL_PLACES = 6
 _MAX_WARNING_SCOPES = 3
 _MAX_POLICY_PROMPTS = 5
+# The effects of the info codes the summary names (registry.Effect).
+_NOTED_EFFECTS = ("adjusted", "withheld")
 _JUDGE_PREFIX = "judge_corrected_"
 _MEASURE_PREFIX = "finite_design_"
 
@@ -853,6 +855,40 @@ def _warnings_section(diagnostics: list[Diagnostic]) -> list[str]:
     return lines
 
 
+def _notes_section(diagnostics: list[Diagnostic]) -> list[str]:
+    """One line naming the info codes that adjust or withhold a result.
+
+    The warnings block lists errors and warnings only. An info code that changes how a result
+    is computed, such as ``TOKEN_LIMIT_REACHED`` counting an answer cut off at the token limit
+    as the plan says, or that leaves one out, is named here, so that the reader of this page
+    knows a number on it was affected. Info codes that only record a fact are left to
+    ``report-full.md``.
+    """
+
+    noted: dict[tuple[str, str], int] = {}
+    for item in diagnostics:
+        if item.severity != "INFO":
+            continue
+        entry = CODES.get(item.code)
+        effect = item.effect or (entry.effect if entry is not None else None)
+        if effect in _NOTED_EFFECTS:
+            noted[(item.code, str(effect))] = noted.get((item.code, str(effect)), 0) + 1
+    if not noted:
+        return []
+    names = ", ".join(
+        f"`{_escape(code)}` ({effect}" + (f", {count}×" if count > 1 else "") + ")"
+        for (code, effect), count in noted.items()
+    )
+    return [
+        "## Notes",
+        "",
+        f"Info diagnostics that change a result: {names}. An adjusted result is computed "
+        "differently, for example with a wider bound or another method, and reported; a "
+        "withheld one is not reported. Each code's message is under Data integrity in "
+        "`report-full.md`.",
+    ]
+
+
 def _assumptions_section(report: SafetyReport) -> list[str]:
     """The assumptions the results rest on, with the plan fields left to their defaults."""
 
@@ -909,6 +945,7 @@ def summary_markdown(report: SafetyReport) -> str:
     flags: list[str] = []
     for section in (
         _warnings_section(diagnostics),
+        _notes_section(diagnostics),
         _claims_section(report),
         _root_section(report, target, budget, primary_scenario, flags),
         _comparison_section(report, target, budget, flags),
