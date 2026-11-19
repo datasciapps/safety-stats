@@ -459,3 +459,38 @@ def test_a_run_killed_between_a_units_two_rows_resumes(
     assert len(read_rewrites(artifacts / "rewrites.csv")) == 20
     with (artifacts / "prompts.restricted.csv").open(encoding="utf-8", newline="") as handle:
         assert len(list(csv.DictReader(handle))) == 20
+
+
+def test_a_resume_that_fails_writing_the_selection_ledger_leaves_it_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resume writes selections.csv again. Before, it wrote over the ledger in place, so a
+    failure midway left a truncated one that blocked every later resume and analysis."""
+
+    import pandas as pd
+
+    plan = write_plan(tmp_path, total=20)
+    artifacts = tmp_path / "run"
+    run_with(ScriptedKernel(survive=8), plan, artifacts)
+    before = (artifacts / "selections.csv").read_bytes()
+    original = pd.DataFrame.to_csv
+
+    def half_written(self: pd.DataFrame, path_or_buf: object = None, **kwargs: object) -> None:
+        text = original(self, None, **kwargs)
+        half = text[: len(text) // 2]
+        if hasattr(path_or_buf, "write"):
+            path_or_buf.write(half)
+        else:
+            with open(path_or_buf, "w", encoding="utf-8", newline="") as handle:
+                handle.write(half)
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(pd.DataFrame, "to_csv", half_written)
+    with pytest.raises(OSError, match="no space left"):
+        run_with(ScriptedKernel(), plan, artifacts, resume=True)
+    monkeypatch.setattr(pd.DataFrame, "to_csv", original)
+
+    assert (artifacts / "selections.csv").read_bytes() == before
+    assert list(artifacts.glob("*.partial")) == []
+    run = run_with(ScriptedKernel(), plan, artifacts, resume=True)
+    assert run is not None and run.resumed == 8 and run.accepted == 20
