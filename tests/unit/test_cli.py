@@ -85,40 +85,58 @@ def test_analyze_prints_each_warning_code_on_stderr_after_the_headline(tmp_path:
     result = _invoke_analyze(_simpleqa_plan(tmp_path), output)
     assert result.exit_code == 0
     index_md = output / "index.md"
+    report_md = output / "report.md"
     header = (
-        f"Warnings by code, each explained in {index_md} under "
-        '"Errors and warnings by code":'
+        f'Warnings by code, listed in {index_md} under "Errors and warnings by code"; '
+        f"{report_md} gives each one's assumption and effect under \"Warnings\":"
     )
     # Plain typer.echo lines, uncoloured; plain() would join them into one.
     stderr = result.stderr.splitlines()
     assert stderr[0] == header
     codes = ("PLAN_SELF_DECLARED", "TAIL_MEASURES_UNINFORMATIVE")
+    # The effect and what follows from it, which hold whenever the code is raised; the
+    # assumption is what the code says may not hold, so printed alone it would read as fact.
     assert stderr[1:] == [
-        f"  WARNING {code} (1 occurrence): {CODES[code].assumption}" for code in codes
+        f"  WARNING {code} (1 occurrence, {CODES[code].effect}): {CODES[code].consequence}"
+        for code in codes
     ]
+    assert not any(CODES[code].assumption in result.output for code in codes)
     assert header not in result.stdout
-    # After the headline, before the paths; index.md has the section the header names.
+    # After the headline, before the paths.
     lines = result.output.splitlines()
     assert (
         lines.index("Failure rate (weighted mean):")
         < lines.index(header)
-        < lines.index(f"Summary: {output / 'report.md'}")
+        < lines.index(f"Summary: {report_md}")
     )
+    # index.md lists each code under the section the header names, and report.md gives each
+    # one's assumption under the other.
     index_text = index_md.read_text(encoding="utf-8")
     assert "\n## Errors and warnings by code\n" in index_text
     assert all(f"| `{code}` | warning | 1 |" in index_text for code in codes)
+    summary_text = report_md.read_text(encoding="utf-8")
+    warnings_section = summary_text.split("\n## Warnings\n", 1)[1].split("\n## ", 1)[0]
+    for code in codes:
+        assert f"| `{code}` (warning) |" in warnings_section
+        assert CODES[code].assumption in warnings_section
+        assert f"**{CODES[code].effect}**. {CODES[code].consequence}" in warnings_section
 
 
 def test_analyze_prints_errors_by_code_when_integrity_is_invalid(tmp_path: Path) -> None:
+    from inspect_safety_stats.registry import CODES
+
     output = tmp_path / "report"
     result = _invoke_analyze(_simpleqa_plan(tmp_path, score_name="nonexistent_scorer"), output)
     assert result.exit_code == 3
     stderr = result.stderr.splitlines()
     assert stderr[0] == (
-        f"Errors and warnings by code, each explained in {output / 'index.md'} under "
-        '"Errors and warnings by code":'
+        f"Errors and warnings by code, listed in {output / 'index.md'} under "
+        f'"Errors and warnings by code"; {output / "report.md"} gives each one\'s assumption '
+        'and effect under "Warnings":'
     )
-    assert any(line.startswith("  ERROR SCORE_MISSING (") for line in stderr)
+    assert stderr[1] == (
+        f"  ERROR SCORE_MISSING (9 occurrences, invalid): {CODES['SCORE_MISSING'].consequence}"
+    )
 
 
 def test_analyze_exits_three_but_writes_the_report_when_integrity_is_invalid(

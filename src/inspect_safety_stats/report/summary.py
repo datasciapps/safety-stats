@@ -39,6 +39,9 @@ from inspect_safety_stats.stats.planning import (
     rollouts_for_half_width,
 )
 
+# The section that gives each error and warning code's assumption and effect; analyze points
+# to it by name.
+WARNINGS_SECTION = "Warnings"
 _MAX_BREAKDOWN_ROWS = 40
 _MAX_WARNING_SCOPES = 3
 _JUDGE_PREFIX = "judge_corrected_"
@@ -589,7 +592,7 @@ def _warnings_section(diagnostics: list[Diagnostic]) -> list[str]:
     for item in sorted(shown, key=lambda item: item.severity != "ERROR"):
         by_code.setdefault((item.severity, item.code), []).append(item)
     lines = [
-        "## Warnings",
+        f"## {WARNINGS_SECTION}",
         "",
         "| Code | Where | Assumption | Effect |",
         "|---|---|---|---|",

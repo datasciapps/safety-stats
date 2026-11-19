@@ -244,11 +244,16 @@ def init_command(
 def _echo_warnings(warnings: list[SummaryWarning], index_md: Path) -> None:
     """Print the report's errors and warnings by code on stderr, as index.md lists them.
 
-    Each code gets one line: its severity, how often it occurred and the assumption it rests
-    on, so that a reader of the command's output alone sees what qualifies the headline.
+    Each code gets one line: its severity, how often it occurred, its effect on the results
+    and the registry's consequence, which says what the analysis did about it, so that a
+    reader of the command's output alone sees what qualifies the headline. The registry's
+    assumption is phrased as the assumption, so printed alone it would state as fact what the
+    code says may not hold; the header names the section of report.md that gives it beside
+    the effect, and the section of index.md that lists each code's diagnostics.
     """
 
-    from inspect_safety_stats.report.index import WARNINGS_HEADING
+    from inspect_safety_stats.report.index import SUMMARY_PAGE, WARNINGS_HEADING
+    from inspect_safety_stats.report.summary import WARNINGS_SECTION
 
     if not warnings:
         return
@@ -258,14 +263,18 @@ def _echo_warnings(warnings: list[SummaryWarning], index_md: Path) -> None:
         else "Warnings"
     )
     typer.echo(
-        f'{kinds} by code, each explained in {index_md} under "{WARNINGS_HEADING}":',
+        f'{kinds} by code, listed in {index_md} under "{WARNINGS_HEADING}"; '
+        f"{index_md.with_name(SUMMARY_PAGE)} gives each one's assumption and effect under "
+        f'"{WARNINGS_SECTION}":',
         err=True,
     )
     for warning in warnings:
         times = "occurrence" if warning.count == 1 else "occurrences"
-        assumption = warning.assumption or "no registry entry gives its assumption"
+        effect = f", {warning.effect}" if warning.effect else ""
+        consequence = warning.consequence or "no registry entry gives its consequence"
         typer.echo(
-            f"  {warning.severity} {warning.code} ({warning.count} {times}): {assumption}",
+            f"  {warning.severity} {warning.code} ({warning.count} {times}{effect}): "
+            f"{consequence}",
             err=True,
         )
 

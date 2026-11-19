@@ -65,9 +65,13 @@ described in their pull requests.
 
 - **`analyze` prints the errors and warnings in the terminal.** After the headline failure
   rates, `analyze` prints each error and warning code of the report on standard error, one line
-  per code: its severity, how often it occurred and the assumption it rests on, under a line
-  that names the report's `index.md` and its section "Errors and warnings by code". A user or a
-  coding agent that reads only the command's output now sees what qualifies the headline.
+  per code: its severity, how often it occurred, its effect on the results and what follows
+  from that effect, as `report.md` gives them. A header line names the report's `index.md` and
+  its section "Errors and warnings by code", which lists each code's diagnostics, and
+  `report.md` and its section "Warnings", which also gives the assumption each code checks.
+  The assumption is not printed in the terminal: it is phrased as what the results rest on,
+  so printed alone it would read as a fact where the code reports that it may not hold. A user
+  or a coding agent that reads only the command's output now sees what qualifies the headline.
   Report files are unchanged.
 
 - **`validate` and `analyze` report how much a grouping column shrinks the evidence
