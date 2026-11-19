@@ -12,7 +12,7 @@ Decisions are hidden (`report.include_decisions` is false); `report.json` still 
 
 | Kind | Model | Baseline | Group | Measure | Estimand | Estimate | Lower | Upper | Eligibility | Pointer | CSV row |
 |---|---|---|---|---|---|---:|---:|---:|---|---|---|
-| group_risk | candidate | — | all-eight | mean | — | 0.5000 | 0.0921 | 0.9079 | certifying | `/group_risks/2` | — |
+| group_risk | candidate | — | all-eight | mean | — | 0.5000 | 0.0920 | 0.9080 | certifying | `/group_risks/2` | — |
 
 ## Errors and warnings by code
 
@@ -21,7 +21,7 @@ Decisions are hidden (`report.include_decisions` is false); `report.json` still 
 | `PLAN_SELF_DECLARED` | warning | 1 | recorded | `/integrity/diagnostics/0` | — |
 | `TAIL_MEASURES_UNINFORMATIVE` | warning | 1 | recorded | `/integrity/diagnostics/1` | — |
 
-What each code assumes and what follows is in `index.json` and in `report.md`; `docs/diagnostics.md` gives the remedy.
+What each code assumes and what follows is in `index.json` and in `report.md`; [the diagnostics reference](https://github.com/aduncan001/safety_stats/blob/main/docs/diagnostics.md) gives the remedy.
 
 ## Assumptions used
 

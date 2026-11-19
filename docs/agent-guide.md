@@ -49,7 +49,9 @@ and `comparisons` in `report.json`.
 
 Only `certifying` results support a claim. A `diagnostic` result is a sensitivity or a
 description, and an `invalid` one has no usable bound. Bounds are null when none could be
-computed.
+computed. `index.md` and `report.md` round each lower bound down and each upper bound up, so
+that none reads tighter than the analysis gives; `index.json` and `report.json` hold the exact
+values.
 
 ## Warnings
 

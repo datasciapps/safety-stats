@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,7 @@ from inspect_safety_stats.report.artifacts import (
 )
 from inspect_safety_stats.report.claims import CLAIMS_JSON, claims_export
 from inspect_safety_stats.report.index import index_files
+from inspect_safety_stats.report.rounding import Direction, exact, rounded
 from inspect_safety_stats.schema.reports import (
     ClaimResult,
     ComparisonResult,
@@ -76,15 +77,15 @@ def _verdict_range(verdict_range: VerdictRange | None, places: int) -> str:
 
     if verdict_range is None:
         return "—"
-    step = Decimal(1).scaleb(-places)
     parts = []
-    for verdict, value, strict, name, rounding, symbols in (
+    direction: Direction
+    for verdict, value, strict, name, direction, symbols in (
         (
             "PASS",
             verdict_range.pass_acceptable_upper,
             verdict_range.pass_strict,
             "acceptable",
-            ROUND_CEILING,
+            "up",
             (">", "≥"),
         ),
         (
@@ -92,15 +93,14 @@ def _verdict_range(verdict_range: VerdictRange | None, places: int) -> str:
             verdict_range.fail_unacceptable_lower,
             verdict_range.fail_strict,
             "unacceptable",
-            ROUND_FLOOR,
+            "down",
             ("<", "≤"),
         ),
     ):
         if value is None:
             continue
-        exact = Decimal(repr(value))
-        shown = exact.quantize(step, rounding=rounding)
-        symbol = symbols[0] if strict and shown == exact else symbols[1]
+        shown = rounded(value, places, direction)
+        symbol = symbols[0] if strict and shown == exact(value) else symbols[1]
         # Fixed-point like the other columns: str() of a Decimal turns scientific below 1E-6,
         # which a zero lower bound reaches at seven or more places.
         parts.append(f"{verdict} at {name} {symbol} {shown:f}")

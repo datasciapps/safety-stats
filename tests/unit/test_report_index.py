@@ -12,6 +12,7 @@ import pytest
 
 from inspect_safety_stats.report.index import (
     AGENT_GUIDE_URL,
+    DIAGNOSTICS_URL,
     INDEX_JSON,
     INDEX_MD,
     index_document,
@@ -144,12 +145,25 @@ def test_a_report_read_back_from_report_json_writes_the_same_index(tmp_path: Pat
         assert (directory / name).read_bytes() == text.encode("utf-8")
 
 
-def test_the_guide_link_names_a_tracked_page_on_main() -> None:
+@pytest.mark.parametrize("url", [AGENT_GUIDE_URL, DIAGNOSTICS_URL])
+def test_the_guide_link_names_a_tracked_page_on_main(url: str) -> None:
     prefix = "https://github.com/aduncan001/safety_stats/blob/main/"
-    assert AGENT_GUIDE_URL.startswith(prefix)
-    page = AGENT_GUIDE_URL.removeprefix(prefix)
+    assert url.startswith(prefix)
+    page = url.removeprefix(prefix)
     root = Path(__file__).resolve().parents[2]
     tracked = subprocess.run(
         ["git", "ls-files", "--error-unmatch", page], cwd=root, capture_output=True, check=False
     )
     assert tracked.returncode == 0, f"{page} is not tracked"
+
+
+def test_the_pages_link_the_diagnostics_reference_where_a_reader_can_open_it(
+    tmp_path: Path,
+) -> None:
+    """A report is read away from the repository, where a docs/ path leads nowhere."""
+
+    directory = _report().write(tmp_path / "report")
+    for name in (INDEX_MD, "report.md"):
+        page = (directory / name).read_text(encoding="utf-8")
+        assert f"[the diagnostics reference]({DIAGNOSTICS_URL})" in page, name
+        assert "`docs/diagnostics.md`" not in page, name

@@ -13,7 +13,7 @@ Decisions are hidden (`report.include_decisions` is false); `report.json` still 
 | Kind | Model | Baseline | Group | Measure | Estimand | Estimate | Lower | Upper | Eligibility | Pointer | CSV row |
 |---|---|---|---|---|---|---:|---:|---:|---|---|---|
 | group_risk | published_gpt4_replay | — | all-pairs | mean | — | 0.1250 | 0.0002 | 0.6865 | certifying | `/group_risks/2` | — |
-| group_risk | published_gpt4_replay | — | safe-prompts | mean | — | 0.0000 | 0.0000 | 0.7459 | certifying | `/group_risks/6` | — |
+| group_risk | published_gpt4_replay | — | safe-prompts | mean | — | 0.0000 | 0.0000 | 0.7460 | certifying | `/group_risks/6` | — |
 | group_risk | published_gpt4_replay | — | unsafe-prompts | mean | — | 0.2500 | 0.0004 | 0.9219 | certifying | `/group_risks/10` | — |
 
 ## Errors and warnings by code
@@ -22,7 +22,7 @@ Decisions are hidden (`report.include_decisions` is false); `report.json` still 
 |---|---|---:|---|---|---|
 | `TAIL_MEASURES_UNINFORMATIVE` | warning | 3 | recorded | `/integrity/diagnostics/0`, `/integrity/diagnostics/1`, `/integrity/diagnostics/2` | — |
 
-What each code assumes and what follows is in `index.json` and in `report.md`; `docs/diagnostics.md` gives the remedy.
+What each code assumes and what follows is in `index.json` and in `report.md`; [the diagnostics reference](https://github.com/aduncan001/safety_stats/blob/main/docs/diagnostics.md) gives the remedy.
 
 ## Assumptions used
 

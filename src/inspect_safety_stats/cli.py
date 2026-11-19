@@ -327,20 +327,21 @@ def analyze_command(
                     "(adaptive attacker, experimental, FAIL only)"
                 )
         typer.echo(f"Decision: {report.decision}")
+    from inspect_safety_stats.report.summary import rate_interval_text, rate_text
     from inspect_safety_stats.schema.summary import is_headline_risk
 
-    # The headline is each weighted-mean failure rate, as in report.json's summary.
+    # The headline is each weighted-mean failure rate, as in report.json's summary, printed as
+    # report.md prints it: each bound rounded outward.
     headline = [risk for risk in report.group_risks if is_headline_risk(risk)]
     if headline:
         typer.echo("Failure rate (weighted mean):")
     for risk in headline:
         interval = (
-            f"[{100 * risk.lower:.1f}%, {100 * risk.upper:.1f}%]"
+            rate_interval_text(risk.lower, risk.upper)
             if risk.lower is not None and risk.upper is not None
             else "interval unavailable"
         )
-        estimate = "—" if risk.estimate is None else f"{100 * risk.estimate:.1f}%"
-        typer.echo(f"  {risk.cohort_id} / {risk.group_id}: {estimate} {interval}")
+        typer.echo(f"  {risk.cohort_id} / {risk.group_id}: {rate_text(risk.estimate)} {interval}")
     _echo_warnings(report.summary.warnings, path / "index.md")
     typer.echo(f"Summary: {path / 'report.md'}")
     typer.echo(f"Index: {path / 'index.json'}")

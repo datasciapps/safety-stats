@@ -78,6 +78,76 @@ described in their pull requests.
   depend on the rollouts, such as `[run_key]`, their frontiers are split instead, which can
   widen the other intervals under that profile but never narrows them.
 
+- **report.md, index.md and `analyze` round every bound outward (changes `report.md` and
+  `index.md`).** They rounded each bound to the nearest digit shown, so an upper bound could
+  read tighter than the analysis gave: with 20 prompts of 500 rollouts and no failure, an upper
+  bound of 0.00044 read as 0.0%, and a claim's upper bound could print equal to a threshold it
+  exceeded. Each upper bound is now rounded up and each lower bound down: at a tenth of a
+  percentage point for rates and differences in `report.md` and in the failure rates `analyze`
+  prints, at two decimals for ratios, three for tail and threshold measures and four in
+  `index.md`. The claims in `report.md` show `report.decimal_places` (6 by default), as
+  `report-full.md` does, instead of four decimals, and each threshold exactly, with more
+  decimals where a threshold needs them, so that a bound shows at or below its threshold exactly
+  when it is. The simultaneous coverage under the failure rates is rounded down, so that
+  99.996% reads 99.9% rather than 100.0%. `report.json`, `report-full.md` and the CSV files keep
+  their bytes.
+
+- **report.md states why the decision is what it is (changes `report.md`).** Its claims
+  table listed the threshold claims only. An adaptive-attacker claim that failed gave "Overall
+  decision: FAIL" beside "No claims declared"; a zero-tolerance failure gave FAIL beside
+  claims that all passed; an exploratory analysis showed `INCONCLUSIVE (descriptive: PASS)`
+  with nothing saying why; and the table did not say which claims were mandatory. The
+  decision now comes with its reason, found by the rules that decide it: a zero-tolerance
+  failure, invalid integrity, an exploratory analysis, no mandatory claim, or the mandatory
+  claims that failed or are inconclusive. The table gains a "Mandatory" column and lists
+  each adaptive-attacker claim, marked "FAIL only", with its lower bound and threshold.
+  Below it, a note explains descriptive statuses when there are any, one explains adaptive
+  claims, and one names the prompts with a zero-tolerance failure and the models that
+  failed them.
+
+- **report.md names the info codes that change a result (changes `report.md`).** Its
+  warnings block lists errors and warnings only, so an info code that adjusts a result, such
+  as `TOKEN_LIMIT_REACHED` counting an answer cut off at the token limit as the plan says, or
+  that withholds one, such as `JUDGE_LANG_REICZIGEL_UNAVAILABLE`, left no trace on the page. A
+  "Notes" line after the warnings now names each such code with its effect and count. Info
+  codes that only record a fact stay in `report-full.md`.
+
+- **report.md no longer truncates the median rollouts per prompt (changes `report.md`).** With
+  an even number of prompts the median can lie halfway between two counts, as 30.5 does; the
+  header showed 30, and the rollout budgets under "Precision" were computed from 30. Both now
+  use the median as it is.
+
+- **report.md says what its tail-measure budget assumes (changes `report.md`).** Under
+  "Precision", the rollouts per prompt that tail and threshold measures need are computed for
+  a prompt with no failures, the fewest any prompt needs, while the text said every budget
+  assumed the observed rate. The line now says so, and shows the precision target exactly
+  rather than at two decimals.
+
+- **report.md's breakdown flag counts every node and names a widest one that has an interval
+  (changes `report.md`).** The "Precision" line for a breakdown counted the too-wide intervals
+  among the 40 rows shown but divided by all nodes, and took a node without an interval, or
+  one of zero width, as the widest, which it then showed as "unavailable". It now counts every
+  node, says how many have no interval, and names the widest among those that have one.
+
+- **report.md keeps a repeated comparison on a row of its own (changes `report.md`).** Two
+  root comparisons of the same estimand, cohorts, group and measure, such as one difference
+  under two independence profiles, shared a row, and the second replaced the first. Each now
+  has a row, and rows that would read alike name their comparisons.
+
+- **report.md and index.md link the diagnostics reference (changes `report.md` and
+  `index.md`).** Both pointed to `docs/diagnostics.md` for each code's remedy, a path in the
+  repository that leads nowhere beside a report. They now link the page on GitHub, as
+  `index.json` links the agent guide.
+
+- **report.md's prompt-level sensitivity is the prompt profile's (changes `report.md`).** The
+  column showed the first sensitivity interval of the primary's method, whatever its profile:
+  with a category profile listed before the prompt profile it showed the category interval,
+  and with a prompt-level primary and a category sensitivity, as in
+  `examples/attack_confirmation`, it showed the category interval as prompt-level. It now shows
+  the sensitivity from a profile with `block_by: [prompt_id]`, or `—` when there is none, and
+  the note under the table says whether such a sensitivity is shown, the primary profile
+  already blocks by prompt, or no interval allows dependence among one prompt's rollouts.
+
 - **A judge's input files are named relative to the plan (changes report bytes).** With
   validated judge calibration, `report.json` recorded the labels file under
   `provenance.judge_calibration.validation_manifest` by the absolute path the plan loader
@@ -413,15 +483,14 @@ described in their pull requests.
   (`PLAN_INVALID_MULTIPLICITY`). Mandatory adaptive claims enter the decision, which they can
   make `FAIL` but, never being `PASS`, otherwise hold at `INCONCLUSIVE`; with
   `mandatory: false` a claim neither fails nor holds the decision. `report.json`
-  and `report-full.md` show them in their own section, `report.html` beside the cohort's claims,
-  with the bound's assumptions: the attack order fixed before any outcome or drawn at random,
-  at most one run per behaviour, and judge error not corrected; when
-  `report.include_decisions` is false, `report-full.md` and `report.html` leave the claims
-  out of view. Such a report lists the assumptions among those it rests on as
-  `adaptive_attack_stream`.
-  Plans without them keep their hash and their `report.json`, `report.md` and
-  `report-full.md` bytes; every `report.html` changes bytes, because it embeds the script
-  that renders them. See
+  and `report-full.md` show them in their own section, `report.md` among its claims, marked
+  "FAIL only", and `report.html` beside the cohort's claims, with the bound's assumptions: the
+  attack order fixed before any outcome or drawn at random, at most one run per behaviour, and
+  judge error not corrected; when `report.include_decisions` is false, `report.md`,
+  `report-full.md` and `report.html` leave the claims out of view. Such a report lists the
+  assumptions among those it rests on as `adaptive_attack_stream`. Plans without them keep
+  their hash and their `report.json` and `report-full.md` bytes; every `report.html` changes
+  bytes, because it embeds the script that renders them. See
   [`adaptive_claims`](docs/plan-reference.md#adaptive_claims-experimental).
 
 - **Multi-turn and system-prompt generation (experimental).** A generative plan can make

@@ -1428,11 +1428,11 @@ its results rest on as
 
 An order that is missing, not an integer or repeated, or a behaviour attacked more than once,
 leaves the claim `INCONCLUSIVE` and says why. The report lists adaptive claims in their own
-section of `report-full.md` and `report.json` (`adaptive_claims`), and beside the cohort's claims
-in `report.html`. When `report.include_decisions` is false, `report-full.md` and `report.html`
-leave them out of view, as they leave out the threshold claims; `report.json` and the data
-embedded in `report.html` still hold them.
-Identifiers are unique across `claims` and `adaptive_claims`.
+section of `report-full.md` and `report.json` (`adaptive_claims`), among the claims of
+`report.md`, marked "FAIL only", and beside the cohort's claims in `report.html`. When
+`report.include_decisions` is false, `report.md`, `report-full.md` and `report.html` leave them
+out of view, as they leave out the threshold claims; `report.json` and the data embedded in
+`report.html` still hold them. Identifiers are unique across `claims` and `adaptive_claims`.
 `report.claims_export` cannot be combined with adaptive claims yet: `claims.json` has no form
 for a claim that can only fail. Plans without `adaptive_claims` keep their hash.
 
@@ -1447,7 +1447,7 @@ for a claim that can only fail. Plans without `adaptive_claims` keep their hash.
 | `include_decisions` | false | Show overall decision, threshold-claim cards, adaptive claims, and policy-event roll-up in human-facing reports. When false they are hidden, not withheld: `report.json` and the data embedded in `report.html` still hold the decision and every claim's status |
 | `include_prompt_text` | false | Reserved; raw content remains omitted in v1 |
 | `include_observations` | true | Write normalized observation CSV |
-| `decimal_places` | 6 | Markdown display precision; JSON retains full precision |
+| `decimal_places` | 6 | Decimals shown in `report-full.md`, and in the claims of `report.md`, which round each bound outward and show each threshold exactly, with more decimals where a threshold needs them; JSON retains full precision |
 | `judge_error_stress` | false | Experimental. Add to every claim the judge accuracy at which its verdict would change for true risk, and the verdict over the primary judge's declared accuracy box; diagnostic only. See [Stressing a threshold verdict](judge-misclassification.md#stressing-a-threshold-verdict-experimental) |
 | `claims_export` | false | Experimental. Write `claims.json`, one record per claim; needs `include_decisions: true`. See [claims.json](#claimsjson-experimental) |
 | `precision_target` | 0.05 | The widest a bound may lie from its estimate and still count as precise, in (0, 0.5). When tail or threshold measures are declared and, in a cohort and group, at the lower median of its prompts' rollouts, a measure's upper bound would lie further than this above its estimate even if no prompt failed, `TAIL_MEASURES_UNINFORMATIVE` warns for that cohort and group and names the rollouts per prompt each such measure would need. The summary in `report.md` marks every interval that lies further than this from its estimate and lists the rollouts that would narrow it. Left out of the resolved plan at its default; a value other than the default is recorded in `report.json` as `presentation.precision_target` |

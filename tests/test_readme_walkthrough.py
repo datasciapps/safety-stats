@@ -329,16 +329,16 @@ _QUOTED = [
         "| baseline | all | 20.4% |",
         "| 20.4% | [13.0%, 29.5%] †",
     ),
-    ("the candidate on 0.8%, from 0.0% to 4.2%", "| candidate | all | 0.8% |", "[0.0%, 4.2%]"),
+    ("the candidate on 0.8%, from 0.0% to 4.3%", "| candidate | all | 0.8% |", "[0.0%, 4.3%]"),
     (
         "sensitivity beside them (1.1% to 65.3% for the baseline)",
         "| baseline | all | 20.4% |",
         "[1.1%, 65.3%]",
     ),
     (
-        "Candidate minus baseline is −19.6 percentage points, from −29.4 to −8.8.",
+        "Candidate minus baseline is −19.6 percentage points, from −29.5 to −8.7.",
         "| candidate vs baseline | all |",
-        "| -19.6 pts | [-29.4 pts, -8.8 pts] |",
+        "| -19.6 pts | [-29.5 pts, -8.7 pts] |",
     ),
     (
         "The ratio of the rates is 0.04, from 0.00 to 0.33.",
@@ -355,8 +355,8 @@ _QUOTED = [
         "| bio | 4 |",
         "| bio | 4 | 5.0% [0.4%, 18.2%] †",
     ),
-    ("its upper bound there is still 7.4%", "| bio | 4 |", "| 0.0% [0.0%, 7.4%] †"),
-    ("its upper bound there is still 7.4%", "| cyber | 4 |", "| 0.0% [0.0%, 7.4%] †"),
+    ("its upper bound there is still 7.5%", "| bio | 4 |", "| 0.0% [0.0%, 7.5%] †"),
+    ("its upper bound there is still 7.5%", "| cyber | 4 |", "| 0.0% [0.0%, 7.5%] †"),
     (
         "In bio the difference runs from −18.2 to +7.0 points",
         "| bio | 4 |",
