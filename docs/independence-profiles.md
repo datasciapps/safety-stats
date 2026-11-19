@@ -244,6 +244,35 @@ For every profile whose blocks hold rollouts of more than one prompt, the diagno
   the block an outcome sits in, averaged over the $N$ outcomes;
 - the effective number of rollouts, $N$ divided by the design effect.
 
+These figures count every rollout as a unit, as a `[rollout]` profile does. A primary profile
+that splits the blocks counts its own blocks instead: a `[prompt_id]` primary already treats the
+rollouts of one prompt as one block. So for each primary profile of a result the plan computes
+(enabled direct mean intervals, comparisons, comparison sets and anytime bounds) that puts
+rollouts of one block in different blocks of its own, the diagnostic gives the same figures on
+that primary's units, under `primaries` in each cohort's details:
+
+- the units: the scored rollouts of one of the primary's blocks within one of the profile's
+  blocks. Where the primary's blocks lie within the profile's, as a prompt lies within its
+  conversation, the units are the primary's blocks. A block of the primary that spans several of
+  the profile's blocks gives one unit in each;
+- `blocks`, the number of the primary's own blocks that the units come from. It is the number of
+  units unless some of the primary's blocks span several of the profile's blocks;
+- the intra-cluster correlation of the units' failure rates within the blocks, with each unit
+  counted once. Where some unit holds several rollouts, it is the covariance of the rates of two
+  units in one block, averaged over all such pairs, over the variance of all the units' rates.
+  A unit with few rollouts has a noisy rate, and this pairwise estimate, unlike the one-way ANOVA
+  estimate on the rates, does not read small blocks of such units beside a large block of
+  well-replicated ones as a correlation;
+- the design effect, with $m$ counted in units: the number of units in the block a unit sits in,
+  averaged over the $K$ units. With a correlation of 0 or more it is the variance of the units'
+  total with the blocks as independent, over that with the units as independent, so it is at
+  most the number of units in the largest block, though the correlation itself can pass 1 when
+  the blocks differ in size;
+- the effective number of units, $K$ divided by the design effect.
+
+For a `[rollout]` primary, and for any primary whose units each hold one rollout, the units are
+the rollouts and the figures are those on rollouts, from the one-way ANOVA estimate.
+
 To get it for a column, declare a profile that blocks by that column, for example as a
 sensitivity of the item-level primary:
 
@@ -257,21 +286,50 @@ outputs:
     independence: {primary: item, sensitivities: [conversation]}
 ```
 
-The diagnostic is a warning when, in some cohort, the design effect is at least 2 and a primary
-profile of the plan puts rollouts of one block in different blocks of its own. It is
-informational otherwise, for example when the grouping profile is itself the primary. Profiles
+The diagnostic is a warning when, in some cohort, the design effect on a primary's units is at
+least 2: their effective number is then at most half of them, though the primary treats the units
+in one of the profile's blocks as independent. Where the primary's blocks lie within the
+profile's, its units are its blocks, and the results resting on it count at least twice as many
+independent blocks as the effective number of units. Where its blocks span several of the
+profile's blocks, as the questions of a `[question_id]` primary do when every conversation asks
+every question, those results count only its own blocks, which the diagnostic gives beside the
+units. Blocks that meet in one of the profile's blocks share its dependence, but the effective
+number of units does not say how many independent blocks they are worth, and can exceed their
+number: 5 questions asked in 8 conversations that fail alike give 40 units, about 8 of them
+effective. It is informational otherwise, for example when the grouping profile is itself the
+primary, or when no result the plan computes rests on a primary that splits the blocks. Profiles
 whose blocks never hold more than one prompt get no diagnostic. It changes no bound: it is a
 measure of how much the independence choice matters, to read beside the sensitivity bounds.
+
+The warning rests on the primary's units, not on the rollouts. Whenever prompts differ in failure
+rate, the rollouts of one prompt are correlated: a conversation that holds a hard prompt holds
+several failing rollouts. A prompt-level primary already accounts for that correlation, and with
+repeated rollouts it can dominate the figures on rollouts. In simulated runs of 10 conversations
+of 8 prompts with 10 rollouts each, where prompts differ widely and conversations add nothing,
+the design effect on rollouts reaches 2 in about 60% of runs, and on the units of a prompt-level
+primary in about 1.5%. Where a conversation effect with a standard deviation of 1 or 1.5 on the
+logit scale is added, it does in about 90% and 99% of runs.
 
 The figures describe the data, and they have limits:
 
 - Under a fixed design, the correlation also includes fixed differences in failure rates between
   the prompts of different blocks. It can therefore overstate the dependence between rollouts.
   A near-zero correlation is still a sign that the grouping matters little.
+- With few blocks the correlation rests on few block means, and the diagnostic can warn though
+  the blocks add nothing. In simulated runs with no conversation effect and single-rollout
+  prompts, it warned in about 17% of runs with 2 conversations of 40 prompts, 14% with 3 of 30,
+  9% with 5 of 16 and 2.5% with 10 of 8; with 10 rollouts per prompt, in about 5.5%, 4.6%, 3.8%
+  and 1.5%.
+- A block that holds most of the units also holds most of the pairs and dominates the
+  correlation on units, so a grouping effect can go unnoticed. Beside one conversation of 40
+  prompts with 10 or 20 rollouts each, five conversations of two single-rollout prompts with a
+  conversation effect of standard deviation 1.5 made it warn in about a third of runs, and twenty
+  in about half.
 - The correlation is undefined when every rollout falls in one block, when no block holds two
-  rollouts, or when all rollouts have the same outcome. The diagnostic then says so, and gives no
-  design effect.
-- The estimate counts rollouts equally, whatever the plan's prompt weights.
+  rollouts, or when all rollouts have the same outcome, and on a primary's units also when they
+  all have the same failure rate. The diagnostic then says so, and gives no design effect.
+- The estimate on rollouts counts rollouts equally, and the estimate on a primary's units counts
+  units equally, whatever their number of rollouts and the plan's prompt weights.
 
 The HTML report has one global independence-profile selector. It displays only the selected
 profile's intervals in risk charts, hierarchy trees, and comparison summaries. JSON and CSV retain
