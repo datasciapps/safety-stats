@@ -23,7 +23,7 @@ Horvitz--Thompson estimator of \(R=\sum_j w_j p_j\) is
 
 \(c_j\) is deterministic, because \(\pi_j\) is known for every frame item -- including the
 ones that were not drawn. Dividing by \(C=\sum_jc_j\) leaves an ordinary bounded weighted
-mean whose weights sum to one, so the existing weighted KL/Chernoff, empirical-Bernstein, and
+mean whose weights sum to one, so the existing weighted KL/Chernoff, empirical-Bernstein, betting, and
 Hoeffding engines apply unchanged, and the resulting bound on \(R/C\) is rescaled by
 \(C\).
 

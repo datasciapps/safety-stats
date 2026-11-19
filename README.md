@@ -23,9 +23,9 @@ The other guides and the examples are listed under [Documentation](#documentatio
 ## Current capabilities
 
 - Exact one-sided Clopper–Pearson failure-rate bounds per fixed prompt.
-- Direct finite-sample weighted KL/Chernoff, variance-adaptive empirical-Bernstein, and
-  weighted-Hoeffding intervals for fixed-design mean risk, with conservative completion of
-  unclassified outcomes.
+- Direct finite-sample weighted KL/Chernoff, variance-adaptive empirical-Bernstein,
+  mixture-of-common-bets (betting, experimental), and weighted-Hoeffding intervals for fixed-design mean
+  risk, with conservative completion of unclassified outcomes.
 - Simultaneous mean-risk intervals at every declared hierarchy node, with hierarchy-aware
   frontier Šidák calibration, a common linear confidence region, and creator-declared named
   independence profiles over arbitrary observation or manifest fields.

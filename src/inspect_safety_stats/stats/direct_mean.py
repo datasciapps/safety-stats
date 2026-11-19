@@ -696,3 +696,221 @@ def worst_of_k_kl_chernoff_bounds(
         alpha_upper=alpha_upper,
         independence_profile="rollout",
     )
+
+
+_BETTING_GRID_SIZE = 16
+BETTING_KERNEL = "common_bet_mixture_jensen_exponent"
+
+
+def _betting_prior() -> tuple[np.ndarray, np.ndarray]:
+    """Common bet fractions and their fixed log mixture weights.
+
+    The fractions are Beta(1/2, 1/2) quantiles, the universal-portfolio prior.
+    Half of the prior mass rides the most aggressive fraction, so the
+    sparse-failure regime, where that bet is optimal, pays about ``log 2`` for
+    not knowing the best bet in advance instead of ``log J``. The prior is fixed
+    before any outcome is seen, which is what keeps the mixture an e-value.
+    """
+
+    quantiles = (2 * np.arange(1, _BETTING_GRID_SIZE + 1) - 1) / (2 * _BETTING_GRID_SIZE)
+    fractions = np.square(np.sin(np.pi * quantiles / 2))
+    log_weights = np.full(_BETTING_GRID_SIZE, math.log(0.5 / _BETTING_GRID_SIZE))
+    log_weights[-1] = math.log(0.5 + 0.5 / _BETTING_GRID_SIZE)
+    return fractions, log_weights
+
+
+def _betting_log_capital(
+    values: np.ndarray,
+    exponents: np.ndarray,
+    mean: float,
+    *,
+    direction: Literal["lower", "upper"],
+) -> float:
+    """Log mixture capital against the null ``sum_g A_g E[Y_g] = mean``.
+
+    Every block is bet against with the same fraction ``theta`` of the maximal
+    admissible stake, ``1 - theta + theta * Y / mean`` when betting that the
+    mean exceeds ``mean`` and ``1 - theta + theta * (1 - Y) / (1 - mean)`` when
+    betting that it falls short. Block ``g`` enters with exponent
+    ``A_g / max A``. With ``theta < 1`` every factor is positive.
+    """
+
+    fractions, log_prior = _betting_prior()
+    ratios = values / mean if direction == "lower" else (1.0 - values) / (1.0 - mean)
+    factors = 1.0 - fractions[:, None] + fractions[:, None] * ratios[None, :]
+    log_growth = np.sum(exponents[None, :] * np.log(factors), axis=1)
+    # logsumexp by hand: scipy.special.logsumexp costs far more than the sum on 16 terms,
+    # and the capital is evaluated about 160 times per interval.
+    log_terms = log_prior + log_growth
+    peak = float(np.max(log_terms))
+    return peak + math.log(float(np.sum(np.exp(log_terms - peak))))
+
+
+def _merge_betting_blocks(
+    values: np.ndarray, exponents: np.ndarray
+) -> tuple[np.ndarray, np.ndarray]:
+    """Blocks with equal value and exponent merged into one, its exponent summed.
+
+    The log capital is ``sum_g exponent_g * log factor(value_g)``, so ``k`` equal
+    blocks contribute ``k * exponent * log factor(value)`` and merging them
+    changes no term. The count form expands a prompt into one block per
+    rollout, which this collapses to at most two blocks per prompt, and the
+    capital is evaluated about 160 times per interval.
+    """
+
+    pairs, inverse = np.unique(np.column_stack([values, exponents]), axis=0, return_inverse=True)
+    merged_exponents = np.bincount(inverse.reshape(-1), weights=exponents, minlength=len(pairs))
+    return pairs[:, 0], merged_exponents
+
+
+def _invert_betting(
+    values: np.ndarray,
+    exponents: np.ndarray,
+    *,
+    alpha: float,
+    direction: Literal["lower", "upper"],
+) -> float:
+    """Boundary of the non-rejected means ``{m : capital(m) < 1 / alpha}``.
+
+    Capital is monotone in the candidate mean (increasing for the upper bet,
+    decreasing for the lower bet), so the confidence set is an interval and
+    its endpoint is found by bisection. The plug-in estimate is never rejected,
+    so the endpoints always straddle it.
+    """
+
+    values, exponents = _merge_betting_blocks(values, exponents)
+    threshold = math.log(1.0 / alpha)
+    edge = 1e-12
+
+    def rejected(mean: float) -> bool:
+        return _betting_log_capital(values, exponents, mean, direction=direction) >= threshold
+
+    if direction == "upper":
+        if not rejected(1.0 - edge):
+            return 1.0
+        inside, outside = 0.0, 1.0 - edge
+    else:
+        if not rejected(edge):
+            return 0.0
+        outside, inside = edge, 1.0
+    for _ in range(80):
+        midpoint = (inside + outside) / 2
+        if rejected(midpoint):
+            outside = midpoint
+        else:
+            inside = midpoint
+    return (inside + outside) / 2
+
+
+def weighted_bounded_betting_mean_bounds(
+    completion_lower: ArrayLike,
+    completion_upper: ArrayLike,
+    weights: ArrayLike,
+    *,
+    alpha_lower: float,
+    alpha_upper: float,
+    independence_profile: str,
+) -> DirectMeanBounds:
+    """Mixture-of-common-bets bounds for independent [0,1]-valued blocks.
+
+    For a candidate mean ``m`` and a common bet fraction, the capital
+    ``prod_g factor_g ** (A_g / max A)`` has expectation at most one whenever
+    ``sum_g A_g E[Y_g] = m``: each exponent lies in (0, 1], so Jensen's
+    inequality bounds every block's expected power by the power of its
+    expectation, and the weighted AM-GM inequality then bounds the product by
+    the weighted sum, which is exactly one under the null. A fixed mixture over
+    fractions keeps that property, so the non-rejected means form a valid
+    confidence set at level ``1 - alpha``.
+
+    The bet is common to every block and fixed in advance. Choosing it block by
+    block, even from earlier blocks, is invalid under heterogeneous block
+    means, because the null constrains only the weighted sum. Equal weights
+    give exponent one everywhere; unequal weights pay through the exponents,
+    much as the KL engine pays through its largest increment. The construction
+    needs no variance proxy, so it adapts to low-variance fractional blocks
+    without the empirical-Bernstein padding term.
+    """
+
+    lower_values, upper_values, w = _validate_bounded_inputs(
+        completion_lower,
+        completion_upper,
+        weights,
+        alpha_lower=alpha_lower,
+        alpha_upper=alpha_upper,
+    )
+    estimate_lower = float(np.dot(w, lower_values))
+    estimate_upper = float(np.dot(w, upper_values))
+    c2 = float(np.sum(np.square(w)))
+    maximum_increment = float(np.max(w))
+    exponents = w / maximum_increment
+    lower = _invert_betting(lower_values, exponents, alpha=alpha_lower, direction="lower")
+    upper = _invert_betting(upper_values, exponents, alpha=alpha_upper, direction="upper")
+    return DirectMeanBounds(
+        lower=lower,
+        upper=upper,
+        completion_estimate_lower=estimate_lower,
+        completion_estimate_upper=estimate_upper,
+        half_width_lower=estimate_lower - lower,
+        half_width_upper=upper - estimate_upper,
+        concentration_variance=c2,
+        effective_sample_size=1 / c2,
+        alpha_lower=alpha_lower,
+        alpha_upper=alpha_upper,
+        method="weighted_betting",
+        independence_unit=independence_profile,
+        maximum_increment=maximum_increment,
+        chernoff_kernel=BETTING_KERNEL,
+    )
+
+
+def weighted_betting_mean_bounds(
+    failures: ArrayLike,
+    unclassified: ArrayLike,
+    trials: ArrayLike,
+    weights: ArrayLike,
+    *,
+    alpha_lower: float,
+    alpha_upper: float,
+    independence_unit: IndependenceUnit = "rollout",
+) -> DirectMeanBounds:
+    """Betting bounds from per-prompt counts under the two canonical partitions.
+
+    Under ``rollout`` independence every attempted rollout is one block with
+    weight ``w_j / n_j``; under ``prompt_cluster`` each prompt's completed
+    failure rate is one block with weight ``w_j``. Unclassified outcomes are
+    completed as safe for the lower endpoint and as failures for the upper.
+    """
+
+    x, u, n, w = _validate_inputs(
+        failures,
+        unclassified,
+        trials,
+        weights,
+        alpha_lower=alpha_lower,
+        alpha_upper=alpha_upper,
+    )
+    if independence_unit not in {"rollout", "prompt_cluster"}:
+        raise ValueError("independence_unit must be rollout or prompt_cluster")
+    if independence_unit == "rollout":
+        block_weights = np.repeat(w / n, n)
+        lower_values = np.concatenate(
+            [np.r_[np.ones(int(k)), np.zeros(int(m - k))] for k, m in zip(x, n, strict=True)]
+        )
+        upper_values = np.concatenate(
+            [
+                np.r_[np.ones(int(k + v)), np.zeros(int(m - k - v))]
+                for k, v, m in zip(x, u, n, strict=True)
+            ]
+        )
+    else:
+        block_weights = w
+        lower_values = x / n
+        upper_values = (x + u) / n
+    return weighted_bounded_betting_mean_bounds(
+        lower_values,
+        upper_values,
+        block_weights,
+        alpha_lower=alpha_lower,
+        alpha_upper=alpha_upper,
+        independence_profile=independence_unit,
+    )

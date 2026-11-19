@@ -7,6 +7,15 @@ described in their pull requests.
 
 ### Added
 
+- **Betting interval for direct means (experimental).** `weighted_betting` is a fourth direct
+  interval method for `outputs.direct_mean_intervals` (`method` or `reference_methods`) and for
+  hierarchy nodes. It inverts a fixed mixture of common betting fractions, needs no estimated
+  variance proxy, and is usually the tightest of the four when blocks are fractional rates, as
+  under a prompt-level independence profile. It is fixed-horizon, not anytime-valid.
+  Comparisons do not accept it, and its functions are not exported from
+  `inspect_safety_stats.stats`. Plans that do not name it are unaffected. See
+  [Betting interval](docs/statistical-methods.md#betting-interval-from-a-fixed-mixture-of-common-bets-experimental).
+
 - **Direct `worst_of_k` interval (experimental).** A `worst_of_k` measure with
   `direct_interval: true` gets a KL/Chernoff interval on its group rows. Each prompt enters as
   `floor(n / k)` independent blocks, so the interval narrows as rollouts grow. Before, the only

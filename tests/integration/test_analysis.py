@@ -3761,7 +3761,13 @@ def _patch_frames_with_failures(
 
 
 @pytest.mark.parametrize(
-    "method", ["weighted_hoeffding", "weighted_empirical_bernstein", "weighted_kl_chernoff"]
+    "method",
+    [
+        "weighted_hoeffding",
+        "weighted_empirical_bernstein",
+        "weighted_kl_chernoff",
+        "weighted_betting",
+    ],
 )
 def test_single_valued_bound_is_reported_per_direct_interval_when_requested(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, method: str
@@ -3911,3 +3917,120 @@ def test_single_valued_bound_is_refused_under_a_sampled_design(tmp_path: Path) -
     ]
     assert len(refused) == 1
     assert "sampled design" in refused[0].message
+
+
+def test_betting_intervals_are_reported_at_root_and_hierarchy_nodes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = load_plan(_write_inputs(tmp_path))
+    spec = plan.outputs.direct_mean_intervals
+    spec.method = "weighted_betting"
+    spec.reference_methods = ["weighted_kl_chernoff", "weighted_hoeffding"]
+    spec.hierarchy_nodes = True
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    assert mean.interval_method == "weighted_betting"
+    primary = next(item for item in mean.intervals if item.role == "primary")
+    hoeffding = next(item for item in mean.intervals if item.method == "weighted_hoeffding")
+    assert primary.method == "weighted_betting"
+    assert primary.eligibility == "certifying"
+    assert primary.chernoff_kernel == "common_bet_mixture_jensen_exponent"
+    assert any("betting" in assumption.lower() for assumption in primary.assumptions)
+    # The fixture has zero failures: the lower bound is exactly zero and the
+    # upper bound beats the range-only Hoeffding reference on the same data.
+    assert primary.lower == 0.0
+    assert 0.0 < primary.upper < hoeffding.upper
+
+    for node in report.hierarchy_risks:
+        assert node.interval_method == "weighted_betting"
+        node_primary = next(item for item in node.intervals if item.role == "primary")
+        assert (
+            node_primary.lower
+            <= node_primary.completion_estimate_lower
+            <= node_primary.completion_estimate_upper
+            <= node_primary.upper
+        )
+
+    output = report.write(tmp_path / "betting-report")
+    assert "weighted_betting" in (output / "hierarchy-risks.csv").read_text(encoding="utf-8")
+    assert "weighted_betting" in (output / "report.html").read_text(encoding="utf-8")
+
+
+def test_betting_intervals_are_marked_experimental_in_the_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = load_plan(_write_inputs(tmp_path))
+    plan.outputs.direct_mean_intervals.method = "weighted_betting"
+    _patch_frames_with_failures(monkeypatch, failing_epochs=3)
+
+    report = analyze(plan=plan, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    primary = next(item for item in mean.intervals if item.role == "primary")
+    assert primary.method == "weighted_betting"
+    assert any(item.startswith("Experimental: a common betting") for item in primary.assumptions)
+
+
+def test_judge_calibration_corrects_betting_intervals(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8").replace(
+        "design:\n",
+        "  judge_calibration:\n"
+        "    mode: assumed\n"
+        "    primary: declared\n"
+        "    scenarios:\n"
+        "      - id: declared\n"
+        "        rho_1: {lower: 0.9, upper: 1.0}\n"
+        "        rho_0: {lower: 0.0, upper: 0.01}\n"
+        "design:\n",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    plan = load_plan(plan_path)
+    plan.outputs.direct_mean_intervals.method = "weighted_betting"
+    plan.outputs.direct_mean_intervals.hierarchy_nodes = True
+    _patch_frames_with_failures(monkeypatch, failing_epochs=3)
+
+    report = analyze(plan=plan, logs="ignored")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    primary = next(item for item in mean.intervals if item.role == "primary")
+    corrected = next(
+        item for item in mean.intervals if item.interval_id == "judge_corrected_declared"
+    )
+    assert primary.method == "weighted_betting"
+    assert (corrected.raw_lower, corrected.raw_upper) == (primary.lower, primary.upper)
+    # A judge that misses up to a tenth of failures can only raise the upper bound.
+    assert corrected.upper >= primary.upper
+    for node in report.hierarchy_risks:
+        assert any(i.interval_id == "judge_corrected_declared" for i in node.intervals)
+
+
+def test_comparisons_refuse_the_betting_method() -> None:
+    from pydantic import ValidationError
+
+    from inspect_safety_stats.config.models import ComparisonSpec
+
+    with pytest.raises(ValidationError, match="input_value='weighted_betting'"):
+        ComparisonSpec.model_validate(
+            {
+                "id": "candidate_vs_baseline",
+                "candidate": "candidate",
+                "baseline": "baseline",
+                "group": "cyber",
+                "measure": "mean",
+                "method": "weighted_betting",
+            }
+        )
