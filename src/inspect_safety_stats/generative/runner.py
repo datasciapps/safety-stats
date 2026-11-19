@@ -785,7 +785,8 @@ def _fidelity(
     """Fidelity by arm from the attempt ledger, when the plan records one.
 
     Appends three diagnostics: a validator that judged the rewrites under another identifier
-    than the plan's, a level whose values it rejects at materially different rates, and
+    than the plan's, a level whose values it rejects at rates more than five percentage
+    points apart, however few rewrites it judged, and
     units whose kept rewrite followed a duplicate rejection, whose prompts therefore
     depend on the rewrites kept for earlier units.
     """
@@ -819,13 +820,18 @@ def _fidelity(
 
     for level in uneven_fidelity(rows):
         spread = [row for row in rows if row.level == level]
+        fewest = min(
+            row.validator_judged for row in spread if row.validator_rejection_rate is not None
+        )
         diagnostics.append(
             Diagnostic(
                 code="GENERATIVE_FIDELITY_UNEVEN",
                 severity="WARNING",
                 message=(
-                    f"the validator rejects rewrites for values of {level!r} at materially "
-                    "different rates, so arm fidelity differs across that level"
+                    f"the validator's rejection rates for the values of {level!r} are more "
+                    "than five percentage points apart, so arm fidelity may differ across "
+                    f"that level; the fewest rewrites it judged for one value is {fewest}, "
+                    "and among few judged rewrites a spread this wide can arise by chance"
                 ),
                 scope=plan_scope("taxonomy", "hierarchy", level),
                 details={

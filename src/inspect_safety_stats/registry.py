@@ -774,11 +774,15 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
         consequence=(
             "Nothing is recomputed: the validator's rejection rates by value are in the details "
-            "and in fidelity.csv."
+            "and in fidelity.csv, beside the rewrites it judged for each value. The spread is "
+            "not tested against chance, so the message names the fewest rewrites judged for "
+            "one value."
         ),
         remedy=(
-            "Read fidelity.csv for the values the validator rejects most; improve the kernel "
-            "for them, or review the validator, and materialize the run again."
+            "Read fidelity.csv for the values the validator rejects most, and how many "
+            "rewrites it judged for them; if they are few, the spread can be chance. Otherwise "
+            "improve the kernel for them, or review the validator, and materialize the run "
+            "again."
         ),
     ),
     CodeEntry(

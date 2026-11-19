@@ -252,3 +252,25 @@ def test_a_run_resumed_after_validator_errors_can_be_analyzed(
         record.rewrite_attempts for record in read_rewrites(artifacts / "rewrites.csv")
     )
     assert not any(item.validator_status == "error" for item in attempts)
+
+
+def test_uneven_fidelity_says_how_few_judged_rewrites_its_rates_rest_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No sample-size floor applies, so the warning must not call a spread material."""
+
+    plan = plan_path(tmp_path)
+    report = run(monkeypatch, plan, tmp_path / "run", validator=DislikesMaltese())
+    found = [
+        item
+        for item in report.diagnostics
+        if item.code == "GENERATIVE_FIDELITY_UNEVEN" and "'language'" in item.message
+    ]
+    assert len(found) == 1
+    fewest = min(row.validator_judged for row in report.fidelity if row.level == "language")
+    assert fewest > 0
+    message = found[0].message
+    assert "materially" not in message
+    assert "more than five percentage points apart" in message
+    assert f"the fewest rewrites it judged for one value is {fewest}," in message
+    assert message.endswith("can arise by chance")

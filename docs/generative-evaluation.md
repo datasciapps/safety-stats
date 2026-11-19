@@ -530,7 +530,9 @@ neither the file nor the section.
 Three diagnostics read it:
 
 - `GENERATIVE_FIDELITY_UNEVEN` (warning): the validator's rejection rates across the values
-  of a level spread by more than five percentage points. The rates are in its details.
+  of a level spread by more than five percentage points. The rates are in its details. No
+  sample size is required and the spread is not tested against chance, so the message gives
+  the fewest rewrites judged for one value: among few, a spread that wide can be noise.
 - `GENERATIVE_VALIDATOR_MISMATCH` (warning): the attempt ledger records another validator
   than the one the plan declares.
 - `GENERATIVE_RETRY_DEPENDENCE` (info): some units kept a rewrite only after a duplicate

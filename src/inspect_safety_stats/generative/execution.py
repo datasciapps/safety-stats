@@ -256,7 +256,11 @@ def fidelity_by_level(
 
 
 def uneven_fidelity(rows: list[FidelityRow], *, tolerance: float = 0.05) -> list[str]:
-    """Levels whose values the validator rejects at materially different rates."""
+    """Levels whose values' validator rejection rates are more than ``tolerance`` apart.
+
+    No sample-size floor applies, and the spread is not tested against chance: among few
+    judged rewrites a wide spread can be noise. The diagnostic built on this says how few.
+    """
 
     by_level: dict[str, list[float]] = {}
     for row in rows:
