@@ -357,15 +357,14 @@ def detectable_failure_rates(
     them, whatever the blocks' individual rates, by the sharpest of Hoeffding's inequality
     and the Chernoff kernel the KL-Chernoff interval uses (Bernoulli KL for equal block
     weights, Poisson deviance with the largest weight otherwise), applied to the failures
-    and to the safe outcomes. Under the rollout profile
-    each rollout is a block. ``None`` means no true rate reaches the target power, or no
-    outcome at all crosses the threshold.
+    and to the safe outcomes. Under the rollout profile each rollout is a block. A rate is
+    ``None`` when its threshold is not given or when no outcome at all crosses it; otherwise
+    some true rate, 0 or 1 at the extreme, reaches the target power.
     """
 
     from inspect_safety_stats.stats.direct_mean import (
-        _bernoulli_kl,
+        _bounded_chernoff_kernel,
         _invert_divergence,
-        _poisson_deviance,
     )
 
     w = np.asarray(weights, dtype=float)
@@ -389,11 +388,9 @@ def detectable_failure_rates(
     concentration_variance = float(np.sum(np.square(w)))
     log_beta = math.log(1 / (1 - power))
     hoeffding_radius = math.sqrt(0.5 * concentration_variance * log_beta)
-    # The same kernel choice as the KL-Chernoff interval.
-    if bool(np.allclose(w, np.full_like(w, 1 / len(w)), rtol=1e-10, atol=1e-14)):
-        divergence, target = _bernoulli_kl, log_beta / len(w)
-    else:
-        divergence, target = _poisson_deviance, float(np.max(w)) * log_beta
+    # The KL-Chernoff interval's kernel, at level beta = 1 - power.
+    _, kernel_target, divergence = _bounded_chernoff_kernel(w)
+    target = kernel_target(1 - power)
 
     def endpoints(estimate: float) -> tuple[float, float]:
         return _planned_endpoints(method, w, estimate, alpha)
@@ -409,8 +406,6 @@ def detectable_failure_rates(
             # The same kernel on the safe outcomes, whose weighted mean is 1 - estimate.
             1 - _invert_divergence(1 - boundary, target, direction="upper", divergence=divergence),
         )
-        if maximum_certifiable < 0:
-            maximum_certifiable = None
     minimum_detectable: float | None = None
     if unacceptable_lower is not None and endpoints(1.0)[0] >= unacceptable_lower:
         boundary = _first_true(lambda estimate: endpoints(estimate)[0] >= unacceptable_lower)
@@ -419,8 +414,6 @@ def detectable_failure_rates(
             _invert_divergence(boundary, target, direction="upper", divergence=divergence),
             1 - _invert_divergence(1 - boundary, target, direction="lower", divergence=divergence),
         )
-        if minimum_detectable > 1:
-            minimum_detectable = None
     return MethodDetectableRates(
         method=method,
         endpoint_alpha=alpha,
