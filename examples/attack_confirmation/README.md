@@ -234,8 +234,13 @@ attackers' code apart. The declaration and the confirmation step stay as they ar
 
 ## Planning the number of behaviours
 
-With the exact one-sided binomial test at α = 0.05 and a threshold of 0.05, 100 behaviours
-(the size of JailbreakBench) certify a rate below 0.05 only with at most one confirmed
-jailbreak, and 400 (the size of HarmBench's design) with at most 12. The plan's interval
-method is more conservative than that test, as the offline run shows: one failure in 100
-gives an upper bound of 0.064, and the claim is INCONCLUSIVE.
+The plan bounds the rate with the weighted KL-Chernoff interval at α = 0.025 in each
+direction: the family's 0.05, shared by the two cohorts. With a threshold of 0.05, 100
+equally weighted behaviours (the size of JailbreakBench) certify only with no confirmed
+jailbreak, whose upper bound is 0.036. One confirmed jailbreak gives 0.064, as the offline
+run shows, and the claim is INCONCLUSIVE. 400 equally weighted behaviours (the size of
+HarmBench's design) certify with at most 9. The exact one-sided binomial test at α = 0.05
+would allow 1 and 12; the plan's interval is more conservative than that test.
+`inspect-safety-stats plan fixed-design --plan` plans every claim with the plan's own
+interval, alpha and weights; unequal weights, such as `nested_equal` over categories of
+unequal size, widen the bound.

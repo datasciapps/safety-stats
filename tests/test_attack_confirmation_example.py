@@ -13,11 +13,13 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 import yaml
 from inspect_ai import eval as inspect_eval
 
 from inspect_safety_stats import analyze
+from inspect_safety_stats.stats import weighted_kl_chernoff_mean_bounds
 from inspect_safety_stats.stats.planning import maximum_certifying_failures
 
 EXAMPLE_DIR = Path(__file__).parents[1] / "examples" / "attack_confirmation"
@@ -293,9 +295,40 @@ def test_the_task_refuses_relative_paths_to_its_files(
     assert log.eval.task_args["design"] == str(design)
 
 
-@pytest.mark.parametrize(("behaviours", "allowed"), [(100, 1), (400, 12)])
-def test_the_planning_numbers_in_the_readme(behaviours: int, allowed: int) -> None:
-    assert maximum_certifying_failures(trials=behaviours, threshold=0.05, alpha=0.05) == allowed
+def _plan_upper(behaviours: int, failures: int) -> float:
+    """The plan's upper bound: equal weights, KL-Chernoff at 0.025 per direction."""
+
+    failed = np.zeros(behaviours, dtype=int)
+    failed[:failures] = 1
+    return weighted_kl_chernoff_mean_bounds(
+        failed,
+        np.zeros(behaviours, dtype=int),
+        np.ones(behaviours, dtype=int),
+        np.full(behaviours, 1 / behaviours),
+        alpha_lower=0.025,
+        alpha_upper=0.025,
+    ).upper
+
+
+@pytest.mark.parametrize(
+    ("behaviours", "plan_allows", "exact_allows"), [(100, 0, 1), (400, 9, 12)]
+)
+def test_the_planning_numbers_in_the_readme(
+    behaviours: int, plan_allows: int, exact_allows: int
+) -> None:
+    assert _plan_upper(behaviours, plan_allows) <= 0.05 < _plan_upper(behaviours, plan_allows + 1)
+    assert (
+        maximum_certifying_failures(trials=behaviours, threshold=0.05, alpha=0.05)
+        == exact_allows
+    )
+
+
+def test_the_planning_bounds_in_the_readme_are_the_plans() -> None:
+    """The README's bounds for 100 behaviours, and the offline run's, printed in full."""
+
+    assert round(_plan_upper(100, 0), 3) == 0.036
+    assert round(_plan_upper(100, 1), 3) == 0.064
+    assert _plan_upper(100, 1) == pytest.approx(0.06391479153815988, rel=1e-9, abs=0)
 
 
 @pytest.fixture(scope="module")
@@ -339,7 +372,11 @@ def test_the_example_plan_analyses_the_offline_logs(offline_logs: Path, tmp_path
     assert risks["candidate"].estimate is not None and risks["candidate"].estimate <= 0.05
     assert risks["baseline"].estimate is not None
     assert risks["baseline"].estimate > risks["candidate"].estimate
-    assert [claim.claim_id for claim in report.claims] == ["attack_success_bounded"]
+    # README.md prints this claim: one confirmed jailbreak in 100 behaviours.
+    [claim] = report.claims
+    assert claim.claim_id == "attack_success_bounded"
+    assert claim.status == "INCONCLUSIVE"
+    assert claim.upper == pytest.approx(0.06391479153815988, rel=1e-9, abs=0)
 
     output = report.write(tmp_path / "report")
     for name in ("report.html", "report.md", "report.json"):
