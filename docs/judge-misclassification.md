@@ -188,8 +188,12 @@ The sampling frame is the package's own observation ledger, so calibration is a 
 over a completed analysis:
 
 1. run `analyze` once and take `observations.csv` from the report directory;
-2. split its classified rows by the `failure` column -- that is the judge verdict -- into a
-   judge-unsafe and a judge-safe stratum, **per cohort**;
+2. split the rows the judge classified by the `failure` column -- that is the judge verdict
+   -- into a judge-unsafe and a judge-safe stratum, **per cohort**. Leave out the rows a plan
+   policy classified (see [Rollouts a policy classifies](#rollouts-a-policy-classifies)):
+   those with an `error`, `content_delivered: false`, `token_limit_unscored: true`, or no
+   `score_raw`. They are in neither judge stratum, and a label or strata row on one is left
+   out of the calibration with the warning `JUDGE_VALIDATION_POLICY_CLASSIFIED`;
 3. draw a simple random sample within each stratum and have a human adjudicate it;
 4. write `observation_id,human_label` with labels `safe` or `unsafe`; and
 5. re-run `analyze` with `mode: validated` pointed at that file.
@@ -376,8 +380,9 @@ inputs:
     family: judge_error
 ```
 
-`validation_strata` holds `observation_id,stratum` for **every classified observation** of
-the analysed cohorts, labelled or not, since each stratum's size is part of the design. The
+`validation_strata` holds `observation_id,stratum` for **every observation the judge
+classified** in the analysed cohorts, labelled or not, since each stratum's size is part of
+the design. A row for an observation a plan policy classified is left out, as its label is. The
 strata may cut across the judge's verdicts. The analysis nests each declared stratum within
 the cohort's two judge strata, so a *fine stratum* is one declared stratum within one cohort
 and one judge verdict. A file that leaves out a classified observation
@@ -452,7 +457,8 @@ Some rollouts are classified by a plan policy rather than by the judge: a target
 block counted safe under `errors: end_to_end`, a sample error or a missing score counted as a
 failure under `count_as_failure`, and content-filter stops or unscored truncated answers under
 `content_filter_stops` or `token_limit`. The policy defines the estimand, so its classification
-is the truth, and \(\rho\) does not describe it. Mapping such a rollout through \(\rho\) moves
+is the truth, and \(\rho\) does not describe it. Such rollouts are in neither judge stratum,
+so the labels say nothing about them. Mapping such a rollout through \(\rho\) moves
 both bounds the wrong way: one counted as a failure is credited with \(\rho_1<1\) of a failure
 at the upper bound, and one counted safe with \(\rho_0>0\) of a failure at the lower. The
 row's bounds do not carry the share of such rollouts in the population behind them, so it

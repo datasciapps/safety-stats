@@ -411,6 +411,11 @@ def _validated_judge_calibrations(
         else "clopper_pearson"
     )
 
+    # A rollout a plan policy classified is in neither judge stratum: the policy, not the
+    # judge, set its failure column, and the corrections do not read it as a verdict. The
+    # strata, their sizes and their labels are the judge's verdicts only.
+    judged = [row for row in data.observations if not _classified_by_policy(row)]
+    by_policy = {row.observation_id for row in data.observations if _classified_by_policy(row)}
     declared: dict[str, str] | None = None
     if spec.sampling == "stratified_without_replacement":
         if spec.validation_strata is None:
@@ -427,7 +432,9 @@ def _validated_judge_calibrations(
                 )
             )
             return {}, {}, None, {}, None
-        design = fine_stratum_counts(data.observations, labels, declared)
+    labels, declared = _without_policy_classified(labels, declared, by_policy, diagnostics)
+    if declared is not None:
+        design = fine_stratum_counts(judged, labels, declared)
         # The strata file is the design: a classified row it does not place, or a key that
         # names no classified row, means the sizes it implies are not the design's.
         for code, keys, what in (
@@ -456,7 +463,7 @@ def _validated_judge_calibrations(
         if design.unstratified or design.unknown_strata:
             return {}, {}, None, {}, None
 
-    _, unmatched = judge_stratum_counts(data.observations, labels)
+    _, unmatched = judge_stratum_counts(judged, labels)
     scopes = _judge_scopes(plan)
     counts: dict[_JudgeScope, JudgeStrata] = {}
     fine: dict[_JudgeScope, FineStrata] = {}
@@ -464,7 +471,7 @@ def _validated_judge_calibrations(
     in_scope: set[str] = set()
     for scope in scopes:
         cohort_id, group_id = scope
-        observations = data.observations
+        observations = judged
         if group_id is not None:
             prompts = set(next(item for item in data.groups if item.id == group_id).prompt_ids)
             observations = [row for row in observations if row.prompt_id in prompts]
@@ -588,6 +595,49 @@ def _validated_judge_calibrations(
             )
         )
     return calibrations, summaries, family.alpha, truth_strata, protocol
+
+
+def _without_policy_classified(
+    labels: dict[str, bool],
+    declared: dict[str, str] | None,
+    by_policy: set[str],
+    diagnostics: list[Diagnostic],
+) -> tuple[dict[str, bool], dict[str, str] | None]:
+    """The labels and declared strata without the rollouts a plan policy classified.
+
+    Such a rollout is in neither judge stratum, so a label on it calibrates nothing, and a
+    declared stratum of it is not part of the design's fine strata. Left out, the remaining
+    labels of a judge stratum are still a simple random sample of its judge verdicts: a simple
+    random sample of a set, cut to a subset fixed before the draw, is one of the subset, of a
+    size that does not depend on the subset's labels.
+    """
+
+    labelled = sorted(by_policy & set(labels))
+    stratified = sorted(by_policy & set(declared or {}))
+    if labelled or stratified:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_VALIDATION_POLICY_CLASSIFIED",
+                severity="WARNING",
+                message=(
+                    f"{len(labelled)} validation labels and {len(stratified)} validation strata "
+                    "rows name rollouts a plan policy classified, not the judge; such rollouts "
+                    "are in neither judge stratum, so they are left out of the calibration"
+                ),
+                scope=plan_scope("inputs", "judge_calibration"),
+                details={
+                    "labels": len(labelled),
+                    "strata_rows": len(stratified),
+                    "observation_ids": sorted({*labelled, *stratified})[:20],
+                },
+            )
+        )
+    return (
+        {key: value for key, value in labels.items() if key not in by_policy},
+        None
+        if declared is None
+        else {key: value for key, value in declared.items() if key not in by_policy},
+    )
 
 
 def _labelling_protocol(

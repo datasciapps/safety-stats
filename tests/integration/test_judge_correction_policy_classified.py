@@ -21,10 +21,13 @@ from tests.diagnostic_codes.judge_analysis_cases import (
     RHO_0,
     RHO_1,
     assumed,
+    census,
     comparison,
+    judge_verdicts,
     judged,
     policy_blocked,
     validated,
+    with_labels,
 )
 
 
@@ -102,17 +105,6 @@ def test_an_assumed_correction_credits_no_judge_error_on_a_row_a_policy_classifi
     assert found.details == {"groups": ["all"], "policy_safe": safe, "policy_failures": failures}
 
 
-def _judge_labels(inputs: Inputs, observations: list[Any]) -> None:
-    """Label every rollout the judge classified, as the judge says, by a simple random sample."""
-
-    labels = [
-        (item.observation_id, "unsafe" if item.failure else "safe")
-        for item in observations
-        if item.failure is not None and item.error is None
-    ]
-    validated(inputs, labels, sampling="simple_random")
-
-
 def _box(interval: Any) -> tuple[tuple[float, float], tuple[float, float]]:
     """The rho_1 and rho_0 ranges a corrected interval states, to six significant digits."""
 
@@ -130,7 +122,8 @@ def _box(interval: Any) -> tuple[tuple[float, float], tuple[float, float]]:
 def test_a_validated_correction_of_such_a_row_still_certifies_and_has_no_reference(
     tmp_path: Any,
 ) -> None:
-    outcome = judged(_judge_labels, _classify_first_by_policy("blocked_safe"))(tmp_path)
+    labels = with_labels(judge_verdicts, sampling="simple_random")
+    outcome = judged(labels, _classify_first_by_policy("blocked_safe"))(tmp_path)
 
     row = _row(outcome)
     corrected = _interval(row, "judge_corrected_validated")
@@ -190,3 +183,68 @@ def test_each_arm_of_a_comparison_is_corrected_by_its_own_rollouts(tmp_path: Any
     assert not any(item.startswith("Baseline arm:") for item in corrected.assumptions)
     (found,) = outcome.with_code("JUDGE_CORRECTION_POLICY_CLASSIFIED")
     assert found.details["groups"] == ["all"]
+
+
+# --- The judge strata leave such rollouts out -----------------------------------------------
+
+
+def _strata(inputs: Inputs, observations: list[Any], policy_row: bool) -> None:
+    """A stratified census of the classified rollouts, each one's stratum its prompt.
+
+    With ``policy_row``, the labels and the strata file also take in the rollout the plan
+    counts safe, as files drawn from every classified row of observations.csv do.
+    """
+
+    validated(
+        inputs,
+        census(observations) if policy_row else judge_verdicts(observations),
+        sampling="stratified_without_replacement",
+        validation_strata="strata.csv",
+    )
+    rows = [
+        f"{item.observation_id},{item.prompt_id}\n"
+        for item in observations
+        if item.failure is not None and (policy_row or item.error is None)
+    ]
+    inputs.files["strata.csv"] = "observation_id,stratum\n" + "".join(rows)
+
+
+@pytest.mark.parametrize("sampling", ["simple_random", "stratified_without_replacement"])
+def test_the_judge_strata_hold_the_judge_verdicts_only(tmp_path: Any, sampling: str) -> None:
+    def labels(inputs: Inputs, observations: list[Any]) -> None:
+        if sampling == "simple_random":
+            validated(inputs, census(observations), sampling="simple_random")
+        else:
+            _strata(inputs, observations, policy_row=True)
+
+    outcome = judged(labels, policy_blocked)(tmp_path)
+
+    # p1's 19 other rollouts and p2's 10 judge-safe ones; the blocked rollout's label is left
+    # out with the rollout, so every judge-safe label agrees with the judge.
+    cohort = outcome.report.provenance["judge_calibration"]["cohorts"]["candidate"]
+    assert cohort["judge_safe"] == {"labelled": 29, "truly_unsafe": 0, "stratum_size": 29}
+    assert cohort["judge_unsafe"] == {"labelled": 10, "truly_unsafe": 10, "stratum_size": 10}
+    (found,) = outcome.with_code("JUDGE_VALIDATION_POLICY_CLASSIFIED")
+    blocked = outcome.report._observations[0].observation_id
+    assert found.details == {
+        "labels": 1,
+        "strata_rows": int(sampling != "simple_random"),
+        "observation_ids": [blocked],
+    }
+    if sampling == "simple_random":
+        # The truth strata the noisy-but-valid test reads leave it out too.
+        truth = outcome.report.provenance["judge_calibration"]["truth_strata"]["candidate"]
+        assert truth["truly_safe"] == {"labelled": 29, "judge_positive": 0}
+    assert outcome.status != "invalid"
+
+
+def test_a_strata_file_need_not_place_rollouts_a_policy_classified(tmp_path: Any) -> None:
+    def labels(inputs: Inputs, observations: list[Any]) -> None:
+        _strata(inputs, observations, policy_row=False)
+
+    outcome = judged(labels, policy_blocked)(tmp_path)
+
+    assert not outcome.with_code("JUDGE_VALIDATION_STRATA_INCOMPLETE")
+    assert not outcome.with_code("JUDGE_VALIDATION_POLICY_CLASSIFIED")
+    corrected = _interval(_row(outcome), "judge_corrected_validated")
+    assert corrected is not None and corrected.eligibility == "certifying"

@@ -591,6 +591,29 @@ def _policy_free(triggered: Outcome, control: Outcome) -> None:
     assert found.details == {"groups": ["all"], "policy_safe": 1, "policy_failures": 0}
 
 
+def judge_verdicts(observations: list[Any]) -> Labels:
+    """Every rollout the judge classified labelled, in agreement with the judge.
+
+    That leaves out the rollouts a plan policy classified, which carry a sample error here.
+    """
+
+    return [
+        (item.observation_id, _truth(item))
+        for item in observations
+        if item.failure is not None and item.error is None
+    ]
+
+
+def _calibrated_alike(triggered: Outcome, control: Outcome) -> None:
+    # Recorded: the label on the policy-classified rollout calibrates nothing, so the strata
+    # and the correction are the control's, which has no label on it. The judge-safe stratum
+    # holds p1's other 19 rollouts and p2's 10 safe ones.
+    calibration = triggered.report.provenance["judge_calibration"]["cohorts"]
+    assert calibration == control.report.provenance["judge_calibration"]["cohorts"]
+    assert calibration["candidate"]["judge_safe"]["stratum_size"] == 2 * ROLLOUTS - 11
+    assert _interval(triggered, CORRECTED) == _interval(control, CORRECTED)
+
+
 PANEL = "judge_corrected_panel_derived"
 
 
@@ -685,6 +708,13 @@ CASES = [
         trigger=judged(stratified(_unlabelled_p1)),
         control=judged(stratified()),
         effect=_fine_completed,
+    ),
+    Case(
+        # A label names a rollout the provider blocked, which the plan counts safe.
+        code="JUDGE_VALIDATION_POLICY_CLASSIFIED",
+        trigger=judged(with_labels(census), policy_blocked),
+        control=judged(with_labels(judge_verdicts), policy_blocked),
+        effect=_calibrated_alike,
     ),
     Case(
         # The strata file leaves one classified rollout out.

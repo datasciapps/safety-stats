@@ -1357,6 +1357,25 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
     ),
     CodeEntry(
+        code="JUDGE_VALIDATION_POLICY_CLASSIFIED",
+        severities=("WARNING",),
+        source="judge_labels",
+        effect="recorded",
+        assumption=(
+            "Every validation label, and every validation strata row, names a rollout the "
+            "judge classified."
+        ),
+        consequence=(
+            "The labels and strata rows of rollouts a plan policy classified calibrate nothing: "
+            "such rollouts are in neither judge stratum."
+        ),
+        remedy=(
+            "Draw the labels from the rollouts the judge classified only, leaving out those a "
+            "policy classified, such as policy blocks counted safe or missing scores counted "
+            "as failures."
+        ),
+    ),
+    CodeEntry(
         code="JUDGE_VALIDATION_STRATA_INCOMPLETE",
         severities=("ERROR",),
         source="judge_labels",

@@ -608,6 +608,16 @@ described in their pull requests.
   the row has no asymptotic reference interval. Rows without such rollouts are unchanged. See
   [Rollouts a policy classifies](docs/judge-misclassification.md#rollouts-a-policy-classifies).
 
+- **The judge strata of a validated calibration hold the judge's verdicts only (changes
+  `report.json`).** A rollout a plan policy classified, such as a policy block counted safe or
+  a missing score counted as a failure, entered the judge stratum of its `failure` value, so
+  its label was read as evidence about the judge and it counted in the stratum's size. Such
+  rollouts are now in neither judge stratum, nor in the truth strata of the noisy-but-valid
+  test. A label or `validation_strata` row on one is left out of the calibration, with the new
+  warning `JUDGE_VALIDATION_POLICY_CLASSIFIED`, and a strata file no longer has to place them.
+  Plans whose rollouts are all classified by the judge are unchanged. See
+  [Workflow](docs/judge-misclassification.md#workflow).
+
 - **`report.include_decisions` hides decisions, and every reader defaults it to false (#58).**
   The option was read as true by `report.html` and by the Python report model when a report did
   not record it, and as false by the plan and the CLI. Every reader now reads it as false. The

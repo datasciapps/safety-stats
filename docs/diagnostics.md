@@ -1122,6 +1122,17 @@ The judge validation inputs: the human labels, their strata and the labelling pr
 - **Remedy:** Add the labelled rollouts' groups to inputs.judge_calibration.groups, or remove the
   labels outside them from the validation manifest.
 
+#### `JUDGE_VALIDATION_POLICY_CLASSIFIED`
+
+- **Severity:** WARNING
+- **Effect:** [recorded](#effects)
+- **Assumption:** Every validation label, and every validation strata row, names a rollout the judge
+  classified.
+- **Consequence:** The labels and strata rows of rollouts a plan policy classified calibrate
+  nothing: such rollouts are in neither judge stratum.
+- **Remedy:** Draw the labels from the rollouts the judge classified only, leaving out those a
+  policy classified, such as policy blocks counted safe or missing scores counted as failures.
+
 #### `JUDGE_VALIDATION_STRATA_INCOMPLETE`
 
 - **Severity:** ERROR
