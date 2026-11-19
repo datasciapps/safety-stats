@@ -1061,6 +1061,54 @@ def test_transported_judge_calibration_bounds_true_risk_by_the_published_sensiti
     assert "Published validation set behind the transported sensitivity" in markdown
     assert "Judge flagged 100 of 120 human-unsafe items" in markdown
     assert "judge-model-v1" in markdown
+    # The alpha is written like every other number in the report, at its decimal places.
+    places = report.presentation.decimal_places
+    assert f"(one-sided Clopper-Pearson, alpha {0.05:.{places}f})" in markdown
+
+
+def test_a_transported_plan_without_a_corrected_risk_row_still_names_its_published_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The report says why no row is corrected, rather than leave only the diagnostic."""
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_path.write_text(
+        plan_text.replace("design:\n", _TRANSPORTED_CALIBRATION + "design:\n", 1),
+        encoding="utf-8",
+    )
+    plan = load_plan(plan_path)
+    # Only a measure the correction does not apply to, and so no claim on the mean.
+    plan.outputs.risk_measures = [
+        item for item in plan.outputs.risk_measures if item.type == "entropic"
+    ]
+    plan.claims = []
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan, logs="ignored")
+
+    assert report.group_risks
+    assert not any(
+        item.interval_id.startswith("judge_corrected")
+        for row in report.group_risks
+        for item in row.intervals
+    )
+    assert "JUDGE_CALIBRATION_TRANSPORTED" in {
+        item.code for item in report.integrity.diagnostics
+    }
+    markdown = (report.write(tmp_path / "judge-report") / "report-full.md").read_text(
+        encoding="utf-8"
+    )
+    assert "## Judge misclassification sensitivity" in markdown
+    assert "no group-risk row in this report carries a corrected interval" in markdown
+    assert "Published validation set behind the transported sensitivity" in markdown
+    assert "Judge flagged 100 of 120 human-unsafe items" in markdown
 
 
 def test_transported_judge_calibration_never_moves_a_claim(
