@@ -171,6 +171,19 @@ def test_low_variance_fractional_blocks_beat_the_range_only_engines() -> None:
     assert betting.upper <= kl.upper
 
 
+def test_unequal_weights_can_make_hoeffding_tighter() -> None:
+    # The example in statistical-methods.md and plan-reference.md: tasks of 2, 10 and 50
+    # equally weighted prompts, every prompt at 0.05. The betting exponents sum to
+    # 1 / max A = 6, while Hoeffding's effective sample size is 1 / sum A^2 = 14.5.
+    weights = np.concatenate([np.full(size, 1 / (3 * size)) for size in (2, 10, 50)])
+    values = np.full(len(weights), 0.05)
+    kwargs = dict(alpha_lower=0.05, alpha_upper=0.05, independence_profile="prompt")
+    betting = weighted_bounded_betting_mean_bounds(values, values, weights, **kwargs)
+    hoeffding = weighted_bounded_hoeffding_mean_bounds(values, values, weights, **kwargs)
+    assert betting.upper == pytest.approx(0.459, rel=0, abs=5e-4)
+    assert hoeffding.upper == pytest.approx(0.371, rel=0, abs=5e-4)
+
+
 # --- Exact values ---------------------------------------------------------------------------
 
 
