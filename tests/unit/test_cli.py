@@ -325,6 +325,17 @@ def _comparison_manifest(tmp_path: Path, *, counts: bool = True) -> Path:
     return manifest
 
 
+def _resolvable(output: str, direction: str) -> float:
+    """The difference plan comparison prints for the bound ``direction`` the margin.
+
+    ``output`` is ``plain`` text, whose words are separated by single spaces.
+    """
+
+    prefix = f"bound at or {direction} the margin: "
+    assert output.count(prefix) == 1, output
+    return float(output.split(prefix)[1].split(" ")[0])
+
+
 def test_comparison_planning_cli_splits_alpha_and_reports_both_directions(
     tmp_path: Path,
 ) -> None:
@@ -361,7 +372,16 @@ def test_comparison_planning_cli_splits_alpha_and_reports_both_directions(
 
     per_direction = runner.invoke(app, [*arguments, "--coverage-mode", "per_direction"])
     assert per_direction.exit_code == 0, per_direction.output
-    assert "One-sided alpha per direction: 0.05" in plain(per_direction.output)
+    per_direction_output = plain(per_direction.output)
+    assert "One-sided alpha per direction: 0.05" in per_direction_output
+    # per_direction spends all of 0.05 on each bound, and the differences say so.
+    gap = math.sqrt(0.5 * ranges * math.log(20)) + math.sqrt(0.5 * ranges * math.log(5))
+    assert _resolvable(per_direction_output, "below") == pytest.approx(
+        0.05 - gap, rel=1e-7, abs=0
+    )
+    assert _resolvable(per_direction_output, "above") == pytest.approx(
+        0.05 + gap, rel=1e-7, abs=0
+    )
 
 
 def test_comparison_planning_cli_pairs_and_overrides_counts(tmp_path: Path) -> None:
@@ -392,6 +412,13 @@ def test_comparison_planning_cli_pairs_and_overrides_counts(tmp_path: Path) -> N
     assert "Margin: -0.02" in output
     assert "Local alpha: 0.025" in output
     assert "One-sided alpha per direction: 0.0125" in output
+    # Each prompt, of weight 1/4, has 20 pair blocks whose difference ranges over
+    # 1/4 * (1/30 + 1/20), and 10 candidate-only rollouts ranging over 1/4 / 30. The family
+    # share 0.05 / 2 is split between the bounds, and the default power is 0.9.
+    ranges = 4 * (20 * (0.25 * (1 / 30 + 1 / 20)) ** 2 + 10 * (0.25 / 30) ** 2)
+    gap = math.sqrt(0.5 * ranges * math.log(1 / 0.0125)) + math.sqrt(0.5 * ranges * math.log(10))
+    assert _resolvable(output, "below") == pytest.approx(-0.02 - gap, rel=1e-7, abs=0)
+    assert _resolvable(output, "above") == pytest.approx(-0.02 + gap, rel=1e-7, abs=0)
 
 
 def test_comparison_planning_cli_needs_counts_for_both_arms(tmp_path: Path) -> None:
