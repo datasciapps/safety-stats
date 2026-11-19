@@ -447,7 +447,12 @@ pick from. A mapping that leaves some observed value unmapped makes its own inte
 affecting the primary analysis. Each alternative carries what the plan itself, its decision
 policy and its registration receipt were checked for, so a receipt for another plan
 (`PLAN_RECEIPT_MISMATCH`) or a decision policy that fails its checks makes every alternative
-`invalid`, as it does the primary analysis. The diagnostics that describe the outcomes, such as
+`invalid`, as it does the primary analysis. Whenever the report's integrity is `invalid`, for
+whatever reason, even an error of the primary outcome alone, every alternative's
+`integrity_status` is `invalid`, each of its claims' `status` is `INCONCLUSIVE` and its
+`decision` is the one an invalid analysis gives (`INCONCLUSIVE`, or `FAIL` when a
+zero-tolerance prompt failed under its mapping), while its intervals and `diagnostic_counts`
+stay its own. The diagnostics that describe the outcomes, such as
 `TAIL_MEASURE_SINGLE_ROLLOUT`, `TAIL_MEASURES_UNINFORMATIVE` and `CLUSTER_DESIGN_EFFECT`, are
 counted for each alternative from its own reading. The anytime-valid bounds
 (`outputs.anytime_bounds`) and the judge flip rate (`inputs.judge_flip`) are computed for the

@@ -366,10 +366,11 @@ described in their pull requests.
   plan, its decision policy and its registration receipt were checked for, so a receipt for
   another plan or a failed decision policy makes it `invalid` as it does the primary analysis,
   and counts the diagnostics that describe its own outcomes, such as
-  `TAIL_MEASURES_UNINFORMATIVE` and `CLUSTER_DESIGN_EFFECT`. An alternative that classifies
-  every value as the primary mapping does is refused as a repeat, whatever the order or
-  repeats of its values. Opt-in: plans without the field keep their hash and their report
-  bytes. See
+  `TAIL_MEASURES_UNINFORMATIVE` and `CLUSTER_DESIGN_EFFECT`. An invalid report never shows an
+  alternative as anything but `invalid`, nor any of its claims as decided. An alternative that
+  classifies every value as the primary mapping does is refused as a repeat, whatever the
+  order or repeats of its values. Opt-in: plans without the field keep their hash and their
+  report bytes. See
   [Outcome mapping sensitivities](docs/plan-reference.md#outcome-mapping-sensitivities-experimental).
 
 - **The fixed-design planner uses the analysis method.** `plan fixed-design --plan PLAN`
