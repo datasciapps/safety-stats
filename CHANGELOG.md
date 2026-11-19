@@ -50,6 +50,12 @@ described in their pull requests.
   assumed the observed rate. The line now says so, and shows the precision target exactly
   rather than at two decimals.
 
+- **report.md's breakdown flag counts every node and names a widest one that has an interval
+  (changes `report.md`).** The "Precision" line for a breakdown counted the too-wide intervals
+  among the 40 rows shown but divided by all nodes, and took a node without an interval, or
+  one of zero width, as the widest, which it then showed as "unavailable". It now counts every
+  node, says how many have no interval, and names the widest among those that have one.
+
 - **report.md's prompt-level sensitivity is the prompt profile's (changes `report.md`).** The
   column showed the first sensitivity interval of the primary's method, whatever its profile:
   with a category profile listed before the prompt profile it showed the category interval,

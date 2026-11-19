@@ -486,7 +486,6 @@ def _breakdown_section(
         header += f" {_escape(pair[0])} − {_escape(pair[1])} |"
         rule += "---|"
     lines = [f"## By {_escape(level)}", "", header, rule]
-    flagged_cells = 0
     for path in paths[:_MAX_BREAKDOWN_ROWS]:
         first = next(index[(cohort, path)] for cohort in cohorts if (cohort, path) in index)
         cells = [_escape(path), str(first.prompt_count)]
@@ -496,7 +495,6 @@ def _breakdown_section(
                 cells.append("—")
                 continue
             flagged = _imprecise(node.estimate, node.lower, node.upper, target)
-            flagged_cells += flagged
             cells.append(
                 f"{rate_text(node.estimate)} {rate_interval_text(node.lower, node.upper)}"
                 + (" †" if flagged else "")
@@ -519,24 +517,38 @@ def _breakdown_section(
         lines.extend(
             ["", f"{len(paths) - _MAX_BREAKDOWN_ROWS} further rows are in `hierarchy-risks.csv`."]
         )
-    if flagged_cells:
-        widest = max(
-            selected,
-            key=lambda node: _half_width(node.estimate, node.lower, node.upper) or 1.0,
-        )
-        flags.append(
-            f"{flagged_cells} of {len(selected)} {_escape(level)} intervals exceed "
-            f"±{rate_text(target)}; the widest ({_escape(widest.cohort_id)} · "
+    flags.extend(_breakdown_flag(selected, level, target, budget))
+    return lines
+
+
+def _breakdown_flag(
+    nodes: list[HierarchyRiskResult], level: str, target: float, budget: _Budget
+) -> list[str]:
+    """The flag for a breakdown: how many of all its nodes are too wide, and the widest.
+
+    It counts every node of the level, also those beyond the rows shown. A node without an
+    interval is counted as unavailable, not as the widest.
+    """
+
+    widths = [
+        (node, _half_width(node.estimate, node.lower, node.upper)) for node in nodes
+    ]
+    wide = [(node, width) for node, width in widths if width is not None and width > target + 1e-12]
+    unavailable = sum(width is None for _, width in widths)
+    if not wide and not unavailable:
+        return []
+    text = f"{len(wide)} of {len(nodes)} {_escape(level)} intervals exceed ±{rate_text(target)}"
+    if unavailable:
+        text += f", and {unavailable} {'is' if unavailable == 1 else 'are'} unavailable"
+    if wide:
+        widest, width = max(wide, key=lambda item: item[1])
+        text += (
+            f"; the widest ({_escape(widest.cohort_id)} · "
             f"{_escape(' → '.join(widest.path.values()))}: "
             f"{rate_text(widest.estimate)} {rate_interval_text(widest.lower, widest.upper)}) "
-            + budget.advice(
-                widest.estimate,
-                _half_width(widest.estimate, widest.lower, widest.upper),
-                _primary(widest.intervals),
-                target,
-            )
+            + budget.advice(widest.estimate, width, _primary(widest.intervals), target)
         )
-    return lines
+    return [text]
 
 
 def _other_measures_section(

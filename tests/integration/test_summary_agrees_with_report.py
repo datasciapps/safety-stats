@@ -15,7 +15,12 @@ from decimal import Decimal
 
 import pytest
 
-from inspect_safety_stats.schema.reports import Diagnostic, RiskIntervalResult, SafetyReport
+from inspect_safety_stats.schema.reports import (
+    Diagnostic,
+    HierarchyRiskResult,
+    RiskIntervalResult,
+    SafetyReport,
+)
 from inspect_safety_stats.schema.summary import is_headline_risk
 from tests.summary_fixtures import Variant, analysed, claim_spec, section, table
 
@@ -517,3 +522,59 @@ def test_info_codes_that_adjust_or_withhold_a_result_are_named(
         assert "CLUSTER_DESIGN_EFFECT" not in page.split("## Claims", 1)[0]
         assert ("## Warnings" in page) == bool(warning)
         assert page.index("## Notes") < page.index("## Claims")
+
+
+def _breakdown_flag(page: str) -> str:
+    return next(
+        line.removeprefix("- ")
+        for line in section(page, "Precision").splitlines()
+        if "category intervals exceed" in line
+    )
+
+
+def test_the_breakdown_flag_counts_every_node_and_skips_unavailable_ones(
+    rendered: dict[str, tuple[SafetyReport, str]],
+) -> None:
+    """The flag counts the nodes beyond the rows shown, and never calls a missing one widest."""
+
+    from inspect_safety_stats.report.summary import precision_target, summary_markdown
+
+    report, page = _case(rendered, "passing")
+    target = precision_target(report)
+    nodes = [node for node in report.hierarchy_risks if node.level == "category"]
+    others = [node for node in report.hierarchy_risks if node.level != "category"]
+    assert len(nodes) == 4
+
+    def wide(node: HierarchyRiskResult) -> bool:
+        assert node.estimate is not None and node.lower is not None and node.upper is not None
+        return max(node.upper - node.estimate, node.estimate - node.lower) > target
+
+    flagged = sum(wide(node) for node in nodes)
+    assert 0 < flagged < 4
+    assert _breakdown_flag(page).startswith(f"{flagged} of 4 category intervals exceed ±5.0%;")
+
+    # 50 categories, more than the 40 rows shown: the count covers them all.
+    many = [
+        node.model_copy(update={"path": {"category": f"{node.path['category']}{copy:02d}"}})
+        for copy in range(25)
+        for node in nodes
+    ]
+    page = summary_markdown(report.model_copy(update={"hierarchy_risks": [*others, *many]}))
+    assert "10 further rows are in `hierarchy-risks.csv`." in page
+    assert _breakdown_flag(page).startswith(
+        f"{25 * flagged} of 100 category intervals exceed ±5.0%;"
+    )
+
+    # Without its interval, the widest node is counted as unavailable, and the next widest
+    # is named.
+    widest = max(nodes, key=lambda node: (node.upper or 0) - (node.lower or 0))
+    missing = widest.model_copy(update={"lower": None, "upper": None})
+    rest = [node for node in nodes if node is not widest]
+    page = summary_markdown(
+        report.model_copy(update={"hierarchy_risks": [*others, *rest, missing]})
+    )
+    flag = _breakdown_flag(page)
+    assert flag.startswith(
+        f"{flagged - 1} of 4 category intervals exceed ±5.0%, and 1 is unavailable"
+    )
+    assert "unavailable)" not in flag
