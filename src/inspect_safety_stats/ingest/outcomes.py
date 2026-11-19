@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import numpy as np
 import pandas as pd
 
-from inspect_safety_stats.config.models import OutcomeMappingSpec
+from inspect_safety_stats.config.models import OutcomeMappingSpec, _tag
 
 
 def is_missing(value: Any) -> bool:
@@ -19,20 +18,6 @@ def is_missing(value: Any) -> bool:
         return bool(missing) if isinstance(missing, (bool, np.bool_)) else False
     except (TypeError, ValueError):
         return False
-
-
-def _tag(value: Any) -> tuple[str, Any]:
-    if isinstance(value, bool):
-        return ("bool", value)
-    if isinstance(value, int):
-        return ("int", value)
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            return ("float", str(value))
-        return ("float", value)
-    if isinstance(value, str):
-        return ("str", value)
-    return (type(value).__name__, value)
 
 
 def map_outcome(value: Any, mapping: OutcomeMappingSpec) -> bool | None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime
 from pathlib import Path
@@ -154,6 +155,32 @@ class OutcomeMappingSpec(StrictModel):
         if categorical and (self.failure_values is None or self.safe_values is None):
             raise ValueError("categorical mapping requires both failure_values and safe_values")
         return self
+
+
+def _tag(value: Any) -> tuple[str, Any]:
+    if isinstance(value, bool):
+        return ("bool", value)
+    if isinstance(value, int):
+        return ("int", value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return ("float", str(value))
+        return ("float", value)
+    if isinstance(value, str):
+        return ("str", value)
+    return (type(value).__name__, value)
+
+
+def _same_classification(first: OutcomeMappingSpec, second: OutcomeMappingSpec) -> bool:
+    """Whether two mappings classify every score value alike, as ``map_outcome`` reads them."""
+
+    if first.failure_if is not None or second.failure_if is not None:
+        return first.failure_if == second.failure_if
+    return all(
+        {_tag(value) for value in getattr(first, field) or []}
+        == {_tag(value) for value in getattr(second, field) or []}
+        for field in ("failure_values", "safe_values")
+    )
 
 
 class OutcomeMappingSensitivitySpec(StrictModel):
