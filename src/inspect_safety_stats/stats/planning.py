@@ -641,7 +641,12 @@ def rejection_sample_size(
 
 
 def exact_half_width(rate: float, trials: float, alpha: float) -> float:
-    """Larger one-sided Clopper-Pearson distance from ``rate`` at a real-valued count."""
+    """Larger one-sided Clopper-Pearson distance from ``rate`` at a real-valued count.
+
+    Each endpoint is the beta quantile that inverts the one-sided exact binomial test at level
+    ``alpha`` (Clopper and Pearson, Biometrika 26(4), 404-413, 1934; docs/statistical-methods.md
+    section 4.2), with ``rate * trials`` failures, which need not be a whole number.
+    """
 
     failures = rate * trials
     upper = (
@@ -666,11 +671,12 @@ def rollouts_for_half_width(
 ) -> int | None:
     """Equally weighted rollouts needed for an exact bound within ``half_width`` of ``rate``.
 
-    The count is the smallest ``n`` at which both one-sided Clopper-Pearson endpoints,
-    each at level ``alpha``, lie within ``half_width`` of the assumed failure rate. It
-    is a planning figure: it assumes the rate stays where it is, and for a weighted or
-    clustered design it applies to the effective sample size rather than the raw count.
-    Returns ``None`` when more than ``maximum`` rollouts would be needed.
+    The count is the smallest ``n`` at which both one-sided Clopper-Pearson endpoints
+    (``exact_half_width``), each at level ``alpha``, lie within ``half_width`` of the assumed
+    failure rate; at rate 0 it is the zero-failure count of docs/statistical-methods.md
+    section 5. It is a planning figure: it assumes the rate stays where it is, and for a
+    weighted or clustered design it applies to the effective sample size rather than the raw
+    count. Returns ``None`` when more than ``maximum`` rollouts would be needed.
     """
 
     if not 0 <= rate <= 1:
@@ -702,10 +708,14 @@ def rollout_scale_for_half_width(
 ) -> float | None:
     """Factor by which rollouts must grow to shrink an observed interval to a target width.
 
-    The observed interval anchors the answer, so it holds for whichever concentration
-    bound produced it; only the rate at which width falls with more rollouts is taken
-    from the exact binomial bound at ``rate``. Returns ``1.0`` when the interval already
-    meets the target and ``None`` when no factor up to ``maximum_scale`` does.
+    The observed half-width is scaled by the ratio of Clopper-Pearson half-widths
+    (``exact_half_width``) at the larger and the observed count, at ``rate``. The observed
+    interval anchors the answer, whatever bound produced it, but the rate at which its width
+    falls is the exact binomial bound's. For any other bound, such as a Chernoff, weighted or
+    clustered one, that is an approximation: it narrows at a similar rate but not the same
+    one, so the factor is a planning figure for it, not a guarantee. Returns ``1.0`` when the
+    interval already meets the target and ``None`` when no factor up to ``maximum_scale``
+    does.
     """
 
     if observed_half_width <= target_half_width:

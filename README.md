@@ -225,7 +225,7 @@ Plan SHA-256: 8f634e7db40e3f538f7262e10b10d53823ba4ef0abc7b98ed091a9693c2e1e6f
 Integrity: valid
 Failure rate (weighted mean):
   baseline / all: 20.4% [13.0%, 29.5%]
-  candidate / all: 0.8% [0.0%, 4.2%]
+  candidate / all: 0.8% [0.0%, 4.3%]
 Warnings by code, listed in reports/demo/index.md under "Errors and warnings by code"; reports/demo/report.md gives each one's assumption and effect under "Warnings":
   WARNING TAIL_MEASURES_UNINFORMATIVE (2 occurrences, recorded): The tail and threshold measures are reported as computed, but in the cohort and group named, at the lower median of the rollouts per prompt, even if no prompt failed the named measures' upper bounds would lie more than the precision target above their estimates, so their intervals can only be wide.
 Summary: reports/demo/report.md
@@ -303,12 +303,12 @@ warnings, one for each model, record a fact and change no result. Then come, in 
 - **Warnings.** One row per code. The demo has one code, raised for each model, read
   [below](#reading-the-warnings).
 - **Failure risk.** The baseline fails on 20.4% of its rollouts, with an interval from 13.0% to
-  29.5%; the candidate on 0.8%, from 0.0% to 4.2%. The intervals bound the rollout uncertainty on
+  29.5%; the candidate on 0.8%, from 0.0% to 4.3%. The intervals bound the rollout uncertainty on
   these 12 prompts, with 95% coverage holding for all of them at once. The prompt-level
   sensitivity beside them (1.1% to 65.3% for the baseline) allows the rollouts of one prompt to
   depend on each other in any way. It is much wider, because it can rely on little more than the
   12 prompts being independent of each other.
-- **Comparisons.** Candidate minus baseline is −19.6 percentage points, from −29.4 to −8.8. The
+- **Comparisons.** Candidate minus baseline is −19.6 percentage points, from −29.5 to −8.7. The
   whole interval is below zero, so on this design the candidate fails less often, as long as
   the rollouts are independent of each other. The prompt-level sensitivity of the difference,
   under "Comparison interval sensitivity" in `report-full.md`, runs from −65.3 to +36.2 points
@@ -317,7 +317,7 @@ warnings, one for each model, record a fact and change no result. Then come, in 
 - **By risk_domain.** The same rates and differences within bio, cyber and privacy. With 80
   rollouts per domain the intervals are wide: the baseline's bio rate is 5.0%, from 0.4% to
   18.2%. The candidate never fails on a bio or cyber prompt, and its upper bound there is still
-  7.4%: rollouts without failures bound a rate only from above. In bio the difference runs from
+  7.5%: rollouts without failures bound a rate only from above. In bio the difference runs from
   −18.2 to +7.0 points, so no difference is established there.
 - **Tail and threshold measures.** `cvar_90` and `worst`, the measures the warning is about.
 - **Precision.** Which intervals are wider than the plan's `report.precision_target` (±5% by
@@ -337,10 +337,10 @@ Baseline, Group, Measure and Eligibility columns:
 
 | Kind | Model | Estimand | Estimate | Lower | Upper | Pointer | CSV row |
 |---|---|---|---:|---:|---:|---|---|
-| group_risk | baseline | — | 0.2042 | 0.1302 | 0.2946 | `/group_risks/1` | — |
-| group_risk | candidate | — | 0.0083 | 0.0003 | 0.0424 | `/group_risks/4` | — |
+| group_risk | baseline | — | 0.2042 | 0.1301 | 0.2947 | `/group_risks/1` | — |
+| group_risk | candidate | — | 0.0083 | 0.0002 | 0.0425 | `/group_risks/4` | — |
 | comparison | candidate | risk_difference | -0.1958 | -0.2944 | -0.0877 | `/comparisons/0` | `comparisons.csv` row 1 |
-| comparison | candidate | risk_ratio | 0.0408 | 0.0009 | 0.3261 | `/comparisons/4` | `comparisons.csv` row 5 |
+| comparison | candidate | risk_ratio | 0.0408 | 0.0008 | 0.3262 | `/comparisons/4` | `comparisons.csv` row 5 |
 
 A pointer is a JSON pointer: `/comparisons/0` is the first entry of `comparisons` in
 `report.json`. Each warning code has the same kind of pointer to its diagnostic. The index also
@@ -447,10 +447,13 @@ reports/example/
   checksums.json
 ```
 
-`report.md` is a one-page summary: warnings first, then the failure rates, comparisons and
-breakdown, the intervals too wide for `report.precision_target` with the rollouts that would
-narrow them, and the assumptions used. `report-full.md` is the full report, with every
-interval construction, sensitivity and diagnostic.
+`report.md` is a one-page summary: warnings first, with any info code that adjusts or withholds
+a result; then, when decisions are shown, the overall decision with the reason for it and every
+claim; then the failure rates, comparisons and breakdown, the intervals too wide for
+`report.precision_target` with the rollouts that would narrow them, and the assumptions used.
+Its bounds are rounded outward, a lower bound down and an upper bound up, so that none reads
+tighter than the analysis gives. `report-full.md` is the full report, with every interval
+construction, sensitivity and diagnostic.
 
 A plan that declares
 [outcome mapping sensitivities](docs/plan-reference.md#outcome-mapping-sensitivities-experimental)
