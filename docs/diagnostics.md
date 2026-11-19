@@ -711,6 +711,18 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
 - **Remedy:** Fix the input the message names, such as an unreadable manifest, log or receipt, or a
   plan option the source cannot serve, and rerun.
 
+#### `JUDGE_CONFIGURATION_UNREADABLE`
+
+- **Severity:** WARNING
+- **Effect:** [recorded](#effects)
+- **Assumption:** With outputs.judge_claims, every run records its scorers and model roles, when it
+  records them at all, as JSON: a list of scorers and a mapping from each role to a configuration
+  with a model id.
+- **Consequence:** Nothing is computed differently and integrity is unchanged; the judges' recorded
+  configurations leave out the field of that run.
+- **Remedy:** Record the run's scorers and model_roles as Inspect logs record them, or leave the
+  field out of the rollout files' runs.
+
 #### `JUDGE_SCORE_MISSING`
 
 - **Severity:** ERROR

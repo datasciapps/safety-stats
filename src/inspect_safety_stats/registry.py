@@ -1073,6 +1073,25 @@ _CODES: tuple[CodeEntry, ...] = (
         assumptions=("judge_accuracy",),
     ),
     CodeEntry(
+        code="JUDGE_CONFIGURATION_UNREADABLE",
+        severities=("WARNING",),
+        source="logs",
+        effect="recorded",
+        assumption=(
+            "With outputs.judge_claims, every run records its scorers and model roles, when it "
+            "records them at all, as JSON: a list of scorers and a mapping from each role to a "
+            "configuration with a model id."
+        ),
+        consequence=(
+            "Nothing is computed differently and integrity is unchanged; the judges' recorded "
+            "configurations leave out the field of that run."
+        ),
+        remedy=(
+            "Record the run's scorers and model_roles as Inspect logs record them, or leave "
+            "the field out of the rollout files' runs."
+        ),
+    ),
+    CodeEntry(
         code="JUDGE_CORRECTED_CLAIMS",
         severities=("INFO",),
         source="analysis",

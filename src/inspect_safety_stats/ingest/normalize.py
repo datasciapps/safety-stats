@@ -9,8 +9,9 @@ missing-score policies, duplicates, completeness and sampled-design checks.
 
 from __future__ import annotations
 
+import functools
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -979,22 +980,38 @@ def _receipt_timing(receipt: RegistrationReceipt, observed: list[Any]) -> list[D
     ]
 
 
-def read_inputs(
-    plan: AnalysisPlan, source: EvaluationSource
-) -> tuple[pd.DataFrame, list[ResolvedGroup], SourceData]:
+@dataclass(frozen=True)
+class RawInputs:
+    """The plan's design manifest and groups and the source's runs and rollouts, as read and
+    before :func:`normalize` applies the plan to them."""
+
+    manifest: pd.DataFrame
+    groups: list[ResolvedGroup]
+    source: SourceData
+
+
+def read_inputs(plan: AnalysisPlan, source: EvaluationSource) -> RawInputs:
     """Load the plan's design manifest and groups, and read the source, without normalizing.
 
-    Split from ``ingest`` so a caller can normalize what was read more than once.
+    Split from ``ingest`` so a caller can normalize what was read more than once. Each
+    normalization hashes the logs it selects; the source returned remembers each log's hash,
+    so a log is hashed once however often what was read is normalized.
     """
 
     # ORDER MATTERS: the manifest is loaded before the source is read, so a broken manifest
     # is reported before any log is opened, as it always was.
     manifest = load_manifest(plan.inputs.design_manifest, plan_manifest_columns(plan))
     groups = resolve_groups(plan, manifest)
-    return manifest, groups, source.read()
+    read = source.read()
+    return RawInputs(
+        manifest=manifest,
+        groups=groups,
+        source=replace(read, source_sha256=functools.cache(read.source_sha256)),
+    )
 
 
 def ingest(plan: AnalysisPlan, source: EvaluationSource) -> NormalizedData:
     """Load the plan's design manifest, read the source and normalize it."""
 
-    return normalize(plan, *read_inputs(plan, source))
+    raw = read_inputs(plan, source)
+    return normalize(plan, raw.manifest, raw.groups, raw.source)

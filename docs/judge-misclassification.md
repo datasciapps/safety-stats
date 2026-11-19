@@ -891,6 +891,13 @@ directly. That is the recommended route to evidence for a panel. The panel secti
 adds pairwise agreement and Cohen's kappa as diagnostics; neither carries a coverage guarantee and
 neither identifies the true failure rate on its own.
 
+To see what each judge alone would decide, set `outputs.judge_claims: true` (experimental). The
+report's judge panel section then gains each judge's claim rows, decided as the plan would decide
+them with that judge as its primary outcome, and the configuration its runs record. The rows bound
+each judge's *reported* risk: no correction on this page applies to them, and under a `validated`
+calibration every row is `INCONCLUSIVE`. They compare judges and do not enter the decision. See
+[Claims by judge](plan-reference.md#claims-by-judge-experimental).
+
 ### Deriving a panel's accuracy box
 
 If the primary outcome is an `any` or `all` composite and every member judge declares
