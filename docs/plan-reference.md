@@ -593,6 +593,7 @@ for what the rate shows.
 | `inclusion_probability_column` | Required with `type: sampled`; names a manifest column holding each frame item's inclusion probability in (0, 1] |
 | `sampling` | `poisson` (independent inclusion, default) or `fixed_size` (exact draws per stratum, without replacement) |
 | `stratum_column` | Optional with `sampling: fixed_size`; names the manifest column defining sampling strata |
+| `selection_column` | Experimental, optional with `type: sampled`; names a manifest column marking the frame items the draw selected (`true`/`false`). `analyze` and `validate` then check that each cohort observed exactly those items (`SAMPLE_SELECTION_MISMATCH`); without it only the number of items is checked. A plan without it keeps its hash and report bytes. See [Checking which items were evaluated](design-based-sampling.md#checking-which-items-were-evaluated-experimental) |
 | `hierarchy` | Creator-declared hierarchy ending in `prompt_id` |
 | `rollout_key` | Fields uniquely identifying one terminal rollout; see [Schema versions](#schema-versions) for the names and default |
 | `require_complete_manifest` | Require every fixed prompt in every cohort |

@@ -10,12 +10,14 @@ import json
 import random
 import shutil
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import analyze
+from inspect_safety_stats import analyze, validate
+from inspect_safety_stats.config.models import DesignSpec
 from inspect_safety_stats.ingest.pilot import draw_pilot
 from inspect_safety_stats.report import visualization
 from tests.template_functions import function_source
@@ -471,39 +473,55 @@ def test_fixed_size_requires_a_constant_probability_within_each_stratum(
     assert report.integrity.status == "invalid"
 
 
-def test_a_drawn_pilot_frame_is_analysed_as_a_fixed_size_design(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    """draw_pilot's frame is the frame of a fixed-size design, with no columns to edit."""
+def _pilot_frame(
+    tmp_path: Path, *, selection_column: bool
+) -> tuple[Path, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """A fixed-size plan over a drawn pilot frame: the plan, evals, a sample row, the frame."""
     plan_path, evals, samples = _write_frame(tmp_path, fixed_size=True)
-    frame = pd.read_csv(tmp_path / "design.csv").drop(columns="inclusion_probability")
+    frame = pd.read_csv(tmp_path / "design.csv", dtype=str, keep_default_na=False)
+    frame = frame.drop(columns="inclusion_probability")
     pilot = draw_pilot(frame, per_stratum=12, strata=["sampling_stratum"], seed=20261116)
     pilot.to_csv(tmp_path / "design.csv", index=False)
+    stratum = "  stratum_column: pilot_stratum\n"
+    if selection_column:
+        stratum += "  selection_column: pilot_selected\n"
     plan_path.write_text(
         plan_path.read_text(encoding="utf-8")
-        .replace("stratum_column: sampling_stratum", "stratum_column: pilot_stratum")
+        .replace("  stratum_column: sampling_stratum\n", stratum)
         .replace(
             "inclusion_probability_column: inclusion_probability",
             "inclusion_probability_column: pilot_inclusion_probability",
         ),
         encoding="utf-8",
     )
-    template = samples.iloc[0].to_dict()
-    drawn = pilot.loc[pilot["pilot_selected"], "prompt_id"].tolist()
-    pilot_samples = pd.DataFrame(
+    return plan_path, evals, samples.iloc[[0]], pilot
+
+
+def _pilot_run(template: pd.DataFrame, prompt_ids: list[str]) -> pd.DataFrame:
+    row = template.iloc[0].to_dict()
+    return pd.DataFrame(
         [
             {
-                **template,
+                **row,
                 "sample_id": f"{prompt_id}-{epoch}",
                 "id": prompt_id,
                 "epoch": epoch,
                 "score_harmful": "FAIL" if epoch == 1 and index % 3 == 0 else "PASS",
             }
-            for index, prompt_id in enumerate(drawn)
+            for index, prompt_id in enumerate(prompt_ids)
             for epoch in range(1, ROLLOUTS + 1)
         ]
     )
-    _patch(monkeypatch, evals, pilot_samples)
+
+
+@pytest.mark.parametrize("selection_column", [False, True], ids=["counts", "selection"])
+def test_a_drawn_pilot_frame_is_analysed_as_a_fixed_size_design(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, selection_column: bool
+) -> None:
+    """draw_pilot's frame is the frame of a fixed-size design, with no columns to edit."""
+    plan_path, evals, template, pilot = _pilot_frame(tmp_path, selection_column=selection_column)
+    drawn = pilot.loc[pilot["pilot_selected"], "prompt_id"].tolist()
+    _patch(monkeypatch, evals, _pilot_run(template, drawn))
 
     report = analyze(plan=plan_path, logs="ignored")
 
@@ -512,6 +530,85 @@ def test_a_drawn_pilot_frame_is_analysed_as_a_fixed_size_design(
     primary = next(item for item in mean.intervals if item.role == "primary")
     assert primary.interval_id.startswith("stratified_without_replacement_")
     assert primary.independent_block_count == 24
+
+
+def test_a_pilot_of_the_first_prompts_is_caught_only_by_the_selection_column(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The first twelve prompts of each stratum by id match the draw's counts, not its items.
+
+    Without design.selection_column the run passes the fixed-size checks; with it, analyze
+    and validate both report SAMPLE_SELECTION_MISMATCH and withhold the cohort's bounds.
+    """
+    plan_path, evals, template, pilot = _pilot_frame(tmp_path, selection_column=True)
+    first = (
+        pilot.sort_values("prompt_id").groupby("pilot_stratum").head(12)["prompt_id"].tolist()
+    )
+    drawn = set(pilot.loc[pilot["pilot_selected"], "prompt_id"])
+    assert set(first) != drawn
+    _patch(monkeypatch, evals, _pilot_run(template, first))
+
+    report = analyze(plan=plan_path, logs="ignored")
+    checked = validate(plan=plan_path, logs="ignored")
+
+    mismatch = [
+        item for item in report.integrity.diagnostics if item.code == "SAMPLE_SELECTION_MISMATCH"
+    ]
+    assert len(mismatch) == 1
+    assert mismatch[0].severity == "ERROR"
+    assert mismatch[0].details["observed_not_selected"] == len(set(first) - drawn)
+    assert mismatch[0].details["selected_not_observed"] == len(drawn - set(first))
+    assert report.integrity.status == "invalid"
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    assert (mean.lower, mean.upper) == (None, None)
+    assert checked.status == "invalid"
+    assert "SAMPLE_SELECTION_MISMATCH" in {item.code for item in checked.diagnostics}
+
+    # Without the column, the same run satisfies every count a fixed-size design checks.
+    text = plan_path.read_text(encoding="utf-8")
+    assert "  selection_column: pilot_selected\n" in text
+    plan_path.write_text(
+        text.replace("  selection_column: pilot_selected\n", ""), encoding="utf-8"
+    )
+    unchecked = analyze(plan=plan_path, logs="ignored")
+    assert unchecked.integrity.status == "valid", unchecked.integrity.diagnostics
+
+
+@pytest.mark.parametrize(
+    ("change", "message"),
+    [
+        (lambda frame: frame.drop(columns="pilot_selected"), "has no selection column"),
+        (lambda frame: frame.assign(pilot_selected="maybe"), "invalid boolean"),
+        (lambda frame: frame.assign(pilot_selected=None), "has missing values"),
+    ],
+    ids=["absent", "not_boolean", "missing"],
+)
+def test_an_unreadable_selection_column_fails_ingest_naming_it(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    change: Callable[[pd.DataFrame], pd.DataFrame],
+    message: str,
+) -> None:
+    plan_path, evals, template, pilot = _pilot_frame(tmp_path, selection_column=True)
+    change(pilot).to_csv(tmp_path / "design.csv", index=False)
+    drawn = pilot.loc[pilot["pilot_selected"], "prompt_id"].tolist()
+    _patch(monkeypatch, evals, _pilot_run(template, drawn))
+
+    checked = validate(plan=plan_path, logs="ignored")
+
+    (failed,) = [item for item in checked.diagnostics if item.code == "INGEST_FAILED"]
+    assert "'pilot_selected'" in failed.message
+    assert message in failed.message
+
+
+def test_the_selection_column_is_recorded_only_when_a_plan_sets_it() -> None:
+    """Plans without the experimental field keep the resolved plan their reports record."""
+    sampled = {"type": "sampled", "inclusion_probability_column": "probability"}
+    assert "selection_column" not in DesignSpec.model_validate(sampled).model_dump()
+    declared = DesignSpec.model_validate({**sampled, "selection_column": "drawn"})
+    assert declared.model_dump()["selection_column"] == "drawn"
+    with pytest.raises(ValueError, match="selection_column requires design.type: sampled"):
+        DesignSpec.model_validate({"selection_column": "drawn"})
 
 
 @pytest.mark.parametrize("fixed_size", [False, True], ids=["poisson", "fixed_size"])

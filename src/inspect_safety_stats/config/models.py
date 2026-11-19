@@ -651,11 +651,16 @@ class IndependenceSelectionSpec(StrictModel):
         return self
 
 
-class DesignSpec(StrictModel):
+class DesignSpec(OmitsAbsentFields):
+    absent_when_none = ("selection_column",)
+
     type: Literal["fixed", "sampled"] = "fixed"
     sampling: Literal["poisson", "fixed_size"] = "poisson"
     inclusion_probability_column: str | None = None
     stratum_column: str | None = None
+    # Experimental: the manifest column that marks the frame items the draw selected. The
+    # analysis then checks that each cohort observed exactly those items.
+    selection_column: str | None = Field(default=None, min_length=1)
     hierarchy: list[str] = Field(default_factory=lambda: ["task_id", "question_id", "prompt_id"])
     # The schema 2.0 default; a schema 3.0 plan defaults to NEUTRAL_ROLLOUT_KEY.
     rollout_key: list[str] = Field(default_factory=lambda: list(LEGACY_ROLLOUT_KEY))
@@ -680,6 +685,8 @@ class DesignSpec(StrictModel):
             )
         if self.stratum_column is not None:
             raise ValueError("stratum_column requires design.type: sampled")
+        if self.selection_column is not None:
+            raise ValueError("selection_column requires design.type: sampled")
         if self.sampling != "poisson":
             raise ValueError("design.sampling requires design.type: sampled")
         return self

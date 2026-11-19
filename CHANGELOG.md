@@ -519,6 +519,16 @@ described in their pull requests.
   a `prompt_id` that is not text, which would hash differently from the command's. See
   [Drawing a random pilot](docs/design-based-sampling.md#drawing-a-random-pilot).
 
+- **Checking a sampled design's items against the recorded draw (experimental).** A sampled
+  design's checks counted the items evaluated but not which ones, so a run on the first
+  prompts of each stratum by identifier passed a fixed-size design's checks as if it were
+  the random draw. `design.selection_column` names a manifest column that marks the frame
+  items the draw selected, such as a pilot frame's `pilot_selected`; `analyze` and
+  `validate` then report `SAMPLE_SELECTION_MISMATCH`, an error that makes integrity invalid
+  and withholds the cohort's bounds, when a cohort's observed items differ from them. A plan
+  without the field keeps its hash and writes the same report bytes as before. See
+  [Checking which items were evaluated](docs/design-based-sampling.md#checking-which-items-were-evaluated-experimental).
+
 - **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory
   analysis makes every claim `INCONCLUSIVE`, so a reader had to compare its bounds with the
   thresholds by hand. Each claim in `report.json` now has `descriptive_status`: in an

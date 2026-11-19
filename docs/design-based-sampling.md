@@ -206,6 +206,31 @@ design has \(\pi_j=n_h/N_h\) constant inside a stratum. Three checks enforce tha
   must match its plan **exactly**; any shortfall means the declared probabilities misstate
   the sample.
 
+### Checking which items were evaluated (experimental)
+
+The checks above count items; they do not check which items were evaluated. A run on the
+first twelve prompts of each stratum by identifier matches a draw of twelve per stratum in
+every count and passes them, although it is not a random sample and the declared inclusion
+probabilities do not describe it. When the frame records which items the draw selected,
+name that column:
+
+```yaml
+design:
+  type: sampled
+  sampling: fixed_size
+  stratum_column: sampling_stratum
+  inclusion_probability_column: inclusion_probability
+  selection_column: drawn        # true for each item the draw selected
+```
+
+`analyze` and `validate` then report `SAMPLE_SELECTION_MISMATCH`, an error that makes
+integrity invalid and withholds the cohort's bounds, when a cohort has observations for an
+item the column does not select or none for an item it selects. The column holds `true` or
+`false` (or `yes`/`no`, `1`/`0`) for every frame item; a missing or other value fails
+ingestion with a message that names the column. The check works under Poisson sampling too.
+It compares the run with the recorded draw, not the draw with chance: that the selection was
+random and made before any outcome was seen remains an assumption.
+
 ## Drawing a random pilot
 
 A pilot estimates what the full study will cost and roughly what its rates will be. Its
@@ -251,7 +276,9 @@ and labels that it reads as one value (`1` and `01`, `true` and `True`): `analyz
 otherwise check the draw against strata it did not use.
 
 The pilot frame is the frame of a fixed-size sampled design, so the pilot's rates can be
-analysed as a sample of the whole manifest without editing any column:
+analysed as a sample of the whole manifest without editing any column. Name
+`pilot_selected` as the selection column, so that the analysis checks that the prompts run
+are the ones drawn and not only that their number per stratum is right:
 
 ```yaml
 design:
@@ -259,6 +286,7 @@ design:
   sampling: fixed_size
   stratum_column: pilot_stratum
   inclusion_probability_column: pilot_inclusion_probability
+  selection_column: pilot_selected
 ```
 
 In Python, `draw_pilot(manifest, per_stratum=..., strata=[...], seed=...)` in
