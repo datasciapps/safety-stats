@@ -8,6 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from inspect_safety_stats.registry import SourceKind
 from tests.diagnostic_codes.harness import (
     BASE_RUN,
     Case,
@@ -406,6 +407,10 @@ def _sampled_sensitivities_withheld(triggered: Outcome, control: Outcome) -> Non
     assert profiles(triggered) == profiles(control) == ["frame_item"]
 
 
+# The kind of input, as inspect_safety_stats.registry.SOURCE_KINDS names them, that these
+# cases' triggers break. A case whose trigger breaks another kind names it as its source.
+SOURCE: SourceKind = "plan"
+
 CASES = [
     Case(
         code="ALPHA_ALLOCATION_INVALID",
@@ -436,6 +441,7 @@ CASES = [
     Case(
         code="DECISION_POLICY_AFTER_GENERATION",
         shows="recorded",
+        source="registration",
         # The policy's version is set after r1 started, on 2026-02-01.
         trigger=analysis(_policy(set_at="2026-02-02T00:00:00Z")),
         control=analysis(_policy(set_at="2026-01-15T00:00:00Z")),
@@ -565,6 +571,7 @@ CASES = [
     Case(
         code="PLAN_POSTHOC",
         shows="invalid",
+        source="registration",
         # The plan was frozen after r1 started.
         trigger=analysis(_frozen_at("2026-03-01T00:00:00Z")),
         control=analysis(_frozen_at("2026-01-31T00:00:00Z")),
@@ -573,6 +580,7 @@ CASES = [
     Case(
         code="PLAN_RECEIPT_MISMATCH",
         shows="invalid",
+        source="registration",
         trigger=analysis(_receipt(sha="0" * 64)),
         control=analysis(_receipt()),
         effect=_claim_undecided,
@@ -580,6 +588,7 @@ CASES = [
     Case(
         code="PLAN_RECEIPT_POSTHOC",
         shows="invalid",
+        source="registration",
         # The receipt was written after r1 started.
         trigger=analysis(_receipt(registered_at="2026-02-01T00:00:01+00:00")),
         control=analysis(_receipt()),
@@ -588,6 +597,7 @@ CASES = [
     Case(
         code="PLAN_REGISTERED",
         shows="recorded",
+        source="registration",
         trigger=analysis(_changes(_self_declared, _receipt())),
         control=analysis(_self_declared),
         effect=_registered_timing_recorded,
@@ -631,6 +641,7 @@ CASES = [
     Case(
         code="PLAN_SELF_DECLARED",
         shows="recorded",
+        source="registration",
         # Without an external registration, the freeze time is the plan's own word.
         trigger=analysis(_self_declared),
         control=analysis(),

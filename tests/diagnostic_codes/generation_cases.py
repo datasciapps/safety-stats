@@ -23,6 +23,7 @@ from inspect_safety_stats.generative.kernels import (
     RewriteRequest,
     ValidationVerdict,
 )
+from inspect_safety_stats.registry import SourceKind
 from tests.diagnostic_codes.harness import Case, Outcome, Run
 from tests.generative_fixtures import SEEDS_WITH_TEXT, base_plan, materialize
 
@@ -381,6 +382,10 @@ def _unmapped(index: int) -> str:
     return "MAYBE" if index >= 55 else "PASS"
 
 
+# The kind of input, as inspect_safety_stats.registry.SOURCE_KINDS names them, that these
+# cases' triggers break. A case whose trigger breaks another kind names it as its source.
+SOURCE: SourceKind = "generation"
+
 CASES = [
     # The kernel exhausts every Maltese unit and no English one.
     Case(
@@ -394,6 +399,7 @@ CASES = [
     Case(
         code="GENERATIVE_COHORT_AMBIGUOUS",
         shows="invalid",
+        source="plan",
         trigger=generative(cohorts(baseline="model-a", candidate="model-a")),
         control=generative(cohorts(baseline="model-a", candidate="model-b")),
         effect=all_unclassified,
@@ -523,6 +529,7 @@ CASES = [
     Case(
         code="JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY",
         shows="withheld",
+        source="analysis",
         trigger=generative(judged(family=True), slices=("language=maltese",)),
         control=generative(judged(family=False), slices=("language=maltese",)),
         effect=family_uncorrected,

@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from inspect_safety_stats.ingest.records import RolloutRecord, SourceData, StopContext
+from inspect_safety_stats.registry import SourceKind
 from inspect_safety_stats.stats.binomial import binomial_lower_bound, binomial_upper_bound
 from tests.diagnostic_codes.harness import (
     BASE_RUN,
@@ -741,6 +742,10 @@ def no_anytime_bound(triggered: Outcome, control: Outcome) -> None:
     assert bounds == [0, 1]
 
 
+# The kind of input, as inspect_safety_stats.registry.SOURCE_KINDS names them, that these
+# cases' triggers break. A case whose trigger breaks another kind names it as its source.
+SOURCE: SourceKind = "logs"
+
 CASES = [
     Case(
         code="CLUSTER_DESIGN_EFFECT",
@@ -861,6 +866,7 @@ CASES = [
     Case(
         code="PLAN_EXPECTED_ROLLOUTS_MISSING",
         shows="invalid",
+        source="manifest",
         # The manifest has no expected_rollouts column while the plan requires it.
         trigger=analysis(_no_expected_rollouts),
         control=analysis(_changes(_no_expected_rollouts, _expected_rollouts_not_required)),
@@ -933,6 +939,7 @@ CASES = [
     Case(
         code="SAMPLE_DRAWS_NOT_INTEGER",
         shows="invalid",
+        source="manifest",
         # Inclusion probability 0.25 for both frame items plans half a draw.
         trigger=analysis(_sampled((0.25, 0.25), fixed_size=True)),
         control=analysis(_sampled((0.5, 0.5), fixed_size=True)),
@@ -988,6 +995,7 @@ CASES = [
     Case(
         code="SAMPLE_STRATUM_INCONSISTENT",
         shows="invalid",
+        source="manifest",
         # The frame's one stratum has inclusion probabilities 0.5 and 0.6.
         trigger=analysis(_sampled((0.5, 0.6), fixed_size=True)),
         control=analysis(_sampled((0.5, 0.5), fixed_size=True)),
