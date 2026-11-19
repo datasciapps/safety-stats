@@ -443,12 +443,14 @@ is unchanged. `report.html` does not show the sensitivities yet.
 ### Judge panels
 
 `inputs.judges` declares additional binary judges scored on every rollout, each with its own
-Inspect score column and outcome mapping. A judge's verdict is its score as mapped:
-`content_filter_stops` and `mapping_sensitivities` apply to `inputs.score` only, and a judge's
-score that sets them is refused. `block` names the judge's dependence block: judges
-sharing a block are one opinion, not independent votes (two judges built on related models
-belong in one block). It defaults to the judge's own id, so a panel is independent only where the
-plan says so. `kind: monitor` marks a chain-of-thought or trajectory monitor.
+Inspect score column and outcome mapping. `content_filter_stops` and `mapping_sensitivities`
+apply to `inputs.score` only, and a judge's score that sets either is refused. A content-filter
+stop is the target's, the same whichever judge reads the rollout, so a judge's run under
+`outputs.judge_claims` takes the primary score's `content_filter_stops` (see
+[Claims by judge](#claims-by-judge-experimental)). `block` names the judge's dependence block:
+judges sharing a block are one opinion, not independent votes (two judges built on related
+models belong in one block). It defaults to the judge's own id, so a panel is independent only
+where the plan says so. `kind: monitor` marks a chain-of-thought or trajectory monitor.
 
 ```yaml
 inputs:
@@ -555,17 +557,19 @@ inputs:
 ```
 
 `content_filter_stops` and `token_limit` are different: they say how rollouts count that the
-target's provider stopped, which is the same whichever judge reads them. A judge that leaves
-either at its default, `score`, takes the primary outcome's value in its run, so it counts a
-content-filter stop or an unscored answer cut at the token limit as the primary analysis does.
-A judge that sets its own value keeps it; there is no way to ask a judge's run not to look when
-the primary does, short of `token_limit: missing`, which leaves such answers to the judge's
-`missing`. An inherited `token_limit` applies to every truncated rollout the judge left
-unscored, whatever the judge's reason, so it can make a judge's row narrower than its own
-`missing` would; `token_limit: missing` on the judge is the way out. With `outputs.judge_claims`, each judge's resulting `content_filter_stops` must fit
-the estimand and that judge's `errors` as the primary's must: a primary
-`content_filter_stops: failure` needs every judge that inherits it to set `errors` to something
-other than `end_to_end`, or the plan is refused when it is loaded.
+target's provider stopped, which is the same whichever judge reads them. Every judge's run takes
+the primary outcome's `content_filter_stops`, which a judge's score cannot set, so it counts a
+content-filter stop as the primary analysis does. A judge that leaves `token_limit` at its
+default, `score`, likewise takes the primary outcome's value, so it counts an unscored answer
+cut at the token limit as the primary analysis does. A judge that sets its own `token_limit`
+keeps it; there is no way to ask a judge's run not to look when the primary does, short of
+`token_limit: missing`, which leaves such answers to the judge's `missing`. An inherited
+`token_limit` applies to every truncated rollout the judge left unscored, whatever the judge's
+reason, so it can make a judge's row narrower than its own `missing` would;
+`token_limit: missing` on the judge is the way out. The inherited `content_filter_stops` must
+fit each judge's `errors` as it fits the primary's: a primary `content_filter_stops: failure`
+needs every judge to set `errors` to something other than `end_to_end`, its default, or a plan
+with `outputs.judge_claims` is refused when it is loaded.
 
 Each judge in `provenance.judge_panel.judges` of `report.json` gains:
 
@@ -577,8 +581,8 @@ Each judge in `provenance.judge_panel.judges` of `report.json` gains:
   `status` is `INCONCLUSIVE`, with no `descriptive_status`, even where the error concerns the
   primary outcome alone; `diagnostic_counts` stay those of the judge's own run, and `reasons`
   says so. A judge whose own `score` asks for what the source cannot give, such as the stop
-  reasons that `token_limit` or `content_filter_stops` need from rollout files, gets an
-  `invalid` run with `INGEST_FAILED`, as the primary run would, and rows that decide nothing.
+  reasons that its `token_limit` needs from rollout files, gets an `invalid` run with
+  `INGEST_FAILED`, as the primary run would, and rows that decide nothing.
   The rest of the report stands.
 - `diagnostic_counts`: how often each diagnostic code occurred in that judge's run, by code, so
   a run that is not `valid` says why.
