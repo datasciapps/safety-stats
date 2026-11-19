@@ -770,6 +770,14 @@ CASES = [
         effect=_roles_left_out,
     ),
     Case(
+        code="JUDGE_SCORE_MAPPING_MISMATCH",
+        # Judge j2's score takes a value its mapping does not cover. The summary withholds
+        # nothing; the rollout's JUDGE_SCORE_UNMAPPED makes its vote missing.
+        trigger=analysis(_judged("other", "MAYBE")),
+        control=analysis(_judged("other")),
+        effect=_missing_votes(1),
+    ),
+    Case(
         code="JUDGE_SCORE_MISSING",
         # Judge j2 names a score the rollouts do not carry.
         trigger=analysis(_judged("absent")),
@@ -914,6 +922,14 @@ CASES = [
         # The frame's one stratum has inclusion probabilities 0.5 and 0.6.
         trigger=analysis(_sampled((0.5, 0.6), fixed_size=True)),
         control=analysis(_sampled((0.5, 0.5), fixed_size=True)),
+    ),
+    Case(
+        code="SCORE_MAPPING_MISMATCH",
+        # A rollout's score is a value the mapping does not classify. The summary withholds
+        # nothing; the rollout's SCORE_UNMAPPED withholds p1 alone.
+        trigger=analysis(_first("MAYBE")),
+        control=analysis(),
+        effect=_only_prompt_withheld("p1"),
     ),
     Case(
         code="SCORE_MISSING",

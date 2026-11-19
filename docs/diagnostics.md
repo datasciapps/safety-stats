@@ -772,6 +772,18 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
 - **Remedy:** Record the run's scorers and model_roles as Inspect logs record them, or leave the
   field out of the rollout files' runs.
 
+#### `JUDGE_SCORE_MAPPING_MISMATCH`
+
+- **Severity:** ERROR
+- **Effect:** [invalid](#effects)
+- **Assumption:** Every value a declared judge's score takes in the selected logs is covered by that
+  judge's outcome mapping.
+- **Consequence:** Integrity is invalid; the error lists the values the judge's mapping does not
+  cover and withholds no bound itself, and each verdict with such a value counts as missing, with
+  its own JUDGE_SCORE_UNMAPPED.
+- **Remedy:** Add each listed value to inputs.judges[].score.mapping, minding that mappings are
+  type-sensitive, or fix the scorer that produced them and rescore.
+
 #### `JUDGE_SCORE_MISSING`
 
 - **Severity:** ERROR
@@ -979,6 +991,18 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
   probabilities that misdescribe the draw bias the estimate.
 - **Remedy:** Correct the inclusion probability column to the probabilities the draw used, or supply
   the logs of every drawn frame item.
+
+#### `SCORE_MAPPING_MISMATCH`
+
+- **Severity:** ERROR
+- **Effect:** [invalid](#effects)
+- **Assumption:** Every value the selected score takes in the selected logs is classified by
+  inputs.score.mapping as a failure or as safe.
+- **Consequence:** Integrity is invalid; the error lists the values the mapping does not cover and
+  withholds no bound itself, while each rollout with such a value has its own SCORE_UNMAPPED, which
+  withholds its prompt's bounds in its cohort.
+- **Remedy:** Add each listed value to failure_values or safe_values of inputs.score.mapping,
+  minding that mappings are type-sensitive, or fix the scorer that produced them.
 
 #### `SCORE_MISSING`
 
