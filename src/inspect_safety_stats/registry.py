@@ -1466,6 +1466,26 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
     ),
     CodeEntry(
+        code="PAIR_NEWCOMBE_UNAVAILABLE",
+        severities=("WARNING",),
+        source="analysis",
+        effect="withheld",
+        assumption=(
+            "The completions of a comparison's unscored pair outcomes produce at most 50,000,000 "
+            "distinct 2x2 tables, the most newcombe_paired evaluates; 668 pairs unscored in both "
+            "arms produce more."
+        ),
+        consequence=(
+            "The comparison's newcombe_paired diagnostic is not reported; its other paired "
+            "diagnostics, its interval and the integrity status are unaffected."
+        ),
+        remedy=(
+            "Rescore or rerun the unscored rollouts, or leave newcombe_paired out of "
+            "comparisons[].diagnostic_methods: exact_mcnemar and fixed_cluster_bootstrap bound "
+            "the completions of any number of unscored pairs."
+        ),
+    ),
+    CodeEntry(
         code="PAIR_UNSCORED_COMPLETED",
         severities=("WARNING",),
         source="logs",

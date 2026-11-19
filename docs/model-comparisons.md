@@ -435,9 +435,13 @@ the report's integrity `invalid`. Unscored rollouts degrade the integrity as the
 pairing. The completions bound the diagnostics only. The comparison's own interval treats
 unscored outcomes as set by `inputs.score.missing`.
 
-`newcombe_paired` enumerates the completions. Their number grows with the cube of the number of
-unscored pairs, and above 50 million candidate tables, a few hundred unscored pairs, the
-diagnostic fails with `PAIR_BROKEN` and a message saying so.
+`newcombe_paired` evaluates its bound on every distinct 2×2 table the completions produce, a
+block at a time, so its memory stays small and its time grows with the number of tables. That
+number grows with up to the cube of the number of unscored pairs. Above 50 million tables, which
+668 pairs unscored in both arms reach, `newcombe_paired` is not reported, and a
+`PAIR_NEWCOMBE_UNAVAILABLE` warning says so. The other paired diagnostics, the comparison's
+interval and the integrity status are unaffected, and `exact_mcnemar` and
+`fixed_cluster_bootstrap` bound any number of unscored pairs.
 
 ## Interpretation boundaries
 

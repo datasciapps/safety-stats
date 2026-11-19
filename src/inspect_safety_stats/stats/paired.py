@@ -157,9 +157,18 @@ def exact_mcnemar(candidate: list[bool], baseline: list[bool]) -> McNemarResult:
 # Partial pairing: pairs in which one or both arms are unscored (outcome None).
 # The unknown outcomes are bounded by their completions, never imputed.
 
-_PARTIAL_NEWCOMBE_GRID_LIMIT = 50_000_000
-# newcombe_paired_interval_partial evaluates its bound on this many tables at a time.
+# newcombe_paired_interval_partial evaluates its bound on every distinct table the
+# completions produce, a block at a time, so its memory is that of a block and its time grows
+# with the number of tables. It refuses more tables than the limit. k pairs unscored in both
+# arms produce C(k + 3, 3) tables, past the limit from k = 668. Pairs unscored in one arm, a
+# of one kind and b of another, a kind being the unscored arm and the other arm's outcome,
+# produce (a + 1)(b + 1), past the limit from a = b = 7071.
 _PARTIAL_NEWCOMBE_BLOCK = 1 << 18
+_PARTIAL_NEWCOMBE_COMPLETION_LIMIT = 50_000_000
+
+
+class CompletionLimitError(ValueError):
+    """The completions of the unscored outcomes produce more tables than a method evaluates."""
 
 
 @dataclass(frozen=True)
@@ -508,26 +517,27 @@ def newcombe_paired_interval_partial(
     The bound is not monotone in the cell counts, so the extreme completions do not suffice:
     the lower bound is the minimum, and the upper bound the maximum, over every cell-count
     vector a completion can produce. They are evaluated a block at a time, so memory does not
-    grow with their number.
+    grow with their number, and when there are more than 50,000,000 of them, as from 668
+    pairs unscored in both arms, the function raises ``CompletionLimitError``, a
+    ``ValueError``, before it evaluates any.
     """
 
     _check_partial_pairs(candidate, baseline)
     if not 0 < alpha_lower < 1 or not 0 < alpha_upper < 1:
         raise ValueError("alpha levels must be in (0, 1)")
     tables = _completion_tables(candidate, baseline)
-    grid = 1
-    for index in range(3):
-        low, high = tables.bounds[(index,)]
-        grid *= high - low + 1
-    if grid > _PARTIAL_NEWCOMBE_GRID_LIMIT:
-        raise ValueError(
-            f"newcombe_paired cannot bound {tables.unscored} unscored pairs: their completions "
-            f"span {grid} cell-count candidates, more than {_PARTIAL_NEWCOMBE_GRID_LIMIT}"
-        )
+    count = 0
+    for _, _, low, high in _table_row_blocks(tables):
+        count += int(np.sum(high - low + 1))
+        if count > _PARTIAL_NEWCOMBE_COMPLETION_LIMIT:
+            raise CompletionLimitError(
+                f"newcombe_paired cannot bound the {tables.unscored} pairs with an unscored "
+                "arm: the completions of their outcomes produce more than "
+                f"{_PARTIAL_NEWCOMBE_COMPLETION_LIMIT} distinct 2x2 tables"
+            )
     # np.minimum and np.maximum carry a NaN through, as np.min and np.max over all tables do.
     estimate_lower = lower = np.float64(np.inf)
     estimate_upper = upper = np.float64(-np.inf)
-    count = 0
     for n11, n10, n01, n00 in _table_blocks(tables):
         estimate, block_lower, block_upper = _newcombe_bounds_from_counts(
             n11, n10, n01, n00, alpha_lower=alpha_lower, alpha_upper=alpha_upper
@@ -536,7 +546,6 @@ def newcombe_paired_interval_partial(
         estimate_upper = np.maximum(estimate_upper, np.max(estimate))
         lower = np.minimum(lower, np.min(block_lower))
         upper = np.maximum(upper, np.max(block_upper))
-        count += len(n11)
     return PartialPairedDifferenceInterval(
         estimate_lower=float(estimate_lower),
         estimate_upper=float(estimate_upper),

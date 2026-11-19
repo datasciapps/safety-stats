@@ -1336,6 +1336,19 @@ cannot be computed, or a result it qualifies.
 - **Remedy:** Nothing in the inputs needs to change: the unprojected intervals keep their coverage.
   Set comparison_sets[].hierarchy_region: none to skip the projection.
 
+#### `PAIR_NEWCOMBE_UNAVAILABLE`
+
+- **Severity:** WARNING
+- **Effect:** [withheld](#effects)
+- **Assumption:** The completions of a comparison's unscored pair outcomes produce at most
+  50,000,000 distinct 2x2 tables, the most newcombe_paired evaluates; 668 pairs unscored in both
+  arms produce more.
+- **Consequence:** The comparison's newcombe_paired diagnostic is not reported; its other paired
+  diagnostics, its interval and the integrity status are unaffected.
+- **Remedy:** Rescore or rerun the unscored rollouts, or leave newcombe_paired out of
+  comparisons[].diagnostic_methods: exact_mcnemar and fixed_cluster_bootstrap bound the completions
+  of any number of unscored pairs.
+
 #### `TAIL_MEASURES_UNINFORMATIVE`
 
 - **Severity:** WARNING

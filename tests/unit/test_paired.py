@@ -4,6 +4,7 @@ import random
 import numpy as np
 import pytest
 
+from inspect_safety_stats.registry import CODES
 from inspect_safety_stats.stats import (
     exact_mcnemar,
     exact_mcnemar_partial,
@@ -182,6 +183,32 @@ def test_partial_newcombe_evaluates_its_tables_a_block_at_a_time(
     interval = newcombe_paired_interval_partial(candidate, baseline)
     assert sum(sizes) == interval.completion_count == 585_276
     assert max(sizes) <= 1 << 18
+
+
+def test_partial_newcombe_limits_the_tables_it_evaluates() -> None:
+    # 600 candidate-unscored pairs with a failing baseline and 600 with a safe one reach
+    # 601**2 tables. The limit used to count a bounding grid of 601**3 candidates and refused.
+    candidate: list[bool | None] = [None] * 1200
+    baseline: list[bool | None] = [True] * 600 + [False] * 600
+    assert newcombe_paired_interval_partial(candidate, baseline).completion_count == 601**2
+    # 668 pairs unscored in both arms reach C(671, 3) = 50,127,055 tables, past the limit.
+    with pytest.raises(ValueError, match="more than 50000000 distinct 2x2 tables"):
+        newcombe_paired_interval_partial([None] * 668, [None] * 668)
+
+
+def test_partial_newcombe_evaluates_as_many_tables_as_its_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert paired._PARTIAL_NEWCOMBE_COMPLETION_LIMIT == 50_000_000
+    assert "at most 50,000,000 distinct" in CODES["PAIR_NEWCOMBE_UNAVAILABLE"].assumption
+    candidate: list[bool | None] = [True, None, False, None]
+    baseline: list[bool | None] = [None, False, True, None]
+    count = newcombe_paired_interval_partial(candidate, baseline).completion_count
+    monkeypatch.setattr(paired, "_PARTIAL_NEWCOMBE_COMPLETION_LIMIT", count)
+    assert newcombe_paired_interval_partial(candidate, baseline).completion_count == count
+    monkeypatch.setattr(paired, "_PARTIAL_NEWCOMBE_COMPLETION_LIMIT", count - 1)
+    with pytest.raises(paired.CompletionLimitError, match="the 3 pairs with an unscored arm"):
+        newcombe_paired_interval_partial(candidate, baseline)
 
 
 @pytest.mark.parametrize("seed", range(60))
