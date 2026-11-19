@@ -520,6 +520,17 @@ def _excludes_null(comparison: ComparisonResult, places: int) -> bool:
     )
 
 
+_Node = HierarchyRiskResult | ComparisonResult
+
+
+def _rows(count: int, noun: str = "node row") -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _has(count: int) -> str:
+    return "has" if count == 1 else "have"
+
+
 def _path_text(report: SafetyReport, path: dict[str, str]) -> str:
     """A node's path, outermost level first.
 
@@ -546,7 +557,8 @@ def _localisation_lines(
     small there. This lists the nodes a reader would otherwise find only by reading every
     hierarchy row. The section appears only when there is something to look for: hierarchy
     comparison rows, or (with decisions shown) a claim whose evidence has hierarchy rows.
-    Nodes are selected on their values as printed.
+    Nodes are selected on their values as printed. A node that its values cannot place is
+    counted, never left out without a word.
     """
     node_comparisons = [item for item in report.comparisons if item.level is not None]
     claim_nodes = _claim_nodes(report) if include_decisions else []
@@ -556,7 +568,7 @@ def _localisation_lines(
     if node_comparisons:
         looked_for.append("whose comparison interval excludes zero difference (a ratio of 1)")
     if claim_nodes:
-        looked_for.append("whose estimate is above a claim's acceptable limit")
+        looked_for.append("whose interval or estimate is above a claim's acceptable limit")
     lines = [
         "",
         "## Where effects sit",
@@ -582,62 +594,104 @@ def _effect_lines(
     report: SafetyReport, node_comparisons: list[ComparisonResult], places: int
 ) -> list[str]:
     effects = [item for item in node_comparisons if _excludes_null(item, places)]
-    if not effects:
-        return [
-            "No hierarchy node's comparison interval excludes zero difference (a ratio of 1)."
-        ]
-    overall = {item.comparison_id: item for item in report.comparisons if item.level is None}
-    lines = [
-        (
-            "| Comparison | Node | Design weight | Prompts | Candidate risk | "
-            "Baseline risk | Effect | Confidence interval | Overall effect |"
-        ),
-        "|---|---|---:|---:|---:|---:|---:|---|---:|",
-    ]
-    for item in effects:
-        headline = overall.get(item.comparison_id)
-        lines.append(
-            "| "
-            + " | ".join(
-                [
-                    _escape(item.comparison_id),
-                    _node_label(report, item.level, item.path),
-                    _number(item.resolved_weight, places),
-                    str(item.prompt_count),
-                    _number(item.candidate_estimate, places),
-                    _number(item.baseline_estimate, places),
-                    _number(item.estimate, places),
-                    f"{_number(item.lower, places)}–{_number(item.upper, places)}",
-                    _number(headline.estimate if headline else None, places),
-                ]
+    lines: list[str] = []
+    if effects:
+        overall = {
+            item.comparison_id: item for item in report.comparisons if item.level is None
+        }
+        lines.extend(
+            [
+                (
+                    "| Comparison | Node | Design weight | Prompts | Candidate risk | "
+                    "Baseline risk | Effect | Confidence interval | Overall effect |"
+                ),
+                "|---|---|---:|---:|---:|---:|---:|---|---:|",
+            ]
+        )
+        for item in effects:
+            headline = overall.get(item.comparison_id)
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _escape(item.comparison_id),
+                        _node_label(report, item.level, item.path),
+                        _number(item.resolved_weight, places),
+                        str(item.prompt_count),
+                        _number(item.candidate_estimate, places),
+                        _number(item.baseline_estimate, places),
+                        _number(item.estimate, places),
+                        f"{_number(item.lower, places)}–{_number(item.upper, places)}",
+                        _number(headline.estimate if headline else None, places),
+                    ]
+                )
+                + " |"
             )
-            + " |"
+    else:
+        lines.append(
+            "No hierarchy node's comparison interval excludes zero difference (a ratio of 1)."
+        )
+    missing = sum(1 for item in node_comparisons if item.lower is None and item.upper is None)
+    if missing:
+        lines.extend(
+            [
+                "",
+                (
+                    f"{_rows(missing, 'comparison node row')} {_has(missing)} no interval, so "
+                    f"the report cannot say whether {'its' if missing == 1 else 'their'} effect "
+                    "differs from zero (a ratio of 1)."
+                ),
+            ]
         )
     return lines
 
 
 def _exceedance_lines(
     report: SafetyReport,
-    claim_nodes: list[tuple[ClaimResult, str, list[HierarchyRiskResult | ComparisonResult]]],
+    claim_nodes: list[tuple[ClaimResult, str, list[_Node]]],
     places: int,
 ) -> list[str]:
-    rows = [
-        (claim, evidence, node)
-        for claim, evidence, nodes in claim_nodes
-        for node in nodes
-        if _shown_above(node.estimate, claim.acceptable_upper, places)
-    ]
-    if not rows:
-        return ["No hierarchy node's estimate is above a claim's acceptable limit."]
-    lines = [
-        (
-            "| Claim | Evidence | Node | Design weight | Prompts | Estimate | "
-            "Confidence interval | Acceptable limit | Claim estimate | Position |"
-        ),
-        "|---|---|---|---:|---:|---:|---|---:|---:|---|",
-    ]
-    for claim, evidence, node in rows:
-        above = _shown_above(node.lower, claim.acceptable_upper, places)
+    """The nodes above each claim's acceptable limit, decided on the interval first.
+
+    A node whose whole interval is above the limit is listed whether or not it has an
+    estimate: a risk node has none when one of its prompts has no classified rollout, and its
+    missingness-robust interval still places it. A node that neither its interval nor its
+    estimate places is counted below the table.
+    """
+
+    rows: list[tuple[ClaimResult, str, _Node, str]] = []
+    unplaced: list[tuple[ClaimResult, int, int]] = []
+    for claim, evidence, nodes in claim_nodes:
+        limit = claim.acceptable_upper
+        open_interval = no_interval = 0
+        for node in nodes:
+            if _shown_above(node.lower, limit, places):
+                rows.append((claim, evidence, node, "interval"))
+            elif _shown_above(node.estimate, limit, places):
+                rows.append((claim, evidence, node, "estimate"))
+            elif node.estimate is None:
+                if node.lower is None and node.upper is None:
+                    no_interval += 1
+                elif node.upper is None or _shown_above(node.upper, limit, places):
+                    open_interval += 1
+        if open_interval or no_interval:
+            unplaced.append((claim, open_interval, no_interval))
+    lines: list[str] = []
+    if rows:
+        lines.extend(
+            [
+                (
+                    "| Claim | Evidence | Node | Design weight | Prompts | Estimate | "
+                    "Confidence interval | Acceptable limit | Claim estimate | Position |"
+                ),
+                "|---|---|---|---:|---:|---:|---|---:|---:|---|",
+            ]
+        )
+    else:
+        lines.append(
+            "No hierarchy node's interval or estimate is above a claim's acceptable limit."
+        )
+    for claim, evidence, node, basis in rows:
         weight = (
             node.design_weight if isinstance(node, HierarchyRiskResult) else node.resolved_weight
         )
@@ -654,35 +708,56 @@ def _exceedance_lines(
                     f"{_number(node.lower, places)}–{_number(node.upper, places)}",
                     _number(claim.acceptable_upper, places),
                     _number(claim.estimate, places),
-                    "interval above the limit" if above else "estimate above the limit",
+                    f"{basis} above the limit",
                 ]
             )
             + " |"
         )
-    lines.extend(
-        [
-            "",
-            "Node rows are judge-reported risks; any judge correction applies only to the claim.",
-        ]
-    )
+    for claim, open_interval, no_interval in unplaced:
+        parts = []
+        if open_interval:
+            parts.append(
+                f"{_rows(open_interval)} with no estimate and an interval that reaches above "
+                "the limit"
+            )
+        if no_interval:
+            parts.append(f"{_rows(no_interval)} with neither an estimate nor an interval")
+        lines.extend(
+            [
+                "",
+                (
+                    f"Not placed for “{_escape(claim.title)}”: "
+                    + "; ".join(parts)
+                    + ". Whether these nodes are above the limit is unknown."
+                ),
+            ]
+        )
+    if rows:
+        lines.extend(
+            [
+                "",
+                "Node rows are judge-reported risks; any judge correction applies only to the "
+                "claim.",
+            ]
+        )
     return lines
 
 
 def _claim_nodes(
     report: SafetyReport,
-) -> list[tuple[ClaimResult, str, list[HierarchyRiskResult | ComparisonResult]]]:
+) -> list[tuple[ClaimResult, str, list[_Node]]]:
     """Each claim whose evidence has hierarchy rows, with a label for it and those rows.
 
     An aggregate claim reaches hierarchy rows only through a weighted-mean measure, the one
     estimand the hierarchy rows report.
     """
     specs = {item.claim_id: item for item in report.presentation.claim_evidence or []}
-    result: list[tuple[ClaimResult, str, list[HierarchyRiskResult | ComparisonResult]]] = []
+    result: list[tuple[ClaimResult, str, list[_Node]]] = []
     for claim in report.claims:
         spec = specs.get(claim.claim_id)
         if spec is None:
             continue
-        nodes: list[HierarchyRiskResult | ComparisonResult]
+        nodes: list[_Node]
         if spec.comparison:
             evidence = f"comparison {spec.comparison}"
             nodes = [
