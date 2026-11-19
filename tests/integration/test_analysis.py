@@ -4146,6 +4146,11 @@ def test_an_opted_in_worst_of_k_row_has_a_direct_interval_in_the_mean_family(
     assert row.lower <= row.estimate <= row.upper
     assert direct.independent_block_count == 20
     assert direct.eligibility == "certifying"
+    # Each prompt's rollouts share one failure probability; different prompts need not.
+    assert direct.assumptions[-1] == (
+        "Equal block weights permit inversion of the Bernoulli-KL Chernoff exponent; "
+        "identical failure probabilities across prompts are not required."
+    )
 
     # The mean's direct interval now shares the family with worst_of_2.
     def mean_alpha(result: SafetyReport) -> float | None:
@@ -4156,6 +4161,78 @@ def test_an_opted_in_worst_of_k_row_has_a_direct_interval_in_the_mean_family(
     assert mean_alpha(report) == pytest.approx(0.0125, rel=1e-12, abs=0)
     unopted = next(item for item in before.group_risks if item.measure_id == "worst_of_2")
     assert unopted.primary_interval_id == "propagated_prompt_envelope"
+
+
+def _worst_of_k_row_with_an_unscored_rollout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, sensitivities: str = ""
+) -> GroupRiskResult:
+    """The worst_of_2 row when p1 has 5 failures, 14 safe rollouts and 1 unscored, p2 none."""
+    eval_frame, sample_frame = _frames(missing_score=True)
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & sample_frame["epoch"].between(2, 6)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    plan_path = _write_inputs(tmp_path)
+    _opt_in_worst_of_k_interval(plan_path)
+    text = plan_path.read_text(encoding="utf-8")
+    for old, new in (
+        ("    missing: block\n", "    missing: conservative_bounds\n"),
+        ("      primary: rollout\n", f"      primary: rollout\n{sensitivities}"),
+    ):
+        assert old in text
+        text = text.replace(old, new)
+    plan_path.write_text(text, encoding="utf-8")
+    report = analyze(plan=plan_path, logs="ignored")
+    return next(item for item in report.group_risks if item.measure_id == "worst_of_2")
+
+
+def test_a_worst_of_k_interval_completes_an_unscored_rollout_both_ways(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from inspect_safety_stats.stats import worst_of_k_kl_chernoff_bounds
+
+    row = _worst_of_k_row_with_an_unscored_rollout(monkeypatch, tmp_path)
+    assert row.primary_interval_id == "direct_worst_of_k_kl_chernoff"
+    direct = next(item for item in row.intervals if item.role == "primary")
+    # The unscored rollout is attempted: p1 keeps its 20 rollouts and 10 blocks of 2.
+    assert direct.independent_block_count == 20
+    assert direct.missingness_method == "all_safe_all_failure_completion"
+    assert direct.eligibility == "certifying"
+    # The lower endpoint counts it as safe (5 of 20 fail), the upper as a failure (6 of 20).
+    # The share of p1's pairs holding a failure is 1 - C(20 - f, 2) / C(20, 2).
+    assert direct.completion_estimate_lower == pytest.approx(0.5 * 85 / 190, rel=1e-12, abs=0)
+    assert direct.completion_estimate_upper == pytest.approx(0.5 * 99 / 190, rel=1e-12, abs=0)
+
+    def bounds(failures: int) -> tuple[float, float]:
+        result = worst_of_k_kl_chernoff_bounds(
+            [failures, 0], [0, 0], [20, 20], [0.5, 0.5], k=2, alpha_lower=0.0125, alpha_upper=0.0125
+        )
+        return result.lower, result.upper
+
+    assert (row.lower, row.upper) == (bounds(5)[0], bounds(6)[1])
+    assert (row.lower, row.upper) == pytest.approx((0.0402, 0.5870), rel=0, abs=5e-5)
+
+
+def test_a_worst_of_k_interval_says_its_sensitivity_profiles_have_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    alone = _worst_of_k_row_with_an_unscored_rollout(monkeypatch, tmp_path / "alone")
+    row = _worst_of_k_row_with_an_unscored_rollout(
+        monkeypatch, tmp_path / "with", sensitivities="      sensitivities: [prompt]\n"
+    )
+    assert alone.warnings == []
+    assert row.warnings == [
+        "The direct interval of 2 attempts assumes independent rollouts; the sensitivity "
+        "profiles prompt have no such interval."
+    ]
+    assert {item.independence_profile for item in row.intervals} == {"rollout", None}
+    # Sensitivity profiles spend no alpha of the primary's, so the interval is unchanged.
+    assert (row.primary_interval_id, row.lower, row.upper) == (
+        alone.primary_interval_id,
+        alone.lower,
+        alone.upper,
+    )
 
 
 def test_a_worst_of_k_interval_beyond_the_rollouts_says_the_design_cannot_bound_it(
@@ -4233,6 +4310,192 @@ def test_plans_refuse_a_worst_of_k_interval_they_cannot_calibrate(
     ]
     assert len(problems) == 1
     assert message in problems[0]
+
+
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        (
+            ("      primary: rollout", "      primary: prompt"),
+            "must block by rollout, not ['prompt_id']",
+        ),
+        (
+            (
+                "design:\n  type: fixed\n",
+                "design:\n  type: sampled\n  inclusion_probability_column: inclusion_probability\n",
+            ),
+            "needs design.type: fixed, not 'sampled'",
+        ),
+        (
+            (
+                "    independence:\n      primary: rollout",
+                "    hierarchy_nodes: true\n    hierarchy_calibration: frontier_sidak\n"
+                "    independence:\n      primary: rollout",
+            ),
+            "frontier_sidak calibration is not supported",
+        ),
+    ],
+)
+def test_analyze_withholds_the_worst_of_k_interval_of_a_refused_plan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, edit: tuple[str, str], message: str
+) -> None:
+    # The refusal makes integrity invalid, but the row itself must not offer an interval
+    # computed under assumptions the plan does not make, such as rollout blocks under a
+    # prompt-level profile, as primary and certifying.
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+    plan_path = _write_inputs(tmp_path)
+    _opt_in_worst_of_k_interval(plan_path)
+    text = plan_path.read_text(encoding="utf-8")
+    assert edit[0] in text
+    plan_path.write_text(text.replace(edit[0], edit[1]), encoding="utf-8")
+    manifest = tmp_path / "design.csv"
+    header, *rows = manifest.read_text(encoding="utf-8").splitlines()
+    manifest.write_text(
+        "\n".join([f"{header},inclusion_probability", *[f"{row},1.0" for row in rows]]) + "\n",
+        encoding="utf-8",
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert "PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED" in {
+        item.code for item in report.integrity.diagnostics
+    }
+    row = next(item for item in report.group_risks if item.measure_id == "worst_of_2")
+    assert row.primary_interval_id == "propagated_prompt_envelope"
+    assert [item.interval_id for item in row.intervals] == ["propagated_prompt_envelope"]
+    assert len(row.warnings) == 1
+    assert row.warnings[0].startswith("No direct interval of 2 attempts: ")
+    assert message in row.warnings[0]
+
+
+def test_a_worst_of_k_interval_alone_puts_the_direct_mean_intervals_to_use(
+    tmp_path: Path,
+) -> None:
+    from inspect_safety_stats.validate.plan import validate_plan_references
+
+    plan_path = _write_inputs(tmp_path)
+    text = plan_path.read_text(encoding="utf-8")
+    for old, new in (
+        ("    - {id: mean, type: weighted_mean}\n", ""),
+        ("    measure: mean\n", "    measure: worst_of_2\n"),
+    ):
+        assert old in text
+        text = text.replace(old, new)
+    plan_path.write_text(text, encoding="utf-8")
+
+    def codes() -> set[str]:
+        return {item.code for item in validate_plan_references(load_plan(plan_path))}
+
+    # Without a weighted mean the direct-mean intervals bound nothing, and the plan is told so,
+    assert "PLAN_METHOD_UNUSED" in codes()
+    # but a worst_of_k interval is calibrated in their family, and needs them enabled.
+    _opt_in_worst_of_k_interval(plan_path)
+    assert "PLAN_METHOD_UNUSED" not in codes()
+    assert "PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED" not in codes()
+
+
+_TREE_ROOT_DRIVER = """
+const fs = require("fs");
+const [functionsPath, reportPath] = process.argv.slice(2);
+const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+const risks = report.group_risks;
+const hierarchy = report.design.hierarchy;
+const state = {cohort: "candidate", group: "cyber"};
+const api = new Function(
+  "risks", "hierarchy", "state",
+  fs.readFileSync(functionsPath, "utf8") + "\\nreturn {hierarchyTreeRows};"
+)(risks, hierarchy, state);
+const rows = report.hierarchy_risks.filter(row => row.cohort_id === state.cohort);
+const tree = api.hierarchyTreeRows(rows);
+const root = tree.allRows.find(row => row.is_root);
+process.stdout.write(JSON.stringify(root && {measure_id: root.measure_id, lower: root.lower}));
+"""
+
+
+def _template_function(template: str, name: str) -> str:
+    start = template.index(f"function {name}(")
+    depth = 0
+    for index in range(template.index("{", start), len(template)):
+        depth += {"{": 1, "}": -1}.get(template[index], 0)
+        if depth == 0:
+            return template[start : index + 1]
+    raise AssertionError(f"unbalanced braces in {name}")
+
+
+def _node_with_optional_chaining() -> str | None:
+    node = shutil.which("node")
+    if node is None:
+        return None
+    version = subprocess.run([node, "--version"], capture_output=True, text=True, check=False)
+    major = version.stdout.strip().lstrip("v").split(".")[0]
+    # The template uses optional chaining (?.), which Node.js reads from version 14.
+    return node if major.isdigit() and int(major) >= 14 else None
+
+
+@pytest.mark.skipif(
+    _node_with_optional_chaining() is None, reason="Node.js 14 or later is not installed"
+)
+def test_report_html_roots_the_hierarchy_tree_at_the_weighted_mean(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A worst_of_k row sorted before the mean must not become the root of the mean's tree.
+
+    Group rows are sorted by measure id, and both rows have a primary interval whose id starts
+    with direct_, so the root has to be chosen by measure. The test runs the template's own
+    function under Node.
+    """
+    from inspect_safety_stats.report import visualization
+
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+    plan_path = _write_inputs(tmp_path)
+    _opt_in_worst_of_k_interval(plan_path)
+    text = plan_path.read_text(encoding="utf-8")
+    for old, new in (
+        ("{id: worst_of_2, type: worst_of_k", "{id: any_of_2, type: worst_of_k"),
+        (
+            "    independence:\n      primary: rollout",
+            "    hierarchy_nodes: true\n    independence:\n      primary: rollout",
+        ),
+    ):
+        assert old in text
+        text = text.replace(old, new)
+    plan_path.write_text(text, encoding="utf-8")
+    report = analyze(plan=plan_path, logs="ignored")
+    assert report.group_risks[0].measure_id == "any_of_2"
+    assert report.group_risks[0].primary_interval_id == "direct_worst_of_k_kl_chernoff"
+    assert report.hierarchy_risks
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+
+    template = visualization._TEMPLATE.read_text(encoding="utf-8")
+    functions = tmp_path / "functions.js"
+    functions.write_text(
+        "\n".join(
+            _template_function(template, name)
+            for name in ("hierarchyNodeKey", "hierarchyTreeRows")
+        ),
+        encoding="utf-8",
+    )
+    payload = tmp_path / "report.json"
+    payload.write_text(json.dumps(report.model_dump(mode="json")), encoding="utf-8")
+    driver = tmp_path / "driver.js"
+    driver.write_text(_TREE_ROOT_DRIVER, encoding="utf-8")
+    node = _node_with_optional_chaining()
+    assert node is not None
+    completed = subprocess.run(
+        [node, str(driver), str(functions), str(payload)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    assert json.loads(completed.stdout) == {"measure_id": "mean", "lower": mean.lower}
 
 
 def test_only_worst_of_k_measures_take_a_direct_interval(tmp_path: Path) -> None:
