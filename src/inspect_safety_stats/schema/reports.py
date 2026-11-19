@@ -657,9 +657,9 @@ class AssumptionUse(ResultModel):
 class SafetyReport(ResultModel):
     """The result of ``analyze``: estimates, bounds, comparisons, claims and the decision.
 
-    Its results apply to the declared fixed evaluation set. ``write`` saves it as a report
-    directory, and ``inspect-safety-stats schema report`` prints the JSON schema of its
-    ``report.json``.
+    Its results apply to the declared fixed evaluation set or, under a sampled design, to the
+    declared item frame; ``scope`` says which. ``write`` saves it as a report directory, and
+    ``inspect-safety-stats schema report`` prints the JSON schema of its ``report.json``.
     """
 
     schema_version: Literal["3.0"] = "3.0"
