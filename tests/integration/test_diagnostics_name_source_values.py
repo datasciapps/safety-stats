@@ -25,6 +25,7 @@ def _inputs(
     score_name: str = "harmful",
     mapping: dict[str, Any] | None = None,
     cohort_model: str = "m",
+    score_column: str | None = "score_harmful",
     judges: list[dict[str, Any]] | None = None,
 ) -> tuple[Path, RolloutFiles]:
     """One run of model ``m`` whose rollouts score each prompt with the values given."""
@@ -76,7 +77,8 @@ def _inputs(
     rollouts.write_text(
         "".join(
             json.dumps(
-                {"run_key": "r1", "item_id": prompt, "repeat": repeat, "score_harmful": value}
+                {"run_key": "r1", "item_id": prompt, "repeat": repeat}
+                | ({score_column: value} if score_column else {})
             )
             + "\n"
             for prompt, values in scores.items()
@@ -86,6 +88,37 @@ def _inputs(
         newline="\n",
     )
     return plan_path, RolloutFiles(runs=runs, rollouts=rollouts)
+
+
+def test_an_absent_score_names_the_scores_the_logs_have(tmp_path: Path) -> None:
+    plan, source = _inputs(tmp_path, {"p1": ["PASS"]}, score_name="harm")
+
+    report = analyze(plan=plan, source=source)
+
+    (missing,) = [
+        item
+        for item in report.integrity.diagnostics
+        if item.code == "SCORE_MISSING" and item.scope is None
+    ]
+    assert missing.message == (
+        "score column 'score_harm' is absent from selected logs; inputs.score.name must name a "
+        "score they have: 'harmful'"
+    )
+
+
+def test_an_absent_score_says_when_the_logs_have_no_scores(tmp_path: Path) -> None:
+    plan, source = _inputs(tmp_path, {"p1": ["PASS"]}, score_column=None)
+
+    report = analyze(plan=plan, source=source)
+
+    (missing,) = [
+        item
+        for item in report.integrity.diagnostics
+        if item.code == "SCORE_MISSING" and item.scope is None
+    ]
+    assert missing.message == (
+        "score column 'score_harmful' is absent from selected logs, which have no scores"
+    )
 
 
 def test_an_empty_cohort_names_the_values_the_evaluations_have(tmp_path: Path) -> None:
@@ -123,3 +156,18 @@ def test_a_cohort_emptied_by_an_overlap_says_so(tmp_path: Path) -> None:
         "another cohort (COHORT_OVERLAP)"
     )
     assert "COHORT_OVERLAP" in {item.code for item in report.integrity.diagnostics}
+
+
+def test_an_absent_judge_score_names_the_scores_the_logs_have(tmp_path: Path) -> None:
+    judges = [{"id": "absent", "score": {"name": "other", "mapping": CATEGORICAL}}]
+    plan, source = _inputs(tmp_path, {"p1": ["PASS"]}, judges=judges)
+
+    report = analyze(plan=plan, source=source)
+
+    (missing,) = [
+        item for item in report.integrity.diagnostics if item.code == "JUDGE_SCORE_MISSING"
+    ]
+    assert missing.message == (
+        "judge 'absent' score column 'score_other' is absent from selected logs; "
+        "inputs.judges.absent.score.name must name a score they have: 'harmful'"
+    )

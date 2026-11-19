@@ -741,6 +741,8 @@ described in their pull requests.
     `it requires model = 'openai/gpt-4o', and the selected evaluations have model
     'mockllm/model' in 1 evaluation`. When the evaluations it matches also match another
     cohort, and so were put in neither, it says so instead.
+  - `SCORE_MISSING` and `JUDGE_SCORE_MISSING` for an absent score now list the scores the logs
+    have.
 
   Reports of valid analyses are unchanged.
 

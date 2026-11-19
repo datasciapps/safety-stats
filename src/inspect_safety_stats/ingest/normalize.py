@@ -205,6 +205,15 @@ def _listing(counts: Counter[str], unit: str) -> str:
     return f"{listed}, and {rest} more" if rest > 0 else listed
 
 
+def _score_absent(column: str, path: str, names: set[str]) -> str:
+    """Say that a score column is absent, and which scores the plan path could name instead."""
+    message = f"score column {column!r} is absent from selected logs"
+    if not names:
+        return f"{message}, which have no scores"
+    listed = ", ".join(repr(name) for name in sorted(names))
+    return f"{message}; {path} must name a score they have: {listed}"
+
+
 def _cohort_empty_message(
     plan: AnalysisPlan, cohort_id: str, match: dict[str, Any], runs: list[RunRecord]
 ) -> str:
@@ -525,9 +534,8 @@ def normalize(
                 Diagnostic(
                     code="JUDGE_SCORE_MISSING",
                     severity="ERROR",
-                    message=(
-                        f"judge {judge.id!r} score column {column!r} is absent from selected logs"
-                    ),
+                    message=f"judge {judge.id!r} "
+                    + _score_absent(column, f"inputs.judges.{judge.id}.score.name", score_names),
                     scope=plan_scope("inputs", "judges", judge.id),
                 )
             )
@@ -567,7 +575,7 @@ def normalize(
             Diagnostic(
                 code="SCORE_MISSING",
                 severity="ERROR",
-                message=f"score column {f'score_{score_name}'!r} is absent from selected logs",
+                message=_score_absent(f"score_{score_name}", "inputs.score.name", score_names),
             )
         )
     manifest_by_prompt = manifest.set_index("prompt_id", drop=False)
