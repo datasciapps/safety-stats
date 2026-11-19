@@ -289,19 +289,19 @@ def _primary_accuracy_box(
             _declared_scope(plan, accuracies),
         )
     declared = [
-        judge
+        (judge, judge.accuracy)
         for judge in plan.inputs.judges
         if judge.score.name == name and judge.accuracy is not None
     ]
     alike = [
-        judge
-        for judge in declared
+        (judge, accuracy)
+        for judge, accuracy in declared
         if _same_classification(judge.score.mapping, plan.inputs.score.mapping)
     ]
     if len(alike) > 1:
         unmatched(
             "judges "
-            + ", ".join(repr(judge.id) for judge in alike)
+            + ", ".join(repr(judge.id) for judge, _ in alike)
             + f" all read the primary score {name!r} with the primary mapping and declare "
             "accuracy, and their boxes need not agree"
         )
@@ -310,17 +310,16 @@ def _primary_accuracy_box(
         if declared:
             unmatched(
                 "judge(s) "
-                + ", ".join(repr(judge.id) for judge in declared)
+                + ", ".join(repr(judge.id) for judge, _ in declared)
                 + f" declare accuracy for score {name!r} under a mapping other than the "
                 "primary one"
             )
         return None
-    (judge,) = alike
-    assert judge.accuracy is not None
+    ((judge, accuracy),) = alike
     return (
-        _declared_box(judge.accuracy),
+        _declared_box(accuracy),
         f"judge:{judge.id}",
-        _declared_scope(plan, [judge.accuracy]),
+        _declared_scope(plan, [accuracy]),
     )
 
 
