@@ -16,6 +16,7 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
+from pydantic.json_schema import SkipJsonSchema
 
 from inspect_safety_stats.registry import CODES, Effect, SourceKind
 from inspect_safety_stats.schema.pointers import ItemPointers
@@ -30,6 +31,10 @@ STORED_REPORT = "stored_report"
 
 class ResultModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+def _without_default(schema: dict[str, Any]) -> None:
+    schema.pop("default", None)
 
 
 class Diagnostic(ResultModel):
@@ -58,8 +63,19 @@ class Diagnostic(ResultModel):
 
     code: str
     severity: Literal["ERROR", "WARNING", "INFO"]
-    source: SourceKind | None = None
-    effect: Effect | None = None
+    # Optional so that a report written before them reads back; the validator below fills them,
+    # so they are null only for a code a stored report holds and the registry no longer lists,
+    # when the report gave none. The JSON schema offers neither null nor a null default.
+    source: SourceKind | SkipJsonSchema[None] = Field(
+        default=None,
+        description="The kind of input the finding concerns, from the code's registry entry.",
+        json_schema_extra=_without_default,
+    )
+    effect: Effect | SkipJsonSchema[None] = Field(
+        default=None,
+        description="What the finding does to the results, from the code's registry entry.",
+        json_schema_extra=_without_default,
+    )
     message: str
     scope: str | None = None
     item: str | None = None

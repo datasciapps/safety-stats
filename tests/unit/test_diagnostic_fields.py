@@ -3,12 +3,18 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 
 import pytest
 from pydantic import ValidationError
 
-from inspect_safety_stats.registry import CODES
-from inspect_safety_stats.schema.reports import STORED_REPORT, Diagnostic, IntegritySummary
+from inspect_safety_stats.registry import CODES, EFFECTS, SOURCE_KINDS
+from inspect_safety_stats.schema.reports import (
+    STORED_REPORT,
+    Diagnostic,
+    IntegritySummary,
+    SafetyReport,
+)
 
 
 @pytest.mark.parametrize("code", sorted(CODES))
@@ -26,6 +32,20 @@ def test_report_json_carries_source_and_effect_after_severity() -> None:
     written = json.loads(summary.model_dump_json())["diagnostics"][0]
     assert list(written)[:4] == ["code", "severity", "source", "effect"]
     assert (written["source"], written["effect"]) == ("logs", "invalid")
+
+
+@pytest.mark.parametrize(("field", "values"), [("source", SOURCE_KINDS), ("effect", EFFECTS)])
+def test_the_report_schema_gives_source_and_effect_as_values_never_null(
+    field: str, values: Mapping[str, str]
+) -> None:
+    # `inspect-safety-stats schema report` is the contract (CONTRIBUTING 4.3). The fields are
+    # optional, so that a report written before them reads back, but a report never holds null.
+    schema = SafetyReport.model_json_schema()["$defs"]["Diagnostic"]
+    written = schema["properties"][field]
+    assert written["type"] == "string"
+    assert written["enum"] == list(values)
+    assert "anyOf" not in written and "default" not in written
+    assert field not in schema["required"]
 
 
 def test_a_report_written_before_the_fields_existed_reads_them_from_the_registry() -> None:

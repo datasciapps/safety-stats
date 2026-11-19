@@ -167,7 +167,8 @@ described in their pull requests.
   a stored report (`context={STORED_REPORT: True}`, as `visualize` and
   `examples/demo/show_results.py` do), a report keeps the `source` and `effect` it was written
   with and fills only those it lacks, so it still reads after a later version reclassifies a
-  code or retires it.
+  code or retires it. In `inspect-safety-stats schema report` both are optional, so a report
+  written before them validates, but neither is ever null.
 
 - **A diagnostic's scope is a path.** `scope` names where a finding sits as a `/`-separated
   path: a root (`plan`, `decision_policy`, `cohorts`, `runs`, `evals`, `logs`, `prompts`,
