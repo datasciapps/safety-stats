@@ -127,12 +127,14 @@ groups prompts by (the levels of `design.hierarchy` and of a `nested_equal` weig
 a group `filter` column, a manifest column in a `block_by` and `design.stratum_column`), are
 read as text, exactly as written. `1`, `01` and `1.0` are three labels, `true` and `True` are
 two, and `0001` stays `0001`. Write each `prompt_id` as the logs record the sample's id:
-`0001` does not match the id `1`. A cell in one of these columns has no value when it is
-blank or holds, ignoring surrounding spaces, a marker that R, spreadsheets, databases and
-pandas write for a missing value: `NA`, `N/A`, `n/a`, `None`, `null`, `NULL`, `nan`, `NaN`,
-`-nan`, `-NaN`, `<NA>`, `#N/A`, `#N/A N/A`, `#NA`, `1.#IND`, `-1.#IND`, `1.#QNAN` or
-`-1.#QNAN`. Such a cell stops the analysis with an error that names the column and the rows.
-Recode a label meant literally, such as `NA` for "not applicable", for example as `none`.
+`0001` does not match the id `1`, and the `PROMPT_UNEXPECTED` and `PROMPT_MISSING` errors name
+the other spelling when an identifier in the logs and one in the manifest spell the same number.
+A cell in one of these columns has no value when it is blank or holds, ignoring surrounding
+spaces, a marker that R, spreadsheets, databases and pandas write for a missing value: `NA`,
+`N/A`, `n/a`, `None`, `null`, `NULL`, `nan`, `NaN`, `-nan`, `-NaN`, `<NA>`, `#N/A`, `#N/A N/A`,
+`#NA`, `1.#IND`, `-1.#IND`, `1.#QNAN` or `-1.#QNAN`. Such a cell stops the analysis with an
+error that names the column and the rows. Recode a label meant literally, such as `NA` for "not
+applicable", for example as `none`.
 
 The other columns keep the types pandas infers, and so do the columns the plan reads as numbers
 or booleans even when it also groups prompts by them: a weight `column`, the

@@ -231,6 +231,31 @@ def test_identifiers_keep_their_leading_zeros(tmp_path: Path) -> None:
     ]
 
 
+def test_identifiers_padded_in_the_manifest_are_named_to_the_logs(tmp_path: Path) -> None:
+    """The logs record `1` and the manifest `0001`: the messages said to add the prompt to the
+    manifest and to run the missing one, when one identifier has to be written as the other."""
+
+    manifest = "prompt_id,question_id,task_id\n0001,q,t\n0002,q,t\n0003,q,t\n"
+    plan, source = _write(tmp_path, manifest, ["1", "2", "3", "x"], design=_FIXED)
+    report = analyze(plan=plan, source=source)
+    messages = {
+        (item.code, (item.details or {}).get("prompt_id")): item.message
+        for item in report.integrity.diagnostics
+    }
+    hint = "the same number written differently. Identifiers are compared as written"
+    assert messages[("PROMPT_UNEXPECTED", "1")] == (
+        f"observed prompt '1' is absent from the design manifest; the manifest has '0001', {hint}"
+        ": write the manifest's prompt_id as the logs record it"
+    )
+    assert messages[("PROMPT_MISSING", "0001")] == (
+        f"prompt '0001' has no observations in cohort 'candidate'; the logs have '1', {hint}: "
+        "write the manifest's prompt_id as the logs record it"
+    )
+    assert messages[("PROMPT_UNEXPECTED", "x")] == (
+        "observed prompt 'x' is absent from the design manifest"
+    )
+
+
 def test_identifiers_that_read_as_one_number_are_two_prompts(tmp_path: Path) -> None:
     """`1` and `01` were one duplicated prompt_id."""
 

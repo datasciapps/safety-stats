@@ -36,7 +36,8 @@ described in their pull requests.
   is an error that says to quote it. Reports of manifests without such labels, every bundled
   example among them, keep their bytes. A manifest that zero-pads identifiers that the logs
   record as integers (`0001` for the sample id `1`) now reports `PROMPT_MISSING` and
-  `PROMPT_UNEXPECTED`: write the identifiers as the logs record them. See
+  `PROMPT_UNEXPECTED`, whose messages name the other spelling of the same number: write the
+  identifiers as the logs record them. See
   [`inputs`](docs/plan-reference.md#inputs).
 
 - **The Newcombe paired interval no longer stops `analyze` on large comparisons (changes

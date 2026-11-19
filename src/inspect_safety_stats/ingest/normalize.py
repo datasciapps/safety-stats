@@ -11,9 +11,12 @@ from __future__ import annotations
 
 import functools
 import math
+import re
 from collections import Counter
+from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Any, Literal
 
 import numpy as np
@@ -205,6 +208,40 @@ def _listing(counts: Counter[str], unit: str) -> str:
     )
     rest = len(ordered) - _LISTED_VALUES
     return f"{listed}, and {rest} more" if rest > 0 else listed
+
+
+# An identifier that spells a decimal number, as pandas' type inference would read it.
+_NUMBER = re.compile(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+
+
+def _by_number(identifiers: Iterable[Any]) -> dict[Decimal, list[str]]:
+    """The identifiers that spell a number, by that number, so that `0001` and `1` meet.
+
+    Identifiers are compared as written, so two such spellings name two prompts. When one is
+    in the manifest and the other in the logs, they are most likely one prompt written two
+    ways, as an exporter that zero-pads identifiers, or a reader that drops the padding, does.
+    """
+
+    numbers: dict[Decimal, list[str]] = {}
+    for identifier in identifiers:
+        text = str(identifier)
+        if _NUMBER.fullmatch(text):
+            numbers.setdefault(Decimal(text), []).append(text)
+    return numbers
+
+
+def _written_as(identifier: str, numbers: dict[Decimal, list[str]], where: str) -> str:
+    """The sentence that names the other spellings of ``identifier`` in ``where``, if any."""
+
+    text = str(identifier)
+    others = numbers.get(Decimal(text), []) if _NUMBER.fullmatch(text) else []
+    if not others:
+        return ""
+    shown = ", ".join(repr(other) for other in sorted(others)[:3])
+    return (
+        f"; {where} {shown}, the same number written differently. Identifiers are compared as "
+        "written: write the manifest's prompt_id as the logs record it"
+    )
 
 
 def _score_absent(column: str, path: str, names: set[str]) -> str:
@@ -639,12 +676,19 @@ def normalize(
         )
     manifest_by_prompt = manifest.set_index("prompt_id", drop=False)
     unexpected = sorted({rollout.item_id for _, rollout in selected} - set(manifest["prompt_id"]))
+    # An unexpected identifier and a manifest one that spell the same number, such as 1 and
+    # 0001, are named to each other: the remedy is to rewrite one, not to add a prompt or run it.
+    manifest_numbers = _by_number(manifest["prompt_id"])
+    unexpected_numbers = _by_number(unexpected)
     for prompt_id in unexpected[:100]:
         diagnostics.append(
             Diagnostic(
                 code="PROMPT_UNEXPECTED",
                 severity="ERROR",
-                message=f"observed prompt {prompt_id!r} is absent from the design manifest",
+                message=(
+                    f"observed prompt {prompt_id!r} is absent from the design manifest"
+                    + _written_as(prompt_id, manifest_numbers, "the manifest has")
+                ),
                 scope=scope_path("prompts", prompt_id),
                 details={"prompt_id": prompt_id},
             )
@@ -981,7 +1025,10 @@ def normalize(
                     Diagnostic(
                         code="PROMPT_MISSING",
                         severity="ERROR",
-                        message=f"prompt {prompt_id!r} has no observations in cohort {cohort_id!r}",
+                        message=(
+                            f"prompt {prompt_id!r} has no observations in cohort {cohort_id!r}"
+                            + _written_as(prompt_id, unexpected_numbers, "the logs have")
+                        ),
                         scope=prompt_scope(cohort_id, prompt_id),
                         details={"cohort_id": cohort_id, "prompt_id": prompt_id},
                     )
