@@ -548,7 +548,9 @@ inspect-safety-stats version
 `init` (experimental) reads completed Inspect logs and writes a starter `design.csv` and
 `safety-plan.yaml` into `--output`. The plan has one cohort per model, the root failure risk
 with a prompt-level sensitivity, an optional one-level breakdown by `--group-by`, and a
-comparison when there are several models. It covers one task: `analyze` requires a cohort's
+comparison when there are several models. `--group-by` names a sample metadata field that
+every sample records; `init` refuses one that some samples lack or leave empty, naming them,
+rather than invent a group for them. The plan covers one task: `analyze` requires a cohort's
 evaluations to share one configuration, task included, so `init` refuses logs of several tasks;
 run it once for each task. `init` never guesses which scores are failures: name them with
 `--failure-values` or `--failure-threshold`. Nor does it take a value nobody named as safe: when

@@ -137,6 +137,42 @@ def test_init_refuses_logs_of_several_tasks_for_the_reason_they_cannot_be_analys
         scaffold_plan(again, tmp_path, failure_values=["FAIL"])
 
 
+def test_init_refuses_a_group_by_field_some_samples_lack(
+    tmp_path_factory: pytest.TempPathFactory, tmp_path: Path
+) -> None:
+    # p1 and p3 lacked the field and were put in a group called "missing", which a real value
+    # "missing" would have joined.
+    metadata = [
+        dict(item) if index in (1, 3) else dict(item, level="missing")
+        for index, item in enumerate(DEFAULT_METADATA)
+    ]
+    logs = write_mock_logs(
+        tmp_path_factory.mktemp("group-missing") / "logs", models=("mockllm/alpha",),
+        tasks=[mock_task(metadata=metadata)], epochs=2,
+    )
+    with pytest.raises(ValueError, match=r"'level' is missing or empty for 2 \S+: p1, p3\. "):
+        scaffold_plan(logs, tmp_path, failure_values=["FAIL"], group_by="level")
+    assert not (tmp_path / "design.csv").exists()
+
+
+def test_init_writes_integer_groups_as_written_whatever_an_ignored_log_lacks(
+    tmp_path_factory: pytest.TempPathFactory, tmp_path: Path
+) -> None:
+    # The samples of an ignored log that lacked the field made pandas read the field as floats,
+    # so design.csv grouped the prompts under 1.0 and 2.0.
+    logs = tmp_path_factory.mktemp("group-integers") / "logs"
+    levels = [dict(item, level=index % 2 + 1) for index, item in enumerate(DEFAULT_METADATA)]
+    write_mock_logs(logs, models=("mockllm/alpha",), tasks=[mock_task(metadata=levels)],
+                    epochs=2)
+    failed = mock_task("other", metadata=[{"error": True}, {}], prefix="x")
+    write_mock_logs(logs, models=("mockllm/alpha",), tasks=[failed], epochs=2, succeed=False)
+
+    result = scaffold_plan(logs, tmp_path, failure_values=["FAIL"], group_by="level")
+    rows = result.manifest_path.read_text(encoding="utf-8").splitlines()
+    assert rows[0].split(",")[:4] == ["prompt_id", "question_id", "task_id", "level"]
+    assert [row.split(",")[3] for row in rows[1:]] == ["1", "2", "1", "2", "1"]
+
+
 def test_init_plan_analyzes_end_to_end(mock_logs: Path, tmp_path: Path) -> None:
     result = scaffold_plan(
         mock_logs,

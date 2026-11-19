@@ -416,7 +416,9 @@ def scaffold_plan(
             + ". Pass the specific .eval files to use with --logs."
         )
 
-    samples = samples_df(log_input)
+    # Read the samples of only the logs init uses: samples of an ignored log that lack a
+    # metadata field would turn the field's integers into floats, 1 into 1.0, for every log.
+    samples = samples_df(analyze_logs)
     samples = samples.loc[samples["eval_id"].astype(str).isin(successful["eval_id"].astype(str))]
     if samples.empty:
         raise ValueError("the successful evaluations contain no samples")
@@ -469,6 +471,19 @@ def scaffold_plan(
         group_column = _IDENTIFIER.sub("_", group_by)
         if group_column in {"prompt_id", "question_id", "task_id", "expected_rollouts"}:
             group_column = f"{group_column}_group"
+        # A sample without the field is refused, not grouped under a made-up value that could
+        # merge with a real one. An empty value counts as missing: design.csv would read back
+        # an empty cell as missing.
+        absent = samples[metadata].map(lambda value: is_missing(value) or str(value) == "")
+        if absent.any():
+            named = sorted(samples.loc[absent, "_prompt_id"].unique())
+            raise ValueError(
+                f"metadata field {group_by!r} is missing or empty for {len(named)} sample(s): "
+                + ", ".join(named[:10])
+                + (", ..." if len(named) > 10 else "")
+                + ". init does not invent a group for them: record the field for every sample, "
+                "or leave out --group-by"
+            )
         conflicting = samples.groupby("_prompt_id")[metadata].nunique(dropna=False)
         if (conflicting > 1).any():
             raise ValueError(
@@ -500,8 +515,7 @@ def scaffold_plan(
             "task_id": task,
         }
         if group_column is not None:
-            value = sample[f"metadata_{group_by}"]
-            row[group_column] = "missing" if is_missing(value) else str(value)
+            row[group_column] = str(sample[f"metadata_{group_by}"])
         row["expected_rollouts"] = rollouts
         rows.append(row)
     manifest = pd.DataFrame(rows)
