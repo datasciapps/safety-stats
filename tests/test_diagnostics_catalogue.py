@@ -56,3 +56,16 @@ def test_the_check_reports_a_stale_page(
     assert render_catalogue.main(["--check"]) == 1
     assert render_catalogue.main([]) == 0
     assert render_catalogue.main(["--check"]) == 0
+
+
+def test_the_check_reports_a_page_with_crlf_line_ends(
+    render_catalogue: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    page = tmp_path / "diagnostics.md"
+    monkeypatch.setattr(render_catalogue, "ROOT", tmp_path)
+    monkeypatch.setattr(render_catalogue, "PAGE", page)
+    page.write_bytes(render_catalogue.render().replace("\n", "\r\n").encode("utf-8"))
+    assert render_catalogue.main(["--check"]) == 1
+    assert render_catalogue.main([]) == 0
+    assert b"\r" not in page.read_bytes()
+    assert render_catalogue.main(["--check"]) == 0
