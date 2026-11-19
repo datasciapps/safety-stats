@@ -331,12 +331,15 @@ described in their pull requests.
   between two values of one arm level, such as one wrapper against another. They are covered
   simultaneously at `1 - alpha` for the primary cohort. A contrast holds the mix of semantic
   seeds fixed between its two values, so declared context weights and constraints cannot move
-  it. The family is written to `family.csv`, to a `slice_family` block in `report.json` and to
-  a section of `report.html`, and `generative analyze` prints each member's upper bound. Plans
-  without the block keep their `report.json` and CSV bytes. Every generative `report.html`
-  changes bytes, because it embeds the script of the new section, and so does
-  `checksums.json`, which holds its digest. With the block, `checksums.json` also covers
-  `family.csv`. See
+  it. A member the analysis could not estimate, such as a value that no compiled path carries
+  or that no selected path reaches, is refused by `generative compile` and
+  `generative materialize` before anything is generated. The family is written to
+  `family.csv`, to a `slice_family` block in `report.json` and to a section of
+  `report.html`, and `generative analyze` prints each member's upper bound under a heading
+  that says it is on the judge-reported scale. Plans without the block keep their
+  `report.json` and CSV bytes. Every generative `report.html` changes bytes, because it embeds
+  the script of the new section, and so does `checksums.json`, which holds its digest. With
+  the block, `checksums.json` also covers `family.csv`. See
   [Arm contrasts](docs/generative-evaluation.md#arm-contrasts-and-a-simultaneous-slice-family-experimental).
 
 - **Rewrite validation and near-duplicate detection in the package (experimental).** In a
