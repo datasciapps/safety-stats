@@ -89,8 +89,14 @@ def _truly_unsafe(epoch: int) -> bool:
     return epoch <= 60 or JUDGE_UNSAFE < epoch <= JUDGE_UNSAFE + 5
 
 
-def _patch_logs(monkeypatch: pytest.MonkeyPatch, unscored: int | None = None) -> None:
-    """Serve the run's logs; the rollout of epoch ``unscored``, if any, has no score."""
+def _patch_logs(
+    monkeypatch: pytest.MonkeyPatch, unscored: int | None = None, other: int = 0
+) -> None:
+    """Serve the run's logs; the rollout of epoch ``unscored``, if any, has no score.
+
+    With ``other``, a second prompt, p2, adds that many judge-safe and truly safe rollouts,
+    numbered after p1's.
+    """
 
     evals = pd.DataFrame(
         [
@@ -129,6 +135,19 @@ def _patch_logs(monkeypatch: pytest.MonkeyPatch, unscored: int | None = None) ->
             }
             for epoch in range(1, ROLLOUTS + 1)
         ]
+        + [
+            {
+                "sample_id": f"candidate-{ROLLOUTS + epoch}",
+                "eval_id": "eval-candidate",
+                "log": "/not/a/local/log.eval",
+                "id": "p2",
+                "epoch": epoch,
+                "score_harmful": "PASS",
+                "error": None,
+                "retries": 0,
+            }
+            for epoch in range(1, other + 1)
+        ]
     )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
@@ -144,10 +163,10 @@ def logs(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_logs(monkeypatch)
 
 
-def _observation_ids(directory: Path) -> dict[int, str]:
+def _observation_ids(directory: Path, other: int = 0) -> dict[int, str]:
     """Each epoch's observation identifier, as an analysis without a protocol reports it."""
 
-    plan = _write_plan(directory / "probe", None)
+    plan = _write_plan(directory / "probe", None, other)
     report = analyze(plan=load_plan(plan), logs="ignored")
     return {
         int(item.rollout_id.rsplit("-", 1)[1]): item.observation_id
@@ -179,15 +198,23 @@ def _queue(ids: dict[int, str], complete: bool = False) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def _write_plan(directory: Path, protocol: str | None) -> Path:
+def _write_plan(directory: Path, protocol: str | None, other: int = 0) -> Path:
+    """The plan; with ``other``, the design adds prompt p2 and the group ``first`` of p1."""
+
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "design.csv").write_text(
         "prompt_id,question_id,task_id,suite,expected_rollouts,zero_tolerance\n"
-        f"p1,q1,t1,s,{ROLLOUTS},false\n",
+        f"p1,q1,t1,s,{ROLLOUTS},false\n" + (f"p2,q2,t1,s,{other},false\n" if other else ""),
         encoding="utf-8",
     )
     # Without a protocol the plan has no calibration either: it only finds the identifiers.
     text = PLAN.replace("@JUDGE@\n", "" if protocol is None else JUDGE + protocol)
+    if other:
+        first = "  - id: first\n    filter: {question_id: q1}\n"
+        text = text.replace("    filter: {suite: s}\n", "    filter: {suite: s}\n" + first)
+        text = text.replace(
+            "    groups: [all]\n    simultaneous", "    groups: [all, first]\n    simultaneous"
+        )
     plan = directory / "plan.yaml"
     plan.write_text(text.strip() + "\n", encoding="utf-8")
     return plan
@@ -221,13 +248,15 @@ def _run(
     edit: str = "none",
     queue_file: str = "queue.csv",
     given: pd.DataFrame | None = None,
+    other: int = 0,
 ) -> tuple[SafetyReport, pd.DataFrame]:
     """Analyse with the first ``take`` calibration rows of the queue labelled.
 
-    The queue is ``given``, or else :func:`_queue`'s, changed as ``edit`` says.
+    The queue is ``given``, or else :func:`_queue`'s, changed as ``edit`` says. ``other`` is
+    the size of prompt p2, as the logs were patched with.
     """
 
-    ids = _observation_ids(tmp_path)
+    ids = _observation_ids(tmp_path, other)
     queue = _queue(ids, complete=edit == "complete") if given is None else given
     if edit in ("absent", "absent_labelled"):
         # A rollout the run does not have, first in the tier and labelled, or right after
@@ -246,12 +275,14 @@ def _run(
     elif edit == "oversample":
         labelled = labelled + [queue.loc[queue["tier"] == "oversample", "observation_id"].iloc[0]]
     _labels(tmp_path, ids, labelled)
-    plan = _write_plan(tmp_path, protocol)
+    plan = _write_plan(tmp_path, protocol, other)
     return analyze(plan=load_plan(plan), logs="ignored"), queue
 
 
-def _corrected(report: SafetyReport) -> RiskIntervalResult | None:
-    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+def _corrected(report: SafetyReport, group: str = "all") -> RiskIntervalResult | None:
+    mean = next(
+        row for row in report.group_risks if row.measure_id == "mean" and row.group_id == group
+    )
     return next(
         (item for item in mean.intervals if item.interval_id == "judge_corrected_validated"),
         None,
@@ -310,18 +341,21 @@ def test_a_labelled_prefix_is_recorded_and_keeps_clopper_pearson(
     assert any("exact Clopper-Pearson" in text for text in corrected.assumptions)
 
 
-@pytest.mark.usefixtures("logs")
 @pytest.mark.parametrize("scoped", [False, True])
 def test_a_queue_that_lists_part_of_a_stratum_is_a_warning(
-    tmp_path: Path, scoped: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, scoped: bool
 ) -> None:
     # The calibration tier lists 30 of the 80 judge-unsafe and 30 of the 320 judge-safe
     # rollouts, so that those rows are a random sample of each stratum is only declared.
-    groups = "    groups: [all]\n" if scoped else ""
-    report, _ = _run(tmp_path, groups + _protocol("label_independent"))
+    # Scoped, the calibration is of group first, p1, and the cohort also has p2's OTHER
+    # judge-safe rollouts: the strata are the group's, not the cohort's.
+    other = OTHER if scoped else 0
+    _patch_logs(monkeypatch, other=other)
+    groups = "    groups: [first]\n" if scoped else ""
+    report, _ = _run(tmp_path, groups + _protocol("label_independent"), other=other)
 
     (found,) = _partial(report)
-    population = "group 'all' in cohort 'candidate'" if scoped else "cohort 'candidate'"
+    population = "group 'first' in cohort 'candidate'" if scoped else "cohort 'candidate'"
     assert found.severity == "WARNING"
     assert found.message == (
         "the labelling queue tier 'calibration' lists 30 of the 80 classified rollouts of the "
@@ -331,7 +365,7 @@ def test_a_queue_that_lists_part_of_a_stratum_is_a_warning(
         "cannot check"
     )
     assert found.scope == (
-        cohort_scope("candidate", "groups", "all") if scoped else cohort_scope("candidate")
+        cohort_scope("candidate", "groups", "first") if scoped else cohort_scope("candidate")
     )
     assert found.details == {
         "judge_strata": [
@@ -340,9 +374,42 @@ def test_a_queue_that_lists_part_of_a_stratum_is_a_warning(
         ]
     }
     # Recorded: the correction is still reported, and states what the queue must be.
-    corrected = _corrected(report)
+    corrected = _corrected(report, "first" if scoped else "all")
     assert corrected is not None and corrected.eligibility == "certifying"
     assert QUEUE_ASSUMPTION in corrected.assumptions
+
+
+@pytest.mark.parametrize("stratified", [False, True])
+def test_a_scoped_queue_of_every_rollout_of_its_group_gives_no_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stratified: bool
+) -> None:
+    # The queue lists every rollout of p1, the calibration's group, and then 5 of p2's, which
+    # are judge-safe and in the declared stratum s0 too. Counted over the cohort, the queue
+    # lists part of its judge-safe stratum and of s0; within the group, all of them.
+    _patch_logs(monkeypatch, other=OTHER)
+    ids = _observation_ids(tmp_path / "ids", OTHER)
+    design = ""
+    if stratified:
+        rows = ["observation_id,stratum"] + [
+            f"{key},{_fine_stratum(epoch)}" for epoch, key in sorted(ids.items())
+        ]
+        tmp_path.joinpath("strata.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+        design = STRATIFIED
+    first = np.random.default_rng(5).permutation(np.arange(1, ROLLOUTS + 1))
+    order = [*first, *range(ROLLOUTS + 1, ROLLOUTS + 6)]
+    queue = pd.DataFrame({"observation_id": [ids[int(e)] for e in order], "tier": "calibration"})
+    report, _ = _run(
+        tmp_path,
+        design + "    groups: [first]\n" + _protocol("label_independent"),
+        take=120,
+        given=queue,
+        other=OTHER,
+    )
+
+    assert _violations(report) == []
+    assert _partial(report) == []
+    corrected = _corrected(report, "first")
+    assert corrected is not None and corrected.eligibility == "certifying"
 
 
 @pytest.mark.usefixtures("logs")
@@ -383,15 +450,17 @@ def test_a_stratified_design_states_the_queue_within_its_fine_strata(tmp_path: P
 
 STRATIFIED = "    sampling: stratified_within_judge_stratum\n    validation_strata: strata.csv\n"
 SMALL = 10
+OTHER = 40
 
 
 def _fine_stratum(epoch: int) -> str:
-    """The judge-unsafe rollouts split by parity; the last ``SMALL`` judge-safe ones, all truly
-    safe, apart from the others, so that leaving them unlabelled keeps the box informative."""
+    """The judge-unsafe rollouts split by parity; the last ``SMALL`` judge-safe ones of p1, all
+    truly safe, apart from the others, so that leaving them unlabelled keeps the box
+    informative. p2's rollouts, numbered after p1's, join s0."""
 
     if epoch <= JUDGE_UNSAFE:
         return f"u{epoch % 2}"
-    return "s1" if epoch > ROLLOUTS - SMALL else "s0"
+    return "s1" if ROLLOUTS - SMALL < epoch <= ROLLOUTS else "s0"
 
 
 def _stratified_queue(directory: Path, listed: dict[str, int]) -> pd.DataFrame:
