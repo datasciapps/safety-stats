@@ -62,6 +62,28 @@ A schema 2.0 plan writes `task_arg_thinking` without the `attributes.` prefix (s
 To split one cohort's run across machines, give every machine the same task, arguments and
 `--epochs`, and divide the prompts between them, for example with `--sample-id`.
 
+### What a report records of a configuration
+
+The report records the configuration fingerprints, not the values: `report.json` lists each
+cohort's under `cohorts[].configuration_fingerprints`, and `observations.csv` gives the
+fingerprint of each rollout's run in `configuration_fingerprint`. A fingerprint is the SHA-256
+of the fields and their values, as Inspect's `evals_df` reads them, written as JSON with sorted
+keys and no whitespace. Equal fingerprints mean equal configurations. The values themselves can
+hold credentials and endpoints, such as request headers in the generation config's
+`extra_headers`, a base URL or the path of a sandbox's configuration, so no report or
+diagnostic copies them from the logs, with one exception: when `outputs.judge_claims` is on,
+`report.json`, `report-full.md` and `report.html` record each scorer's options and metadata as
+the logs give them. Of the rest, only the model is named.
+
+A fingerprint hides a value only as well as the value is hard to guess. It has no salt, so the
+same configuration always gives the same fingerprint, which keeps reports byte-identical and
+lets two of them be compared. Someone who knows the rest of a run's configuration can hash
+candidate values for the one they do not know and compare the result with the report. A value
+with few possibilities, such as an internal IP address, a port or a user name in a path, can be
+confirmed or recovered that way in seconds. A long random credential, such as an API key or a
+bearer token, cannot. If a run's configuration holds a guessable value that must stay private,
+share the report only with readers who may see the logs.
+
 ## Request timeout
 
 Inspect gives each HTTP request to a model 600 seconds by default. Requests are not streamed, so

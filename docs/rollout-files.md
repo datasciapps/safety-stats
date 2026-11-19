@@ -59,7 +59,10 @@ Every other field is an attribute of the run. Cohort `match` and `require_unifor
 field of the run: under plan schema 3.0, `run_key`, `model`, `status` and `run_id` by name and
 any other field as `attributes.<name>`. A run's configuration fingerprint covers
 `model` and the fields its cohort lists in `require_uniform`, so list there every field that
-must not drift between the runs of a cohort.
+must not drift between the runs of a cohort. The report records the fingerprint, not the values
+of these fields. See
+[What a report records of a configuration](running-inspect.md#what-a-report-records-of-a-configuration)
+for what a fingerprint shows, and why a value that is easy to guess can be recovered from it.
 
 ## The rollouts file
 
