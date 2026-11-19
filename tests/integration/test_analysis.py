@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import itertools
 import json
@@ -3356,10 +3357,12 @@ def test_judge_claims_decide_each_claim_on_each_judge_as_its_own_plan_would(
         assert row == {
             "claim_id": expected.claim_id,
             "status": expected.status,
+            "descriptive_status": expected.descriptive_status,
             "estimate": expected.estimate,
             "lower": expected.lower,
             "upper": expected.upper,
             "method": expected.method,
+            "reasons": expected.reasons,
         }
     # Judge a flags half of p1's rollouts and none of p2's.
     assert judges["judge_a"]["claims"][0]["estimate"] == pytest.approx(0.25, abs=0)
@@ -3374,20 +3377,84 @@ def test_judge_claims_record_each_judges_scorer_configuration(
     _patch_frames(monkeypatch, _judge_frames_with_configuration())
     report = analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
     judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    recorded = {
+        "name": "harmful_a",
+        "options": {"model": "grader/x", "thinking": True},
+        "metrics": [],
+        "metadata": {},
+    }
     assert judges["judge_a"]["configuration"] == {
         "candidate": {
-            "scorer": [
-                {
-                    "metadata": {},
-                    "metrics": [],
-                    "options": {"model": "grader/x", "thinking": True},
-                }
-            ],
+            "scorer": [{"name": "harmful_a", "sha256": _fingerprint(recorded)}],
             "model_roles": [{"grader": {"model": "grader/x"}}],
         }
     }
     # The log names no scorer harmful_b: its configuration is not recorded, and says so.
     assert judges["judge_b"]["configuration"]["candidate"]["scorer"] is None
+
+
+def _fingerprint(entry: dict[str, Any]) -> str:
+    """The SHA-256 of a scorer entry as canonical JSON, computed without the package."""
+
+    text = json.dumps(entry, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+# Values a scorer's options and metadata can hold that must never reach a report: a request
+# header, a token, an internal endpoint and local paths, POSIX and Windows.
+_PLANTED_SCORER_SECRETS = (
+    "sk-planted-header-4d1e",
+    "planted-token-77b0",
+    "10.9.8.7",
+    "planted-user",
+    "planted-models",
+    "planted-metadata-secret-0c3f",
+)
+
+
+def test_judge_claims_never_copy_scorer_options_or_metadata_into_any_artifact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    options = {
+        "model": "grader/x",
+        "extra_headers": {"Authorization": "Bearer sk-planted-header-4d1e"},
+        "azure_ad_token": "planted-token-77b0",
+        "base_url": "http://10.9.8.7:8000/v1",
+        "template": "/home/planted-user/private/grader-template.txt",
+        "instructions": "C:\\Users\\planted-user\\instructions.txt",
+    }
+    metadata = {
+        "model_path": "/srv/planted-models/grader",
+        "api_token": "planted-metadata-secret-0c3f",
+    }
+    scorers = [
+        {"name": "harmful", "options": options, "metrics": [], "metadata": metadata},
+        {"name": "harmful_a", "options": options, "metrics": [], "metadata": metadata},
+    ]
+    eval_frame, sample_frame = _judge_frames_with_configuration()
+    eval_frame = eval_frame.assign(scorers=json.dumps(scorers))
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+
+    report = analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
+
+    out = report.write(tmp_path / "report")
+    written = sorted(path for path in out.rglob("*") if path.is_file())
+    names = {path.name for path in written}
+    assert {"report.json", "report.md", "report-full.md", "report.html", "checksums.json"} <= (
+        names
+    )
+    for path in written:
+        text = path.read_bytes().decode("utf-8", errors="replace")
+        for secret in _PLANTED_SCORER_SECRETS:
+            assert secret not in text, (path.name, secret)
+    dumped = json.dumps(report.model_dump(mode="json"))
+    for secret in _PLANTED_SCORER_SECRETS:
+        assert secret not in dumped, secret
+    # What is recorded instead identifies the configuration without showing it.
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    assert judges["judge_a"]["configuration"]["candidate"]["scorer"] == [
+        {"name": "harmful_a", "sha256": _fingerprint(scorers[1])}
+    ]
 
 
 def test_judge_claims_keep_only_each_model_roles_name_and_model(
@@ -3424,14 +3491,274 @@ def test_judge_claims_keep_only_each_model_roles_name_and_model(
     )
 
 
-def test_judge_claims_reject_a_model_role_without_a_model(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize(
+    ("field", "value", "why"),
+    [
+        ("model_roles", "grader=openai/gpt-4o", "it is not JSON"),
+        ("model_roles", '["grader-x.invalid"]', "it is not a mapping of model roles"),
+        (
+            "model_roles",
+            '{"grader": {"base_url": "https://x.invalid"}}',
+            "model role 'grader' has no model id",
+        ),
+        ("scorers", "harmful_a(base_url=https://x.invalid)", "it is not JSON"),
+        ("scorers", '{"name": "harmful_a", "x": "x.invalid"}', "it is not a list of scorers"),
+        (
+            "scorers",
+            '[{"name": "harmful_a", "options": {"x": "x.invalid", "temperature": NaN}}]',
+            "the entry of scorer 'harmful_a' is not JSON data",
+        ),
+    ],
+)
+def test_judge_claims_warn_about_a_configuration_field_they_cannot_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, field: str, value: str, why: str
 ) -> None:
     eval_frame, sample_frame = _judge_frames_with_configuration()
-    eval_frame = eval_frame.assign(model_roles='{"grader": {"base_url": "https://x.invalid"}}')
+    _patch_frames(monkeypatch, (eval_frame.assign(**{field: value}), sample_frame))
+
+    report = analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
+
+    # The field is described, not recorded, and the analysis is the one a readable field gives.
+    (warning,) = [
+        item
+        for item in report.integrity.diagnostics
+        if item.code == "JUDGE_CONFIGURATION_UNREADABLE"
+    ]
+    assert warning.severity == "WARNING"
+    assert warning.details == {"run_key": "eval-1", "field": field}
+    assert why in warning.message
+    # The message never quotes the value, which can hold credentials or endpoints.
+    for fragment in ("gpt-4o", "x.invalid"):
+        assert fragment not in warning.message
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    recorded = judges["judge_a"]["configuration"]["candidate"]
+    key = "scorer" if field == "scorers" else "model_roles"
+    assert recorded[key] is None
+    _patch_frames(monkeypatch, _judge_frames_with_configuration())
+    readable_dir = tmp_path / "readable"
+    readable_dir.mkdir()
+    readable = analyze(plan=_judge_claims_plan(readable_dir), logs="ignored")
+    assert report.integrity.status == readable.integrity.status == "valid"
+    assert report.claims == readable.claims
+    assert judges["judge_a"]["claims"] == readable.provenance["judge_panel"]["judges"][0][
+        "claims"
+    ]
+
+
+def test_judge_claims_hash_each_log_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import inspect_safety_stats.ingest.inspect_logs as inspect_logs
+
+    hashed: list[str] = []
+
+    def counting_sha256(path: str) -> str | None:
+        hashed.append(path)
+        return None
+
+    monkeypatch.setattr(inspect_logs, "file_sha256", counting_sha256)
+    _patch_frames(monkeypatch, _judge_frames_with_configuration())
+
+    report = analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
+
+    # The primary run and both judges' runs normalize the same log, which is hashed once.
+    assert len(report.provenance["judge_panel"]["judges"]) == 2
+    assert hashed == ["/not/a/local/log.eval"]
+
+
+def _without_stop_reasons(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Read the logs as a source that reports no stop reasons, as rollout files do."""
+
+    from dataclasses import replace
+
+    from inspect_safety_stats.ingest import inspect_logs
+
+    read = inspect_logs.read_inspect_source
+    monkeypatch.setattr(
+        inspect_logs,
+        "read_inspect_source",
+        lambda logs, parallel=False: replace(read(logs, parallel=parallel), stop_context=None),
+    )
+
+
+@pytest.mark.parametrize(
+    "option", ["token_limit: safe", "content_filter_stops: safe", "token_limit: missing"]
+)
+def test_a_judges_option_the_source_cannot_serve_invalidates_only_that_judges_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, option: str
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "score: {name: harmful_a, mapping: {failure_values: [FAIL], safe_values: [PASS]}}",
+            "score: {name: harmful_a, mapping: {failure_values: [FAIL], safe_values: [PASS]}, "
+            + option
+            + "}",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    _patch_frames(monkeypatch, _judge_frames_with_configuration())
+    _without_stop_reasons(monkeypatch)
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    # The primary outcome needs no stop reason, so its analysis stands.
+    assert report.integrity.status == "valid"
+    assert "INGEST_FAILED" not in {item.code for item in report.integrity.diagnostics}
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    # Judge a's run is refused as the primary's would be, and decides nothing.
+    assert judges["judge_a"]["integrity"] == "invalid"
+    assert judges["judge_a"]["diagnostic_counts"]["INGEST_FAILED"] == 1
+    (row,) = judges["judge_a"]["claims"]
+    assert row["claim_id"] == report.claims[0].claim_id
+    assert (row["status"], row["estimate"], row["lower"], row["upper"]) == (
+        "INCONCLUSIVE",
+        None,
+        None,
+        None,
+    )
+    assert any("does not report" in reason for reason in row["reasons"])
+    # Judge b asks for nothing the source lacks.
+    assert judges["judge_b"]["integrity"] == "degraded"
+    assert judges["judge_b"]["claims"][0]["upper"] is not None
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert "| judge_a | `invalid` | `INGEST_FAILED` (1) |" in section
+
+
+def _mirroring_judge_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Judge a gives the primary outcome's verdicts, so on its own its row would PASS."""
+
+    eval_frame, sample_frame = _judge_frames_with_configuration()
+    sample_frame = sample_frame.assign(score_harmful_a=sample_frame["score_harmful"])
+    return eval_frame, sample_frame
+
+
+def _decision_policy_file(plan_path: Path, *, sha: str | None, set_at: str) -> Path:
+    from inspect_safety_stats.config.decision_policy import inference_plan_hash
+
+    path = plan_path.parent / "policy.json"
+    path.write_text(
+        json.dumps(
+            {
+                "inference_plan_sha256": sha or inference_plan_hash(load_plan(plan_path)),
+                "versions": [
+                    {
+                        "id": "v1",
+                        "set_at": set_at,
+                        "thresholds": {
+                            "mean_safe": {"acceptable_upper": 0.25, "unacceptable_lower": 0.6}
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.parametrize("problem", ["receipt for another plan", "policy for another plan"])
+def test_judge_runs_carry_the_plans_own_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, problem: str
+) -> None:
+    from datetime import datetime, timezone
+
+    from inspect_safety_stats.config.registration import write_receipt
+
+    plan_path = _judge_claims_plan(tmp_path)
+    _patch_frames(monkeypatch, _mirroring_judge_frames())
+    mirrored = analyze(plan=plan_path, logs="ignored")
+    mirrored_rows = {item["id"]: item for item in mirrored.provenance["judge_panel"]["judges"]}
+    # Without the problem, judge a's row is the primary's PASS.
+    assert mirrored.claims[0].status == "PASS"
+    assert mirrored_rows["judge_a"]["integrity"] == "valid"
+    assert mirrored_rows["judge_a"]["claims"][0]["status"] == "PASS"
+
+    if problem == "receipt for another plan":
+        code = "PLAN_RECEIPT_MISMATCH"
+        receipt = tmp_path / "plan.receipt.json"
+        write_receipt(
+            receipt, "0" * 64, package_version="0", now=datetime(2024, 6, 1, tzinfo=timezone.utc)
+        )
+        report = analyze(plan=plan_path, logs="ignored", registration_receipt=receipt)
+    else:
+        code = "DECISION_POLICY_MISMATCH"
+        policy = _decision_policy_file(plan_path, sha="0" * 64, set_at="2024-06-01T00:00:00Z")
+        report = analyze(plan=plan_path, logs="ignored", decision_policy=policy)
+
+    # The plan's own error makes the primary invalid, and every judge's run of the same plan.
+    assert report.integrity.status == "invalid"
+    assert report.claims[0].status == "INCONCLUSIVE"
+    for judge in report.provenance["judge_panel"]["judges"]:
+        assert judge["integrity"] == "invalid", judge["id"]
+        assert judge["diagnostic_counts"][code] == 1
+        assert {row["status"] for row in judge["claims"]} == {"INCONCLUSIVE"}
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert f"`{code}` (1)" in section
+
+
+def test_judge_runs_decide_at_an_applied_policys_thresholds_and_carry_its_note(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    _patch_frames(monkeypatch, _mirroring_judge_frames())
+    # Set after the run started, and stricter than the primary's upper bound.
+    policy = _decision_policy_file(plan_path, sha=None, set_at="2026-02-01T00:00:00Z")
+
+    report = analyze(plan=plan_path, logs="ignored", decision_policy=policy)
+
+    assert report.decision_policy is not None and report.decision_policy.applied
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "DECISION_POLICY_AFTER_GENERATION" in codes
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    assert judges["judge_a"]["diagnostic_counts"]["DECISION_POLICY_AFTER_GENERATION"] == 1
+    (primary,) = report.claims
+    (row,) = judges["judge_a"]["claims"]
+    assert (row["status"], row["upper"]) == (primary.status, primary.upper)
+
+
+@pytest.mark.parametrize("intent", ["confirmatory", "exploratory"])
+def test_an_invalid_report_never_shows_a_judges_row_as_valid_or_decided(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, intent: str
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8")
+        .replace("intent: confirmatory", f"intent: {intent}", 1)
+        .replace("report:\n", "report:\n  include_decisions: true\n", 1),
+        encoding="utf-8",
+    )
+    eval_frame, sample_frame = _mirroring_judge_frames()
+    # The primary outcome alone is missing once, which its `missing: block` makes an error;
+    # judge a still has that rollout's verdict, so its own run is valid.
+    missing = (sample_frame["id"] == "p2") & (sample_frame["epoch"] == 2)
+    sample_frame = sample_frame.assign(
+        score_harmful=sample_frame["score_harmful"].where(~missing, None)
+    )
     _patch_frames(monkeypatch, (eval_frame, sample_frame))
-    with pytest.raises(ValueError, match="model role 'grader' without a model id"):
-        analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert report.integrity.status == "invalid"
+    assert "SCORE_MISSING" in {item.code for item in report.integrity.diagnostics}
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    for judge in judges.values():
+        assert judge["integrity"] == "invalid", judge["id"]
+        for row in judge["claims"]:
+            assert (row["status"], row["descriptive_status"]) == ("INCONCLUSIVE", None)
+            assert any("report's integrity is invalid" in reason for reason in row["reasons"])
+    # Judge a's run is fine on its own: its bounds are computed and its counts are its own.
+    (row,) = judges["judge_a"]["claims"]
+    assert row["upper"] is not None
+    assert "SCORE_MISSING" not in judges["judge_a"]["diagnostic_counts"]
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert "`valid`" not in section
+    assert "`PASS`" not in section
+    assert "When the report's integrity is invalid" in section
 
 
 def test_judge_claims_are_opt_in_and_leave_plan_hashes_alone(
@@ -3470,10 +3797,14 @@ def test_judge_claims_have_a_report_section(
     assert report.presentation.include_decisions is False
     assert "| Judge | Integrity | Claim | Estimate |" in section
     assert f"| judge_a | `valid` | {claim.claim_id} | 0.250000 |" in section
+    # The primary blocks missing and errored scores; the judges keep their own defaults.
+    assert "by that judge's own `score.missing` and `score.errors`" in section
     assert "| judge_b | `degraded` |" in section
+    (scorer,) = report.provenance["judge_panel"]["judges"][0]["configuration"]["candidate"][
+        "scorer"
+    ]
     assert (
-        '| judge_a | candidate | `{"metadata":{},"metrics":[],'
-        '"options":{"model":"grader/x","thinking":true}}` | '
+        f'| judge_a | candidate | `{{"name":"harmful_a","sha256":"{scorer["sha256"]}"}}` | '
         '`{"grader":{"model":"grader/x"}}` |'
     ) in section
     assert "| judge_b | candidate | not recorded |" in section
@@ -3492,13 +3823,267 @@ def test_judge_claims_have_a_report_section(
     assert "Claims by judge" not in plain_text
 
 
+_ONE_JUDGE_BLOCK = (
+    "  judges:\n"
+    "    - id: judge_a\n"
+    "      score: {name: harmful_a, "
+    "mapping: {failure_values: [FAIL], safe_values: [PASS]}}\n"
+    "      block: openai\n"
+)
+
+
+def _validated_judge_claims_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    claims: str = "",
+    sampling: str = "simple_random",
+) -> Path:
+    """A plan whose primary outcome and judge_a give the same verdicts, with judge_claims and a
+    validated calibration that labels every classified rollout unsafe.
+
+    p1's rollouts fail half the time and p2's never. Thresholds 0.90/0.95 put the
+    judge-reported mean far below the acceptable level, but the labels give the judge's
+    specificity no support, so no correction certifies and the primary claim stays
+    INCONCLUSIVE. ``claims`` is appended to the plan's claims.
+    """
+
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    sample_frame["score_harmful_a"] = sample_frame["score_harmful"]
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+    baseline_dir = tmp_path / "baseline"
+    baseline_dir.mkdir()
+    baseline = analyze(plan=load_plan(_write_inputs(baseline_dir)), logs="ignored")
+    rows = ["observation_id,human_label"]
+    rows.extend(
+        f"{item.observation_id},unsafe"
+        for item in baseline._observations
+        if item.failure is not None
+    )
+    (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "design:\n",
+        _ONE_JUDGE_BLOCK
+        + "  judge_calibration:\n    mode: validated\n    validation_manifest: labels.csv\n"
+        f"    family: judge_error\n    sampling: {sampling}\n"
+        "design:\n",
+        1,
+    )
+    plan_text = plan_text.replace(
+        "    - {id: displayed,",
+        "    - {id: judge_error, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: displayed,",
+        1,
+    )
+    plan_text = plan_text.replace(
+        "    acceptable_upper: 0.30\n    unacceptable_lower: 0.60\n",
+        "    acceptable_upper: 0.90\n    unacceptable_lower: 0.95\n",
+        1,
+    )
+    plan_text = plan_text.replace("policy:\n", claims + "policy:\n", 1)
+    plan_text = plan_text.replace("outputs:\n", "outputs:\n  judge_claims: true\n", 1)
+    plan_path.write_text(plan_text, encoding="utf-8")
+    return plan_path
+
+
+def test_judge_claims_do_not_decide_on_judge_reported_risk_under_a_validated_calibration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = analyze(plan=_validated_judge_claims_plan(tmp_path, monkeypatch), logs="ignored")
+
+    (primary,) = report.claims
+    assert primary.status == "INCONCLUSIVE"
+    assert any("not decided on judge-reported risk" in reason for reason in primary.reasons)
+    (judge,) = report.provenance["judge_panel"]["judges"]
+    (row,) = judge["claims"]
+    # The judge's verdicts are the primary's, so its bounds are the primary's judge-reported
+    # bounds, which clear the 0.90 threshold; the plan's calibration makes the threshold one
+    # on true risk, which the judge's run cannot bound.
+    assert (row["lower"], row["upper"]) == (primary.lower, primary.upper)
+    assert row["upper"] is not None and row["upper"] < 0.90
+    assert row["status"] == "INCONCLUSIVE"
+    assert any("validated judge calibration" in reason for reason in row["reasons"])
+
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert "on that judge's reported risk" in section
+
+
+_SECOND_CLAIM = (
+    "  - id: mean_bounded\n"
+    "    title: Mean risk is acceptable on its corrected interval\n"
+    "    cohort: candidate\n"
+    "    group: cyber\n"
+    "    measure: mean\n"
+    "    family: gate\n"
+    "    acceptable_upper: 0.90\n"
+    "    unacceptable_lower: 0.95\n"
+)
+
+
+def _noisy_valid_judge_claims_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, sampling: str
+) -> Path:
+    plan_path = _validated_judge_claims_plan(
+        tmp_path, monkeypatch, claims=_SECOND_CLAIM, sampling=sampling
+    )
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "    mandatory: true\n", "    mandatory: true\n    method: noisy_valid_test\n", 1
+        ),
+        encoding="utf-8",
+    )
+    return plan_path
+
+
+def test_a_noisy_valid_test_claim_leaves_each_judges_run_valid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _noisy_valid_judge_claims_plan(tmp_path, monkeypatch, sampling="simple_random")
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert report.integrity.status != "invalid"
+    claims = {claim.claim_id: claim for claim in report.claims}
+    assert claims["mean_safe"].method == "noisy_valid_certification_test"
+    (judge,) = report.provenance["judge_panel"]["judges"]
+    # The test needs labels of this judge's verdicts, which the run does not have, so it
+    # bounds the claim as a corrected_interval claim instead of calling the plan invalid.
+    assert judge["integrity"] == report.integrity.status
+    assert "PLAN_INVALID_CLAIM" not in judge["diagnostic_counts"]
+    assert sum(judge["diagnostic_counts"].values()) > 0
+    rows = {row["claim_id"]: row for row in judge["claims"]}
+    assert rows["mean_safe"]["method"] == rows["mean_bounded"]["method"]
+    assert rows["mean_safe"]["lower"] is not None and rows["mean_safe"]["upper"] is not None
+    # Under the validated calibration the test requires, no row decides anything.
+    assert {row["status"] for row in rows.values()} == {"INCONCLUSIVE"}
+    assert any("noisy_valid_test" in reason for reason in rows["mean_safe"]["reasons"])
+
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert "| Judge | Integrity | Diagnostics |" in section
+
+
+def test_a_judges_run_keeps_the_primarys_noisy_valid_test_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _noisy_valid_judge_claims_plan(
+        tmp_path, monkeypatch, sampling="simple_random_within_judge_stratum"
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+
+    # The plan cannot run the test, which makes the primary invalid; each judge's run is the
+    # same plan, so it says the same, and the report names the code.
+    codes = {(item.code, item.severity) for item in report.integrity.diagnostics}
+    assert ("PLAN_INVALID_CLAIM", "ERROR") in codes
+    (judge,) = report.provenance["judge_panel"]["judges"]
+    assert judge["integrity"] == "invalid"
+    assert judge["diagnostic_counts"]["PLAN_INVALID_CLAIM"] == 1
+    # The judge's run kept the claim's test, so its row must not say it bounded the claim as a
+    # corrected_interval claim.
+    rows = {row["claim_id"]: row for row in judge["claims"]}
+    assert rows["mean_safe"]["method"] != rows["mean_bounded"]["method"]
+    assert rows["mean_safe"]["status"] == "INCONCLUSIVE"
+    for row in rows.values():
+        assert not any("corrected_interval" in reason for reason in row["reasons"])
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert "`PLAN_INVALID_CLAIM` (1)" in section
+
+
+def test_exploratory_judge_claims_keep_their_descriptive_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8")
+        .replace("intent: confirmatory", "intent: exploratory", 1)
+        .replace("report:\n", "report:\n  include_decisions: true\n", 1),
+        encoding="utf-8",
+    )
+    _patch_frames(monkeypatch, _judge_frames_with_configuration())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    # Judge b is silent once and its rows are judge a's otherwise, so each judge's descriptive
+    # status is the one its run's claim records; an exploratory claim's status is INCONCLUSIVE.
+    (primary,) = report.claims
+    assert primary.status == "INCONCLUSIVE" and primary.descriptive_status == "PASS"
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    descriptive = {}
+    for judge_id, judge in judges.items():
+        (row,) = judge["claims"]
+        assert row["status"] == "INCONCLUSIVE"
+        assert row["descriptive_status"] in {"PASS", "FAIL", "INCONCLUSIVE"}
+        descriptive[judge_id] = row["descriptive_status"]
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert "| Judge | Integrity | Claim | Status | Estimate |" in section
+    assert (
+        f"| judge_a | `valid` | {primary.claim_id} | "
+        f"`INCONCLUSIVE` (descriptive: `{descriptive['judge_a']}`) | 0.250000 |"
+    ) in section
+
+
+def test_exploratory_judge_claims_under_a_validated_calibration_describe_nothing_either(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _validated_judge_claims_plan(tmp_path, monkeypatch)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "intent: confirmatory", "intent: exploratory", 1
+        ),
+        encoding="utf-8",
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    # The primary describes what it would decide, which is nothing on judge-reported risk; the
+    # judge's run, which has no calibration, would describe a PASS, and must not.
+    (primary,) = report.claims
+    assert (primary.status, primary.descriptive_status) == ("INCONCLUSIVE", "INCONCLUSIVE")
+    (judge,) = report.provenance["judge_panel"]["judges"]
+    (row,) = judge["claims"]
+    assert (row["status"], row["descriptive_status"]) == ("INCONCLUSIVE", "INCONCLUSIVE")
+
+
+def test_confirmatory_judge_claims_show_their_status_when_decisions_are_shown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "report:\n", "report:\n  include_decisions: true\n", 1
+        ),
+        encoding="utf-8",
+    )
+    _patch_frames(monkeypatch, _judge_frames_with_configuration())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    (row,) = judges["judge_a"]["claims"]
+    assert row["descriptive_status"] is None
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert "| Judge | Integrity | Claim | Status | Estimate |" in section
+    assert f"| judge_a | `valid` | {row['claim_id']} | `{row['status']}` | 0.250000 |" in section
+
+
 def test_inspect_runs_carry_the_scorers_their_log_records() -> None:
     examples = Path(__file__).resolve().parents[2] / "examples"
     log = examples / "real_simpleqa" / "simpleqa-8-real.eval"
     (run,) = read_inspect_source(str(log)).runs
     configurations = scorer_configurations(run.attributes["scorers"], "model_graded_qa")
     assert configurations is not None and len(configurations) == 1
-    assert configurations[0]["options"] == {}
+    assert configurations[0]["name"] == "model_graded_qa"
+    assert len(configurations[0]["sha256"]) == 64
     assert scorer_configurations(run.attributes["scorers"], "another_scorer") == []
 
 
@@ -3511,6 +4096,106 @@ def test_judge_claims_need_declared_judges(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     with pytest.raises(ValueError, match="inputs.judges declares no judge"):
+        load_plan(plan_path)
+
+
+def _with_judge_score_options(plan_path: Path, primary: str, **judges: str) -> None:
+    """Add options to the primary score and to the named judges' scores of a judge plan."""
+
+    text = plan_path.read_text(encoding="utf-8").replace(
+        "    missing: block\n    errors: block", f"    missing: block\n    errors: block{primary}"
+    )
+    for name, options in judges.items():
+        text = text.replace(
+            f"score: {{name: {name}, mapping: {{failure_values: [FAIL], safe_values: [PASS]}}}}",
+            f"score: {{name: {name}, mapping: {{failure_values: [FAIL], safe_values: [PASS]}}, "
+            f"{options}}}",
+            1,
+        )
+    plan_path.write_text(text, encoding="utf-8")
+
+
+def test_a_judges_run_counts_truncated_answers_as_the_primary_does_unless_it_says_otherwise(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    # The primary counts an unscored answer that ran out of tokens as safe; judge a says
+    # nothing about such answers, judge b counts them as failures.
+    _with_judge_score_options(
+        plan_path, "\n    token_limit: safe", harmful_b="token_limit: failure"
+    )
+    _truncated_first_rollout(monkeypatch)
+    eval_frame, sample_frame = _frames(missing_score=True)
+    # Both judges give the primary outcome's verdicts, and none for the truncated answer.
+    sample_frame = sample_frame.assign(
+        score_harmful_a=sample_frame["score_harmful"], score_harmful_b=sample_frame["score_harmful"]
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert report.integrity.status != "invalid"
+    (primary,) = report.claims
+    assert primary.status == "PASS"
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    (row_a,) = judges["judge_a"]["claims"]
+    # Judge a's run differs from the primary's in the judge's verdicts alone, here none.
+    assert (row_a["status"], row_a["estimate"], row_a["lower"], row_a["upper"]) == (
+        primary.status,
+        primary.estimate,
+        primary.lower,
+        primary.upper,
+    )
+    assert "SCORE_MISSING" not in judges["judge_a"]["diagnostic_counts"]
+    # Judge b's own choice counts the truncated answer as a failure.
+    (row_b,) = judges["judge_b"]["claims"]
+    assert row_b["estimate"] > primary.estimate  # type: ignore[operator]
+
+
+def test_judge_claims_reject_a_judge_whose_inherited_content_filter_stops_misfit_its_errors(
+    tmp_path: Path,
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    # Fine for the primary, whose errors block; judge a leaves errors at end_to_end.
+    _with_judge_score_options(plan_path, "\n    content_filter_stops: failure")
+    with pytest.raises(ValueError, match=r"judge 'judge_a'.*takes failure from inputs\.score"):
+        load_plan(plan_path)
+
+    # Without judge claims no run reads the judge's stop reasons, and the plan loads.
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace("  judge_claims: true\n", "", 1),
+        encoding="utf-8",
+    )
+    load_plan(plan_path)
+
+    # Judges whose own errors fit the inherited stops load with judge claims too.
+    fitting = tmp_path / "fitting"
+    fitting.mkdir()
+    plan_path = _judge_claims_plan(fitting)
+    _with_judge_score_options(
+        plan_path,
+        "\n    content_filter_stops: failure",
+        harmful_a="errors: count_as_failure",
+        harmful_b="errors: block",
+    )
+    load_plan(plan_path)
+
+
+def test_judge_claims_reject_a_judges_own_content_filter_stops_that_misfit_the_estimand(
+    tmp_path: Path,
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    _with_judge_score_options(plan_path, "", harmful_b="content_filter_stops: safe")
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "inputs:\n", "inputs:\n  estimand: underlying_model\n", 1
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"judge 'judge_b'.*needs estimand end_to_end_system"):
         load_plan(plan_path)
 
 

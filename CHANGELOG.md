@@ -298,8 +298,10 @@ described in their pull requests.
   repeated under each on the same rollouts, and the report shows every reading side by side
   in `report.json` (`outcome_mapping_sensitivities`), a new
   `outcome-mapping-sensitivity.csv` and a section of `report.md`. Only the primary mapping
-  enters claims and the decision. Opt-in: plans without the field keep their hash and their
-  report bytes. See
+  enters claims and the decision. Each alternative carries what the plan, its decision policy
+  and its registration receipt were checked for, so a receipt for another plan or a failed
+  decision policy makes it `invalid` as it does the primary analysis. Opt-in: plans without the
+  field keep their hash and their report bytes. See
   [Outcome mapping sensitivities](docs/plan-reference.md#outcome-mapping-sensitivities-experimental).
 
 - **The fixed-design planner uses the analysis method.** `plan fixed-design --plan PLAN`
@@ -450,15 +452,40 @@ described in their pull requests.
 - **Claims by judge (experimental).** With `outputs.judge_claims: true`, a plan with a judge
   panel also decides every claim on each declared judge's verdicts, as the plan would with that
   judge as its primary outcome, over the same rollouts. Each judge in
-  `provenance.judge_panel.judges` of `report.json` gains its run's `integrity`, its `claims`
-  rows (status, estimate, lower and upper bound, method) and the `configuration` its cohorts'
-  runs record: the options of the scorer named like the judge's score and the model roles,
-  `null` where none are recorded. A model role keeps only its name and model id: its
-  `base_url`, `args` and `extra_headers`, which can hold endpoints and credentials, never reach
-  the report. `report.md` adds a "Claims by judge (experimental)" table to
-  the judge panel section. The rows do not enter the decision. The option requires
+  `provenance.judge_panel.judges` of `report.json` gains its run's `integrity` and
+  `diagnostic_counts`, its `claims` rows (status, descriptive status under an exploratory
+  intent, estimate, lower and upper bound, method, reasons) and the `configuration` its cohorts'
+  runs record: a SHA-256 fingerprint of the scorer named like the judge's score and the model
+  roles, `null` where none are recorded. The rows' bounds are on the judge's reported risk;
+  under a validated judge calibration, whose thresholds are about true risk, every row is
+  `INCONCLUSIVE`, as the primary outcome's claims are without a certifying correction. Where
+  the plan can run a `noisy_valid_test` claim's test (a validated calibration with
+  `sampling: simple_random`), a judge's run bounds the claim as a `corrected_interval` claim,
+  since the test needs labels of that judge's verdicts; where it cannot, the claim is the same
+  plan error in each judge's run as in the primary's. The scorer's options and metadata, which
+  can hold request headers, tokens, endpoints and local paths, never reach the report; their
+  fingerprint is unsalted, so a value with few possibilities, such as an internal address, can
+  be guessed back from it by someone who knows the rest of the entry. A model role
+  keeps only its name and model id: its `base_url`, `args` and `extra_headers`, which can hold
+  endpoints and credentials, never reach the report. A run whose scorers or model roles cannot
+  be read, such as text that is not JSON or a role without a model id, is left out of the
+  record with a `JUDGE_CONFIGURATION_UNREADABLE` warning. Each judge's run carries what the
+  plan, its decision policy and its registration receipt were checked for, so a receipt for
+  another plan or a failed decision policy makes it `invalid` as it does the primary analysis.
+  An invalid report never shows a judge's run as anything but `invalid`, nor a row as anything
+  but `INCONCLUSIVE`. A judge's run takes the primary score's `content_filter_stops` and
+  `token_limit` where the judge leaves them at `score`, so it counts the rollouts the target's
+  provider stopped as the primary analysis does (an inherited `token_limit` also covers a
+  truncated rollout the judge left unscored for another reason, which can narrow its row;
+  `token_limit: missing` on the judge opts out); a plan whose judges' resulting
+  `content_filter_stops` misfit their `errors` or the estimand is refused when it is loaded.
+  A judge whose own `score` asks for what the source cannot give, such as the stop reasons
+  `token_limit` needs, gets an `invalid` run with `INGEST_FAILED` and rows that decide nothing,
+  instead of stopping the analysis. `report-full.md` adds a "Claims by judge (experimental)"
+  table to the judge panel section. The rows do not enter the decision. The option requires
   `inputs.judges`. Plans that leave it off keep their hash and write the same report bytes as
-  before. See [Claims by judge](docs/plan-reference.md#claims-by-judge-experimental).
+  before. See
+  [Claims by judge](docs/plan-reference.md#claims-by-judge-experimental).
 
 - **Transported judge calibration (experimental).** `inputs.judge_calibration.mode:
   transported` takes a judge's sensitivity from a published human-labelled validation set,

@@ -231,6 +231,43 @@ class ScoreSpec(StrictModel):
         return self
 
 
+def judge_run_score(primary: ScoreSpec, judge: ScoreSpec) -> ScoreSpec:
+    """The score a judge's run under ``outputs.judge_claims`` reads: the judge's own, except
+    the stop reasons the judge leaves at ``score``, which it takes from the primary score.
+
+    ``content_filter_stops`` and ``token_limit`` say how rollouts count that the target's
+    provider stopped, which is the same for every judge of the same rollouts. Left at
+    ``score`` the judge's score says nothing about them, so its run counts them as the plan's
+    primary analysis does, and differs from it in the judge's verdicts alone.
+    """
+
+    update: dict[str, Any] = {}
+    if judge.content_filter_stops == "score":
+        update["content_filter_stops"] = primary.content_filter_stops
+    if judge.token_limit == "score":
+        update["token_limit"] = primary.token_limit
+    return judge.model_copy(update=update) if update else judge
+
+
+def _content_filter_stops_problem(score: ScoreSpec, estimand: str) -> str | None:
+    """Why ``score.content_filter_stops`` does not fit the estimand or ``score.errors``, if it
+    does not."""
+
+    stops = score.content_filter_stops
+    if stops != "score" and estimand != "end_to_end_system":
+        return (
+            "score.content_filter_stops counts a provider's block as the outcome of the "
+            "end-to-end system; it needs estimand end_to_end_system"
+        )
+    if stops == "failure" and score.errors == "end_to_end":
+        return (
+            "score.content_filter_stops: failure counts a block as a refusal, but "
+            "score.errors: end_to_end counts a policy-blocked sample error as safe; "
+            "choose another score.errors"
+        )
+    return None
+
+
 class JudgeRateRangeSpec(StrictModel):
     """A declared closed range for one conditional judge accuracy."""
 
@@ -594,18 +631,9 @@ class InputsSpec(OmitsAbsentFields):
 
     @model_validator(mode="after")
     def content_filter_stops_fit_the_estimand(self) -> InputsSpec:
-        stops = self.score.content_filter_stops
-        if stops != "score" and self.estimand != "end_to_end_system":
-            raise ValueError(
-                "score.content_filter_stops counts a provider's block as the outcome of the "
-                "end-to-end system; it needs estimand end_to_end_system"
-            )
-        if stops == "failure" and self.score.errors == "end_to_end":
-            raise ValueError(
-                "score.content_filter_stops: failure counts a block as a refusal, but "
-                "score.errors: end_to_end counts a policy-blocked sample error as safe; "
-                "choose another score.errors"
-            )
+        problem = _content_filter_stops_problem(self.score, self.estimand)
+        if problem is not None:
+            raise ValueError(problem)
         return self
 
 
@@ -1300,6 +1328,30 @@ class AnalysisPlan(StrictModel):
                 "outputs.judge_claims decides the claims on each declared judge's verdicts, "
                 "but inputs.judges declares no judge. Declare the judges, or set "
                 "outputs.judge_claims: false"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def judge_runs_count_content_filter_stops_consistently(self) -> AnalysisPlan:
+        # Each judge's run reads the judge's score with the stop reasons it inherits
+        # (judge_run_score), which must fit as the primary score must. Without judge_claims
+        # no run reads them.
+        if not self.outputs.judge_claims:
+            return self
+        for judge in self.inputs.judges:
+            score = judge_run_score(self.inputs.score, judge.score)
+            problem = _content_filter_stops_problem(score, self.inputs.estimand)
+            if problem is None:
+                continue
+            inherited = (
+                " The judge leaves its content_filter_stops at score, so its run takes "
+                f"{score.content_filter_stops} from inputs.score."
+                if judge.score.content_filter_stops == "score"
+                else ""
+            )
+            raise ValueError(
+                f"outputs.judge_claims runs judge {judge.id!r} on its own score, where "
+                f"{problem}.{inherited}"
             )
         return self
 

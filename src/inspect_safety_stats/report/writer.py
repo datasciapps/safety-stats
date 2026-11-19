@@ -277,9 +277,13 @@ def _judge_error_stress_lines(
 
 
 def _claim_status(claim: Any) -> str:
-    if claim.descriptive_status is None:
-        return f"`{claim.status}`"
-    return f"`{claim.status}` (descriptive: `{claim.descriptive_status}`)"
+    return _status_text(claim.status, claim.descriptive_status)
+
+
+def _status_text(status: str, descriptive_status: str | None) -> str:
+    if descriptive_status is None:
+        return f"`{status}`"
+    return f"`{status}` (descriptive: `{descriptive_status}`)"
 
 
 _MAPPING_KIND_ORDER = {"group_risk": 0, "comparison": 1, "claim": 2}
@@ -480,15 +484,28 @@ def _judge_claim_lines(
         "",
         "Each judge's rows are the claims this plan gives with that judge's verdicts as its "
         "primary outcome, over the same rollouts, without the panel or the judge calibration. "
-        "They compare judge configurations. The report's decision rests on the primary outcome "
-        "alone, and these rows are not adjusted for their number.",
+        "Their bounds are on that judge's reported risk. Under a validated judge calibration, "
+        "which makes the plan's thresholds ones on true risk, every row is `INCONCLUSIVE`. "
+        "A judge's run handles missing and errored verdicts by that judge's own "
+        "`score.missing` and `score.errors`, not the primary outcome's, and counts "
+        "content-filter stops and unscored answers cut at the token limit as the primary "
+        "outcome does, unless the judge's score sets its own `content_filter_stops` or "
+        "`token_limit`. "
+        "When the report's integrity is invalid, every judge's run is `invalid` and every row "
+        "`INCONCLUSIVE`, whatever the judge's own diagnostics below. "
+        "The rows compare judge configurations. The report's decision rests on the primary "
+        "outcome alone, and these rows are not adjusted for their number.",
         "",
         f"| Judge | Integrity | Claim | {status_header}Estimate | Lower | Upper | Method |",
         f"|---|---|---|{status_rule}---:|---:|---:|---|",
     ]
     for judge in judges:
         for claim in judge["claims"]:
-            status = f"`{claim['status']}` | " if include_decisions else ""
+            status = (
+                f"{_status_text(claim['status'], claim['descriptive_status'])} | "
+                if include_decisions
+                else ""
+            )
             lines.append(
                 f"| {_escape(judge['id'])} | `{judge['integrity']}` | "
                 f"{_escape(claim['claim_id'])} | {status}"
@@ -498,8 +515,24 @@ def _judge_claim_lines(
     lines.extend(
         [
             "",
+            "Each judge's run's diagnostics, by code, with how often each occurred:",
+            "",
+            "| Judge | Integrity | Diagnostics |",
+            "|---|---|---|",
+        ]
+    )
+    for judge in judges:
+        counts = judge["diagnostic_counts"]
+        listed = "; ".join(f"`{_escape(code)}` ({count})" for code, count in counts.items())
+        lines.append(
+            f"| {_escape(judge['id'])} | `{judge['integrity']}` | {listed or 'none'} |"
+        )
+    lines.extend(
+        [
+            "",
             "The scorer configuration and model roles each cohort's runs record, by judge: the "
-            "options of the scorer named like the judge's score.",
+            "SHA-256 fingerprint of the scorer named like the judge's score, and each model "
+            "role's model id. Neither shows the scorer's options or metadata.",
             "",
             "| Judge | Cohort | Scorer | Model roles |",
             "|---|---|---|---|",

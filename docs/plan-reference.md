@@ -415,7 +415,10 @@ the coverage the plan declares for that mapping alone; the readings are not simu
 across mappings, so the side-by-side view is a sensitivity analysis, not a set of tests to
 pick from. A mapping that leaves some observed value unmapped makes its own integrity
 `invalid` (`SCORE_UNMAPPED` in its diagnostic counts) without affecting the primary
-analysis.
+analysis. Each alternative carries what the plan itself, its decision policy and its
+registration receipt were checked for, so a receipt for another plan
+(`PLAN_RECEIPT_MISMATCH`) or a decision policy that fails its checks makes every alternative
+`invalid`, as it does the primary analysis.
 
 Identifiers must be unique and cannot be `primary`, which names the primary mapping in the
 outputs; an alternative may not repeat the primary mapping. Only `inputs.score` takes
@@ -513,28 +516,96 @@ The report's claims are decided on the primary outcome alone. To see what each d
 would decide, set `outputs.judge_claims: true`. The analysis then runs the plan again once per
 judge, with that judge's `score` as the primary outcome and without `judges`, `composites` or
 `judge_calibration` (the calibration validates the primary outcome, not the other judges). Every
-run uses the same rollouts, and the logs are read once.
+run uses the same rollouts: each log is read, and hashed, once.
 
 ```yaml
 outputs:
   judge_claims: true
 ```
 
+A judge's run takes that judge's `score`, including its `missing` and `errors` policies, not
+the primary outcome's. A judge that leaves them out gets their defaults, `conservative_bounds`
+and `end_to_end`, so with a primary `score` set to `missing: block` and `errors: block`, the rows
+also differ by how missing and errored verdicts are handled. To compare judges alone, give each
+judge the primary outcome's policies:
+
+```yaml
+inputs:
+  score: {name: harmful, mapping: {...}, missing: block, errors: block}
+  judges:
+    - id: judge_a
+      score: {name: harmful_a, mapping: {...}, missing: block, errors: block}
+```
+
+`content_filter_stops` and `token_limit` are different: they say how rollouts count that the
+target's provider stopped, which is the same whichever judge reads them. A judge that leaves
+either at its default, `score`, takes the primary outcome's value in its run, so it counts a
+content-filter stop or an unscored answer cut at the token limit as the primary analysis does.
+A judge that sets its own value keeps it; there is no way to ask a judge's run not to look when
+the primary does, short of `token_limit: missing`, which leaves such answers to the judge's
+`missing`. An inherited `token_limit` applies to every truncated rollout the judge left
+unscored, whatever the judge's reason, so it can make a judge's row narrower than its own
+`missing` would; `token_limit: missing` on the judge is the way out. With `outputs.judge_claims`, each judge's resulting `content_filter_stops` must fit
+the estimand and that judge's `errors` as the primary's must: a primary
+`content_filter_stops: failure` needs every judge that inherits it to set `errors` to something
+other than `end_to_end`, or the plan is refused when it is loaded.
+
 Each judge in `provenance.judge_panel.judges` of `report.json` gains:
 
-- `integrity`: the integrity status of that judge's run.
-- `claims`: one row per claim, with `claim_id`, `status`, `estimate`, `lower`, `upper` and
-  `method`.
+- `integrity`: the integrity status of that judge's run. Each judge's run carries what the
+  plan itself, its decision policy and its registration receipt were checked for, so a receipt
+  for another plan (`PLAN_RECEIPT_MISMATCH`) or a decision policy that fails its checks makes
+  every judge's run `invalid`, as it does the primary run. Whenever the report's integrity is
+  `invalid`, for whatever reason, every judge's `integrity` is `invalid` and every row's
+  `status` is `INCONCLUSIVE`, with no `descriptive_status`, even where the error concerns the
+  primary outcome alone; `diagnostic_counts` stay those of the judge's own run, and `reasons`
+  says so. A judge whose own `score` asks for what the source cannot give, such as the stop
+  reasons that `token_limit` or `content_filter_stops` need from rollout files, gets an
+  `invalid` run with `INGEST_FAILED`, as the primary run would, and rows that decide nothing.
+  The rest of the report stands.
+- `diagnostic_counts`: how often each diagnostic code occurred in that judge's run, by code, so
+  a run that is not `valid` says why.
+- `claims`: one row per claim, with `claim_id`, `status`, `descriptive_status`, `estimate`,
+  `lower`, `upper`, `method` and `reasons`. Under `intent: exploratory` every `status` is
+  `INCONCLUSIVE` and `descriptive_status` holds what a confirmatory analysis would decide, as
+  for the report's own claims; otherwise it is `null`. The bounds are on that judge's reported
+  risk, since its run has no calibration. When the plan declares a validated
+  `judge_calibration`, the plan's thresholds are about true risk, and the primary outcome's
+  claims are not decided on judge-reported bounds.
+  The rows are not either: every `status` is `INCONCLUSIVE`, and `reasons` says why. A
+  `noisy_valid_test` claim's test needs labels of the judge's verdicts, so a judge's run bounds
+  such a claim as a `corrected_interval` claim. Where the plan's calibration cannot run the
+  test, the claim is a plan error in the primary run and in each judge's run alike.
 - `configuration`: per cohort, the distinct configurations of the scorer named like the judge's
   score (`scorer`) and the model roles (`model_roles`) that the cohort's runs record. Inspect
-  logs record them under `eval.scorers` and `eval.model_roles`. Each model role keeps only its
-  name and model id, as `{"<role>": {"model": "<model id>"}}`. The rest of its configuration
-  (`base_url`, `args` and the generate config with its `extra_headers`) can hold endpoints and
-  credentials, so it never reaches the report. A role recorded without a model id is an error.
-  Where the runs record none, the value is `null`.
+  logs record them under `eval.scorers` and `eval.model_roles`. Neither is copied as recorded:
+  - Each scorer is `{"name": "<score name>", "sha256": "<fingerprint>"}`. The fingerprint is
+    the SHA-256 of the scorer's whole entry in `eval.scorers` (name, options, metrics and
+    metadata) as JSON with sorted keys, no whitespace and UTF-8 text. Equal fingerprints mean
+    equal recorded configurations. The options and metadata themselves can hold request
+    headers, tokens, endpoints and local paths, such as a template file, and Inspect redacts
+    only some of them, so they never reach the report.
+
+    The fingerprint hides a value only as well as the value is hard to guess. It has no salt,
+    so the same entry always gives the same fingerprint, which is what lets two reports be
+    compared. Someone who knows the rest of the entry, such as the scorer's other options, can
+    hash candidate values for the one they do not know and compare: a value with few
+    possibilities, such as an internal IP address, a port or a user name in a path, can be
+    recovered that way in seconds. A long random credential, such as an API key or a
+    bearer token, cannot. If an entry holds a guessable value that must stay private, remove
+    it from the logs' scorer options before the analysis, or leave `judge_claims` off.
+  - Each model role keeps only its name and model id, as `{"<role>": {"model": "<model id>"}}`.
+    The rest of its configuration (`base_url`, `args` and the generate config with its
+    `extra_headers`) can hold endpoints and credentials, so it never reaches the report.
+
+  Where the runs record none, the value is `null`. A run whose `scorers` or `model_roles` cannot
+  be read, such as text that is not JSON or a role without a model id, is left out of the
+  record, with a `JUDGE_CONFIGURATION_UNREADABLE` warning that names the run and the field but
+  not its value. Rollout files can carry either field as a run field.
 
 `report-full.md` shows the same rows under **Claims by judge (experimental)** in the judge panel
-section, without the status column when `report.include_decisions` is false. The rows compare
+section, without the status column when `report.include_decisions` is false. The status column
+shows a descriptive status beside the status, as the report's claims table does. The rows compare
 judge configurations. They do not enter the decision and are not adjusted for multiplicity
 across judges. The option requires `inputs.judges`. A plan that leaves it off keeps its hash and
 writes the same report bytes as before.
@@ -717,6 +788,10 @@ groups:
 ## `outputs`
 
 `prompt_bounds` declares the simultaneous-bound family and alpha allocation. Prompt bounds are on by default and take their alpha from `family`, simultaneous or not, and `family` has no default: name a declared multiplicity family, or set `enabled: false`. `risk_measures` contains named measures. A plan without one reports no group risk, and the analysis warns (`PLAN_NO_RISK_MEASURES`).
+
+`judge_claims: true` (experimental, off by default) also decides every claim on each declared
+judge's verdicts, for comparing judges; it requires `inputs.judges`. See
+[Claims by judge](#claims-by-judge-experimental).
 
 ```yaml
 outputs:
