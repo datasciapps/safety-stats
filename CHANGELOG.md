@@ -588,11 +588,14 @@ described in their pull requests.
     that times `1 - rho_1`, so a box whose `rho_1` reaches 1 and `rho_0` reaches 0 is
     unchanged.
   - Under `missing: exclude` or `errors: exclude` the judge-system bounds cover only the
-    classified rollouts' rate. The correction now corrects that rate and mixes the share in at
-    its worst case. It used to subtract the share from an upper bound that never held it, and
-    a `transported` correction left the excluded rollouts out entirely: a maximum over two
-    prompts, half of one prompt's scores missing, got an upper bound of 0.4625 where true risk
-    could be 0.5.
+    classified rollouts' rate. The correction now corrects that rate and lets the share move
+    it at its worst case. A weighted mean's share bound holds only for the prompts' mean
+    share, which may sit on the prompts with the lowest classified rate or on those with the
+    highest, so each end moves by the whole bound; a tail measure's holds for every prompt, so
+    it is mixed in, `[(1 - s_U) A_L, (1 - s_U) A_U + s_U]`. It used to subtract the share from
+    an upper bound that never held it, and a `transported` correction left the excluded
+    rollouts out entirely: a maximum over two prompts, half of one prompt's scores missing,
+    got an upper bound of 0.4625 where true risk could be 0.5.
   - Generative corrected rows in `report.json` gain `unclassified_upper` and
     `unclassified_alpha`.
 

@@ -594,6 +594,7 @@ def _judge_corrected_interval(
         calibration=calibration,
         unclassified_share=unclassified.upper if unclassified is not None else 0.0,
         unclassified_in_bounds=unclassified.in_bounds if unclassified is not None else True,
+        unclassified_share_per_prompt=unclassified is not None and unclassified.per_prompt,
     )
     validated = calibration.source == "validated"
     # Measured accuracies certify only a row they were measured for, and never more than
@@ -809,8 +810,9 @@ def _transported_judge_interval(
     Experimental. Only the sensitivity is transported; the false-positive rate is bounded
     by the run's own judged rate, so the interval's lower end is zero. When the row's bounds
     drop some unclassified rollouts (``unclassified.in_bounds`` false), the bound on their
-    share is mixed into the upper end at its worst case, since every one of them may be
-    truly unsafe.
+    share enters the upper end at its worst case, since every one of them may be truly
+    unsafe: added in full when it bounds only the prompts' weighted mean, and mixed in when
+    it bounds every prompt's share.
     """
 
     if result.upper is None:
@@ -821,19 +823,27 @@ def _transported_judge_interval(
         observed_estimate=result.estimate,
         sensitivity_lower=sensitivity_lower,
         unclassified_share=unclassified.upper if unclassified is not None and added else 0.0,
+        unclassified_share_per_prompt=unclassified is not None and unclassified.per_prompt,
     )
     completion = (
         "The upper bound is the judge-system upper bound divided by the sensitivity bound; "
         "unclassified rollouts stay completed as failures."
     )
     if unclassified is not None and added:
+        how = (
+            "weights that by one minus the unclassified share, at most "
+            f"{unclassified.upper:.6g} on every prompt, then adds the share"
+            if unclassified.per_prompt
+            else f"adds the unclassified share, at most {unclassified.upper:.6g}, in full: "
+            "the bound holds only for the prompts' weighted mean, and the share may sit on "
+            "the prompts with the lowest rates"
+        )
         completion = (
             "The plan's missing or error policy excludes unclassified rollouts from the "
             "judge-system bounds, which then cover only the classified rollouts' rate. The "
             "upper bound divides that rate's upper bound by the sensitivity bound for the "
-            f"classified rollouts and adds back the unclassified share, at most "
-            f"{unclassified.upper:.6g}, at its worst case, truly unsafe. "
-            + unclassified_share_text(unclassified)
+            f"classified rollouts and {how}. Every unclassified rollout is taken at its worst "
+            "case, truly unsafe. " + unclassified_share_text(unclassified)
         )
     return RiskIntervalResult(
         interval_id="judge_corrected_transported",

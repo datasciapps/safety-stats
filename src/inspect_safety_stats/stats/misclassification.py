@@ -75,6 +75,7 @@ def correct_judge_risk(
     calibration: JudgeCalibration,
     unclassified_share: float = 0.0,
     unclassified_in_bounds: bool = True,
+    unclassified_share_per_prompt: bool = False,
 ) -> CorrectedRisk:
     """Map a judge-system risk interval onto the true-risk scale.
 
@@ -115,17 +116,34 @@ def correct_judge_risk(
       ``min(s_U, observed_upper)``, so that each end needs only its own observed endpoint,
       the share bound and its two rho endpoints.
     - False: the ``exclude`` policy dropped some unclassified rollouts from the bounds, which
-      then cover only the judge-unsafe rate among classified rollouts, ``Q = M / (1 - s)``.
-      Then ``R* = (1 - s) A + s u``, where ``A = Q rho_1 + (1 - Q) rho_0`` is the true risk
-      among classified rollouts, so the corrected interval is the plain correction
-      ``[A_lower, A_upper]`` of the observed interval, mixed with the share at its worst
-      case: ``[(1 - s_U) A_lower, (1 - s_U) A_upper + s_U]``. Both ends are monotone in
-      ``s``, so the bound ``s_U`` is all they need. This reading holds for bounds that
-      complete too, since those cover ``Q`` as well, so it is the conservative one when
-      in doubt.
+      then cover only each prompt's judge-unsafe rate among its classified rollouts, ``Q_i``,
+      combined by the measure. Prompt ``i`` has true risk ``(1 - s_i) A_i + s_i u_i``, where
+      ``A_i = Q_i rho_1 + (1 - Q_i) rho_0`` is its true risk among classified rollouts, and
+      the plain correction ``[A_lower, A_upper]`` of the observed interval bounds the
+      measure of the ``A_i``. How the share enters depends on what ``s_U`` bounds.
 
-    For a tail measure, pass a bound on the largest share of any prompt it weights. The
-    adjustment is monotone and translation equivariant, so that bounds the tail too.
+      - ``unclassified_share_per_prompt`` false (the default): ``s_U`` bounds the weighted
+        mean of the prompts' shares, ``sum_i w_i s_i``, as for a weighted mean. The shares
+        may sit on the riskiest prompts or on the safest, so ``R* = sum_i w_i A_i +
+        sum_i w_i s_i (u_i - A_i)`` lies in ``[A_lower - s_U, A_upper + s_U]``. Mixing
+        ``A`` with the share as if every prompt had the same share does not bound it: two
+        prompts of weight one half, one with share 0.4 whose classified rollouts are all
+        safe and one fully classified at rate 0.5, have ``Q = 0.25`` and ``s = 0.2`` and
+        true risk up to 0.45 under a perfect judge, where ``(1 - s) A_upper + s`` gives 0.4.
+      - ``unclassified_share_per_prompt`` true: ``s_U`` bounds every prompt's own share, as
+        the largest share does for a tail measure (maximum, CVaR, top-k mean). Each prompt's
+        risk lies in ``[(1 - s_U) A_i, (1 - s_U) A_i + s_U]``, and a measure that is
+        monotone, positively homogeneous and translation equivariant carries that through,
+        so the interval is ``[(1 - s_U) A_lower, (1 - s_U) A_upper + s_U]``, inside the
+        additive one.
+
+      Every end is monotone in ``s``, so the bound ``s_U`` is all it needs. This reading
+      holds for bounds that complete too, since those cover the ``Q_i`` as well, so it is
+      the conservative one when in doubt.
+
+    For a tail measure, pass a bound on the largest share of any prompt it weights, which
+    bounds every prompt's share. The adjustment is monotone and translation equivariant, so
+    that bounds the tail too.
     """
 
     if not 0 <= observed_lower <= observed_upper <= 1:
@@ -157,9 +175,19 @@ def correct_judge_risk(
         upper = max(vertices(min(unclassified_share, observed_upper), 1.0))
     else:
         # The observed interval bounds the classified rollouts' rate; correct it as if
-        # every rollout were classified, then mix in the share at its worst case.
-        lower = (1 - unclassified_share) * min(vertices(0.0, 0.0))
-        upper = (1 - unclassified_share) * max(vertices(0.0, 0.0)) + unclassified_share
+        # every rollout were classified, then let the share move it at its worst case.
+        plain_lower = min(vertices(0.0, 0.0))
+        plain_upper = max(vertices(0.0, 0.0))
+        if unclassified_share_per_prompt:
+            # Every prompt's share is at most s_U, so each prompt mixes in at most s_U.
+            lower = (1 - unclassified_share) * plain_lower
+            upper = (1 - unclassified_share) * plain_upper + unclassified_share
+        else:
+            # Only the average share is bounded, and it may sit where the rate is lowest
+            # (for the upper end) or highest (for the lower end), so the share moves each
+            # end by its whole size.
+            lower = plain_lower - unclassified_share
+            upper = plain_upper + unclassified_share
     estimate_lower = estimate_upper = None
     if observed_estimate is not None:
         estimate_lower = (
@@ -201,6 +229,7 @@ def transport_judge_risk(
     sensitivity_lower: float,
     scenario_id: str = "transported",
     unclassified_share: float = 0.0,
+    unclassified_share_per_prompt: bool = False,
 ) -> CorrectedRisk:
     """Bound true risk from a transported sensitivity and the run's own judged rate.
 
@@ -217,14 +246,18 @@ def transport_judge_risk(
     Rollouts the judge never classified need no separate term when the observed upper bound
     completes them as judge failures: dividing by a sensitivity of at most one only enlarges
     that completion. When the ``exclude`` policy dropped some of them from the bounds, the
-    bound covers only the classified rollouts' rate ``q_c``, and the dropped ones may all be
+    bound covers only the classified rollouts' rates ``q_i``, and the dropped ones may all be
     truly unsafe. Pass an upper bound ``s_U`` on their population share as
-    ``unclassified_share``: true risk is ``(1 - s) pi_c + s u <= (1 - s) q_c / Se + s``, which
-    rises with ``s``, so it is at most ``(1 - s_U) min(1, observed_upper / Se) + s_U``. The
-    bound is monotone, positively
-    homogeneous and translation equivariant in the prompt rates, so it applies to the
-    weighted mean and to the tail measures alike, provided the sensitivity bound holds on
-    every prompt; for a tail measure pass a bound on the largest share of any prompt.
+    ``unclassified_share``. Prompt ``i`` has true risk ``(1 - s_i) pi_i + s_i u_i`` with
+    ``pi_i <= min(1, q_i / Se)``, which rises with ``s_i``. When ``s_U`` bounds only the
+    weighted mean of the shares (``unclassified_share_per_prompt`` false, the default, as
+    for a weighted mean), the shares may sit on the prompts with the lowest rates, so the
+    upper bound is ``min(1, observed_upper / Se) + s_U``. When it bounds every prompt's own
+    share (true, as the largest share does for a tail measure), each prompt's risk is at
+    most ``(1 - s_U) min(1, q_i / Se) + s_U``, and a measure that is monotone, positively
+    homogeneous and translation equivariant in the prompt rates carries that through to
+    ``(1 - s_U) min(1, observed_upper / Se) + s_U``. Both need the sensitivity bound to hold
+    on every prompt.
     """
 
     if not 0 <= observed_upper <= 1:
@@ -246,7 +279,12 @@ def transport_judge_risk(
         lower=0.0,
         upper=min(
             1.0,
-            (1 - unclassified_share) * inflate(observed_upper) + unclassified_share,
+            (
+                (1 - unclassified_share) * inflate(observed_upper)
+                if unclassified_share_per_prompt
+                else inflate(observed_upper)
+            )
+            + unclassified_share,
         ),
         completion_estimate_lower=None if observed_estimate is None else 0.0,
         completion_estimate_upper=(

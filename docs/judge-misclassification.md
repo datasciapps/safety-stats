@@ -480,12 +480,26 @@ plan's `missing` and `errors` policies:
   \(L\rho_1+(1-s-L)\rho_0\) with \(s=\min(s_U,1-L)\), and of
   \((U-s)\rho_1+(1-U)\rho_0+s\) with \(s=\min(s_U,U)\).
 - `exclude` drops the rollout from its prompt's denominator, so \([L,U]\) covers only the
-  judge-unsafe rate among classified rollouts, \(Q=M/(1-s)\). Then
-  \(R^*=(1-s)A+s\,u\), where \(A=Q\rho_1+(1-Q)\rho_0\) is true risk among classified rollouts.
-  If \([A_L,A_U]\) is the plain correction of \([L,U]\), the corrected interval is
-  \([(1-s_U)A_L,\;(1-s_U)A_U+s_U]\). Direct-mean intervals complete every rollout under any
-  policy, and this reading holds for them too, so a plan that excludes is always read this
-  way.
+  measure of each prompt's judge-unsafe rate among its classified rollouts, \(Q_i\). Prompt
+  \(i\) has true risk \((1-s_i)A_i+s_iu_i\), where \(A_i=Q_i\rho_1+(1-Q_i)\rho_0\) is its true
+  risk among classified rollouts, and the plain correction \([A_L,A_U]\) of \([L,U]\) bounds
+  the measure of the \(A_i\). How the share enters depends on what \(s_U\) bounds.
+  - A `weighted_mean` row or comparison arm, and every hierarchy node, bounds only the
+    prompts' mean share \(\sum_iw_is_i\), and that share may sit on the prompts with the
+    lowest classified rate or on those with the highest. Since
+    \(R^*=\sum_iw_iA_i+\sum_iw_is_i(u_i-A_i)\), the corrected interval is
+    \([A_L-s_U,\;A_U+s_U]\), clipped to \([0,1]\).
+  - A tail measure's row or arm bounds every prompt's share, so each prompt's risk lies in
+    \([(1-s_U)A_i,\;(1-s_U)A_i+s_U]\). The measure is monotone, positively homogeneous and
+    translation equivariant, so the corrected interval is \([(1-s_U)A_L,\;(1-s_U)A_U+s_U]\),
+    inside the additive one.
+
+  Mixing a mean share in the second way does not bound a weighted mean. Take two prompts of
+  weight one half and a judge that never errs. One prompt has 40% unclassified rollouts and
+  its classified ones are all safe, the other is fully classified at rate 0.5, so \(Q=0.25\)
+  and \(s=0.2\). If the unclassified rollouts are all unsafe, true risk is 0.45, where
+  \((1-s)A_U+s\) gives 0.4. Direct-mean intervals complete every rollout under any policy,
+  and this reading holds for them too, so a plan that excludes is always read this way.
 
 Mapping the whole completion through \(\rho_1\) would treat unclassified rollouts as if the
 labels described them. With 1,000 of 3,200 rollouts unclassified, that once gave a corrected
@@ -769,10 +783,13 @@ would give the same upper bound. When \(Se_L=0\), a judge that may catch nothing
 Rollouts the judge never classified need no separate term when the judge-system bounds
 complete them as failures: dividing by a sensitivity of at most one only enlarges that
 completion. Under `missing: exclude` or `errors: exclude` the bounds cover only the
-classified rollouts' rate \(q_c\), and every excluded rollout may be truly unsafe. True risk
-is then \((1-s)\pi_c+s\,u\le(1-s)\,q_c/Se+s\), so the upper bound becomes
-\((1-s_U)\min(1,q_U/Se_L)+s_U\), with \(s_U\) the bound on the population share described
-under [Unclassified rollouts](#unclassified-rollouts), at the row's own one-sided alpha.
+classified rollouts' rates \(q_i\), and every excluded rollout may be truly unsafe. Prompt
+\(i\) then has true risk \((1-s_i)\pi_i+s_iu_i\) with \(\pi_i\le\min(1,q_i/Se)\). With \(s_U\)
+the bound on the population share described under
+[Unclassified rollouts](#unclassified-rollouts), at the row's own one-sided alpha, the upper
+bound becomes \(\min(1,q_U/Se_L)+s_U\) for a `weighted_mean` row or hierarchy node, whose
+\(s_U\) bounds only the prompts' mean share, and \((1-s_U)\min(1,q_U/Se_L)+s_U\) for a tail
+measure, whose \(s_U\) bounds every prompt's share. Both are capped at one.
 
 The bound is monotone and positively homogeneous in the prompt rates, so it applies to
 `weighted_mean`, `maximum`, `cvar` and `top_k_mean`, to every hierarchy node, but not to

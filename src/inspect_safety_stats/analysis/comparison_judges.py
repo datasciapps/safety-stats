@@ -79,6 +79,7 @@ def _judge_corrected_comparison_interval(
         calibration=candidate_calibration,
         unclassified_share=candidate_share.upper if candidate_share is not None else 0.0,
         unclassified_in_bounds=candidate_share.in_bounds if candidate_share is not None else True,
+        unclassified_share_per_prompt=candidate_share is not None and candidate_share.per_prompt,
     )
     baseline = correct_judge_risk(
         observed_lower=cast(float, primary.baseline_lower),
@@ -87,6 +88,7 @@ def _judge_corrected_comparison_interval(
         calibration=baseline_calibration,
         unclassified_share=baseline_share.upper if baseline_share is not None else 0.0,
         unclassified_in_bounds=baseline_share.in_bounds if baseline_share is not None else True,
+        unclassified_share_per_prompt=baseline_share is not None and baseline_share.per_prompt,
     )
     lower, upper = _multi_arm_effect_interval(
         result.estimand,

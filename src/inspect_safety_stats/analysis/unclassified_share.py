@@ -54,7 +54,9 @@ class UnclassifiedShare:
     measure, the largest of any prompt it weights). ``upper`` bounds the population share at
     one-sided level ``alpha`` by ``method``. ``in_bounds`` says whether the row's judge-system
     bounds complete every unclassified rollout, which decides how the correction places the
-    classified mass (see ``correct_judge_risk``).
+    classified mass, and ``per_prompt`` whether ``upper`` bounds every weighted prompt's own
+    share or only their weighted mean, which decides how a share the bounds exclude enters
+    the correction (see ``correct_judge_risk``).
     """
 
     observed: float
@@ -64,6 +66,7 @@ class UnclassifiedShare:
     in_bounds: bool
     prompts: int = 0
     independence_profile: str | None = None
+    per_prompt: bool = False
 
 
 def bounds_complete_unclassified(plan: AnalysisPlan) -> bool:
@@ -150,7 +153,8 @@ def unclassified_share_bound(
     tail = measure_type != "weighted_mean"
     observed = _observed_share(rollouts, weighted, tail)
     if plan.design.type != "fixed":
-        return UnclassifiedShare(observed, 1.0, alpha, UNBOUNDED_METHOD, in_bounds)
+        # 1 bounds every prompt's share.
+        return UnclassifiedShare(observed, 1.0, alpha, UNBOUNDED_METHOD, in_bounds, per_prompt=True)
     if not weighted:
         return UnclassifiedShare(observed, observed, alpha, PER_PROMPT_METHOD, in_bounds)
     profile = (
@@ -200,8 +204,9 @@ def unclassified_share_bound(
         upper = max(bound for _, bound in bounds)
     else:
         upper = min(1.0, sum(weight * bound for weight, bound in bounds))
+    # The largest of the simultaneous per-prompt bounds bounds every prompt's share.
     return UnclassifiedShare(
-        observed, upper, alpha, PER_PROMPT_METHOD, in_bounds, prompts=len(weighted)
+        observed, upper, alpha, PER_PROMPT_METHOD, in_bounds, prompts=len(weighted), per_prompt=tail
     )
 
 
@@ -243,6 +248,18 @@ def unclassified_assumption(share: UnclassifiedShare) -> str:
         text += (
             " The plan's missing or error policy excludes some of them from the judge-system "
             "bounds, which then cover only the classified rollouts' rate, so that rate is "
-            "corrected on its own and the unclassified share is mixed in at its worst case."
+            "corrected on its own. "
         )
+        if share.per_prompt:
+            text += (
+                "The share bound holds for every prompt, so each prompt mixes in its share at "
+                "its worst case: the corrected bounds scale by one minus the share bound, and "
+                "the upper one adds the share bound."
+            )
+        else:
+            text += (
+                "The share bound holds only for the prompts' weighted mean, and the share may "
+                "sit on the safest prompts or on the riskiest, so each corrected bound moves "
+                "outward by the whole share bound."
+            )
     return text

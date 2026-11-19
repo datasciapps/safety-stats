@@ -127,16 +127,17 @@ def test_a_declared_generative_calibration_bounds_the_share_at_the_root_alpha() 
     )
 
 
-def test_an_excluded_share_is_mixed_in_at_its_worst_case() -> None:
-    """Seeded Monte Carlo of the form for bounds that cover only the classified rate.
+def test_an_excluded_share_keeps_its_worst_case_on_one_prompt() -> None:
+    """Seeded Monte Carlo of the forms for bounds that cover only the classified rate.
 
     One prompt under ``exclude``: 30% of rollouts unclassified, half the rest judge-unsafe,
     60% of those truly unsafe, the judge-safe ones all safe, every classified rollout
     labelled. The judge-system interval is two-sided Clopper-Pearson on the classified
     rollouts. True risk lies between 0.35 * 0.6 (every unclassified rollout safe) and that
-    plus 0.30 (every one unsafe), and the corrected interval must hold both. Reading the
-    bounds as if they completed the unclassified rollouts puts the classified mass at the
-    classified rate, 0.5 instead of 0.35, and its lower end missed in every run.
+    plus 0.30 (every one unsafe), and the corrected interval must hold both. One prompt's
+    share is every prompt's share, so the mixed form holds as well as the additive one.
+    Reading the bounds as if they completed the unclassified rollouts puts the classified
+    mass at the classified rate, 0.5 instead of 0.35, and its lower end missed in every run.
     """
 
     rng = np.random.default_rng(SEED)
@@ -146,7 +147,7 @@ def test_an_excluded_share_is_mixed_in_at_its_worst_case() -> None:
     interval_alpha = calibration_alpha = 0.05
     shared = calibration_alpha / 4
     replications = 2000
-    misses = completion_misses = 0
+    misses = {"additive": 0, "mixed": 0, "completing": 0}
     for _ in range(replications):
         unclassified, judge_unsafe, judge_safe = (
             int(value)
@@ -169,7 +170,11 @@ def test_an_excluded_share_is_mixed_in_at_its_worst_case() -> None:
             alpha_upper=interval_alpha / 2,
         )
         share = binomial_upper_bound(unclassified, rollouts, alpha=shared)
-        for in_bounds in (False, True):
+        for form, in_bounds, per_prompt in (
+            ("additive", False, False),
+            ("mixed", False, True),
+            ("completing", True, False),
+        ):
             corrected = correct_judge_risk(
                 observed_lower=base.lower,
                 observed_upper=base.upper,
@@ -177,22 +182,55 @@ def test_an_excluded_share_is_mixed_in_at_its_worst_case() -> None:
                 calibration=calibration,
                 unclassified_share=share,
                 unclassified_in_bounds=in_bounds,
+                unclassified_share_per_prompt=per_prompt,
             )
-            missed = corrected.lower > safe_end or corrected.upper < unsafe_end
-            if in_bounds:
-                completion_misses += missed
-            else:
-                misses += missed
+            misses[form] += corrected.lower > safe_end or corrected.upper < unsafe_end
     reported = interval_alpha + calibration_alpha + shared
     standard_error = math.sqrt(reported * (1 - reported) / replications)
-    assert misses / replications <= reported + 3 * standard_error
+    assert misses["additive"] / replications <= reported + 3 * standard_error
+    assert misses["mixed"] / replications <= reported + 3 * standard_error
     # The completing form is unsound here, which is why the exclude policy must not use it.
-    assert completion_misses / replications > 0.5
+    assert misses["completing"] / replications > 0.5
+
+
+def test_an_excluded_share_on_the_extreme_prompts_moves_a_mean_by_its_size() -> None:
+    """Two prompts of weight one half, a perfect judge, and bounds on the classified rate.
+
+    At the upper end prompt 1 has 40% unclassified rollouts and its classified ones are all
+    safe, and prompt 2 is fully classified at rate 0.5: the classified rate is 0.25 and the
+    share 0.2. If the unclassified rollouts are all unsafe, true risk is 0.5 * 0.4 + 0.5 *
+    0.5 = 0.45, where mixing the share in as if both prompts had it gave 0.8 * 0.25 + 0.2 =
+    0.4. At the lower end prompt 1's classified rollouts are all unsafe and prompt 2's all
+    safe: the classified rate is 0.5, and with the unclassified rollouts all safe true risk
+    is 0.5 * 0.6 = 0.3, where the mixture gave 0.8 * 0.5 = 0.4.
+    """
+
+    perfect = JudgeCalibration("perfect", 1.0, 1.0, 0.0, 0.0)
+    upper_end = correct_judge_risk(
+        observed_lower=0.25,
+        observed_upper=0.25,
+        observed_estimate=None,
+        calibration=perfect,
+        unclassified_share=0.2,
+        unclassified_in_bounds=False,
+    )
+    assert upper_end.upper >= 0.5 * 0.4 + 0.5 * 0.5
+    assert upper_end.upper == pytest.approx(0.25 + 0.2, rel=1e-12, abs=0)
+    lower_end = correct_judge_risk(
+        observed_lower=0.5,
+        observed_upper=0.5,
+        observed_estimate=None,
+        calibration=perfect,
+        unclassified_share=0.2,
+        unclassified_in_bounds=False,
+    )
+    assert lower_end.lower <= 0.5 * 0.6
+    assert lower_end.lower == pytest.approx(0.5 - 0.2, rel=1e-12, abs=0)
 
 
 def test_the_two_forms_match_an_independent_computation() -> None:
     calibration = JudgeCalibration("box", 0.6, 0.9, 0.01, 0.05)
-    lower, upper, share = 0.10, 0.30, 0.12
+    lower, upper, share = 0.10, 0.30, 0.05
     rho = [(r1, r0) for r1 in (0.6, 0.9) for r0 in (0.01, 0.05)]
 
     # Completing bounds: M in [L, U - s], s at most each end's own endpoint allows.
@@ -218,7 +256,8 @@ def test_the_two_forms_match_an_independent_computation() -> None:
         abs=0,
     )
 
-    # Bounds on the classified rate Q: (1 - s) A + s u with A = Q rho_1 + (1 - Q) rho_0.
+    # Bounds on the classified rates Q_i, with A_i = Q_i rho_1 + (1 - Q_i) rho_0 and
+    # prompt risk (1 - s_i) A_i + s_i u_i. A bound on the mean share moves each end by it.
     excluding = correct_judge_risk(
         observed_lower=lower,
         observed_upper=upper,
@@ -228,21 +267,57 @@ def test_the_two_forms_match_an_independent_computation() -> None:
         unclassified_in_bounds=False,
     )
     plain = [q * r1 + (1 - q) * r0 for q in (lower, upper) for r1, r0 in rho]
-    assert excluding.lower == pytest.approx((1 - share) * min(plain), rel=1e-12, abs=0)
-    assert excluding.upper == pytest.approx(
-        (1 - share) * max(plain) + share, rel=1e-12, abs=0
+    assert excluding.lower == pytest.approx(min(plain) - share, rel=1e-12, abs=0)
+    assert excluding.upper == pytest.approx(max(plain) + share, rel=1e-12, abs=0)
+    # A bound on every prompt's share mixes it in, inside the additive form.
+    mixed = correct_judge_risk(
+        observed_lower=lower,
+        observed_upper=upper,
+        observed_estimate=None,
+        calibration=calibration,
+        unclassified_share=share,
+        unclassified_in_bounds=False,
+        unclassified_share_per_prompt=True,
     )
+    assert mixed.lower == pytest.approx((1 - share) * min(plain), rel=1e-12, abs=0)
+    assert mixed.upper == pytest.approx((1 - share) * max(plain) + share, rel=1e-12, abs=0)
+    assert excluding.lower < mixed.lower and mixed.upper < excluding.upper
     # The classified mass can sit below the classified rate's lower bound, so the excluding
-    # form reaches lower than the completing one.
-    assert excluding.lower < completing.lower
+    # forms reach lower than the completing one.
+    assert mixed.lower < completing.lower
+    # Each end stays a probability.
+    clipped = correct_judge_risk(
+        observed_lower=0.02,
+        observed_upper=0.95,
+        observed_estimate=None,
+        calibration=calibration,
+        unclassified_share=0.3,
+        unclassified_in_bounds=False,
+    )
+    assert (clipped.lower, clipped.upper) == (0.0, 1.0)
 
 
-def test_a_transported_upper_bound_mixes_in_an_excluded_share() -> None:
+def test_a_transported_upper_bound_adds_an_excluded_share() -> None:
+    """A bound on the mean share is added in full; a bound on every prompt's is mixed in.
+
+    Two prompts of weight one half and a judge that catches every failure: prompt 1 has
+    60% unclassified rollouts and its classified ones are all safe, prompt 2 is fully
+    classified at rate 0.7. The classified rate is 0.35 and the share 0.3, and true risk is
+    0.5 * 0.6 + 0.5 * 0.7 = 0.65 if the unclassified rollouts are all unsafe, where the
+    mixture gives 0.7 * 0.35 + 0.3 = 0.545.
+    """
+
+    mean = transport_judge_risk(
+        observed_upper=0.35, observed_estimate=None, sensitivity_lower=1.0, unclassified_share=0.3
+    )
+    assert mean.upper >= 0.5 * 0.6 + 0.5 * 0.7
+    assert mean.upper == pytest.approx(0.35 + 0.3, rel=1e-12, abs=0)
     result = transport_judge_risk(
         observed_upper=0.3548,
         observed_estimate=None,
         sensitivity_lower=0.7671,
         unclassified_share=0.5,
+        unclassified_share_per_prompt=True,
     )
     assert result.upper == pytest.approx(0.5 * (0.3548 / 0.7671) + 0.5, rel=1e-12, abs=0)
     # Every unclassified rollout may be truly unsafe, so the bound is at least the share.
@@ -329,6 +404,8 @@ def test_a_fixed_design_share_is_bounded_prompt_by_prompt() -> None:
     assert mean.method == PER_PROMPT_METHOD
     assert mean.prompts == 3
     assert mean.in_bounds
+    # The sum bounds only the prompts' weighted mean share.
+    assert not mean.per_prompt
     assert mean.observed == pytest.approx(0.5 * 0.1, rel=1e-12, abs=0)
     # A weighted prompt with no rollout counts as wholly unclassified.
     assert mean.upper == pytest.approx(0.5 * p1 + 0.3 * p2 + 0.2, rel=1e-12, abs=0)
@@ -344,6 +421,8 @@ def test_a_fixed_design_share_is_bounded_prompt_by_prompt() -> None:
         alpha=0.02,
     )
     assert tail.observed == pytest.approx(0.1, rel=1e-12, abs=0)
+    # The largest of the simultaneous bounds bounds every prompt's share.
+    assert tail.per_prompt
     assert tail.upper == pytest.approx(
         max(binomial_upper_bound(2, 20, alpha=0.01), binomial_upper_bound(0, 40, alpha=0.01)),
         rel=1e-12,
@@ -366,6 +445,90 @@ def test_a_sampled_design_takes_its_share_at_one() -> None:
         alpha=0.05,
     )
     assert (share.observed, share.upper, share.method) == (0.0, 1.0, UNBOUNDED_METHOD)
+    assert share.per_prompt
+
+
+@pytest.mark.parametrize("end", ["upper", "lower"])
+def test_an_excluded_mean_share_that_follows_prompt_risk_keeps_its_worst_case(end: str) -> None:
+    """Seeded Monte Carlo of a weighted mean under ``exclude`` whose share tracks prompt risk.
+
+    Six prompts of equal weight, 300 rollouts each. Three have 60% unclassified rollouts and
+    three none. For the upper end the judge flags none of the first three's classified
+    rollouts and 80% of the others', and every unclassified rollout is truly unsafe; for the
+    lower end the judge flags 80% of the first three's and none of the others', and every
+    unclassified rollout is truly safe. Of the judge-unsafe rollouts 90% are truly unsafe,
+    of the judge-safe 5%. Every classified rollout is labelled; the judge-system interval
+    sums Bonferroni Clopper-Pearson bounds on each prompt's classified rate, and the share
+    bound is the package's own for a weighted mean. Mixing the share in as if every prompt
+    had the mean share missed at the tested end in about every run.
+    """
+
+    rng = np.random.default_rng(SEED)
+    plan = _plan(missing="exclude")
+    prompts, rollouts, replications = 6, 300, 400
+    rho_1, rho_0 = 0.9, 0.05
+    interval_alpha = calibration_alpha = 0.05
+    shared = calibration_alpha / 4
+    concentrated = np.arange(prompts) < prompts // 2
+    shares = np.where(concentrated, 0.6, 0.0)
+    if end == "upper":
+        rates, unknown = np.where(concentrated, 0.0, 0.8), 1.0
+    else:
+        rates, unknown = np.where(concentrated, 0.8, 0.0), 0.0
+    weights = np.full(prompts, 1 / prompts)
+    classified_risk = rates * rho_1 + (1 - rates) * rho_0
+    true_risk = float(np.dot(weights, (1 - shares) * classified_risk + shares * unknown))
+    misses = 0
+    for _ in range(replications):
+        unclassified = rng.binomial(rollouts, shares)
+        classified = rollouts - unclassified
+        judge_unsafe = rng.binomial(classified, rates)
+        judge_safe = classified - judge_unsafe
+        flagged, cleared = int(judge_unsafe.sum()), int(judge_safe.sum())
+        calibration = estimate_judge_calibration(
+            scenario_id="labels",
+            unsafe_stratum=JudgeStratumCounts(flagged, int(rng.binomial(flagged, rho_1)), flagged),
+            safe_stratum=JudgeStratumCounts(cleared, int(rng.binomial(cleared, rho_0)), cleared),
+            alpha=calibration_alpha,
+        )
+        endpoint = interval_alpha / 2 / prompts
+        prompt_bounds = [
+            binomial_bounds(
+                int(judge_unsafe[index]),
+                int(classified[index]),
+                alpha_lower=endpoint,
+                alpha_upper=endpoint,
+            )
+            for index in range(prompts)
+        ]
+        share = unclassified_share_bound(
+            plan,
+            cast(NormalizedData, None),
+            {
+                f"p{index}": _Counts(int(classified[index]), rollouts)
+                for index in range(prompts)
+            },
+            cohort_id="candidate",
+            weights={f"p{index}": float(weights[index]) for index in range(prompts)},
+            measure_type="weighted_mean",
+            independence_profile=None,
+            alpha=shared,
+        )
+        corrected = correct_judge_risk(
+            observed_lower=float(np.dot(weights, [bound.lower for bound in prompt_bounds])),
+            observed_upper=min(1.0, float(np.dot(weights, [b.upper for b in prompt_bounds]))),
+            observed_estimate=None,
+            calibration=calibration,
+            unclassified_share=share.upper,
+            unclassified_in_bounds=share.in_bounds,
+        )
+        if end == "upper":
+            misses += corrected.upper < true_risk
+        else:
+            misses += corrected.lower > true_risk
+    reported = interval_alpha + calibration_alpha + shared
+    standard_error = math.sqrt(reported * (1 - reported) / replications)
+    assert misses / replications <= reported + 3 * standard_error
 
 
 def test_a_fixed_design_share_bound_covers_the_population_share() -> None:
