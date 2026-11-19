@@ -39,6 +39,22 @@ The kind of input an assumption or a code concerns: where to look first.
 The assumptions a report's results can rest on, the plan field that sets or relaxes each, and the
 diagnostic codes that report evidence against it.
 
+### Assumption `adaptive_attack_stream`
+
+The behaviours of each adaptive claim were attacked in the order its order_field records, fixed
+before any outcome was seen or drawn at random, each at most once; every run's score is taken as
+right, without correcting judge error, even where the plan validates the judge.
+
+- **Input:** [manifest](#input-kinds)
+- **Plan field:** `adaptive_claims[].order_field`, default none: the plan must state it
+- **If it is wrong:** An order chosen or changed after seeing outcomes, such as attacking first the
+  behaviours already found to fall, or a judge that confirms successes that are not, can raise the
+  lower bound above the attacker's success rate and make a FAIL wrong.
+- **Remedy:** Fix the attack order before the runs, or draw it at random from a recorded seed, and
+  record it in the manifest column order_field names; validate the confirmation judge on labelled
+  outputs of the attack.
+- **Checked by:** no diagnostic code
+
 ### Assumption `arm_independence`
 
 The arms of a comparison are independent of each other, block by block, unless the profile couples
@@ -429,13 +445,14 @@ The analysis plan: its fields, references and their combinations.
 - **Severity:** ERROR
 - **Effect:** [invalid](#effects)
 - **Assumption:** Simultaneous results take their alpha from a family whose method supports them,
-  and the direct comparisons sharing a family use one coverage_mode and one set of independence
-  profiles.
+  the direct comparisons sharing a family use one coverage_mode and one set of independence
+  profiles, and no two adaptive claims share a family, since each takes the family's whole alpha.
 - **Consequence:** The integrity status is invalid, so no claim can pass.
 - **Remedy:** Give simultaneous comparisons and prompt bounds a bonferroni or weighted_bonferroni
   family, and simultaneous outputs.direct_mean_intervals a bonferroni family, in
   multiplicity.families[].method; or align coverage_mode and independence across the comparisons
-  sharing a family, or split them into separate families.
+  sharing a family, or split them into separate families; give each adaptive claim a family of its
+  own.
 
 #### `PLAN_METHOD_UNUSED`
 

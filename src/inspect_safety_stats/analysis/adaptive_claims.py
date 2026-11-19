@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from inspect_safety_stats.config.models import AdaptiveClaimSpec, AnalysisPlan
+from inspect_safety_stats.ingest.outcomes import classified_by_policy, judge_positive
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.reports import AdaptiveClaimResult
 from inspect_safety_stats.stats.adaptive import METHOD, adaptive_lower_bound
@@ -18,6 +19,14 @@ AdaptiveStatus = Literal["FAIL", "INCONCLUSIVE"]
 SCOPE_NOTE = (
     "The bound describes this attacker at this budget, on these behaviours in this order. It "
     "is no evidence about other attackers or budgets, which is why the claim can only FAIL."
+)
+# What the bound rests on beyond the claim's own data (CONTRIBUTING 8.5); the registry's
+# adaptive_attack_stream assumption says the same in "Assumptions used".
+ASSUMPTIONS_NOTE = (
+    "The bound assumes that the attack order was fixed before any outcome was seen, or drawn "
+    "at random; that each behaviour was attacked at most once, which the analysis checks; and "
+    "that each run's score is right: judge error is not corrected, even where the plan "
+    "validates the judge."
 )
 
 
@@ -29,9 +38,13 @@ def _stream(spec: AdaptiveClaimSpec, data: NormalizedData) -> tuple[int, int, li
     """The runs and successes of the claim's stream, and what the reader needs to know of it.
 
     The stream runs over the group's behaviours in the order of ``spec.order_field``, up to the
-    last behaviour the cohort attacked. A behaviour in it with no run, or with an unclassified
-    outcome, counts as no success. That can only lower the success count, which keeps the
-    lower bound valid.
+    last behaviour the cohort attacked. A success is a run whose score the plan's mapping
+    classifies as a failure. A behaviour in the stream with no run, with an unclassified
+    outcome, or with a failure that a plan policy filled in without a score to confirm it (a
+    sample error, a missing score, an unscored answer at the token limit or a content-filter
+    stop, :func:`classified_by_policy`), counts as no success. That can only lower the success
+    count, which keeps the lower bound valid; a filled-in failure counted as a success could
+    raise it above the attacker's true rate.
     """
 
     group = next((item for item in data.groups if item.id == spec.group), None)
@@ -82,16 +95,13 @@ def _stream(spec: AdaptiveClaimSpec, data: NormalizedData) -> tuple[int, int, li
     ordered = sorted(orders, key=orders.__getitem__)
     last = max(ordered.index(item.prompt_id) for item in observations)
     stream = set(ordered[: last + 1])
-    successes = sum(
-        1
-        for item in observations
-        if item.prompt_id in stream and item.outcome_status == "classified_failure"
-    )
-    unclassified = sum(
-        1
-        for item in observations
-        if item.prompt_id in stream and item.outcome_status == "unclassified"
-    )
+    runs = [item for item in observations if item.prompt_id in stream]
+    # A failure is a confirmed success only when the score itself says so. A plan policy that
+    # fills an unknown outcome in as a failure is conservative for an upper bound, and the
+    # opposite for this lower one.
+    successes = sum(1 for item in runs if judge_positive(item))
+    filled_in = sum(1 for item in runs if item.failure is True and classified_by_policy(item))
+    unclassified = sum(1 for item in runs if item.outcome_status == "unclassified")
     notes = [
         f"Stream: {last + 1} behaviours in {spec.order_field!r} order, up to the last one the "
         f"cohort attacked, of {len(ordered)} in the group; {successes} confirmed successes."
@@ -101,6 +111,13 @@ def _stream(spec: AdaptiveClaimSpec, data: NormalizedData) -> tuple[int, int, li
         notes.append(
             f"{unattacked} behaviours in the stream have no run and {unclassified} an "
             "unclassified outcome; each counts as no success, which can only lower the bound."
+        )
+    if filled_in:
+        notes.append(
+            f"{filled_in} runs in the stream are failures that a plan policy filled in "
+            "(score.errors, score.missing, score.token_limit or score.content_filter_stops) "
+            "with no score to confirm them; each counts as no success, which can only lower "
+            "the bound."
         )
     return last + 1, successes, notes
 
@@ -149,7 +166,7 @@ def _adaptive_claim(
             else f"is below {spec.unacceptable_lower:.12g}."
         )
     )
-    reasons = [verdict, *notes, SCOPE_NOTE]
+    reasons = [verdict, *notes, SCOPE_NOTE, ASSUMPTIONS_NOTE]
     if not integrity_valid:
         result.reasons = [
             "The bound was computed but is ineligible because data integrity is invalid.",

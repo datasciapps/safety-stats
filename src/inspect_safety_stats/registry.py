@@ -411,6 +411,29 @@ _ASSUMPTIONS: tuple[AssumptionEntry, ...] = (
             "analysis.intent: exploratory."
         ),
     ),
+    AssumptionEntry(
+        id="adaptive_attack_stream",
+        statement=(
+            "The behaviours of each adaptive claim were attacked in the order its order_field "
+            "records, fixed before any outcome was seen or drawn at random, each at most once; "
+            "every run's score is taken as right, without correcting judge error, even where "
+            "the plan validates the judge."
+        ),
+        source="manifest",
+        plan_field="adaptive_claims[].order_field",
+        default=None,
+        if_wrong=(
+            "An order chosen or changed after seeing outcomes, such as attacking first the "
+            "behaviours already found to fall, or a judge that confirms successes that are "
+            "not, can raise the lower bound above the attacker's success rate and make a FAIL "
+            "wrong."
+        ),
+        remedy=(
+            "Fix the attack order before the runs, or draw it at random from a recorded seed, "
+            "and record it in the manifest column order_field names; validate the "
+            "confirmation judge on labelled outputs of the attack."
+        ),
+    ),
 )
 
 ASSUMPTIONS: Final[Mapping[str, AssumptionEntry]] = MappingProxyType(
@@ -1885,8 +1908,9 @@ _CODES: tuple[CodeEntry, ...] = (
         effect="invalid",
         assumption=(
             "Simultaneous results take their alpha from a family whose method supports them, "
-            "and the direct comparisons sharing a family use one coverage_mode and one set of "
-            "independence profiles."
+            "the direct comparisons sharing a family use one coverage_mode and one set of "
+            "independence profiles, and no two adaptive claims share a family, since each "
+            "takes the family's whole alpha."
         ),
         consequence="The integrity status is invalid, so no claim can pass.",
         remedy=(
@@ -1894,7 +1918,7 @@ _CODES: tuple[CodeEntry, ...] = (
             "weighted_bonferroni family, and simultaneous outputs.direct_mean_intervals a "
             "bonferroni family, in multiplicity.families[].method; or align coverage_mode and "
             "independence across the comparisons sharing a family, or split them into "
-            "separate families."
+            "separate families; give each adaptive claim a family of its own."
         ),
     ),
     CodeEntry(

@@ -248,6 +248,26 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope=plan_scope("adaptive_claims", adaptive.id),
                 )
             )
+    # Each adaptive bound takes its family's whole alpha (analysis/adaptive_claims.py), so a
+    # family's alpha can serve one adaptive claim only.
+    adaptive_families: dict[str, list[str]] = {}
+    for adaptive in plan.adaptive_claims:
+        adaptive_families.setdefault(adaptive.family, []).append(adaptive.id)
+    for family_id, adaptive_ids in sorted(adaptive_families.items()):
+        if family_id in families and len(adaptive_ids) > 1:
+            diagnostics.append(
+                Diagnostic(
+                    code="PLAN_INVALID_MULTIPLICITY",
+                    severity="ERROR",
+                    message=(
+                        f"adaptive claims {adaptive_ids!r} share the multiplicity family "
+                        f"{family_id!r}. Each adaptive bound takes its family's whole alpha, "
+                        "so two in one family would spend it twice; give each adaptive claim "
+                        "a family of its own"
+                    ),
+                    scope=plan_scope("multiplicity", "families", family_id),
+                )
+            )
     prompt_bounds = plan.outputs.prompt_bounds
     prompt_family = prompt_bounds.family
     # Prompt bounds are on by default, and take their alpha from a family, simultaneous or

@@ -108,6 +108,10 @@ def test_init_command_writes_files_and_refuses_to_overwrite(
     assert "--overwrite" in plain(second.output)
 
 
+# A plan init writes declares no adaptive claims, so it does not rest on their assumption.
+_NOT_INIT = {"adaptive_attack_stream"}
+
+
 def _header_text(plan_path: Path) -> str:
     """The plan's opening comment as one line of text, with its wrapping undone."""
 
@@ -122,7 +126,7 @@ def test_init_notes_every_assumption_it_rests_on_independence_first(
     result = scaffold_plan(mock_logs, tmp_path, failure_values=["FAIL"])
     ids = [note.assumption for note in result.assumptions]
     assert ids[0] == "rollout_independence"
-    assert sorted(ids) == sorted(ASSUMPTIONS)
+    assert sorted(ids) == sorted(set(ASSUMPTIONS) - _NOT_INIT)
     header = _header_text(result.plan_path)
     for note in result.assumptions:
         entry = ASSUMPTIONS[note.assumption]
@@ -166,7 +170,7 @@ def test_init_for_one_model_has_no_comparison_note(tmp_path: Path) -> None:
     result = scaffold_plan(logs, tmp_path / "out", failure_values=["FAIL"])
     ids = [note.assumption for note in result.assumptions]
     assert ids[0] == "rollout_independence"
-    assert sorted(ids) == sorted(set(ASSUMPTIONS) - {"arm_independence"})
+    assert sorted(ids) == sorted(set(ASSUMPTIONS) - _NOT_INIT - {"arm_independence"})
 
 
 def test_init_refuses_a_confirmatory_plan_and_points_to_exploratory(
@@ -192,7 +196,7 @@ def test_init_command_lists_the_assumptions_independence_first(
     output = plain(result.output)
     heading = "Assumptions (the plan's header says what each means and how to change it):"
     listed = output[output.index(heading) + len(heading):]
-    positions = {name: listed.find(f" {name}: ") for name in ASSUMPTIONS}
+    positions = {name: listed.find(f" {name}: ") for name in set(ASSUMPTIONS) - _NOT_INIT}
     assert all(position >= 0 for position in positions.values()), positions
     assert min(positions, key=positions.__getitem__) == "rollout_independence"
     refused = CliRunner().invoke(app, [*arguments, "--overwrite", "--intent", "confirmatory"])

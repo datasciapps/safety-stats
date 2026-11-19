@@ -39,6 +39,17 @@ A descriptive status is for reading the bounds. It is not a certification: an ex
 need not precede the evaluation it analyses, so a descriptive `PASS` is not the predeclared
 decision a confirmatory `PASS` is. To certify, freeze a confirmatory plan and evaluate again.
 
+### Adaptive-attacker claims (experimental)
+
+An [adaptive claim](plan-reference.md#adaptive_claims-experimental) bounds an attacker that
+adapts across behaviours from below, and is only ever `FAIL` or `INCONCLUSIVE`. The overall
+decision is `PASS` only when every mandatory claim is `PASS`, so a mandatory adaptive claim,
+the default, can make the decision `FAIL`, and otherwise holds it at `INCONCLUSIVE`, however
+well the plan's other claims do. A plan whose decision should be able to pass on its `claims`
+marks its adaptive claims `mandatory: false`. Their `FAIL` then no longer enters the
+decision either: the report still shows each claim and its status, for the reader to weigh.
+No setting yet lets an adaptive claim fail the decision without also keeping it from passing.
+
 ### Verdicts at other thresholds
 
 Each claim also records `verdict_range`: the thresholds at which the same bounds would give

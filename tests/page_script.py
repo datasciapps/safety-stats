@@ -152,6 +152,7 @@ process.stdout.write(JSON.stringify({
   audit,
   footer: byId.get("footer").textContent,
   links,
+  texts: Object.fromEntries([...byId].map(([id, element]) => [id, element.textContent])),
 }));
 """
 
@@ -174,6 +175,9 @@ class PageRun:
     footer: str
     # Every link the script made, as (text, address); the address is None when it set none.
     links: list[tuple[str, str | None]]
+    # The text each element with an id holds once the script has run, by id: the text a reader
+    # sees there when the page loads, before any control is changed.
+    texts: dict[str, str]
 
 
 def node_or_skip() -> str:
@@ -225,4 +229,5 @@ def run_page(node: str, html: str, directory: Path) -> PageRun:
         audit=[AuditPanel(title=item["title"], text=item["text"]) for item in result["audit"]],
         footer=result["footer"],
         links=[(item["text"], item["href"]) for item in result["links"]],
+        texts=result["texts"],
     )

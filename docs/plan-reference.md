@@ -1390,15 +1390,20 @@ adaptive_claims:
 |---|---|
 | `cohort`, `group` | the attacker's runs: the cohort's runs on the group's behaviours |
 | `order_field` | the design-manifest column that gives each behaviour its place in the attack order, as an integer; each value once in the group |
-| `family` | the multiplicity family whose `alpha` the bound takes, as for `claims` |
+| `family` | the multiplicity family whose `alpha` the bound takes, whole, as each claim under `claims` does; no two adaptive claims may share a family (`PLAN_INVALID_MULTIPLICITY`). The bound is a test of its own, not one of the family's simultaneous bounds: in a family whose `alpha` prompt bounds, direct-mean intervals or comparisons split, it spends that `alpha` again, so give it a family of its own |
 | `unacceptable_lower` | the claim is `FAIL` when the lower bound is at or above it; in (0, 1] |
-| `mandatory` | whether the claim enters the overall decision; default `true` |
+| `mandatory` | whether the claim enters the overall decision; default `true`. The claim is never `PASS`, and the decision is `PASS` only when every mandatory claim is, so a mandatory adaptive claim can make the decision `FAIL` and otherwise holds it at `INCONCLUSIVE`, whatever the other claims show. With `false` the decision can pass on `claims`, but the adaptive claim's `FAIL` no longer enters it; the report still shows the claim and its status |
 
 What the claim assumes and reports:
 
-- **Success** is the plan's mapped failure outcome of each run. With the
+- **Success** is a run whose score the plan's mapping classifies as a failure. With the
   [attack-confirmation example](../examples/attack_confirmation/README.md) that is the
-  confirmation verdict, not the attacker's own. Judge error is not corrected.
+  confirmation verdict, not the attacker's own. Judge error is not corrected. A failure that
+  a plan policy fills in with no score to confirm it, under `score.errors: count_as_failure`,
+  `score.missing: count_as_failure`, `score.token_limit: failure` or
+  `score.content_filter_stops: failure`, counts as no success, and the claim's reasons say
+  how many there were. Counting such a run as a failure is conservative for the upper bounds
+  of `claims`, but for this lower bound it would be the opposite.
 - **The order** of the behaviours is fixed in advance or randomised, and `order_field`
   records it. The attacker may adapt within and across runs. The stream runs in that order
   up to the last behaviour the cohort attacked, and a behaviour inside it with no run, or
@@ -1410,10 +1415,17 @@ What the claim assumes and reports:
   An upper bound on one adaptive attacker is no evidence about other attackers or budgets,
   so a plan that gives an adaptive claim an `acceptable_upper` is refused.
 
+The report states these assumptions beside each bound, and lists them among the assumptions
+its results rest on as
+[`adaptive_attack_stream`](diagnostics.md#assumption-adaptive_attack_stream).
+
 An order that is missing, not an integer or repeated, or a behaviour attacked more than once,
 leaves the claim `INCONCLUSIVE` and says why. The report lists adaptive claims in their own
 section of `report-full.md` and `report.json` (`adaptive_claims`), and beside the cohort's claims
-in `report.html`. Identifiers are unique across `claims` and `adaptive_claims`.
+in `report.html`. When `report.include_decisions` is false, `report-full.md` and `report.html`
+leave them out of view, as they leave out the threshold claims; `report.json` and the data
+embedded in `report.html` still hold them.
+Identifiers are unique across `claims` and `adaptive_claims`.
 `report.claims_export` cannot be combined with adaptive claims yet: `claims.json` has no form
 for a claim that can only fail. Plans without `adaptive_claims` keep their hash.
 
@@ -1425,7 +1437,7 @@ for a claim that can only fail. Plans without `adaptive_claims` keep their hash.
 
 | Field | Default | Meaning |
 |---|---:|---|
-| `include_decisions` | false | Show overall decision, threshold-claim cards, and policy-event roll-up in human-facing reports. When false they are hidden, not withheld: `report.json` and the data embedded in `report.html` still hold the decision and every claim's status |
+| `include_decisions` | false | Show overall decision, threshold-claim cards, adaptive claims, and policy-event roll-up in human-facing reports. When false they are hidden, not withheld: `report.json` and the data embedded in `report.html` still hold the decision and every claim's status |
 | `include_prompt_text` | false | Reserved; raw content remains omitted in v1 |
 | `include_observations` | true | Write normalized observation CSV |
 | `decimal_places` | 6 | Markdown display precision; JSON retains full precision |

@@ -388,11 +388,24 @@ described in their pull requests.
   from below by an anytime-valid bound on the attacker's running average of conditional
   success probabilities, which needs no independence between runs. The claim is `FAIL` when
   the bound reaches `unacceptable_lower` and `INCONCLUSIVE` otherwise; a plan that gives it an
-  `acceptable_upper` is refused, because the bound describes one attacker at one budget.
-  Mandatory adaptive claims enter the decision. `report.json` and `report.md` show them in
-  their own section, `report.html` beside the cohort's claims. Plans without them keep their
-  hash and their `report.json` and `report.md` bytes; every `report.html` changes bytes,
-  because it embeds the script that renders them. See
+  `acceptable_upper` is refused, because the bound describes one attacker at one budget. A
+  success is a run whose score the mapping classifies as a failure: a failure that a plan
+  policy fills in with no score to confirm it (`errors` or `missing: count_as_failure`,
+  `token_limit` or `content_filter_stops: failure`) counts as no success, and the claim's
+  reasons say how many there were. Each claim takes its multiplicity family's whole alpha,
+  and a plan that puts two adaptive claims in one family is invalid
+  (`PLAN_INVALID_MULTIPLICITY`). Mandatory adaptive claims enter the decision, which they can
+  make `FAIL` but, never being `PASS`, otherwise hold at `INCONCLUSIVE`; with
+  `mandatory: false` a claim neither fails nor holds the decision. `report.json`
+  and `report-full.md` show them in their own section, `report.html` beside the cohort's claims,
+  with the bound's assumptions: the attack order fixed before any outcome or drawn at random,
+  at most one run per behaviour, and judge error not corrected; when
+  `report.include_decisions` is false, `report-full.md` and `report.html` leave the claims
+  out of view. Such a report lists the assumptions among those it rests on as
+  `adaptive_attack_stream`.
+  Plans without them keep their hash and their `report.json`, `report.md` and
+  `report-full.md` bytes; every `report.html` changes bytes, because it embeds the script
+  that renders them. See
   [`adaptive_claims`](docs/plan-reference.md#adaptive_claims-experimental).
 
 - **Multi-turn and system-prompt generation (experimental).** A generative plan can make
