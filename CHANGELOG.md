@@ -7,6 +7,18 @@ described in their pull requests.
 
 ### Fixed
 
+- **report.md, index.md and `analyze` round every bound outward (changes `report.md` and
+  `index.md`).** They rounded each bound to the nearest digit shown, so an upper bound could
+  read tighter than the analysis gave: with 20 prompts of 500 rollouts and no failure, an upper
+  bound of 0.00044 read as 0.0%, and a claim's upper bound could print equal to a threshold it
+  exceeded. Each upper bound is now rounded up and each lower bound down: at a tenth of a
+  percentage point for rates and differences in `report.md` and in the failure rates `analyze`
+  prints, at two decimals for ratios, three for tail and threshold measures and four in
+  `index.md`. The claims in `report.md` show `report.decimal_places` (6 by default), as
+  `report-full.md` does, instead of four decimals, and each threshold exactly, with more
+  decimals where a threshold needs them, so that a bound shows at or below its threshold exactly
+  when it is. `report.json`, `report-full.md` and the CSV files keep their bytes.
+
 - **A judge's input files are named relative to the plan (changes report bytes).** With
   validated judge calibration, `report.json` recorded the labels file under
   `provenance.judge_calibration.validation_manifest` by the absolute path the plan loader

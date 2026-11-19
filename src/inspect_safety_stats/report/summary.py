@@ -6,6 +6,11 @@ answers the questions a reader brings: how often does each model fail, does one 
 than another, where, which of those numbers are too imprecise to act on, what the analysis
 warned about, and which assumptions the results rest on.
 
+No bound reads tighter than the analysis gives: each upper bound is rounded up and each lower
+bound down at the decimals shown (``report.rounding``). Rates and differences show a tenth of a
+percentage point. The claims show ``report.decimal_places``, as ``report-full.md`` does, and
+each threshold exactly, so that a bound shows at or below its threshold exactly when it is.
+
 An interval is flagged as imprecise when either endpoint lies further than the plan's
 ``report.precision_target`` from the estimate. Each flag carries a planning figure for the
 rollouts that would resolve it at the observed rate, so an uninformative interval is reported
@@ -24,6 +29,7 @@ from statistics import median
 
 from inspect_safety_stats.config.models import DEFAULT_PRECISION_TARGET
 from inspect_safety_stats.registry import CODES
+from inspect_safety_stats.report.rounding import bound_text, decimals, threshold_text
 from inspect_safety_stats.report.writer import _claim_status, _escape
 from inspect_safety_stats.schema.reports import (
     ComparisonResult,
@@ -40,6 +46,13 @@ from inspect_safety_stats.stats.planning import (
 )
 
 _MAX_BREAKDOWN_ROWS = 40
+# Decimals shown: of a percentage point for rates and differences, of a ratio, and of a tail
+# or threshold measure. Every bound is rounded outward at these (``report.rounding``).
+_RATE_PLACES = 1
+_RATIO_PLACES = 2
+_MEASURE_PLACES = 3
+# report-full.md's precision, which the claims share, for a report that does not record it.
+_DEFAULT_DECIMAL_PLACES = 6
 _MAX_WARNING_SCOPES = 3
 _JUDGE_PREFIX = "judge_corrected_"
 _MEASURE_PREFIX = "finite_design_"
@@ -49,7 +62,9 @@ def _count(number: int, noun: str) -> str:
     return f"{number} {noun}{'' if number == 1 else 's'}"
 
 
-def _rate(value: float | None) -> str:
+def rate_text(value: float | None) -> str:
+    """A failure rate as a percentage, to the nearest tenth of a point."""
+
     if value is None:
         return "—"
     return f"{100 * value:.1f}%"
@@ -61,21 +76,39 @@ def _signed_points(value: float | None) -> str:
     return f"{100 * value:+.1f} pts"
 
 
-def _interval(lower: float | None, upper: float | None) -> str:
+def rate_interval_text(lower: float | None, upper: float | None) -> str:
+    """An interval of rates in percent, rounded outward to a tenth of a point."""
+
     if lower is None or upper is None:
         return "unavailable"
-    return f"[{_rate(lower)}, {_rate(upper)}]"
+    left = bound_text(lower, _RATE_PLACES, upper=False, percent=True)
+    right = bound_text(upper, _RATE_PLACES, upper=True, percent=True)
+    return f"[{left}%, {right}%]"
 
 
 def _signed_interval(lower: float | None, upper: float | None) -> str:
     if lower is None or upper is None:
         return "unavailable"
-    return f"[{_signed_points(lower)}, {_signed_points(upper)}]"
+    left = bound_text(lower, _RATE_PLACES, upper=False, percent=True, signed=True)
+    right = bound_text(upper, _RATE_PLACES, upper=True, percent=True, signed=True)
+    return f"[{left} pts, {right} pts]"
 
 
 def _ratio_interval(lower: float | None, upper: float | None) -> str:
-    left = "—" if lower is None else f"{lower:.2f}"
-    right = "∞" if upper is None else f"{upper:.2f}"
+    left = bound_text(lower, _RATIO_PLACES, upper=False)
+    right = (
+        "∞"
+        if upper is None or not math.isfinite(upper)
+        else bound_text(upper, _RATIO_PLACES, upper=True)
+    )
+    return f"[{left}, {right}]"
+
+
+def _measure_interval(lower: float | None, upper: float | None) -> str:
+    if lower is None or upper is None:
+        return "unavailable"
+    left = bound_text(lower, _MEASURE_PLACES, upper=False)
+    right = bound_text(upper, _MEASURE_PLACES, upper=True)
     return f"[{left}, {right}]"
 
 
@@ -209,10 +242,10 @@ def _root_section(
         cells = [
             _escape(risk.cohort_id),
             _escape(risk.group_id),
-            _rate(risk.estimate),
-            _interval(risk.lower, risk.upper) + (" †" if flagged else ""),
+            rate_text(risk.estimate),
+            rate_interval_text(risk.lower, risk.upper) + (" †" if flagged else ""),
             (
-                _interval(sensitivity.lower, sensitivity.upper)
+                rate_interval_text(sensitivity.lower, sensitivity.upper)
                 if sensitivity is not None
                 else "—"
             ),
@@ -222,14 +255,14 @@ def _root_section(
             cells.append(
                 "—"
                 if judged is None
-                else _interval(judged.lower, judged.upper)
+                else rate_interval_text(judged.lower, judged.upper)
                 + ("" if judged.eligibility == "certifying" else " (assumed)")
             )
         lines.append("| " + " | ".join(cells) + " |")
         if flagged:
             flags.append(
-                f"{_escape(risk.cohort_id)} · {_escape(risk.group_id)}: {_rate(risk.estimate)} "
-                f"{_interval(risk.lower, risk.upper)}: "
+                f"{_escape(risk.cohort_id)} · {_escape(risk.group_id)}: "
+                f"{rate_text(risk.estimate)} {rate_interval_text(risk.lower, risk.upper)}: "
                 + budget.advice(
                     risk.estimate,
                     _half_width(risk.estimate, risk.lower, risk.upper),
@@ -240,7 +273,7 @@ def _root_section(
     coverage = next(
         (risk.simultaneous_coverage for risk in risks if risk.simultaneous_coverage), None
     )
-    coverage_text = f" with {_rate(coverage)} simultaneous coverage" if coverage else ""
+    coverage_text = f" with {rate_text(coverage)} simultaneous coverage" if coverage else ""
     if report.scope.get("design") == "sampled":
         # A sampled design's intervals are about the frame its items were drawn from, and it
         # has no sensitivity profiles: each drawn item is one observation, its failure rate.
@@ -402,7 +435,7 @@ def _breakdown_section(
             flagged = _imprecise(node.estimate, node.lower, node.upper, target)
             flagged_cells += flagged
             cells.append(
-                f"{_rate(node.estimate)} {_interval(node.lower, node.upper)}"
+                f"{rate_text(node.estimate)} {rate_interval_text(node.lower, node.upper)}"
                 + (" †" if flagged else "")
             )
         if pair is not None:
@@ -430,9 +463,9 @@ def _breakdown_section(
         )
         flags.append(
             f"{flagged_cells} of {len(selected)} {_escape(level)} intervals exceed "
-            f"±{_rate(target)}; the widest ({_escape(widest.cohort_id)} · "
+            f"±{rate_text(target)}; the widest ({_escape(widest.cohort_id)} · "
             f"{_escape(' → '.join(widest.path.values()))}: "
-            f"{_rate(widest.estimate)} {_interval(widest.lower, widest.upper)}) "
+            f"{rate_text(widest.estimate)} {rate_interval_text(widest.lower, widest.upper)}) "
             + budget.advice(
                 widest.estimate,
                 _half_width(widest.estimate, widest.lower, widest.upper),
@@ -465,13 +498,8 @@ def _other_measures_section(
             _escape(risk.cohort_id),
             _escape(risk.group_id),
             _escape(risk.measure_id),
-            f"{risk.estimate:.3f}" if risk.estimate is not None else "—",
-            (
-                f"[{risk.lower:.3f}, {risk.upper:.3f}]"
-                if risk.lower is not None and risk.upper is not None
-                else "unavailable"
-            )
-            + (" †" if imprecise else ""),
+            f"{risk.estimate:.{_MEASURE_PLACES}f}" if risk.estimate is not None else "—",
+            _measure_interval(risk.lower, risk.upper) + (" †" if imprecise else ""),
         ]
         lines.append("| " + " | ".join(cells) + " |")
     lines.extend(
@@ -502,9 +530,28 @@ def _other_measures_section(
     return lines
 
 
+def _claim_places(report: SafetyReport) -> int:
+    """The decimals of the claims: report-full.md's, or more where a threshold needs them.
+
+    Each threshold is shown exactly and each bound rounded outward at the same decimals, so a
+    bound shows at or below its threshold exactly when it is at or below it.
+    """
+
+    places = report.presentation.decimal_places
+    if places is None:
+        places = _DEFAULT_DECIMAL_PLACES
+    thresholds = [
+        value
+        for claim in report.claims
+        for value in (claim.acceptable_upper, claim.unacceptable_lower)
+    ]
+    return max([places, *(decimals(value) for value in thresholds)])
+
+
 def _claims_section(report: SafetyReport) -> list[str]:
     if not report.presentation.include_decisions:
         return []
+    places = _claim_places(report)
     lines = [
         "## Claims",
         "",
@@ -517,10 +564,10 @@ def _claims_section(report: SafetyReport) -> list[str]:
         cells = [
             _escape(claim.title),
             _claim_status(claim),
-            f"{claim.lower:.4f}" if claim.lower is not None else "—",
-            f"{claim.upper:.4f}" if claim.upper is not None else "—",
-            f"{claim.acceptable_upper:.4f}",
-            f"{claim.unacceptable_lower:.4f}",
+            bound_text(claim.lower, places, upper=False),
+            bound_text(claim.upper, places, upper=True),
+            threshold_text(claim.acceptable_upper, places),
+            threshold_text(claim.unacceptable_lower, places),
         ]
         lines.append("| " + " | ".join(cells) + " |")
     if not report.claims:
@@ -690,7 +737,7 @@ def summary_markdown(report: SafetyReport) -> str:
             [
                 "## Precision",
                 "",
-                f"† marks an interval with an endpoint more than ±{_rate(target)} from its "
+                f"† marks an interval with an endpoint more than ±{rate_text(target)} from its "
                 "estimate (`report.precision_target`). The budgets below assume the observed "
                 "rate holds; they are planning figures, not guarantees.",
                 "",

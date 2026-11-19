@@ -17,6 +17,7 @@ from typing import Any
 
 from inspect_safety_stats.config.canonicalize import canonical_value
 from inspect_safety_stats.report.artifacts import CHECKSUMS, json_text
+from inspect_safety_stats.report.rounding import bound_text
 from inspect_safety_stats.schema.reports import SafetyReport
 
 INDEX_JSON = "index.json"
@@ -27,6 +28,8 @@ AGENT_GUIDE_URL = "https://github.com/aduncan001/safety_stats/blob/main/docs/age
 SUMMARY_PAGE = "report.md"
 # The section of index.md that lists the errors and warnings; analyze points to it by name.
 WARNINGS_HEADING = "Errors and warnings by code"
+# Decimals of the numbers in index.md; bounds are rounded outward at them.
+_PLACES = 4
 
 # What each file holds, and the report.json list whose items its data rows are, in order.
 _ARTIFACTS: dict[str, tuple[str, str, str | None]] = {
@@ -103,8 +106,14 @@ def _cell(value: Any) -> str:
     if value is None:
         return "—"
     if isinstance(value, float):
-        return f"{value:.4f}"
+        return f"{value:.{_PLACES}f}"
     return str(value).replace("|", "\\|").replace("\n", " ")
+
+
+def _bound(value: float | None, *, upper: bool) -> str:
+    """A bound at the index's decimals: an upper bound rounded up, a lower bound down."""
+
+    return bound_text(value, _PLACES, upper=upper)
 
 
 def index_markdown(document: dict[str, Any]) -> str:
@@ -174,8 +183,8 @@ def index_markdown(document: dict[str, Any]) -> str:
                 _cell(item["measure"]),
                 _cell(item["estimand"]),
                 _cell(item["estimate"]),
-                _cell(item["lower"]),
-                _cell(item["upper"]),
+                _bound(item["lower"], upper=False),
+                _bound(item["upper"], upper=True),
                 item["eligibility"],
                 f"`{item['item']}`",
                 f"`{csv['file']}` row {csv['row']}" if csv else "—",
