@@ -234,6 +234,7 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Contributing](CONTRIBUTING.md): development setup, engineering practices, and the interfaces that must not break
 - [Security](SECURITY.md): how to report a vulnerability, and what the package does with network access, plans, and prompt text
 - [Quickstart](docs/quickstart.md)
+- [Running Inspect for analysis](docs/running-inspect.md): epochs, cohorts by task argument, the request timeout, and connections shared with a judge
 - [Analysis plan reference](docs/plan-reference.md)
 - [Python and command-line API reference](docs/api-reference.md)
 - [Rollout files](docs/rollout-files.md): analysing results from other evaluation systems (experimental)
