@@ -66,14 +66,15 @@ def _rank_key(seed: int, prompt_id: str) -> bytes:
 
 
 def _check_strata_read_back(labels: pd.Series) -> None:
-    """Refuse strata that analyze would not read back from the pilot frame as drawn.
+    """Refuse strata labels that analyze refuses, or that a reader of the frame would merge.
 
-    The draw treats stratum labels as text, but analyze reads the written frame with pandas'
-    type inference (`load_manifest`) and then takes `str()` of each `pilot_stratum` value.
-    Labels such as `1` and `01`, or `true` and `True`, would become one stratum, and the
-    analysis would check and weight the draw against strata it did not use. A label that
-    pandas reads as missing, such as `N/A` or `None`, has no stratum that analyze reads the
-    same way under every supported pandas version.
+    The draw treats stratum labels as text, and so does analyze, which reads `pilot_stratum`
+    exactly as written (`load_manifest`). Analyze refuses a label that pandas reads as a
+    missing value, such as `N/A` or `None`, so the draw refuses it too, rather than write a
+    frame that analyze will not take. It also refuses labels that pandas' default type
+    inference reads as the same number or boolean, such as `1` and `01` or `true` and `True`.
+    Analyze keeps them apart, but a spreadsheet or a pandas reader with its defaults, with
+    which a person may check the draw, would show them as one stratum.
     """
 
     text = labels.rename(STRATUM_COLUMN).to_csv(index=False, lineterminator="\n")
@@ -81,9 +82,8 @@ def _check_strata_read_back(labels: pd.Series) -> None:
     missing = sorted(set(labels.to_numpy()[read.isna().to_numpy()]))
     if missing:
         raise ValueError(
-            "analyze reads the pilot frame with pandas' type inference, which reads these "
-            f"strata labels as missing values: {missing[:10]!r}. Recode those strata values, "
-            "for example as 'none'"
+            "analyze refuses these strata labels, which pandas and analyze read as missing "
+            f"values: {missing[:10]!r}. Recode those strata values, for example as 'none'"
         )
     pairs = pd.DataFrame({"drawn": labels.to_numpy(), "read": read.astype(str).to_numpy()})
     groups = pairs.drop_duplicates().groupby("read")["drawn"].agg(sorted)
@@ -94,10 +94,10 @@ def _check_strata_read_back(labels: pd.Series) -> None:
     ]
     if merged:
         raise ValueError(
-            "analyze reads the pilot frame with pandas' type inference, which would merge "
-            "strata whose labels read as the same number or boolean: "
-            f"{'; '.join(merged[:10])}. Recode the strata values so that they differ as "
-            "text, for example with a letter prefix"
+            "pandas' default type inference, which a spreadsheet or another reader of the "
+            "pilot frame may apply, would merge strata whose labels read as the same number "
+            f"or boolean: {'; '.join(merged[:10])}. Recode the strata values so that they "
+            "differ as text, for example with a letter prefix"
         )
 
 
@@ -122,9 +122,10 @@ def draw_pilot(
     and draw different prompts from the command's.
 
     Raises ValueError when a `prompt_id` is not text or is blank, when a stratum holds fewer
-    than `per_stratum` prompts, when a strata column is absent or has missing values, when
-    two strata labels would read back from the written frame as one (`1` and `01`, say), or
-    when the manifest already has an added column.
+    than `per_stratum` prompts, when a strata column is absent or has missing values, when a
+    stratum label marks a missing value (`N/A`, say), when two strata labels would read as
+    one under pandas' default type inference (`1` and `01`, say), or when the manifest already
+    has an added column.
     """
 
     if isinstance(per_stratum, bool) or per_stratum < 1:
