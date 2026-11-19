@@ -112,10 +112,12 @@ def check_labelled_prefix(
 
     The queue is a CSV whose ``observation_id`` column lists rollouts in labelling order.
     With ``tier``, only rows whose ``tier`` column holds that value count. A queue that
-    orders each judge stratum by a random permutation makes every prefix a simple random
-    sample within each stratum, so a skipped row, or a label from outside the queue, would
-    let the sample depend on which rollouts were easy or interesting to label. Either
-    raises ``ValueError``, naming the first offending row.
+    lists each judge stratum, or a simple random sample of it, in a random order makes every
+    prefix a simple random sample within each stratum, so a skipped row, or a label from
+    outside the queue, would let the sample depend on which rollouts were easy or interesting
+    to label. Either raises ``ValueError``, naming the first offending row. The check does
+    not see the analysed rollouts: the caller checks the queue's rows, which the result lists
+    as ``observation_ids``, against them.
 
     The file is read once: the hash it reports is of the bytes the check parsed, so a queue
     rewritten while the analysis reads it cannot be hashed in one version and checked in

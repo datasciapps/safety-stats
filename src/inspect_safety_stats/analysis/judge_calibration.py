@@ -29,6 +29,7 @@ from inspect_safety_stats.schema.reports import (
 )
 from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope
 from inspect_safety_stats.stats.judge_calibration import (
+    JUDGE_STRATA,
     NO_STRATA,
     FineStrata,
     JudgeStrata,
@@ -261,6 +262,17 @@ def _stratified_assumptions(cohort: str = "the cohort") -> list[str]:
     ]
 
 
+def _queue_assumption(stratum: str) -> str:
+    """What a declared labelling queue must be, of which the analysis checks only part."""
+
+    return (
+        f"The declared labelling queue lists, within each {stratum}, all of its classified "
+        "rollouts or a simple random sample of them, in a uniformly random order fixed before "
+        "labelling; the analysis checks that the labels are its first rows and that it lists "
+        "only classified rollouts of the run, not how its rows were drawn."
+    )
+
+
 def _uncertified_base_warning(eligibility: str) -> str:
     return (
         f"Sensitivity analysis, not a certified bound: the judge-system interval it corrects "
@@ -363,9 +375,13 @@ def _validated_judge_calibrations(
         )
         return {}, {}, None, {}, None
 
-    protocol = _labelling_protocol(spec, labels, data.observations, diagnostics)
-    if spec.protocol is not None and protocol is None:
+    checked = _labelling_protocol(spec, labels, data.observations, diagnostics)
+    if spec.protocol is not None and checked is None:
         return {}, {}, None, {}, None
+    protocol = None if checked is None else checked.record
+    # The queue's rows, keyed as labels are, so that counting them per judge stratum shows
+    # how much of each stratum the queue lists.
+    queued = None if checked is None else dict.fromkeys(checked.queue, True)
     bound: CalibrationBound = (
         "confidence_sequence"
         if spec.protocol is not None and spec.protocol.stopping == "data_dependent"
@@ -424,6 +440,7 @@ def _validated_judge_calibrations(
     # rollouts and gets no calibration, but still takes its share of the budget below.
     calibrated = [scope for scope in scopes if scope[1] is None or scope[1] in group_prompts]
     counts: dict[_JudgeScope, JudgeStrata] = {}
+    queue_counts: dict[_JudgeScope, JudgeStrata] = {}
     fine: dict[_JudgeScope, FineStrata] = {}
     truth_strata: dict[_JudgeScope, Any] = {}
     in_scope: set[str] = set()
@@ -442,6 +459,10 @@ def _validated_judge_calibrations(
                 fine[scope] = scoped_fine.by_cohort[cohort_id]
         elif cohort_id in (scoped := judge_stratum_counts(observations, labels)[0]):
             counts[scope] = scoped[cohort_id]
+        if queued is not None:
+            listed = judge_stratum_counts(observations, queued)[0].get(cohort_id)
+            if listed is not None:
+                queue_counts[scope] = listed
         if spec.sampling == "simple_random":
             # A simple random sample of the design also estimates sensitivity and the
             # false-positive rate by true class, which the noisy-but-valid test needs.
@@ -536,6 +557,12 @@ def _validated_judge_calibrations(
         completed = completion_diagnostic(outcome.calibration, where)
         if completed is not None:
             diagnostics.append(completed)
+        if spec.protocol is not None and scope in queue_counts:
+            partial_queue = _partial_queue_diagnostic(
+                outcome.strata, queue_counts[scope], spec.protocol.tier, scope, where
+            )
+            if partial_queue is not None:
+                diagnostics.append(partial_queue)
         summary: dict[str, Any] = dict(outcome.strata.summary())
         if declared is not None:
             partial = unlabelled_fine_strata_diagnostic(outcome.fine_strata, where)
@@ -562,12 +589,20 @@ def _validated_judge_calibrations(
     return calibrations, summaries, family.alpha, truth_strata, protocol
 
 
+@dataclass(frozen=True)
+class _CheckedProtocol:
+    """A declared labelling protocol the labels keep: its report record, and the queue's rows."""
+
+    record: dict[str, Any]
+    queue: tuple[str, ...]
+
+
 def _labelling_protocol(
     spec: JudgeCalibrationSpec,
     labels: dict[str, bool],
     observations: list[Observation],
     diagnostics: list[Diagnostic],
-) -> dict[str, Any] | None:
+) -> _CheckedProtocol | None:
     """Check the labels against the declared labelling protocol, and record both.
 
     The labels must be the first rows of the queue (or of its tier), and every row of it
@@ -627,7 +662,7 @@ def _labelling_protocol(
             f"validation manifest has {prefix.labelled}"
         )
         return None
-    return {
+    record = {
         "queue_sha256": prefix.queue_sha256,
         "queue_rows": prefix.queue_rows,
         "labelled_prefix": prefix.labelled,
@@ -641,6 +676,67 @@ def _labelling_protocol(
             else "clopper_pearson"
         ),
     }
+    return _CheckedProtocol(record=record, queue=prefix.observation_ids)
+
+
+def _partial_queue_diagnostic(
+    labelled: JudgeStrata,
+    queued: JudgeStrata,
+    tier: str | None,
+    scope: _JudgeScope,
+    where: str,
+) -> Diagnostic | None:
+    """The warning for labelled judge strata the queue lists only part of, if there are any.
+
+    ``queued`` counts the queue's rows as labels, so its ``labelled`` is how many of the
+    stratum's classified rollouts the queue lists. A queue that lists them all leaves only its
+    order to chance; one that lists part of a stratum is a random sample of it, simple or
+    stratified as the design declares, only if it was drawn as one, which the queue cannot
+    show. A stratum without labels is completed with certainty, so it rests on no sample.
+    """
+
+    partial = [
+        (name, getattr(queued, name), getattr(labelled, name).labelled)
+        for name in JUDGE_STRATA
+        if getattr(labelled, name).labelled > 0
+        and getattr(queued, name).labelled < getattr(queued, name).stratum_size
+    ]
+    if not partial:
+        return None
+    cohort_id, group_id = scope
+    population = (
+        f"cohort {cohort_id!r}"
+        if group_id is None
+        else f"group {group_id!r} in cohort {cohort_id!r}"
+    )
+    queue = "labelling queue" if tier is None else f"labelling queue tier {tier!r}"
+    listed = " and ".join(
+        f"{counts.labelled} of the {counts.stratum_size}"
+        + (" classified rollouts" if index == 0 else "")
+        + f" of the {name.replace('_', '-')} stratum"
+        for index, (name, counts, _) in enumerate(partial)
+    )
+    return Diagnostic(
+        code="JUDGE_LABELLING_QUEUE_PARTIAL",
+        severity="WARNING",
+        message=(
+            f"the {queue} lists {listed} of {population}; the labels are a random sample of "
+            "such a stratum only if the queue's rows of it were drawn from all of its "
+            "rollouts at random before labelling, which the analysis cannot check"
+        ),
+        scope=where,
+        details={
+            "judge_strata": [
+                {
+                    "judge_stratum": name,
+                    "queue_rows": counts.labelled,
+                    "labelled": count,
+                    "stratum_size": counts.stratum_size,
+                }
+                for name, counts, count in partial
+            ]
+        },
+    )
 
 
 def _judge_corrected_interval(
@@ -656,11 +752,12 @@ def _judge_corrected_interval(
     scoped_groups: list[str] | None = None,
     stratified: bool = False,
     per_cohort: bool = False,
+    labelling_queue: bool = False,
 ) -> RiskIntervalResult | None:
     """Correct one row; ``scoped_group`` names a validated calibration's group, and
     ``scoped_groups`` the groups an assumed calibration is scoped to. ``per_cohort`` says
     that the assumed scenario declares boxes by cohort, so ``calibration`` is the row's
-    cohort's box."""
+    cohort's box. ``labelling_queue`` says that the plan declares a labelling protocol."""
 
     if result.lower is None or result.upper is None:
         return None
@@ -713,6 +810,8 @@ def _judge_corrected_interval(
                 "with certainty."
             )
         assumptions.extend(_stratified_assumptions())
+        if labelling_queue:
+            assumptions.append(_queue_assumption("declared fine stratum"))
         if scoped_group is not None:
             assumptions.append(
                 f"The calibration is scoped to group {scoped_group!r}: its fine strata are the "
@@ -779,6 +878,7 @@ def _judge_corrected_interval(
                     "stratum; this is a property of the declared collection protocol, not "
                     "of the data."
                 ),
+                *([_queue_assumption("judge stratum")] if labelling_queue else []),
                 "Human adjudication is treated as ground truth.",
             ]
         )

@@ -17,7 +17,8 @@ import pytest
 
 from inspect_safety_stats import analyze, load_plan
 from inspect_safety_stats.config.loader import canonical_plan_hash
-from inspect_safety_stats.schema.reports import RiskIntervalResult, SafetyReport
+from inspect_safety_stats.schema.reports import Diagnostic, RiskIntervalResult, SafetyReport
+from inspect_safety_stats.schema.scopes import cohort_scope
 from inspect_safety_stats.stats import misclassification
 from inspect_safety_stats.stats.misclassification import JudgeStratumCounts
 
@@ -154,11 +155,20 @@ def _observation_ids(directory: Path) -> dict[int, str]:
     }
 
 
-def _queue(ids: dict[int, str]) -> pd.DataFrame:
+def _queue(ids: dict[int, str], complete: bool = False) -> pd.DataFrame:
+    """The queue: 30 rows of each judge stratum, or with ``complete`` every rollout of both."""
+
     rng = np.random.default_rng(41)
     unsafe = [ids[e] for e in rng.permutation(np.arange(1, JUDGE_UNSAFE + 1))]
     safe = [ids[e] for e in rng.permutation(np.arange(JUDGE_UNSAFE + 1, ROLLOUTS + 1))]
     rows: list[dict[str, str]] = []
+    if complete:
+        # The same two orders, alternating until the judge-unsafe stratum runs out.
+        for slot in range(2 * JUDGE_UNSAFE):
+            rows.append({"observation_id": (unsafe if slot % 2 else safe)[slot // 2],
+                         "tier": "calibration"})
+        rows += [{"observation_id": key, "tier": "calibration"} for key in safe[JUDGE_UNSAFE:]]
+        return pd.DataFrame(rows)
     # Calibration rows take each stratum's order from the front, oversample rows from the
     # back, so the tiers never meet.
     for slot in range(60):
@@ -208,7 +218,7 @@ def _run(
     tmp_path: Path, protocol: str, take: int = 40, edit: str = "none"
 ) -> tuple[SafetyReport, pd.DataFrame]:
     ids = _observation_ids(tmp_path)
-    queue = _queue(ids)
+    queue = _queue(ids, complete=edit == "complete")
     if edit in ("absent", "absent_labelled"):
         # A rollout the run does not have, first in the tier and labelled, or right after
         # the labelled rows.
@@ -235,6 +245,22 @@ def _corrected(report: SafetyReport) -> RiskIntervalResult | None:
         (item for item in mean.intervals if item.interval_id == "judge_corrected_validated"),
         None,
     )
+
+
+QUEUE_ASSUMPTION = (
+    "The declared labelling queue lists, within each judge stratum, all of its classified "
+    "rollouts or a simple random sample of them, in a uniformly random order fixed before "
+    "labelling; the analysis checks that the labels are its first rows and that it lists only "
+    "classified rollouts of the run, not how its rows were drawn."
+)
+
+
+def _partial(report: SafetyReport) -> list[Diagnostic]:
+    return [
+        item
+        for item in report.integrity.diagnostics
+        if item.code == "JUDGE_LABELLING_QUEUE_PARTIAL"
+    ]
 
 
 def _violations(report: SafetyReport) -> list[str]:
@@ -265,6 +291,77 @@ def test_a_labelled_prefix_is_recorded_and_keeps_clopper_pearson(tmp_path: Path)
     corrected = _corrected(report)
     assert corrected is not None and corrected.eligibility == "certifying"
     assert any("exact Clopper-Pearson" in text for text in corrected.assumptions)
+
+
+@pytest.mark.usefixtures("logs")
+@pytest.mark.parametrize("scoped", [False, True])
+def test_a_queue_that_lists_part_of_a_stratum_is_a_warning(
+    tmp_path: Path, scoped: bool
+) -> None:
+    # The calibration tier lists 30 of the 80 judge-unsafe and 30 of the 320 judge-safe
+    # rollouts, so that those rows are a random sample of each stratum is only declared.
+    groups = "    groups: [all]\n" if scoped else ""
+    report, _ = _run(tmp_path, groups + _protocol("label_independent"))
+
+    (found,) = _partial(report)
+    population = "group 'all' in cohort 'candidate'" if scoped else "cohort 'candidate'"
+    assert found.severity == "WARNING"
+    assert found.message == (
+        "the labelling queue tier 'calibration' lists 30 of the 80 classified rollouts of the "
+        f"judge-unsafe stratum and 30 of the 320 of the judge-safe stratum of {population}; "
+        "the labels are a random sample of such a stratum only if the queue's rows of it were "
+        "drawn from all of its rollouts at random before labelling, which the analysis "
+        "cannot check"
+    )
+    assert found.scope == (
+        cohort_scope("candidate", "groups", "all") if scoped else cohort_scope("candidate")
+    )
+    assert found.details == {
+        "judge_strata": [
+            {"judge_stratum": "judge_unsafe", "queue_rows": 30, "labelled": 20, "stratum_size": 80},
+            {"judge_stratum": "judge_safe", "queue_rows": 30, "labelled": 20, "stratum_size": 320},
+        ]
+    }
+    # Recorded: the correction is still reported, and states what the queue must be.
+    corrected = _corrected(report)
+    assert corrected is not None and corrected.eligibility == "certifying"
+    assert QUEUE_ASSUMPTION in corrected.assumptions
+
+
+@pytest.mark.usefixtures("logs")
+def test_a_queue_of_every_classified_rollout_gives_no_warning(tmp_path: Path) -> None:
+    report, queue = _run(tmp_path, _protocol("label_independent"), edit="complete")
+
+    assert len(queue) == ROLLOUTS
+    assert _partial(report) == []
+    corrected = _corrected(report)
+    assert corrected is not None and corrected.eligibility == "certifying"
+    assert QUEUE_ASSUMPTION in corrected.assumptions
+
+
+@pytest.mark.usefixtures("logs")
+def test_a_stratified_design_states_the_queue_within_its_fine_strata(tmp_path: Path) -> None:
+    # Two fine strata within each judge stratum: the first and second half of its rollouts.
+    ids = _observation_ids(tmp_path / "ids")
+    rows = ["observation_id,stratum"] + [
+        f"{key},{'u' if epoch <= JUDGE_UNSAFE else 's'}{int(epoch % 2 == 0)}"
+        for epoch, key in sorted(ids.items())
+    ]
+    tmp_path.joinpath("strata.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    design = (
+        "    sampling: stratified_within_judge_stratum\n    validation_strata: strata.csv\n"
+    )
+    report, _ = _run(
+        tmp_path, design + _protocol("label_independent"), take=200, edit="complete"
+    )
+
+    corrected = _corrected(report)
+    assert corrected is not None
+    assert QUEUE_ASSUMPTION.replace("each judge stratum", "each declared fine stratum") in (
+        corrected.assumptions
+    )
+    assert QUEUE_ASSUMPTION not in corrected.assumptions
+    assert _partial(report) == []
 
 
 @pytest.mark.usefixtures("logs")

@@ -491,6 +491,7 @@ def _add_judge_corrections(
             unclassified_share=share,
             scoped_group=scope[1],
             stratified=stratified,
+            labelling_queue=protocol is not None,
         )
         if interval is not None:
             result.intervals.append(interval)

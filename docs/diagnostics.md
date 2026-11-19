@@ -1115,6 +1115,18 @@ The judge validation inputs: the human labels, their strata and the labelling pr
   skipping rows, write the queue from the classified rollouts of the logs analysed, or correct
   protocol.tier, protocol.stopping or protocol.size to match how the labels were collected.
 
+#### `JUDGE_LABELLING_QUEUE_PARTIAL`
+
+- **Severity:** WARNING
+- **Effect:** [recorded](#effects)
+- **Assumption:** The declared labelling queue lists every classified rollout of each judge stratum
+  it labels, so that only its random order decides which rollouts are labelled.
+- **Consequence:** The validated correction is reported as computed; that the queue's rows of the
+  named strata are a random sample of them is declared, not checked.
+- **Remedy:** Write the queue as a seeded random permutation of every classified rollout of each
+  judge stratum and label it from the front; a queue drawn at random from part of a stratum stays
+  valid, and the warning records that its draw is declared.
+
 #### `JUDGE_STRATUM_UNLABELLED_COMPLETED`
 
 - **Severity:** WARNING

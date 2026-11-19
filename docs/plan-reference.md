@@ -343,7 +343,8 @@ only queue rows whose `tier` column has that value (the cells are read without s
 whitespace, and a `tier` with any is rejected); `seed`, recorded for an audit; and
 `stopping`, one of `fixed_size` (with `size`), `label_independent` or `data_dependent`. The
 analysis checks that the queue lists only classified rollouts of the analysed run, that the
-manifest labels exactly its first rows, and that `size` rows are labelled under `fixed_size`. `data_dependent` bounds each stratum with an anytime-valid
+manifest labels exactly its first rows, and that `size` rows are labelled under `fixed_size`,
+and warns when the queue lists only part of a labelled judge stratum. `data_dependent` bounds each stratum with an anytime-valid
 confidence sequence instead of Clopper-Pearson, and requires
 `sampling: simple_random_within_judge_stratum`. See
 [Labelling protocol](judge-misclassification.md#labelling-protocol-experimental).

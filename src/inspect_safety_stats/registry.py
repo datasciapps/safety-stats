@@ -1238,6 +1238,25 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
     ),
     CodeEntry(
+        code="JUDGE_LABELLING_QUEUE_PARTIAL",
+        severities=("WARNING",),
+        source="judge_labels",
+        effect="recorded",
+        assumption=(
+            "The declared labelling queue lists every classified rollout of each judge stratum "
+            "it labels, so that only its random order decides which rollouts are labelled."
+        ),
+        consequence=(
+            "The validated correction is reported as computed; that the queue's rows of the "
+            "named strata are a random sample of them is declared, not checked."
+        ),
+        remedy=(
+            "Write the queue as a seeded random permutation of every classified rollout of each "
+            "judge stratum and label it from the front; a queue drawn at random from part of a "
+            "stratum stays valid, and the warning records that its draw is declared."
+        ),
+    ),
+    CodeEntry(
         code="JUDGE_LANG_REICZIGEL_UNAVAILABLE",
         severities=("INFO",),
         source="analysis",

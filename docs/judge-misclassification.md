@@ -219,19 +219,28 @@ inputs:
       stopping: label_independent
 ```
 
-The queue lists rollouts in the order people label them. Ordering each judge stratum by a
-seeded random permutation, and interleaving the strata on a pattern fixed in advance, makes
-every prefix of the queue a simple random sample within each stratum. `tier` is for a queue
-that also holds rows the calibration does not use, such as rows oversampled to study where
-the judge goes wrong; the manifest then holds the calibration tier's labels only.
+The queue lists rollouts in the order people label them. Within each judge stratum it lists
+all of the stratum's classified rollouts, or a simple random sample of them drawn before
+labelling, in a seeded random order. With the strata interleaved on a pattern fixed in
+advance, every prefix of the queue is then a simple random sample within each stratum. `tier`
+is for a queue that also holds rows the calibration does not use, such as rows oversampled to
+study where the judge goes wrong; the manifest then holds the calibration tier's labels only.
 
 The analysis checks that the manifest labels exactly the first rows of the queue (or of its
 tier), and that every row of the queue (or of its tier) names a classified rollout of the
 analysed run. A skipped row, a label for a rollout outside the queue, or a queue row that
 names a rollout the run does not have or did not classify is an error,
 `JUDGE_LABELLING_PROTOCOL_VIOLATED`, and no correction is reported. Every label is then on a
-classified rollout, so `size` below counts only labels the calibration uses. `stopping` says
-why labelling stopped where it did:
+classified rollout, so `size` below counts only labels the calibration uses.
+
+A queue that lists every classified rollout of a stratum leaves only its order to chance. One
+that lists part of a stratum is a random sample of it only if it was drawn as one: a queue
+written from hand-picked rollouts would pass every check above. When the queue (or its tier)
+lists only part of a judge stratum that has labels, the report carries the warning
+`JUDGE_LABELLING_QUEUE_PARTIAL`, which names the stratum and how many of its rollouts the
+queue lists; the correction is reported as computed, and how the queue's rows were drawn is
+declared, not checked. A queue that permutes every classified rollout of each stratum avoids
+the warning. `stopping` says why labelling stopped where it did:
 
 | `stopping` | Meaning | What the analysis does |
 |---|---|---|

@@ -9,8 +9,11 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
+from inspect_safety_stats.analysis.judge_calibration import _partial_queue_diagnostic
 from inspect_safety_stats.config.models import JudgeCalibrationSpec
 from inspect_safety_stats.ingest.validation import check_labelled_prefix
+from inspect_safety_stats.stats.judge_calibration import JudgeStrata
+from inspect_safety_stats.stats.misclassification import JudgeStratumCounts
 
 
 def _spec(protocol: dict[str, Any] | None, **fields: Any) -> JudgeCalibrationSpec:
@@ -147,3 +150,32 @@ def test_the_queue_hash_is_of_the_bytes_the_check_parsed(
 def test_queue_checks(tmp_path: Path, text: str, tier: str | None, message: str) -> None:
     with pytest.raises(ValueError, match=message):
         check_labelled_prefix(_queue(tmp_path, text), {"a": True, "b": False}, tier=tier)
+
+
+def _strata(unsafe: tuple[int, int], safe: tuple[int, int]) -> JudgeStrata:
+    """Both judge strata as (counted, size): labels, or queue rows counted as labels."""
+
+    return JudgeStrata(
+        JudgeStratumCounts(labelled=unsafe[0], truly_unsafe=0, stratum_size=unsafe[1]),
+        JudgeStratumCounts(labelled=safe[0], truly_unsafe=0, stratum_size=safe[1]),
+    )
+
+
+@pytest.mark.parametrize(
+    ("labelled", "queued", "flagged"),
+    [
+        # A queue that lists every rollout of each labelled stratum leaves only its order.
+        (_strata((5, 10), (5, 30)), _strata((10, 10), (30, 30)), []),
+        # A stratum without labels is completed with certainty: its queue rows do not matter.
+        (_strata((0, 10), (5, 30)), _strata((4, 10), (30, 30)), []),
+        (_strata((5, 10), (5, 30)), _strata((10, 10), (29, 30)), ["judge_safe"]),
+        (_strata((5, 10), (5, 30)), _strata((5, 10), (5, 30)), ["judge_unsafe", "judge_safe"]),
+    ],
+)
+def test_only_labelled_strata_the_queue_lists_in_part_are_flagged(
+    labelled: JudgeStrata, queued: JudgeStrata, flagged: list[str]
+) -> None:
+    found = _partial_queue_diagnostic(labelled, queued, None, ("c", None), "cohorts/c")
+    details = {} if found is None else found.details
+    names = [item["judge_stratum"] for item in details.get("judge_strata", [])]
+    assert names == flagged
