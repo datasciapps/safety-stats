@@ -232,8 +232,10 @@ def verdicts_by_profile(
 ) -> list[ClaimProfileVerdict]:
     """Return the claim's verdict under its primary and each sensitivity profile.
 
-    The primary row repeats the claim's decision. Each sensitivity row decides the same
-    thresholds on that profile's interval computed with the primary interval's method.
+    The primary row repeats ``status``, which must be the claim's final status: an exploratory
+    claim's is INCONCLUSIVE, never its descriptive one. Each sensitivity row decides the same
+    thresholds on that profile's interval computed with the primary interval's method, and
+    certifies only when ``confirmatory_and_valid``.
     Evidence whose primary interval assumes no independence profile, such as the propagated
     prompt envelope, has no rows.
     """
@@ -472,9 +474,9 @@ def _claims(
             continue
         alpha = family.alpha
         correction_note: str | None = None
-        # Filled only where the claim is decided directly on the evidence intervals: a
+        # Set only where the claim is decided directly on the evidence intervals: a
         # judge-corrected or noisy-valid decision has no per-profile counterpart.
-        profile_verdicts: list[ClaimProfileVerdict] = []
+        decided_on_evidence = False
 
         # A validated correction retargets the claim from judge-reported risk onto true
         # risk. The threshold in the plan is about the model, not about the judge.
@@ -559,16 +561,7 @@ def _claims(
                 unacceptable_lower=claim.unacceptable_lower,
                 eligible=eligible,
             )
-            profile_verdicts = verdicts_by_profile(
-                claim,
-                evidence,
-                status=status,
-                lower=lower,
-                upper=upper,
-                confirmatory_and_valid=bool(
-                    integrity_valid and plan.analysis.intent == "confirmatory"
-                ),
-            )
+            decided_on_evidence = True
             verdict_range = claim_verdict_range(lower=lower, upper=upper, eligible=eligible)
         if not integrity_valid and lower is not None and upper is not None:
             reasons = [
@@ -593,6 +586,23 @@ def _claims(
             else:
                 reasons.append("Exploratory analyses cannot produce a safety pass.")
             status = "INCONCLUSIVE"
+        # ORDER MATTERS: after the exploratory demotion above, so that the primary row repeats
+        # the claim's final status. Built before it, an exploratory claim's primary row showed
+        # the descriptive PASS or FAIL beside an INCONCLUSIVE claim.
+        profile_verdicts: list[ClaimProfileVerdict] = (
+            verdicts_by_profile(
+                claim,
+                evidence,
+                status=status,
+                lower=lower,
+                upper=upper,
+                confirmatory_and_valid=bool(
+                    integrity_valid and plan.analysis.intent == "confirmatory"
+                ),
+            )
+            if decided_on_evidence
+            else []
+        )
         # ORDER MATTERS: after the exploratory demotion above, so `status` is the final one.
         stress = None
         if plan.report.judge_error_stress:

@@ -561,9 +561,10 @@ described in their pull requests.
   sample size. `report.md` adds a "Verdicts by independence profile" table under the mandatory
   claims when a claim has a sensitivity profile, and the HTML claim card lists the verdicts.
   The claim's status and the decision stay the primary profile's; a sensitivity verdict is
-  shown, never selected. Claims decided on a judge correction or the noisy-valid test have no
-  per-profile rows, and say so when their evidence has sensitivity profiles. Reports whose
-  plans declare no sensitivity profile gain only the primary row. See
+  shown, never selected. An exploratory claim's rows are all `INCONCLUSIVE`, like the claim,
+  whatever its `descriptive_status`. Claims decided on a judge correction or the noisy-valid
+  test have no per-profile rows, and say so when their evidence has sensitivity profiles.
+  Reports whose plans declare no sensitivity profile gain only the primary row. See
   [Verdicts by profile](docs/independence-profiles.md#verdicts-by-profile).
 
 ### Changed

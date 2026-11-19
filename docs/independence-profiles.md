@@ -71,8 +71,10 @@ Each claim in `report.json` lists its verdict under every profile in `profile_ve
 first row is the primary profile's and repeats the claim's status and bounds. Each sensitivity
 row decides the same `acceptable_upper` and `unacceptable_lower` on that profile's interval,
 computed with the primary interval's method, under the same integrity and confirmatory
-conditions. A row also gives the interval id, the independent block count and the effective
-sample size, so a reader can see how many independent units each verdict rests on.
+conditions. An exploratory claim certifies nothing, so all its rows are `INCONCLUSIVE`, like the
+claim; its `descriptive_status` says what the primary bounds would decide. A row also gives the
+interval id, the independent block count and the effective sample size, so a reader can see how
+many independent units each verdict rests on.
 
 The claim's `status`, and the report's decision, are always the primary profile's verdict.
 Sensitivity verdicts show how far that verdict depends on the primary independence assumption;

@@ -5,7 +5,7 @@ import io
 import json
 import shutil
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pandas as pd
 import pytest
@@ -4242,9 +4242,14 @@ def test_a_report_names_its_inputs_relative_to_the_plan(
 
 
 def _profiled_report(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, sensitivities: list[str]
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    sensitivities: list[str],
+    *,
+    intent: Literal["confirmatory", "exploratory"] = "confirmatory",
 ) -> SafetyReport:
     plan = load_plan(_write_inputs(tmp_path))
+    plan.analysis.intent = intent
     plan.report.include_decisions = True
     spec = plan.outputs.direct_mean_intervals
     spec.method = "weighted_kl_chernoff"
@@ -4295,6 +4300,38 @@ def test_claims_show_their_verdict_under_every_independence_profile(
     )
     html = (output / "report.html").read_text(encoding="utf-8")
     assert "profile_verdicts" in html
+
+
+def test_an_exploratory_claims_primary_profile_verdict_is_its_final_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The primary row repeats the claim's status, never the descriptive one.
+
+    The rows were built before the exploratory demotion, so an exploratory claim whose bounds
+    pass showed `PASS` under "A claim's status is its verdict under the primary profile" while
+    the claim itself was INCONCLUSIVE.
+    """
+    report = _profiled_report(monkeypatch, tmp_path, ["prompt"], intent="exploratory")
+
+    claim = report.claims[0]
+    # The bounds would pass under a confirmatory analysis; the claim certifies nothing.
+    assert (claim.status, claim.descriptive_status) == ("INCONCLUSIVE", "PASS")
+    assert [(v.independence_profile, v.role, v.status) for v in claim.profile_verdicts] == [
+        ("rollout", "primary", "INCONCLUSIVE"),
+        ("prompt", "sensitivity", "INCONCLUSIVE"),
+    ]
+    assert claim.profile_verdicts[0].status == claim.status
+    assert (claim.profile_verdicts[0].lower, claim.profile_verdicts[0].upper) == (
+        claim.lower,
+        claim.upper,
+    )
+    markdown = (report.write(tmp_path / "exploratory-report") / "report-full.md").read_text(
+        encoding="utf-8"
+    )
+    assert "| Mean fixed-design risk is acceptable | `rollout` | primary | `INCONCLUSIVE` " in (
+        markdown
+    )
+    assert "| `rollout` | primary | `PASS` " not in markdown
 
 
 def test_a_claim_without_sensitivity_profiles_has_only_its_primary_verdict(
