@@ -256,51 +256,108 @@ def _streams(
     return streams
 
 
-def anytime_bound_diagnostics(
+@dataclass(frozen=True)
+class ComputedAnytimeBound:
+    """The anytime-valid bound of one cohort and group, before it is reported."""
+
+    cohort: str
+    group_id: str
+    scope: str
+    alpha: float
+    bound: AnytimeUpperBound
+    details: dict[str, Any]
+
+
+def anytime_bounds(
     plan: AnalysisPlan,
     data: NormalizedData,
     diagnostics: list[Diagnostic],
     read_orders: OrderReader | None,
-) -> None:
-    """Add the anytime-valid bounds the plan's ``outputs.anytime_bounds`` asks for, if any.
+) -> list[ComputedAnytimeBound]:
+    """The anytime-valid bounds the plan's ``outputs.anytime_bounds`` asks for, if any.
 
-    Each cohort and group gets an ``ANYTIME_UPPER_BOUND`` diagnostic (INFO) that carries the
-    bound and, for each weighted-mean claim on it, whether the bound lies at or below the
-    claim's ``acceptable_upper``. A run without a recorded random order is refused with an
-    ``ANYTIME_ORDER_UNRECORDED`` error, and any other reason the stream cannot be built with
-    an ``ANYTIME_BOUND_INVALID`` error. ``read_orders`` reads the runs' recorded orders, and is
-    None for a source that records none.
+    A run without a recorded random order is refused with an ``ANYTIME_ORDER_UNRECORDED``
+    error, and any other reason the stream cannot be built with an ``ANYTIME_BOUND_INVALID``
+    error, each added to ``diagnostics``. ``read_orders`` reads the runs' recorded orders, and
+    is None for a source that records none. ``anytime_bound_diagnostics`` reports the bounds.
     """
 
     spec = _requested(plan)
     if spec is None:
-        return
+        return []
     group_ids = _bounded_groups(plan, spec)
     cohorts = sorted(plan.cohorts)
     family = next(item for item in plan.multiplicity.families if item.id == spec.family)
     alpha = family.alpha / (len(cohorts) * len(group_ids))
-    measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
+    computed: list[ComputedAnytimeBound] = []
     for stream in _streams(plan, spec, data, diagnostics, read_orders):
-        cohort, group_id, scope = stream.cohort, stream.group_id, stream.scope
         bound, details = _bound(plan, spec, data, stream, alpha)
+        computed.append(
+            ComputedAnytimeBound(
+                stream.cohort, stream.group_id, stream.scope, alpha, bound, details
+            )
+        )
+    return computed
+
+
+def _withheld(plan: AnalysisPlan, integrity_valid: bool) -> str | None:
+    """Why no claim may be certified by the bounds, as none may pass: None when they may."""
+
+    reasons = []
+    if not integrity_valid:
+        reasons.append("data integrity is invalid")
+    if plan.analysis.intent == "exploratory":
+        reasons.append("the analysis is exploratory")
+    return " and ".join(reasons) if reasons else None
+
+
+def anytime_bound_diagnostics(
+    plan: AnalysisPlan,
+    computed: list[ComputedAnytimeBound],
+    diagnostics: list[Diagnostic],
+    *,
+    integrity_valid: bool,
+) -> None:
+    """Report each computed bound as an ``ANYTIME_UPPER_BOUND`` diagnostic (INFO).
+
+    It carries the bound and, for each weighted-mean claim on its cohort and group, whether
+    the bound certifies the claim's ``acceptable_upper``: lies at or below it. A claim can
+    pass only in a confirmatory analysis whose integrity is valid, and the bound certifies
+    nothing elsewhere either: under invalid integrity (``integrity_valid`` false, as the
+    claims were decided) or exploratory intent, each claim's ``certified`` is None, and
+    ``certification_withheld`` says why.
+    """
+
+    measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
+    withheld = _withheld(plan, integrity_valid)
+    for item in computed:
+        bound, alpha = item.bound, item.alpha
         weighted = [
             claim
             for claim in plan.claims
-            if claim.cohort == cohort
-            and claim.group == group_id
+            if claim.cohort == item.cohort
+            and claim.group == item.group_id
             and measure_types.get(str(claim.measure)) == "weighted_mean"
         ]
         certified = [
-            claim.id for claim in weighted if bound.upper <= claim.acceptable_upper
+            claim.id
+            for claim in weighted
+            if withheld is None and bound.upper <= claim.acceptable_upper
         ]
         claims = [
             {
                 "claim_id": claim.id,
                 "acceptable_upper": claim.acceptable_upper,
-                "certified": claim.id in certified,
+                "certified": None if withheld is not None else claim.id in certified,
             }
             for claim in weighted
         ]
+        if withheld is not None:
+            outcome = f"; it certifies no claim, because {withheld}"
+        elif certified:
+            outcome = f"; at or below acceptable_upper for {', '.join(certified)}"
+        else:
+            outcome = ""
         diagnostics.append(
             Diagnostic(
                 code="ANYTIME_UPPER_BOUND",
@@ -309,19 +366,15 @@ def anytime_bound_diagnostics(
                     f"anytime-valid upper bound {bound.upper:.6g} on the weighted mean "
                     f"failure probability at one-sided alpha {alpha:.6g}, after "
                     f"{bound.draws} of {bound.population} prompts in the recorded order"
-                    + (
-                        f"; at or below acceptable_upper for {', '.join(certified)}"
-                        if certified
-                        else ""
-                    )
+                    + outcome
                     + ". It holds wherever the run stopped; claims keep their "
                     "fixed-horizon status"
                 ),
-                scope=scope,
+                scope=item.scope,
                 details={
-                    "cohort": cohort,
-                    "group": group_id,
-                    **details,
+                    "cohort": item.cohort,
+                    "group": item.group_id,
+                    **item.details,
                     "alpha": alpha,
                     "alpha_sequence": bound.alpha_sequence,
                     "alpha_population": bound.alpha_population,
@@ -331,6 +384,9 @@ def anytime_bound_diagnostics(
                     "sequence_kernel": bound.sequence_kernel,
                     "population_kernel": bound.population_kernel,
                     "claims": claims,
+                    **(
+                        {"certification_withheld": withheld} if withheld is not None else {}
+                    ),
                 },
             )
         )

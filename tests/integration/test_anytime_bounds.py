@@ -153,7 +153,11 @@ def logs(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
     }
 
 
-def _analyze(directory: Path, log: str, section: str = "") -> SafetyReport:
+def _analyze(
+    directory: Path, log: str, section: str = "", edit: Callable[[str], str] = str
+) -> SafetyReport:
+    """Analyse ``log`` under the plan with ``section`` in its outputs, edited by ``edit``."""
+
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "design.csv").write_text(
         "prompt_id,question_id,task_id,suite\n"
@@ -161,7 +165,9 @@ def _analyze(directory: Path, log: str, section: str = "") -> SafetyReport:
         encoding="utf-8",
     )
     plan = directory / "plan.yaml"
-    plan.write_text(PLAN.replace("@ANYTIME@\n", section).strip() + "\n", encoding="utf-8")
+    plan.write_text(
+        edit(PLAN.replace("@ANYTIME@\n", section)).strip() + "\n", encoding="utf-8"
+    )
     return analyze(plan=load_plan(plan), logs=log)
 
 
@@ -212,6 +218,41 @@ def test_the_bound_changes_no_claim(logs: dict[str, str], tmp_path: Path) -> Non
         claim.model_dump() for claim in plain.claims
     ]
     assert with_bound.decision == plain.decision
+
+
+@pytest.mark.parametrize(
+    ("edit", "why"),
+    [
+        (
+            lambda plan: plan.replace("intent: confirmatory", "intent: exploratory"),
+            "the analysis is exploratory",
+        ),
+        # The prompts after the stop have no rollouts, which a complete manifest forbids.
+        (
+            lambda plan: plan.replace(
+                "require_complete_manifest: false", "require_complete_manifest: true"
+            ),
+            "data integrity is invalid",
+        ),
+    ],
+    ids=["exploratory", "integrity-invalid"],
+)
+def test_the_bound_certifies_no_claim_where_no_claim_can_pass(
+    logs: dict[str, str], tmp_path: Path, edit: Callable[[str], str], why: str
+) -> None:
+    """A claim passes only in a confirmatory analysis of valid integrity; the bound, which
+    certifies the loose claim in one, certifies nothing in any other."""
+
+    report = _analyze(
+        tmp_path, logs["seeded"], SECTION.format(profile="prompt", family="gate"), edit
+    )
+
+    (diagnostic,) = _found(report, "ANYTIME_UPPER_BOUND")
+    assert diagnostic.details["upper"] <= 0.8
+    assert [item["certified"] for item in diagnostic.details["claims"]] == [None, None]
+    assert diagnostic.details["certification_withheld"] == why
+    assert f"it certifies no claim, because {why}" in diagnostic.message
+    assert "PASS" not in {claim.status for claim in report.claims}
 
 
 @pytest.mark.parametrize(

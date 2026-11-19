@@ -1129,7 +1129,9 @@ with the group's weights.
 `details` hold the run, its seed, `population` (the group's prompts), `draws` (prompts read),
 `complete_draws`, `rollouts_counted_as_failures`, the alpha, `estimate`, `upper`, and, for
 each weighted-mean claim on that cohort and group, whether `upper` is at or below its
-`acceptable_upper` (`certified`). The bound never changes a claim's status or the decision:
+`acceptable_upper` (`certified`). As a claim can pass only in a confirmatory analysis whose
+integrity is valid, `certified` is `null` under exploratory intent or invalid integrity, and
+`certification_withheld` says which. The bound never changes a claim's status or the decision:
 claims keep the status the fixed-horizon analysis gives them, which for a run stopped early is
 usually `INCONCLUSIVE`. Any other reason the bound cannot be computed is an
 `ANYTIME_BOUND_INVALID` error, and a plan the bound cannot serve (a sampled design, an unknown

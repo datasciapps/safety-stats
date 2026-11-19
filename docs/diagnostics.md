@@ -1249,7 +1249,8 @@ cannot be computed, or a result it qualifies.
   stopped it chose only when to stop, never which prompt ran next.
 - **Consequence:** The anytime-valid upper bound on the group's weighted mean failure probability,
   and whether it lies at or below each weighted-mean claim's acceptable_upper, are recorded beside
-  the claims, whose status does not change.
+  the claims, whose status does not change. Under exploratory intent or invalid integrity, where no
+  claim can pass, it certifies none.
 - **Remedy:** Nothing to change. Read the bound's certified flags for a run stopped early, since its
   claims keep their fixed-horizon status.
 

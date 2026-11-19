@@ -5,7 +5,11 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from inspect_safety_stats.analysis.anytime import OrderReader, anytime_bound_diagnostics
+from inspect_safety_stats.analysis.anytime import (
+    OrderReader,
+    anytime_bound_diagnostics,
+    anytime_bounds,
+)
 from inspect_safety_stats.analysis.core import (
     _add_judge_claims,
     _add_judge_configurations,
@@ -322,8 +326,13 @@ def analyze(
     judge_flip_diagnostic(resolved, data, diagnostics)
     # ORDER MATTERS as well: a run without a recorded order must be an error before integrity
     # is read.
-    anytime_bound_diagnostics(resolved, data, diagnostics, _order_reader(logs, source))
+    anytime = anytime_bounds(resolved, data, diagnostics, _order_reader(logs, source))
     core = _analysis_core(resolved, data, diagnostics, _policy_set_claims(application))
+    # ORDER MATTERS: after the core, so that the bounds certify a claim only where the
+    # integrity the claims were decided under lets a claim pass.
+    anytime_bound_diagnostics(
+        resolved, anytime, diagnostics, integrity_valid=core.integrity_status != "invalid"
+    )
     estimates = core.estimates
     tail_measure_precision(resolved, estimates, diagnostics)
     risks = core.risks
