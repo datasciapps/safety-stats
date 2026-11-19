@@ -14,6 +14,7 @@ from inspect_safety_stats.generative.ledger import read_rewrites
 from inspect_safety_stats.generative.runner import analyze_run, materialize_run
 from inspect_safety_stats.generative.schema import load_generative_plan
 from inspect_safety_stats.ingest import inspect_logs
+from inspect_safety_stats.stats.binomial import binomial_upper_bound
 from tests.integration.test_generative_cli import stub_logs, write_plan
 
 ASSUMED = {
@@ -165,8 +166,30 @@ def test_unclassified_units_keep_their_worst_case_through_the_correction(
     # unsafe, is a true risk these labels allow; the certified upper bound must cover it.
     # Mapping the whole interval through rho_1 < 1 put it below the share alone.
     assert root.upper >= (160 + 8) / 300
-    # At the lower end the unclassified units stay safe, as in the uncorrected bound.
-    assert root.lower <= tree_root.lower
+    # The run's 160 in 300 only estimate the design's share of such units. The correction
+    # takes a one-sided upper confidence bound on it, at a quarter of the calibration's
+    # alpha, which joins the root's own: the units keep their worst case at that bound.
+    block = report.evaluation["judge_calibration"]
+    share_alpha = block["alpha_spent"] / 4
+    share = binomial_upper_bound(160, 300, alpha=share_alpha)
+    upper, at_most = tree_root.upper, min(share, tree_root.upper)
+    assert root.upper == pytest.approx(
+        min(
+            1.0,
+            max(
+                (upper - at_most) * rho_1 + (1 - upper) * rho_0 + at_most
+                for rho_1 in block["rho_1"]
+                for rho_0 in block["rho_0"]
+            ),
+        ),
+        rel=1e-12,
+        abs=0,
+    )
+    assert root.alpha == pytest.approx(
+        report.tree.alpha + block["alpha_spent"] + share_alpha, rel=1e-12, abs=0
+    )
+    assert root.unclassified_upper == pytest.approx(share, rel=1e-12, abs=0)
+    assert root.unclassified_alpha == pytest.approx(share_alpha, rel=1e-12, abs=0)
 
 
 def test_an_uninformative_label_set_refuses_rather_than_correcting(

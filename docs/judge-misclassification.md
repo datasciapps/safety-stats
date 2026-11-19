@@ -281,15 +281,22 @@ a label, the calibration is refused.
 The corrected interval's simultaneous coverage is therefore
 
 \[
-1-\left(\alpha_{\text{interval}}+\alpha_{\text{spent}}\right),
+1-\left(\alpha_{\text{interval}}+\alpha_{\text{spent}}+\alpha_{s}\right),
 \]
 
-where \(\alpha_{\text{spent}}\) is the share the calibrations it used actually consumed, and
-is reported in the interval's `family_alpha`.
+where \(\alpha_{\text{spent}}\) is the share the calibrations it used actually consumed and
+\(\alpha_s=\alpha_{\text{spent}}/4\) is the alpha of the bound on the row's
+[unclassified share](#unclassified-rollouts), the level of each calibration endpoint. Their sum
+is reported in the interval's `family_alpha`. The share bound is added on top of the
+calibration's budget rather than carved out of it, so the calibration box is the same whether
+or not the run has unclassified rollouts. A row that holds
+[rollouts a policy classifies](#rollouts-a-policy-classifies), under a policy whose bounds
+complete the unclassified rollouts, needs no share bound, so its \(\alpha_s\) is 0.
 
-Each *endpoint* of the corrected interval uses the base interval's endpoint plus two of the four
-calibration endpoints, so a one-sided claim spends the base endpoint's alpha plus half the
-calibration budget; the interval records this as its directional coverage. Beside the exact box
+Each *endpoint* of the corrected interval uses the base interval's endpoint, two of the four
+calibration endpoints and the share bound, so a one-sided claim spends the base endpoint's
+alpha, half the calibration budget and \(\alpha_s\); the interval records this as its
+directional coverage. Beside the exact box
 of a weighted-mean row, the report shows a `judge_corrected_validated_delta` reference. Tail
 measures have none, since the reference propagates the weighted mean's variance, and nor does a
 row holding rollouts a plan policy classified ([Rollouts a policy
@@ -493,19 +500,79 @@ corrected row does. Generative plans do not offer this design.
 
 ### Unclassified rollouts
 
-A rollout the judge never classified, such as one with a missing score under
-`conservative_bounds`, belongs to neither judge stratum, so no label can say anything about
-it. The base bounds complete it as judge-safe at the lower end and judge-unsafe at the upper.
-The correction keeps that completion on the true-risk scale, truly safe at the lower bound and
-truly unsafe at the upper. Only the classified mass is mapped through \(\rho\):
+A rollout the judge never classified, such as one with a missing score, belongs to neither
+judge stratum, so no label can say anything about it. The correction keeps its worst case on
+the true-risk scale, truly safe at the lower bound and truly unsafe at the upper. Only the
+classified mass is mapped through \(\rho\):
 
 \[
 R^*=M\rho_1+(1-s-M)\rho_0+s\,u,\qquad u\in[0,1],
 \]
 
-where \(s\) is the row's weight on unclassified rollouts and \(M\in[L,\,U-s]\) its classified
+where \(s\) is the row's weight on unclassified rollouts and \(M\) its classified
 judge-unsafe mass. For a tail measure, \(s\) is the largest unclassified share of any prompt
-it weights. The corrected interval's assumptions state \(s\) whenever it is positive.
+it weights. The maximum and the top-k mean ignore weights, so a prompt of weight zero can set
+their bounds, and for them every prompt the row lists counts, that one included.
+
+**The share is a parameter.** \(s\) is the share in the population the row estimates, and the
+run's own share \(\hat s\) only estimates it. With \(\hat s\) in its place the corrected upper
+bound falls short of true risk by up to \((s-\hat s)(1-\rho_1)\) whenever the run saw fewer
+unclassified rollouts than the population holds, even when the judge-system interval and the
+calibration both cover. A run that saw none is no exception. The correction therefore uses a
+one-sided upper confidence bound \(s_U\) on the population share, under the row's own
+independence assumption:
+
+- a `weighted_mean` row or comparison whose primary interval assumes a declared independence
+  profile takes the KL/Chernoff bound over that profile's independent blocks, each block's
+  unclassified share a value in \([0,1]\);
+- any other fixed-design row takes an exact Clopper--Pearson bound on each prompt's share, at
+  the share alpha divided by the number of prompts the row counts, so that all hold together
+  by Bonferroni with no independence between prompts. A weighted mean sums them with the
+  row's weights, a tail measure takes the largest, and a weighted prompt with no rollout
+  counts as wholly unclassified;
+- a sampled design's frame share is not bounded, so it is taken at 1, even when the run has
+  no unclassified rollout. Its corrections are sensitivity analyses in every mode, and none
+  lowers the upper bound below the judge-system upper bound \(U\): with a share as large as
+  \(U\) allowed to be truly unsafe, the correction can no longer show that the judge's false
+  positives make true risk lower than judge-reported risk. Under `exclude` the corrected
+  interval is \([0,1]\).
+
+A `validated` calibration bounds the share at a quarter of its own alpha and adds that to the
+interval's budget ([above](#estimation-and-error-budget)). An `assumed` calibration bounds it
+at the row's own one-sided alpha. The corrected interval's assumptions state the run's share,
+the bound and how it was obtained.
+
+**What the judge-system bounds hold** decides where \(M\) can lie, and it depends on the
+plan's `missing` and `errors` policies:
+
+- `conservative_bounds` and `end_to_end` keep each unclassified rollout in its prompt's
+  bounds, judge-safe at the lower end and judge-unsafe at the upper, so \([L,U]\) covers \(M\)
+  and \(M+s\). `count_as_failure` classifies the rollout, and `block` blocks its prompt, so
+  every row that still has bounds saw none in this run and its bounds are the completing ones
+  too. The corrected bounds are the extremes over the box of
+  \(L\rho_1+(1-s-L)\rho_0\) with \(s=\min(s_U,1-L)\), and of
+  \((U-s)\rho_1+(1-U)\rho_0+s\) with \(s=\min(s_U,U)\).
+- `exclude` drops the rollout from its prompt's denominator, so \([L,U]\) covers only the
+  measure of each prompt's judge-unsafe rate among its classified rollouts, \(Q_i\). Prompt
+  \(i\) has true risk \((1-s_i)A_i+s_iu_i\), where \(A_i=Q_i\rho_1+(1-Q_i)\rho_0\) is its true
+  risk among classified rollouts, and the plain correction \([A_L,A_U]\) of \([L,U]\) bounds
+  the measure of the \(A_i\). How the share enters depends on what \(s_U\) bounds.
+  - A `weighted_mean` row or comparison arm, and every hierarchy node, bounds only the
+    prompts' mean share \(\sum_iw_is_i\), and that share may sit on the prompts with the
+    lowest classified rate or on those with the highest. Since
+    \(R^*=\sum_iw_iA_i+\sum_iw_is_i(u_i-A_i)\), the corrected interval is
+    \([A_L-s_U,\;A_U+s_U]\), clipped to \([0,1]\).
+  - A tail measure's row or arm bounds every prompt's share, so each prompt's risk lies in
+    \([(1-s_U)A_i,\;(1-s_U)A_i+s_U]\). The measure is monotone, positively homogeneous and
+    translation equivariant, so the corrected interval is \([(1-s_U)A_L,\;(1-s_U)A_U+s_U]\),
+    inside the additive one.
+
+  Mixing a mean share in the second way does not bound a weighted mean. Take two prompts of
+  weight one half and a judge that never errs. One prompt has 40% unclassified rollouts and
+  its classified ones are all safe, the other is fully classified at rate 0.5, so \(Q=0.25\)
+  and \(s=0.2\). If the unclassified rollouts are all unsafe, true risk is 0.45, where
+  \((1-s)A_U+s\) gives 0.4. Direct-mean intervals complete every rollout under any policy,
+  and this reading holds for them too, so a plan that excludes is always read this way.
 
 Mapping the whole completion through \(\rho_1\) would treat unclassified rollouts as if the
 labels described them. With 1,000 of 3,200 rollouts unclassified, that once gave a corrected
@@ -528,7 +595,7 @@ cannot be taken back out exactly.
 A corrected row that holds any such rollout, in either mode and on either arm of a comparison,
 is therefore corrected as if the judge made no error in the direction that would move the bound
 the wrong way: \(\rho_1\) may reach 1 at the upper bound and \(\rho_0\) fall to 0 at the lower,
-with no unclassified share taken out:
+with no unclassified share taken out when the bounds complete the unclassified rollouts:
 
 \[
 R^*\in\bigl[L\,\underline{\rho}_1,\; U+(1-U)\,\overline{\rho}_0\bigr].
@@ -540,7 +607,13 @@ rollouts, true risk is \(J_1\rho_1+J_0\rho_0+P+Vu\). The base bounds cover
 \(L\le J_1+P\) and \(J_1+P+V\le U\), and \(J_0\le1-U\) then, so true risk lies between
 \(\underline{\rho}_1(J_1+P)\ge\underline{\rho}_1L\) and
 \(J_1+P+V+\overline{\rho}_0J_0\le U+(1-U)\overline{\rho}_0\). The step holds prompt by prompt,
-so it holds for the tail measures too. A row holds such a rollout when any prompt it lists does,
+so it holds for the tail measures too. It needs bounds that complete the unclassified
+rollouts, as `conservative_bounds`, `end_to_end`, `count_as_failure` and `block` give, and
+there the share drops out of both ends: such a row bounds no
+[unclassified share](#unclassified-rollouts) and spends no alpha on one. Under
+`missing: exclude` or `errors: exclude` the bounds cover only the classified rollouts' rate,
+policy-classified ones included. The step then bounds that rate, and the bound on the
+population share moves it as on any other row under `exclude`, at that bound's alpha. A row holds such a rollout when any prompt it lists does,
 a prompt of weight zero included, since the maximum and the top-k mean ignore weights and such
 a prompt can set the row's bounds. The correction states which rollouts it covers in the
 interval's assumptions, and an INFO diagnostic, `JUDGE_CORRECTION_POLICY_CLASSIFIED`, names the
@@ -593,7 +666,9 @@ prevalence-dependent the two arms carry different boxes, and
 \]
 
 is not a function of \(\Delta\) alone. Risk ratios and relative reductions are derived from
-the same two corrected arm intervals. Each arm must be a row its own cohort's labels
+the same two corrected arm intervals. Each arm bounds its own
+[unclassified share](#unclassified-rollouts) under the comparison's independence assumption,
+and a validated correction adds both bounds' alphas to the budget. Each arm must be a row its own cohort's labels
 certify, as [below](#what-it-certifies); otherwise the corrected comparison is a sensitivity.
 
 In `assumed` mode the same recombination runs once per declared scenario, with the box the
@@ -616,9 +691,12 @@ The judge family alpha is divided equally among the **declared cohorts**, or, wh
 calibration is [scoped to groups](#scoping-the-calibration-to-groups), among the cohorts
 times the listed groups. A single risk row consumes one share; a comparison consumes two,
 those of its two arms' calibrations: each cohort's, or with `groups` each cohort's calibration
-for the comparison's group. A union over every corrected row therefore stays inside the
-declared family budget, and each interval reports the share it actually spent in
-`family_alpha`.
+for the comparison's group. A union over every calibration therefore stays inside the
+declared family budget. The bound on a row's own [unclassified share](#unclassified-rollouts)
+is spent on top of it: each corrected row adds a quarter of each share it uses and reports
+the total it actually spent in `family_alpha`. That total, and a claim's `alpha`, hold for
+the one row or claim, not jointly over rows. Each row bounds a different share, so a
+statement about several corrected rows at once must also add up their share bounds' alphas.
 
 ### What it assumes
 
@@ -643,7 +721,9 @@ rollouts. The two agree exactly only for a row that
 - gives every classified rollout the same weight, meaning a prompt's weight divided by the
   number of rollouts its rate is computed over is the same for every prompt; and
 - belongs to a fixed design. A sampled design estimates a frame mean, and labels on the drawn
-  items do not bound the judge's accuracy over the frame.
+  items do not bound the judge's accuracy over the frame. The root of a
+  [generative evaluation](#on-the-generative-path) is the one exception, for the reason given
+  there.
 
 Equal prompt weights with equal rollout counts satisfy the weighting condition. `nested_equal`
 weights over an unbalanced hierarchy usually do not. A correction also never supports more
@@ -747,8 +827,9 @@ Three consequences are recorded on every affected `ClaimResult`:
 
 - `method` becomes `validated_judge_misclassification_correction` and `evidence_refs` gains
   `interval:judge_corrected_validated`, so the interval actually used is identifiable;
-- `alpha` becomes the **union** of the claim family budget and the judge calibration budget,
-  because that is the claim's real error probability; and
+- `alpha` becomes the **union** of the claim family budget, the judge calibration budget and
+  the alpha of the bound on the unclassified share, because that is the claim's real error
+  probability; and
 - `estimate` is `null`. A calibration box yields a range of corrected point estimates rather
   than a single one, and the range is stated in the claim's reasons alongside both the
   corrected and uncorrected bounds.
@@ -890,11 +971,24 @@ false positives are bounded only by its own judged failures: the judged rate is
 The upper bound is the Rogan--Gladen inversion at its maximising corner \(Sp=1\). The inversion
 increases with \(Sp\) whenever \(q\le Se\), so declaring any specificity range that reaches one
 would give the same upper bound. When \(Se_L=0\), a judge that may catch nothing, the bound is
-\([0,1]\). A perfectly sensitive judge leaves the upper bound unchanged. Rollouts the judge
-never classified stay completed as failures. The bound is monotone and positively homogeneous
-in the prompt rates, so it applies to `weighted_mean`, `maximum`, `cvar` and `top_k_mean`, to
-every hierarchy node, but not to `entropic` or the threshold measures. If both bounds hold,
-coverage is at least one minus the sum of the row's own alpha and `sensitivity_alpha`.
+\([0,1]\). A perfectly sensitive judge leaves the upper bound unchanged.
+
+Rollouts the judge never classified need no separate term when the judge-system bounds
+complete them as failures: dividing by a sensitivity of at most one only enlarges that
+completion. Under `missing: exclude` or `errors: exclude` the bounds cover only the
+classified rollouts' rates \(q_i\), and every excluded rollout may be truly unsafe. Prompt
+\(i\) then has true risk \((1-s_i)\pi_i+s_iu_i\) with \(\pi_i\le\min(1,q_i/Se)\). With \(s_U\)
+the bound on the population share described under
+[Unclassified rollouts](#unclassified-rollouts), at the row's own one-sided alpha, the upper
+bound becomes \(\min(1,q_U/Se_L)+s_U\) for a `weighted_mean` row or hierarchy node, whose
+\(s_U\) bounds only the prompts' mean share, and \((1-s_U)\min(1,q_U/Se_L)+s_U\) for a tail
+measure, whose \(s_U\) bounds every prompt's share. Both are capped at one.
+
+The bound is monotone and positively homogeneous in the prompt rates, so it applies to
+`weighted_mean`, `maximum`, `cvar` and `top_k_mean`, to every hierarchy node, but not to
+`entropic` or the threshold measures. If both bounds hold, coverage is at least one minus the
+sum of the row's own alpha and `sensitivity_alpha`, and under an excluding policy also the
+share bound's alpha.
 
 ### What it assumes
 
@@ -957,18 +1051,48 @@ The derivation is in
 
 The same correction is available for
 [generative evaluations](generative-evaluation.md), where it is reported for the root, every
-hierarchy node and every cross-cutting slice. A `validated` calibration certifies only the
-root, and only when every unit carries the same weight in it, for the reason in
-[What it certifies](#what-it-certifies): the labels pool the cohort's classified units with
-equal weight, and \(\rho\) depends on prevalence, so a node or slice where the judge misses
-more failures than average would get a corrected upper bound below its true risk. A root with
-unequal unit weights, for example under `minimum_rewrites_per_stratum`, has the same problem.
-Every other corrected estimate is reported as a sensitivity analysis: `eligibility:
-diagnostic`, with a warning that names the reason.
+hierarchy node and every cross-cutting slice.
 
-Units with no judge verdict keep their completion through the correction, as on the
-fixed-design path: each estimate reports the design weight on them as
-`unclassified_share`, and only the classified mass is mapped through \(\rho\).
+**Why a validated calibration can certify the root.** A generative root estimates a mean
+over the distribution the declared procedure induces, as a sampled design estimates a frame
+mean, and [What it certifies](#what-it-certifies) refuses sampled designs. The generative
+root is the exception because its labels are drawn from the same distribution it estimates:
+
+- under `sampling.method: direct` every draw is an independent sample from the declared
+  procedure, and with `rollouts_per_rewrite: 1` each unit carries one binary judge verdict;
+- the human labels are a simple random sample of the classified units within each judge
+  verdict stratum, so within a stratum they are independent draws from the procedure's own
+  conditional distribution given that verdict, and estimate its \(\rho_1\) and \(\rho_0\)
+  directly; and
+- the root weights every unit equally, as the labels do, so the identity needs \(\rho\)
+  weighted exactly as the labels weight it.
+
+These are the assumptions the certified root rests on, beyond those of its own interval. A
+`proportional_stratified` root whose strata all get draw counts exactly proportional to their
+weights also weights every unit equally, and is certified on the same terms: its draws are
+independent within each stratum, and fixing each stratum's count at its share keeps the
+labels' mix of strata the one the root weights.
+
+The argument fails for any estimate that weights units unequally. A node or slice covers
+only part of the labelled units, and \(\rho\) depends on prevalence, so one where the judge
+misses more failures than average would get a corrected upper bound below its true risk. A
+root with unequal unit weights has the same problem: `minimum_rewrites_per_stratum`
+oversamples small strata, and a plain `proportional_stratified` root is usually unequal too,
+because the largest-remainder rounding of `total_rewrites` rarely gives every stratum a draw
+count exactly proportional to its weight. Every corrected estimate other than an equally
+weighted root is reported as a sensitivity analysis: `eligibility: diagnostic`, with a
+warning that names the reason.
+
+Units with no judge verdict keep their worst case through the correction, as on the
+fixed-design path: each estimate reports the design weight on them in the run as
+`unclassified_share`, and only the classified mass is mapped through \(\rho\). As there, the
+correction uses an upper confidence bound on the design's share, reported as
+`unclassified_upper` at one-sided level `unclassified_alpha`, computed with the estimate's own
+kernel: exact Clopper--Pearson on the unclassified count when every draw carries the same
+coefficient and one rollout, and otherwise the KL/Chernoff bound over the independent draws,
+each draw's unclassified share a value in \([0,1]\). A `validated` calibration bounds the share
+at a quarter of its alpha and adds that to the certifying estimate's `alpha`. An `assumed`
+one bounds it at the estimate's own upper alpha.
 
 Two further differences: human labels key on the sample identifier materialization wrote
 rather than an observation id, and comparisons are **not** corrected -- doing so would either

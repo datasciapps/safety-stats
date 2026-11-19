@@ -70,11 +70,13 @@ class ClaimEvidence(ResultModel):
 
     ``family_alpha`` is the interval's own: the error budget of the multiplicity family it was
     computed in. It is not the claim's error budget, ``bound.alpha``. For a judge correction it
-    is the share of the judge family's alpha that the correction spends. The calibration
-    divides that alpha equally over its scopes, one per declared cohort, or per cohort and
-    group when it is scoped to groups, so with several scopes it is a share, not the whole
-    budget; a comparison's correction spends the shares of the two it spans. A
-    judge-corrected claim's ``bound.alpha`` is the claim family's alpha plus this
+    is the share of the judge family's alpha that the correction spends, plus a quarter of that
+    share for the bound on the row's unclassified share when the correction needs one, spent on
+    top of the judge family's alpha. The calibration divides that alpha equally over its
+    scopes, one per declared cohort, or per cohort and group when it is scoped to groups, so
+    with several scopes it is a share, not the whole budget; a comparison's correction spends
+    the shares of the two it spans, and a quarter of each for the share bound of each arm that
+    needs one. A judge-corrected claim's ``bound.alpha`` is the claim family's alpha plus this
     ``family_alpha``.
     """
 

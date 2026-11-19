@@ -8,6 +8,11 @@ from typing import Any
 
 from inspect_safety_stats.analysis.direct_mean import _HierarchyNode
 from inspect_safety_stats.analysis.estimates import _bounds_carry_unknown_outcome
+from inspect_safety_stats.analysis.unclassified_share import (
+    UnclassifiedShare,
+    unclassified_assumption,
+    unclassified_share_text,
+)
 from inspect_safety_stats.config.loader import report_message
 from inspect_safety_stats.config.models import (
     AnalysisPlan,
@@ -206,33 +211,6 @@ def pooled_calibration_gap(
     return None
 
 
-def _unclassified_share(
-    population: dict[str, PromptRollouts], weights: dict[str, float], measure_type: str
-) -> float:
-    """The weight a row's bounds put on rollouts they complete as unknown outcomes.
-
-    A tail measure can rest on a single prompt, so for one this is the largest share in
-    any prompt it weights. Each prompt takes the larger of its two counts' shares: they
-    differ only under ``exclude``, which direct-mean intervals complete and prompt bounds
-    drop, and the larger share is conservative for either.
-    """
-
-    shares: list[tuple[float, float]] = []
-    for prompt_id, weight in weights.items():
-        item = population.get(prompt_id)
-        if weight <= 0 or item is None or item.attempted == 0:
-            continue
-        share = (item.attempted - item.classified) / item.attempted
-        if item.bounded:
-            share = max(share, (item.bounded - item.classified) / item.bounded)
-        shares.append((weight, share))
-    if not shares:
-        return 0.0
-    if measure_type == "weighted_mean":
-        return min(1.0, sum(weight * share for weight, share in shares))
-    return max(share for _, share in shares)
-
-
 def _policy_rollouts(
     population: Mapping[str, PromptRollouts], weights: Mapping[str, float]
 ) -> tuple[int, int]:
@@ -280,20 +258,32 @@ def _policy_free_box(calibration: JudgeCalibration) -> JudgeCalibration:
     share of policy-classified and unclassified rollouts, since L <= P(J1) + P(policy failure)
     and P(J1) + P(policy failure) + P(unclassified) <= U. Each is monotone, translation
     equivariant and positively homogeneous in the prompt rates, so it bounds the tail
-    measures too. The row's unclassified rollouts need no share of their own.
+    measures too. Over this box a share of unclassified rollouts that the bounds complete
+    drops out of both ends, so it needs no bound of its own. Under ``exclude`` the bounds
+    cover only the classified rollouts' rate, and the bound on the population share still
+    moves it (see ``correct_judge_risk``).
     """
 
     return replace(calibration, rho_1_upper=1.0, rho_0_lower=0.0)
 
 
-def _policy_assumption(safe: int, failures: int) -> str:
+def _policy_assumption(safe: int, failures: int, excluded: bool = False) -> str:
+    """What a row holding policy-classified rollouts assumes; ``excluded`` when its bounds
+    leave its unclassified rollouts out, so that their share is still bounded."""
+
     return (
         f"{safe + failures} of the row's rollouts were classified by a plan policy, not by the "
         f"judge ({safe} counted safe, {failures} counted as failures), and the row's bounds do "
         "not carry their share. So the correction credits the judge with no false alarm at the "
         "upper bound and no missed failure at the lower: P(truly unsafe | judge said unsafe) "
-        "may reach 1 and P(truly unsafe | judge said safe) fall to 0. That holds whatever the "
-        "share of policy-classified and unclassified rollouts."
+        "may reach 1 and P(truly unsafe | judge said safe) fall to 0. "
+        + (
+            "That holds whatever the share of policy-classified rollouts. The plan's missing "
+            "or error policy leaves the unclassified rollouts out of the row's bounds, so the "
+            "bound on their share still moves the corrected interval."
+            if excluded
+            else "That holds whatever the share of policy-classified and unclassified rollouts."
+        )
     )
 
 
@@ -331,14 +321,6 @@ def _policy_absent_assumption() -> str:
         "the box as given. That assumes the population the rollouts are drawn from holds none "
         "either: there, a policy failure read as a judge verdict would lower the upper bound, "
         "and a policy-safe rollout raise the lower."
-    )
-
-
-def _unclassified_assumption(share: float) -> str:
-    return (
-        f"{share:.6g} of the row's weight rests on unclassified rollouts. They keep their "
-        "completion on the true-risk scale, truly safe at the lower bound and truly unsafe at "
-        "the upper, and only the classified mass is mapped through rho."
     )
 
 
@@ -778,7 +760,7 @@ def _judge_corrected_interval(
     family_id: str | None,
     judge_alpha: float | None,
     gap: str | None = None,
-    unclassified_share: float = 0.0,
+    unclassified: UnclassifiedShare | None = None,
     scoped_group: str | None = None,
     scoped_groups: list[str] | None = None,
     stratified: bool = False,
@@ -789,19 +771,28 @@ def _judge_corrected_interval(
     """Correct one row; ``scoped_group`` names a validated calibration's group, and
     ``scoped_groups`` the groups an assumed calibration is scoped to. ``per_cohort`` says
     that the assumed scenario declares boxes by cohort, so ``calibration`` is the row's
-    cohort's box. ``policy_classified`` counts the row's rollouts a plan policy counted safe
-    and as failures; a row holding any is corrected over ``_policy_free_box``. A row holding
-    none states what that assumes when ``policy_possible`` (see ``_policy_cohorts``)."""
+    cohort's box. ``unclassified`` bounds the row's share of unclassified rollouts; without
+    it the row is taken to have none. A measured calibration adds the bound's alpha to its
+    own. ``policy_classified`` counts the row's rollouts a plan policy counted safe and as
+    failures; a row holding any is corrected over ``_policy_free_box``. A row holding none
+    states what that assumes when ``policy_possible`` (see ``_policy_cohorts``)."""
 
     if result.lower is None or result.upper is None:
         return None
     by_policy = any(policy_classified)
+    if by_policy and unclassified is not None and unclassified.in_bounds:
+        # Over the policy-free box a share the bounds complete drops out of both ends, so the
+        # row needs no bound on it and spends no alpha on one. A share the bounds exclude
+        # still moves the corrected rate, so it keeps its bound.
+        unclassified = None
     corrected = correct_judge_risk(
         observed_lower=result.lower,
         observed_upper=result.upper,
         observed_estimate=result.estimate,
         calibration=_policy_free_box(calibration) if by_policy else calibration,
-        unclassified_share=0.0 if by_policy else unclassified_share,
+        unclassified_share=unclassified.upper if unclassified is not None else 0.0,
+        unclassified_in_bounds=unclassified.in_bounds if unclassified is not None else True,
+        unclassified_share_per_prompt=unclassified is not None and unclassified.per_prompt,
     )
     validated = calibration.source == "validated"
     # Measured accuracies certify only a row they were measured for, and never more than
@@ -811,6 +802,10 @@ def _judge_corrected_interval(
     base = next((item for item in result.intervals if item.role == "primary"), None)
     base_alpha = base.family_alpha if base is not None else None
     spent = calibration.alpha if calibration.alpha is not None else judge_alpha
+    # The share bound is one more endpoint of a measured judge model, so its alpha joins
+    # the calibration's at both ends.
+    if spent is not None and unclassified is not None:
+        spent += unclassified.alpha
     simultaneous = (
         1 - (base_alpha + spent)
         if certified and base_alpha is not None and spent is not None
@@ -824,8 +819,9 @@ def _judge_corrected_interval(
         base_directional = (
             1 - base.simultaneous_coverage if base.simultaneous_coverage is not None else None
         )
+    share_spent = unclassified.alpha if unclassified is not None else 0.0
     one_sided = (
-        1 - (base_directional + spent / 2)
+        1 - (base_directional + (spent - share_spent) / 2 + share_spent)
         if certified and base_directional is not None and spent is not None
         else None
     )
@@ -859,8 +855,14 @@ def _judge_corrected_interval(
                     f"The fine strata weight back to every classified rollout of {population} "
                     "equally, and so does this row, so they measure the judge's accuracy for "
                     "its estimand.",
-                    "Coverage is the union bound over the underlying interval, every "
-                    "calibration count bound and the four Clopper-Pearson bounds.",
+                    (
+                        "Coverage is the union bound over the underlying interval, every "
+                        "calibration count bound, the four Clopper-Pearson bounds and the "
+                        "bound on the unclassified share."
+                        if unclassified is not None
+                        else "Coverage is the union bound over the underlying interval, every "
+                        "calibration count bound and the four Clopper-Pearson bounds."
+                    ),
                 ]
             )
     elif validated:
@@ -930,8 +932,13 @@ def _judge_corrected_interval(
                 [
                     f"{labels}, and so "
                     "does this row, so they measure the judge's accuracy for its estimand.",
-                    "Coverage is the union bound over the underlying interval and the four "
-                    "calibration endpoints.",
+                    (
+                        "Coverage is the union bound over the underlying interval, the four "
+                        "calibration endpoints and the bound on the unclassified share."
+                        if unclassified is not None
+                        else "Coverage is the union bound over the underlying interval and the "
+                        "four calibration endpoints."
+                    ),
                 ]
             )
     else:
@@ -955,12 +962,13 @@ def _judge_corrected_interval(
             ]
         )
     if by_policy:
-        assumptions.append(_policy_assumption(*policy_classified))
-    else:
-        if policy_possible:
-            assumptions.append(_policy_absent_assumption())
-        if unclassified_share > 0:
-            assumptions.append(_unclassified_assumption(unclassified_share))
+        assumptions.append(
+            _policy_assumption(*policy_classified, excluded=unclassified is not None)
+        )
+    elif policy_possible:
+        assumptions.append(_policy_absent_assumption())
+    if unclassified is not None and unclassified.upper > 0:
+        assumptions.append(unclassified_assumption(unclassified))
     assumptions.append("The underlying judge-system interval retains its own stated guarantee.")
     warnings: list[str] = []
     if validated and gap is not None:
@@ -1009,20 +1017,48 @@ def _transported_judge_interval(
     result: GroupRiskResult | HierarchyRiskResult,
     published: PublishedValidationSetSpec,
     sensitivity_lower: float,
+    unclassified: UnclassifiedShare | None = None,
 ) -> RiskIntervalResult | None:
     """A true-risk sensitivity from a judge sensitivity measured on a published set.
 
     Experimental. Only the sensitivity is transported; the false-positive rate is bounded
-    by the run's own judged rate, so the interval's lower end is zero.
+    by the run's own judged rate, so the interval's lower end is zero. When the row's bounds
+    drop some unclassified rollouts (``unclassified.in_bounds`` false), the bound on their
+    share enters the upper end at its worst case, since every one of them may be truly
+    unsafe: added in full when it bounds only the prompts' weighted mean, and mixed in when
+    it bounds every prompt's share.
     """
 
     if result.upper is None:
         return None
+    added = unclassified is not None and not unclassified.in_bounds
     corrected = transport_judge_risk(
         observed_upper=result.upper,
         observed_estimate=result.estimate,
         sensitivity_lower=sensitivity_lower,
+        unclassified_share=unclassified.upper if unclassified is not None and added else 0.0,
+        unclassified_share_per_prompt=unclassified is not None and unclassified.per_prompt,
     )
+    completion = (
+        "The upper bound is the judge-system upper bound divided by the sensitivity bound; "
+        "unclassified rollouts stay completed as failures."
+    )
+    if unclassified is not None and added:
+        how = (
+            "weights that by one minus the unclassified share, at most "
+            f"{unclassified.upper:.6g} on every prompt, then adds the share"
+            if unclassified.per_prompt
+            else f"adds the unclassified share, at most {unclassified.upper:.6g}, in full: "
+            "the bound holds only for the prompts' weighted mean, and the share may sit on "
+            "the prompts with the lowest rates"
+        )
+        completion = (
+            "The plan's missing or error policy excludes unclassified rollouts from the "
+            "judge-system bounds, which then cover only the classified rollouts' rate. The "
+            "upper bound divides that rate's upper bound by the sensitivity bound for the "
+            f"classified rollouts and {how}. Every unclassified rollout is taken at its worst "
+            "case, truly unsafe. " + unclassified_share_text(unclassified)
+        )
     return RiskIntervalResult(
         interval_id="judge_corrected_transported",
         lower=corrected.lower,
@@ -1057,8 +1093,7 @@ def _transported_judge_interval(
             "The published set's false-positive rate is not transported. This run's false "
             "positives are bounded only by its own judged failures, so every judged failure "
             "may be a false positive and the lower bound is zero.",
-            "The upper bound is the judge-system upper bound divided by the sensitivity "
-            "bound; unclassified rollouts stay completed as failures.",
+            completion,
             "Human adjudication on the published set is treated as ground truth.",
         ],
         eligibility="diagnostic",

@@ -352,9 +352,13 @@ diagnostic Lang-Reiczigel limits beside the exact box; tail measures, hierarchy 
 that hold rollouts a plan policy classified do not.
 Threshold claims whose evidence carries a validated correction are decided from the corrected
 bounds; an `assumed` correction never affects a claim. One calibration is estimated per cohort
-by exact Clopper-Pearson bounds within each judge stratum, and the corrected interval's coverage
-is the union of its own family budget and the judge family budget. A plan declares one mode:
-`assumed`, `validated` or `transported` (below).
+by exact Clopper-Pearson bounds within each judge stratum. The corrected interval's coverage is
+the union of three budgets: its own family's, the judge family's, and that of the bound on its
+[unclassified share](judge-misclassification.md#unclassified-rollouts). The last is a quarter
+of the calibration's share of the judge family budget, and is spent on top of it; a row that
+needs no share bound, such as one holding rollouts a plan policy classified under a policy
+whose bounds complete the unclassified ones, spends none. A plan
+declares one mode: `assumed`, `validated` or `transported` (below).
 
 `groups` scopes an `assumed` or `validated` calibration to declared groups, for a cohort that
 holds several benchmarks whose judge accuracies differ:
@@ -1495,11 +1499,15 @@ the report holds no such result or interval.
 
 `evidence.family_alpha` is the interval's own: the budget of the multiplicity family it was
 computed in, not the claim's error budget, which is `bound.alpha`. For a judge correction it is
-the share of the judge family's alpha that the correction spends. The calibration divides that
-alpha equally over its scopes, one per declared cohort, or per cohort and group when it is
-scoped to groups, so with several scopes a correction's `family_alpha` is a share, not the
-whole budget. A comparison's correction spends the shares of the two scopes it spans. A
-judge-corrected claim's `bound.alpha` is the claim family's alpha plus its `family_alpha`.
+the share of the judge family's alpha that the correction spends, plus a quarter of that share
+for the bound on the row's
+[unclassified share](judge-misclassification.md#unclassified-rollouts) when the correction
+needs one, which is spent on top of the judge family's alpha. The calibration divides that alpha equally over its scopes, one
+per declared cohort, or per cohort and group when it is scoped to groups, so with several
+scopes a correction's `family_alpha` is a share, not the whole budget. A comparison's
+correction spends the shares of the two scopes it spans, and a quarter of each for the share
+bound of each arm that needs one. A judge-corrected claim's `bound.alpha` is the claim family's alpha plus
+its `family_alpha`.
 
 A claim can be `INCONCLUSIVE` without a decision on its bound, and its record still carries the
 bound `report.json` gives it. Two such cases, among others:

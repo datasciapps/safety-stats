@@ -486,7 +486,10 @@ JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper
 JudgeStratumCounts(labelled, truly_unsafe, stratum_size)
 estimate_judge_calibration(*, scenario_id, unsafe_stratum, safe_stratum, alpha)
 completion_warning(calibration)   # message naming completed strata, or None
-correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration)
+correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration,
+                   unclassified_share=0.0,   # upper bound on the population share
+                   unclassified_in_bounds=True,   # False: bounds cover the classified rate
+                   unclassified_share_per_prompt=False)   # True: the share bounds every prompt
 delta_method_corrected_risk(*, observed_estimate, observed_variance, unsafe_stratum,
                             safe_stratum, alpha)   # asymptotic reference, diagnostic
 TruthStratumCounts(labelled, judge_positive)
@@ -515,7 +518,13 @@ agreement statistics are descriptive diagnostics only.
 Maps a judge-system risk interval onto the true-risk scale via
 `R* = R * rho_1 + (1 - R) * rho_0`. The identity is multilinear, so the returned bounds are
 the exact extrema over the declared box. It applies unchanged to any positively homogeneous,
-translation-equivariant risk measure. `estimate_judge_calibration` derives the same box from
+translation-equivariant risk measure. Rollouts with no judge verdict keep their worst case, and
+`unclassified_share` must bound their share in the population, not just in the run. When the
+bounds cover only the classified rate, a bound on the prompts' mean share moves each end by
+the share, and only a bound on every prompt's share (`unclassified_share_per_prompt=True`, as
+for a tail measure) may be mixed in; see
+[Unclassified rollouts](judge-misclassification.md#unclassified-rollouts).
+`estimate_judge_calibration` derives the same box from
 human labels by exact Clopper-Pearson bounds within each judge stratum. See
 [Judge misclassification](judge-misclassification.md).
 

@@ -10,6 +10,8 @@ from typing import Any
 
 import pytest
 
+from inspect_safety_stats.stats import JudgeCalibration, correct_judge_risk
+from inspect_safety_stats.stats.binomial import binomial_upper_bound
 from tests.diagnostic_codes.harness import (
     Case,
     Inputs,
@@ -134,12 +136,13 @@ def _uninformative(triggered: Outcome, control: Outcome) -> None:
 
 def _corrected_claims(triggered: Outcome, control: Outcome) -> None:
     # Adjusted: the claim is decided on the corrected bounds, at the union of the claim's and
-    # the calibration's budgets, with no point estimate.
+    # the calibration's budgets and the share bound's quarter of the latter, with no point
+    # estimate.
     decided, plain = claim(triggered), claim(control)
     assert decided.method == "validated_judge_misclassification_correction"
     assert plain.method != decided.method
     assert decided.estimate is None and plain.estimate is not None
-    assert decided.alpha == pytest.approx(0.1, abs=1e-12)
+    assert decided.alpha == pytest.approx(0.1 + 0.05 / 4, abs=1e-12)
     assert plain.alpha == pytest.approx(0.05, abs=1e-12)
     corrected = _interval(triggered, CORRECTED)
     assert (decided.lower, decided.upper) == (corrected.lower, corrected.upper)
@@ -612,21 +615,41 @@ def assumed(inputs: Inputs, _: list[Any] | None = None) -> None:
     }
 
 
+def declared_correction(row: Any, prompts: int) -> Any:
+    """The declared box's correction of a judged row of ``prompts`` prompts, none of whose
+    rollouts went unclassified.
+
+    The population may still hold unclassified rollouts. With no independence profile, each
+    prompt's share takes an exact Clopper-Pearson bound at the row's one-sided alpha over its
+    prompts, 1 - (alpha / prompts) ** (1 / ROLLOUTS) when none was seen, and the weighted sum
+    of those equal bounds is the row's.
+    """
+
+    primary = next(item for item in row.intervals if item.role == "primary")
+    assert primary.independence_profile is None
+    share = binomial_upper_bound(0, ROLLOUTS, alpha=primary.directional_family_alpha / prompts)
+    return correct_judge_risk(
+        observed_lower=row.lower,
+        observed_upper=row.upper,
+        observed_estimate=row.estimate,
+        calibration=JudgeCalibration("declared", *RHO_1, *RHO_0),
+        unclassified_share=share,
+    )
+
+
 def _policy_free(triggered: Outcome, control: Outcome) -> None:
     # Adjusted: the row holding the blocked rollout is corrected as if rho_1 could reach 1 and
-    # rho_0 fall to 0, so neither end credits the judge with an error; the control's row is
-    # corrected over the declared box.
+    # rho_0 fall to 0, so neither end credits the judge with an error, and the share of
+    # unclassified rollouts drops out; the control's row is corrected over the declared box,
+    # with the bound on that share.
     widened, row = _interval(triggered, DECLARED), _row(triggered)
     assert widened.lower == pytest.approx(row.lower * RHO_1[0], abs=1e-12)
     assert widened.upper == pytest.approx(row.upper + (1 - row.upper) * RHO_0[1], abs=1e-12)
     assert any("classified by a plan policy" in item for item in widened.assumptions)
     plain, row = _interval(control, DECLARED), _row(control)
-    assert plain.lower == pytest.approx(
-        row.lower * RHO_1[0] + (1 - row.lower) * RHO_0[0], abs=1e-12
-    )
-    assert plain.upper == pytest.approx(
-        row.upper * RHO_1[1] + (1 - row.upper) * RHO_0[1], abs=1e-12
-    )
+    expected = declared_correction(row, prompts=2)
+    assert plain.lower == pytest.approx(expected.lower, abs=1e-12)
+    assert plain.upper == pytest.approx(expected.upper, abs=1e-12)
     (found,) = triggered.with_code("JUDGE_CORRECTION_POLICY_CLASSIFIED")
     assert found.details == {"groups": ["all"], "policy_safe": 1, "policy_failures": 0}
 

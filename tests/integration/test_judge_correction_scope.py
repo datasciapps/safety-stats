@@ -293,10 +293,11 @@ def test_a_pooled_calibration_never_certifies_a_row_it_does_not_measure(
     report = _analyze(tmp_path, monkeypatch)
 
     # The pooled correction understates every true risk: all 0.15, hard 0.30, worst 0.30.
-    # Each corrected upper bound clears its claim's threshold, so these claims used to PASS.
+    # The hard and worst corrected upper bounds clear their claims' thresholds, so those
+    # claims used to PASS.
     mean_all = _risk(report, "all", "mean")
     corrected = _corrected(mean_all)
-    assert corrected.upper is not None and corrected.upper < 0.12 < 0.15
+    assert corrected.upper is not None and corrected.upper < 0.15
     for group, measure, threshold in [("hard", "mean", 0.25), ("all", "worst", 0.25)]:
         interval = _corrected(_risk(report, group, measure))
         assert interval.upper is not None and interval.upper < threshold < 0.30
@@ -488,7 +489,8 @@ def test_a_group_scoped_calibration_splits_the_judge_budget_over_cohorts_and_gro
     corrected = _corrected(comparison)
     assert corrected.eligibility == "certifying"
     assert corrected.warnings == []
-    assert corrected.family_alpha == pytest.approx(0.025, abs=0)
+    # Each arm also bounds its unclassified share at a quarter of its calibration's alpha.
+    assert corrected.family_alpha == pytest.approx(2 * (0.0125 + 0.0125 / 4), rel=1e-12, abs=0)
     assert any("calibration for group 'hard'" in item for item in corrected.assumptions)
 
 

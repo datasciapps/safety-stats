@@ -389,10 +389,11 @@ def test_a_claim_the_validated_calibration_cannot_correct_is_flagged(tmp_path: P
     assert mean["judge_corrected"] is True
     assert mean["judge_correction_unavailable"] is False
     # The correction's family_alpha is the calibration's budget (the judge family's 0.1, with
-    # one cohort calibrated), not the claim's: the claim's alpha adds the gate family's 0.05.
+    # one cohort calibrated) plus a quarter of it for the bound on the unclassified share, not
+    # the claim's: the claim's alpha adds the gate family's 0.05.
     assert mean["evidence"]["interval_id"] == "judge_corrected_validated"
-    assert mean["evidence"]["family_alpha"] == pytest.approx(0.1, rel=1e-12, abs=0)
-    assert mean["bound"]["alpha"] == pytest.approx(0.15, rel=1e-12, abs=0)
+    assert mean["evidence"]["family_alpha"] == pytest.approx(0.125, rel=1e-12, abs=0)
+    assert mean["bound"]["alpha"] == pytest.approx(0.175, rel=1e-12, abs=0)
     assert mean["reasons"] == claims["mean_safe"].reasons
     assert round_trip_differences(output) == []
 
