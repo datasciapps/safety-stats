@@ -11,7 +11,12 @@ from inspect_safety_stats.stats import (
     newcombe_paired_interval_partial,
     paired,
 )
-from inspect_safety_stats.stats.paired import _newcombe_bounds_from_counts, partial_pairing
+from inspect_safety_stats.stats.clusters import ClusterBootstrapResult, paired_cluster_bootstrap
+from inspect_safety_stats.stats.paired import (
+    _newcombe_bounds_from_counts,
+    favourable_and_adverse_completions,
+    partial_pairing,
+)
 
 
 def test_exact_mcnemar_counts_and_direction() -> None:
@@ -203,6 +208,34 @@ def test_partial_bounds_are_attained_by_some_completion() -> None:
     interval = newcombe_paired_interval_partial(candidate, baseline)
     assert interval.lower == pytest.approx(min(i.lower for i in intervals), rel=1e-12, abs=1e-15)
     assert interval.upper == pytest.approx(max(i.upper for i in intervals), rel=1e-12, abs=1e-15)
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_extreme_completions_bound_the_cluster_bootstrap_of_every_completion(seed: int) -> None:
+    # fixed_cluster_bootstrap takes its lower bound from the favourable completion and its upper
+    # bound from the adverse one. Its resampling draws do not depend on the outcomes, and every
+    # replicate mean grows with each pair's difference, so no completion goes beyond either.
+    rng = random.Random(seed)
+    size = rng.randint(2, 8)
+    choices: list[bool | None] = [True, False, None]
+    candidate = rng.choices(choices, weights=[0.35, 0.4, 0.25], k=size)
+    baseline = rng.choices(choices, weights=[0.35, 0.4, 0.25], k=size)
+    clusters = [index if index < 2 else rng.randint(0, 2) for index in range(size)]
+
+    def bootstrap(cand: list[bool], base: list[bool]) -> ClusterBootstrapResult:
+        differences = [float(c) - float(b) for c, b in zip(cand, base, strict=True)]
+        return paired_cluster_bootstrap(differences, clusters, replicates=100, seed=seed)
+
+    favourable, adverse = (
+        bootstrap(*completion)
+        for completion in favourable_and_adverse_completions(candidate, baseline)
+    )
+    for cand, base in _completions(candidate, baseline):
+        completed = bootstrap(cand, base)
+        assert favourable.estimate <= completed.estimate <= adverse.estimate
+        # np.quantile interpolates, which can round by an ulp.
+        assert favourable.lower <= completed.lower + 1e-12
+        assert completed.upper <= adverse.upper + 1e-12
 
 
 def test_partial_outcomes_must_be_booleans_or_none() -> None:
