@@ -17,7 +17,11 @@ import pandas as pd
 import pytest
 
 from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.config.models import IndependenceProfileSpec
+from inspect_safety_stats.config.models import (
+    AnalysisPlan,
+    IndependenceProfileSpec,
+    RiskMeasureSpec,
+)
 from inspect_safety_stats.ingest.manifest import load_manifest, resolve_groups
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import RiskIntervalResult, SafetyReport
@@ -87,13 +91,15 @@ def test_variant_weights_split_each_base_prompt_not_each_variant() -> None:
         assert cyber[f"cyber-credentials-{variant}"] == pytest.approx(1 / 6, rel=1e-12, abs=0)
 
 
-def _analyze(monkeypatch: pytest.MonkeyPatch, *, coupled: bool) -> SafetyReport:
+def _analyze(
+    monkeypatch: pytest.MonkeyPatch, *, coupled: bool, plan: AnalysisPlan | None = None
+) -> SafetyReport:
     """The template on synthetic logs in which each credential-theft wording fails 5 of 20 times.
 
     ``coupled``: every wording fails on epochs 1-5, so the wordings share each epoch's outcome,
     as they would through a seed, cache, sandbox or batch shared by the same epoch.
     Otherwise the i-th wording fails on epochs 5i+1 to 5i+5: the same failures per wording,
-    on different epochs.
+    on different epochs. ``plan`` replaces the template plan.
     """
     manifest = _manifest()
     eval_frame = pd.DataFrame(
@@ -143,7 +149,7 @@ def _analyze(monkeypatch: pytest.MonkeyPatch, *, coupled: bool) -> SafetyReport:
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, **_: sample_frame,
     )
-    return analyze(plan=PLAN, logs="ignored")
+    return analyze(plan=PLAN if plan is None else plan, logs="ignored")
 
 
 Target = tuple[str, tuple[tuple[str, str], ...]]
@@ -267,6 +273,80 @@ def test_per_epoch_blocks_keep_a_bound_where_per_base_prompt_blocks_reach_one(
             assert rollout is not None and rollout < question_repeat, target
 
 
+def test_hierarchy_nodes_divide_the_alpha_of_the_group_intervals(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Under flat_bonferroni each node is one more target of the direct-mean family.
+
+    The family's alpha of 0.05 is two-sided, 0.025 for each direction. The template's two
+    group roots and eight nodes divide it by ten, the roots alone by two, as
+    docs/plan-reference.md says.
+    """
+    plan = load_plan(PLAN)
+    direct = plan.outputs.direct_mean_intervals
+    assert direct.hierarchy_calibration == "flat_bonferroni"
+    roots_spec = direct.model_copy(update={"hierarchy_nodes": False})
+    without_nodes = plan.model_copy(
+        update={"outputs": plan.outputs.model_copy(update={"direct_mean_intervals": roots_spec})}
+    )
+    with_nodes = _targets(_analyze(monkeypatch, coupled=True))
+    roots_only = _targets(_analyze(monkeypatch, coupled=True, plan=without_nodes))
+    assert len(with_nodes) == 10
+    assert set(roots_only) == {(group, ()) for group in EXPECTED_WEIGHTS}
+    for targets, alpha in ((with_nodes, 0.025 / 10), (roots_only, 0.025 / 2)):
+        for target, intervals in targets.items():
+            for interval in intervals:
+                if interval.independence_profile is not None:
+                    assert interval.alpha_upper == pytest.approx(alpha, rel=1e-12, abs=0), target
+    # So the nodes widen the primary interval a claim is decided on.
+    for root, intervals in roots_only.items():
+        alone = next(interval for interval in intervals if interval.role == "primary")
+        shared = next(interval for interval in with_nodes[root] if interval.role == "primary")
+        assert alone.upper is not None and shared.upper is not None
+        assert alone.upper < shared.upper, root
+
+
+def test_maximum_and_top_k_mean_count_wordings_not_base_prompts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The two measures docs/plan-reference.md says count wordings.
+
+    `maximum` rests on the prompt bounds, whose equal_bonferroni allocation divides the
+    family's 0.025 per direction over all six wordings. `top_k_mean` needs equal weights,
+    which nested_equal does not give the wordings of either group.
+    """
+    plan = load_plan(PLAN)
+    top = RiskMeasureSpec(id="top2", type="top_k_mean", k=2)
+    with_top = plan.model_copy(
+        update={
+            "outputs": plan.outputs.model_copy(
+                update={"risk_measures": [*plan.outputs.risk_measures, top]}
+            )
+        }
+    )
+    report = _analyze(monkeypatch, coupled=True, plan=with_top)
+
+    assert len(report.prompt_estimates) == 6
+    for estimate in report.prompt_estimates:
+        assert estimate.alpha_upper == pytest.approx(0.025 / 6, rel=1e-12, abs=0)
+    worst = {risk.group_id: risk for risk in report.group_risks if risk.measure_id == "worst"}
+    uppers = {estimate.prompt_id: estimate.upper for estimate in report.prompt_estimates}
+    for group, weights in EXPECTED_WEIGHTS.items():
+        largest = max(upper for prompt, upper in uppers.items() if prompt in weights and upper)
+        assert worst[group].upper == pytest.approx(largest, rel=1e-12, abs=0)
+
+    refused = sorted(
+        item.scope for item in report.integrity.diagnostics if item.code == "RISK_MEASURE_INVALID"
+    )
+    assert refused == [
+        f"cohorts/candidate/groups/{group}/measures/top2" for group in sorted(EXPECTED_WEIGHTS)
+    ]
+    assert report.integrity.status == "invalid"
+    for risk in report.group_risks:
+        if risk.measure_id == "top2":
+            assert (risk.estimate, risk.lower, risk.upper) == (None, None, None)
+
+
 def test_per_epoch_coupling_shows_only_in_the_design_effect_of_question_repeat(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -319,7 +399,9 @@ def test_per_epoch_coupling_shows_only_in_the_design_effect_of_question_repeat(
             ), (target, interval.interval_id)
 
 
-def _rollout(prompt: str, question: str, epoch: int, failure: bool) -> Observation:
+def _rollout(
+    prompt: str, question: str, epoch: int, failure: bool, task: str = "task"
+) -> Observation:
     return Observation(
         observation_id=f"{prompt}-{epoch}",
         source="simulated.eval",
@@ -329,7 +411,7 @@ def _rollout(prompt: str, question: str, epoch: int, failure: bool) -> Observati
         repeat=epoch,
         prompt_id=prompt,
         question_id=question,
-        task_id="task",
+        task_id=task,
         cohort_id="candidate",
         score_name="safety",
         score_raw="FAIL" if failure else "PASS",
@@ -411,3 +493,41 @@ def test_wordings_sharing_each_epoch_need_question_repeat_blocks_for_coverage() 
     for method in methods:
         assert misses[("rollout", method)] / repetitions > limit, (method, misses)
         assert misses[("question_repeat", method)] / repetitions <= limit, (method, misses)
+
+
+def test_a_block_key_is_the_raw_value_not_the_hierarchy_path() -> None:
+    """Two tasks that both name a base prompt q1 share its block unless task_id is in the key."""
+    manifest = pd.DataFrame(
+        [
+            {"prompt_id": f"{task}-q1-w{wording}", "question_id": "q1", "task_id": task}
+            for task in ("t1", "t2")
+            for wording in range(2)
+        ]
+    )
+    observations = [
+        _rollout(prompt, "q1", epoch, failure=False, task=task)
+        for prompt, task in zip(manifest["prompt_id"], manifest["task_id"], strict=True)
+        for epoch in (1, 2)
+    ]
+    counts = {
+        tuple(block_by): direct_bounded_blocks(
+            observations,
+            manifest,
+            IndependenceProfileSpec(block_by=block_by),
+            cohort_id="candidate",
+            prompt_ids=manifest["prompt_id"].tolist(),
+            prompt_weights=np.full(4, 0.25),
+        ).count
+        for block_by in (
+            ["question_id"],
+            ["task_id", "question_id"],
+            ["question_id", "repeat"],
+            ["task_id", "question_id", "repeat"],
+        )
+    }
+    assert counts == {
+        ("question_id",): 1,
+        ("task_id", "question_id"): 2,
+        ("question_id", "repeat"): 2,
+        ("task_id", "question_id", "repeat"): 4,
+    }

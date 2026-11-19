@@ -52,7 +52,8 @@ design:
     # Variants of a base prompt that fail at similar rates still give independent rollouts.
     # Variants whose rollouts share randomness or state (a seed, a cache, a sandbox, a batch)
     # do not. If the same epoch of every variant can share it, make question_repeat the
-    # primary below; if it can reach across epochs, make question the primary.
+    # primary below; if it can reach across epochs, make question the primary. A block key
+    # is a field's raw value: keep question ids unique across tasks, or add task_id to it.
     question_repeat:
       block_by: [question_id, repeat]
       comparison_coupling: joint

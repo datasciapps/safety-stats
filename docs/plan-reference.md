@@ -697,8 +697,38 @@ $\left(\sum_g A_g^2\right)^{-1}$ over the base-prompt weights $A_g$ (see
 [Statistical construction](independence-profiles.md#statistical-construction)), is no larger
 than the `prompt` profile's. With the same number of epochs for every wording,
 `question_repeat`'s is that many times larger than `question`'s. With few base prompts the
-`question` intervals can reach the whole range $[0, 1]$. Set `hierarchy_nodes: true` under
-`direct_mean_intervals` to report an interval for each base prompt as well as each task.
+`question` intervals can reach the whole range $[0, 1]$.
+
+A block key is the raw value of each field, not a path in the hierarchy. If two tasks both have
+a base prompt with `question_id: q1`, `[question_id]` puts the two in one block. Keep base-prompt
+identifiers unique across tasks, or block by `[task_id, question_id]` and
+`[task_id, question_id, repeat]`.
+
+**Risk measures.** Measures that use the group weights, such as `weighted_mean`, `cvar` and
+`worst_of_k`, count each base prompt once under `nested_equal`, whatever its number of wordings.
+Two measures count wordings instead:
+
+- `maximum` ignores weights: it is the largest risk of any wording, not of any base prompt.
+  Its bounds come from the prompt bounds, and `alpha_allocation: equal_bonferroni` divides the
+  family alpha equally over every wording of every cohort. Each added wording therefore widens
+  every prompt bound, and with them the maximum's upper bound.
+- `top_k_mean` needs equal prompt weights. On a group where `nested_equal` gives the wordings
+  unequal weights it is refused with `RISK_MEASURE_INVALID`, which makes integrity invalid.
+  Under `equal_prompt` it averages the `k` riskiest wordings, so a base prompt with three
+  wordings can fill three of the `k` places.
+
+**Hierarchy nodes.** Set `hierarchy_nodes: true` under `direct_mean_intervals` to report an
+interval for each base prompt as well as each task. The nodes have two costs:
+
+- Under the `question` profile a base-prompt node is a single block, so its interval rests on
+  one independent value and is close to $[0, 1]$ whatever the data. Under `question_repeat` it
+  has one block per epoch.
+- Under the default `hierarchy_calibration: flat_bonferroni`, every node is one more target of
+  the direct-mean family, whose alpha is divided over all of them. Each node therefore widens
+  every interval of the family, including the group intervals that claims are decided on. In
+  the template below, each group interval's one-sided alpha is 0.0025 with the nodes and 0.0125
+  without them. `frontier_sidak` spends less where sibling nodes have disjoint blocks (see
+  [Direct fixed-design mean intervals](#direct-fixed-design-mean-intervals)).
 
 [`examples/fixed_design`](../examples/fixed_design/README.md#prompt-variants-of-one-base-prompt)
 has a complete template: `variant-design.csv`, `variant-plan.yaml` and the Inspect task

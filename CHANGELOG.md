@@ -16,7 +16,10 @@ described in their pull requests.
   not. Outcomes coupled through a shared seed, cache, sandbox or batch do, and then
   `[question_id, repeat]` (coupling within an epoch) or `[question_id]` (across epochs) must be
   the primary profile, because a sensitivity never changes a claim's status. The template
-  reports both as sensitivities of its `rollout` primary. The package itself is unchanged.
+  reports both as sensitivities of its `rollout` primary. The section also says that `maximum`
+  and `top_k_mean` count wordings rather than base prompts, what `hierarchy_nodes: true` costs
+  in alpha and in vacuous single-block nodes, and that a block key is a field's raw value, so
+  base-prompt ids repeated across tasks share a block. The package itself is unchanged.
 
 - **An offline example compares two versions of a harness around the same model.**
   `examples/harness_versions` runs one simulated model inside harness v1 and v2, selects the two

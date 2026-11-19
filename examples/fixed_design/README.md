@@ -68,7 +68,8 @@ wrapper. The base prompt is the `question_id` and each wording is a `prompt_id` 
   independent. If the variants' rollouts can share a seed, a cache, a sandbox or a batch, make
   `question_repeat` (shared within an epoch) or `question` (shared across epochs) the primary: a
   claim's status is the primary profile's verdict, and a sensitivity never changes it.
-- `hierarchy_nodes: true` reports an interval for each base prompt as well as each task.
+- `hierarchy_nodes: true` reports an interval for each base prompt as well as each task. Each
+  node takes a share of the family's alpha, so the group intervals widen too.
 
 ```bash
 inspect eval examples/fixed_design/variant_eval.py \
