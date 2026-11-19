@@ -210,6 +210,24 @@ def _judge_claim_row(
     }
 
 
+def _unread_judge_claim_rows(plan: AnalysisPlan, why: str) -> list[dict[str, Any]]:
+    """The rows of a judge's run that could not read its input: every claim undecided, unbounded."""
+
+    return [
+        {
+            "claim_id": claim.id,
+            "status": "INCONCLUSIVE",
+            "descriptive_status": None,
+            "estimate": None,
+            "lower": None,
+            "upper": None,
+            "method": "unavailable",
+            "reasons": [f"This judge's run could not read its input: {why}"],
+        }
+        for claim in sorted(plan.claims, key=lambda item: item.id)
+    ]
+
+
 def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeInputs) -> None:
     """Decide every claim again on each declared judge's verdicts, beside the primary's.
 
@@ -217,7 +235,10 @@ def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeI
     outcome, over the same rollouts, so comparing judge configurations is one analysis. Its
     bounds are on that judge's reported risk; under a validated calibration its rows decide
     nothing (``_judge_claim_row``). Beside its integrity status, each judge records how often
-    each diagnostic code occurred in its run, so the report says why a run is not valid.
+    each diagnostic code occurred in its run, so the report says why a run is not valid. A
+    judge whose own ``score`` asks for what the source cannot give, such as the stop reasons
+    its ``token_limit`` needs, gets an ``invalid`` run with ``INGEST_FAILED``, as the primary
+    would, and rows that decide nothing; the rest of the report stands.
     """
 
     validated_calibration = (
@@ -231,21 +252,29 @@ def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeI
     for entry in panel["judges"]:
         judge_plan = _judge_plan(plan, by_id[entry["id"]])
         diagnostics = validate_plan_references(judge_plan)
-        data = normalize(
-            judge_plan,
-            inputs.manifest.copy(),
-            copy.deepcopy(inputs.groups),
-            inputs.source,
-            inputs.receipt,
-        )
+        try:
+            data = normalize(
+                judge_plan,
+                inputs.manifest.copy(),
+                copy.deepcopy(inputs.groups),
+                inputs.source,
+                inputs.receipt,
+            )
+        except ValueError as exc:
+            # The primary run read the same source, so only the judge's own score can ask for
+            # more than it gives.
+            diagnostics.append(
+                Diagnostic(code="INGEST_FAILED", severity="ERROR", message=str(exc))
+            )
+            entry["integrity"] = "invalid"
+            entry["diagnostic_counts"] = _code_counts(diagnostics)
+            entry["claims"] = _unread_judge_claim_rows(plan, str(exc))
+            continue
         diagnostics.extend(data.diagnostics)
         diagnostics.extend(single_rollout_tail_claims(judge_plan, data))
         core = _analysis_core(judge_plan, data, diagnostics)
         entry["integrity"] = core.integrity_status
-        counts: dict[str, int] = {}
-        for item in diagnostics:
-            counts[item.code] = counts.get(item.code, 0) + 1
-        entry["diagnostic_counts"] = dict(sorted(counts.items()))
+        entry["diagnostic_counts"] = _code_counts(diagnostics)
         entry["claims"] = [
             _judge_claim_row(
                 claim,
@@ -254,6 +283,15 @@ def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeI
             )
             for claim in sorted(core.claims, key=lambda item: item.claim_id)
         ]
+
+
+def _code_counts(diagnostics: list[Diagnostic]) -> dict[str, int]:
+    """How often each diagnostic code occurs, by code."""
+
+    counts: dict[str, int] = {}
+    for item in diagnostics:
+        counts[item.code] = counts.get(item.code, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 class UnreadableField(ValueError):

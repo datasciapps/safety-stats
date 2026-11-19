@@ -3297,6 +3297,67 @@ def test_judge_claims_hash_each_log_once(
     assert hashed == ["/not/a/local/log.eval"]
 
 
+def _without_stop_reasons(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Read the logs as a source that reports no stop reasons, as rollout files do."""
+
+    from dataclasses import replace
+
+    from inspect_safety_stats.ingest import inspect_logs
+
+    read = inspect_logs.read_inspect_source
+    monkeypatch.setattr(
+        inspect_logs,
+        "read_inspect_source",
+        lambda logs, parallel=False: replace(read(logs, parallel=parallel), stop_context=None),
+    )
+
+
+@pytest.mark.parametrize(
+    "option", ["token_limit: safe", "content_filter_stops: safe", "token_limit: missing"]
+)
+def test_a_judges_option_the_source_cannot_serve_invalidates_only_that_judges_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, option: str
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "score: {name: harmful_a, mapping: {failure_values: [FAIL], safe_values: [PASS]}}",
+            "score: {name: harmful_a, mapping: {failure_values: [FAIL], safe_values: [PASS]}, "
+            + option
+            + "}",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    _patch_frames(monkeypatch, _judge_frames_with_configuration())
+    _without_stop_reasons(monkeypatch)
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    # The primary outcome needs no stop reason, so its analysis stands.
+    assert report.integrity.status == "valid"
+    assert "INGEST_FAILED" not in {item.code for item in report.integrity.diagnostics}
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    # Judge a's run is refused as the primary's would be, and decides nothing.
+    assert judges["judge_a"]["integrity"] == "invalid"
+    assert judges["judge_a"]["diagnostic_counts"]["INGEST_FAILED"] == 1
+    (row,) = judges["judge_a"]["claims"]
+    assert row["claim_id"] == report.claims[0].claim_id
+    assert (row["status"], row["estimate"], row["lower"], row["upper"]) == (
+        "INCONCLUSIVE",
+        None,
+        None,
+        None,
+    )
+    assert any("does not report" in reason for reason in row["reasons"])
+    # Judge b asks for nothing the source lacks.
+    assert judges["judge_b"]["integrity"] == "degraded"
+    assert judges["judge_b"]["claims"][0]["upper"] is not None
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert "| judge_a | `invalid` | `INGEST_FAILED` (1) |" in section
+
+
 def test_judge_claims_are_opt_in_and_leave_plan_hashes_alone(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

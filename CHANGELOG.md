@@ -429,8 +429,11 @@ described in their pull requests.
   keeps only its name and model id: its `base_url`, `args` and `extra_headers`, which can hold
   endpoints and credentials, never reach the report. A run whose scorers or model roles cannot
   be read, such as text that is not JSON or a role without a model id, is left out of the
-  record with a `JUDGE_CONFIGURATION_UNREADABLE` warning. `report-full.md` adds a "Claims by
-  judge (experimental)" table to the judge panel section. The rows do not enter the decision.
+  record with a `JUDGE_CONFIGURATION_UNREADABLE` warning. A judge whose own `score` asks for
+  what the source cannot give, such as the stop reasons `token_limit` needs, gets an `invalid`
+  run with `INGEST_FAILED` and rows that decide nothing, instead of stopping the analysis.
+  `report-full.md` adds a "Claims by judge (experimental)" table to the judge panel section.
+  The rows do not enter the decision.
   The option requires `inputs.judges`. Plans that leave it off keep their hash and write the
   same report bytes as before. See
   [Claims by judge](docs/plan-reference.md#claims-by-judge-experimental).

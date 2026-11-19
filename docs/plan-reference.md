@@ -523,7 +523,10 @@ inputs:
 
 Each judge in `provenance.judge_panel.judges` of `report.json` gains:
 
-- `integrity`: the integrity status of that judge's run.
+- `integrity`: the integrity status of that judge's run. A judge whose own `score` asks for
+  what the source cannot give, such as the stop reasons that `token_limit` or
+  `content_filter_stops` need from rollout files, gets an `invalid` run with `INGEST_FAILED`, as
+  the primary run would, and rows that decide nothing. The rest of the report stands.
 - `diagnostic_counts`: how often each diagnostic code occurred in that judge's run, by code, so
   a run that is not `valid` says why.
 - `claims`: one row per claim, with `claim_id`, `status`, `descriptive_status`, `estimate`,
