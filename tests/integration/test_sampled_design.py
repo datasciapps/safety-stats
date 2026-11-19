@@ -20,6 +20,7 @@ import pytest
 from inspect_safety_stats import analyze, validate
 from inspect_safety_stats.config.models import DesignSpec
 from inspect_safety_stats.ingest.pilot import draw_pilot
+from inspect_safety_stats.registry import ASSUMPTIONS
 from inspect_safety_stats.report import visualization
 from tests.diagnostic_codes.harness import (
     BASE_RUN,
@@ -448,6 +449,36 @@ def test_stratified_fixed_size_draws_are_estimated_without_replacement(
     # plain sample mean, so the drawn items carry the whole weight.
     assert primary.maximum_increment == pytest.approx(1 / primary.independent_block_count)
     assert mean.lower is not None and mean.upper is not None and mean.lower < mean.upper
+
+
+@pytest.mark.parametrize("fixed_size", [False, True], ids=["poisson", "fixed_size"])
+def test_a_sampled_report_rests_on_the_probability_sample_not_on_rollout_independence(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fixed_size: bool
+) -> None:
+    # The frame intervals block by the drawn item whatever profile the plan declares, so the
+    # report listed rollout_independence and no assumption about the draw.
+    plan_path, evals, samples = _write_frame(tmp_path, fixed_size=fixed_size)
+    _patch(monkeypatch, evals, samples)
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    used = {item.id: item for item in report.assumptions_used}
+    assert "rollout_independence" not in used and "fixed_design" not in used
+    sampling = "fixed_size" if fixed_size else "poisson"
+    statement, if_wrong = ASSUMPTIONS["probability_sample"].stated_for(sampling)
+    assert (used["probability_sample"].statement, used["probability_sample"].if_wrong) == (
+        statement,
+        if_wrong,
+    )
+    assert [
+        (setting.path, setting.value, setting.default)
+        for setting in used["probability_sample"].settings
+    ] == [("design.sampling", sampling, not fixed_size)]
+    assert ("without replacement" in statement) is fixed_size
+    full = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    limitations = full.split("## Limitations", 1)[1].split("\n## ", 1)[0]
+    assert f"**probability_sample.** {statement}" in limitations
+    assert "**rollout_independence.**" not in limitations
 
 
 def test_fixed_size_run_that_misses_its_plan_is_rejected(

@@ -15,10 +15,16 @@ from inspect_safety_stats.registry import ASSUMPTIONS
 # Whether an assumption of the registry applies to a plan. Every registry entry has one, which
 # tests/unit/test_assumptions_used.py checks, so a new entry cannot be left out silently.
 APPLIES: dict[str, Callable[[AnalysisPlan], bool]] = {
-    # A sampled design rests on its inclusion probabilities instead.
+    # A sampled design rests on probability_sample instead.
     "fixed_design": lambda plan: plan.design.type == "fixed",
+    # A sampled design's intervals take the drawn frame item as the independent block, whatever
+    # independence profile the plan declares, so they rest on the draw, not on the profile.
+    "probability_sample": lambda plan: plan.design.type == "sampled",
     "run_stability": lambda plan: True,
-    "rollout_independence": lambda plan: True,
+    # Prompt bounds, when enabled, still take each rollout of a prompt as an independent draw.
+    "rollout_independence": (
+        lambda plan: plan.design.type == "fixed" or plan.outputs.prompt_bounds.enabled
+    ),
     "arm_independence": lambda plan: bool(plan.comparisons or plan.comparison_sets),
     "scorer_validity": lambda plan: True,
     "judge_accuracy": lambda plan: True,

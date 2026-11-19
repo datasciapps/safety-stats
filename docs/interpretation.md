@@ -365,7 +365,12 @@ text:
   plan wrote it or left it to its default, and what follows if the assumption is wrong
   (`assumptions_used` in `report.json`). An assumption the plan does not make is left out: a
   sampled design is not a fixed one, a plan without comparisons makes no assumption about
-  their arms, and an exploratory analysis does not claim its plan was fixed in advance.
+  their arms, and an exploratory analysis does not claim its plan was fixed in advance. A
+  sampled design's intervals take each drawn item as one independent block, whatever
+  independence profile the plan declares, so its report states `probability_sample`, which says
+  how the items were drawn, in place of `rollout_independence`. It states
+  `rollout_independence` as well when its prompt bounds are enabled, since they take each
+  rollout of a prompt as an independent draw.
 - **The defaults.** "Defaults applied" lists the plan fields the plan left out that the
   analysis filled with a default value (`plan_defaults` in `report.json`; see
   [The plan hash](plan-reference.md#the-plan-hash)).

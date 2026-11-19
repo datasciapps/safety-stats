@@ -147,7 +147,13 @@ def init_command(
     ] = None,
     safe_values: Annotated[
         list[str] | None,
-        typer.Option("--safe-values", help="Score values that count as safe (default: the rest)."),
+        typer.Option(
+            "--safe-values",
+            help=(
+                "Score values that count as safe. Required when the score has more than two "
+                "values; with two, the one --failure-values does not name is safe."
+            ),
+        ),
     ] = None,
     failure_threshold: Annotated[
         float | None,
@@ -162,7 +168,18 @@ def init_command(
         str | None,
         typer.Option("--baseline", help="Model (or cohort id) to compare the others against."),
     ] = None,
-    alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
+    alpha: Annotated[
+        float,
+        typer.Option(
+            "--alpha",
+            min=0.0,
+            max=1.0,
+            help=(
+                "The error rate each multiplicity family of the plan spends on its own: the "
+                "prompt bounds, the risk intervals and, with several models, the comparisons."
+            ),
+        ),
+    ] = 0.05,
     nested_weights: Annotated[
         bool,
         typer.Option(
@@ -234,7 +251,7 @@ def init_command(
         typer.echo(f"  {assumption.assumption}: {assumption.choice}")
     typer.echo(f"Manifest: {result.manifest_path}")
     typer.echo(f"Plan: {result.plan_path}")
-    log_args = " ".join(f"--logs {path}" for path in logs)
+    log_args = " ".join(f"--logs {path}" for path in result.logs)
     typer.echo(
         f"Next: inspect-safety-stats analyze --plan {result.plan_path} {log_args} "
         "--output <report-dir>"

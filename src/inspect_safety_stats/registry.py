@@ -186,6 +186,40 @@ _ASSUMPTIONS: tuple[AssumptionEntry, ...] = (
         ),
     ),
     AssumptionEntry(
+        id="probability_sample",
+        statement=(
+            "The evaluated items are a probability sample of the declared frame: each item's "
+            "inclusion probability was fixed before the draw, the draw was made at random and "
+            "without regard to the outcomes, and each item was included independently of the "
+            "others with its declared probability (Poisson sampling). Each drawn item is one "
+            "independent block: the rollouts of different items are independent."
+        ),
+        source="manifest",
+        plan_field="design.sampling",
+        default="poisson",
+        if_wrong=(
+            "Items drawn with other probabilities than those declared, or chosen with the "
+            "outcomes in view, bias the frame estimate; rollouts of different items that share "
+            "a cause make the bounds narrower than their stated coverage."
+        ),
+        remedy=(
+            "Draw the items at random with probabilities fixed in advance, before any outcome "
+            "is seen, record the draw in design.selection_column and each item's inclusion "
+            "probability in the manifest; otherwise analyse the evaluated items as a fixed "
+            "design."
+        ),
+        by_setting=(
+            AssumptionSetting(
+                "fixed_size",
+                "The evaluated items are a probability sample of the declared frame: each "
+                "stratum drew its planned number of items at random without replacement, with "
+                "the inclusion probabilities fixed before the draw and the draw made without "
+                "regard to the outcomes. Each drawn item is one independent block: the rollouts "
+                "of different items are independent.",
+            ),
+        ),
+    ),
+    AssumptionEntry(
         id="run_stability",
         statement=(
             "Every rollout of a cohort comes from one stable system: the same model and "
@@ -2366,6 +2400,7 @@ _CODES: tuple[CodeEntry, ...] = (
             "Supply the logs of every drawn frame item and no others, or correct the "
             "inclusion probability column to the design actually drawn."
         ),
+        assumptions=("probability_sample",),
     ),
     CodeEntry(
         code="SAMPLE_DRAWS_NOT_INTEGER",
@@ -2384,6 +2419,7 @@ _CODES: tuple[CodeEntry, ...] = (
             "Correct the inclusion probability column to draws divided by stratum size, or "
             "name the column that defines the strata in design.stratum_column."
         ),
+        assumptions=("probability_sample",),
     ),
     CodeEntry(
         code="SAMPLE_EMPTY",
@@ -2471,6 +2507,7 @@ _CODES: tuple[CodeEntry, ...] = (
             "Evaluate every selected frame item and no other, or correct the selection column "
             "to the draw actually made, at random and before any outcome was seen."
         ),
+        assumptions=("probability_sample",),
     ),
     CodeEntry(
         code="SAMPLE_SIZE_IMPLAUSIBLE",
@@ -2489,6 +2526,7 @@ _CODES: tuple[CodeEntry, ...] = (
             "Correct the inclusion probability column to the probabilities the draw used, or "
             "supply the logs of every drawn frame item."
         ),
+        assumptions=("probability_sample",),
     ),
     CodeEntry(
         code="SAMPLE_STRATUM_INCONSISTENT",
@@ -2508,6 +2546,7 @@ _CODES: tuple[CodeEntry, ...] = (
             "inclusion probability column, or use design.sampling: poisson when items were "
             "drawn independently."
         ),
+        assumptions=("probability_sample",),
     ),
     CodeEntry(
         code="SCORE_MAPPING_MISMATCH",
