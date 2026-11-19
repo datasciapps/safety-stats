@@ -7,8 +7,6 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
-import numpy as np
-
 from inspect_safety_stats.analysis.adaptive_claims import _adaptive_claims
 from inspect_safety_stats.analysis.claims import _claims
 from inspect_safety_stats.analysis.comparisons import _comparison_set_results, _comparisons
@@ -25,6 +23,7 @@ from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.models import AnalysisPlan, JudgeSpec
 from inspect_safety_stats.decision.engine import mandatory_statuses
 from inspect_safety_stats.ingest.normalize import normalize
+from inspect_safety_stats.ingest.outcomes import is_missing
 from inspect_safety_stats.ingest.records import NormalizedData, SourceData
 from inspect_safety_stats.schema.reports import (
     AdaptiveClaimResult,
@@ -37,6 +36,7 @@ from inspect_safety_stats.schema.reports import (
     HierarchyRiskResult,
     PromptEstimate,
 )
+from inspect_safety_stats.schema.scopes import scope_path
 from inspect_safety_stats.validate.plan import noisy_valid_test_supported, validate_plan_references
 
 
@@ -238,6 +238,24 @@ def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeI
         ]
 
 
+class UnreadableField(ValueError):
+    """A run field the judge configurations cannot read. The message says why without quoting
+    the value, which can hold credentials."""
+
+
+def _recorded_field(value: Any) -> Any:
+    """A run field as recorded: None when it is absent, decoded when it is a JSON string."""
+
+    if is_missing(value):
+        return None
+    if not isinstance(value, str):
+        return value
+    try:
+        return json.loads(value)
+    except json.JSONDecodeError:
+        raise UnreadableField("it is not JSON") from None
+
+
 def scorer_configurations(value: Any, score_name: str) -> list[dict[str, str]] | None:
     """Fingerprints of the configurations a run records for the scorer named like a judge's score.
 
@@ -247,52 +265,92 @@ def scorer_configurations(value: Any, score_name: str) -> list[dict[str, str]] |
     endpoints and local paths, such as a request header, a token or a template file, and
     Inspect redacts only some of them. Equal fingerprints mean equal recorded configurations.
     None when the run records no scorers at all, an empty list when none has that name.
+    Raises ``UnreadableField`` when the value is not a JSON list of scorers, or the scorer's
+    entry is not JSON data.
     """
 
-    if value is None or (isinstance(value, float) and np.isnan(value)):
+    scorers = _recorded_field(value)
+    if scorers is None:
         return None
-    scorers = json.loads(value) if isinstance(value, str) else value
     if not isinstance(scorers, list):
-        return None
-    return [
-        {"name": score_name, "sha256": sha256_value(item)}
-        for item in scorers
-        if isinstance(item, dict) and item.get("name") == score_name
-    ]
+        raise UnreadableField("it is not a list of scorers")
+    try:
+        return [
+            {"name": score_name, "sha256": sha256_value(item)}
+            for item in scorers
+            if isinstance(item, dict) and item.get("name") == score_name
+        ]
+    except (TypeError, ValueError):
+        raise UnreadableField(f"the entry of scorer {score_name!r} is not JSON data") from None
 
 
-def _role_models(roles: dict[str, Any], run_key: str) -> dict[str, Any]:
+def _role_models(value: Any) -> dict[str, Any] | None:
     """Each model role's name and model id, without the rest of its configuration.
 
     A run's roles also record ``base_url``, ``args`` and the generate config with its
     ``extra_headers``, which can hold endpoints and credentials; none of it reaches a report.
+    None when the run records no roles. Raises ``UnreadableField`` when the value is not a
+    JSON mapping of roles, or a role has no model id.
     """
 
+    roles = _recorded_field(value)
+    if roles is None:
+        return None
+    if not isinstance(roles, dict):
+        raise UnreadableField("it is not a mapping of model roles")
     named: dict[str, Any] = {}
-    for name in sorted(roles):
+    for name in sorted(roles, key=str):
         role = roles[name]
         model = role.get("model") if isinstance(role, dict) else None
         if not isinstance(model, str):
-            raise ValueError(
-                f"run {run_key} records model role {name!r} without a model id; "
-                "eval.model_roles must map each role to a configuration with a 'model'"
+            raise UnreadableField(
+                f"model role {str(name)!r} has no model id; each role must map to a "
+                "configuration with a 'model'"
             )
         named[name] = {"model": model}
     return named
 
 
+def _unreadable_configuration(run_key: str, field: str, why: str) -> Diagnostic:
+    """The warning for a run field that cannot be read. It names the field, never its value."""
+
+    return Diagnostic(
+        code="JUDGE_CONFIGURATION_UNREADABLE",
+        severity="WARNING",
+        message=(
+            f"run {run_key} records {field} that cannot be read: {why}. The judges' recorded "
+            f"configurations leave out this run's {field}"
+        ),
+        scope=scope_path("runs", run_key),
+        details={"run_key": run_key, "field": field},
+    )
+
+
 def _add_judge_configurations(
-    panel: dict[str, Any], plan: AnalysisPlan, data: NormalizedData, source_data: SourceData
+    panel: dict[str, Any],
+    plan: AnalysisPlan,
+    data: NormalizedData,
+    source_data: SourceData,
+    diagnostics: list[Diagnostic],
 ) -> None:
     """Record, per judge and cohort, the scorer fingerprints and model roles of its runs.
 
     The values are the distinct ones the cohort's runs record, sorted by their canonical
     form; a cohort whose runs record none says so with null. Neither copies a configuration
     value other than a role's model id, so no credential, endpoint or path reaches a report.
+    A run whose ``scorers`` or ``model_roles`` cannot be read contributes nothing to it, with
+    a ``JUDGE_CONFIGURATION_UNREADABLE`` warning, once per run and field.
     """
 
     runs_by_key = {run.run_key: run for run in source_data.runs}
     by_id = {judge.id: judge for judge in plan.inputs.judges}
+    warned: set[tuple[str, str]] = set()
+
+    def warn(run_key: str, field: str, exc: UnreadableField) -> None:
+        if (run_key, field) not in warned:
+            warned.add((run_key, field))
+            diagnostics.append(_unreadable_configuration(run_key, field, str(exc)))
+
     for entry in panel["judges"]:
         score_name = by_id[entry["id"]].score.name
         configuration: dict[str, Any] = {}
@@ -301,15 +359,19 @@ def _add_judge_configurations(
             roles: dict[str, Any] = {}
             for run_key in summary["run_keys"]:
                 attributes = runs_by_key[run_key].attributes
-                found = scorer_configurations(attributes.get("scorers"), score_name)
-                if found is not None:
-                    for item in found:
-                        scorers[item["sha256"]] = item
-                role_value = attributes.get("model_roles")
-                if isinstance(role_value, str):
-                    role_value = json.loads(role_value)
-                if isinstance(role_value, dict):
-                    named = _role_models(role_value, run_key)
+                try:
+                    found = scorer_configurations(attributes.get("scorers"), score_name)
+                except UnreadableField as exc:
+                    warn(run_key, "scorers", exc)
+                    found = None
+                for item in found or []:
+                    scorers[item["sha256"]] = item
+                try:
+                    named = _role_models(attributes.get("model_roles"))
+                except UnreadableField as exc:
+                    warn(run_key, "model_roles", exc)
+                    named = None
+                if named is not None:
                     roles[sha256_value(named)] = named
             configuration[summary["cohort_id"]] = {
                 "scorer": [scorers[key] for key in sorted(scorers)] or None,

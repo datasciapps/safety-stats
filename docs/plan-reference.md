@@ -531,10 +531,12 @@ Each judge in `provenance.judge_panel.judges` of `report.json` gains:
     only some of them, so they never reach the report.
   - Each model role keeps only its name and model id, as `{"<role>": {"model": "<model id>"}}`.
     The rest of its configuration (`base_url`, `args` and the generate config with its
-    `extra_headers`) can hold endpoints and credentials, so it never reaches the report. A role
-    recorded without a model id is an error.
+    `extra_headers`) can hold endpoints and credentials, so it never reaches the report.
 
-  Where the runs record none, the value is `null`.
+  Where the runs record none, the value is `null`. A run whose `scorers` or `model_roles` cannot
+  be read, such as text that is not JSON or a role without a model id, is left out of the
+  record, with a `JUDGE_CONFIGURATION_UNREADABLE` warning that names the run and the field but
+  not its value. Rollout files can carry either field as a run field.
 
 `report-full.md` shows the same rows under **Claims by judge (experimental)** in the judge panel
 section, without the status column when `report.include_decisions` is false. The rows compare

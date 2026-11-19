@@ -299,13 +299,18 @@ def analyze(
         zero_tolerance_failure=bool(events),
         confirmatory=resolved.analysis.intent == "confirmatory",
     )
-    integrity = _sorted_integrity(diagnostics)
     judge_panel = _judge_panel_summary(resolved, data)
     if judge_panel is not None and core.panel_correction is not None:
         judge_panel["derived_correction"] = core.panel_correction
     if judge_panel is not None and judge_inputs is not None and resolved.outputs.judge_claims:
         _add_judge_claims(judge_panel, resolved, judge_inputs)
-        _add_judge_configurations(judge_panel, resolved, data, judge_inputs.source)
+        _add_judge_configurations(
+            judge_panel, resolved, data, judge_inputs.source, diagnostics
+        )
+    # ORDER MATTERS: after the judge configurations, whose warning about a run field that
+    # cannot be read must reach the report's diagnostics. It is a warning, which no claim's
+    # eligibility above depends on.
+    integrity = _sorted_integrity(diagnostics)
     report = SafetyReport(
         **_report_frame(frozen),
         provenance={

@@ -3221,14 +3221,58 @@ def test_judge_claims_keep_only_each_model_roles_name_and_model(
     )
 
 
-def test_judge_claims_reject_a_model_role_without_a_model(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+@pytest.mark.parametrize(
+    ("field", "value", "why"),
+    [
+        ("model_roles", "grader=openai/gpt-4o", "it is not JSON"),
+        ("model_roles", '["grader-x.invalid"]', "it is not a mapping of model roles"),
+        (
+            "model_roles",
+            '{"grader": {"base_url": "https://x.invalid"}}',
+            "model role 'grader' has no model id",
+        ),
+        ("scorers", "harmful_a(base_url=https://x.invalid)", "it is not JSON"),
+        ("scorers", '{"name": "harmful_a", "x": "x.invalid"}', "it is not a list of scorers"),
+        (
+            "scorers",
+            '[{"name": "harmful_a", "options": {"x": "x.invalid", "temperature": NaN}}]',
+            "the entry of scorer 'harmful_a' is not JSON data",
+        ),
+    ],
+)
+def test_judge_claims_warn_about_a_configuration_field_they_cannot_read(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, field: str, value: str, why: str
 ) -> None:
     eval_frame, sample_frame = _judge_frames_with_configuration()
-    eval_frame = eval_frame.assign(model_roles='{"grader": {"base_url": "https://x.invalid"}}')
-    _patch_frames(monkeypatch, (eval_frame, sample_frame))
-    with pytest.raises(ValueError, match="model role 'grader' without a model id"):
-        analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
+    _patch_frames(monkeypatch, (eval_frame.assign(**{field: value}), sample_frame))
+
+    report = analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
+
+    # The field is described, not recorded, and the analysis is the one a readable field gives.
+    (warning,) = [
+        item
+        for item in report.integrity.diagnostics
+        if item.code == "JUDGE_CONFIGURATION_UNREADABLE"
+    ]
+    assert warning.severity == "WARNING"
+    assert warning.details == {"run_key": "eval-1", "field": field}
+    assert why in warning.message
+    # The message never quotes the value, which can hold credentials or endpoints.
+    for fragment in ("gpt-4o", "x.invalid"):
+        assert fragment not in warning.message
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    recorded = judges["judge_a"]["configuration"]["candidate"]
+    key = "scorer" if field == "scorers" else "model_roles"
+    assert recorded[key] is None
+    _patch_frames(monkeypatch, _judge_frames_with_configuration())
+    readable_dir = tmp_path / "readable"
+    readable_dir.mkdir()
+    readable = analyze(plan=_judge_claims_plan(readable_dir), logs="ignored")
+    assert report.integrity.status == readable.integrity.status == "valid"
+    assert report.claims == readable.claims
+    assert judges["judge_a"]["claims"] == readable.provenance["judge_panel"]["judges"][0][
+        "claims"
+    ]
 
 
 def test_judge_claims_are_opt_in_and_leave_plan_hashes_alone(

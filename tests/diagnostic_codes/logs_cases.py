@@ -269,6 +269,29 @@ def _missing_votes(count: int) -> Check:
     return check
 
 
+def _judge_claims_with_roles(model_roles: Any) -> Change:
+    """Judges j1 and j2 with outputs.judge_claims, and the run's model_roles as given."""
+
+    def change(inputs: Inputs) -> None:
+        _judged("other")(inputs)
+        inputs.plan["outputs"]["judge_claims"] = True
+        inputs.runs[0]["model_roles"] = model_roles
+
+    return change
+
+
+def _roles_left_out(triggered: Outcome, control: Outcome) -> None:
+    """The run's model roles are left out of each judge's configuration; nothing else moves."""
+
+    for outcome, expected in ((triggered, None), (control, [{"grader": {"model": "m"}}])):
+        for judge in outcome.report.provenance["judge_panel"]["judges"]:
+            assert judge["configuration"]["candidate"]["model_roles"] == expected
+    assert triggered.report.claims == control.report.claims
+    assert [judge["claims"] for judge in triggered.report.provenance["judge_panel"]["judges"]] == [
+        judge["claims"] for judge in control.report.provenance["judge_panel"]["judges"]
+    ]
+
+
 # --- manifest --------------------------------------------------------------------------------
 
 
@@ -708,6 +731,13 @@ CASES = [
         trigger=analysis(_unreadable_rollout),
         control=analysis(),
         effect=_nothing_reported,
+    ),
+    Case(
+        code="JUDGE_CONFIGURATION_UNREADABLE",
+        # The run records its model roles as text that is not JSON.
+        trigger=analysis(_judge_claims_with_roles("grader=m")),
+        control=analysis(_judge_claims_with_roles({"grader": {"model": "m"}})),
+        effect=_roles_left_out,
     ),
     Case(
         code="JUDGE_SCORE_MISSING",
