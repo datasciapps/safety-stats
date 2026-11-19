@@ -367,10 +367,33 @@ Rollout counts come from the manifest's `expected_rollouts` column for both arms
 `--coverage-mode` follows the comparison's `coverage_mode`: `two_sided`, the default, splits
 alpha between the two bounds. `--family-size M` plans at the share `alpha / M`.
 
-The numbers hold for the `weighted_hoeffding` interval. The recommended
-`weighted_kl_chernoff` interval is usually narrower on sparse failures, so the planner tends to
-be pessimistic for it, but it gives no guarantee for that method. The planner assumes no
-unclassified outcomes and does not plan hierarchy-node contrasts. The derivation is in
+The numbers hold only for a `comparisons` entry with `method: weighted_hoeffding`, which bounds
+the difference directly, and the output's `Interval method` line says so. This is not the
+setup `init` writes, nor the one this guide recommends for two or more configurations: both
+use a `comparison_sets` entry with `method: weighted_kl_chernoff`, so the numbers do not apply
+to such a plan as written. To rely on them, declare the contrast as a `comparisons` entry with
+`method: weighted_hoeffding`.
+
+The numbers do not hold for:
+
+- **A `comparison_sets` entry, whatever its method.** A comparison set bounds each arm at half
+  the alpha and subtracts the arms' endpoints, which is wider unless the baseline's lower
+  bound is cut off at zero. In the example above, with
+  `method: weighted_hoeffding`, a true difference of −0.059 then gives an upper bound at or
+  below the margin in about 77% of runs when the baseline fails on 30% of rollouts, and in
+  about 76% at 50%, not the planned 90%.
+- **The other methods.** `weighted_kl_chernoff`, the recommended method, bounds each arm
+  separately as a comparison set does, and `weighted_empirical_bernstein` adapts to the
+  observed variance. Both are often narrower than `weighted_hoeffding` on sparse failures
+  when prompt weights are even; with uneven weights, or at moderate failure rates, either can
+  be wider. In the same example, `weighted_kl_chernoff` is wider once both arms fail on more
+  than about 12% of rollouts, and at 50% the difference −0.059 passes in about 76% of runs.
+  With `nested_equal` weights over tasks of 2 and 98 prompts and 1% failures on the most
+  heavily weighted prompts, both are wider than `weighted_hoeffding`. The planner states
+  nothing for these methods, in either direction.
+
+The planner assumes no unclassified outcomes and does not plan hierarchy-node contrasts. The
+derivation is in
 [Statistical methods, section 7.7](statistical-methods.md#77-planning-a-comparison-at-a-margin-experimental).
 
 ## Report and visualization
@@ -419,8 +442,9 @@ bounds that hold for every way of scoring the unknown outcomes, instead of faili
   produce.
 - `fixed_cluster_bootstrap` takes its lower bound from the completion that scores every unknown
   candidate outcome safe and every unknown baseline outcome a failure, and its upper bound from
-  the opposite completion. The resampling draws do not depend on the outcomes, so no completion
-  gives a lower or a higher bound.
+  the opposite completion. The resampling draws do not depend on the outcomes, and every
+  replicate mean grows with each pair's difference, so no completion gives a lower lower bound
+  or a higher upper bound.
 
 The point estimate depends on the unknown outcomes, so each of these outputs carries
 `estimate_lower` and `estimate_upper` in place of `estimate`. `diagnostic_outputs` gains a
@@ -434,9 +458,13 @@ the report's integrity `invalid`. Unscored rollouts degrade the integrity as the
 pairing. The completions bound the diagnostics only. The comparison's own interval treats
 unscored outcomes as set by `inputs.score.missing`.
 
-`newcombe_paired` enumerates the completions. Their number grows with the cube of the number of
-unscored pairs, and above 50 million candidate tables, a few hundred unscored pairs, the
-diagnostic fails with `PAIR_BROKEN` and a message saying so.
+`newcombe_paired` evaluates its bound on every distinct 2×2 table the completions produce, a
+block at a time, so its memory stays small and its time grows with the number of tables. That
+number grows with up to the cube of the number of unscored pairs. Above 50 million tables, which
+668 pairs unscored in both arms reach, `newcombe_paired` is not reported, and a
+`PAIR_NEWCOMBE_UNAVAILABLE` warning says so. The other paired diagnostics, the comparison's
+interval and the integrity status are unaffected, and `exact_mcnemar` and
+`fixed_cluster_bootstrap` bound any number of unscored pairs.
 
 ## Interpretation boundaries
 

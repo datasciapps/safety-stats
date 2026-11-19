@@ -443,6 +443,17 @@ def test_compare_artifacts_generative_cases_need_a_dataset_per_cohort(
     assert artifact_cases._cohort_dataset(shared, "candidate") == shared[0]
 
 
+def test_release_rehearsal_installs_the_inspect_extra_wherever_it_installs_the_wheel() -> None:
+    """The rehearsal reads the shipped example's Inspect log, which the core install cannot."""
+    script = (ROOT / "scripts" / "release-rehearsal.sh").read_text(encoding="utf-8")
+    installs = [line.strip() for line in script.splitlines()
+                if "uv pip install" in line and "WHEEL" in line]
+    assert installs
+    # The dev extra includes the inspect extra (pyproject.toml).
+    assert [line for line in installs
+            if '"${WHEEL}[inspect]"' not in line and '"${WHEEL}[dev]"' not in line] == []
+
+
 def test_the_slow_end_to_end_test_of_the_cases_is_marked(request: pytest.FixtureRequest) -> None:
     """It takes a minute or more; ``pytest -m "not slow"`` leaves it out of a quick run."""
     assert any(line.startswith("slow:") for line in request.config.getini("markers"))

@@ -71,9 +71,9 @@ of the fields and their values, as Inspect's `evals_df` reads them, written as J
 keys and no whitespace. Equal fingerprints mean equal configurations. The values themselves can
 hold credentials and endpoints, such as request headers in the generation config's
 `extra_headers`, a base URL or the path of a sandbox's configuration, so no report or
-diagnostic copies them from the logs, with one exception: when `outputs.judge_claims` is on,
-`report.json`, `report-full.md` and `report.html` record each scorer's options and metadata as
-the logs give them. Of the rest, only the model is named.
+diagnostic copies them from the logs. Only the model is named. A judge panel records each
+judge's scorer the same way: by its name and the fingerprint of its options, metrics and
+metadata, and each model role by its model id alone.
 
 A fingerprint hides a value only as well as the value is hard to guess. It has no salt, so the
 same configuration always gives the same fingerprint, which keeps reports byte-identical and

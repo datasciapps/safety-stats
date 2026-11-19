@@ -1185,6 +1185,14 @@ end-to-end system. An explicit provider policy block during target generation ca
 known safe outcome only when no target content was delivered. The event is retained as a distinct
 `target_policy_blocked_safe` outcome rather than rewritten as an ordinary model refusal.
 
+"No target content" means none in the whole sample, not only in the blocked generation. A block in
+the last turn of a conversation, or the last step of an agent, does not withdraw what an earlier
+turn delivered: its text, readable reasoning or tool calls reached the user or the environment
+before the block. A sample error therefore counts as a target-side block only when no earlier
+generation of the sample succeeded, and a content-filter stop classified under
+`inputs.score.content_filter_stops` only when neither the stopped output nor any earlier
+generation that the transcript records carries content. Otherwise the score decides.
+
 This logic does not apply to a grader-side policy block. Once target content exists, failure of a
 separate classifier leaves its label unknown. It also does not apply to network errors, timeouts,
 quota failures, or ambiguous provider errors. For an `underlying_model` estimand, even a
@@ -1609,7 +1617,7 @@ Updating a Bernoulli confidence sequence after every correlated epoch is invalid
 
 ### 6.8 AI-evaluation precedent
 
-Sequential inference is emerging explicitly in AI evaluation. *Efficient Sequential Evaluation of Large Language Models* constructs confidence sequences by inverting test supermartingales and studies adaptive question selection [20]. CELEUS builds anytime-valid confidence intervals from e-processes and combines uncertainty-guided sample selection with a surrogate for the items not yet evaluated [37]. Both papers target the unweighted mean score of one model over a pool of items, with one outcome per item. Neither offers one-sided threshold decisions, a declared weighted estimand, several rollouts per prompt, correction for judge error, or multiplicity across claims. Both use non-uniform selection with inverse-probability weighting, but only as a sampling device, not as a weighted target. Optstop implements Bayesian adaptive stopping for Inspect AI, but its posterior-width criterion is not the same as an anytime-valid frequentist confidence sequence [21]. This remains a useful future integration point if users later require a frequentist false-pass guarantee after adaptive stopping; it does not justify adding sequential complexity to the fixed-horizon core.
+Sequential inference is emerging explicitly in AI evaluation. *Efficient Sequential Evaluation of Large Language Models* constructs confidence sequences by inverting test supermartingales and studies adaptive question selection [20]. CELEUS builds anytime-valid confidence intervals from e-processes and combines uncertainty-guided sample selection with a surrogate for the items not yet evaluated [39]. Both papers target the unweighted mean score of one model over a pool of items, with one outcome per item. Neither offers one-sided threshold decisions, a declared weighted estimand, several rollouts per prompt, correction for judge error, or multiplicity across claims. Both use non-uniform selection with inverse-probability weighting, but only as a sampling device, not as a weighted target. Optstop implements Bayesian adaptive stopping for Inspect AI, but its posterior-width criterion is not the same as an anytime-valid frequentist confidence sequence [21]. This remains a useful future integration point if users later require a frequentist false-pass guarantee after adaptive stopping; it does not justify adding sequential complexity to the fixed-horizon core.
 
 ### 6.9 Implemented: human labels for a judge calibration (experimental)
 
@@ -1623,7 +1631,7 @@ One confidence sequence is implemented: for the human labels of a validated judg
 \pi_n(\rho)=\frac{\rho^{S_n}(1-\rho)^{n-S_n}}{B(S_n+1,\,n-S_n+1)}
 \]
 
-is also the posterior-to-prior ratio. At the true \(\rho^\ast\), the prior-posterior ratio \(1/\pi_n(\rho^\ast)\) is a nonnegative martingale with initial value one (Waudby-Smith and Ramdas [39], Proposition 1, here for the binomial model rather than a finite population). It is the likelihood ratio of the uniform mixture of rates against \(\rho^\ast\), a method-of-mixtures martingale in the sense of [3]. Ville's inequality gives \(\Pr(\exists n:1/\pi_n(\rho^\ast)\ge 1/a)\le a\), so
+is also the posterior-to-prior ratio. At the true \(\rho^\ast\), the prior-posterior ratio \(1/\pi_n(\rho^\ast)\) is a nonnegative martingale with initial value one (Waudby-Smith and Ramdas [41], Proposition 1, here for the binomial model rather than a finite population). It is the likelihood ratio of the uniform mixture of rates against \(\rho^\ast\), a method-of-mixtures martingale in the sense of [3]. Ville's inequality gives \(\Pr(\exists n:1/\pi_n(\rho^\ast)\ge 1/a)\le a\), so
 
 \[
 C_n=\{\rho:\pi_n(\rho)>a\}
@@ -1637,7 +1645,7 @@ contains \(\rho^\ast\) at every \(n\) simultaneously with probability at least \
 
 **Assumptions.** The queue's order within each stratum is a uniformly random permutation fixed before labelling, and which stratum the next queue row comes from does not depend on labels not yet seen. Rows are labelled in queue order without skipping, which the analysis checks as a prefix of the declared queue. Given its size, each stratum's rollouts are independent, each truly unsafe with the stratum's \(\rho\). Human labels are ground truth. Several strata interleaved in one queue keep each stratum's martingale, because each stratum's order is drawn independently of the others' labels.
 
-**Validation.** `tests/unit/test_confidence_sequence.py` checks each endpoint against the posterior density in exact rational arithmetic. Its Monte Carlo draws every rollout anew in each of 2,000 strata of 60 rollouts and labels each stratum up to a census, counting a side as missed if it ever excluded \(\rho\), which is the most adversarial stopping rule. At \(a=0.1\) each side missed 0% to 5.3% of the time. A corrected interval on 120 rollouts, at 0.05 for the judge-reported interval and 0.05 for the calibration, with two rows of each stratum labelled per round up to a census, never missed the true risk at any round in 2,000 runs. An earlier version used the finite-population sequence of [39], with a uniform prior on \(K\), and reported \([\min C_n/N,\ \max C_n/N]\) for the counts it kept. That bounds \(K/N\), not \(\rho\): under the same simulations each side missed 43.6% to 58.5% of the time, and the corrected interval lay above the true risk in 12.25% of the runs and below it in 16.25%, against 5% per side.
+**Validation.** `tests/unit/test_confidence_sequence.py` checks each endpoint against the posterior density in exact rational arithmetic. Its Monte Carlo draws every rollout anew in each of 2,000 strata of 60 rollouts and labels each stratum up to a census, counting a side as missed if it ever excluded \(\rho\), which is the most adversarial stopping rule. At \(a=0.1\) each side missed 0% to 5.3% of the time. A corrected interval on 120 rollouts, at 0.05 for the judge-reported interval and 0.05 for the calibration, with two rows of each stratum labelled per round up to a census, never missed the true risk at any round in 2,000 runs. An earlier version used the finite-population sequence of [41], with a uniform prior on \(K\), and reported \([\min C_n/N,\ \max C_n/N]\) for the counts it kept. That bounds \(K/N\), not \(\rho\): under the same simulations each side missed 43.6% to 58.5% of the time, and the corrected interval lay above the true risk in 12.25% of the runs and below it in 16.25%, against 5% per side.
 
 ---
 
@@ -1990,7 +1998,7 @@ which risk differences \(\Delta=R_C-R_B\) a fixed two-arm design can resolve at 
   probability at least \(1-\beta\) (a regression of at least \(\delta\) is shown).
 
 The guarantee is that of the `weighted_hoeffding` difference of section 7.0, as `analyze`
-computes it, with no unclassified outcomes. That interval bounds
+computes it for a `comparisons` entry, with no unclassified outcomes. That interval bounds
 \(Q=(1+\Delta)/2\) by a weighted mean of independent blocks \(b\) with values in \([0,1]\) and
 masses \(m_b\). With \(c^2=\sum_bm_b^2\), Hoeffding's inequality [32] gives
 
@@ -2037,11 +2045,33 @@ under `per_direction`. \(M\) is the number of targets among which the family div
 alpha, as under `flat_bonferroni`. Hierarchy-node contrasts and `frontier_sidak` calibration
 are not planned.
 
-**Scope.** The guarantee is not one for the `weighted_kl_chernoff` or
-`weighted_empirical_bernstein` differences. Those are usually narrower on sparse failures, but
-not for every design, so a design planned here may resolve more than stated under those
-methods, and has no stated guarantee under them. Unclassified outcomes widen the analysis
-bounds and are not planned for.
+**Scope.** The guarantee holds only for a `comparisons` entry with
+`method: weighted_hoeffding`. A `comparison_sets` entry, whatever its method, and
+`weighted_kl_chernoff` in a `comparisons` entry bound each arm's weighted mean at
+\(\alpha_U/2\) and report \(U_\Delta=U_C-L_B\) (section 7.0). With per-arm masses \(c_C^2\),
+\(c_B^2\) and \(s_X(\gamma)=\sqrt{\tfrac12c_X^2\log(1/\gamma)}\), the confidence term of that
+rectangle under `weighted_hoeffding` is \(s_C(\alpha_U/2)+s_B(\alpha_U/2)\) rather than
+\(2s(\alpha_U)\). For unpaired arms at equal counts, \(c_C^2=c_B^2=2c^2\), so it is
+\(\sqrt{2\log(2/\alpha_U)/\log(1/\alpha_U)}\approx1.54\) times as large at
+\(\alpha_U=0.025\), and \(g_U\) no longer suffices. In the example of
+[Planning a comparison](model-comparisons.md#planning-a-comparison-experimental) (100 equally
+weighted prompts, 10 unpaired rollouts per arm, \(\delta=0.05\), \(\alpha_U=0.025\),
+\(1-\beta=0.9\)), `research/comparison_planning_scope.py` simulates 10,000 runs at the
+planned \(\Delta=\delta-g_U\approx-0.059\). \(U_\Delta\le\delta\) holds in 0.773 of them for
+the `weighted_hoeffding` rectangle at a baseline rate of 0.3, and in 0.755 at 0.5 (standard
+error at most 0.005); for the `weighted_empirical_bernstein` rectangle, in 0.582 at either
+rate. The `weighted_kl_chernoff` and `weighted_empirical_bernstein` differences are often
+narrower than the Hoeffding difference on sparse failures when prompt weights are even; with
+uneven weights, or at moderate rates, either can be wider. In the same example,
+KL/Chernoff's upper half-width equals Hoeffding's 0.061 when both arms observe a failure rate
+of 0.12 and is 0.093 at 0.5, and at a baseline rate of 0.5 the planned difference gives
+\(U_\Delta\le\delta\) in 0.756 of the runs. With `nested_equal` weights over tasks of 2 and
+98 prompts, 10 rollouts each, and one failure per arm on each of the first ten prompts (both
+of the small task's among them), the upper half-widths are 0.217 for Hoeffding, 0.243 for
+KL/Chernoff, which then uses its Poisson kernel, and 0.276 for empirical Bernstein; over tasks
+of 5, 10, 20, 25 and 40 prompts with 20 such failures, 0.078 for Hoeffding and 0.081 for
+KL/Chernoff. The planner states no guarantee for these methods, in either direction.
+Unclassified outcomes widen the analysis bounds and are not planned for.
 
 ### 7.8 Arm contrasts on a generative design (experimental)
 
@@ -2323,6 +2353,16 @@ and overall `PASS` occurs only when every component test rejects its unsafe null
 
 Correction is still required when the report asserts simultaneous coverage for every displayed interval, permits separate component-level safety claims, selects favorable claims after inspection, or uses “any significant result” logic. The analysis plan must record which decision semantics apply; the library must not apply multiplicity mechanically without first identifying the claim being protected.
 
+The argument needs the thresholds fixed before the data. Let claim \(j\) of the mandatory claims \(M\) pass when its upper bound \(U_j\) is at or below its threshold \(a_j\), and let \(E_j=\{R_j\le U_j\}\) be its coverage event, with \(\Pr(E_j^c)\le\alpha_j\). A false overall pass needs some claim with \(U_j\le a_j<R_j\), so it lies in \(E_j^c\) for that claim. With fixed thresholds the set \(W=\{j: R_j>a_j\}\) is fixed. When it is not empty, a pass needs \(E_{j_0}^c\) for any one \(j_0\in W\), and the bound is \(\alpha_{j_0}\).
+
+When a [decision policy](decision-policy.md) sets thresholds after the run, both the thresholds and the choice of which claims to move may depend on the data, so \(W\) is no longer fixed. What remains is that a false overall pass needs some claim, whichever the data make it, with \(R_j>a_j\ge U_j\):
+
+\[
+\Pr(\text{false overall pass})\le\Pr\Big(\textstyle\bigcup_{j\in M}E_j^c\Big).
+\]
+
+This is at most one budget \(\alpha\) when one simultaneous coverage event \(E\subseteq\bigcap_{j\in M}E_j\) with \(\Pr(E^c)\le\alpha\) covers every mandatory claim's bound. Otherwise it can reach the sum of the separate events' budgets. Setting each \(a_j\) at \(U_j\) reaches it: every claim then passes, and the pass is false whenever any bound misses. With ten independent claims at \(\alpha=0.05\) that is close to \(1-0.95^{10}\approx0.40\); exact binomial bounds, being conservative, give about 0.27. Moving one threshold reaches it as well, when the claim is chosen from the data: with the others at loose plan thresholds, tightening the claim with the lowest upper bound to that bound gives a false pass whenever any bound misses, since the lowest bound is then below its true risk too (the same 0.27 in the same setting). A set of moved claims fixed in advance would keep a sharper bound, but the analysis cannot tell such a set from one chosen after the run. The library therefore treats every threshold a decision policy moves as data-dependent, whatever time the policy states for it, and does not certify an overall pass when a policy moves any mandatory claim's `acceptable_upper` while the mandatory claims rest on more than one coverage event (`DECISION_POLICY_OVERALL_UNCERTIFIED`). Each claim's own verdict is unaffected: its error is bounded by \(\alpha_j\) at any threshold, because a wrong pass of claim \(j\) alone needs \(E_j^c\).
+
 ### 9.4 Holm step-down procedure
 
 Given valid p-values \(p_1,\ldots,p_m\), sort them:
@@ -2548,12 +2588,12 @@ then
 \le\alpha_{\mathrm{family}}.
 \]
 
-This single union-bound argument controls both dimensions:
+Two mechanisms control the two dimensions:
 
-- repeated looks over time;
-- repeated claims across the safety family.
+- repeated looks over time, by each claim's time-uniform guarantee in the first display, which spends no alpha per look;
+- repeated claims across the safety family, by the union bound over \(i\).
 
-It is simple and conservative, which makes it an appropriate first implementation within the later sequential module. More powerful online multiple-testing or e-value procedures may follow, but they should not obscure the guarantee.
+The union bound is simple and conservative, which makes it an appropriate first implementation within the later sequential module. More powerful online multiple-testing or e-value procedures may follow, but they should not obscure the guarantee.
 
 The analysis plan must freeze each claim's \(\alpha_i\) before monitoring begins. Adding claims midstream requires reserving alpha in advance or starting a new declared family.
 
@@ -2582,7 +2622,7 @@ is a nonnegative martingale with \(N_0=1\). \(\psi_\lambda\) is concave, so by J
 G_t(\lambda)=\exp\bigl(\lambda S_t-t\,\psi_\lambda(\bar m_t)\bigr)\le N_t(\lambda).
 \]
 
-For weights \(w_j>0\) summing to one on values \(\lambda_j>0\), all fixed before the data, \(N_t=\sum_j w_j N_t(\lambda_j)\) is again a nonnegative martingale with \(N_0=1\), and \(G_t=\sum_j w_j G_t(\lambda_j)\le N_t\). Ville's inequality [40] gives \(\Pr(\exists t:N_t\ge 1/\alpha)\le\alpha\). Define
+For weights \(w_j>0\) summing to one on values \(\lambda_j>0\), all fixed before the data, \(N_t=\sum_j w_j N_t(\lambda_j)\) is again a nonnegative martingale with \(N_0=1\), and \(G_t=\sum_j w_j G_t(\lambda_j)\le N_t\). Ville's inequality [42] gives \(\Pr(\exists t:N_t\ge 1/\alpha)\le\alpha\). Define
 
 \[
 L_t=\inf\Bigl\{m\in[0,1]:\sum_j w_j\exp\bigl(\lambda_j S_t-t\,\psi_{\lambda_j}(m)\bigr)<1/\alpha\Bigr\}.
@@ -2685,7 +2725,7 @@ The original Inspect logs should remain immutable; statistical reports should be
 | Core | Repeated attempts within declared groups | Design-respecting cluster summaries; bootstrap only with a justified sampling interpretation | Avoid pseudoreplication; optionally cluster-level sampling uncertainty | Declared hierarchy and source of randomness | Fixed groups are not automatically a sampled population |
 | Core | Multiple safety claims | Intersection-union logic, Holm tests, or Bonferroni simultaneous bounds as appropriate | Protect the declared global or simultaneous claim | Valid component methods and predeclared decision semantics | Correction is claim-dependent, not automatic |
 | Core | Exploratory discovery across many slices | Benjamini–Hochberg | False discovery rate | Standard BH dependence conditions | Must not drive deployment pass |
-| Core | Deployment gate | Two-threshold decision | Controlled false pass/fail | Valid bounds and predeclared thresholds | Inconclusive is a required outcome |
+| Core | Deployment gate | Two-threshold decision | Controlled false pass/fail | Valid bounds and predeclared thresholds; thresholds set later only when one simultaneous family decides every mandatory claim (section 9.3) | Inconclusive is a required outcome |
 | Experimental | Two values of one arm level of a generative design | Seed-matched arm contrast, simultaneous over a declared slice family (section 7.8) | Simultaneous coverage of declared slices and contrasts | Independent sampling units; family declared in the frozen plan | Not paired; widens with `maximum_ratio` when the declared weights skew a value across seeds |
 | Stretch | Continuously monitored or adaptively allocated rollouts | Bernoulli confidence sequence | Time-uniform coverage | Method-specific IID or martingale conditions | Adaptive selection can change the estimand |
 
@@ -2706,10 +2746,10 @@ A model may behave differently when it recognizes an evaluation. Statistical pre
 Every bound in this document is therefore conditional on the evaluated model not strategically
 underperforming. A model that deliberately fails to show a capability, or behaves more safely
 because it recognizes the evaluation, is measured correctly for the behaviour it chose to show;
-no amount of rollouts makes that behaviour representative [33]. Detecting sandbagging is a
+no amount of rollouts makes that behaviour representative [35]. Detecting sandbagging is a
 separate evaluation. One proposed method injects noise into the model's weights: a model that
 is not sandbagging degrades steadily as the noise grows, while a sandbagging model can improve
-anomalously. Its authors implemented it in Inspect [34]. This package does not run such checks.
+anomalously. Its authors implemented it in Inspect [36]. This package does not run such checks.
 
 ### 15.3 Scorer error
 
@@ -2759,7 +2799,7 @@ and \(U=1\) when \(Se_L=0\). By the union bound, \(\Pr(R(\pi;w)\le U)\ge 1-\alph
 
 **Lower bound.** Without a bound on \(FPR_j\), every judged failure may be a false positive: \(\pi_j=0\) with \(FPR_j=q_j\) reproduces any \(q_j\). The lower end is therefore zero, also for a perfectly sensitive judge.
 
-**Relation to Rogan--Gladen.** With a declared specificity \(Sp=1-FPR\) and \(Se+Sp>1\), the inversion \(\pi=(q-1+Sp)/(Se+Sp-1)\) [41] has
+**Relation to Rogan--Gladen.** With a declared specificity \(Sp=1-FPR\) and \(Se+Sp>1\), the inversion \(\pi=(q-1+Sp)/(Se+Sp-1)\) [43] has
 
 \[
 \frac{\partial\pi}{\partial Sp}=\frac{Se-q}{(Se+Sp-1)^2}\ge 0\quad\text{when } q\le Se ,
@@ -2794,7 +2834,7 @@ comparable to human drivers by test driving alone would take hundreds of million
 of billions of miles. They concluded that test driving alone cannot provide sufficient
 evidence of safety, that new ways of demonstrating it are needed, that even with them safety may
 not be established with certainty, and that regulation must therefore adapt as the technology
-and the evidence develop [35].
+and the evidence develop [37].
 
 The same holds here. A pre-deployment evaluation can bound rates that its rollout budget can
 reach. Below that, the residual risk is not shown to be small, only not measured. Claims about
@@ -2960,18 +3000,18 @@ That is the role this Inspect extension should fill.
 
 ### Threats to validity and small-sample evaluation
 
-33. T. van der Weij, F. Hofstätter, O. Jaffe, S. F. Brown, and F. R. Ward, “AI Sandbagging: Language Models can Strategically Underperform on Evaluations,” 2024. [arXiv:2406.07358](https://arxiv.org/abs/2406.07358)
-34. C. Tice, P. A. Kreer, N. Helm-Burger, P. S. Shahani, F. Ryzhenkov, F. Roger, C. Neo, J. Haimes, F. Hofstätter, and T. van der Weij, “Noise Injection Reveals Hidden Capabilities of Sandbagging Language Models,” NeurIPS 2025. [arXiv:2412.01784](https://arxiv.org/abs/2412.01784)
-35. N. Kalra and S. M. Paddock, “Driving to safety: How many miles of driving would it take to demonstrate autonomous vehicle reliability?,” *Transportation Research Part A: Policy and Practice* 94, 182–193, 2016. [doi:10.1016/j.tra.2016.09.010](https://doi.org/10.1016/j.tra.2016.09.010)
-36. S. Bowyer, L. Aitchison, and D. R. Ivanova, “Position: Don't Use the CLT in LLM Evals With Fewer Than a Few Hundred Datapoints,” ICML 2025. [arXiv:2503.01747](https://arxiv.org/abs/2503.01747)
+35. T. van der Weij, F. Hofstätter, O. Jaffe, S. F. Brown, and F. R. Ward, “AI Sandbagging: Language Models can Strategically Underperform on Evaluations,” 2024. [arXiv:2406.07358](https://arxiv.org/abs/2406.07358)
+36. C. Tice, P. A. Kreer, N. Helm-Burger, P. S. Shahani, F. Ryzhenkov, F. Roger, C. Neo, J. Haimes, F. Hofstätter, and T. van der Weij, “Noise Injection Reveals Hidden Capabilities of Sandbagging Language Models,” NeurIPS 2025. [arXiv:2412.01784](https://arxiv.org/abs/2412.01784)
+37. N. Kalra and S. M. Paddock, “Driving to safety: How many miles of driving would it take to demonstrate autonomous vehicle reliability?,” *Transportation Research Part A: Policy and Practice* 94, 182–193, 2016. [doi:10.1016/j.tra.2016.09.010](https://doi.org/10.1016/j.tra.2016.09.010)
+38. S. Bowyer, L. Aitchison, and D. R. Ivanova, “Position: Don't Use the CLT in LLM Evals With Fewer Than a Few Hundred Datapoints,” ICML 2025. [arXiv:2503.01747](https://arxiv.org/abs/2503.01747)
 
 ### Sequential evaluation and judge reliability
 
-37. Z. Zhou, Z. Ye, Z. Chen, B. Li, and F. Liu, “CELEUS: Certifiable and Efficient LLM Evaluation via E-Processes,” 2026. [arXiv:2606.20820](https://arxiv.org/abs/2606.20820)
-38. Y. Gao, “How Reliable Is Your Jailbreak Judge? Calibration and Adversarial Robustness of Automated ASR Scoring,” 2026. [arXiv:2606.25487](https://arxiv.org/abs/2606.25487)
-39. I. Waudby-Smith and A. Ramdas, “Confidence sequences for sampling without replacement,” *Advances in Neural Information Processing Systems* 33, 2020. [arXiv:2006.04347](https://arxiv.org/abs/2006.04347)
-40. J. Ville, *Étude critique de la notion de collectif*, Gauthier-Villars, Paris, 1939.
-41. W. J. Rogan and B. Gladen, “Estimating prevalence from the results of a screening test,” *American Journal of Epidemiology* 107(1), 71–76, 1978. [doi:10.1093/oxfordjournals.aje.a112510](https://doi.org/10.1093/oxfordjournals.aje.a112510)
+39. Z. Zhou, Z. Ye, Z. Chen, B. Li, and F. Liu, “CELEUS: Certifiable and Efficient LLM Evaluation via E-Processes,” 2026. [arXiv:2606.20820](https://arxiv.org/abs/2606.20820)
+40. Y. Gao, “How Reliable Is Your Jailbreak Judge? Calibration and Adversarial Robustness of Automated ASR Scoring,” 2026. [arXiv:2606.25487](https://arxiv.org/abs/2606.25487)
+41. I. Waudby-Smith and A. Ramdas, “Confidence sequences for sampling without replacement,” *Advances in Neural Information Processing Systems* 33, 2020. [arXiv:2006.04347](https://arxiv.org/abs/2006.04347)
+42. J. Ville, *Étude critique de la notion de collectif*, Gauthier-Villars, Paris, 1939.
+43. W. J. Rogan and B. Gladen, “Estimating prevalence from the results of a screening test,” *American Journal of Epidemiology* 107(1), 71–76, 1978. [doi:10.1093/oxfordjournals.aje.a112510](https://doi.org/10.1093/oxfordjournals.aje.a112510)
 
 ---
 

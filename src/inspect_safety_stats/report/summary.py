@@ -19,7 +19,7 @@ warning's code means.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from statistics import median
 
 from inspect_safety_stats.config.models import DEFAULT_PRECISION_TARGET
@@ -525,7 +525,53 @@ def _claims_section(report: SafetyReport) -> list[str]:
         lines.append("| " + " | ".join(cells) + " |")
     if not report.claims:
         lines.append("| _No claims declared_ | — | — | — | — | — |")
+    policy = decision_policy_note(report)
+    if policy:
+        lines.extend(["", policy])
     return lines
+
+
+def decision_policy_note(
+    report: SafetyReport,
+    code: Callable[[str], str] = lambda text: f"`{_escape(text)}`",
+    *,
+    pointer: bool = True,
+) -> str:
+    """One paragraph on the decision policy the thresholds come from, or "" without one.
+
+    It says which thresholds the policy set, and which versions state a time after the first
+    evaluation started. The summary lists errors and warnings only, so without it the latter
+    would be left to an ``INFO`` diagnostic in ``report-full.md``. ``code`` formats an
+    identifier or a file name; ``pointer`` adds where the versions are listed.
+    """
+
+    record = report.decision_policy
+    if record is None:
+        return ""
+    if not record.applied:
+        return (
+            "A decision policy (experimental) was given but not applied, because it failed a "
+            "check; the claims keep the plan's thresholds."
+        )
+    claims = [item.claim_id for item in record.claims if item.set_by != "plan"]
+    later = [item.id for item in record.versions if item.set_after_first_evaluation]
+    text = (
+        "Thresholds of "
+        + (", ".join(code(item) for item in claims) or "no claim")
+        + " come from a decision policy (experimental), not the plan; the others are the "
+        "plan's."
+    )
+    if later:
+        text += (
+            " Version(s) "
+            + ", ".join(code(item) for item in later)
+            + " state a time after the first evaluation started, so those thresholds may "
+            "describe the bounds rather than a requirement fixed in advance."
+        )
+    if pointer:
+        text += " The versions and their times are under Decision policy in "
+        text += code("report-full.md") + "."
+    return text
 
 
 def _warnings_section(diagnostics: list[Diagnostic]) -> list[str]:

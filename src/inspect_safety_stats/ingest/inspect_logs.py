@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 import zipfile
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -163,6 +163,80 @@ def _error_context(
     )
 
 
+def _carries_content(message: Any) -> bool:
+    """Whether a generated message carries any content: text, readable reasoning, a tool call
+    or any other part, such as an image or a provider's own tool use. Reasoning that the
+    provider returned only encrypted (redacted) or only as a signature is not readable."""
+
+    if getattr(message, "tool_calls", None):
+        return True
+    content = getattr(message, "content", None)
+    if isinstance(content, str):
+        return bool(content.strip())
+    for part in content or []:
+        kind = getattr(part, "type", None)
+        if kind == "text":
+            texts = [getattr(part, "text", None)]
+        elif kind == "reasoning":
+            texts = [getattr(part, "summary", None)]
+            if not getattr(part, "redacted", False):
+                texts.append(getattr(part, "reasoning", None))
+        else:
+            return True
+        if any(isinstance(text, str) and text.strip() for text in texts):
+            return True
+    return False
+
+
+def _delivers_content(output: Any) -> bool:
+    """Whether a model output delivered content. An output reported as an API error delivered
+    none, whatever stand-in text Inspect put in its place."""
+
+    if output is None or getattr(output, "error", None) is not None:
+        return False
+    choices = getattr(output, "choices", None) or []
+    return any(_carries_content(getattr(choice, "message", None)) for choice in choices)
+
+
+def _message_id(output: Any) -> str | None:
+    choices = getattr(output, "choices", None) or []
+    message = getattr(choices[0], "message", None) if choices else None
+    identifier = getattr(message, "id", None)
+    return identifier if isinstance(identifier, str) else None
+
+
+def _content_before_stop(sample: Any) -> Literal["earlier_generation", "unverifiable"] | None:
+    """Whether the target delivered content in a sample before the generation that a content
+    filter stopped, which is the sample's output.
+
+    The generations before the stopped one are the model events that the transcript records
+    before it, such as the earlier turns of a conversation or the steps of an agent; the
+    scorers' model calls come after it. Any model's content counts, since the transcript does
+    not say which calls the end-to-end system delivered. When the transcript does not record
+    the stopped generation, content delivered before it cannot be ruled out.
+    """
+
+    stopped = _message_id(getattr(sample, "output", None))
+    generations = [
+        event for event in (sample.events or []) if getattr(event, "event", None) == "model"
+    ]
+    recorded = [
+        index
+        for index, event in enumerate(generations)
+        if stopped is not None and _message_id(getattr(event, "output", None)) == stopped
+    ]
+    if not recorded:
+        return "unverifiable"
+    earlier = generations[: recorded[-1]]
+    if any(
+        getattr(event, "error", None) is None
+        and _delivers_content(getattr(event, "output", None))
+        for event in earlier
+    ):
+        return "earlier_generation"
+    return None
+
+
 def _stop_of(output: Any) -> StopContext | None:
     """The content-filter stop of a sample's output, or None when no content filter stopped it.
 
@@ -170,20 +244,35 @@ def _stop_of(output: Any) -> StopContext | None:
     reason `refusal`, which Inspect records as `content_filter`, with the provider's category in
     the choice's `stop_details` (Inspect 0.3.286 and later). A decline that arrives as an API
     error comes back with the output's `error` set and Inspect's stand-in apology as content.
+    Only the output itself is read: :func:`_sample_stop` adds the sample's earlier generations.
     """
 
     if output is None or getattr(output, "stop_reason", None) != "content_filter":
         return None
     choices = getattr(output, "choices", None) or []
     details = getattr(choices[0], "stop_details", None) if choices else None
-    block_error = getattr(output, "error", None) is not None
-    completion = getattr(output, "completion", "") or ""
+    delivered = _delivers_content(output)
     return StopContext(
-        content_delivered=not block_error and bool(completion.strip()),
+        content_delivered=delivered,
         block_type=getattr(details, "type", None),
         block_category=getattr(details, "category", None),
-        block_error=block_error,
+        block_error=getattr(output, "error", None) is not None,
+        delivered_in="stopped_output" if delivered else None,
     )
+
+
+def _sample_stop(sample: Any) -> StopContext | None:
+    """The content-filter stop of a sample, which delivered content when the stopped output or
+    any earlier generation of the sample did. A stop after an earlier turn delivered content
+    did not keep that content from the user (statistical methods, section 4.6)."""
+
+    stop = _stop_of(getattr(sample, "output", None))
+    if stop is None or stop.content_delivered:
+        return stop
+    before = _content_before_stop(sample)
+    if before is None:
+        return stop
+    return replace(stop, content_delivered=True, delivered_in=before)
 
 
 def _token_limit_stop_of(output: Any) -> StopContext | None:
@@ -220,7 +309,7 @@ def _stop_context(
         log = provided.get(eval_id) or read_eval_log(log_path)
         stops: dict[str, StopContext] = {}
         for sample in log.samples or []:
-            stop = _stop_of(sample.output) or _token_limit_stop_of(sample.output)
+            stop = _sample_stop(sample) or _token_limit_stop_of(sample.output)
             if stop is not None:
                 stops[str(sample.uuid)] = stop
         cache[cache_key] = stops

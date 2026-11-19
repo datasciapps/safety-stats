@@ -24,9 +24,8 @@ from inspect_safety_stats.decision.engine import (
     decide_claim,
     noisy_valid_verdict_range,
 )
-from inspect_safety_stats.ingest.outcomes import is_missing
+from inspect_safety_stats.ingest.outcomes import classified_by_policy
 from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import (
     ClaimProfileVerdict,
     ClaimResult,
@@ -330,30 +329,12 @@ def _has_sensitivity_profiles(evidence: ComparisonResult | GroupRiskResult | Non
     )
 
 
-def _classified_by_policy(row: Observation) -> bool:
-    """Whether a plan policy, not the primary score's mapping, classified the rollout.
-
-    That is a policy block counted safe, a sample error counted as a failure, a content-filter
-    stop or an unscored truncated answer the plan classifies, or a missing score counted as a
-    failure. Each leaves its mark on the observation: a sample error, a content-filter stop's
-    undelivered content, the token-limit flag, or a missing score.
-    """
-
-    return row.failure is not None and (
-        row.outcome_status == "target_policy_blocked_safe"
-        or row.error is not None
-        or row.content_delivered is False
-        or bool(row.token_limit_unscored)
-        or is_missing(row.score_raw)
-    )
-
-
 def _policy_classified(data: NormalizedData) -> dict[tuple[str, str], tuple[int, int]]:
     """Per cohort and prompt, the rollouts a plan policy counted safe and as failures."""
 
     counts: dict[tuple[str, str], list[int]] = {}
     for row in data.observations:
-        if _classified_by_policy(row):
+        if classified_by_policy(row):
             tally = counts.setdefault((row.cohort_id, row.prompt_id), [0, 0])
             tally[1 if row.failure else 0] += 1
     return {key: (safe, failures) for key, (safe, failures) in counts.items()}
@@ -465,6 +446,47 @@ def _claim_judge_error_stress(
     )
 
 
+# A region projection intersects a family's raw intervals, so a projected interval covers on
+# the joint event of the family it was projected from, as the raw intervals do.
+_REGION_SUFFIXES = ("_hierarchy_region", "_multi_arm_region")
+
+
+def coverage_event(ref: str, decided: RiskIntervalResult | None) -> str:
+    """A key for the coverage event a claim's verdict rests on.
+
+    Two claims get the same key only when one event covers both their bounds: both are decided
+    on primary intervals of one simultaneous family (one calibration, so one event, whatever
+    the group, cohort or projection), or on the same interval of the same row. Every other
+    interval, a pointwise one, a judge correction or the noisy-but-valid test (``decided``
+    None), has a key of its own, which is the conservative reading when nothing ties two
+    events together. ``ref`` is the claim's evidence reference.
+    """
+
+    if decided is None:
+        return ref
+    scope = decided.coverage_scope or ""
+    for suffix in _REGION_SUFFIXES:
+        scope = scope.replace(suffix, "")
+    if (
+        decided.role == "primary"
+        and decided.family is not None
+        and scope.startswith("simultaneous")
+    ):
+        return f"{scope} of family {decided.family}"
+    return f"{ref} {decided.interval_id}"
+
+
+def _primary_interval(
+    evidence: ComparisonResult | GroupRiskResult | None,
+) -> RiskIntervalResult | None:
+    if evidence is None:
+        return None
+    return next(
+        (item for item in evidence.intervals if item.interval_id == evidence.primary_interval_id),
+        None,
+    )
+
+
 def _claims(
     plan: AnalysisPlan,
     data: NormalizedData,
@@ -473,7 +495,17 @@ def _claims(
     integrity_valid: bool,
     diagnostics: list[Diagnostic],
     judge_summary: dict[str, Any] | None = None,
+    coverage_events: dict[str, str] | None = None,
+    policy_claims: frozenset[str] = frozenset(),
 ) -> list[ClaimResult]:
+    """Decide every claim of the plan on its evidence.
+
+    ``coverage_events``, when given, receives each claim's ``coverage_event`` key, for the
+    overall decision under a decision policy (``analysis.policy._policy_roll_up``).
+    ``policy_claims`` are the claims whose thresholds in ``plan`` a decision policy set.
+    """
+
+    events: dict[str, str] = {} if coverage_events is None else coverage_events
     risk_index = {(item.cohort_id, item.group_id, item.measure_id): item for item in risks}
     comparison_index = {item.comparison_id: item for item in comparisons if item.level is None}
     families = {family.id: family for family in plan.multiplicity.families}
@@ -507,7 +539,7 @@ def _claims(
         certifying = evidence is not None and evidence.eligibility == "certifying"
         exploratory = plan.analysis.intent == "exploratory"
         # An exploratory analysis certifies nothing, but its reader still needs what the bounds
-        # say at the plan's thresholds. Such a claim is decided as a confirmatory analysis would
+        # say at the claim's thresholds. Such a claim is decided as a confirmatory analysis would
         # decide it, the result is kept as its descriptive status, and the claim stays
         # INCONCLUSIVE below.
         eligible = bool(integrity_valid and certifying)
@@ -516,6 +548,8 @@ def _claims(
         estimate = evidence.estimate if evidence else None
         method = evidence.method if evidence else "unavailable"
         evidence_refs = [ref]
+        # Decided on its evidence's primary interval, unless a branch below says otherwise.
+        events[claim.id] = coverage_event(ref, _primary_interval(evidence))
         family = families.get(claim.family)
         if family is None:
             # Plan validation reports the undeclared family. Without its error budget the claim
@@ -579,6 +613,7 @@ def _claims(
             estimate = None
             method = correction.method
             evidence_refs.append(f"interval:{correction.interval_id}")
+            events[claim.id] = coverage_event(ref, correction)
             if correction.family_alpha is not None:
                 alpha = family.alpha + correction.family_alpha
             if claim.method != "noisy_valid_test":
@@ -618,6 +653,7 @@ def _claims(
             estimate = None
             correction_note = None
             evidence_refs.append("test:noisy_valid_certification")
+            events[claim.id] = coverage_event(ref, None)
         elif validated_judge and correction is None:
             # A validated calibration makes every claim a claim about true risk. Without a
             # certifying correction only judge-reported risk remains, and the labels may show
@@ -666,9 +702,10 @@ def _claims(
                 ]
                 if eligible:
                     descriptive_status = status
+                    source = "decision policy" if claim.id in policy_claims else "plan"
                     reasons.append(
                         f"Descriptive only, not a certification: a confirmatory analysis of "
-                        f"these bounds at the plan's thresholds would give {status}."
+                        f"these bounds at the {source}'s thresholds would give {status}."
                     )
                     reasons.extend(decided)
             else:
