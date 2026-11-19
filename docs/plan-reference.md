@@ -282,8 +282,8 @@ diagnostic Lang-Reiczigel limits beside the exact box. Threshold claims whose ev
 validated correction are decided from the corrected bounds; an `assumed` correction never
 affects a claim. One calibration is estimated per cohort by
 exact Clopper-Pearson bounds within each judge stratum, and the corrected interval's coverage
-is the union of its own family budget and the judge family budget. The two modes are mutually
-exclusive.
+is the union of its own family budget and the judge family budget. A plan declares one mode:
+`assumed`, `validated` or `transported` (below).
 
 `groups` scopes an `assumed` or `validated` calibration to declared groups, for a cohort that
 holds several benchmarks whose judge accuracies differ:
@@ -357,7 +357,8 @@ inputs:
 `primary`, `validation_manifest` or `family`, and `published_set` is refused in any other
 mode. The specificity is not transported, so each corrected interval runs from zero to the
 judge-system upper bound divided by the sensitivity's lower bound. The intervals are always
-`diagnostic` and never affect a claim. Generative plans do not offer this mode. See
+`diagnostic` and never affect a claim. Fixed and sampled designs offer this mode; generative
+plans do not. See
 [Transported mode](judge-misclassification.md#transported-mode-a-published-sensitivity-experimental).
 
 Corrections are applied to `weighted_mean`, `maximum`, `cvar`, and `top_k_mean` measures, to

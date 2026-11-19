@@ -745,8 +745,10 @@ about the difference. Every comparison stays on the judge-reported scale, and th
 names them in the warning `JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON`.
 
 `mode: transported` takes only `published_set`. It cannot be combined with scenarios, a
-validation manifest or a judge family, and only fixed-design analyses offer it: a generative
-plan that declares it is refused.
+validation manifest or a judge family. Fixed and sampled designs run it. Under a sampled design
+the interval bounds the frame mean, so the transport assumption must hold on every prompt of
+the frame, drawn or not. The generative path does not offer it: a generative plan that declares
+it is refused.
 
 ### How it differs from issue #123
 

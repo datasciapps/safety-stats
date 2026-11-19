@@ -436,9 +436,9 @@ described in their pull requests.
   analysis emits `JUDGE_CALIBRATION_TRANSPORTED`, and `report-full.md` names the published set
   in its judge misclassification section, also when no group-risk row is corrected.
   Comparisons are not corrected: the warning `JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON`
-  names them.
-  Fixed-design analyses only. Plans without the mode keep their hash and write the same
-  report bytes as before. See
+  names them. Fixed and sampled designs run it; under a sampled design the interval bounds the
+  frame mean when transport holds on every prompt of the frame. Generative plans do not offer
+  it. Plans without the mode keep their hash and write the same report bytes as before. See
   [Transported mode](docs/judge-misclassification.md#transported-mode-a-published-sensitivity-experimental).
 
 - **A single-valued risk bound for system models (experimental).** Fault trees and Markov
