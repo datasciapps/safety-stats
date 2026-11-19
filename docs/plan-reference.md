@@ -1270,7 +1270,9 @@ claims:
 A [decision policy](decision-policy.md) (experimental) can set or revise the thresholds of
 `corrected_interval` claims outside the plan, after the run if need be, without changing the
 plan's hash. `hash-plan --inference` prints the hash a policy names, which leaves those
-thresholds out.
+thresholds out. An overall `PASS` at thresholds a policy moves certifies only when one coverage
+event covers every mandatory claim; see
+[When the overall decision certifies](decision-policy.md#when-the-overall-decision-certifies).
 
 ## `adaptive_claims` (experimental)
 

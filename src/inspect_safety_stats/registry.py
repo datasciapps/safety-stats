@@ -617,12 +617,16 @@ _CODES: tuple[CodeEntry, ...] = (
         source="registration",
         effect="recorded",
         assumption=(
-            "A decision policy's thresholds do not enter the bounds, so a version set after the "
-            "first evaluation started leaves the verdicts at them certifying."
+            "A decision policy's thresholds were set before the evidence. They do not enter "
+            "the bounds, so each claim's verdict keeps its error bound at a later threshold, "
+            "but such a threshold may describe the bounds rather than a requirement fixed in "
+            "advance."
         ),
         consequence=(
             "The policy's thresholds stay in force and the claims keep their status; the "
-            "versions set after the first evaluation started are listed in the diagnostic."
+            "versions set after the first evaluation started are listed in the diagnostic. "
+            "Whether the overall decision still certifies is DECISION_POLICY_OVERALL_UNCERTIFIED's "
+            "concern."
         ),
         remedy=(
             "No change is needed; to avoid the note, set the policy's versions before the runs "
@@ -664,6 +668,49 @@ _CODES: tuple[CodeEntry, ...] = (
             "Apply the policy to the plan it was written for, or set its inference_plan_sha256 "
             "to the hash `inspect-safety-stats hash-plan --inference` prints for this plan."
         ),
+    ),
+    CodeEntry(
+        code="DECISION_POLICY_OVERALL_UNCERTIFIED",
+        severities=("WARNING",),
+        source="plan",
+        effect="adjusted",
+        assumption=(
+            "An overall PASS has the error bound of one claim only when every mandatory "
+            "claim's acceptable_upper was fixed before the data, or when one simultaneous "
+            "coverage event covers every mandatory claim's bound."
+        ),
+        consequence=(
+            "The overall decision is INCONCLUSIVE where every mandatory claim passes, since a "
+            "wrong PASS is bounded only by the sum of the separate events' error budgets; a "
+            "FAIL stays FAIL, and every claim keeps its status."
+        ),
+        remedy=(
+            "Set these thresholds in the plan before the runs, or decide every mandatory claim "
+            "on one simultaneous family, such as the default simultaneous prompt bounds or "
+            "simultaneous direct-mean intervals."
+        ),
+        assumptions=("plan_fixed_in_advance",),
+    ),
+    CodeEntry(
+        code="DECISION_POLICY_SELF_DECLARED",
+        severities=("WARNING",),
+        source="plan",
+        effect="recorded",
+        assumption=(
+            "A decision policy version's set_at, which only its author states, is when its "
+            "thresholds were decided."
+        ),
+        consequence=(
+            "The report records the versions listed in the diagnostic as set before the first "
+            "evaluation, as they state; no result changes, and the overall decision does not "
+            "rely on the stated time."
+        ),
+        remedy=(
+            "Keep the policy file where others can check when each version was written, such "
+            "as a version-controlled repository or a registry, and say where in each "
+            "version's reason."
+        ),
+        assumptions=("plan_fixed_in_advance",),
     ),
     CodeEntry(
         code="DECISION_POLICY_UNKNOWN_CLAIM",
