@@ -727,6 +727,7 @@ def no_anytime_bound(triggered: Outcome, control: Outcome) -> None:
 CASES = [
     Case(
         code="CLUSTER_DESIGN_EFFECT",
+        shows="recorded",
         # A profile blocks by task_id, which puts the rollouts of p1 and p2 in one block; in
         # the control it blocks by prompt_id, at the item level.
         trigger=analysis(_profile(["task_id"])),
@@ -735,6 +736,7 @@ CASES = [
     ),
     Case(
         code="COHORT_EMPTY",
+        shows="invalid",
         # Cohort baseline matches a model no run has; in the control run r2 has it.
         trigger=analysis(_baseline_cohort("absent", rollouts=False)),
         control=analysis(_baseline_cohort("b")),
@@ -742,6 +744,7 @@ CASES = [
     ),
     Case(
         code="CONFIG_DRIFT",
+        shows="invalid",
         # The cohort's two runs record different values of a uniform-required field.
         trigger=analysis(_two_runs((0, 1))),
         control=analysis(_two_runs((0, 0))),
@@ -749,6 +752,7 @@ CASES = [
     ),
     Case(
         code="CONFIG_UNOBSERVED",
+        shows="degraded",
         # The run, matched by its key, records no model, its only configuration field.
         trigger=analysis(_changes(_match_by_run_key, _no_model)),
         control=analysis(_match_by_run_key),
@@ -756,6 +760,7 @@ CASES = [
     ),
     Case(
         code="CONTENT_FILTER_STOP_SCORED",
+        shows="recorded",
         # A FAIL-scored output was stopped by a content filter after an earlier turn delivered
         # content, under content_filter_stops: safe; the control's output was not stopped.
         # Either way the score decides.
@@ -772,6 +777,7 @@ CASES = [
     ),
     Case(
         code="INGEST_FAILED",
+        shows="invalid",
         # A rollout's repeat of 0 makes the rollout files unreadable.
         trigger=analysis(_unreadable_rollout),
         control=analysis(),
@@ -779,6 +785,7 @@ CASES = [
     ),
     Case(
         code="JUDGE_CONFIGURATION_UNREADABLE",
+        shows="recorded",
         # The run records its model roles as text that is not JSON.
         trigger=analysis(_judge_claims_with_roles("grader=m")),
         control=analysis(_judge_claims_with_roles({"grader": {"model": "m"}})),
@@ -786,6 +793,7 @@ CASES = [
     ),
     Case(
         code="JUDGE_SCORE_MAPPING_MISMATCH",
+        shows="invalid",
         # Judge j2's score takes a value its mapping does not cover. The summary withholds
         # nothing; the rollout's JUDGE_SCORE_UNMAPPED makes its vote missing.
         trigger=analysis(_judged("other", "MAYBE")),
@@ -794,6 +802,7 @@ CASES = [
     ),
     Case(
         code="JUDGE_SCORE_MISSING",
+        shows="invalid",
         # Judge j2 names a score the rollouts do not carry.
         trigger=analysis(_judged("absent")),
         control=analysis(_judged("other")),
@@ -801,6 +810,7 @@ CASES = [
     ),
     Case(
         code="JUDGE_SCORE_UNMAPPED",
+        shows="invalid",
         # Judge j2's score takes a value its mapping does not cover.
         trigger=analysis(_judged("other", "MAYBE")),
         control=analysis(_judged("other")),
@@ -808,6 +818,7 @@ CASES = [
     ),
     Case(
         code="LOG_INCOMPLETE",
+        shows="invalid",
         # The run's status is error.
         trigger=analysis(_status_error),
         control=analysis(),
@@ -815,6 +826,7 @@ CASES = [
     ),
     Case(
         code="PAIR_BROKEN",
+        shows="invalid",
         # The baseline's p1 repeat 4 is numbered 5: key (p1, 4) and (p1, 5) are in one arm.
         trigger=analysis(_changes(_paired, _baseline_rollout("p1", 4, {"repeat": 5}))),
         control=analysis(_paired),
@@ -822,6 +834,7 @@ CASES = [
     ),
     Case(
         code="PAIR_UNSCORED_COMPLETED",
+        shows="adjusted",
         # A baseline rollout of p1, in the compared group, is unscored; in the control the
         # unscored rollout is of p2, outside it.
         trigger=analysis(_changes(_paired, _baseline_rollout("p1", 1, {"score_harmful": None}))),
@@ -830,6 +843,7 @@ CASES = [
     ),
     Case(
         code="PLAN_EXPECTED_ROLLOUTS_MISSING",
+        shows="invalid",
         # The manifest has no expected_rollouts column while the plan requires it.
         trigger=analysis(_no_expected_rollouts),
         control=analysis(_changes(_no_expected_rollouts, _expected_rollouts_not_required)),
@@ -837,6 +851,7 @@ CASES = [
     ),
     Case(
         code="PROMPT_MISSING",
+        shows="invalid",
         # Manifest prompt p2 has no rollouts; the control leaves it out of the manifest too.
         trigger=analysis(_drop_p2_rollouts),
         control=analysis(_changes(_drop_p2_rollouts, _drop_p2_from_manifest)),
@@ -844,6 +859,7 @@ CASES = [
     ),
     Case(
         code="PROMPT_UNEXPECTED",
+        shows="invalid",
         # The rollouts evaluate p3, which the manifest does not declare.
         trigger=analysis(_p3_rollouts),
         control=analysis(),
@@ -852,6 +868,7 @@ CASES = [
     ),
     Case(
         code="PROVENANCE_UNOBSERVED",
+        shows="recorded",
         # The cohort requires a uniform temperature that its run does not record.
         trigger=analysis(_require_temperature),
         control=analysis(_changes(_require_temperature, _record_temperature)),
@@ -859,6 +876,7 @@ CASES = [
     ),
     Case(
         code="ROLLOUT_DUPLICATE",
+        shows="invalid",
         # A fifth rollout of p1 repeats the key (r1, p1, 1); in the control it is repeat 5.
         trigger=analysis(_changes(_p1_expects(5), _p1_rollout(1))),
         control=analysis(_changes(_p1_expects(5), _p1_rollout(5))),
@@ -866,6 +884,7 @@ CASES = [
     ),
     Case(
         code="ROLLOUT_EXCESS",
+        shows="invalid",
         # p1 has a fifth rollout against 4 expected; the control expects 5.
         trigger=analysis(_p1_rollout(5)),
         control=analysis(_changes(_p1_rollout(5), _p1_expects(5))),
@@ -873,6 +892,7 @@ CASES = [
     ),
     Case(
         code="ROLLOUT_SHORTFALL",
+        shows="invalid",
         # p1 has 3 rollouts against 4 expected; the control expects 3.
         trigger=analysis(_drop_p1_repeat_4),
         control=analysis(_changes(_drop_p1_repeat_4, _p1_expects(3))),
@@ -880,6 +900,7 @@ CASES = [
     ),
     Case(
         code="RUN_STATUS_UNOBSERVED",
+        shows="degraded",
         # The run records no status.
         trigger=analysis(_run_without("status")),
         control=analysis(),
@@ -887,18 +908,21 @@ CASES = [
     ),
     Case(
         code="SAMPLE_DRAWS_MISMATCH",
+        shows="invalid",
         # A fixed-size design plans one draw from the frame, and both items were evaluated.
         trigger=analysis(_changes(_sampled((0.5, 0.5), fixed_size=True), _draw_p2_too)),
         control=analysis(_sampled((0.5, 0.5), fixed_size=True)),
     ),
     Case(
         code="SAMPLE_DRAWS_NOT_INTEGER",
+        shows="invalid",
         # Inclusion probability 0.25 for both frame items plans half a draw.
         trigger=analysis(_sampled((0.25, 0.25), fixed_size=True)),
         control=analysis(_sampled((0.5, 0.5), fixed_size=True)),
     ),
     Case(
         code="SAMPLE_EMPTY",
+        shows="invalid",
         # Cohort candidate's run has no rollouts of any frame item.
         trigger=analysis(_sampled_two_cohorts(empty=True)),
         control=analysis(_sampled_two_cohorts(empty=False)),
@@ -906,6 +930,7 @@ CASES = [
     ),
     Case(
         code="SAMPLE_ERROR",
+        shows="invalid",
         # A rollout ends in a sample error under errors: block.
         trigger=analysis(_changes(_plan_score(errors="block"), _first(None, error="boom"))),
         control=analysis(_plan_score(errors="block")),
@@ -913,6 +938,7 @@ CASES = [
     ),
     Case(
         code="SAMPLE_ERROR_UNCLASSIFIED",
+        shows="degraded",
         # A rollout ends in a sample error of unknown stage under errors: end_to_end.
         trigger=analysis(_first(None, error="boom")),
         control=analysis(),
@@ -920,6 +946,7 @@ CASES = [
     ),
     Case(
         code="SAMPLE_SELECTION_MISMATCH",
+        shows="invalid",
         # The selection column records a draw of p2, but p1 was evaluated in its place.
         trigger=analysis(_changes(_sampled((0.5, 0.5)), _selection(False, True))),
         control=analysis(_changes(_sampled((0.5, 0.5)), _selection(True, False))),
@@ -927,6 +954,7 @@ CASES = [
     ),
     Case(
         code="SAMPLE_SIZE_IMPLAUSIBLE",
+        shows="invalid",
         # One item drawn where inclusion probabilities of 0.01 expect 0.02 (sd 0.14).
         trigger=analysis(_sampled((0.01, 0.01))),
         control=analysis(_sampled((0.5, 0.5))),
@@ -934,12 +962,14 @@ CASES = [
     ),
     Case(
         code="SAMPLE_STRATUM_INCONSISTENT",
+        shows="invalid",
         # The frame's one stratum has inclusion probabilities 0.5 and 0.6.
         trigger=analysis(_sampled((0.5, 0.6), fixed_size=True)),
         control=analysis(_sampled((0.5, 0.5), fixed_size=True)),
     ),
     Case(
         code="SCORE_MAPPING_MISMATCH",
+        shows="invalid",
         # A rollout's score is a value the mapping does not classify. The summary withholds
         # nothing; the rollout's SCORE_UNMAPPED withholds p1 alone.
         trigger=analysis(_first("MAYBE")),
@@ -948,6 +978,7 @@ CASES = [
     ),
     Case(
         code="SCORE_MISSING",
+        shows="invalid",
         # A rollout has no score under missing: block.
         trigger=analysis(_changes(_plan_score(missing="block"), _first(None))),
         control=analysis(_plan_score(missing="block")),
@@ -955,6 +986,7 @@ CASES = [
     ),
     Case(
         code="SCORE_MISSING_BOUNDED",
+        shows="degraded",
         # A rollout has no score under missing: conservative_bounds.
         trigger=analysis(_first(None)),
         control=analysis(),
@@ -962,6 +994,7 @@ CASES = [
     ),
     Case(
         code="SCORE_UNMAPPED",
+        shows="invalid",
         # A rollout's score is a value the mapping does not classify.
         trigger=analysis(_first("MAYBE")),
         control=analysis(),
@@ -969,6 +1002,7 @@ CASES = [
     ),
     Case(
         code="START_TIME_UNOBSERVED",
+        shows="degraded",
         # The run records no start time.
         trigger=analysis(_run_without("started_at")),
         control=analysis(),
@@ -976,6 +1010,7 @@ CASES = [
     ),
     Case(
         code="TAIL_MEASURE_SINGLE_ROLLOUT",
+        shows="degraded",
         # A claim on a cvar measure, with one rollout of each prompt; the control has four.
         trigger=analysis(_changes(_claim_on_cvar, _one_rollout_per_prompt)),
         control=analysis(_claim_on_cvar),
@@ -983,6 +1018,7 @@ CASES = [
     ),
     Case(
         code="TARGET_POLICY_BLOCKED_REFUSAL",
+        shows="adjusted",
         # A PASS-scored output was stopped by a content filter before it delivered content,
         # under content_filter_stops: failure.
         trigger=_stopped(
@@ -998,6 +1034,7 @@ CASES = [
     ),
     Case(
         code="TARGET_POLICY_BLOCKED_SAFE",
+        shows="adjusted",
         # A FAIL-scored rollout ends in a target-side policy-block error that delivered
         # nothing, under errors: end_to_end; the control has no error.
         trigger=analysis(
@@ -1014,6 +1051,7 @@ CASES = [
     ),
     Case(
         code="TOKEN_LIMIT_REACHED",
+        shows="adjusted",
         # An unscored answer stopped at the token limit, under token_limit: failure; in the
         # control the truncated answer was scored FAIL.
         trigger=_stopped(
@@ -1026,6 +1064,7 @@ CASES = [
     ),
     Case(
         code="TRANSCRIPT_UNREAD",
+        shows="recorded",
         # The log of a run with a sample error is gone when its transcript is read.
         trigger=_vanishing(True),
         control=_vanishing(False),
@@ -1033,6 +1072,7 @@ CASES = [
     ),
     Case(
         code="ANYTIME_ORDER_UNRECORDED",
+        shows="invalid",
         # The run did not shuffle its samples; the control shuffled them with a seed.
         trigger=on_inspect_logs([{}], anytime_bounds),
         control=on_inspect_logs([{"shuffle": SHUFFLE_SEED}], anytime_bounds),
@@ -1040,6 +1080,7 @@ CASES = [
     ),
     Case(
         code="ANYTIME_BOUND_INVALID",
+        shows="invalid",
         # The cohort's rollouts come from two seeded runs of two epochs each, so no one run's
         # order covers them; the control is one seeded run of four epochs.
         trigger=on_inspect_logs(

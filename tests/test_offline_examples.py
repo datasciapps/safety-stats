@@ -230,6 +230,42 @@ def test_the_demo_steps_one_at_a_time_agree_with_the_script(
     assert shown.replace(output.as_posix(), "reports/demo") in stdout
 
 
+def test_show_results_reads_a_demo_report_written_under_an_earlier_registry(
+    demo_run: tuple[Path, str], tmp_path: Path
+) -> None:
+    """A report saved before the registry reclassified or retired a code still shows."""
+    workspace, _ = demo_run
+    saved = _report(workspace / "reports" / "demo")
+    integrity = saved["integrity"]
+    assert isinstance(integrity, dict)
+    warnings = integrity["diagnostics"]
+    # The demo's only code, TAIL_MEASURES_UNINFORMATIVE (one per group it concerns), has the
+    # effect recorded in the registry.
+    assert warnings
+    assert {(item["code"], item["effect"]) for item in warnings} == {
+        ("TAIL_MEASURES_UNINFORMATIVE", "recorded")
+    }
+    for warning in warnings:
+        warning["effect"] = "withheld"
+    integrity["diagnostics"].append(
+        {
+            "code": "RETIRED_CODE",
+            "severity": "INFO",
+            "source": "analysis",
+            "effect": "recorded",
+            "message": "a code this version no longer has",
+        }
+    )
+    earlier = tmp_path / "earlier"
+    earlier.mkdir()
+    (earlier / "report.json").write_text(json.dumps(saved), encoding="utf-8", newline="\n")
+
+    shown = _completed(_run_script(DEMO / "show_results.py", str(earlier), cwd=workspace))
+
+    assert "WARNING TAIL_MEASURES_UNINFORMATIVE:" in shown
+    assert "INFO RETIRED_CODE:" in shown
+
+
 # The harness-versions example ----------------------------------------------------------------
 
 

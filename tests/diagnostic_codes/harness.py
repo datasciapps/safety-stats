@@ -8,14 +8,19 @@ analysis on control inputs that differ only in keeping the assumption. The test 
   assumption the inputs differ in;
 - every emitted diagnostic has a severity, source and effect the code's registry entry lists,
   in the report as written too;
-- the effect the registry gives the code is what the trigger does to the integrity status,
-  compared with the control's: ``invalid`` makes it invalid, ``degraded`` makes a valid one
-  degraded, and every other effect leaves it as it is;
+- the case's ``shows``, the effect its checks show the code has, is the effect the registry
+  gives the code. It is written in the case, beside the checks that show it, and not read
+  from the registry, so that a registry entry that says something other than what the code
+  does fails the test;
+- ``shows`` is what the trigger does to the integrity status, compared with the control's:
+  ``invalid`` makes it invalid, ``degraded`` makes a valid one degraded, and every other
+  effect leaves it as it is;
 - where the entry names assumptions of ``ASSUMPTIONS`` and the analysis reports the ones it
   rests on, the trigger's report lists them;
 - the case's own ``effect`` check, which says what the code does to the results. The test
   requires one for ``withheld``, ``adjusted`` and ``recorded``, whose effect the integrity
-  status does not show.
+  status does not show, and it is the check that shows that effect: a withheld result, a
+  result computed differently, or the same results.
 
 Inputs for the main analysis are built from ``base_inputs`` and run with ``run_analysis``.
 """
@@ -29,6 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from inspect_safety_stats.registry import Effect
 from inspect_safety_stats.schema.reports import Diagnostic
 
 Status = str | None
@@ -63,10 +69,13 @@ class Case:
     """One way to trigger ``code``: ``trigger`` breaks its assumption, ``control`` keeps it.
 
     Both get a directory of their own to write inputs in. ``effect`` gets the trigger's
-    outcome, then the control's, and asserts what the code did to the results.
+    outcome, then the control's, and asserts what the code did to the results. ``shows`` is
+    the effect, as ``inspect_safety_stats.registry.EFFECTS`` names them, that the integrity
+    status and ``effect`` show the code has.
     """
 
     code: str
+    shows: Effect
     trigger: Run
     control: Run
     effect: EffectCheck | None = None

@@ -67,7 +67,13 @@ of where the finding sits: `plan/claims/<claim>` for a place in the plan,
 `cohorts/<cohort>/prompts/<prompt>` or `runs/<run key>` for the data,
 `comparisons/<comparison>/methods/<method>/units/<unit>` for a result. After the root, segments
 come in collection/id pairs, and each id has `%` written as `%25` and `/` as `%2F`, so a path
-splits back into its ids. `inspect_safety_stats.schema.scopes` builds and reads them.
+splits back into its ids. `inspect_safety_stats.schema.scopes` builds and reads them. A
+scope goes down to the result row, method and profile the finding concerns, and a hierarchy
+node is `levels/<level>/nodes/<node>` below its group or comparison, the node written as its
+`level=value` pairs joined by `/`, as in
+`cohorts/candidate/groups/all/levels/question_id/nodes/task_id=t1%2Fquestion_id=q1`. An ERROR
+scoped to a whole cohort, `cohorts/<cohort>`, withholds the bounds of every prompt in it; one
+scoped to a group, measure or node of the cohort withholds none.
 
 In a report, each diagnostic also has `item`: a JSON pointer into `report.json` to the record
 its scope names, such as `/claims/0` for `plan/claims/<claim>`, `/prompt_estimates/12` for
@@ -76,6 +82,14 @@ its scope names, such as `/claims/0` for `plan/claims/<claim>`, `/prompt_estimat
 record of the item, as for a plan setting or a run. `inspect_safety_stats.schema.pointers`
 lists every scope that has one. The report computes `item` from the scope, also when a saved
 `report.json` is read back, so it always points into the report that holds the diagnostic.
+
+Read a saved `report.json` back with
+`SafetyReport.model_validate_json(text, context={STORED_REPORT: True})`, with `STORED_REPORT`
+from `inspect_safety_stats.schema.reports`, as `visualize` does. The report then says what its
+diagnostics were when it was written: each keeps the `source` and `effect` it was written with,
+takes them from the registry only where the report has none, and a code a later version no
+longer lists still reads. Without the context, a code the registry does not list, or a `source`
+or `effect` that differs from its entry, is rejected.
 
 ### `load_plan`
 

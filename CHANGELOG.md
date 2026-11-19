@@ -271,9 +271,16 @@ described in their pull requests.
   now carries `source`, the kind of input it concerns (`plan`, `registration`, `manifest`,
   `logs`, `judge_labels`, `analysis` or `generation`), and `effect`, what it does to the
   results (`invalid`, `degraded`, `withheld`, `adjusted` or `recorded`). Both are filled from
-  the code's entry in `inspect_safety_stats.registry`, which also says what each value means.
+  the code's entry in `inspect_safety_stats.registry`, which also says what each value means;
+  a `withheld` or `adjusted` diagnostic leaves integrity alone but can withhold a claim's PASS
+  or the overall decision's.
   Every `report.json` and `report.html` with a diagnostic changes bytes; `report.md` and the
-  CSVs do not. A `report.json` written before reads back with both fields filled.
+  CSVs do not. A `report.json` written before reads back with both fields filled. Read back as
+  a stored report (`context={STORED_REPORT: True}`, as `visualize` and
+  `examples/demo/show_results.py` do), a report keeps the `source` and `effect` it was written
+  with and fills only those it lacks, so it still reads after a later version reclassifies a
+  code or retires it. In `inspect-safety-stats schema report` both are optional, so a report
+  written before them validates, but neither is ever null.
 
 - **A diagnostic's scope is a path.** `scope` names where a finding sits as a `/`-separated
   path: a root (`plan`, `decision_policy`, `cohorts`, `runs`, `evals`, `logs`, `prompts`,
@@ -283,7 +290,11 @@ described in their pull requests.
   any id splits back out. Scopes were free text before (`candidate:p1`,
   `inputs.judges.j1`), and an error whose scope was a stratum, claim or prompt id equal to a
   cohort's id withheld that cohort's prompt bounds; an error now withholds a cohort's bounds
-  only when its scope is `cohorts/<id>`. Every `report.json`, `report.md`, `report.html` and
+  only when its scope is `cohorts/<id>`. A scope goes down to the result row, method, profile
+  and hierarchy node a finding concerns, a node as `levels/<level>/nodes/<node>`, so two
+  findings of one code have two scopes, and an error about a group's measure, node or anytime
+  bound, scoped below `cohorts/<id>/groups/<group>`, withholds none of the cohort's prompt
+  bounds. Every `report.json`, `report.md`, `report.html` and
   diagnostics CSV with a scoped diagnostic changes bytes, and so does the CLI's diagnostic
   listing. A `report.json` written before still renders with `visualize`.
 

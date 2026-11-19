@@ -23,9 +23,18 @@ def _coerce_plan(plan: AnalysisPlan | str | Path) -> AnalysisPlan:
 
 
 def _integrity_status(diagnostics: list[Diagnostic]) -> Literal["valid", "degraded", "invalid"]:
+    """What the diagnostics do to integrity, as the registry's effect for their codes says.
+
+    An ERROR makes it invalid: ``tests/unit/test_registry.py`` gives a code the effect
+    ``invalid`` exactly when its entry lists ERROR. A diagnostic whose code has the effect
+    ``degraded`` degrades it. The sites that emit those codes also write
+    ``integrity_degraded`` into the details, for a reader of the report, and the registry test
+    holds the codes with that detail to the ``degraded`` ones.
+    """
+
     if any(item.severity == "ERROR" for item in diagnostics):
         return "invalid"
-    if any(bool(item.details.get("integrity_degraded")) for item in diagnostics):
+    if any(item.effect == "degraded" for item in diagnostics):
         return "degraded"
     return "valid"
 

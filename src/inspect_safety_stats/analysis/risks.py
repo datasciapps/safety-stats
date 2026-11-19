@@ -33,7 +33,7 @@ from inspect_safety_stats.schema.reports import (
     PromptEstimate,
     RiskIntervalResult,
 )
-from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope
+from inspect_safety_stats.schema.scopes import cohort_scope, node_id, plan_scope
 from inspect_safety_stats.stats.risk import worst_of_k_estimate
 
 
@@ -383,7 +383,13 @@ def _hierarchy_risks(
                             severity="ERROR",
                             message=str(exc),
                             scope=cohort_scope(
-                                cohort_id, "groups", node.group_id, "levels", node.level
+                                cohort_id,
+                                "groups",
+                                node.group_id,
+                                "levels",
+                                node.level,
+                                "nodes",
+                                node_id(node.path),
                             ),
                         )
                     )
