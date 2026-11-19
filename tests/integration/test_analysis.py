@@ -1107,13 +1107,15 @@ def _comparison_judge_plan(
     calibrated: bool,
     assumed: bool = False,
     cohort_boxes: bool = False,
+    transported: bool = False,
 ) -> Path:
     """Two-cohort comparison plan, with or without the judge calibration block.
 
     Labels are keyed by observation_id, so they must be generated from a run over the
     same cohorts and logs. The uncalibrated variant produces that ledger. ``assumed``
     declares two scenarios instead of a validated calibration, and ``cohort_boxes`` gives
-    the candidate cohort a box of its own in the ``declared`` scenario.
+    the candidate cohort a box of its own in the ``declared`` scenario. ``transported``
+    declares a transported calibration instead.
     """
     plan_path = _write_inputs(tmp_path)
     text = plan_path.read_text(encoding="utf-8")
@@ -1126,7 +1128,9 @@ def _comparison_judge_plan(
         "groups:\n",
         1,
     )
-    if assumed:
+    if transported:
+        text = text.replace("design:\n", _TRANSPORTED_CALIBRATION + "design:\n", 1)
+    elif assumed:
         text = text.replace(
             "design:\n",
             "  judge_calibration:\n"
@@ -1459,6 +1463,34 @@ def _patch_two_cohort_frames(monkeypatch: pytest.MonkeyPatch) -> None:
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
+
+
+def test_a_transported_calibration_names_the_comparisons_it_leaves_uncorrected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Comparisons stay on the judge-reported scale under transport, and the report says so."""
+    plan_path = _comparison_judge_plan(
+        tmp_path, method="weighted_kl_chernoff", calibrated=False, transported=True
+    )
+    _patch_two_cohort_frames(monkeypatch)
+
+    report = analyze(plan=load_plan(plan_path), logs="ignored")
+
+    assert report.comparisons
+    for row in report.comparisons:
+        assert not any(item.interval_id.startswith("judge_corrected") for item in row.intervals)
+    # The risk rows are still corrected.
+    mean = next(item for item in report.group_risks if item.measure_id == "mean")
+    assert any(item.interval_id == "judge_corrected_transported" for item in mean.intervals)
+    (notice,) = [
+        item
+        for item in report.integrity.diagnostics
+        if item.code == "JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON"
+    ]
+    assert notice.severity == "WARNING"
+    assert "transported calibration" in notice.message
+    names = sorted({row.result_id or row.comparison_id for row in report.comparisons})
+    assert notice.details == {"result_ids": names, "count": len(names)}
 
 
 def test_decision_presentation_is_opt_in(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -34,7 +34,7 @@ from inspect_safety_stats.schema.reports import (
     HierarchyRiskResult,
     RiskIntervalResult,
 )
-from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope
+from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope, scope_path
 from inspect_safety_stats.stats.misclassification import (
     JudgeStratumCounts,
     TruthStratumCounts,
@@ -323,7 +323,9 @@ def _add_judge_corrections(
     of every comparison. In
     ``validated`` mode one calibration is estimated per cohort from human labels. A
     calibration scoped to groups corrects only the rows of those groups, and validated mode
-    then estimates one calibration per cohort and group.
+    then estimates one calibration per cohort and group. ``transported`` mode corrects risk
+    rows and hierarchy nodes only, and names the comparisons it leaves uncorrected in
+    ``JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON``.
     """
 
     spec = plan.inputs.judge_calibration
@@ -382,6 +384,23 @@ def _add_judge_corrections(
                 scope=plan_scope("inputs", "judge_calibration"),
             )
         )
+        # Comparisons stay on the judge-reported scale, and the report says which.
+        uncorrected = sorted({result.result_id or result.comparison_id for result in comparisons})
+        if uncorrected:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON",
+                    severity="WARNING",
+                    message=(
+                        "a transported calibration corrects no comparison: with a lower end of "
+                        "zero on each arm, a corrected effect would only span minus the "
+                        "baseline's corrected upper bound to the candidate's, so these effects "
+                        "remain on the judge-reported scale"
+                    ),
+                    scope=scope_path("comparisons"),
+                    details={"result_ids": uncorrected[:20], "count": len(uncorrected)},
+                )
+            )
         return {
             "mode": "transported",
             "experimental": True,

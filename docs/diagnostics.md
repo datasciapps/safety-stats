@@ -1274,7 +1274,8 @@ cannot be computed, or a result it qualifies.
   scale; on the generative path every comparison stays there by design.
 - **Remedy:** On the fixed-design path, use a comparison whose primary interval exposes both arm
   bounds (comparisons[].method: weighted_kl_chernoff, or a comparison_sets entry) and resolve any
-  calibration refusal for either cohort; generative comparisons have no correction.
+  calibration refusal for either cohort. Generative comparisons, and comparisons under
+  inputs.judge_calibration.mode: transported, have no correction.
 
 #### `JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY`
 

@@ -739,6 +739,11 @@ set and `sensitivity_lower`, and the analysis emits the `INFO` diagnostic
 `JUDGE_CALIBRATION_TRANSPORTED`. `report-full.md` describes the published set in the judge
 misclassification section.
 
+Comparisons are not corrected. With a lower end of zero on each arm, a corrected effect would
+run from minus the baseline's corrected upper bound to the candidate's, so it would say little
+about the difference. Every comparison stays on the judge-reported scale, and the analysis
+names them in the warning `JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON`.
+
 `mode: transported` takes only `published_set`. It cannot be combined with scenarios, a
 validation manifest or a judge family, and only fixed-design analyses offer it: a generative
 plan that declares it is refused.

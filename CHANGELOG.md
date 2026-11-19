@@ -434,6 +434,8 @@ described in their pull requests.
   published set's human-unsafe items as independent draws, which several completions of one
   behaviour are not. These intervals are diagnostic sensitivities and never decide a claim. The
   analysis emits `JUDGE_CALIBRATION_TRANSPORTED`, and `report.md` names the published set.
+  Comparisons are not corrected: the warning `JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON`
+  names them.
   Fixed-design analyses only. Plans without the mode keep their hash and write the same
   report bytes as before. See
   [Transported mode](docs/judge-misclassification.md#transported-mode-a-published-sensitivity-experimental).
