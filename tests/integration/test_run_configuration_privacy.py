@@ -6,9 +6,6 @@ observations.csv, ``CONFIG_DRIFT``) and copies none of it. These tests plant a d
 in every configuration field of real logs written offline (tests/planted_configuration.py), run
 each command that reads them, and look for the secrets in every file it writes and every line
 it prints. The generative workflow's test is in test_generative_real_logs.py.
-
-Scorer options and metadata (``eval.scorers``) are not planted: with ``outputs.judge_claims``
-on, a report still records them as the logs give them, which docs/running-inspect.md says.
 """
 
 from __future__ import annotations
@@ -187,6 +184,10 @@ def test_a_drifting_cohort_shows_fingerprints_and_no_planted_secret(
     assert judge["configuration"]["beta"]["model_roles"] == [
         {"grader": {"model": "mockllm/grader"}}
     ]
+    # The judge's scorer, options and metadata planted, is recorded by name and fingerprint only.
+    (scorer,) = judge["configuration"]["beta"]["scorer"]
+    assert sorted(scorer) == ["name", "sha256"]
+    assert [len(judge["configuration"]["alpha"]["scorer"])] == [2]
 
 
 def _key_rollouts_by_run_fields(plan: dict[str, Any]) -> None:
