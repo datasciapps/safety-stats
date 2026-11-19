@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
@@ -11,7 +12,11 @@ import pandas as pd
 from inspect_safety_stats.analysis.estimates import _block_index, prompt_blocked
 from inspect_safety_stats.analysis.measures import _coverage_floors, _independence, _parameter
 from inspect_safety_stats.config.methods import DirectMeanMethod
-from inspect_safety_stats.config.models import AnalysisPlan, RiskMeasureSpec
+from inspect_safety_stats.config.models import (
+    AnalysisPlan,
+    IndependenceProfileSpec,
+    RiskMeasureSpec,
+)
 from inspect_safety_stats.ingest.manifest import load_inclusion_probabilities
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.reports import Diagnostic, PromptEstimate, RiskIntervalResult
@@ -32,6 +37,7 @@ from inspect_safety_stats.stats.direct_mean import (
 from inspect_safety_stats.stats.independence import (
     BoundedBlocks,
     direct_bounded_blocks,
+    prompt_level_block_ids,
     prompt_outcome_counts,
 )
 from inspect_safety_stats.stats.single_valued import (
@@ -252,6 +258,93 @@ def _group_independent_frontiers(
     return frontiers
 
 
+def _has_rows(data: NormalizedData, cohorts: Sequence[str], prompt_ids: Sequence[str]) -> bool:
+    """Whether each of the cohorts has a row of each of the prompts."""
+    positions = _block_index(data).positions
+    return all((cohort, prompt) in positions for cohort in cohorts for prompt in prompt_ids)
+
+
+def _own_blocks(prompt_ids: Sequence[str], prompt_weights: np.ndarray) -> frozenset[str]:
+    """A block that no other target of the frontier holds, standing in for unobserved blocks.
+
+    Its id starts with NUL, which sets it apart from the blocks of observed rollouts, named by
+    digests, cohort ids and manifest values. It names the target's prompts of nonzero weight,
+    which would form its blocks and which no other target of a frontier shares. Comparisons of
+    the same two arms over the same prompts get the same one, as they would get the same
+    observed blocks, and so share a region as those would.
+    """
+    weighted = (prompt for prompt, weight in zip(prompt_ids, prompt_weights, strict=True) if weight)
+    return frozenset({"\x00" + "\x1f".join(sorted(weighted))})
+
+
+def _complete_ledger_blocks(
+    data: NormalizedData,
+    profile: IndependenceProfileSpec,
+    prompt_ids: Sequence[str],
+    prompt_weights: np.ndarray,
+    comparison_arms: tuple[str, str] | None = None,
+) -> frozenset[str] | None:
+    """The blocks a target would form if its cohort, or both arms, had a row of every prompt.
+
+    A cohort that matches no evaluation, or misses a prompt, has no such ledger, and the target
+    gets no interval: the risk and comparison stages require a complete one. It keeps its place
+    and its share of alpha in its frontier all the same, so that every other target is
+    calibrated as it would be were the ledger complete. Under the rollout profile no two targets
+    share a block, so it gets one of its own; under a profile that blocks by prompt-level
+    fields, its prompts' manifest rows name its blocks (``prompt_level_block_ids``). Under any
+    other profile its blocks depend on rollouts it does not have, and the result is None: the
+    frontier is then taken to hold overlapping targets, each calibrated as a frontier of its
+    own, which spends the most alpha.
+    """
+    if profile.block_by == ["rollout"]:
+        return _own_blocks(prompt_ids, prompt_weights)
+    return prompt_level_block_ids(
+        profile,
+        _block_index(data).manifest_values,
+        prompt_ids=prompt_ids,
+        prompt_weights=prompt_weights,
+        comparison_arms=comparison_arms,
+    )
+
+
+def _frontier_overlaps(supports: Iterable[frozenset[str] | None]) -> bool:
+    """Whether targets of a frontier may share a block: some do, or some target's are unknown."""
+    blocks = list(supports)
+    return any(atoms is None for atoms in blocks) or any_overlap(
+        atoms for atoms in blocks if atoms is not None
+    )
+
+
+def _direct_target_blocks(
+    plan: AnalysisPlan,
+    data: NormalizedData,
+    profile: IndependenceProfileSpec,
+    cohort_id: str,
+    prompt_ids: tuple[str, ...],
+    prompt_weights: np.ndarray,
+) -> frozenset[str] | None:
+    """The blocks a direct-mean target forms in a cohort, which its frontier keeps apart.
+
+    Where the cohort has no row of some prompt of a fixed design, the blocks a complete ledger
+    would form (``_complete_ledger_blocks``). A sampled design's undrawn items have no rows
+    either, and ``direct_bounded_blocks`` refuses them, as before: how to calibrate the
+    frontiers of a sample is not settled here.
+    """
+    if plan.design.type == "fixed" and not _has_rows(data, (cohort_id,), prompt_ids):
+        return _complete_ledger_blocks(data, profile, prompt_ids, prompt_weights)
+    return frozenset(
+        direct_bounded_blocks(
+            data.observations,
+            data.manifest,
+            profile,
+            cohort_id=cohort_id,
+            prompt_ids=prompt_ids,
+            prompt_weights=prompt_weights,
+            index=_block_index(data),
+        ).block_ids
+    )
+
+
 def _direct_mean_context(
     plan: AnalysisPlan,
     data: NormalizedData,
@@ -262,7 +355,10 @@ def _direct_mean_context(
     """The calibrated alpha of every direct-mean target.
 
     A hierarchy that cannot be calibrated is reported in ``diagnostics`` and leaves every target
-    uncalibrated; without ``diagnostics`` it raises ValueError.
+    uncalibrated; without ``diagnostics`` it raises ValueError. The frontiers are those of the
+    plan: a cohort of a fixed design that has no rows of some prompt, such as one that matches
+    no evaluation, keeps its targets in them (``_direct_target_blocks``), though they get no
+    interval.
     """
     spec = plan.outputs.direct_mean_intervals
     if not spec.enabled:
@@ -339,21 +435,19 @@ def _direct_mean_context(
             profile_frontiers: list[IndependentFrontier] = []
             for cohort_id in sorted(plan.cohorts):
                 for frontier in base_frontiers:
-                    supports: dict[str, frozenset[str]] = {}
-                    for target_id in frontier.targets:
-                        prompt_ids, weights = target_details[target_id]
-                        supports[target_id] = frozenset(
-                            direct_bounded_blocks(
-                                data.observations,
-                                data.manifest,
-                                profile,
-                                cohort_id=cohort_id,
-                                prompt_ids=prompt_ids,
-                                prompt_weights=weights,
-                                index=_block_index(data),
-                            ).block_ids
+                    known = {
+                        target_id: _direct_target_blocks(
+                            plan, data, profile, cohort_id, *target_details[target_id]
                         )
-                    overlaps = any_overlap(supports.values())
+                        for target_id in frontier.targets
+                    }
+                    overlaps = _frontier_overlaps(known.values())
+                    supports = {
+                        target_id: (
+                            _own_blocks(*target_details[target_id]) if atoms is None else atoms
+                        )
+                        for target_id, atoms in known.items()
+                    }
                     if overlaps:
                         for target_id, atoms in supports.items():
                             aliases = frontier.aliases.get(target_id, (target_id,))

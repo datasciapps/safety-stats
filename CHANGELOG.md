@@ -7,6 +7,20 @@ described in their pull requests.
 
 ### Fixed
 
+- **`analyze` reports a cohort that matches no evaluation instead of stopping.** With direct
+  means calibrated over hierarchy frontiers (`hierarchy_calibration: frontier_sidak`), as in the
+  plan `init --group-by` writes, a cohort that matched no evaluation, or a cohort of a fixed
+  design that missed a prompt, made `analyze` stop with `ValueError: independence blocks cannot
+  be formed` and write no report, while `validate` reported `COHORT_EMPTY` or `PROMPT_MISSING`.
+  Comparisons with such an arm gave `COMPARISON_CALIBRATION_INVALID` instead, under either
+  hierarchy calibration, and withheld every comparison of the family under each profile
+  (changes report bytes). `analyze` now writes the report, invalid with the errors `validate`
+  reports, and the command exits 3. The incomplete cohort's targets and comparisons get no
+  interval, as before. They keep their places and alpha in their frontiers, so every other
+  cohort and comparison is calibrated as with a complete ledger. Under a profile whose blocks
+  depend on the rollouts, such as `[run_key]`, their frontiers are split instead, which can
+  widen the other intervals under that profile but never narrows them.
+
 - **A judge's input files are named relative to the plan (changes report bytes).** With
   validated judge calibration, `report.json` recorded the labels file under
   `provenance.judge_calibration.validation_manifest` by the absolute path the plan loader
