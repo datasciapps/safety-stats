@@ -256,8 +256,9 @@ described in their pull requests.
   and `report-full.md` show them in their own section, `report.html` beside the cohort's claims,
   with the bound's assumptions: the attack order fixed before any outcome or drawn at random,
   at most one run per behaviour, and judge error not corrected; when
-  `report.include_decisions` is false, only `report.json` holds the claims. Such a report
-  lists the assumptions among those it rests on as `adaptive_attack_stream`.
+  `report.include_decisions` is false, `report-full.md` and `report.html` leave the claims
+  out of view. Such a report lists the assumptions among those it rests on as
+  `adaptive_attack_stream`.
   Plans without them keep their hash and their `report.json`, `report.md` and
   `report-full.md` bytes; every `report.html` changes bytes, because it embeds the script
   that renders them. See

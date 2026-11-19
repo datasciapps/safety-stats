@@ -1337,7 +1337,8 @@ An order that is missing, not an integer or repeated, or a behaviour attacked mo
 leaves the claim `INCONCLUSIVE` and says why. The report lists adaptive claims in their own
 section of `report-full.md` and `report.json` (`adaptive_claims`), and beside the cohort's claims
 in `report.html`. When `report.include_decisions` is false, `report-full.md` and `report.html`
-leave them out, as they leave out the threshold claims, and only `report.json` holds them.
+leave them out of view, as they leave out the threshold claims; `report.json` and the data
+embedded in `report.html` still hold them.
 Identifiers are unique across `claims` and `adaptive_claims`.
 `report.claims_export` cannot be combined with adaptive claims yet: `claims.json` has no form
 for a claim that can only fail. Plans without `adaptive_claims` keep their hash.

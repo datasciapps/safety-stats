@@ -237,7 +237,7 @@ def test_a_report_without_decisions_leaves_out_the_adaptive_claims(
     assert "|" not in section
     assert f"{claim.lower:.6f}" not in section and "0.200000" not in section
     assert "FAIL" not in section.replace("can only FAIL", "")
-    assert "the adaptive claims, their bounds and their statuses are only in `report.json`" in (
+    assert "their bounds and their statuses are left out here; `report.json` holds them" in (
         section
     )
     # The section still states the method and its assumptions.

@@ -1058,8 +1058,8 @@ def _adaptive_claim_lines(report: SafetyReport, places: int, include_decisions: 
         return [
             *lines,
             "This report omits decisions (`report.include_decisions` is false), so the adaptive "
-            "claims, their bounds and their statuses are only in `report.json`, under "
-            "`adaptive_claims`.",
+            "claims, their bounds and their statuses are left out here; `report.json` holds "
+            "them, under `adaptive_claims`.",
         ]
     header = ["Claim", "Status", "Mandatory", "Runs", "Successes", "Lower", "Unacceptable", "Alpha"]
     lines.append("| " + " | ".join(header) + " |")
