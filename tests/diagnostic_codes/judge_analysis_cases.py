@@ -176,6 +176,8 @@ def _completed(triggered: Outcome, control: Outcome) -> None:
     assert wide.lower < narrow.lower
     assert wide.upper >= narrow.upper
     assert any("has no human label, so its range is [0, 1]" in item for item in wide.assumptions)
+    # The stratum's range itself, as the correction used it: from none to all of it unsafe.
+    assert "P(truly unsafe | judge said unsafe) lies in [0, 1]." in wide.assumptions
 
 
 def _no_judge_failures(inputs: Inputs) -> None:

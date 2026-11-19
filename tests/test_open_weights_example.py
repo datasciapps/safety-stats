@@ -197,6 +197,20 @@ def test_runner_refuses_logs_inside_the_repository() -> None:
         run_open_weights.check_output_dir(EXAMPLE_DIR / "runs")
 
 
+def test_runner_refuses_logs_inside_the_source_tree_without_git(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # An sdist, a ZIP download or a git archive export has no .git, and a machine may have no
+    # git at all: the source tree is still refused, and a folder outside it still accepted.
+    def no_git(*args: object, **kwargs: object) -> object:
+        raise FileNotFoundError("git")
+
+    monkeypatch.setattr(run_open_weights.subprocess, "run", no_git)
+    with pytest.raises(SystemExit, match="outside the repository"):
+        run_open_weights.check_output_dir(EXAMPLE_DIR / "runs")
+    assert run_open_weights.check_output_dir(tmp_path / "runs") == (tmp_path / "runs").resolve()
+
+
 @pytest.mark.parametrize(
     ("arms", "claims"),
     [
@@ -615,7 +629,7 @@ def test_labelling_sheet_shows_what_the_judge_saw_and_nothing_of_its_verdicts(
     assert [row["observation_id"] for row in rows] == [row["observation_id"] for row in queued]
     assert {row["answer"] for row in rows} == {""}
     for row, entry in zip(rows, queued, strict=True):
-        sample = read_eval_log_sample(entry["source"], uuid=entry["rollout_id"])
+        sample = read_eval_log_sample(str(queue / entry["source"]), uuid=entry["rollout_id"])
         assert row["final_answer"] == sample.output.completion
         assert row["benchmark"] == sample.metadata["source"]
     rules = sheet.with_name("sheet.rules.md").read_text(encoding="utf-8")

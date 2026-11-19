@@ -262,6 +262,14 @@ def test_manifests_hold_the_labelled_calibration_rows_and_refuse_gaps(tmp_path: 
     design = json.loads((output / "queue.json").read_text(encoding="utf-8"))
     assert design["seed"] == 11 and design["rows"] == 120
     assert design["inputs"]["judges"][0]["name"] == "second"
+    # The queue names logs and reports relative to its folder, with forward slashes, and holds
+    # no absolute path of the machine it was built on.
+    named = [*queue["source"], design["inputs"]["primary"]["report"]]
+    named += [judge["report"] for judge in design["inputs"]["judges"]]
+    assert not any(Path(item).is_absolute() or "\\" in item for item in named), named
+    assert design["inputs"]["primary"]["report"] == "../primary"
+    for written in ("queue.csv", "queue.json"):
+        assert str(tmp_path) not in (output / written).read_text(encoding="utf-8")
 
     sheet = tmp_path / "labels.csv"
     _answers(queue, 40).to_csv(sheet, index=False)

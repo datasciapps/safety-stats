@@ -137,12 +137,36 @@ def check_environment(environ: dict[str, str] | os._Environ[str] = os.environ) -
         )
 
 
+def _source_roots() -> list[Path]:
+    """The folders logs must stay out of: the source tree this example sits in, and the git
+    checkout around it when there is one.
+
+    The source tree is the nearest folder above this one with a ``pyproject.toml``, so the
+    check holds in an sdist, a ZIP download or a ``git archive`` export as in a checkout.
+    """
+
+    here = HERE.resolve()
+    roots = [
+        next(
+            (folder for folder in here.parents if (folder / "pyproject.toml").is_file()),
+            here.parents[1],
+        )
+    ]
+    try:
+        top = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"], cwd=HERE, capture_output=True, text=True
+        )
+    except OSError:
+        # No git on PATH: the source tree is the only root.
+        return roots
+    if top.returncode == 0 and top.stdout.strip():
+        roots.append(Path(top.stdout.strip()).resolve())
+    return roots
+
+
 def check_output_dir(path: Path) -> Path:
     path = path.resolve()
-    top = subprocess.run(
-        ["git", "rev-parse", "--show-toplevel"], cwd=HERE, capture_output=True, text=True
-    )
-    if top.returncode == 0 and path.is_relative_to(Path(top.stdout.strip()).resolve()):
+    if any(path.is_relative_to(root) for root in _source_roots()):
         raise SystemExit(f"{path}: logs hold completions; write them outside the repository")
     return path
 
