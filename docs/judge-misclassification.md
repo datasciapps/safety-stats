@@ -35,6 +35,15 @@ box vertices and interval arithmetic is exact rather than conservative. And the 
 design it implies -- stratify by judge verdict, sample within stratum -- is what an
 evaluator would do operationally anyway.
 
+The correction recommended for jailbreak benchmarks in
+[*How Reliable Is Your Jailbreak Judge?*](https://arxiv.org/abs/2606.25487) (section 5),
+reported attack success rate multiplied by judge precision, is this identity with
+\(\rho_0=0\), because precision is \(\rho_1\). Setting \(\rho_0=0\) assumes the judge has no
+false negatives, and those are the errors that make an unsafe model look safe. A safety gate
+cannot ignore them, because a missed failure produces a false PASS. The paper itself notes that a
+precision correction does not fix the poor recall of LLM judges. Declaring \(\rho_0\) here
+puts that error into the bound.
+
 Because the identity is affine in \(R\) with positive slope \(\rho_1-\rho_0\), it
 applies unchanged to any risk measure that is positively homogeneous and translation
 equivariant: `weighted_mean`, `maximum`, `cvar`, and `top_k_mean`. It does **not** apply to
