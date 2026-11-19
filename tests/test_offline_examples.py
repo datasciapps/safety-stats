@@ -101,9 +101,13 @@ def test_the_demo_prints_the_numbers_its_readme_quotes(demo_run: tuple[Path, str
     assert "  cyber    0.200 [0.077, 0.382]    0.000 [0.000, 0.074]" in stdout
     assert "Candidate minus baseline, all prompts: -0.196 [-0.294, -0.088]" in stdout
     assert "The whole interval is below zero: the candidate fails less often." in stdout
-    assert "WARNING TAIL_MEASURES_UNINFORMATIVE:" in stdout
-    assert "bounded only at 0.291" in stdout
-    assert "About 134 rollouts per prompt would be needed." in stdout
+    # One warning for each model; the script wraps each message over several lines.
+    assert stdout.count("WARNING TAIL_MEASURES_UNINFORMATIVE:") == 2
+    words = " ".join(stdout.split())
+    for cohort in ("baseline", "candidate"):
+        assert f"In cohort '{cohort}', group 'all', cvar_90 and worst are built" in words
+    assert words.count("still bounded only at 0.291") == 2
+    assert words.count("About 134 rollouts per prompt would be needed.") == 2
 
 
 def test_the_demo_report_keeps_the_comparison_and_warns_about_an_assumption(
@@ -120,7 +124,7 @@ def test_the_demo_report_keeps_the_comparison_and_warns_about_an_assumption(
     integrity = report["integrity"]
     assert isinstance(integrity, dict)
     warnings = [item for item in integrity["diagnostics"] if item["severity"] == "WARNING"]
-    assert [item["code"] for item in warnings] == ["TAIL_MEASURES_UNINFORMATIVE"]
+    assert [item["code"] for item in warnings] == ["TAIL_MEASURES_UNINFORMATIVE"] * 2
 
 
 def test_the_demo_plan_is_the_one_init_writes_plus_two_risk_measures(

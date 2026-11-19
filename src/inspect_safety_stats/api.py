@@ -310,7 +310,7 @@ def analyze(
     anytime_bound_diagnostics(resolved, data, diagnostics, _order_reader(logs, source))
     core = _analysis_core(resolved, data, diagnostics)
     estimates = core.estimates
-    tail_measure_precision(resolved, estimates, diagnostics)
+    tail_measure_precision(resolved, data, estimates, diagnostics)
     risks = core.risks
     hierarchy_risks = core.hierarchy_risks
     comparisons = core.comparisons

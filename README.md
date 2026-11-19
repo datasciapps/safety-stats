@@ -213,7 +213,7 @@ Failure rate (weighted mean):
   baseline / all: 20.4% [13.0%, 29.5%]
   candidate / all: 0.8% [0.0%, 4.2%]
 Warnings by code, each explained in reports/demo/index.md under "Errors and warnings by code":
-  WARNING TAIL_MEASURES_UNINFORMATIVE (1 occurrence): Each prompt has enough rollouts that its simultaneous bound can be tighter than report.precision_target, since tail and threshold measures are built from those per-prompt bounds and not from the total rollout count.
+  WARNING TAIL_MEASURES_UNINFORMATIVE (2 occurrences): Each prompt has enough rollouts that the tail and threshold measures built from the prompts' simultaneous bounds can lie within report.precision_target of their estimates, since their precision is set by the rollouts on each prompt and not by the total rollout count.
 Summary: reports/demo/report.md
 Index: reports/demo/index.json
 Report: reports/demo
@@ -244,7 +244,7 @@ for warning in summary.warnings:
 ```
 
 ```text
-valid 1
+valid 2
 baseline mean 0.204 [0.130, 0.295]
 candidate mean 0.008 [0.000, 0.042]
 candidate risk_difference -0.196 [-0.294, -0.088]
@@ -276,14 +276,15 @@ the same `summary`.
 `report.md` opens with one line on the design and the integrity status:
 
 ```text
-12 fixed prompts · 20 rollouts per prompt (median) · 2 models · data integrity **valid** (1 warning)
+12 fixed prompts · 20 rollouts per prompt (median) · 2 models · data integrity **valid** (2 warnings)
 ```
 
 Read the integrity status before any number. `degraded` means the results rest on an assumption
-the inputs could not confirm, and `invalid` means no claim can pass. The demo is `valid`: its one
-warning records a fact and changes no result. Then come, in this order:
+the inputs could not confirm, and `invalid` means no claim can pass. The demo is `valid`: its two
+warnings, one for each model, record a fact and change no result. Then come, in this order:
 
-- **Warnings.** One row per code. The demo has one, read [below](#reading-the-warnings).
+- **Warnings.** One row per code. The demo has one code, raised for each model, read
+  [below](#reading-the-warnings).
 - **Failure risk.** The baseline fails on 20.4% of its rollouts, with an interval from 13.0% to
   29.5%; the candidate on 0.8%, from 0.0% to 4.2%. The intervals bound the rollout uncertainty on
   these 12 prompts, with 95% coverage holding for all of them at once. The prompt-level
@@ -336,15 +337,16 @@ the code, where it applies, the assumption it checks and its effect:
 
 | Column | In the demo | What it tells you |
 |---|---|---|
-| Where | `plan/outputs/risk_measures` | The finding is about the plan's risk measures, not a model, prompt or log. In the index the code's `item` is null, because `report.json` has no record of a plan setting. |
-| Assumption | Each prompt has enough rollouts that its bound can be tighter than `report.precision_target`. | Tail measures such as `cvar_90` and `worst` are built from a bound on each prompt, so their precision depends on the rollouts per prompt, not on the total. |
+| Where | `cohorts/baseline/groups/all`, `cohorts/candidate/groups/all` | The finding is about the tail measures of each model's group `all`, not a prompt or a log. In the index the code's `item` is null, because `report.json` has no single record of a model's group. |
+| Assumption | Each prompt has enough rollouts that the tail measures built from the prompts' bounds can lie within `report.precision_target` of their estimates. | Tail measures such as `cvar_90` and `worst` are built from a bound on each prompt, so their precision depends on the rollouts per prompt, not on the total. |
 | Effect | recorded | Nothing was withheld or recomputed: the measures are reported as computed, and the integrity stays valid. |
 
-The message for this analysis, under Data integrity in `report-full.md` and in `report.json` at
-`/integrity/diagnostics/0`, gives the numbers: with 20 rollouts per prompt, a prompt that never
-fails is still bounded only at 0.291, above the precision target of 0.05, and about 134
-rollouts per prompt would bring it below. So `cvar_90` and `worst` cannot be narrow on this
-design, whatever the models do: the candidate's `worst` is 0.100 with an interval from 0.002 to
+The messages for this analysis, one for each model, under Data integrity in `report-full.md` and
+in `report.json` at `/integrity/diagnostics/0` and `/integrity/diagnostics/1`, give the numbers:
+with 20 rollouts per prompt, a prompt that never fails is still bounded only at 0.291, so even
+if no prompt failed, the upper bounds of `cvar_90` and `worst` would lie more than the precision
+target of 0.05 above their estimates, and about 134 rollouts per prompt would bring them within
+it. So `cvar_90` and `worst` cannot be narrow on this design, whatever the models do: the candidate's `worst` is 0.100 with an interval from 0.002 to
 0.446. Read them as uninformative at this budget, or run about 134 rollouts per prompt. The
 mean rates and the comparison are not affected. Every code's meaning and remedy is in
 [Diagnostic codes and assumptions](docs/diagnostics.md#tail_measures_uninformative).

@@ -289,29 +289,35 @@ def test_the_warning_codes_are_the_ones_the_walkthrough_reads(walkthrough: Walkt
     assert isinstance(integrity, dict)
     assert integrity["status"] == "valid"
     diagnostics = integrity["diagnostics"]
+    # One warning for each model: each cohort's group is judged on its own rollouts.
     assert [(item["code"], item["severity"], item["effect"]) for item in diagnostics] == [
         ("TAIL_MEASURES_UNINFORMATIVE", "WARNING", "recorded")
-    ]
-    (diagnostic,) = diagnostics
-    assert diagnostic["item"] is None
-    assert diagnostic["details"]["median_rollouts_per_prompt"] == 20
-    assert diagnostic["details"]["rollouts_per_prompt_needed"] == 134
-    assert diagnostic["details"]["measures"] == ["cvar_90", "worst"]
-    assert "bounded only at 0.291, above the precision target 0.05" in diagnostic["message"]
+    ] * 2
+    assert [item["details"]["cohort"] for item in diagnostics] == ["baseline", "candidate"]
+    for diagnostic in diagnostics:
+        assert diagnostic["item"] is None
+        assert diagnostic["details"]["group"] == "all"
+        assert diagnostic["details"]["median_rollouts_per_prompt"] == 20
+        assert diagnostic["details"]["rollouts_per_prompt_needed"] == 134
+        assert diagnostic["details"]["measures"] == ["cvar_90", "worst"]
+        assert "bounded only at 0.291, so even if no prompt failed" in diagnostic["message"]
+        assert "more than the precision target 0.05 above" in diagnostic["message"]
+    scopes = ", ".join(f"`{item['scope']}`" for item in diagnostics)
 
     reading = _subsection("Reading the warnings")
     assert "**`TAIL_MEASURES_UNINFORMATIVE` (warning, effect recorded).**" in reading
     columns = {row["Column"]: row["In the demo"] for row in _table(reading, "Column")}
-    assert columns["Where"] == f"`{diagnostic['scope']}`"
-    assert columns["Effect"] == diagnostic["effect"]
+    assert columns["Where"] == scopes
+    assert all(item["effect"] == columns["Effect"] for item in diagnostics)
     prose = _prose(reading)
-    assert "`report.json` at `/integrity/diagnostics/0`" in prose
+    assert "`report.json` at `/integrity/diagnostics/0` and `/integrity/diagnostics/1`" in prose
     assert "a prompt that never fails is still bounded only at 0.291" in prose
-    assert "about 134 rollouts per prompt would bring it below" in prose
+    assert "more than the precision target of 0.05 above their estimates" in prose
+    assert "about 134 rollouts per prompt would bring them within it" in prose
 
     warnings = _table(walkthrough.file("report.md"), "Code")
     assert [(row["Code"], row["Where"]) for row in warnings] == [
-        ("`TAIL_MEASURES_UNINFORMATIVE` (warning)", "`plan/outputs/risk_measures`")
+        ("`TAIL_MEASURES_UNINFORMATIVE` (warning, 2×)", scopes)
     ]
 
 
