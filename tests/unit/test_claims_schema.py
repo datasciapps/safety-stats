@@ -42,6 +42,7 @@ _FIELDS = {
         "interval_id",
         "interval_method",
         "refs",
+        "test",
     ],
     "ClaimRecord": [
         "bound",

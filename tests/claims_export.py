@@ -38,8 +38,11 @@ _RECORD_FIELDS: dict[tuple[str, str], tuple[str, str]] = {
     ("evidence", "independence_profile"): ("evidence_interval", "independence_profile"),
     ("evidence", "assumptions"): ("evidence_interval", "assumptions"),
 }
-# Checked on their own (judge_corrected) or containers of the fields above.
-_UNMAPPED = {("", name) for name in ("judge_corrected", "estimand", "bound", "evidence", "sources")}
+# Checked on their own (judge_corrected, evidence.test) or containers of the fields above.
+_UNMAPPED = {
+    *(("", name) for name in ("judge_corrected", "estimand", "bound", "evidence", "sources")),
+    ("evidence", "test"),
+}
 
 
 def _resolve(document: Any, pointer: str) -> Any:
@@ -95,6 +98,7 @@ def round_trip_differences(directory: Path) -> list[str]:
         if diagnostic["code"] == "JUDGE_CORRECTED_CLAIMS"
         for claim_id in diagnostic["details"]["claim_ids"]
     }
+    claims_by_id = {item["claim_id"]: item for item in report["claims"]}
     for record in claims["claims"]:
         name = record["claim_id"]
         flat = _flat(record)
@@ -102,6 +106,12 @@ def round_trip_differences(directory: Path) -> list[str]:
         if unmapped:
             differences.append(f"{name}: fields without a report.json counterpart: {unmapped}")
         expect(f"{name}.judge_corrected", record["judge_corrected"], name in corrected)
+        tests = [
+            ref.removeprefix("test:")
+            for ref in claims_by_id[name]["evidence_refs"]
+            if ref.startswith("test:")
+        ]
+        expect(f"{name}.evidence.test", record["evidence"]["test"], tests[0] if tests else None)
         for field, (source, source_field) in _RECORD_FIELDS.items():
             pointer = record["sources"][source]
             if pointer is None:

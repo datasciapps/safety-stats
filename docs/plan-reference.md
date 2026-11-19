@@ -1148,16 +1148,21 @@ manifest's hash, the integrity status and the overall decision. Each claim recor
 | `estimand` | `acceptable_upper`, `unacceptable_lower` | the claim |
 | `bound` | `estimate`, `lower`, `upper`, `alpha`, `method`, `multiplicity_family` | the claim: the bound it was decided on |
 | `evidence` | `refs` | the claim's `evidence_refs` |
+| `evidence` | `test` | the test the claim was decided by, as a `test:` evidence ref names it; null for a claim decided on an interval |
 | `evidence` | `eligibility` | the group risk or comparison the claim is about |
-| `evidence` | `interval_id`, `interval_method`, `coverage_mode`, `coverage_scope`, `family_alpha`, `independence_profile`, `assumptions` | the interval the bound comes from: the one an `interval:` evidence ref names, else that result's primary interval |
+| `evidence` | `interval_id`, `interval_method`, `coverage_mode`, `coverage_scope`, `family_alpha`, `independence_profile`, `assumptions` | the interval the bound comes from: for a claim decided by a test, that result's primary interval, which the test was applied to; otherwise the one an `interval:` evidence ref names, else that result's primary interval |
 | `sources` | `claim`, `estimand`, `evidence`, `evidence_interval` | JSON pointers (RFC 6901) into `report.json` to each of the above |
 
 For a claim decided on a validated judge correction, `bound` holds the corrected bound and
 `alpha` holds the error budget of the claim family and the judge calibration together, and the
-evidence interval is the correction's. In an exploratory analysis, `status` stays
-`INCONCLUSIVE` and `descriptive_status` gives what a confirmatory analysis would decide; it
-certifies nothing. Fields of `evidence` are null when the report holds no such result or
-interval.
+evidence interval is the correction's. For a claim decided by the noisy-but-valid test, `bound`
+holds the test's set of true risks with the same combined `alpha`, `evidence.test` is
+`noisy_valid_certification`, and the evidence interval is the judge-reported primary interval
+the test was applied to, although the claim's refs also name the validated correction. Its
+`assumptions` are then the interval's own; the claim's reasons in `report.json` state the
+test's. In an exploratory analysis, `status` stays `INCONCLUSIVE` and `descriptive_status`
+gives what a confirmatory analysis would decide; it certifies nothing. Fields of `evidence`
+are null when the report holds no such result or interval.
 
 The file has its own `schema_version` (now `"1.0"`) and `"experimental": true`.
 `inspect-safety-stats schema claims` prints its JSON schema.

@@ -30,7 +30,9 @@ class ClaimBound(ResultModel):
     """The bound the claim was decided on.
 
     For a claim decided on a validated judge correction this is the corrected bound, and
-    ``alpha`` is the error budget of the claim family and the judge calibration together.
+    ``alpha`` is the error budget of the claim family and the judge calibration together. For
+    a claim decided by the noisy-but-valid test it is the test's set of true risks, with the
+    same combined ``alpha``.
     """
 
     estimate: float | None = None
@@ -45,11 +47,19 @@ class ClaimEvidence(ResultModel):
     """The result the claim was decided on, and the interval its bound comes from.
 
     The interval is the one the claim's evidence refs name (``interval:<id>``, as for a
-    judge-corrected claim), else the result's primary interval. The interval fields are None
-    when that result, or that interval, is not in the report.
+    judge-corrected claim), else the result's primary interval. A claim decided by a test
+    (``test:<name>``, now only ``noisy_valid_certification``) has the test's bound, which the
+    test computes from the result's primary interval and the judge calibration: ``test`` names
+    the test, and the interval is that primary interval, whatever interval the refs name. Its
+    assumptions are then the interval's alone; the claim's reasons in report.json state the
+    test's. The interval fields are None when that result, or that interval, is not in the
+    report.
     """
 
     refs: list[str] = Field(default_factory=list)
+    # The test the claim was decided by, as its ``test:<name>`` ref names it; None when the
+    # claim was decided on an interval.
+    test: str | None = None
     eligibility: Eligibility | None = None
     interval_id: str | None = None
     interval_method: str | None = None

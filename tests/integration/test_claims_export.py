@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
@@ -34,7 +35,7 @@ inputs:
       safe_values: ["PASS"]
     missing: block
     errors: block
-design:
+{judge}design:
   type: fixed
   hierarchy: [task_id, question_id, prompt_id]
   rollout_key: [eval_id, id, epoch]
@@ -75,7 +76,7 @@ multiplicity:
     - {{id: displayed, purpose: simultaneous_intervals, method: bonferroni, alpha: 0.05}}
     - {{id: direct_means, purpose: simultaneous_intervals, method: bonferroni, alpha: 0.05}}
     - {{id: gate, purpose: all_mandatory, method: intersection_union, alpha: 0.05}}
-claims:
+{families}claims:
   - id: mean_safe
     title: Mean risk is acceptable
     cohort: candidate
@@ -84,7 +85,7 @@ claims:
     family: gate
     acceptable_upper: 0.30
     unacceptable_lower: 0.60
-  - id: worst_of_2_safe
+{mean_method}  - id: worst_of_2_safe
     title: Worst of two is acceptable
     cohort: candidate
     group: cyber
@@ -103,6 +104,9 @@ def _write(
     export: str = "  claims_export: true\n",
     include_decisions: bool = True,
     intent: str = "confirmatory",
+    judge: str = "",
+    families: str = "",
+    mean_method: str = "",
 ) -> Path:
     tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "design.csv").write_text(
@@ -116,10 +120,60 @@ def _write(
             export=export,
             include_decisions=str(include_decisions).lower(),
             intent=intent,
+            judge=judge,
+            families=families,
+            mean_method=mean_method,
         ),
         encoding="utf-8",
     )
     return plan
+
+
+_JUDGE = (
+    "  judge_calibration:\n"
+    "    mode: validated\n"
+    "    validation_manifest: labels.csv\n"
+    "    family: judge_error\n"
+    "    sampling: {sampling}\n"
+)
+_JUDGE_FAMILY = (
+    "    - {id: judge_error, purpose: simultaneous_intervals, method: bonferroni, alpha: 0.05}\n"
+)
+
+
+def _calibrated(tmp_path: Path, *, sampling: str, mean_method: str = "") -> Path:
+    """A plan with a validated judge calibration whose labels agree with every verdict."""
+
+    unlabelled = analyze(plan=_write(tmp_path / "unlabelled"), logs="ignored")
+    rows = ["observation_id,human_label"]
+    rows.extend(
+        f"{item.observation_id},{'unsafe' if item.failure else 'safe'}"
+        for item in unlabelled._observations
+        if item.failure is not None
+    )
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    return _write(
+        tmp_path,
+        judge=_JUDGE.format(sampling=sampling),
+        families=_JUDGE_FAMILY,
+        mean_method=mean_method,
+    )
+
+
+def _located(report: dict[str, Any], claim_id: str) -> tuple[str, dict[str, Any]]:
+    """The pointer to the group risk a claim of report.json is about, found by its estimand."""
+
+    (record,) = [
+        item for item in report["presentation"]["claim_evidence"] if item["claim_id"] == claim_id
+    ]
+    (index,) = [
+        index
+        for index, risk in enumerate(report["group_risks"])
+        if (risk["cohort_id"], risk["group_id"], risk["measure_id"])
+        == (record["cohort"], record["group"], record["measure"])
+    ]
+    return f"/group_risks/{index}", report["group_risks"][index]
 
 
 @pytest.fixture(autouse=True)
@@ -188,6 +242,7 @@ def test_every_exported_value_is_the_report_json_value(tmp_path: Path, intent: s
     assert mean.evidence.interval_id == report.group_risks[0].primary_interval_id
     assert mean.evidence.independence_profile == "rollout"
     assert mean.evidence.assumptions
+    assert mean.evidence.test is None
     assert not mean.judge_corrected
     if intent == "exploratory":
         assert mean.status == "INCONCLUSIVE"
@@ -252,3 +307,43 @@ def test_the_schema_command_prints_the_claims_schema() -> None:
 
     assert result.exit_code == 0, plain(result.output)
     assert json.loads(result.output) == ClaimsExport.model_json_schema()
+
+
+def test_a_noisy_valid_claim_exports_the_interval_its_test_was_applied_to(
+    tmp_path: Path,
+) -> None:
+    plan = _calibrated(
+        tmp_path, sampling="simple_random", mean_method="    method: noisy_valid_test\n"
+    )
+    output = analyze(plan=plan, logs="ignored").write(tmp_path / "report")
+
+    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    exported = json.loads((output / "claims.json").read_text(encoding="utf-8"))
+    (claim,) = [item for item in report["claims"] if item["claim_id"] == "mean_safe"]
+    (record,) = [item for item in exported["claims"] if item["claim_id"] == "mean_safe"]
+    # The analysis names the validated correction too, but decides the claim by the test,
+    # which it applies to the group risk's primary interval: the judge-reported one.
+    assert claim["method"] == "noisy_valid_certification_test"
+    assert claim["evidence_refs"] == [
+        "risk:candidate:cyber:mean",
+        "interval:judge_corrected_validated",
+        "test:noisy_valid_certification",
+    ]
+    pointer, risk = _located(report, "mean_safe")
+    assert risk["primary_interval_id"] == "direct_weighted_hoeffding"
+    (position,) = [
+        index
+        for index, item in enumerate(risk["intervals"])
+        if item["interval_id"] == "direct_weighted_hoeffding"
+    ]
+    assert record["evidence"]["interval_id"] == "direct_weighted_hoeffding"
+    assert record["evidence"]["interval_method"] == "weighted_hoeffding"
+    assert record["sources"]["evidence"] == pointer
+    assert record["sources"]["evidence_interval"] == f"{pointer}/intervals/{position}"
+    assert record["evidence"]["test"] == "noisy_valid_certification"
+    # The bound is the test's, which ran.
+    assert record["bound"]["method"] == "noisy_valid_certification_test"
+    assert record["bound"]["upper"] is not None
+    assert (record["bound"]["lower"], record["bound"]["upper"]) == (claim["lower"], claim["upper"])
+    assert not record["judge_corrected"]
+    assert round_trip_differences(output) == []
