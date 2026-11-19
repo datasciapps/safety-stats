@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime
 from pathlib import Path
@@ -156,6 +157,32 @@ class OutcomeMappingSpec(StrictModel):
         return self
 
 
+def _tag(value: Any) -> tuple[str, Any]:
+    if isinstance(value, bool):
+        return ("bool", value)
+    if isinstance(value, int):
+        return ("int", value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return ("float", str(value))
+        return ("float", value)
+    if isinstance(value, str):
+        return ("str", value)
+    return (type(value).__name__, value)
+
+
+def _same_classification(first: OutcomeMappingSpec, second: OutcomeMappingSpec) -> bool:
+    """Whether two mappings classify every score value alike, as ``map_outcome`` reads them."""
+
+    if first.failure_if is not None or second.failure_if is not None:
+        return first.failure_if == second.failure_if
+    return all(
+        {_tag(value) for value in getattr(first, field) or []}
+        == {_tag(value) for value in getattr(second, field) or []}
+        for field in ("failure_values", "safe_values")
+    )
+
+
 class OutcomeMappingSensitivitySpec(StrictModel):
     """Experimental: an alternative reading of the same score, reported beside the primary one.
 
@@ -224,9 +251,18 @@ class ScoreSpec(StrictModel):
                 f"{PRIMARY_MAPPING_ID!r} names the primary mapping and cannot name a sensitivity"
             )
         for item in self.mapping_sensitivities:
-            if item.mapping == self.mapping:
+            # Compared as map_outcome reads them: the order and repeats of the values do not
+            # matter, and their types do.
+            try:
+                repeats = _same_classification(item.mapping, self.mapping)
+            except TypeError:
+                # A list or an object among the values cannot be matched to a score value, and
+                # reading the scores fails on it. The plan loads as it did.
+                repeats = item.mapping == self.mapping
+            if repeats:
                 raise ValueError(
-                    f"outcome mapping sensitivity {item.id!r} repeats the primary mapping"
+                    f"outcome mapping sensitivity {item.id!r} repeats the primary mapping: it "
+                    "classifies every score value as the primary mapping does"
                 )
         return self
 

@@ -631,7 +631,11 @@ class ReportPresentation(ResultModel):
 
 
 class MappingSensitivityResult(ResultModel):
-    """One displayed result as an alternative outcome mapping reads it."""
+    """One displayed result as an alternative outcome mapping reads it.
+
+    Descriptive: its interval and its claim status never enter a claim's status or the
+    decision. ``outcome-mapping-sensitivity.csv`` marks such rows with ``descriptive``.
+    """
 
     kind: Literal["group_risk", "comparison", "claim"]
     result_id: str
@@ -805,6 +809,7 @@ class SafetyReport(ResultModel):
         from inspect_safety_stats.report.writer import write_report
 
         return write_report(self, output, overwrite=overwrite)
+
 
 def mapping_results(report: SafetyReport) -> list[MappingSensitivityResult]:
     """The displayed results that outcome mapping sensitivities put side by side."""

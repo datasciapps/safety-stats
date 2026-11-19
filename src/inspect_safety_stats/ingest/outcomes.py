@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import math
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 
-from inspect_safety_stats.config.models import OutcomeMappingSpec
+from inspect_safety_stats.config.models import OutcomeMappingSpec, _tag
 
 if TYPE_CHECKING:
     from inspect_safety_stats.schema.observations import Observation
@@ -50,20 +49,6 @@ def judge_positive(row: Observation) -> bool:
     """
 
     return row.failure is True and not classified_by_policy(row)
-
-
-def _tag(value: Any) -> tuple[str, Any]:
-    if isinstance(value, bool):
-        return ("bool", value)
-    if isinstance(value, int):
-        return ("int", value)
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            return ("float", str(value))
-        return ("float", value)
-    if isinstance(value, str):
-        return ("str", value)
-    return (type(value).__name__, value)
 
 
 class UnmappedScoreError(ValueError):

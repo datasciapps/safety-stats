@@ -360,11 +360,16 @@ described in their pull requests.
   `inputs.score.mapping_sensitivities` declares named alternative mappings; the analysis is
   repeated under each on the same rollouts, and the report shows every reading side by side
   in `report.json` (`outcome_mapping_sensitivities`), a new
-  `outcome-mapping-sensitivity.csv` and a section of `report.md`. Only the primary mapping
-  enters claims and the decision. Each alternative carries what the plan, its decision policy
-  and its registration receipt were checked for, so a receipt for another plan or a failed
-  decision policy makes it `invalid` as it does the primary analysis. Opt-in: plans without the
-  field keep their hash and their report bytes. See
+  `outcome-mapping-sensitivity.csv` and a section of `report-full.md`. Only the primary mapping
+  enters claims and the decision: the CSV's `descriptive` column and the "(descriptive)" mark
+  in `report-full.md` set an alternative's readings apart. Each alternative carries what the
+  plan, its decision policy and its registration receipt were checked for, so a receipt for
+  another plan or a failed decision policy makes it `invalid` as it does the primary analysis,
+  and counts the diagnostics that describe its own outcomes, such as
+  `TAIL_MEASURES_UNINFORMATIVE` and `CLUSTER_DESIGN_EFFECT`. An alternative that classifies
+  every value as the primary mapping does is refused as a repeat, whatever the order or
+  repeats of its values. Opt-in: plans without the field keep their hash and their report
+  bytes. See
   [Outcome mapping sensitivities](docs/plan-reference.md#outcome-mapping-sensitivities-experimental).
 
 - **The fixed-design planner uses the analysis method.** `plan fixed-design --plan PLAN`

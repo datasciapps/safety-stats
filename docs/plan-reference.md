@@ -432,9 +432,12 @@ report shows every reading side by side:
   interval of every group risk, comparison and claim (with the claim's status), and
   `presentation.primary_outcome_mapping` records the primary mapping beside them;
 - `outcome-mapping-sensitivity.csv` holds one row per result and mapping, `primary` first,
-  with each result's readings adjacent, and is listed in `checksums.json`;
+  with each result's readings adjacent, and is listed in `checksums.json`. Its last column,
+  `descriptive`, is `True` on every row of an alternative, whose claim status certifies
+  nothing;
 - `report-full.md` has an "Outcome mapping sensitivity (experimental)" section. Claims and
-  decisions appear in it only when `report.include_decisions` is true.
+  decisions appear in it only when `report.include_decisions` is true, and an alternative's
+  are marked "(descriptive)".
 
 Only the primary mapping enters claims and the decision. Each alternative's intervals carry
 the coverage the plan declares for that mapping alone; the readings are not simultaneous
@@ -444,12 +447,18 @@ pick from. A mapping that leaves some observed value unmapped makes its own inte
 affecting the primary analysis. Each alternative carries what the plan itself, its decision
 policy and its registration receipt were checked for, so a receipt for another plan
 (`PLAN_RECEIPT_MISMATCH`) or a decision policy that fails its checks makes every alternative
-`invalid`, as it does the primary analysis.
+`invalid`, as it does the primary analysis. The diagnostics that describe the outcomes, such as
+`TAIL_MEASURE_SINGLE_ROLLOUT`, `TAIL_MEASURES_UNINFORMATIVE` and `CLUSTER_DESIGN_EFFECT`, are
+counted for each alternative from its own reading. The anytime-valid bounds
+(`outputs.anytime_bounds`) and the judge flip rate (`inputs.judge_flip`) are computed for the
+primary mapping only.
 
 Identifiers must be unique and cannot be `primary`, which names the primary mapping in the
-outputs; an alternative may not repeat the primary mapping. Only `inputs.score` takes
-sensitivities, not a judge's score. A plan without the field keeps its hash, and its report
-is unchanged. `report.html` does not show the sensitivities yet.
+outputs; an alternative may not repeat the primary mapping. One that classifies every value as
+the primary mapping does is a repeat, whatever the order of its values and however often it
+lists one; values of another type are not, since mappings are type-sensitive. Only
+`inputs.score` takes sensitivities, not a judge's score. A plan without the field keeps its
+hash, and its report is unchanged. `report.html` does not show the sensitivities yet.
 
 ### Judge panels
 
