@@ -640,14 +640,17 @@ exits `3` when the receipt file already exists.
 
 ### Exit codes
 
-Every command draws its exit status from one table, `ExitCode` in `cli.py`:
+Every status a command chooses comes from one table, `ExitCode` in `cli.py`. Only `analyze`,
+`hash-plan` and the `generative` commands guarantee `3` for input they cannot run on; the other
+commands below do not, and a malformed plan given to `validate` or `plan fixed-design --plan`
+is not mapped to `3`:
 
 | Status | Meaning |
 |---|---|
 | `0` | The command completed. |
 | `1` | `analyze --decision-exit-codes`: the decision is FAIL. `plan fixed-design --plan`: no claim of the plan could be planned. |
 | `2` | `analyze --decision-exit-codes`: the decision is INCONCLUSIVE. typer also exits `2` on a usage error, such as a missing option, before the command runs. |
-| `3` | The command could not run, or its result supports no claim: an `invalid` integrity, or a `generative analyze` report with `ERROR` diagnostics. |
+| `3` | `analyze`, `hash-plan` and the `generative` commands: the command could not run, or its result supports no claim: an `invalid` integrity, or a `generative analyze` report with `ERROR` diagnostics. `validate`: an `invalid` integrity. |
 
 Exit codes of `analyze`:
 
@@ -658,7 +661,11 @@ Exit codes of `analyze`:
 | Integrity `invalid` with `--allow-invalid` | `0` | `2`, because an invalid analysis is never PASS |
 | The analysis cannot run, for example an unreadable plan | `3` | `3` |
 
-`validate` exits `3` for invalid input and `0` otherwise. `hash-plan` exits `3` for a plan it
+`validate` exits `3` when its integrity is `invalid` and `0` otherwise. A plan that cannot be
+loaded at all (malformed YAML, or a schema failure) is not mapped: `validate` prints a traceback
+and exits `1`. `plan fixed-design --plan` exits `2`, as a usage error, for a plan that fails
+validation, and `1` for malformed YAML. Check the exit status of these two commands only for
+zero versus nonzero. `hash-plan` exits `3` for a plan it
 cannot read or validate, and prints `Plan invalid:` with each failing field on one line.
 Before this release it printed a traceback and exited `1`. `generative analyze` exits `3` when
 its report carries an `ERROR` diagnostic, and still writes the report. Before this release it
