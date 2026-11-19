@@ -14,9 +14,11 @@ without replacement. Each prompt's rank is a hash of the seed and its `prompt_id
 - is nested: the pilot drawn with `per_stratum=k` contains the one drawn with any smaller `k`
   and the same seed, so a pilot can be extended without discarding the prompts already run.
 
-The returned frame is the whole manifest with three added columns. It doubles as the frame of
-a `design.type: sampled` plan with `sampling: fixed_size`, `stratum_column: pilot_stratum`
-and `inclusion_probability_column: pilot_inclusion_probability`.
+The returned frame is the whole manifest with five added columns, among them the seed and
+the per-stratum count, so the frame alone records how to repeat the draw. It doubles as
+the frame of a `design.type: sampled` plan with `sampling: fixed_size`,
+`stratum_column: pilot_stratum` and `inclusion_probability_column:
+pilot_inclusion_probability`.
 """
 
 from __future__ import annotations
@@ -30,7 +32,15 @@ import pandas as pd
 STRATUM_COLUMN = "pilot_stratum"
 PROBABILITY_COLUMN = "pilot_inclusion_probability"
 SELECTED_COLUMN = "pilot_selected"
-ADDED_COLUMNS = (STRATUM_COLUMN, PROBABILITY_COLUMN, SELECTED_COLUMN)
+SEED_COLUMN = "pilot_seed"
+PER_STRATUM_COLUMN = "pilot_per_stratum"
+ADDED_COLUMNS = (
+    STRATUM_COLUMN,
+    PROBABILITY_COLUMN,
+    SELECTED_COLUMN,
+    SEED_COLUMN,
+    PER_STRATUM_COLUMN,
+)
 
 _SEPARATOR = "/"
 
@@ -87,7 +97,8 @@ def draw_pilot(
     Strata are the distinct combinations of the `strata` columns; with no columns the whole
     manifest is one stratum. Returns a copy of the manifest, rows in their original order, with
     `pilot_stratum` (the stratum's values joined by "/"), `pilot_inclusion_probability`
-    (draws over stratum size) and `pilot_selected`.
+    (draws over stratum size), `pilot_selected`, and `pilot_seed` and `pilot_per_stratum`
+    (the arguments, repeated on every row so that the frame records the draw).
 
     The draw hashes each `prompt_id` as written, so `prompt_id` must hold text: read the
     manifest with `pd.read_csv(path, dtype=str, keep_default_na=False)`, as `plan pilot`
@@ -174,4 +185,6 @@ def draw_pilot(
     result[STRATUM_COLUMN] = labels
     result[PROBABILITY_COLUMN] = probability
     result[SELECTED_COLUMN] = selected
+    result[SEED_COLUMN] = seed
+    result[PER_STRATUM_COLUMN] = per_stratum
     return result

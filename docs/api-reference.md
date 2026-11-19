@@ -633,7 +633,8 @@ reports the risk differences a two-arm design resolves at `--margin`; see
 
 `plan pilot` (experimental) draws `K` prompts at random from each combination of the
 `--strata` columns (`task_id` by default) and writes the whole manifest with
-`pilot_stratum`, `pilot_inclusion_probability` and `pilot_selected` added. See
+`pilot_stratum`, `pilot_inclusion_probability`, `pilot_selected`, `pilot_seed` and
+`pilot_per_stratum` added. See
 [Drawing a random pilot](design-based-sampling.md#drawing-a-random-pilot).
 
 Repeat `--logs` to select multiple files or directories. `--runs` and `--rollouts` name the two

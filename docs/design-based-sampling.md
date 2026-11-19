@@ -222,13 +222,15 @@ inspect-safety-stats plan pilot --manifest design.csv --per-stratum 5 --seed 202
 
 It draws `--per-stratum` prompts from each combination of the `--strata` columns
 (`task_id` by default; an empty value makes the whole manifest one stratum) by simple random
-sampling without replacement, and writes the whole manifest with three added columns:
+sampling without replacement, and writes the whole manifest with five added columns:
 
 | Column | Meaning |
 |---|---|
 | `pilot_stratum` | The stratum's values, joined by `/` |
 | `pilot_inclusion_probability` | Draws over stratum size, \(n_h/N_h\) |
 | `pilot_selected` | `True` for the prompts to run in the pilot |
+| `pilot_seed` | `--seed`, on every row |
+| `pilot_per_stratum` | `--per-stratum`, on every row |
 
 Each prompt's rank is a SHA-256 hash of the seed and its `prompt_id`, so the draw:
 
@@ -237,7 +239,9 @@ Each prompt's rank is a SHA-256 hash of the seed and its `prompt_id`, so the dra
 - is nested: a pilot drawn with a larger `--per-stratum` and the same seed contains the
   smaller one, so a pilot can be extended without discarding the prompts already run.
 
-Record the seed with the pilot. The command refuses a stratum with fewer prompts than
+The frame records the seed and the per-stratum count, so the frame alone repeats the draw,
+and a report whose design manifest is the frame covers them with the manifest's hash. The
+command refuses a stratum with fewer prompts than
 `--per-stratum`, a missing value in a strata column, strata values that would share a label
 once joined, a manifest that already has the added columns, and an `--output` that would
 overwrite the manifest. Values are written back as they appear in the manifest. The draw

@@ -505,11 +505,16 @@ def test_pilot_cli_writes_the_frame_with_the_draw(tmp_path: Path) -> None:
     assert b"\r\n" not in written
     lines = written.decode("utf-8").splitlines()
     original = manifest.read_text(encoding="utf-8").splitlines()
-    assert lines[0] == original[0] + ",pilot_stratum,pilot_inclusion_probability,pilot_selected"
+    assert lines[0] == original[0] + (
+        ",pilot_stratum,pilot_inclusion_probability,pilot_selected,pilot_seed,pilot_per_stratum"
+    )
     # The manifest's own text comes through, including the gap in an integer column.
-    assert [line.rsplit(",", 3)[0] for line in lines[1:]] == original[1:]
-    assert sum(line.endswith(",True") for line in lines[1:]) == 4
-    assert {line.split(",")[-2] for line in lines[1:]} == {"0.3333333333333333"}
+    assert [line.rsplit(",", 5)[0] for line in lines[1:]] == original[1:]
+    added = [line.split(",")[-4:] for line in lines[1:]]
+    assert sum(selected == "True" for _, selected, _, _ in added) == 4
+    assert {probability for probability, _, _, _ in added} == {"0.3333333333333333"}
+    # The frame records the arguments that repeat the draw.
+    assert {(seed, count) for _, _, seed, count in added} == {("13", "2")}
 
 
 def test_pilot_cli_and_python_draw_the_same_prompts(tmp_path: Path) -> None:

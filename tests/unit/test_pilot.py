@@ -228,6 +228,29 @@ def test_a_pilot_frame_cannot_be_drawn_from_again() -> None:
     frame = draw_pilot(_manifest({"a": 3}), per_stratum=1, strata=["category"], seed=1)
     with pytest.raises(ValueError, match="pilot_selected"):
         draw_pilot(frame, per_stratum=1, strata=["category"], seed=1)
+    for column in ("pilot_seed", "pilot_per_stratum"):
+        with pytest.raises(ValueError, match=column):
+            draw_pilot(
+                _manifest({"a": 3}).assign(**{column: 1}),
+                per_stratum=1,
+                strata=["category"],
+                seed=1,
+            )
+
+
+def test_the_frame_records_the_arguments_that_repeat_the_draw() -> None:
+    """The seed is part of the frame that becomes the design manifest (CONTRIBUTING 5.3)."""
+    manifest = _manifest({"a": 12, "b": 9})
+    frame = draw_pilot(manifest, per_stratum=3, strata=["category"], seed=20261119)
+    assert frame["pilot_seed"].unique().tolist() == [20261119]
+    assert frame["pilot_per_stratum"].unique().tolist() == [3]
+    again = draw_pilot(
+        manifest,
+        per_stratum=int(frame["pilot_per_stratum"].iloc[0]),
+        strata=["category"],
+        seed=int(frame["pilot_seed"].iloc[0]),
+    )
+    assert _drawn(again) == _drawn(frame)
 
 
 def test_prompt_ids_must_be_text_as_written(tmp_path: Path) -> None:

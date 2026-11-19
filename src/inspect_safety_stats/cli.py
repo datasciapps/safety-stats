@@ -898,7 +898,7 @@ def pilot_command(
         int, typer.Option("--per-stratum", min=1, help="Prompts to draw from each stratum.")
     ],
     seed: Annotated[
-        int, typer.Option("--seed", help="Selection seed; record it with the pilot.")
+        int, typer.Option("--seed", help="Selection seed; the frame records it as pilot_seed.")
     ],
     output: Annotated[
         Path,
@@ -915,10 +915,11 @@ def pilot_command(
 ) -> None:
     """Draw a random pilot within strata of a design manifest (experimental).
 
-    Writes the whole manifest with pilot_stratum, pilot_inclusion_probability and
-    pilot_selected added. Run the pilot on the rows where pilot_selected is true. The
-    same file is the frame of a sampled design (sampling: fixed_size, stratum_column:
-    pilot_stratum, inclusion_probability_column: pilot_inclusion_probability).
+    Writes the whole manifest with pilot_stratum, pilot_inclusion_probability,
+    pilot_selected, pilot_seed and pilot_per_stratum added. Run the pilot on the rows where
+    pilot_selected is true. The same file is the frame of a sampled design (sampling:
+    fixed_size, stratum_column: pilot_stratum, inclusion_probability_column:
+    pilot_inclusion_probability).
     """
 
     import pandas as pd
