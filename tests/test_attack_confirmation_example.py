@@ -25,6 +25,7 @@ from inspect_safety_stats.stats.planning import maximum_certifying_failures
 EXAMPLE_DIR = Path(__file__).parents[1] / "examples" / "attack_confirmation"
 sys.path.insert(0, str(EXAMPLE_DIR))
 
+import attack_confirmation as example  # noqa: E402
 from attack_confirmation import (  # noqa: E402
     DESIGN_PATH,
     REFUSAL,
@@ -474,6 +475,44 @@ def cross_budget_logs(tmp_path_factory: pytest.TempPathFactory) -> Path:
     return logs
 
 
+def _changed_template_run(directory: Path, logs: Path, model: str, numbers: Iterable[int]) -> None:
+    """A live run at budget 1 whose attacker prompt differs from the shipped one by a word.
+
+    Its task arguments are those of the shipped attack; only the fingerprint differs.
+    """
+
+    shipped = _live_declaration(1).attack_fingerprint
+    changed = example.ATTACKER_SYSTEM.replace("Write an improved", "Write a better")
+    assert changed != example.ATTACKER_SYSTEM
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(example, "ATTACKER_SYSTEM", changed)
+        assert _live_declaration(1).attack_fingerprint != shipped
+        _live_run(directory, logs, model, 1, numbers)
+
+
+@pytest.fixture(scope="module")
+def split_template_logs(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The candidate's behaviours attacked half with the shipped prompt, half with another."""
+
+    root = tmp_path_factory.mktemp("split-template")
+    logs = root / "logs"
+    _live_run(root / "candidate-shipped", logs, "mockllm/candidate", 1, [0, 1])
+    _changed_template_run(root / "candidate-changed", logs, "mockllm/candidate", [2, 3])
+    _live_run(root / "baseline-shipped", logs, "mockllm/baseline", 1, range(4))
+    return logs
+
+
+@pytest.fixture(scope="module")
+def cross_template_logs(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The candidate attacked with another prompt, the baseline with the shipped one."""
+
+    root = tmp_path_factory.mktemp("cross-template")
+    logs = root / "logs"
+    _changed_template_run(root / "candidate-changed", logs, "mockllm/candidate", range(4))
+    _live_run(root / "baseline-shipped", logs, "mockllm/baseline", 1, range(4))
+    return logs
+
+
 def _live_plan(directory: Path, *, match: AttackDeclaration | None = None) -> Path:
     """The example plan over the four behaviours, with a design declaring budget 1.
 
@@ -516,6 +555,27 @@ def test_the_example_plan_flags_a_cohort_attacked_at_two_budgets(
     assert report.integrity.status == "invalid"
     drift = [message for code, message in _errors(report) if code == "CONFIG_DRIFT"]
     assert len(drift) == 1 and "'candidate'" in drift[0]
+
+
+def test_the_fingerprint_separates_two_templates_within_a_cohort_only(
+    split_template_logs: Path, cross_template_logs: Path, tmp_path: Path
+) -> None:
+    """Runs whose task arguments agree and whose prompt templates differ.
+
+    Within a cohort, the fingerprint in the task's metadata differs, and the plan's
+    require_uniform reports it. Across cohorts nothing compares fingerprints, even with the
+    cohorts matched on the attack as README.md says, which is why README.md asks for a new
+    attack_id whenever the attack changes.
+    """
+
+    declared = _live_declaration(1)
+    within = analyze(plan=_live_plan(tmp_path / "within", match=declared), logs=split_template_logs)
+    assert within.integrity.status == "invalid"
+    assert [code for code, _ in _errors(within)] == ["CONFIG_DRIFT"]
+    assert "'candidate'" in _errors(within)[0][1]
+
+    across = analyze(plan=_live_plan(tmp_path / "across", match=declared), logs=cross_template_logs)
+    assert across.integrity.status == "valid"
 
 
 def test_cohorts_matched_on_the_declared_attack_keep_other_attacks_out(
