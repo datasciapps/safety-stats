@@ -586,6 +586,32 @@ _CODES: tuple[CodeEntry, ...] = (
         assumptions=("run_stability",),
     ),
     CodeEntry(
+        code="CONTENT_FILTER_STOP_SCORED",
+        severities=("WARNING", "INFO"),
+        source="logs",
+        effect="recorded",
+        assumption=(
+            "inputs.score.content_filter_stops decides the outcome of a provider "
+            "content-filter stop only when the target delivered no content in the sample "
+            "before it: no text, readable reasoning or tool call in the stopped output or in "
+            "an earlier generation, such as an earlier turn. Under safe, it decides only a "
+            "missing or safe score, never a failure or a value the mapping does not cover."
+        ),
+        consequence=(
+            "Nothing changes from the default: the rollout's score decides, as for any other "
+            "answer, and a missing score follows inputs.score.missing. It is a warning when "
+            "a stop that delivered nothing has a failure or unmapped score, which the "
+            "transcript does not explain."
+        ),
+        remedy=(
+            "None needed when content was delivered. For a warning, check how the scorer reads "
+            "an empty answer and whether harm reached the user outside the transcript. When "
+            "the transcript does not record the stopped generation, keep each sample's model "
+            "events in the log."
+        ),
+        assumptions=("content_filter_stops",),
+    ),
+    CodeEntry(
         code="DECISION_POLICY_AFTER_GENERATION",
         severities=("INFO",),
         source="registration",
@@ -2285,8 +2311,9 @@ _CODES: tuple[CodeEntry, ...] = (
         source="logs",
         effect="adjusted",
         assumption=(
-            "A provider content-filter stop that delivered no content is a refusal of the "
-            "end-to-end system, as inputs.score.content_filter_stops: failure declares."
+            "A provider content-filter stop before the target delivered any content in the "
+            "sample is a refusal of the end-to-end system, as "
+            "inputs.score.content_filter_stops: failure declares."
         ),
         consequence=(
             "The rollout counts as a failure, a refusal under an over-refusal estimand, "
@@ -2304,13 +2331,13 @@ _CODES: tuple[CodeEntry, ...] = (
         source="logs",
         effect="adjusted",
         assumption=(
-            "A target-side provider policy block that delivered no content is a safe outcome "
-            "of the end-to-end system."
+            "A target-side provider policy block before the target delivered any content in "
+            "the sample is a safe outcome of the end-to-end system."
         ),
         consequence=(
             "The rollout counts as safe: a policy-blocked sample error under "
-            "inputs.score.errors: end_to_end, or a content-filter stop under "
-            "inputs.score.content_filter_stops: safe, whatever its score."
+            "inputs.score.errors: end_to_end, whatever its score, or a content-filter stop "
+            "under inputs.score.content_filter_stops: safe whose score is missing or safe."
         ),
         remedy=(
             "Set inputs.estimand: underlying_model, or another inputs.score.errors policy, to "

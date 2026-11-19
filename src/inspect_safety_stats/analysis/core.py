@@ -152,9 +152,10 @@ def _judge_plan(plan: AnalysisPlan, judge: JudgeSpec) -> AnalysisPlan:
     run the test the judge's run bounds the claim as a ``corrected_interval`` claim instead
     (its row decides nothing under the validated calibration the test requires). Where the
     plan cannot, the claim is kept, so the judge's run reports the primary's plan error. The
-    judge's score takes the stop reasons it leaves at ``score`` from the primary score
-    (``judge_run_score``), so its run differs from the primary's in the judge's verdicts and
-    its own ``missing`` and ``errors`` only.
+    judge's score takes the primary score's ``content_filter_stops``, which a judge cannot set,
+    and its ``token_limit`` unless the judge sets its own (``judge_run_score``), so its run
+    differs from the primary's in the judge's verdicts and its own ``missing``, ``errors`` and
+    ``token_limit`` only.
     """
 
     remapped = _corrected_interval_claims(plan)
