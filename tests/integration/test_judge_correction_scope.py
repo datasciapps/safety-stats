@@ -476,6 +476,30 @@ def test_the_headline_gives_the_true_risk_the_claim_is_decided_on(
     assert hard["judge_corrected"]["simultaneous_coverage"] is None
 
 
+def test_report_md_marks_a_validated_correction_that_does_not_certify_as_a_sensitivity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The labels measure the judge on the whole cohort, so the hard group's is a sensitivity.
+
+    report.md marked it assumed, which its note says means declared rather than measured
+    judge accuracy, while the summary says the calibration is validated.
+    """
+
+    report = _analyze(tmp_path, monkeypatch, weights="equal_prompt")
+    directory = report.write(tmp_path / "report")
+    rows = {
+        row["Group"]: row["True risk (judge-corrected)"]
+        for row in table(section((directory / "report.md").read_text("utf-8"), "Failure risk"))
+    }
+    for group, mark in [("all", ""), ("hard", " (sensitivity)")]:
+        corrected = _corrected(_risk(report, group, "mean"))
+        assert isinstance(corrected, RiskIntervalResult)
+        assert rows[group] == rate_interval_text(corrected.lower, corrected.upper) + mark
+        assert _headline(directory, "group_risk", group)["judge_corrected"]["calibration"] == (
+            "validated"
+        )
+
+
 def test_noisy_valid_test_refuses_a_row_its_labels_do_not_measure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

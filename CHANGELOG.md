@@ -24,6 +24,15 @@ described in their pull requests.
   [agent guide](docs/agent-guide.md#judge-reported-and-true-risk) says which bound describes
   the true risk.
 
+- **report.md marks a validated correction that does not certify its row as a sensitivity,
+  not as assumed (changes `report.md` for such plans).** Its true risk column marked every
+  correction that does not certify "(assumed)", and its note said that means the correction
+  rests on declared rather than measured judge accuracy. A validated calibration measures the
+  judge on the rollouts its labels were drawn from, so its correction of a row that weights
+  them differently, such as one group of the cohort, is a sensitivity: such rows are now marked
+  "(sensitivity)", and the note says so, as the summary's `judge_corrected.calibration` says
+  `validated`.
+
 - **A rollout that an `exclude` score policy leaves out of the bounds is reported, and integrity
   is degraded (changes report bytes).** Under `inputs.score.missing: exclude` or
   `inputs.score.errors: exclude` an unscored or errored rollout was dropped with no diagnostic,

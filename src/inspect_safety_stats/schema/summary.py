@@ -67,6 +67,12 @@ def judge_interval(
     return next((item for item in intervals if item.interval_id == wanted), None)
 
 
+def judge_calibration_of(interval: RiskIntervalResult) -> Literal["validated", "assumed"]:
+    """How a judge-corrected interval took the judge's accuracy: measured, or declared."""
+
+    return "validated" if interval.method == VALIDATED_CORRECTION else "assumed"
+
+
 class SummaryJudgeCorrection(ResultModel):
     """The interval that bounds a headline's true failure risk (``judge_interval``)."""
 
@@ -176,7 +182,7 @@ def _judge_corrected(
         return None
     position = next(index for index, other in enumerate(intervals) if other is interval)
     return SummaryJudgeCorrection(
-        calibration="validated" if interval.method == VALIDATED_CORRECTION else "assumed",
+        calibration=judge_calibration_of(interval),
         lower=interval.lower,
         upper=interval.upper,
         eligibility=interval.eligibility,

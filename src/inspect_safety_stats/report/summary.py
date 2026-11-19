@@ -41,7 +41,12 @@ from inspect_safety_stats.schema.reports import (
     RiskIntervalResult,
     SafetyReport,
 )
-from inspect_safety_stats.schema.summary import JUDGE_PREFIX, is_headline_risk, judge_interval
+from inspect_safety_stats.schema.summary import (
+    JUDGE_PREFIX,
+    is_headline_risk,
+    judge_calibration_of,
+    judge_interval,
+)
 from inspect_safety_stats.stats.planning import (
     rollout_scale_for_half_width,
     rollouts_for_half_width,
@@ -170,6 +175,14 @@ def _sensitivity(
     )
 
 
+def _judge_mark(interval: RiskIntervalResult) -> str:
+    """What qualifies a true-risk interval: declared accuracy, or a sensitivity of measured."""
+
+    if judge_calibration_of(interval) == "assumed":
+        return " (assumed)"
+    return "" if interval.eligibility == "certifying" else " (sensitivity)"
+
+
 def _measure_type(risk: GroupRiskResult) -> str | None:
     """The plan's type of the measure, which the result's method names."""
 
@@ -272,8 +285,7 @@ def _root_section(
             cells.append(
                 "—"
                 if judged is None
-                else rate_interval_text(judged.lower, judged.upper)
-                + ("" if judged.eligibility == "certifying" else " (assumed)")
+                else rate_interval_text(judged.lower, judged.upper) + _judge_mark(judged)
             )
         lines.append("| " + " | ".join(cells) + " |")
         if flagged:
@@ -314,7 +326,8 @@ def _root_section(
     if with_judge:
         note += (
             " The judge-corrected column bounds the true failure risk; it is marked "
-            "assumed when it rests on declared rather than measured judge accuracy."
+            "assumed when it rests on declared rather than measured judge accuracy, and "
+            "sensitivity when the measured accuracy does not certify its row."
         )
     lines.extend(["", note])
     return lines
