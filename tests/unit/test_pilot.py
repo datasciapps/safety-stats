@@ -175,7 +175,7 @@ def test_strata_labels_that_would_merge_are_rejected() -> None:
 def test_strata_that_analyze_would_merge_are_rejected(
     first: str, second: str, read_as: str
 ) -> None:
-    """The draw reads strata as text; analyze reads the frame with pandas' inference."""
+    """analyze keeps them apart, but a spreadsheet or a pandas reader would merge them."""
     manifest = _manifest({"a": 4, "b": 4})
     manifest["category"] = [first] * 4 + [second] * 4
     expected = f"{sorted([first, second])[0]!r}, {sorted([first, second])[1]!r} "
@@ -183,9 +183,10 @@ def test_strata_that_analyze_would_merge_are_rejected(
         draw_pilot(manifest, per_stratum=1, strata=["category"], seed=1)
 
 
-@pytest.mark.parametrize("label", ["N/A", "None", "NA", "null", "nan"])
+@pytest.mark.parametrize("label", ["N/A", "None", "NA", "null", "nan", " NA", "None ", "#N/A"])
 def test_strata_that_analyze_would_read_as_missing_are_rejected(label: str) -> None:
-    """Under pandas 2 they form one "nan" stratum, and under pandas 3 analyze cannot sort them."""
+    """analyze refuses a stratum label that marks a missing value, ignoring surrounding spaces,
+    which pandas does not ignore: the draw accepted ` NA`, which analyze then refused."""
     manifest = _manifest({"a": 4, "b": 4})
     manifest["category"] = ["kept"] * 4 + [label] * 4
     with pytest.raises(ValueError, match=re.escape(f"as missing values: [{label!r}]")):

@@ -248,12 +248,13 @@ def write_rewrites(records: list[RewriteRecord], path: str | Path) -> None:
 def read_selections(path: str | Path) -> list[SelectionRecord]:
     """Read and validate a selection ledger CSV, one ``SelectionRecord`` per row.
 
-    Empty cells are read as missing values. Raises ``ValueError`` when two rows share a
-    ``selection_order`` or a ``sampling_unit_id``, and pydantic's ``ValidationError`` for an
-    invalid row.
+    Every cell is read as text, as written, and the record's fields convert it: an identifier
+    such as ``007`` stays ``007``. Empty cells are read as missing values. Raises
+    ``ValueError`` when two rows share a ``selection_order`` or a ``sampling_unit_id``, and
+    pydantic's ``ValidationError`` for an invalid row.
     """
 
-    frame = pd.read_csv(path, keep_default_na=False)
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
     records = [SelectionRecord.model_validate(_clean(row)) for row in frame.to_dict("records")]
     orders = [record.selection_order for record in records]
     if len(set(orders)) != len(orders):
@@ -269,16 +270,18 @@ def read_rewrite_rows(path: str | Path) -> list[RewriteRecord]:
 
     :func:`read_rewrites` is the reader to use. A resume reads with this one, because it
     drops the rows of errored units, and any repeat they make, before it checks for repeats.
+    Every cell is read as text, as written, and the record's fields convert it.
     """
 
-    frame = pd.read_csv(path, keep_default_na=False)
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
     return [RewriteRecord.model_validate(_clean(row)) for row in frame.to_dict("records")]
 
 
 def read_rewrites(path: str | Path) -> list[RewriteRecord]:
     """Read and validate a rewrite ledger CSV, one ``RewriteRecord`` per row.
 
-    Empty cells are read as missing values. Raises ``ValueError`` when two rows share a
+    Every cell is read as text, as written, and the record's fields convert it. Empty cells
+    are read as missing values. Raises ``ValueError`` when two rows share a
     ``sampling_unit_id``, and pydantic's ``ValidationError`` for an invalid row.
     """
 

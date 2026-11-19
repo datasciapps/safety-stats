@@ -15,6 +15,39 @@ described in their pull requests.
   the generative and statistical-methods pages agree. The bounds are unchanged. Every generative
   `report.html` embeds the page's script, so it and its `checksums.json` entry change in bytes.
 
+- **A generative run whose identifiers read as numbers can be analysed.** The seed manifest is
+  read as text, but `generative analyze` and a resumed `generative materialize` read the
+  selection and rewrite ledgers back with pandas' type inference. A semantic seed or other
+  identifier such as `001`, `1.0` or `true` became a number or a boolean there, and the run
+  stopped with a validation error. The ledgers are now read as text, as written.
+
+- **Manifest identifiers and grouping columns are read as written (changes report bytes for
+  numeric-looking labels).** The analysis read the design manifest with pandas' type
+  inference. Labels that read as one number or boolean, such as `1` and `01`, `1` and `1.0`,
+  or `true` and `True`, became one stratum, independence block, hierarchy node or group filter
+  value without a word, so a fixed-size design that drew one item too few from one such stratum
+  and one too many from the other passed its draw checks. An identifier such as `0001` became
+  `1`, so no rollout of item `0001` joined its row, and `1` and `01` were a duplicate
+  `prompt_id`. A blank value, or one that pandas reads as missing such as `NA` or `None`,
+  merged, split or crashed depending on the column and the pandas version. `prompt_id`,
+  `question_id`, `task_id` and every column the plan groups by (hierarchy levels, nested weight
+  hierarchies, group filters, manifest columns in a `block_by` and `design.stratum_column`) are
+  now read as text, exactly as written, by `analyze`, `validate`, `plan fixed-design` and
+  `plan comparison`. A cell in one of these columns that is blank, or holds a marker that R,
+  spreadsheets, databases and pandas write for a missing value (`NA`, `N/A`, `None`, `null`,
+  `nan`, `#N/A` and the rest of pandas' default list, fixed so that it does not change with
+  the pandas version), is an `INGEST_FAILED` error that names the column and the rows: recode
+  a label meant literally, for example as `none`. Weights, inclusion probabilities, thresholds,
+  the selection column, adaptive claims' order fields, `expected_rollouts` and the other
+  numeric or boolean columns keep their types, even when the plan also groups by them. A group
+  `filter` on a label column takes a quoted value: an unquoted YAML `1`, `01`, `1.0` or `true`
+  is an error that says to quote it. Reports of manifests without such labels, every bundled
+  example among them, keep their bytes. A manifest that zero-pads identifiers that the logs
+  record as integers (`0001` for the sample id `1`) now reports `PROMPT_MISSING` and
+  `PROMPT_UNEXPECTED`, whose messages name the other spelling of the same number: write the
+  identifiers as the logs record them. See
+  [`inputs`](docs/plan-reference.md#inputs).
+
 - **The Newcombe paired interval no longer stops `analyze` on large comparisons (changes
   behaviour from 131,072 pairs).** Its correlation divides by the square root of the product of
   the 2×2 table's four margins, which was computed in integers. Once the product passed 2^64,
