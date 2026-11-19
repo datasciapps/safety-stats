@@ -22,6 +22,7 @@ from inspect_safety_stats.ingest.inspect_logs import (
     read_inspect_source,
 )
 from inspect_safety_stats.ingest.manifest import load_manifest
+from inspect_safety_stats.ingest.records import StopContext
 from inspect_safety_stats.schema.reports import (
     Diagnostic,
     GroupRiskResult,
@@ -1452,6 +1453,127 @@ def test_error_stage_controls_end_to_end_safe_classification(
     assert estimate.n_valid == expected_valid
     assert estimate.n_policy_blocked_safe == expected_blocked
     assert estimate.n_unclassified == 20 - expected_valid
+
+
+def _content_filter_plan(tmp_path: Path, stops: str | None, errors: str = "block") -> Path:
+    plan_path = _write_inputs(tmp_path)
+    option = "" if stops is None else f"\n    content_filter_stops: {stops}"
+    text = plan_path.read_text(encoding="utf-8").replace(
+        "    missing: block\n    errors: block",
+        f"    missing: conservative_bounds\n    errors: {errors}{option}",
+    )
+    plan_path.write_text(text, encoding="utf-8", newline="\n")
+    return plan_path
+
+
+def _stopped_first_rollout(
+    monkeypatch: pytest.MonkeyPatch, *, content_delivered: bool, scored: bool = False
+) -> None:
+    # The first rollout of p1 was stopped by a content filter; its scorer left it unscored, or
+    # scored it as compliant.
+    eval_frame, sample_frame = _frames(missing_score=not scored)
+    if scored:
+        target = (sample_frame["id"] == "p1") & (sample_frame["epoch"] == 1)
+        sample_frame.loc[target, "score_harmful"] = "FAIL"
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    stop = StopContext(
+        content_delivered=content_delivered,
+        block_type="refusal",
+        block_category="cyber",
+        block_error=False,
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs._stop_context",
+        lambda **kwargs: stop if kwargs["sample_id"] == "p1-1" else None,
+    )
+
+
+@pytest.mark.parametrize(
+    ("stops", "errors", "status", "failures", "blocked", "unclassified"),
+    [
+        # Before the option, and at its default, the unscored block is a possible failure.
+        (None, "block", "degraded", 0, 0, 1),
+        ("score", "block", "degraded", 0, 0, 1),
+        ("safe", "block", "valid", 0, 1, 0),
+        ("failure", "conservative_bounds", "valid", 1, 0, 0),
+    ],
+)
+def test_a_content_filter_stop_without_content_counts_as_the_plan_says(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    stops: str | None,
+    errors: str,
+    status: str,
+    failures: int,
+    blocked: int,
+    unclassified: int,
+) -> None:
+    plan_path = _content_filter_plan(tmp_path, stops, errors)
+    _stopped_first_rollout(monkeypatch, content_delivered=False)
+    report = analyze(plan=plan_path, logs="ignored")
+    estimate = next(item for item in report.prompt_estimates if item.prompt_id == "p1")
+    assert report.integrity.status == status
+    assert (estimate.n_failure, estimate.n_policy_blocked_safe) == (failures, blocked)
+    assert estimate.n_unclassified == unclassified
+    codes = {
+        "safe": "TARGET_POLICY_BLOCKED_SAFE",
+        "failure": "TARGET_POLICY_BLOCKED_REFUSAL",
+    }
+    if stops in codes:
+        diagnostic = next(
+            item for item in report.integrity.diagnostics if item.code == codes[stops]
+        )
+        assert diagnostic.scope == "eval-1:p1:1"
+        assert diagnostic.details["block_category"] == "cyber"
+
+
+def test_a_block_overrides_the_score_of_an_output_that_delivered_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _content_filter_plan(tmp_path, "safe")
+    _stopped_first_rollout(monkeypatch, content_delivered=False, scored=True)
+    report = analyze(plan=plan_path, logs="ignored")
+    estimate = next(item for item in report.prompt_estimates if item.prompt_id == "p1")
+    assert (estimate.n_failure, estimate.n_policy_blocked_safe) == (0, 1)
+
+
+@pytest.mark.parametrize("scored", [False, True])
+def test_content_delivered_before_a_content_filter_stop_is_scored_as_usual(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, scored: bool
+) -> None:
+    plan_path = _content_filter_plan(tmp_path, "safe")
+    _stopped_first_rollout(monkeypatch, content_delivered=True, scored=scored)
+    report = analyze(plan=plan_path, logs="ignored")
+    estimate = next(item for item in report.prompt_estimates if item.prompt_id == "p1")
+    assert estimate.n_policy_blocked_safe == 0
+    assert (estimate.n_failure, estimate.n_unclassified) == ((1, 0) if scored else (0, 1))
+
+
+def test_content_filter_stops_are_refused_for_a_source_that_cannot_report_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from dataclasses import replace
+
+    from inspect_safety_stats.ingest import inspect_logs
+
+    plan_path = _content_filter_plan(tmp_path, "safe")
+    _stopped_first_rollout(monkeypatch, content_delivered=False)
+    read = inspect_logs.read_inspect_source
+    monkeypatch.setattr(
+        inspect_logs,
+        "read_inspect_source",
+        lambda logs, parallel=False: replace(read(logs, parallel=parallel), stop_context=None),
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+    assert report.integrity.status == "invalid"
+    failure = next(item for item in report.integrity.diagnostics if item.code == "INGEST_FAILED")
+    assert "does not report" in failure.message
 
 
 def test_inspect_blank_error_field_is_not_a_sample_error(

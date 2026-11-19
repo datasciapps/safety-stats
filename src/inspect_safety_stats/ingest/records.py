@@ -51,6 +51,19 @@ class ErrorContext:
 
 
 @dataclass(frozen=True)
+class StopContext:
+    """How a rollout's output ended, for one that a provider's content filter stopped."""
+
+    # Whether the output delivered content before the stop. A stop reported as an API error
+    # delivered none, whatever stand-in text the tool put in its place.
+    content_delivered: bool
+    # The provider's own type and category of the block, when it gave them.
+    block_type: str | None
+    block_category: str | None
+    block_error: bool
+
+
+@dataclass(frozen=True)
 class RunRecord:
     """One evaluation run, as a source adapter reports it.
 
@@ -114,6 +127,10 @@ class SourceData:
     source_sha256: Callable[[str], str | None]
     # What kind of source this is, recorded in the report's provenance: at least its format.
     source_format: Mapping[str, Any]
+    # The content-filter stop of a rollout without a sample error, or None when its output was
+    # not stopped by a content filter. None in place of the function when the source cannot
+    # tell; a plan that asks for content-filter stops is then refused.
+    stop_context: Callable[[RolloutRecord], StopContext | None] | None = None
 
 
 class EvaluationSource(Protocol):
