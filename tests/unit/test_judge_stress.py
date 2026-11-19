@@ -9,7 +9,7 @@ from inspect_safety_stats.stats.judge_stress import (
     true_risk_bounds,
     verdict_lines,
 )
-from inspect_safety_stats.stats.judges import JudgeAccuracyBox
+from inspect_safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
 
 
 def point(sensitivity: float, specificity: float) -> JudgeAccuracyBox:
@@ -69,24 +69,62 @@ def test_an_uninformative_box_identifies_nothing() -> None:
     assert (stress.stressed.true_risk_lower, stress.stressed.true_risk_upper) == (0.0, 1.0)
 
 
-def test_unclassified_rollouts_stay_failures_at_the_upper_bound() -> None:
-    # 2% of the weight is unclassified and completed as unsafe: only the classified 2.5%
-    # above it is inverted, so the PASS needs Se >= 0.025 / 0.03 at perfect specificity.
-    pass_line, _ = verdict_lines(
-        judge_reported_lower=0.01,
-        judge_reported_upper=0.045,
-        acceptable_upper=0.05,
-        unacceptable_lower=0.10,
-        unclassified_share=0.02,
+def test_the_box_bounds_are_the_inversion_the_panel_correction_uses() -> None:
+    boxes = [point(0.5, 1.0), point(0.95, 0.8), JudgeAccuracyBox(0.6, 0.9, 0.85, 0.99)]
+    for box, (low, high) in itertools.product(
+        boxes, [(0.0, 0.05), (0.2455, 0.466), (0.4, 0.55), (0.9, 1.0)]
+    ):
+        lower, upper, identified = true_risk_bounds(
+            judge_reported_lower=low, judge_reported_upper=high, box=box
+        )
+        expected = identified_risk_set(low, high, box)
+        assert (lower, upper, identified) == (expected.lower, expected.upper, expected.identified)
+
+
+def test_a_tipping_line_never_points_the_wrong_way() -> None:
+    # A maximum row with L = 0.2455 and U = 0.466 against a = 0.66: the PASS needs
+    # Se >= U / a = 0.706 at perfect specificity, so the point box Se = 0.5 does not pass.
+    pass_line, fail_line = verdict_lines(
+        judge_reported_lower=0.2455,
+        judge_reported_upper=0.466,
+        acceptable_upper=0.66,
+        unacceptable_lower=0.95,
     )
-    assert pass_line.sensitivity_at_perfect_specificity == pytest.approx(0.025 / 0.03, abs=1e-12)
-    _, upper, _ = true_risk_bounds(
-        judge_reported_lower=0.01,
-        judge_reported_upper=0.045,
+    assert pass_line.sensitivity_at_perfect_specificity == pytest.approx(
+        0.466 / 0.66, rel=1e-12, abs=0
+    )
+    assert fail_line.specificity_at_perfect_sensitivity == pytest.approx(
+        (1 - 0.2455) / 0.05, rel=1e-12, abs=0
+    )
+    stress = stress_verdict(
+        judge_reported_lower=0.2455,
+        judge_reported_upper=0.466,
+        acceptable_upper=0.66,
+        unacceptable_lower=0.95,
         box=point(0.5, 1.0),
-        unclassified_share=0.02,
     )
-    assert upper == pytest.approx(0.02 + 0.025 / 0.5, abs=1e-12)
+    assert stress.stressed is not None and stress.stressed.verdict == "INCONCLUSIVE"
+
+
+def test_an_unacceptable_lower_of_one_has_no_specificity_tipping_point() -> None:
+    # FAIL at perfect sensitivity needs L >= 1 whatever the specificity: all of the edge or
+    # none of it.
+    _, fail_line = verdict_lines(
+        judge_reported_lower=0.6,
+        judge_reported_upper=0.9,
+        acceptable_upper=0.5,
+        unacceptable_lower=1.0,
+    )
+    assert fail_line.specificity_at_perfect_sensitivity is None
+    for sp in (0.2, 0.6, 1.0):
+        stress = stress_verdict(
+            judge_reported_lower=0.6,
+            judge_reported_upper=0.9,
+            acceptable_upper=0.5,
+            unacceptable_lower=1.0,
+            box=point(1.0, sp),
+        )
+        assert stress.stressed is not None and stress.stressed.verdict != "FAIL"
 
 
 def test_a_zero_limit_has_no_sensitivity_tipping_point() -> None:
@@ -99,19 +137,18 @@ def test_a_zero_limit_has_no_sensitivity_tipping_point() -> None:
     assert pass_line.sensitivity_at_perfect_specificity is None
 
 
-@pytest.mark.parametrize("share", [0.0, 0.01])
-def test_the_stressed_verdict_agrees_with_the_tipping_lines(share: float) -> None:
+def test_the_stressed_verdict_agrees_with_the_tipping_lines() -> None:
     # Every point of the (Se, Sp) grid: PASS on true risk exactly where the PASS line says,
     # FAIL exactly where the FAIL line says.
     acceptable, unacceptable = 0.05, 0.10
     grid = [index / 40 for index in range(41)]
-    for low, high in ((0.02, 0.045), (0.11, 0.16), (0.04, 0.12)):
+    for low, high in ((0.02, 0.045), (0.11, 0.16), (0.04, 0.12), (0.2455, 0.466)):
         for se, sp in itertools.product(grid, grid):
             if se + sp <= 1:
                 continue
             fpr = 1 - sp
-            pass_margin = (acceptable - share) * se + (1 - acceptable) * fpr - (high - share)
-            fail_margin = low - unacceptable * se - (1 - share - unacceptable) * fpr
+            pass_margin = acceptable * se + (1 - acceptable) * fpr - high
+            fail_margin = low - unacceptable * se - (1 - unacceptable) * fpr
             if min(abs(pass_margin), abs(fail_margin)) < 1e-9:
                 continue
             stress = stress_verdict(
@@ -120,7 +157,6 @@ def test_the_stressed_verdict_agrees_with_the_tipping_lines(share: float) -> Non
                 acceptable_upper=acceptable,
                 unacceptable_lower=unacceptable,
                 box=point(se, sp),
-                unclassified_share=share,
             )
             assert stress.stressed is not None
             expected = "PASS" if pass_margin > 0 else "FAIL" if fail_margin > 0 else "INCONCLUSIVE"

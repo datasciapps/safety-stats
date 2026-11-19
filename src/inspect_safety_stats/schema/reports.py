@@ -357,7 +357,6 @@ class JudgeErrorStressResult(ResultModel):
     reason: str | None = None
     judge_reported_lower: float | None = None
     judge_reported_upper: float | None = None
-    unclassified_share: float | None = None
     pass_sensitivity_at_perfect_specificity: float | None = None
     pass_specificity_at_perfect_sensitivity: float | None = None
     fail_sensitivity_at_perfect_specificity: float | None = None

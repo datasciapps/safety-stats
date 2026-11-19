@@ -525,7 +525,10 @@ described in their pull requests.
   judge-reported bounds, the record gives the sensitivity and specificity at which the PASS or
   FAIL would no longer hold for true risk. When the primary outcome's judge, or its `any` or
   `all` composite, declares accuracy ranges, it also gives the verdict over that box and whether
-  it matches the claim. It never changes a claim. Plans without the field keep their hash and
+  it matches the claim. The true-risk bounds over the box invert the claim's judge-reported
+  bounds as the panel-derived correction does, with unclassified rollouts inverted in their
+  conservative completion, which keeps the bounds valid for tail measures and under every
+  missing-outcome policy. It never changes a claim. Plans without the field keep their hash and
   their output. See
   [Stressing a threshold verdict](docs/judge-misclassification.md#stressing-a-threshold-verdict-experimental).
 

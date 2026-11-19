@@ -183,10 +183,11 @@ def _judge_error_stress_lines(
             "Se and specificity Sp applied unchanged to every rollout, the verdict holds for "
             "**true** risk only on one side of a line in (Se, Sp). The columns give where that "
             "line meets the edges of perfect specificity and perfect sensitivity; a value above "
-            "1 or below 0 means the condition holds along the whole edge or nowhere on it. "
-            "Unclassified rollouts keep their conservative completion. Where the primary "
-            "outcome's judge declares accuracy ranges, the verdict on true risk over that box "
-            "is shown too. Declared ranges are assumptions: nothing here moves a claim.",
+            "1, or a dash, means the condition holds along the whole edge or nowhere on it. The "
+            "bounds are inverted whole: an unclassified rollout counts as judge-unsafe at the "
+            "upper bound and judge-safe at the lower, which is conservative on both sides. Where "
+            "the primary outcome's judge declares accuracy ranges, the verdict on true risk over "
+            "that box is shown too. Declared ranges are assumptions: nothing here moves a claim.",
             "",
             (
                 "| Claim | Status | Judge-reported bounds | PASS: Se at least (Sp = 1) | "

@@ -7,7 +7,6 @@ from typing import Any, cast
 
 from inspect_safety_stats.analysis.judge_calibration import (
     JUDGE_CORRECTABLE_MEASURES,
-    PromptRollouts,
     _judge_scope,
     _judge_scope_excludes,
     _JudgeScope,
@@ -15,7 +14,6 @@ from inspect_safety_stats.analysis.judge_calibration import (
     _out_of_scope_reason,
     _scope_population,
     _scope_rollouts,
-    _unclassified_share,
     pooled_calibration_gap,
 )
 from inspect_safety_stats.analysis.judge_panel import _DeclaredBox, _primary_accuracy_box
@@ -314,8 +312,6 @@ def _claim_judge_error_stress(
     status: Decision,
     why_not: str | None,
     measure_types: Mapping[str, str],
-    population: dict[str, dict[str, PromptRollouts]],
-    group_weights: dict[str, dict[str, float]],
     accuracy: _DeclaredBox | None,
 ) -> JudgeErrorStressResult:
     """Where a claim decided on judge-reported bounds tips, and whether a declared box holds it.
@@ -345,9 +341,9 @@ def _claim_judge_error_stress(
             f"a {measure_type} measure does not carry the judge's per-prompt error model over "
             "to the row"
         )
-    share = _unclassified_share(
-        population.get(evidence.cohort_id, {}), group_weights[evidence.group_id], measure_type
-    )
+    # The bounds are inverted whole, with their unclassified rollouts completed as they are:
+    # that is conservative on both sides for every measure here, and a share taken out of
+    # them is not (see stats.judge_stress).
     if accuracy is not None and accuracy[2] is not None and evidence.group_id not in accuracy[2]:
         accuracy = None
     stress = stress_verdict(
@@ -356,7 +352,6 @@ def _claim_judge_error_stress(
         acceptable_upper=claim.acceptable_upper,
         unacceptable_lower=claim.unacceptable_lower,
         box=accuracy[0] if accuracy is not None else None,
-        unclassified_share=share,
     )
     box, source = (accuracy[0], accuracy[1]) if accuracy is not None else (None, None)
     stressed = stress.stressed
@@ -364,7 +359,6 @@ def _claim_judge_error_stress(
         applicable=True,
         judge_reported_lower=evidence.lower,
         judge_reported_upper=evidence.upper,
-        unclassified_share=share,
         pass_sensitivity_at_perfect_specificity=(
             stress.pass_line.sensitivity_at_perfect_specificity
         ),
@@ -413,9 +407,6 @@ def _claims(
     )
     group_weights = {group.id: group.weights for group in data.groups}
     measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
-    stress_population = (
-        population or _labelled_population(plan, data) if plan.report.judge_error_stress else {}
-    )
     stress_box = _primary_accuracy_box(plan) if plan.report.judge_error_stress else None
     results: list[ClaimResult] = []
     corrected_claims: list[str] = []
@@ -617,8 +608,6 @@ def _claims(
                     else None
                 ),
                 measure_types=measure_types,
-                population=stress_population,
-                group_weights=group_weights,
                 accuracy=stress_box,
             )
         if correction_note is not None:

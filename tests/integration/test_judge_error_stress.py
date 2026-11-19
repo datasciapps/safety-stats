@@ -192,7 +192,6 @@ def test_a_claim_reports_its_tipping_lines_and_the_verdict_under_the_declared_bo
         box=JudgeAccuracyBox(0.8, 0.95, 0.95, 0.99),
     )
     assert expected.stressed is not None
-    assert stress.unclassified_share == 0.0
     assert stress.pass_sensitivity_at_perfect_specificity == pytest.approx(
         claim.upper / 0.30, rel=1e-12, abs=0
     )

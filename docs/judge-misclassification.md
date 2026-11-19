@@ -835,31 +835,48 @@ only and never changes a claim's status.
 
 **Tipping lines.** Take the prevalence-free model of the
 [noisy-but-valid test](#certifying-a-threshold-directly-the-noisy-but-valid-test),
-\(q=\pi\,Se+(1-\pi)\,FPR\) with \(FPR=1-Sp\), applied unchanged to every prompt. Like the
-correction, it carries over to `weighted_mean`, `maximum`, `cvar` and `top_k_mean`. Write
-\([L,U]\) for the judge-reported bounds, \(a\) for `acceptable_upper`, \(b\) for
-`unacceptable_lower`, and \(s\) for the share of the row's weight on rollouts the judge never
-classified. The bounds complete those rollouts as judge-safe at the lower end and judge-unsafe
-at the upper. The stress analysis keeps the same completion on the true-risk scale and inverts
-only the classified mass. Then
+\(q=\pi\,Se+(1-\pi)\,FPR\) with \(FPR=1-Sp\), applied unchanged to every prompt. For an
+informative judge the map is affine and increasing in \(\pi\), so, like the correction, it
+carries over to `weighted_mean`, `maximum`, `cvar` and `top_k_mean`. With \([L,U]\) for the
+judge-reported bounds, true risk lies in
 
-- the PASS (\(U\le a\)) holds for true risk if and only if \((a-s)\,Se+(1-a)\,FPR\ge U-s\);
-- the FAIL (\(L\ge b\)) holds for true risk if and only if \(b\,Se+(1-s-b)\,FPR\le L\).
+\[
+\left[\frac{L-FPR}{Se-FPR},\ \frac{U-FPR}{Se-FPR}\right],
+\]
+
+the Rogan--Gladen inversion of the [panel-derived correction](#deriving-a-panels-accuracy-box).
+Write \(a\) for `acceptable_upper` and \(b\) for `unacceptable_lower`. Then
+
+- the PASS (\(U\le a\)) holds for true risk if and only if \(a\,Se+(1-a)\,FPR\ge U\);
+- the FAIL (\(L\ge b\)) holds for true risk if and only if \(b\,Se+(1-b)\,FPR\le L\).
 
 Each condition is a line in the \((Se,Sp)\) square. The report gives where each line meets the
 two perfect edges:
 
 | Field | Meaning |
 |---|---|
-| `pass_sensitivity_at_perfect_specificity` | With no false alarms, PASS holds iff \(Se\ge (U-s)/(a-s)\) |
+| `pass_sensitivity_at_perfect_specificity` | With no false alarms, PASS holds iff \(Se\ge U/a\) |
 | `pass_specificity_at_perfect_sensitivity` | With no misses, PASS holds iff \(Sp\le (1-U)/(1-a)\) |
 | `fail_sensitivity_at_perfect_specificity` | With no false alarms, FAIL holds iff \(Se\le L/b\) |
-| `fail_specificity_at_perfect_sensitivity` | With no misses, FAIL holds iff \(Sp\ge 1-(L-b)/(1-s-b)\) |
+| `fail_specificity_at_perfect_sensitivity` | With no misses, FAIL holds iff \(Sp\ge (1-L)/(1-b)\) |
 
-A value above 1 or below 0 means the condition holds along the whole edge or nowhere on it.
-`null` means the line never meets that edge. For example, a PASS with \(U=4.98\%\) against
-\(a=5\%\) and no unclassified rollouts needs \(Se\ge0.996\) even at perfect specificity. A
-false negative rate above 0.4% is enough to put true risk over the threshold.
+No value is below 0. A value above 1 means the condition holds along the whole edge or nowhere
+on it. `null` means the condition does not tighten along that edge, because \(a\) is 0 for the
+PASS line or \(b\) is 1 for the FAIL line; it then also holds along the whole edge or nowhere.
+For example, a PASS with \(U=4.98\%\) against \(a=5\%\) needs \(Se\ge0.996\) even at perfect
+specificity. A false negative rate above 0.4% is enough to put the true-risk upper bound over
+the threshold.
+
+**Unclassified rollouts.** The bounds complete rollouts the judge never classified as
+judge-safe at the lower end and judge-unsafe at the upper, and the inversion treats each
+completion as a verdict. That is conservative on both sides. A rollout completed as
+judge-unsafe adds \((1-FPR)/(Se-FPR)\ge1\) of its weight to the upper bound, at least the 1 it
+can add to true risk. One completed as judge-safe adds \(-FPR/(Se-FPR)\le0\) to the lower
+bound. The argument holds prompt by prompt, so it holds for the tail measures and under every
+`missing` and `errors` policy. Taking the unclassified share out of the inversion would tighten
+the bounds only where that share is exact. A tail row has no single share, and under `exclude`
+the prompt bounds and the direct-mean intervals divide by different rollouts, so a share used
+there can move both bounds the wrong way.
 
 The two directions differ. Missed failures (low \(Se\)) undermine a PASS, because true risk is
 higher than reported. False alarms (low \(Sp\)) undermine a FAIL, because part of the reported
@@ -872,7 +889,8 @@ whether it matches the claim's status (`robust`). That judge is either a judge i
 `inputs.judges` whose score is the primary score, or an `any` or `all` composite whose members
 all declare ranges, with its box [derived as above](#deriving-a-panels-accuracy-box).
 `accuracy_source` names it, as `judge:<id>` or `composite:<id>`. Both inversions are separately
-monotone in \(Se\) and \(FPR\), so the bounds over the box are attained at its vertices. When the
+monotone in \(Se\) and \(FPR\), so the bounds over the box are attained at its vertices. For a
+composite they are the `judge_corrected_panel_derived` interval of the claim's row. When the
 box admits \(Se+Sp\le1\), or no accuracy in it can produce the observed bounds, true risk is not
 identified: the bounds are \([0,1]\), `identified` is false, and the stressed verdict is
 INCONCLUSIVE. Without a declared box these fields are `null`, and the lines are still reported.
