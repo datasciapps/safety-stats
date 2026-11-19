@@ -424,8 +424,8 @@ The analysis plan: its fields, references and their combinations.
   is computed.
 - **Remedy:** Fix outputs.anytime_bounds as the message says: name a family of
   multiplicity.families, groups of groups and a profile of design.independence_profiles that blocks
-  by rollout or prompt_id, under design.type: fixed, and bound only groups that
-  inputs.judge_calibration.groups leaves out; or remove outputs.anytime_bounds.
+  by rollout or prompt_id, under design.type: fixed, and bound only groups that an assumed or
+  transported inputs.judge_calibration.groups leaves out; or remove outputs.anytime_bounds.
 
 #### `PLAN_DIAGNOSTIC_GATE`
 
@@ -1434,7 +1434,8 @@ cannot be computed, or a result it qualifies.
 - **Consequence:** The anytime-valid upper bound on the group's weighted mean failure probability,
   and whether it lies at or below each weighted-mean claim's acceptable_upper, are recorded beside
   the claims, whose status does not change. Under exploratory intent or invalid integrity, where no
-  claim can pass, it certifies none.
+  claim can pass, it certifies none, and under a validated judge calibration, which decides every
+  claim on corrected risk, neither.
 - **Remedy:** Nothing to change. Read the bound's certified flags for a run stopped early, since its
   claims keep their fixed-horizon status.
 

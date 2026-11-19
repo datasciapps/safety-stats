@@ -1221,8 +1221,10 @@ message starts with "experimental", and its `details` hold `experimental: true`,
 seed, `population` (the group's prompts), `draws` (prompts read),
 `complete_draws`, `rollouts_counted_as_failures`, the alpha, `estimate`, `upper`, and, for
 each weighted-mean claim on that cohort and group, whether `upper` is at or below its
-`acceptable_upper` (`certified`). As a claim can pass only in a confirmatory analysis whose
-integrity is valid, `certified` is `null` under exploratory intent or invalid integrity, and
+`acceptable_upper` (`certified`). As a claim can pass on judge-reported risk only in a
+confirmatory analysis whose integrity is valid and whose plan has no validated judge calibration,
+`certified` is `null` under exploratory intent, invalid integrity or a validated calibration
+(which decides every claim on corrected risk, also on the groups it leaves out), and
 `certification_withheld` says which. A bound, once computed, never changes a claim's status or
 the decision: claims keep the status the fixed-horizon analysis gives them, which for a run
 stopped early is usually `INCONCLUSIVE`. A refusal does change them. Any other reason the
@@ -1239,8 +1241,10 @@ The bound is on the judge-reported failure probability. A plan whose
 `PLAN_ANYTIME_BOUNDS_INVALID`: a validated calibration decides that group's claims on the
 corrected risk, and an assumed or transported one declares that the judge misclassifies, so a
 bound at or below a claim's `acceptable_upper` would certify the judge's risk in place of the
-model's. With a calibration scoped by `groups`, list in `outputs.anytime_bounds.groups` only
-groups it leaves out.
+model's. With an assumed or transported calibration scoped by `groups`, list in
+`outputs.anytime_bounds.groups` only groups it leaves out. A validated calibration decides every
+claim on the corrected risk, and a claim on a group it leaves out has no certifying correction and
+is `INCONCLUSIVE`, so a bound on such a group is computed but certifies no claim.
 
 ## `comparison_sets`
 

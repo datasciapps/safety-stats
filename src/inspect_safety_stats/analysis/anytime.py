@@ -334,6 +334,16 @@ def _withheld(plan: AnalysisPlan, integrity_valid: bool) -> str | None:
         reasons.append("data integrity is invalid")
     if plan.analysis.intent == "exploratory":
         reasons.append("the analysis is exploratory")
+    calibration = plan.inputs.judge_calibration
+    # The plan refuses a validated calibration that covers a bounded group. One scoped to other
+    # groups still decides every claim on the corrected risk, and a claim it gives no certifying
+    # correction, as on the groups it leaves out, is INCONCLUSIVE: a bound on the judge's
+    # reported risk can certify none of them.
+    if calibration is not None and calibration.mode == "validated":
+        reasons.append(
+            "the validated judge calibration decides every claim on corrected risk, not on "
+            "the judge's reported risk"
+        )
     return " and ".join(reasons) if reasons else None
 
 
@@ -348,9 +358,10 @@ def anytime_bound_diagnostics(
 
     It carries the bound and, for each weighted-mean claim on its cohort and group, whether
     the bound certifies the claim's ``acceptable_upper``: lies at or below it. A claim can
-    pass only in a confirmatory analysis whose integrity is valid, and the bound certifies
-    nothing elsewhere either: under invalid integrity (``integrity_valid`` false, as the
-    claims were decided) or exploratory intent, each claim's ``certified`` is None, and
+    pass on judge-reported risk only in a confirmatory analysis whose integrity is valid and
+    whose plan has no validated judge calibration, and the bound certifies nothing elsewhere
+    either: under invalid integrity (``integrity_valid`` false, as the claims were decided),
+    exploratory intent or a validated calibration, each claim's ``certified`` is None, and
     ``certification_withheld`` says why.
     """
 
