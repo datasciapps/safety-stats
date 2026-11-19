@@ -42,7 +42,8 @@ _ARTIFACTS: dict[str, tuple[str, str, str | None]] = {
     "observations.csv": ("csv", "One row per normalised observation (analysis input).", None),
     "outcome-mapping-sensitivity.csv": (
         "csv",
-        "Each displayed result under each alternative outcome mapping.",
+        "Each displayed result under the primary and each alternative outcome mapping; "
+        "the descriptive column marks the alternatives' rows.",
         None,
     ),
     "claims.json": ("json", "One record per claim (experimental).", None),

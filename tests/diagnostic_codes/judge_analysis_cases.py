@@ -480,7 +480,9 @@ def _tail_recorded(triggered: Outcome, control: Outcome) -> None:
     assert triggered.report.claims == control.report.claims
 
 
-def panel(rule: str, groups_a: list[str] | None, groups_b: list[str] | None) -> Run:
+def composite_primary(
+    rule: str, groups_a: list[str] | None, groups_b: list[str] | None
+) -> Callable[[Inputs], None]:
     """A composite primary of judges a and b, each with declared, optionally scoped, accuracy."""
 
     def change(inputs: Inputs) -> None:
@@ -512,9 +514,27 @@ def panel(rule: str, groups_a: list[str] | None, groups_b: list[str] | None) -> 
         for item in inputs.rollouts:
             item["score_harmful_a"] = item["score_harmful_b"] = item.pop("score_harmful")
 
+    return change
+
+
+def panel(
+    rule: str,
+    groups_a: list[str] | None,
+    groups_b: list[str] | None,
+    data: Callable[[Inputs], None] | None = None,
+) -> Run:
+    """The main analysis with the composite of ``composite_primary`` as its primary outcome.
+
+    ``data`` changes the inputs after the panel is declared.
+    """
+
+    change = composite_primary(rule, groups_a, groups_b)
+
     def run(directory: Path) -> Outcome:
         inputs = base_inputs()
         change(inputs)
+        if data is not None:
+            data(inputs)
         return run_analysis(inputs, directory)
 
     return run
@@ -552,6 +572,86 @@ def _stress_box_withheld(triggered: Outcome, control: Outcome) -> None:
     assert claim(triggered).status == claim(control).status
 
 
+def policy_blocked(inputs: Inputs) -> None:
+    """p1's first rollout blocked by the provider before it delivered content.
+
+    Under the default ``errors: end_to_end`` the plan counts it safe: a plan policy, not the
+    judge, classified it.
+    """
+
+    inputs.rollouts[0].update(
+        score_harmful=None,
+        error="blocked by the provider",
+        error_stage="target_generation",
+        content_delivered=False,
+        provider_error_code="content_filter",
+    )
+
+
+# An assumed box: rho_1 in [0.8, 0.95], rho_0 in [0.01, 0.05].
+RHO_1 = (0.8, 0.95)
+RHO_0 = (0.01, 0.05)
+DECLARED = "judge_corrected_declared"
+
+
+def assumed(inputs: Inputs, _: list[Any] | None = None) -> None:
+    """Declare an assumed calibration with the one scenario ``declared``."""
+
+    inputs.plan["inputs"]["judge_calibration"] = {
+        "mode": "assumed",
+        "primary": "declared",
+        "scenarios": [
+            {
+                "id": "declared",
+                "rho_1": {"lower": RHO_1[0], "upper": RHO_1[1]},
+                "rho_0": {"lower": RHO_0[0], "upper": RHO_0[1]},
+            }
+        ],
+    }
+
+
+def _policy_free(triggered: Outcome, control: Outcome) -> None:
+    # Adjusted: the row holding the blocked rollout is corrected as if rho_1 could reach 1 and
+    # rho_0 fall to 0, so neither end credits the judge with an error; the control's row is
+    # corrected over the declared box.
+    widened, row = _interval(triggered, DECLARED), _row(triggered)
+    assert widened.lower == pytest.approx(row.lower * RHO_1[0], abs=1e-12)
+    assert widened.upper == pytest.approx(row.upper + (1 - row.upper) * RHO_0[1], abs=1e-12)
+    assert any("classified by a plan policy" in item for item in widened.assumptions)
+    plain, row = _interval(control, DECLARED), _row(control)
+    assert plain.lower == pytest.approx(
+        row.lower * RHO_1[0] + (1 - row.lower) * RHO_0[0], abs=1e-12
+    )
+    assert plain.upper == pytest.approx(
+        row.upper * RHO_1[1] + (1 - row.upper) * RHO_0[1], abs=1e-12
+    )
+    (found,) = triggered.with_code("JUDGE_CORRECTION_POLICY_CLASSIFIED")
+    assert found.details == {"groups": ["all"], "policy_safe": 1, "policy_failures": 0}
+
+
+def judge_verdicts(observations: list[Any]) -> Labels:
+    """Every rollout the judge classified labelled, in agreement with the judge.
+
+    That leaves out the rollouts a plan policy classified, which carry a sample error here.
+    """
+
+    return [
+        (item.observation_id, _truth(item))
+        for item in observations
+        if item.failure is not None and item.error is None
+    ]
+
+
+def _calibrated_alike(triggered: Outcome, control: Outcome) -> None:
+    # Recorded: the label on the policy-classified rollout calibrates nothing, so the strata
+    # and the correction are the control's, which has no label on it. The judge-safe stratum
+    # holds p1's other 19 rollouts and p2's 10 safe ones.
+    calibration = triggered.report.provenance["judge_calibration"]["cohorts"]
+    assert calibration == control.report.provenance["judge_calibration"]["cohorts"]
+    assert calibration["candidate"]["judge_safe"]["stratum_size"] == 2 * ROLLOUTS - 11
+    assert _interval(triggered, CORRECTED) == _interval(control, CORRECTED)
+
+
 PANEL = "judge_corrected_panel_derived"
 
 
@@ -561,6 +661,13 @@ def _panel_rows(outcome: Outcome) -> list[str]:
         for item in outcome.report.group_risks
         if any(interval.interval_id == PANEL for interval in item.intervals)
     )
+
+
+def _inverted_verdict(inputs: Inputs) -> None:
+    inputs.plan["inputs"]["score"]["mapping"] = {
+        "failure_values": [False],
+        "safe_values": [True],
+    }
 
 
 def _panel_withheld(triggered: Outcome, control: Outcome) -> None:
@@ -648,6 +755,13 @@ CASES = [
         effect=_fine_completed,
     ),
     Case(
+        # A label names a rollout the provider blocked, which the plan counts safe.
+        code="JUDGE_VALIDATION_POLICY_CLASSIFIED",
+        trigger=judged(with_labels(census), policy_blocked),
+        control=judged(with_labels(judge_verdicts), policy_blocked),
+        effect=_calibrated_alike,
+    ),
+    Case(
         # The strata file leaves one classified rollout out.
         code="JUDGE_VALIDATION_STRATA_INCOMPLETE",
         trigger=judged(stratified(drop=1)),
@@ -693,6 +807,13 @@ CASES = [
 ]
 CASES += [
     Case(
+        # The plan counts a rollout the provider blocked safe; the judge never saw it.
+        code="JUDGE_CORRECTION_POLICY_CLASSIFIED",
+        trigger=judged(assumed, policy_blocked),
+        control=judged(assumed),
+        effect=_policy_free,
+    ),
+    Case(
         # The comparison's primary interval is a contrast bound without arm bounds.
         code="JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON",
         trigger=judged(with_labels(census), comparison("weighted_empirical_bernstein")),
@@ -718,6 +839,13 @@ CASES += [
         code="PANEL_CORRECTION_NO_COMMON_GROUP",
         trigger=panel("any", ["all"], ["b"]),
         control=panel("any", ["all", "b"], ["b"]),
+        effect=_panel_withheld,
+    ),
+    Case(
+        # The primary mapping counts the composite's false verdict as failure.
+        code="PANEL_CORRECTION_VERDICT_UNMATCHED",
+        trigger=panel("any", None, None, _inverted_verdict),
+        control=panel("any", None, None),
         effect=_panel_withheld,
     ),
     Case(

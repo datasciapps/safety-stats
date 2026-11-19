@@ -42,6 +42,7 @@ _FIELDS = {
         "interval_id",
         "interval_method",
         "refs",
+        "test",
     ],
     "ClaimRecord": [
         "bound",
@@ -50,7 +51,9 @@ _FIELDS = {
         "estimand",
         "evidence",
         "judge_corrected",
+        "judge_correction_unavailable",
         "mandatory",
+        "reasons",
         "sources",
         "status",
         "title",
@@ -77,3 +80,21 @@ def test_the_claims_schema_keeps_its_version() -> None:
     schema = ClaimsExport.model_json_schema()
     assert schema["properties"]["schema_version"]["const"] == "1.0"
     assert schema["properties"]["experimental"]["const"] is True
+
+
+def test_a_claim_record_requires_the_fields_the_exporter_always_writes() -> None:
+    record = ClaimsExport.model_json_schema()["$defs"]["ClaimRecord"]
+
+    assert sorted(record["required"]) == [
+        "bound",
+        "claim_id",
+        "estimand",
+        "evidence",
+        "judge_corrected",
+        "judge_correction_unavailable",
+        "mandatory",
+        "reasons",
+        "sources",
+        "status",
+        "title",
+    ]

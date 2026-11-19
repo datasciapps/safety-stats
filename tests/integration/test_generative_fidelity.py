@@ -212,3 +212,166 @@ def test_an_attempt_ledger_that_disagrees_is_refused(
     write_attempts(attempts[1:], artifacts / "attempts.csv")
     with pytest.raises(ValueError, match="disagree"):
         analyze_run(plan, artifacts, "logs")
+
+
+@dataclass
+class FailsEveryFifth:
+    """Reports an operational error on every fifth call, and accepts every other rewrite."""
+
+    validator_id: str = "fake-validator"
+    calls: int = 0
+
+    def validate(self, request: RewriteRequest, prompt: str) -> ValidationVerdict:
+        self.calls += 1
+        if self.calls % 5 == 0:
+            return ValidationVerdict(status="error", detail="validator unavailable")
+        return ValidationVerdict(status="valid")
+
+
+def test_a_run_resumed_after_validator_errors_can_be_analyzed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Resume reruns the errored units; their old rows must not block the analysis."""
+
+    import inspect_safety_stats.generative.runner as runner_module
+
+    plan = plan_path(tmp_path)
+    artifacts = tmp_path / "run"
+    monkeypatch.setattr(runner_module, "resolve_validator", lambda spec: FailsEveryFifth())
+    first = materialize_run(plan, artifacts, validator="stub")
+    assert first.errored == 24
+
+    monkeypatch.setattr(runner_module, "resolve_validator", lambda spec: DislikesMaltese())
+    resumed = materialize_run(plan, artifacts, validator="stub", resume=True)
+    assert resumed.errored == 0 and resumed.accepted == 120
+    stub_logs(monkeypatch, artifacts)
+    report = analyze_run(plan, artifacts, "logs")
+    assert report.tree.root.draws == 120
+    attempts = read_attempts(artifacts / "attempts.csv")
+    assert len(attempts) == sum(
+        record.rewrite_attempts for record in read_rewrites(artifacts / "rewrites.csv")
+    )
+    assert not any(item.validator_status == "error" for item in attempts)
+
+
+def test_uneven_fidelity_says_how_few_judged_rewrites_its_rates_rest_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """No sample-size floor applies, so the warning must not call a spread material."""
+
+    plan = plan_path(tmp_path)
+    report = run(monkeypatch, plan, tmp_path / "run", validator=DislikesMaltese())
+    found = [
+        item
+        for item in report.diagnostics
+        if item.code == "GENERATIVE_FIDELITY_UNEVEN" and "'language'" in item.message
+    ]
+    assert len(found) == 1
+    fewest = min(row.validator_judged for row in report.fidelity if row.level == "language")
+    assert fewest > 0
+    message = found[0].message
+    assert "materially" not in message
+    assert "more than five percentage points apart" in message
+    assert f"the fewest rewrites it judged for one value is {fewest}," in message
+    assert message.endswith("can arise by chance")
+
+
+@dataclass
+class RejectsEverything:
+    """A kernel that never returns a usable rewrite, so no attempt reaches the validator."""
+
+    kernel_id: str = "test-kernel"
+
+    def rewrite(self, request: RewriteRequest) -> RewriteOutcome:
+        return RewriteOutcome(status="invalid", detail="never usable")
+
+
+def test_no_validator_mismatch_when_no_rewrite_reached_the_validator(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Nothing was judged and nothing kept, so there is no validator to compare."""
+
+    import inspect_safety_stats.generative.runner as runner_module
+
+    plan = plan_path(tmp_path)
+    artifacts = tmp_path / "run"
+    monkeypatch.setattr(runner_module, "resolve_kernel", lambda spec: RejectsEverything())
+    monkeypatch.setattr(runner_module, "resolve_validator", lambda spec: DislikesMaltese())
+    run_summary = materialize_run(plan, artifacts, validator="stub")
+    assert run_summary.accepted == 0 and run_summary.exhausted == 120
+    # No rewrite was accepted, so the log can only hold a sample that matches none.
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df",
+        lambda logs, **_: pd.DataFrame(
+            [{"eval_id": "e", "model": "model-a", "status": "success"}]
+        ),
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, **_: pd.DataFrame(
+            [{"eval_id": "e", "id": "elsewhere", "epoch": 1, "score_harmful": "PASS"}]
+        ),
+    )
+    report = analyze_run(plan, artifacts, "logs")
+    assert report.fidelity is not None
+    assert all(row.validator_judged == 0 for row in report.fidelity)
+    assert "GENERATIVE_VALIDATOR_MISMATCH" not in codes(report)
+
+
+class KernelStopped(RuntimeError):
+    """Stands in for a kernel whose provider stopped responding."""
+
+
+@dataclass
+class StopsAfter:
+    """Returns one rewrite per unit, until it stops after ``survive`` calls."""
+
+    survive: int = 10**6
+    kernel_id: str = "test-kernel"
+    calls: int = 0
+
+    def rewrite(self, request: RewriteRequest) -> RewriteOutcome:
+        self.calls += 1
+        if self.calls > self.survive:
+            raise KernelStopped
+        return RewriteOutcome(status="valid", prompt=f"rewrite of {request.sampling_unit_id}")
+
+
+def test_kept_rewrites_no_validator_judged_are_a_validator_mismatch(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A plan that set validation.invoke only for the resume validated part of the run."""
+
+    import inspect_safety_stats.generative.runner as runner_module
+
+    near = {"near_duplicate": "normalized_text"}
+    artifacts = tmp_path / "run"
+    unvalidated = plan_path(tmp_path, invoke=False, deduplication=near)
+    monkeypatch.setattr(runner_module, "resolve_kernel", lambda spec: StopsAfter(40))
+    with pytest.raises(KernelStopped):
+        materialize_run(unvalidated, artifacts)
+
+    validated = plan_path(tmp_path, invoke=True, deduplication=near)
+    monkeypatch.setattr(runner_module, "resolve_kernel", lambda spec: StopsAfter())
+    monkeypatch.setattr(runner_module, "resolve_validator", lambda spec: DislikesMaltese())
+    materialize_run(validated, artifacts, validator="stub", resume=True)
+    stub_logs(monkeypatch, artifacts)
+    report = analyze_run(validated, artifacts, "logs")
+    found = [item for item in report.diagnostics if item.code == "GENERATIVE_VALIDATOR_MISMATCH"]
+    assert len(found) == 1
+    assert found[0].message == (
+        "the plan declares validator 'fake-validator', but the attempt ledger records 40 "
+        "kept rewrite(s) that no validator judged"
+    )
+
+
+def test_no_validator_mismatch_when_the_plan_only_detects_near_duplicates(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Every kept rewrite is unjudged here, as the plan says, so there is nothing to warn of."""
+
+    plan = plan_path(tmp_path, invoke=False, deduplication={"near_duplicate": "normalized_text"})
+    report = run(monkeypatch, plan, tmp_path / "run")
+    assert report.fidelity is not None and report.tree.root.draws == 120
+    assert all(row.validator_judged == 0 for row in report.fidelity)
+    assert "GENERATIVE_VALIDATOR_MISMATCH" not in codes(report)

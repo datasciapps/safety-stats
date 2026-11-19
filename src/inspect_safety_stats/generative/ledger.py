@@ -12,8 +12,10 @@ and hashes; the prompt text lives in a separate restricted materialization artif
 from __future__ import annotations
 
 import csv
+import errno
 import hashlib
-from collections.abc import Hashable, Mapping, Sequence
+import os
+from collections.abc import Hashable, Iterable, Mapping, Sequence
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Literal
@@ -99,6 +101,10 @@ class IncrementalCsvWriter:
     killed partway -- by a rate limit, a dropped connection, a spend cap -- then leaves a
     usable record of the units it did complete, which is what makes resumption possible at
     all. Writing only on success loses every completed unit.
+
+    Every row ends with LF, as every text artifact does (CONTRIBUTING section 6), and on
+    every platform: the file is opened with ``newline=""``, so nothing translates it. A field
+    holding a line break is quoted, so a prompt's own line endings are kept as they are.
     """
 
     def __init__(self, path: str | Path, columns: Sequence[str]) -> None:
@@ -111,7 +117,9 @@ class IncrementalCsvWriter:
         existing = self._path.exists() and self._path.stat().st_size > 0
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._handle = self._path.open("a", newline="", encoding="utf-8")
-        self._writer = csv.DictWriter(self._handle, fieldnames=self._columns)
+        self._writer = csv.DictWriter(
+            self._handle, fieldnames=self._columns, lineterminator="\n"
+        )
         if not existing:
             self._writer.writeheader()
             self._handle.flush()
@@ -120,6 +128,38 @@ class IncrementalCsvWriter:
     def append(self, row: Mapping[str, object]) -> None:
         self._writer.writerow({key: row.get(key) for key in self._columns})
         self._handle.flush()
+
+    def replace(self, rows: Iterable[Mapping[str, object]]) -> None:
+        """Rewrite the file to hold only ``rows``, as :meth:`append` would have written them.
+
+        The rows go to a sibling file first, which then takes the ledger's place in one
+        step, so an interruption leaves the old ledger or the new one, never a truncated
+        one. A failure that the process survives removes the sibling; one it does not is
+        overwritten by the next replace. Call it while the writer is closed: Windows cannot
+        replace an open file.
+
+        The sibling's rows reach the disk before the rename does. Otherwise a power loss
+        soon after could leave the ledger's name on an empty file, on file systems that may
+        commit a rename before the data of the file renamed. On POSIX the directory is then
+        synced as well, so that the rename itself survives one.
+        """
+
+        partial = self._path.with_name(self._path.name + ".partial")
+        try:
+            with partial.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(
+                    handle, fieldnames=self._columns, lineterminator="\n"
+                )
+                writer.writeheader()
+                for row in rows:
+                    writer.writerow({key: row.get(key) for key in self._columns})
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(partial, self._path)
+        except BaseException:
+            partial.unlink(missing_ok=True)
+            raise
+        _sync_directory(self._path.parent)
 
     def __exit__(
         self,
@@ -130,6 +170,25 @@ class IncrementalCsvWriter:
         if self._handle is not None:
             self._handle.close()
             self._handle = None
+
+
+def _sync_directory(directory: Path) -> None:
+    """Commit a rename in ``directory`` to disk, where the platform can.
+
+    Windows opens no directory as a file, and a file system that cannot sync a directory
+    says so with EINVAL or ENOTSUP; the rename then stands as the file system keeps it.
+    """
+
+    if os.name == "nt":
+        return
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    except OSError as exc:
+        if exc.errno not in {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}:
+            raise
+    finally:
+        os.close(descriptor)
 
 
 def rewrite_ledger_writer(path: str | Path) -> IncrementalCsvWriter:
@@ -206,6 +265,18 @@ def read_selections(path: str | Path) -> list[SelectionRecord]:
     return records
 
 
+def read_rewrite_rows(path: str | Path) -> list[RewriteRecord]:
+    """Every row of a rewrite ledger CSV, validated, in file order, a repeated unit included.
+
+    :func:`read_rewrites` is the reader to use. A resume reads with this one, because it
+    drops the rows of errored units, and any repeat they make, before it checks for repeats.
+    Every cell is read as text, as written, and the record's fields convert it.
+    """
+
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    return [RewriteRecord.model_validate(_clean(row)) for row in frame.to_dict("records")]
+
+
 def read_rewrites(path: str | Path) -> list[RewriteRecord]:
     """Read and validate a rewrite ledger CSV, one ``RewriteRecord`` per row.
 
@@ -214,8 +285,7 @@ def read_rewrites(path: str | Path) -> list[RewriteRecord]:
     ``sampling_unit_id``, and pydantic's ``ValidationError`` for an invalid row.
     """
 
-    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
-    records = [RewriteRecord.model_validate(_clean(row)) for row in frame.to_dict("records")]
+    records = read_rewrite_rows(path)
     identifiers = [record.sampling_unit_id for record in records]
     if len(set(identifiers)) != len(identifiers):
         raise ValueError(f"rewrite ledger {path} repeats a sampling_unit_id")

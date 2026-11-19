@@ -451,6 +451,17 @@ def _draw_p2_too(inputs: Inputs) -> None:
     inputs.rollouts += [rollout("p2", repeat) for repeat in range(1, 5)]
 
 
+def _selection(*marked: bool) -> Change:
+    """design.selection_column names the manifest column ``drawn``, marking p1 and p2 so."""
+
+    def change(inputs: Inputs) -> None:
+        inputs.plan["design"]["selection_column"] = "drawn"
+        for row, value in zip(inputs.manifest, marked, strict=True):
+            row["drawn"] = value
+
+    return change
+
+
 def _sampled_two_cohorts(*, empty: bool) -> Change:
     """A Poisson sample in cohorts candidate and baseline; with ``empty`` candidate's run r1
     has no rollouts."""
@@ -495,7 +506,8 @@ def _claim_still_evaluated(triggered: Outcome, control: Outcome) -> None:
 @dataclass(frozen=True)
 class StoppedRollouts:
     """Rollout files whose rollouts may carry a ``stop_reason``: ``content_filter`` for a
-    provider block that delivered no content, ``max_tokens`` for the generation token limit."""
+    provider block, ``max_tokens`` for the generation token limit. A block delivered no
+    content unless the rollout gives ``stop_delivered_in``, where content was delivered."""
 
     runs: Path
     rollouts: Path
@@ -507,12 +519,14 @@ class StoppedRollouts:
             reason = item.attributes.get("stop_reason")
             if reason is None:
                 return None
+            delivered_in = item.attributes.get("stop_delivered_in")
             return StopContext(
-                content_delivered=False,
+                content_delivered=delivered_in is not None,
                 block_type=None,
                 block_category=None,
                 block_error=False,
                 stop_reason=reason,
+                delivered_in=delivered_in,
             )
 
         return replace(read_rollout_files(self.runs, self.rollouts), stop_context=stop)
@@ -726,6 +740,22 @@ CASES = [
         effect=_same_estimates,
     ),
     Case(
+        code="CONTENT_FILTER_STOP_SCORED",
+        # A FAIL-scored output was stopped by a content filter after an earlier turn delivered
+        # content, under content_filter_stops: safe; the control's output was not stopped.
+        # Either way the score decides.
+        trigger=_stopped(
+            _changes(
+                _plan_score(content_filter_stops="safe"),
+                _first(
+                    "FAIL", stop_reason="content_filter", stop_delivered_in="earlier_generation"
+                ),
+            )
+        ),
+        control=_stopped(_changes(_plan_score(content_filter_stops="safe"), _first("FAIL"))),
+        effect=_same_estimates,
+    ),
+    Case(
         code="INGEST_FAILED",
         # A rollout's repeat of 0 makes the rollout files unreadable.
         trigger=analysis(_unreadable_rollout),
@@ -738,6 +768,14 @@ CASES = [
         trigger=analysis(_judge_claims_with_roles("grader=m")),
         control=analysis(_judge_claims_with_roles({"grader": {"model": "m"}})),
         effect=_roles_left_out,
+    ),
+    Case(
+        code="JUDGE_SCORE_MAPPING_MISMATCH",
+        # Judge j2's score takes a value its mapping does not cover. The summary withholds
+        # nothing; the rollout's JUDGE_SCORE_UNMAPPED makes its vote missing.
+        trigger=analysis(_judged("other", "MAYBE")),
+        control=analysis(_judged("other")),
+        effect=_missing_votes(1),
     ),
     Case(
         code="JUDGE_SCORE_MISSING",
@@ -866,6 +904,13 @@ CASES = [
         effect=_unclassified_p1,
     ),
     Case(
+        code="SAMPLE_SELECTION_MISMATCH",
+        # The selection column records a draw of p2, but p1 was evaluated in its place.
+        trigger=analysis(_changes(_sampled((0.5, 0.5)), _selection(False, True))),
+        control=analysis(_changes(_sampled((0.5, 0.5)), _selection(True, False))),
+        effect=_cohort_risk_withheld,
+    ),
+    Case(
         code="SAMPLE_SIZE_IMPLAUSIBLE",
         # One item drawn where inclusion probabilities of 0.01 expect 0.02 (sd 0.14).
         trigger=analysis(_sampled((0.01, 0.01))),
@@ -877,6 +922,14 @@ CASES = [
         # The frame's one stratum has inclusion probabilities 0.5 and 0.6.
         trigger=analysis(_sampled((0.5, 0.6), fixed_size=True)),
         control=analysis(_sampled((0.5, 0.5), fixed_size=True)),
+    ),
+    Case(
+        code="SCORE_MAPPING_MISMATCH",
+        # A rollout's score is a value the mapping does not classify. The summary withholds
+        # nothing; the rollout's SCORE_UNMAPPED withholds p1 alone.
+        trigger=analysis(_first("MAYBE")),
+        control=analysis(),
+        effect=_only_prompt_withheld("p1"),
     ),
     Case(
         code="SCORE_MISSING",

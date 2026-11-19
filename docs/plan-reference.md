@@ -159,7 +159,10 @@ mapping:
     value: 0.5
 ```
 
-Mappings are type-sensitive: `true`, `1`, `1.0`, and `"1"` are distinct.
+Mappings are type-sensitive: `true`, `1`, `1.0`, and `"1"` are distinct. A score value that the
+mapping does not cover is an error for its rollout, `SCORE_UNMAPPED`, which withholds the bounds
+of that rollout's prompt. One `SCORE_MAPPING_MISMATCH` error lists every such value, with its
+type and how many rollouts have it.
 
 `missing` accepts `conservative_bounds`, `block`, `count_as_failure`, or `exclude`.
 `conservative_bounds` is the default: integrity becomes `degraded`, and exact bounds cover both
@@ -184,23 +187,38 @@ inputs:
 ```
 
 `content_filter_stops` (experimental) decides how a rollout counts when a provider's content
-filter stopped its output before it delivered any content, without a sample error. Claude
-5-series models report a safety-classifier decline this way: a normal answer with stop reason
-`refusal`, which Inspect records as `content_filter` with the provider's category. A decline that
-arrives as an API error counts as having delivered nothing, whatever stand-in text Inspect put in
-its place.
+filter stopped its output before the target delivered any content in the sample, without a
+sample error. Claude 5-series models report a safety-classifier decline this way: a normal
+answer with stop reason `refusal`, which Inspect records as `content_filter` with the provider's
+category. A decline that arrives as an API error counts as having delivered nothing, whatever
+stand-in text Inspect put in its place.
 
 - `score`, the default: the rollout's score decides, as for any other rollout, and a missing
   score follows `missing`.
 - `safe`: the block counts as `target_policy_blocked_safe`, for a harm estimand.
 - `failure`: the block counts as a refusal, for an over-refusal estimand on safe prompts.
 
-With `safe` or `failure`, the plan's choice replaces the score of such a rollout, and each block
-is reported in a `TARGET_POLICY_BLOCKED_SAFE` or `TARGET_POLICY_BLOCKED_REFUSAL` diagnostic with
-the provider's block type and category. Content delivered before a decline mid-answer is scored
-as usual. Both need `estimand: end_to_end_system`, and `failure` cannot be combined with
-`errors: end_to_end`, which counts a policy-blocked sample error as safe. Only Inspect logs report
-stop reasons; with rollout files the option is refused.
+The target delivered content when the stopped output, or any generation that the sample's
+transcript records before it, holds text, readable reasoning, a tool call or any other content
+part. That covers a decline mid-answer, and a decline in a later turn of a conversation or a later
+step of an agent after an earlier one delivered content: what the earlier turn delivered reached
+the user, whatever the last turn did. Any model's generation counts, since the transcript does not
+say which calls the end-to-end system delivered, so a solver that calls another model before the
+target, such as an attacker model, also leaves the stop to the score. The scorer's own model calls
+come after the stop and do not count. A rollout whose stop came after content, or whose stopped
+generation the transcript does not record, is scored as usual and reported in a
+`CONTENT_FILTER_STOP_SCORED` diagnostic (INFO) that says where the content was.
+
+With `safe` or `failure`, the plan's choice replaces the score of a rollout whose stop delivered
+nothing, and each block is reported in a `TARGET_POLICY_BLOCKED_SAFE` or
+`TARGET_POLICY_BLOCKED_REFUSAL` diagnostic with the provider's block type and category. The choice
+only ever adds failures: `failure` replaces any score, but `safe` replaces only a missing or safe
+score. A failure score, or a value the mapping does not cover, keeps deciding under `safe`, since
+the scorer may have seen harm that the transcript does not show, and is reported in a
+`CONTENT_FILTER_STOP_SCORED` warning; an uncovered value is also a `SCORE_UNMAPPED` error. Both need
+`estimand: end_to_end_system`, and `failure` cannot be combined with `errors: end_to_end`, which
+counts a policy-blocked sample error as safe. Only Inspect logs report stop reasons; with rollout
+files the option is refused.
 
 ```yaml
 inputs:
@@ -231,6 +249,17 @@ With any value but `score`, each such rollout is reported in a `TOKEN_LIMIT_REAC
 "Token limit" column, and `observations.csv` gets a `token_limit_unscored` column. An answer
 that stopped at the token limit but was scored keeps its score. Only Inspect logs report stop
 reasons; with rollout files the option is refused.
+
+Only the stop reason `max_tokens` is detected. Two other ends that look alike are not, and such
+a rollout counts by its score, and without a score follows `missing`, whatever `token_limit`
+says:
+
+- Inspect's stop reason `model_length`: the conversation outgrew the model's context window,
+  which a long prompt or long tool output can cause as well as the model's own answer.
+- A sample that hit one of Inspect's own sample limits, such as its token limit
+  (`--token-limit`, recorded as a sample limit of type `token`). That limit counts the tokens of
+  the whole sample, across turns and tool calls, and is a harness setting rather than a property
+  of one answer.
 
 ```yaml
 inputs:
@@ -297,11 +326,13 @@ The manifest holds `observation_id,human_label` with labels `safe` or `unsafe`; 
 come from the `observations.csv` of a prior run. `sampling` is
 `simple_random_within_judge_stratum` (the default) or `simple_random`; only the latter also
 estimates sensitivity and the false-positive rate by true class, which a claim with
-`method: noisy_valid_test` requires (the validator emits `PLAN_INVALID_CLAIM` otherwise). With those estimates, a whole-cohort `weighted_mean` row also carries
-diagnostic Lang-Reiczigel limits beside the exact box. Threshold claims whose evidence carries a
-validated correction are decided from the corrected bounds; an `assumed` correction never
-affects a claim. One calibration is estimated per cohort by
-exact Clopper-Pearson bounds within each judge stratum, and the corrected interval's coverage
+`method: noisy_valid_test` requires (the validator emits `PLAN_INVALID_CLAIM` otherwise). With
+those estimates, every group's `weighted_mean` row that the calibration corrects also carries
+diagnostic Lang-Reiczigel limits beside the exact box; tail measures, hierarchy nodes and rows
+that hold rollouts a plan policy classified do not.
+Threshold claims whose evidence carries a validated correction are decided from the corrected
+bounds; an `assumed` correction never affects a claim. One calibration is estimated per cohort
+by exact Clopper-Pearson bounds within each judge stratum, and the corrected interval's coverage
 is the union of its own family budget and the judge family budget. A plan declares one mode:
 `assumed`, `validated` or `transported` (below).
 
@@ -424,32 +455,45 @@ report shows every reading side by side:
   interval of every group risk, comparison and claim (with the claim's status), and
   `presentation.primary_outcome_mapping` records the primary mapping beside them;
 - `outcome-mapping-sensitivity.csv` holds one row per result and mapping, `primary` first,
-  with each result's readings adjacent, and is listed in `checksums.json`;
+  with each result's readings adjacent, and is listed in `checksums.json`. Its last column,
+  `descriptive`, is `True` on every row of an alternative, whose claim status certifies
+  nothing;
 - `report-full.md` has an "Outcome mapping sensitivity (experimental)" section. Claims and
-  decisions appear in it only when `report.include_decisions` is true.
+  decisions appear in it only when `report.include_decisions` is true, and an alternative's
+  are marked "(descriptive)".
 
 Only the primary mapping enters claims and the decision. Each alternative's intervals carry
 the coverage the plan declares for that mapping alone; the readings are not simultaneous
 across mappings, so the side-by-side view is a sensitivity analysis, not a set of tests to
 pick from. A mapping that leaves some observed value unmapped makes its own integrity
-`invalid` (`SCORE_UNMAPPED` in its diagnostic counts) without affecting the primary
-analysis. Each alternative carries what the plan itself, its decision policy and its
-registration receipt were checked for, so a receipt for another plan
+`invalid` (`SCORE_UNMAPPED` and `SCORE_MAPPING_MISMATCH` in its diagnostic counts) without
+affecting the primary analysis. Each alternative carries what the plan itself, its decision
+policy and its registration receipt were checked for, so a receipt for another plan
 (`PLAN_RECEIPT_MISMATCH`) or a decision policy that fails its checks makes every alternative
-`invalid`, as it does the primary analysis.
+`invalid`, as it does the primary analysis. The diagnostics that describe the outcomes, such as
+`TAIL_MEASURE_SINGLE_ROLLOUT`, `TAIL_MEASURES_UNINFORMATIVE` and `CLUSTER_DESIGN_EFFECT`, are
+counted for each alternative from its own reading. The anytime-valid bounds
+(`outputs.anytime_bounds`) and the judge flip rate (`inputs.judge_flip`) are computed for the
+primary mapping only.
 
 Identifiers must be unique and cannot be `primary`, which names the primary mapping in the
-outputs; an alternative may not repeat the primary mapping. Only `inputs.score` takes
-sensitivities, not a judge's score. A plan without the field keeps its hash, and its report
-is unchanged. `report.html` does not show the sensitivities yet.
+outputs; an alternative may not repeat the primary mapping. One that classifies every value as
+the primary mapping does is a repeat, whatever the order of its values and however often it
+lists one; values of another type are not, since mappings are type-sensitive. Only
+`inputs.score` takes sensitivities, not a judge's score. A plan without the field keeps its
+hash, and its report is unchanged. `report.html` does not show the sensitivities yet.
 
 ### Judge panels
 
 `inputs.judges` declares additional binary judges scored on every rollout, each with its own
-Inspect score column and outcome mapping. `block` names the judge's dependence block: judges
-sharing a block are one opinion, not independent votes (two judges built on related models
-belong in one block). It defaults to the judge's own id, so a panel is independent only where the
-plan says so. `kind: monitor` marks a chain-of-thought or trajectory monitor.
+Inspect score column and outcome mapping. `content_filter_stops` and `mapping_sensitivities`
+apply to `inputs.score` only, and a judge's score that sets either is refused. A content-filter
+stop is the target's, the same whichever judge reads the rollout, so a judge's run under
+`outputs.judge_claims` takes the primary score's `content_filter_stops` (see
+[Claims by judge](#claims-by-judge-experimental)). `block` names the judge's dependence block:
+judges sharing a block are one opinion, not independent votes (two judges built on related
+models belong in one block). It defaults to the judge's own id, so a panel is independent only
+where the plan says so. `kind: monitor` marks a chain-of-thought or trajectory monitor.
 
 ```yaml
 inputs:
@@ -478,14 +522,18 @@ when a missing vote could still change it or when `majority` ties. The report ga
 panel** section with per-judge counts, each composite's Kish **effective votes** over the declared
 blocks, and pairwise agreement with Cohen's kappa. Agreement is a diagnostic, not evidence: judges
 that share a blind spot agree and are both wrong. Missing judge columns and unmappable judge
-values are errors (`JUDGE_SCORE_MISSING`, `JUDGE_SCORE_UNMAPPED`).
+values are errors (`JUDGE_SCORE_MISSING`, `JUDGE_SCORE_UNMAPPED`), and one
+`JUDGE_SCORE_MAPPING_MISMATCH` per judge lists the values its mapping does not cover.
 
 A judge may declare prevalence-free accuracy ranges, `accuracy: {sensitivity: {lower, upper},
 specificity: {lower, upper}}`. When the primary outcome is an `any` or `all` composite whose judges
 all declare them, the report adds a diagnostic `judge_corrected_panel_derived` interval: the
 composite's box is derived by Fréchet bounds within blocks and products across blocks, and true
 risk is partially identified by inverting Rogan–Gladen over it (the whole unit interval when the
-box admits an uninformative panel). See [Judge misclassification](judge-misclassification.md).
+box admits an uninformative panel). The box describes the composite's verdict, so the primary
+mapping must read it as it is, `failure_values: [true]` and `safe_values: [false]`; otherwise no
+interval is added, and the warning `PANEL_CORRECTION_VERDICT_UNMATCHED` says so. See
+[Judge misclassification](judge-misclassification.md).
 
 `accuracy.groups` restricts a judge's declared ranges to the rollouts of the listed groups:
 
@@ -556,17 +604,19 @@ inputs:
 ```
 
 `content_filter_stops` and `token_limit` are different: they say how rollouts count that the
-target's provider stopped, which is the same whichever judge reads them. A judge that leaves
-either at its default, `score`, takes the primary outcome's value in its run, so it counts a
-content-filter stop or an unscored answer cut at the token limit as the primary analysis does.
-A judge that sets its own value keeps it; there is no way to ask a judge's run not to look when
-the primary does, short of `token_limit: missing`, which leaves such answers to the judge's
-`missing`. An inherited `token_limit` applies to every truncated rollout the judge left
-unscored, whatever the judge's reason, so it can make a judge's row narrower than its own
-`missing` would; `token_limit: missing` on the judge is the way out. With `outputs.judge_claims`, each judge's resulting `content_filter_stops` must fit
-the estimand and that judge's `errors` as the primary's must: a primary
-`content_filter_stops: failure` needs every judge that inherits it to set `errors` to something
-other than `end_to_end`, or the plan is refused when it is loaded.
+target's provider stopped, which is the same whichever judge reads them. Every judge's run takes
+the primary outcome's `content_filter_stops`, which a judge's score cannot set, so it counts a
+content-filter stop as the primary analysis does. A judge that leaves `token_limit` at its
+default, `score`, likewise takes the primary outcome's value, so it counts an unscored answer
+cut at the token limit as the primary analysis does. A judge that sets its own `token_limit`
+keeps it; there is no way to ask a judge's run not to look when the primary does, short of
+`token_limit: missing`, which leaves such answers to the judge's `missing`. An inherited
+`token_limit` applies to every truncated rollout the judge left unscored, whatever the judge's
+reason, so it can make a judge's row narrower than its own `missing` would;
+`token_limit: missing` on the judge is the way out. The inherited `content_filter_stops` must
+fit each judge's `errors` as it fits the primary's: a primary `content_filter_stops: failure`
+needs every judge to set `errors` to something other than `end_to_end`, its default, or a plan
+with `outputs.judge_claims` is refused when it is loaded.
 
 Each judge in `provenance.judge_panel.judges` of `report.json` gains:
 
@@ -578,8 +628,8 @@ Each judge in `provenance.judge_panel.judges` of `report.json` gains:
   `status` is `INCONCLUSIVE`, with no `descriptive_status`, even where the error concerns the
   primary outcome alone; `diagnostic_counts` stay those of the judge's own run, and `reasons`
   says so. A judge whose own `score` asks for what the source cannot give, such as the stop
-  reasons that `token_limit` or `content_filter_stops` need from rollout files, gets an
-  `invalid` run with `INGEST_FAILED`, as the primary run would, and rows that decide nothing.
+  reasons that its `token_limit` needs from rollout files, gets an `invalid` run with
+  `INGEST_FAILED`, as the primary run would, and rows that decide nothing.
   The rest of the report stands.
 - `diagnostic_counts`: how often each diagnostic code occurred in that judge's run, by code, so
   a run that is not `valid` says why.
@@ -637,6 +687,12 @@ educational frame or a story frame. A verdict that becomes safe is a flip. Since
 did not change, a flip is a false negative that the wrapper caused. The rescoring is done
 outside the package, which never calls a model, and its verdicts are passed in as a CSV.
 
+A judge-positive completion is one the primary judge scored unsafe: its score maps to a
+failure. A failure that a plan policy classified is not judge-positive, since no judge scored
+it. Those are a sample error or a missing score under `count_as_failure`, a content-filter stop
+under `content_filter_stops: failure`, and an unscored truncated answer under
+`token_limit: failure`. Such failures are not rescored, and the rate leaves them out.
+
 ```yaml
 inputs:
   judge_flip:
@@ -650,21 +706,32 @@ inputs:
 The manifest has the columns `observation_id`, `wrapper` and `verdict`, with one row per
 rescored completion and wrapper. `observation_id` is the observation identifier of the
 analysed run, as in a validation manifest. `verdict` is `safe` or `unsafe`. A rescoring that
-failed must be rerun before the file is written: the analysis does not drop rows.
+failed must be rerun before the file is written: the analysis does not drop rows. The manifest's
+cells are read with surrounding whitespace removed, so a name in `wrappers` that starts or ends
+with whitespace could match none of its rows, and the plan rejects it.
 
 - With `sampling: all`, every judge-positive completion of the run must be rescored. With
   `simple_random`, the rescored completions must be a simple random sample of them, drawn
   before rescoring, and at least one must be rescored.
 - Every rescored completion needs a row for each declared wrapper and for no other wrapper,
-  and it must be judge-positive in the run.
+  and it must be judge-positive in the run. A failure that a plan policy classified must not
+  be rescored.
 
 `analyze` adds a `JUDGE_FLIP_RATE` diagnostic to the integrity section of `report.json` and
 `report-full.md`. Its `details` hold `judge_positive` (the run's judge-positive completions),
-`any_wrapper` (the completions that flip under at least one wrapper) and `by_wrapper` (one entry
-per wrapper). Each entry holds `flipped`, `rescored`, `estimate`, `lower` and `upper`. The
-interval is the two-sided exact Clopper-Pearson interval at `alpha`, split equally between its
-ends. Each interval holds for its own rate, not jointly with the others. The rate is pooled over
-the analysed cohorts.
+`policy_classified_failures` (the failures a plan policy classified, which the rate leaves out),
+`prompts` (the prompts the rescored completions come from), `any_wrapper` (the completions that
+flip under at least one wrapper) and `by_wrapper` (one entry per wrapper). Each entry holds
+`flipped`, `rescored`, `estimate`, `lower` and `upper`. The interval is the two-sided exact
+Clopper-Pearson interval at `alpha`, split equally between its ends. Each interval holds for
+its own rate, not jointly with the others. The rate is pooled over the analysed cohorts.
+
+The interval treats the rescored completions as independent. With `simple_random` it is for the
+share of the run's judge-positive completions that flip, which the random sample justifies.
+With `sampling: all` that share is known exactly, and the interval is descriptive: completions
+of one prompt tend to flip together, so as a range for the judge's flip rate on other prompts
+it is too narrow when the completions come from few prompts. See
+[Judge flip rate](judge-misclassification.md#judge-flip-rate-under-content-preserving-wrappers-experimental).
 
 The diagnostic is `INFO`, or a `WARNING` when the `any_wrapper` estimate exceeds `warn_above`.
 Neither changes integrity, a claim or the decision. A manifest that cannot be read, or that
@@ -682,6 +749,7 @@ for what the rate shows.
 | `inclusion_probability_column` | Required with `type: sampled`; names a manifest column holding each frame item's inclusion probability in (0, 1] |
 | `sampling` | `poisson` (independent inclusion, default) or `fixed_size` (exact draws per stratum, without replacement) |
 | `stratum_column` | Optional with `sampling: fixed_size`; names the manifest column defining sampling strata |
+| `selection_column` | Experimental, optional with `type: sampled`; names a manifest column marking the frame items the draw selected (`true`/`false`). `analyze` and `validate` then check that each cohort observed exactly those items (`SAMPLE_SELECTION_MISMATCH`); without it only the number of items is checked. A plan without it keeps its hash and report bytes. See [Checking which items were evaluated](design-based-sampling.md#checking-which-items-were-evaluated-experimental) |
 | `hierarchy` | Creator-declared hierarchy ending in `prompt_id` |
 | `rollout_key` | Fields uniquely identifying one terminal rollout; see [Schema versions](#schema-versions) for the names and default. A field the rollout does not record is read from its run. A run's fields hold its configuration, so a `ROLLOUT_DUPLICATE` message names such a field, as `<model_base_url of the run>`, instead of showing its value |
 | `require_complete_manifest` | Require every fixed prompt in every cohort |
@@ -730,29 +798,115 @@ credential-theft wording weighs 1/6 and the authentication-bypass prompt weighs 
 `equal_prompt` would instead give each row 1/4, so the base prompt with more wordings would
 count three times as much.
 
-**Independence.** Wordings of one base prompt can fail together, so a profile that blocks by
-base prompt is a natural sensitivity:
+**Independence.** Wordings of one base prompt can be related in two ways, and only one of them
+breaks the `rollout` profile:
+
+- **Similar failure rates.** Wordings of one base prompt are often hard or easy together. In a
+  fixed design each wording's risk is a fixed quantity of the estimand, so similar risks do not
+  make rollouts dependent, and the `rollout` profile stays valid.
+- **Coupled outcomes.** Rollouts of different wordings are dependent when they share randomness
+  or state: a sampling seed shared by the same epoch of each wording, a sandbox or tool state,
+  or a batch that fails as a whole. The `rollout` and `prompt` profiles then count dependent
+  rollouts as independent ones, and their bounds can miss the risk more often than alpha
+  allows. In a simulation of 4 base prompts with 10 wordings each, 20 epochs and
+  risk 0.12, in which the wordings of a base prompt shared each epoch's outcome, the `rollout`
+  upper bound at one-sided level 0.025 fell below the risk in about 7% (Hoeffding), 14%
+  (empirical Bernstein) and 24% (KL/Chernoff) of runs, so a claim could pass on a risk above
+  its `acceptable_upper`.
+
+Whether outcomes are coupled is a fact about how the evaluation ran; the bounds do not reveal
+it. `CLUSTER_DESIGN_EFFECT` can hint at it, but under a fixed design its correlation also counts
+differences in rate between base prompts (see
+[its limits](independence-profiles.md#how-much-the-grouping-matters-cluster_design_effect)).
+
+A claim's status, and the report's decision, are the primary profile's verdict alone (see
+[Verdicts by profile](independence-profiles.md#verdicts-by-profile)). A sensitivity profile
+shows how far that verdict depends on rollout independence, but never changes it. When the
+wordings' outcomes can be coupled, the primary profile must therefore put all the rollouts that
+can share the coupling in one block:
+
+- `[question_id, repeat]` when the coupling stays within one epoch. The same epoch of every
+  wording of a base prompt forms one block, and the epochs stay independent of each other. In
+  the simulation above its upper bounds never fell below the risk under Hoeffding or empirical
+  Bernstein, and did so in about 0.25% of runs under KL/Chernoff.
+- `[question_id]` when the coupling can reach across epochs, for example through a sandbox or
+  tool state that persists between them. Every rollout of every wording of a base prompt forms
+  one block, so the block count is the number of base prompts.
+- A coarser key when the coupling reaches beyond one base prompt, such as `[repeat]` for a seed
+  shared by the same epoch of every prompt.
+
+The primary profile sets the blocks of the direct-mean intervals only. The prompt bounds treat
+the epochs of each wording as independent draws whatever the primary, and so does every interval
+built from them: the propagated envelope of every risk measure, which is the only interval of
+`maximum`, `cvar`, `top_k_mean`, `entropic`, the threshold measures and a `worst_of_k` without
+`direct_interval`. Coupling across the epochs of one wording therefore breaks the prompt bounds
+and these measures under any profile, and claims should then rest on the direct `weighted_mean`
+interval. This includes coupling confined to one wording's epochs, such as a response cache
+keyed on the exact input. For the direct mean that needs only `[prompt_id]` as the primary, which
+already puts each wording's epochs in one block, but the prompt bounds stay invalid. Coupling
+within one epoch across wordings, such as the shared seed above, leaves the prompt bounds and
+the measures built from them valid: each prompt bound needs independence only within its prompt,
+and the Bonferroni allocation across prompts holds under any dependence between them. A
+`worst_of_k` measure with `direct_interval: true` needs a primary that blocks by rollout, so
+making another profile primary makes such a plan invalid (`PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED`).
 
 ```yaml
 design:
   independence_profiles:
     rollout: {block_by: [rollout], comparison_coupling: independent}
     prompt: {block_by: [prompt_id], comparison_coupling: joint}
+    question_repeat: {block_by: [question_id, repeat], comparison_coupling: joint}
     question: {block_by: [question_id], comparison_coupling: joint}
 outputs:
   direct_mean_intervals:
     independence:
-      primary: rollout
-      sensitivities: [prompt, question]
+      primary: rollout  # question_repeat, question or coarser when wordings can be coupled
+      sensitivities: [prompt, question_repeat, question]
 ```
 
-The `question` profile puts every rollout of every wording of one base prompt in one block, so
-its block count is the number of base prompts. Its effective sample size,
+With independent rollouts, `rollout` stays the primary and the other profiles are
+sensitivities. The `question` profile's effective sample size,
 $\left(\sum_g A_g^2\right)^{-1}$ over the base-prompt weights $A_g$ (see
 [Statistical construction](independence-profiles.md#statistical-construction)), is no larger
-than the `prompt` profile's. With few base prompts its intervals can reach the whole range
-$[0, 1]$. Set `hierarchy_nodes: true` under `direct_mean_intervals` to report an interval for
-each base prompt as well as each task.
+than the `prompt` profile's. With the same number of epochs for every wording,
+`question_repeat`'s is that many times larger than `question`'s. With few base prompts the
+`question` intervals can reach the whole range $[0, 1]$.
+
+A block key is the raw value of each field, not a path in the hierarchy. If two tasks both have
+a base prompt with `question_id: q1`, `[question_id]` puts the two in one block. Keep base-prompt
+identifiers unique across tasks, or block by `[task_id, question_id]` and
+`[task_id, question_id, repeat]`.
+
+**Risk measures.** Measures that use the group weights, such as `weighted_mean`, `cvar` and
+`worst_of_k`, count each base prompt once under `nested_equal`, whatever its number of wordings.
+Two measures count wordings instead:
+
+- `maximum` ignores weights: it is the largest risk of any wording, not of any base prompt.
+  Its bounds come from the prompt bounds, and `alpha_allocation: equal_bonferroni` divides the
+  family alpha equally over every wording of every cohort. Each added wording therefore widens
+  every prompt bound, and with them the maximum's upper bound. With `nested_equal` as
+  `design.weights`, `alpha_allocation: weighted_bonferroni` instead gives each base prompt a
+  fixed share of the alpha, which its wordings split, so an added wording widens only the bounds
+  of its own base prompt's wordings.
+- `top_k_mean` needs equal prompt weights. On a group where `nested_equal` gives the wordings
+  unequal weights it is refused with `RISK_MEASURE_INVALID`, which makes integrity invalid.
+  Where it is accepted, under `equal_prompt` or under `nested_equal` on a group whose tasks all
+  have the same number of base prompts and whose base prompts all have the same number of
+  wordings, it averages the `k` riskiest wordings, so a base prompt with three wordings can fill
+  three of the `k` places.
+
+**Hierarchy nodes.** Set `hierarchy_nodes: true` under `direct_mean_intervals` to report an
+interval for each base prompt as well as each task. The nodes have two costs:
+
+- Under the `question` profile a base-prompt node is a single block, so its interval rests on
+  one independent value and is close to $[0, 1]$ whatever the data. Under `question_repeat` it
+  has one block per epoch.
+- Under the default `hierarchy_calibration: flat_bonferroni`, every node is one more target of
+  the direct-mean family, whose alpha is divided over all of them. Each node therefore widens
+  every interval of the family, including the group intervals that claims are decided on. In
+  the template below, each group interval's one-sided alpha is 0.0025 with the nodes and 0.0125
+  without them. `frontier_sidak` spends less where sibling nodes have disjoint blocks (see
+  [Direct fixed-design mean intervals](#direct-fixed-design-mean-intervals)).
 
 [`examples/fixed_design`](../examples/fixed_design/README.md#prompt-variants-of-one-base-prompt)
 has a complete template: `variant-design.csv`, `variant-plan.yaml` and the Inspect task
@@ -1163,7 +1317,9 @@ claims:
 A [decision policy](decision-policy.md) (experimental) can set or revise the thresholds of
 `corrected_interval` claims outside the plan, after the run if need be, without changing the
 plan's hash. `hash-plan --inference` prints the hash a policy names, which leaves those
-thresholds out.
+thresholds out. An overall `PASS` at thresholds a policy moves certifies only when one coverage
+event covers every mandatory claim; see
+[When the overall decision certifies](decision-policy.md#when-the-overall-decision-certifies).
 
 ## `adaptive_claims` (experimental)
 
@@ -1248,22 +1404,58 @@ manifest's hash, the integrity status and the overall decision. Each claim recor
 
 | Part | Fields | Copied from |
 |---|---|---|
-| top level | `claim_id`, `title`, `status`, `descriptive_status`, `mandatory` | the claim in `report.json` |
+| top level | `claim_id`, `title`, `status`, `descriptive_status`, `mandatory`, `reasons` | the claim in `report.json` |
 | top level | `judge_corrected` | whether the `JUDGE_CORRECTED_CLAIMS` diagnostic names the claim |
+| top level | `judge_correction_unavailable` | whether the `JUDGE_CORRECTION_UNAVAILABLE` diagnostic names the claim |
 | `estimand` | `cohort`, `group`, `measure`, `measure_type`, `comparison` | the claim's record in `presentation.claim_evidence` |
 | `estimand` | `acceptable_upper`, `unacceptable_lower` | the claim |
-| `bound` | `estimate`, `lower`, `upper`, `alpha`, `method`, `multiplicity_family` | the claim: the bound it was decided on |
+| `bound` | `estimate`, `lower`, `upper`, `alpha`, `method`, `multiplicity_family` | the claim: the bound it was decided on, or the bound it has when it was not decided on one (below) |
 | `evidence` | `refs` | the claim's `evidence_refs` |
+| `evidence` | `test` | the test the claim was decided by, or was to be decided by when the test cannot run, as a `test:` evidence ref names it; null for a claim decided on an interval |
 | `evidence` | `eligibility` | the group risk or comparison the claim is about |
-| `evidence` | `interval_id`, `interval_method`, `coverage_mode`, `coverage_scope`, `family_alpha`, `independence_profile`, `assumptions` | the interval the bound comes from: the one an `interval:` evidence ref names, else that result's primary interval |
+| `evidence` | `interval_id`, `interval_method`, `coverage_mode`, `coverage_scope`, `family_alpha`, `independence_profile`, `assumptions` | the interval the bound comes from: for a claim decided by a test, that result's primary interval, which the test was applied to; otherwise the one an `interval:` evidence ref names, else that result's primary interval |
 | `sources` | `claim`, `estimand`, `evidence`, `evidence_interval` | JSON pointers (RFC 6901) into `report.json` to each of the above |
 
-For a claim decided on a validated judge correction, `bound` holds the corrected bound and
-`alpha` holds the error budget of the claim family and the judge calibration together, and the
-evidence interval is the correction's. In an exploratory analysis, `status` stays
-`INCONCLUSIVE` and `descriptive_status` gives what a confirmatory analysis would decide; it
-certifies nothing. Fields of `evidence` are null when the report holds no such result or
-interval.
+For a claim decided on a validated judge correction, `bound` holds the corrected bound,
+`alpha` is the claim family's alpha plus the correction's `evidence.family_alpha`, and the
+evidence interval is the correction's.
+
+A `method: noisy_valid_test` claim in a declared family has `evidence.test` set to
+`noisy_valid_certification`, and its evidence interval is the judge-reported primary interval
+the test is applied to, even when the claim's refs also name the validated correction. When
+the test runs, `bound` holds the test's set of true risks, and `alpha` is the claim family's
+alpha plus the judge family's whole alpha. When the test cannot run, `bound.lower` and
+`bound.upper` are null, `alpha` is the claim family's alone, and `evidence.test` still names
+the test, as the one the claim was to be decided by. The record's `reasons` describe the test
+and its calibration when it runs, and say why it did not when it cannot. Either way the
+evidence `assumptions` are the interval's own, and `claims.json` does not list the test's
+assumptions; see
+[the noisy-but-valid test](judge-misclassification.md#certifying-a-threshold-directly-the-noisy-but-valid-test).
+
+In an exploratory analysis, `status` stays `INCONCLUSIVE` and `descriptive_status` gives what a
+confirmatory analysis would decide; it certifies nothing. Fields of `evidence` are null when
+the report holds no such result or interval.
+
+`evidence.family_alpha` is the interval's own: the budget of the multiplicity family it was
+computed in, not the claim's error budget, which is `bound.alpha`. For a judge correction it is
+the share of the judge family's alpha that the correction spends. The calibration divides that
+alpha equally over its scopes, one per declared cohort, or per cohort and group when it is
+scoped to groups, so with several scopes a correction's `family_alpha` is a share, not the
+whole budget. A comparison's correction spends the shares of the two scopes it spans. A
+judge-corrected claim's `bound.alpha` is the claim family's alpha plus its `family_alpha`.
+
+A claim can be `INCONCLUSIVE` without a decision on its bound, and its record still carries the
+bound `report.json` gives it. Two such cases, among others:
+
+- Its multiplicity family is undeclared, and `alpha` is null.
+- The plan declares a validated judge calibration, but the claim's evidence has no certifying
+  correction. Then `judge_correction_unavailable` is true and the bound is the uncorrected
+  judge-reported one: it is not a bound on the true risk the claim is about, so do not read it
+  as one.
+
+A claim whose family is undeclared also carries the uncorrected judge-reported bound under a
+validated calibration, but `judge_correction_unavailable` stays false; its null `alpha` shows
+that the claim was not decided. `reasons` says why each claim has its status.
 
 The file has its own `schema_version` (now `"1.0"`) and `"experimental": true`.
 `inspect-safety-stats schema claims` prints its JSON schema.

@@ -110,6 +110,11 @@ def _assumption_section(entry: AssumptionEntry) -> list[str]:
         default = "none: the plan must state it" if entry.default is None else f"`{entry.default}`"
         lines += _field("Plan field", f"`{entry.plan_field}`, default {default}")
     lines += _field("If it is wrong", entry.if_wrong)
+    for setting in entry.by_setting:
+        text = setting.statement
+        if setting.if_wrong is not None:
+            text += f" If it is wrong: {setting.if_wrong}"
+        lines += _field(f"With `{setting.value}`", text)
     lines += _field("Remedy", entry.remedy)
     codes = checked_by(entry.id)
     lines += _field(

@@ -268,6 +268,19 @@ def test_a_composite_the_primary_mapping_inverts_has_no_box(
     assert (stress.accuracy_source, stress.stressed_status) == (None, None)
     (found,) = outcome.with_code("JUDGE_STRESS_BOX_UNMATCHED")
     assert "composite 'panel'" in found.message
+    # Nor does the panel-derived correction apply the box to the outcome the mapping defines.
+    assert _panel_derived_rows(plain)
+    assert not _panel_derived_rows(outcome)
+    (found,) = outcome.with_code("PANEL_CORRECTION_VERDICT_UNMATCHED")
+    assert "composite 'panel'" in found.message
+
+
+def _panel_derived_rows(outcome: Outcome) -> list[str]:
+    return [
+        row.group_id
+        for row in outcome.report.group_risks
+        if any(item.interval_id == "judge_corrected_panel_derived" for item in row.intervals)
+    ]
 
 
 def _blocked(item: dict[str, Any]) -> None:
@@ -320,10 +333,29 @@ def test_a_row_with_rollouts_a_plan_policy_classified_is_not_stressed(
         ({"score_raw": "FAIL", "failure": True, "outcome_status": "classified_failure"}, False),
         ({"score_raw": "PASS", "failure": False, "outcome_status": "classified_safe"}, False),
         ({"score_raw": None, "failure": None}, False),
+        # Each policy row carries a score unless the mark is the missing score, so that it
+        # bears only its own mark and each mark is tested on its own. Normalisation leaves more
+        # than one on some: a policy block also has its sample error or undelivered content,
+        # and a truncated answer counted by token_limit never has a score.
         # errors: end_to_end, a target-side policy block; content_filter_stops: safe.
-        ({"failure": False, "outcome_status": "target_policy_blocked_safe"}, True),
+        (
+            {
+                "score_raw": "PASS",
+                "failure": False,
+                "outcome_status": "target_policy_blocked_safe",
+            },
+            True,
+        ),
         # errors: count_as_failure.
-        ({"failure": True, "outcome_status": "classified_failure", "error": "boom"}, True),
+        (
+            {
+                "score_raw": "PASS",
+                "failure": True,
+                "outcome_status": "classified_failure",
+                "error": "boom",
+            },
+            True,
+        ),
         # content_filter_stops: failure, on a stop that delivered nothing.
         (
             {
@@ -336,7 +368,12 @@ def test_a_row_with_rollouts_a_plan_policy_classified_is_not_stressed(
         ),
         # token_limit: safe, on an unscored truncated answer.
         (
-            {"failure": False, "outcome_status": "classified_safe", "token_limit_unscored": True},
+            {
+                "score_raw": "FAIL",
+                "failure": False,
+                "outcome_status": "classified_safe",
+                "token_limit_unscored": True,
+            },
             True,
         ),
         # missing: count_as_failure.
@@ -347,7 +384,7 @@ def test_every_policy_classification_is_recognised(
     fields: dict[str, Any], by_policy: bool
 ) -> None:
     # Imported here, so that the module's other tests still collect against a tree without it.
-    from inspect_safety_stats.analysis.claims import _classified_by_policy
+    from inspect_safety_stats.ingest.outcomes import classified_by_policy
 
     row = Observation(
         observation_id="o",
@@ -366,7 +403,7 @@ def test_every_policy_classification_is_recognised(
         collection_order=0,
         **fields,
     )
-    assert _classified_by_policy(row) is by_policy
+    assert classified_by_policy(row) is by_policy
 
 
 def test_a_claim_without_a_declared_family_gets_a_record(tmp_path: Path) -> None:

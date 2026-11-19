@@ -1,18 +1,23 @@
 import itertools
+import math
 import random
+from statistics import NormalDist
 
 import numpy as np
 import pytest
 
+from inspect_safety_stats.registry import CODES
 from inspect_safety_stats.stats import (
     exact_mcnemar,
     exact_mcnemar_partial,
     newcombe_paired_interval,
     newcombe_paired_interval_partial,
+    paired,
 )
+from inspect_safety_stats.stats.clusters import ClusterBootstrapResult, paired_cluster_bootstrap
 from inspect_safety_stats.stats.paired import (
     _newcombe_bounds_from_counts,
-    _reachable_cell_counts,
+    favourable_and_adverse_completions,
     partial_pairing,
 )
 
@@ -151,9 +156,61 @@ def test_reachable_cell_counts_are_exactly_the_completions(seed: int) -> None:
                 result.candidate_safe_baseline_safe,
             )
         )
-    n11, n10, n01, n00 = _reachable_cell_counts(candidate, baseline)
-    reachable = set(zip(n11.tolist(), n10.tolist(), n01.tolist(), n00.tolist(), strict=True))
-    assert reachable == expected
+    tables = paired._completion_tables(candidate, baseline)
+    reachable = [
+        table
+        for block in paired._table_blocks(tables)
+        for table in zip(*(cells.tolist() for cells in block), strict=True)
+    ]
+    assert len(reachable) == len(set(reachable))
+    assert set(reachable) == expected
+
+
+def test_partial_newcombe_evaluates_its_tables_a_block_at_a_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 150 pairs unscored in both arms reach 585,276 tables. Evaluating them at once, after
+    # filtering a dense grid of 151**3 candidates, took memory that grew with the cube of the
+    # unscored pairs: gigabytes near the limit.
+    evaluate = paired._newcombe_bounds_from_counts
+    sizes: list[int] = []
+
+    def recording(*cells: np.ndarray, **alphas: float) -> tuple[np.ndarray, ...]:
+        sizes.append(len(cells[0]))
+        return evaluate(*cells, **alphas)
+
+    monkeypatch.setattr(paired, "_newcombe_bounds_from_counts", recording)
+    candidate: list[bool | None] = [True, False] * 20 + [None] * 150
+    baseline: list[bool | None] = [False, True] * 20 + [None] * 150
+    interval = newcombe_paired_interval_partial(candidate, baseline)
+    assert sum(sizes) == interval.completion_count == 585_276
+    assert max(sizes) <= 1 << 18
+
+
+def test_partial_newcombe_limits_the_tables_it_evaluates() -> None:
+    # 600 candidate-unscored pairs with a failing baseline and 600 with a safe one reach
+    # 601**2 tables. The limit used to count a bounding grid of 601**3 candidates and refused.
+    candidate: list[bool | None] = [None] * 1200
+    baseline: list[bool | None] = [True] * 600 + [False] * 600
+    assert newcombe_paired_interval_partial(candidate, baseline).completion_count == 601**2
+    # 668 pairs unscored in both arms reach C(671, 3) = 50,127,055 tables, past the limit.
+    with pytest.raises(ValueError, match="more than 50000000 distinct 2x2 tables"):
+        newcombe_paired_interval_partial([None] * 668, [None] * 668)
+
+
+def test_partial_newcombe_evaluates_as_many_tables_as_its_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert paired._PARTIAL_NEWCOMBE_COMPLETION_LIMIT == 50_000_000
+    assert "at most 50,000,000 distinct" in CODES["PAIR_NEWCOMBE_UNAVAILABLE"].assumption
+    candidate: list[bool | None] = [True, None, False, None]
+    baseline: list[bool | None] = [None, False, True, None]
+    count = newcombe_paired_interval_partial(candidate, baseline).completion_count
+    monkeypatch.setattr(paired, "_PARTIAL_NEWCOMBE_COMPLETION_LIMIT", count)
+    assert newcombe_paired_interval_partial(candidate, baseline).completion_count == count
+    monkeypatch.setattr(paired, "_PARTIAL_NEWCOMBE_COMPLETION_LIMIT", count - 1)
+    with pytest.raises(paired.CompletionLimitError, match="the 3 pairs with an unscored arm"):
+        newcombe_paired_interval_partial(candidate, baseline)
 
 
 @pytest.mark.parametrize("seed", range(60))
@@ -182,8 +239,211 @@ def test_partial_bounds_are_attained_by_some_completion() -> None:
     assert interval.upper == pytest.approx(max(i.upper for i in intervals), rel=1e-12, abs=1e-15)
 
 
+@pytest.mark.parametrize("block", [1, 4, 25])
+@pytest.mark.parametrize("seed", range(12))
+def test_partial_bounds_span_every_block_of_tables(
+    monkeypatch: pytest.MonkeyPatch, seed: int, block: int
+) -> None:
+    # The tables are evaluated a block at a time and the bounds carried across blocks. With
+    # small blocks every input here spans several, so a bound taken from one block alone, not
+    # the running minimum and maximum, differs from the brute force over every completion.
+    monkeypatch.setattr(paired, "_PARTIAL_NEWCOMBE_BLOCK", block)
+    candidate, baseline = _random_partial_pairs(seed)
+    intervals = [newcombe_paired_interval(c, b) for c, b in _completions(candidate, baseline)]
+    interval = newcombe_paired_interval_partial(candidate, baseline)
+    assert interval.lower == pytest.approx(min(i.lower for i in intervals), rel=1e-12, abs=1e-15)
+    assert interval.upper == pytest.approx(max(i.upper for i in intervals), rel=1e-12, abs=1e-15)
+    assert interval.estimate_lower == pytest.approx(
+        min(i.estimate for i in intervals), rel=1e-12, abs=1e-15
+    )
+    assert interval.estimate_upper == pytest.approx(
+        max(i.estimate for i in intervals), rel=1e-12, abs=1e-15
+    )
+
+
+@pytest.mark.parametrize("seed", range(20))
+def test_extreme_completions_bound_the_cluster_bootstrap_of_every_completion(seed: int) -> None:
+    # fixed_cluster_bootstrap takes its lower bound from the favourable completion and its upper
+    # bound from the adverse one. Its resampling draws do not depend on the outcomes, and every
+    # replicate mean grows with each pair's difference, so no completion goes beyond either.
+    rng = random.Random(seed)
+    size = rng.randint(2, 8)
+    choices: list[bool | None] = [True, False, None]
+    candidate = rng.choices(choices, weights=[0.35, 0.4, 0.25], k=size)
+    baseline = rng.choices(choices, weights=[0.35, 0.4, 0.25], k=size)
+    clusters = [index if index < 2 else rng.randint(0, 2) for index in range(size)]
+
+    def bootstrap(cand: list[bool], base: list[bool]) -> ClusterBootstrapResult:
+        differences = [float(c) - float(b) for c, b in zip(cand, base, strict=True)]
+        return paired_cluster_bootstrap(differences, clusters, replicates=100, seed=seed)
+
+    favourable, adverse = (
+        bootstrap(*completion)
+        for completion in favourable_and_adverse_completions(candidate, baseline)
+    )
+    for cand, base in _completions(candidate, baseline):
+        completed = bootstrap(cand, base)
+        assert favourable.estimate <= completed.estimate <= adverse.estimate
+        # np.quantile interpolates, which can round by an ulp.
+        assert favourable.lower <= completed.lower + 1e-12
+        assert completed.upper <= adverse.upper + 1e-12
+
+
 def test_partial_outcomes_must_be_booleans_or_none() -> None:
     with pytest.raises(TypeError):
         exact_mcnemar_partial([1], [None])  # type: ignore[list-item]
     with pytest.raises(ValueError):
         newcombe_paired_interval_partial([], [])
+
+
+def _reference_newcombe(
+    n11: int, n10: int, n01: int, n00: int, *, alpha_lower: float, alpha_upper: float
+) -> tuple[float, float]:
+    """Newcombe method 10 from the four cells, with the correlation's integers kept exact.
+
+    Independent of the package: Python integers for the products of counts, ``math.sqrt`` for
+    their square root and ``statistics.NormalDist`` for the quantiles.
+    """
+
+    n = n11 + n10 + n01 + n00
+    candidate_rate = (n11 + n10) / n
+    baseline_rate = (n11 + n01) / n
+    estimate = candidate_rate - baseline_rate
+    numerator = n11 * n00 - n10 * n01
+    corrected = max(numerator - n / 2, 0.0) if numerator > 0 else float(numerator)
+    product = (n11 + n10) * (n01 + n00) * (n11 + n01) * (n10 + n00)
+    correlation = min(1.0, max(-1.0, corrected / math.sqrt(product))) if product else 0.0
+
+    def wilson(rate: float, z: float) -> tuple[float, float]:
+        scale = 1 + z * z / n
+        centre = (rate + z * z / (2 * n)) / scale
+        radius = z * math.sqrt(rate * (1 - rate) / n + z * z / (4 * n * n)) / scale
+        return max(0.0, centre - radius), min(1.0, centre + radius)
+
+    def distance(first: float, second: float) -> float:
+        return math.sqrt(max(0.0, first**2 + second**2 - 2 * correlation * first * second))
+
+    z = NormalDist().inv_cdf(1 - alpha_lower)
+    candidate_low, _ = wilson(candidate_rate, z)
+    _, baseline_high = wilson(baseline_rate, z)
+    lower = estimate - distance(candidate_rate - candidate_low, baseline_high - baseline_rate)
+    z = NormalDist().inv_cdf(1 - alpha_upper)
+    _, candidate_high = wilson(candidate_rate, z)
+    baseline_low, _ = wilson(baseline_rate, z)
+    upper = estimate + distance(candidate_high - candidate_rate, baseline_rate - baseline_low)
+    return max(-1.0, lower), min(1.0, upper)
+
+
+def _paired_lists(n11: int, n10: int, n01: int, n00: int) -> tuple[list[bool], list[bool]]:
+    candidate = [True] * n11 + [True] * n10 + [False] * n01 + [False] * n00
+    baseline = [True] * n11 + [False] * n10 + [True] * n01 + [False] * n00
+    return candidate, baseline
+
+
+# Cell counts (n11, n10, n01, n00) around the counts at which the product of the four margins,
+# the correlation's denominator, outgrows a fixed-width integer. With all four margins m it is
+# m ** 4: past 2 ** 63 from m = 55,109 (110,218 pairs) and past 2 ** 64 from m = 65,536.
+_MARGIN_OVERFLOW_TABLES = {
+    "below_2_63": (13_777, 41_331, 41_331, 13_777),
+    "past_2_63": (13_777, 41_332, 41_332, 13_777),
+    "below_2_64": (16_384, 49_151, 49_151, 16_384),
+    "past_2_64": (16_384, 49_152, 49_152, 16_384),
+    "past_5_times_2_64_positive": (60_000, 40_000, 40_000, 60_000),
+}
+
+
+@pytest.mark.parametrize(
+    "cells", list(_MARGIN_OVERFLOW_TABLES.values()), ids=list(_MARGIN_OVERFLOW_TABLES)
+)
+def test_newcombe_keeps_the_correlation_when_the_margin_product_outgrows_integers(
+    cells: tuple[int, int, int, int],
+) -> None:
+    # The int64 product wrapped modulo 2 ** 64: where the wrapped value was negative its square
+    # root was NaN, so the correlation became 0, and where it was below 2 ** 63 (as for 1e20) it
+    # was a wrong positive number. As an integer past
+    # 2 ** 64 the scalar interval's product was an object NumPy could not take a root of.
+    expected_lower, expected_upper = _reference_newcombe(
+        *cells, alpha_lower=0.01, alpha_upper=0.04
+    )
+    scalar = newcombe_paired_interval(*_paired_lists(*cells), alpha_lower=0.01, alpha_upper=0.04)
+    assert scalar.lower == pytest.approx(expected_lower, rel=1e-12, abs=0)
+    assert scalar.upper == pytest.approx(expected_upper, rel=1e-12, abs=0)
+    _, lower, upper = _newcombe_bounds_from_counts(
+        *(np.asarray([value], dtype=np.int64) for value in cells),
+        alpha_lower=0.01,
+        alpha_upper=0.04,
+    )
+    assert float(lower[0]) == pytest.approx(expected_lower, rel=1e-12, abs=0)
+    assert float(upper[0]) == pytest.approx(expected_upper, rel=1e-12, abs=0)
+
+
+def test_partial_newcombe_bounds_hold_when_the_margin_product_outgrows_integers() -> None:
+    # One candidate outcome unscored in a table whose margins all reach 2 ** 16; the true
+    # correlation is -0.5, and the int64 product made it 0, which narrows the interval.
+    complete_candidate, complete_baseline = _paired_lists(16_384, 49_152, 49_152, 16_384)
+    candidate: list[bool | None] = list(complete_candidate)
+    baseline: list[bool | None] = list(complete_baseline)
+    candidate[-1] = None  # a pair whose baseline is safe
+    expected = [
+        _reference_newcombe(*cells, alpha_lower=0.05, alpha_upper=0.05)
+        for cells in [(16_384, 49_152, 49_152, 16_384), (16_384, 49_153, 49_152, 16_383)]
+    ]
+    interval = newcombe_paired_interval_partial(candidate, baseline)
+    assert interval.completion_count == 2
+    assert interval.lower == pytest.approx(min(low for low, _ in expected), rel=1e-12, abs=0)
+    assert interval.upper == pytest.approx(max(high for _, high in expected), rel=1e-12, abs=0)
+
+
+def test_partial_newcombe_bounds_hold_over_many_large_tables() -> None:
+    # 120,000 scored pairs with a correlation near -0.5, and 600 pairs unscored in the
+    # candidate arm with a failing baseline and 600 with a safe one: 601 ** 2 tables of
+    # 121,200 pairs, more than one block. Each table's margins multiply past 2 ** 63, and the
+    # int64 product gave [-0.00829, 0.00829].
+    n11, n10, n01, n00 = 15_000, 45_000, 45_000, 15_000
+    complete_candidate, complete_baseline = _paired_lists(n11, n10, n01, n00)
+    candidate: list[bool | None] = [*complete_candidate, *[None] * 1200]
+    baseline: list[bool | None] = [*complete_baseline, *[True] * 600, *[False] * 600]
+    interval = newcombe_paired_interval_partial(candidate, baseline)
+    assert interval.completion_count == 601**2 > paired._PARTIAL_NEWCOMBE_BLOCK
+    lows, highs = zip(
+        *(
+            _reference_newcombe(
+                n11 + failing,
+                n10 + safe,
+                n01 + 600 - failing,
+                n00 + 600 - safe,
+                alpha_lower=0.05,
+                alpha_upper=0.05,
+            )
+            # How many unscored candidates fail, of those with a failing and a safe baseline.
+            for failing in range(601)
+            for safe in range(601)
+        ),
+        strict=True,
+    )
+    assert interval.lower == pytest.approx(min(lows), rel=1e-12, abs=0)
+    assert interval.upper == pytest.approx(max(highs), rel=1e-12, abs=0)
+
+
+@pytest.mark.parametrize(
+    "cells",
+    [(100, 400, 400, 100), (5_000, 20_000, 20_000, 5_000)],
+    ids=["margins_500", "margins_25000"],
+)
+def test_vectorised_newcombe_does_not_depend_on_the_integer_type_of_the_counts(
+    cells: tuple[int, int, int, int],
+) -> None:
+    # The counts used to arrive in NumPy's default integer, int32 on Windows with NumPy 1, and
+    # may in any integer type. In int32 the product of the four margins overflows once they
+    # reach 216 each, and the Wilson term's 4 * trials ** 2 from 23,171 pairs.
+    expected_lower, expected_upper = _reference_newcombe(
+        *cells, alpha_lower=0.05, alpha_upper=0.05
+    )
+    for dtype in (np.int32, np.int64):
+        _, lower, upper = _newcombe_bounds_from_counts(
+            *(np.asarray([value], dtype=dtype) for value in cells),
+            alpha_lower=0.05,
+            alpha_upper=0.05,
+        )
+        assert float(lower[0]) == pytest.approx(expected_lower, rel=1e-12, abs=0), dtype
+        assert float(upper[0]) == pytest.approx(expected_upper, rel=1e-12, abs=0), dtype

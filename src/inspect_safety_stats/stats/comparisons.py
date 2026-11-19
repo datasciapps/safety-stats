@@ -99,7 +99,9 @@ def _arrays(
         raise ValueError("comparison counts and weights must be nonempty and aligned")
     if not all(np.issubdtype(array.dtype, np.integer) for array in arrays):
         raise TypeError("comparison counts must be integers")
-    cf, cu, cn, bf, bu, bn = arrays
+    # int64: the prompt-cluster encoding multiplies the two arms' counts, which overflows int32,
+    # NumPy's default integer on Windows with NumPy 1, from 32,768 rollouts a prompt.
+    cf, cu, cn, bf, bu, bn = (array.astype(np.int64) for array in arrays)
     if np.any(cn <= 0) or np.any(bn <= 0):
         raise ValueError("every comparison arm must have positive attempted rollout counts")
     if (

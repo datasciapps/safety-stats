@@ -209,12 +209,40 @@ design has \(\pi_j=n_h/N_h\) constant inside a stratum. Three checks enforce tha
   must match its plan **exactly**; any shortfall means the declared probabilities misstate
   the sample.
 
+### Checking which items were evaluated (experimental)
+
+The checks above count items; they do not check which items were evaluated. A run on the
+first twelve prompts of each stratum by identifier matches a draw of twelve per stratum in
+every count and passes them, although it is not a random sample and the declared inclusion
+probabilities do not describe it. When the frame records which items the draw selected,
+name that column:
+
+```yaml
+design:
+  type: sampled
+  sampling: fixed_size
+  stratum_column: sampling_stratum
+  inclusion_probability_column: inclusion_probability
+  selection_column: drawn        # true for each item the draw selected
+```
+
+`analyze` and `validate` then report `SAMPLE_SELECTION_MISMATCH`, an error that makes
+integrity invalid and withholds the cohort's bounds, when a cohort has observations for an
+item the column does not select or none for an item it selects. The column holds `true` or
+`false` (or `yes`/`no`, `1`/`0`) for every frame item; a missing or other value fails
+ingestion with a message that names the column. The check works under Poisson sampling too.
+Every cohort is checked against the same column, so it fits cohorts that all evaluated one
+draw; cohorts whose items were drawn separately cannot use it. It compares the run with the
+recorded draw, not the draw with chance: that the selection was random and made before any
+outcome was seen remains an assumption.
+
 ## Drawing a random pilot
 
-A pilot estimates what the full study will cost and roughly what its rates will be. Its
-means estimate those quantities without bias only if the pilot prompts are a random sample.
-The first prompts of each category are not one: identifiers are often assigned in an order
-that tracks length, difficulty or source.
+A pilot estimates what the full study will cost and roughly what its rates will be. It can
+do so only if its prompts are a random sample, weighted as they were drawn (see
+[Estimating from a pilot](#estimating-from-a-pilot)). The first prompts of each category are
+not a random sample: identifiers are often assigned in an order that tracks length,
+difficulty or source.
 
 `plan pilot` (experimental) draws a pilot at random within strata of a design manifest:
 
@@ -225,39 +253,100 @@ inspect-safety-stats plan pilot --manifest design.csv --per-stratum 5 --seed 202
 
 It draws `--per-stratum` prompts from each combination of the `--strata` columns
 (`task_id` by default; an empty value makes the whole manifest one stratum) by simple random
-sampling without replacement, and writes the whole manifest with three added columns:
+sampling without replacement, and writes the whole manifest with five added columns:
 
 | Column | Meaning |
 |---|---|
 | `pilot_stratum` | The stratum's values, joined by `/` |
 | `pilot_inclusion_probability` | Draws over stratum size, \(n_h/N_h\) |
 | `pilot_selected` | `True` for the prompts to run in the pilot |
+| `pilot_seed` | `--seed`, on every row |
+| `pilot_per_stratum` | `--per-stratum`, on every row |
 
 Each prompt's rank is a SHA-256 hash of the seed and its `prompt_id`, so the draw:
 
 - uses only the manifest and the seed, never an outcome;
 - does not depend on the order of the manifest's rows or on the platform;
-- is nested: a pilot drawn with a larger `--per-stratum` and the same seed contains the
-  smaller one, so a pilot can be extended without discarding the prompts already run.
+- is nested: a pilot drawn from the same manifest and strata with a larger `--per-stratum`
+  and the same seed contains the smaller one, so a pilot can be enlarged for planning
+  without discarding the prompts already run. An enlarged pilot certifies nothing; see
+  [What a pilot can show](#what-a-pilot-can-show).
 
-Record the seed with the pilot. The command refuses a stratum with fewer prompts than
-`--per-stratum`, a missing value in a strata column, strata values that would share a label
-once joined, a manifest that already has the added columns, and an `--output` that would
-overwrite the manifest. Values are written back as they appear in the manifest.
+The frame records the seed and the per-stratum count, so the frame alone repeats the draw,
+and a report whose design manifest is the frame covers them with the manifest's hash. The
+command refuses a stratum with fewer prompts than `--per-stratum`, a missing value in a
+strata column, strata values that would share a label once joined, a manifest that already
+has the added columns, and an `--output` that would overwrite the manifest. Values are
+written back as they appear in the manifest. The draw reads strata as text, but `analyze`
+reads the pilot frame with pandas' type inference, so the command also refuses a stratum
+label that pandas reads as missing (`N/A`, `None`, `NA`) and labels that it reads as one
+value (`1` and `01`, `true` and `True`): `analyze` would otherwise check the draw against
+strata it did not use.
+
+In Python, `draw_pilot(manifest, per_stratum=..., strata=[...], seed=...)` in
+`inspect_safety_stats.ingest.pilot` returns the same frame as a DataFrame. Read the manifest
+as the command does, with `pd.read_csv(path, dtype=str, keep_default_na=False)`: the draw
+hashes each `prompt_id` as written, and pandas' defaults would read an identifier such as
+`0001` as the number 1. `draw_pilot` refuses a `prompt_id` that is not text or is blank.
+
+### Estimating from a pilot
+
+Every stratum gives the same number of prompts, so a prompt in a small stratum is more
+likely to be drawn than one in a large stratum, and the pilot over-represents small strata.
+In the [HarmBench example](../examples/real_harmbench/design.csv), `--per-stratum 2` with
+the default `--strata task_id` draws two of the 100 copyright prompts and two of the 300
+others: copyright is half of the pilot and a quarter of the manifest. The pilot's plain
+mean, of failures or of answer length, is therefore biased for the manifest's whenever
+strata differ in size and in that quantity.
+
+Weight each pilot prompt by `1 / pilot_inclusion_probability`. Over the drawn prompts \(S\)
+of a manifest of \(N\), \(\frac1N\sum_{j\in S}y_j/\pi_j\), which scales each stratum's pilot
+mean by its share of the manifest, is unbiased for the manifest mean, and
+\(\sum_{j\in S}y_j/\pi_j\) for the manifest total, such as the tokens one rollout of every
+prompt would use. Analysing the pilot frame as a sampled design does the weighting and bounds
+the result.
 
 The pilot frame is the frame of a fixed-size sampled design, so the pilot's rates can be
-analysed as a sample of the whole manifest without editing any column:
+analysed as a sample of the whole manifest without editing any column. Name
+`pilot_selected` as the selection column, so that the analysis checks that the prompts run
+are the ones drawn and not only that their number per stratum is right. Declare the analysis
+exploratory: `analysis.intent` defaults to `confirmatory`, under which the pilot could pass a
+claim it cannot support (see [What a pilot can show](#what-a-pilot-can-show)):
 
 ```yaml
+analysis:
+  intent: exploratory
 design:
   type: sampled
   sampling: fixed_size
   stratum_column: pilot_stratum
   inclusion_probability_column: pilot_inclusion_probability
+  selection_column: pilot_selected
 ```
 
-In Python, `draw_pilot(manifest, per_stratum=..., strata=[...], seed=...)` in
-`inspect_safety_stats.ingest.pilot` returns the same frame as a DataFrame.
+### What a pilot can show
+
+Analyse a pilot with `analysis.intent: exploratory`. An exploratory analysis certifies
+nothing, and its descriptive status says what a confirmatory analysis of the same bounds would
+give. A pilot's interval holds for a draw whose size was fixed before the pilot ran, but a
+pilot exists to inform choices made after its outcomes are seen. Enlarging it after seeing
+them and analysing it again until a claim passes is the repeated peeking of
+[Statistical methods, section 6.1](statistical-methods.md#61-why-fixed-sample-bounds-cannot-be-repeatedly-peeked-at):
+each look at a size fixed in advance passes a false claim with probability at most
+\(\alpha\), but stopping at the first pass does so more often. In a simulation with KL/Chernoff
+bounds at a one-sided \(\alpha\) of 0.05, a frame of 2,000 items whose mean risk equals the
+claim's limit of 0.05 was drawn at 20, 40, ..., 600 items, nested as `plan pilot` nests its
+draws. Each size alone passed with probability at most 0.045, but stopping at the first size
+that passed did so with probability 0.068 (Monte Carlo standard error 0.003). An extension
+decided after the outcomes is therefore not a fixed-size confirmatory design, whatever the
+frame and the plan say.
+
+A confirmatory analysis uses fresh rollouts under a plan frozen before they ran: of the whole
+manifest as a fixed design, or of a new draw, with a new seed, whose size the frozen plan
+fixes. Fix that seed before drawing, as the plan fixes the size, and draw once: drawing with
+several seeds and keeping the draw whose prompts look easiest selects the sample. Do not
+enlarge the pilot's own draw for it: with the same seed, the larger sample would contain the
+pilot's prompts, whose outcomes already shaped the decision to run it and its size.
 
 ## Not yet supported
 

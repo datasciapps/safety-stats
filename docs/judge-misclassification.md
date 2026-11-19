@@ -188,8 +188,12 @@ The sampling frame is the package's own observation ledger, so calibration is a 
 over a completed analysis:
 
 1. run `analyze` once and take `observations.csv` from the report directory;
-2. split its classified rows by the `failure` column -- that is the judge verdict -- into a
-   judge-unsafe and a judge-safe stratum, **per cohort**;
+2. split the rows the judge classified by the `failure` column -- that is the judge verdict
+   -- into a judge-unsafe and a judge-safe stratum, **per cohort**. Leave out the rows a plan
+   policy classified (see [Rollouts a policy classifies](#rollouts-a-policy-classifies)):
+   those with an `error`, `content_delivered: false`, `token_limit_unscored: true`, or no
+   `score_raw`. They are in neither judge stratum, and a label or strata row on one is left
+   out of the calibration with the warning `JUDGE_VALIDATION_POLICY_CLASSIFIED`;
 3. draw a simple random sample within each stratum and have a human adjudicate it;
 4. write `observation_id,human_label` with labels `safe` or `unsafe`; and
 5. re-run `analyze` with `mode: validated` pointed at that file.
@@ -287,8 +291,9 @@ Each *endpoint* of the corrected interval uses the base interval's endpoint plus
 calibration endpoints, so a one-sided claim spends the base endpoint's alpha plus half the
 calibration budget; the interval records this as its directional coverage. Beside the exact box
 of a weighted-mean row, the report shows a `judge_corrected_validated_delta` reference. Tail
-measures have none, since the reference propagates the weighted mean's variance. It is a
-delta-method (Wald) interval that
+measures have none, since the reference propagates the weighted mean's variance, and nor does a
+row holding rollouts a plan policy classified ([Rollouts a policy
+classifies](#rollouts-a-policy-classifies)). It is a delta-method (Wald) interval that
 propagates the calibration variance through \(R^*=R\rho_1+(1-R)\rho_0\) with Agresti--Coull
 stabilised stratum proportions and the rollout-independence binomial variance of the judge-reported
 mean. It is asymptotic, carries no finite-sample guarantee, is labelled `diagnostic`, and never
@@ -304,11 +309,15 @@ interval that under-covers where failures are rare is not a better interval for 
 ### Lang--Reiczigel limits
 
 With `sampling: simple_random` the labels also estimate the judge's sensitivity \(Se\) and
-specificity \(Sp\) by true class, and a whole-cohort `weighted_mean` row gains a third interval,
-`judge_corrected_validated_lang_reiczigel`. It holds the confidence limits of Lang and Reiczigel
-(2014) for prevalence adjusted for estimated sensitivity and specificity. With \(z\) the normal
-quantile at \(1-\alpha/2\), the judge-reported rate \(q\) over \(n\) rollouts and the two
-truth-class counts are adjusted in the manner of Agresti and Coull,
+specificity \(Sp\) by true class, and every `weighted_mean` row the calibration corrects gains a
+third interval, `judge_corrected_validated_lang_reiczigel`. That is each group's row in each
+cohort, from the cohort's labels, or with `groups` each listed group's row, from that group's
+labels. Tail measures, hierarchy nodes and rows holding rollouts a plan policy classified
+([Rollouts a policy classifies](#rollouts-a-policy-classifies)) get none. The interval holds the
+confidence limits of Lang and Reiczigel (2014) for prevalence adjusted for estimated sensitivity
+and specificity. With \(z\) the normal quantile at \(1-\alpha/2\), the judge-reported rate
+\(q\) over \(n\) rollouts and the two truth-class counts are adjusted in the manner of Agresti
+and Coull,
 
 \[
 q'=\frac{nq+z^2/2}{n+z^2},\qquad Se'=\frac{x_{Se}+1}{n_{Se}+2},\qquad
@@ -321,8 +330,8 @@ The Rogan--Gladen estimate \(P'=(q'+Sp'-1)/(Se'+Sp'-1)\) is then shifted by a bi
 clipped to \([0,1]\). The implementation reproduces the five worked examples of the paper. The
 judge-reported rate is the row's design-weighted mean, and \(n\) is its effective size
 \((\sum_j w_j)^2/\sum_j(w_j^2/n_j)\) under rollout independence. That is the classified count
-when every rollout weighs the same. The interval spends the cohort's share of the judge family
-alpha, as the delta reference does.
+when every rollout weighs the same. The interval spends its calibration's share of the judge
+family alpha, as the delta reference does.
 
 The interval is `diagnostic`. Like the delta reference, it never decides a claim.
 `research/judge_correction_lang_reiczigel.py` compares it with the exact box at nominal 95% over
@@ -340,21 +349,38 @@ The interval is `diagnostic`. Like the delta reference, it never decides a claim
 
 The widths compare the box from judge-stratum labels with the limits from a simple random sample
 of the same size. Where the box often refuses, its widths come only from the samples it
-accepted. The limits are not uniformly narrower. Where failures are rare and labels few, the regime most safety claims sit in, the
-limits miss their level, and the miss falls partly on the upper side, where it would let an
-unsafe model pass. They also refuse less often, since they need one
-truly unsafe label where the box needs both judge strata labelled and an informative
-calibration. When the judge reports far fewer failures than its estimated false-positive rate
-implies, the whole interval falls below zero and is clipped to the single point 0. The interval
-then warns that the data contradict the estimated accuracies.
+accepted. The limits are not uniformly narrower. Where failures are rare and labels few, the
+regime most safety claims sit in, the limits miss their level, and the miss falls partly on the
+upper side, where it would let an unsafe model pass.
+
+Neither method refuses less often everywhere. The box refuses whenever the confidence bounds on
+its two judge strata fail to separate, which with few labels at low prevalence is almost always.
+The limits need only point estimates of \(Se\) and \(Sp\) that sum to more than 1, but they need
+a labelled rollout of each true class, and where failures are rare a small simple random sample
+often holds no truly unsafe one. At 0.5% prevalence with 30 labels the box refuses in every
+sample and the limits in 86--88%, nearly all for want of a truly unsafe label. For the better
+judge at 2% prevalence with 100 labels it is the other way round: the box refuses in 27 of 2,000
+samples and the limits in 350.
+
+These counts compare labelling designs: the box from labels drawn within judge strata, the limits
+from a simple random sample. In an analysis the limits come with the box computed from the same
+simple random labels, and only where that box is computed: where its calibration is uninformative
+(`JUDGE_CALIBRATION_UNINFORMATIVE`), a row gets neither interval, and no
+`JUDGE_LANG_REICZIGEL_UNAVAILABLE` is emitted. From a simple random sample the box refuses far
+more often (the simulation's `box_srs` column), so the limits never add a corrected interval
+where the box has none.
+
+When the judge reports far fewer failures than its estimated false-positive rate implies, the
+whole interval falls below zero and is clipped to the single point 0. The interval then warns
+that the data contradict the estimated accuracies.
 
 Labels drawn within judge strata (`simple_random_within_judge_stratum`) estimate \(\rho_1\) and
 \(\rho_0\), not \(Se\) and \(Sp\), and get no such interval. In that parameterisation the identity
 \(R^*=R\rho_1+(1-R)\rho_0\) is affine, so the Lang--Reiczigel bias term vanishes. What remains
 is an Agresti--Coull-adjusted Wald interval, which is what the delta reference already is.
-Stratified labels (`stratified_within_judge_stratum`, below) get no such interval either. Where
-the limits cannot be computed, for example when no labelled rollout is truly unsafe, the analysis
-emits `JUDGE_LANG_REICZIGEL_UNAVAILABLE` with the reason.
+Stratified labels (`stratified_within_judge_stratum`, below) get no such interval either. For a
+row whose box is computed, where the limits cannot be, for example when no labelled rollout is
+truly unsafe, the analysis emits `JUDGE_LANG_REICZIGEL_UNAVAILABLE` with the reason.
 
 ### Stratified labels (experimental)
 
@@ -375,8 +401,9 @@ inputs:
     family: judge_error
 ```
 
-`validation_strata` holds `observation_id,stratum` for **every classified observation** of
-the analysed cohorts, labelled or not, since each stratum's size is part of the design. The
+`validation_strata` holds `observation_id,stratum` for **every observation the judge
+classified** in the analysed cohorts, labelled or not, since each stratum's size is part of
+the design. A row for an observation a plan policy classified is left out, as its label is. The
 strata may cut across the judge's verdicts. The analysis nests each declared stratum within
 the cohort's two judge strata, so a *fine stratum* is one declared stratum within one cohort
 and one judge verdict. A file that leaves out a classified observation
@@ -484,6 +511,74 @@ Mapping the whole completion through \(\rho_1\) would treat unclassified rollout
 labels described them. With 1,000 of 3,200 rollouts unclassified, that once gave a corrected
 upper bound of 0.064 where the unclassified rollouts alone allow 0.319
 ([issue #97](https://github.com/aduncan001/safety_stats/issues/97)).
+
+### Rollouts a policy classifies
+
+Some rollouts are classified by a plan policy rather than by the judge: a target-side policy
+block counted safe under `errors: end_to_end`, a sample error or a missing score counted as a
+failure under `count_as_failure`, and content-filter stops or unscored truncated answers under
+`content_filter_stops` or `token_limit`. The policy defines the estimand, so its classification
+is the truth, and \(\rho\) does not describe it. Such rollouts are in neither judge stratum,
+so the labels say nothing about them. Mapping such a rollout through \(\rho\) moves
+both bounds the wrong way: one counted as a failure is credited with \(\rho_1<1\) of a failure
+at the upper bound, and one counted safe with \(\rho_0>0\) of a failure at the lower. The
+row's bounds do not carry the share of such rollouts in the population behind them, so it
+cannot be taken back out exactly.
+
+A corrected row that holds any such rollout, in either mode and on either arm of a comparison,
+is therefore corrected as if the judge made no error in the direction that would move the bound
+the wrong way: \(\rho_1\) may reach 1 at the upper bound and \(\rho_0\) fall to 0 at the lower,
+with no unclassified share taken out:
+
+\[
+R^*\in\bigl[L\,\underline{\rho}_1,\; U+(1-U)\,\overline{\rho}_0\bigr].
+\]
+
+This holds whatever the policy's and the unclassified shares. If \(J_1\), \(J_0\), \(P\) and
+\(V\) are the row's weights on judge-unsafe, judge-safe, policy failure and unclassified
+rollouts, true risk is \(J_1\rho_1+J_0\rho_0+P+Vu\). The base bounds cover
+\(L\le J_1+P\) and \(J_1+P+V\le U\), and \(J_0\le1-U\) then, so true risk lies between
+\(\underline{\rho}_1(J_1+P)\ge\underline{\rho}_1L\) and
+\(J_1+P+V+\overline{\rho}_0J_0\le U+(1-U)\overline{\rho}_0\). The step holds prompt by prompt,
+so it holds for the tail measures too. A row holds such a rollout when any prompt it lists does,
+a prompt of weight zero included, since the maximum and the top-k mean ignore weights and such
+a prompt can set the row's bounds. The correction states which rollouts it covers in the
+interval's assumptions, and an INFO diagnostic, `JUDGE_CORRECTION_POLICY_CLASSIFIED`, names the
+groups per cohort. A validated correction of such a row still certifies. Its asymptotic
+references, `judge_corrected_validated_delta` and the Lang--Reiczigel limits, would read the
+policy's rollouts as judge verdicts, so they are not reported for that row.
+
+**A row whose sample holds none.** The widening is triggered by the sample. A row whose sample
+holds no rollout a plan policy classified is corrected over the box as given, which assumes that
+the population its rollouts are drawn from holds none either. When the policy classifies rare
+rollouts, such as an occasional missing score counted as a failure, a run can miss them, and the
+correction then reads the population's policy failures through \(\rho_1<1\) at the upper bound,
+so the upper bound can miss more often than its nominal rate. The corrected interval states this
+assumption when the plan sets a policy that classifies rollouts (`missing` or `errors` set to
+`count_as_failure`, or `token_limit` or `content_filter_stops` set to `safe` or `failure`), and
+in any cohort whose sample holds such a rollout in some row. A plan at the defaults whose sample
+holds none, where only an unseen policy block could be missed, does not repeat it on every row.
+The correction does not yet bound the policy's share in the population, which would correct such
+a row without this assumption.
+
+In a seeded simulation of three prompts of 300 rollouts at a point box on the judge's true
+accuracy, a judge that over-flags (\(\rho_1=0.5\)) with up to 40% policy failures, and one that
+misses failures (\(\rho_0=0.3\)) with up to 40% policy-safe rollouts, the previous correction
+missed true risk in 95% to 100% of runs on the side tested, for all four measures, against a
+nominal 5%. The correction above missed in none
+(`tests/unit/test_judge_policy_correction.py`).
+
+The [panel-derived correction](#deriving-a-panels-accuracy-box) has the same problem and the same
+remedy. Its Rogan--Gladen inversion takes a false alarm off every rollout, a policy-safe one
+included, and scales every flagged rollout up for missed failures, a policy failure included. On
+a row that holds such a rollout, sensitivity and specificity may therefore reach 1: the upper
+bound is the inversion at specificity 1, \(U/\underline{Se}\), and the lower bound the inversion
+at sensitivity 1, \((L-\overline{FPR})/(1-\overline{FPR})\), each clipped to \([0,1]\). At
+specificity 1 a policy-safe rollout maps to 0 and a policy failure to at least 1; at sensitivity
+1 a policy failure maps to 1 and a policy-safe rollout to at most 0. So both hold whatever the
+policy's share, prompt by prompt. In the same kind of simulation, with a panel of specificity 0.8
+and up to 60% policy-safe rollouts, and one of sensitivity 0.6 with up to 40% policy failures,
+inverting over the box itself missed in 93% to 100% of runs, and the widened box in none.
 
 ### Comparisons
 
@@ -715,7 +810,11 @@ sensitivity upward, so the plan validator refuses `noisy_valid_test` under
 very rare failures that may require many labels, in which case the honest outcome is INCONCLUSIVE.
 The sensitivity and false-positive rate are pooled over the cohort's rollouts with equal weight, so
 the test certifies only the rows the corrected interval does ([What it certifies](#what-it-certifies)).
-Elsewhere the claim is INCONCLUSIVE, with the reason.
+Elsewhere the claim is INCONCLUSIVE, with the reason. So is a claim whose row holds a rollout a
+plan policy classified ([Rollouts a policy classifies](#rollouts-a-policy-classifies)): the test
+inverts the judge-reported bounds as if every classified rollout carried a judge verdict, which
+moves them the wrong way for such a rollout. A `corrected_interval` claim on the same row is
+decided on the correction, which covers it.
 The construction follows the structure of Feng et al.'s "Noisy but Valid" framework (a calibration
 set for the judge's error rates and a variance-corrected critical threshold on the judge-labelled
 set, with finite-sample validity); it is realised here with the package's exact Clopper--Pearson
@@ -928,6 +1027,14 @@ dependent judges cannot substitute for calibration. Because declared boxes are a
 interval is `diagnostic` and can never move a claim; the certifying route for a panel remains a
 `validated` calibration of the composite's own verdict strata.
 
+A row that holds rollouts a plan policy classified is inverted over a wider box, with
+sensitivity and specificity free to reach 1
+([Rollouts a policy classifies](#rollouts-a-policy-classifies)).
+
+The box describes the composite's verdict. A primary mapping that does not read it as it is,
+true as failure and false as safe, defines another outcome, which the box does not describe, so
+no interval is added, and the warning `PANEL_CORRECTION_VERDICT_UNMATCHED` says so.
+
 A declaration can be scoped with `accuracy.groups` when a judge's ranges are known for some
 benchmarks only. The composite's box then holds only in the groups that every member's
 declaration covers, and only those groups' rows get the derived interval. If the members
@@ -1079,12 +1186,13 @@ sensitivity, which a high flip rate puts in doubt.
 `inputs.judge_flip` reads the rescored verdicts and reports a `JUDGE_FLIP_RATE` diagnostic: the
 share of rescored completions that flip under at least one wrapper, and under each wrapper,
 each with an exact Clopper-Pearson interval (see
-[the plan reference](plan-reference.md#judge-flip-rate-experimental)). With `sampling: all`
-the interval is about the run's judge-positive completions. With `simple_random` it is about
-the same population, through the sample. Above the declared `warn_above` the diagnostic is a
-warning. The package does not rescore: [`examples/judge_flip`](../examples/judge_flip/README.md)
-has an Inspect task that rescores a run's judge-positive completions under four wrappers and
-writes the manifest, offline with simulated models or live with the run's judge.
+[the plan reference](plan-reference.md#judge-flip-rate-experimental)). Above the declared
+`warn_above` the diagnostic is a warning. The package does not rescore:
+[`examples/judge_flip`](../examples/judge_flip/README.md) has an Inspect task that rescores a
+run's judge-positive completions under four wrappers and writes the manifest, offline with
+simulated models or live with the run's judge. Failures that a plan policy classified, such as
+a sample error counted as a failure, are not judge-positive: no judge scored them, so the rate
+leaves them out and they must not be rescored.
 
 What it assumes:
 
@@ -1095,6 +1203,26 @@ What it assumes:
   unsafe, and some of those are false positives. A flip of a false positive is a correction.
   With a precise judge the difference is small. With an imprecise one the rate overstates the
   judge's misses.
+- **The interval treats the rescored completions as independent.** What it is about depends
+  on `sampling`.
+  - With `simple_random` the rescored completions are a simple random sample of the run's
+    judge-positive completions, and the interval is for the share of all of them that flip.
+    The sample is drawn completion by completion, so that holds however flips cluster by
+    prompt. Drawing without replacement only makes the count less variable than the binomial
+    model assumes.
+  - With `sampling: all` every judge-positive completion is rescored, so the run's share is
+    known: it is the estimate. The interval is then descriptive. It would be a confidence
+    interval for the flip rate of the process that produced the completions only if they
+    flipped independently. Completions of one prompt share their content and tend to flip
+    together, and then the interval is too narrow for that rate. In a simulation of 35
+    completions from five prompts, with an intra-prompt correlation of 0.3 between flips, the
+    0.95 interval covered the process rate in 78% of runs
+    (`python research/judge_flip_clustering.py`).
+
+  The diagnostic counts the prompts the rescored completions come from in `details.prompts`.
+  The fewer they are against the completions, the more the clustering matters. The same
+  caution applies to reading a `simple_random` interval as a statement about prompts the run
+  did not include.
 
 The flip rate is a screen, not a correction. It never changes a claim, an interval or the
 decision. It does not estimate the judge's sensitivity on the run's own outputs, because the

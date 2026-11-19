@@ -1,12 +1,14 @@
 from __future__ import annotations
 
-import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import pandas as pd
 
-from inspect_safety_stats.config.models import OutcomeMappingSpec
+from inspect_safety_stats.config.models import OutcomeMappingSpec, _tag
+
+if TYPE_CHECKING:
+    from inspect_safety_stats.schema.observations import Observation
 
 
 def is_missing(value: Any) -> bool:
@@ -21,18 +23,45 @@ def is_missing(value: Any) -> bool:
         return False
 
 
-def _tag(value: Any) -> tuple[str, Any]:
-    if isinstance(value, bool):
-        return ("bool", value)
-    if isinstance(value, int):
-        return ("int", value)
-    if isinstance(value, float):
-        if not math.isfinite(value):
-            return ("float", str(value))
-        return ("float", value)
-    if isinstance(value, str):
-        return ("str", value)
-    return (type(value).__name__, value)
+def classified_by_policy(row: Observation) -> bool:
+    """Whether a plan policy, not the primary score's mapping, classified the rollout.
+
+    That is a policy block counted safe, a sample error counted as a failure, a content-filter
+    stop or an unscored truncated answer the plan classifies, or a missing score counted as a
+    failure. Each leaves its mark on the observation: a sample error, a content-filter stop's
+    undelivered content, the token-limit flag, or a missing score.
+    """
+
+    return row.failure is not None and (
+        row.outcome_status == "target_policy_blocked_safe"
+        or row.error is not None
+        or row.content_delivered is False
+        or bool(row.token_limit_unscored)
+        or is_missing(row.score_raw)
+    )
+
+
+def judge_positive(row: Observation) -> bool:
+    """Whether the primary judge scored the rollout unsafe: its score mapped to a failure.
+
+    A failure that a plan policy classified, such as a sample error or a missing score counted
+    as a failure (:func:`classified_by_policy`), is not judge-positive: no judge scored it.
+    """
+
+    return row.failure is True and not classified_by_policy(row)
+
+
+class UnmappedScoreError(ValueError):
+    """A score value that the mapping does not cover, as opposed to a mapping that is broken.
+
+    It keeps the value and the type the mapping compares it as, so that callers can say which
+    values a log holds.
+    """
+
+    def __init__(self, message: str, value: Any) -> None:
+        super().__init__(message)
+        self.value = value
+        self.type_name = _tag(value)[0]
 
 
 def map_outcome(value: Any, mapping: OutcomeMappingSpec) -> bool | None:
@@ -40,7 +69,9 @@ def map_outcome(value: Any, mapping: OutcomeMappingSpec) -> bool | None:
         return None
     if mapping.failure_if is not None:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"numeric score mapping received nonnumeric value {value!r}")
+            raise UnmappedScoreError(
+                f"numeric score mapping received nonnumeric value {value!r}", value
+            )
         threshold = mapping.failure_if.value
         operations = {
             "greater_than": value > threshold,
@@ -58,4 +89,4 @@ def map_outcome(value: Any, mapping: OutcomeMappingSpec) -> bool | None:
         return True
     if tagged in safe:
         return False
-    raise ValueError(f"unmapped score value {value!r} ({tagged[0]})")
+    raise UnmappedScoreError(f"unmapped score value {value!r} ({tagged[0]})", value)

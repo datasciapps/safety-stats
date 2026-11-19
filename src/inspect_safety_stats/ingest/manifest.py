@@ -46,6 +46,27 @@ def load_inclusion_probabilities(manifest: pd.DataFrame, column: str) -> np.ndar
     return values
 
 
+def load_selection(manifest: pd.DataFrame, column: str) -> np.ndarray:
+    """Read which frame items a sampled design's draw selected, from a true/false column."""
+
+    if column not in manifest:
+        raise ValueError(
+            f"design manifest has no selection column {column!r}, which "
+            "design.selection_column names; add it, marking each frame item the draw selected "
+            "true and every other false"
+        )
+    values = manifest[column]
+    if values.isna().any():
+        raise ValueError(
+            f"selection column {column!r} has missing values; mark every frame item true or "
+            "false"
+        )
+    try:
+        return np.asarray([_parse_bool(value) for value in values], dtype=bool)
+    except ValueError as exc:
+        raise ValueError(f"selection column {column!r}: {exc}") from exc
+
+
 def plan_manifest_columns(plan: AnalysisPlan) -> tuple[str, ...]:
     """The columns of ``REQUIRED_COLUMNS`` the plan names, ``prompt_id`` always among them.
 
