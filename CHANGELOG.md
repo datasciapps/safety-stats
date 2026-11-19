@@ -22,6 +22,17 @@ described in their pull requests.
   silently held no prompt to zero tolerance. It now stops with an error that names the column.
   The default field `zero_tolerance` stays optional.
 
+- **`analyze` reports a direct-mean hierarchy it cannot calibrate instead of crashing.** With
+  `outputs.direct_mean_intervals` set to `hierarchy_nodes: true` and `hierarchy_calibration:
+  frontier_sidak`, a hierarchy node of zero weight is left out of the nodes, so its level no
+  longer partitions the group, and `analyze` stopped with "ValueError: hierarchy level ... does
+  not partition the group" and wrote no report. It now writes the report with a new error,
+  `DIRECT_MEAN_CALIBRATION_INVALID`, as comparisons report the same condition with
+  `COMPARISON_CALIBRATION_INVALID`: integrity is invalid, so no claim can pass, no direct-mean
+  interval of the family is calibrated, group rows keep only the propagated prompt envelope and
+  hierarchy-node rows have no interval. Giving every node a positive weight, or
+  `hierarchy_calibration: flat_bonferroni`, avoids it.
+
 ### Added
 
 - **A fixed-design template for prompt variants, and the profile that coupled wordings need.**
