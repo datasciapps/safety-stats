@@ -96,6 +96,19 @@ For every selected cohort and group, the compiler:
    conservative singleton frontiers, and treats all remaining cohorts, groups, and levels as
    potentially dependent.
 
+The frontiers are those of the plan, not of the rollouts that arrived. In a fixed design, a cohort
+that has no rows of some prompt, because it matches no evaluation (`COHORT_EMPTY`) or misses the
+prompt (`PROMPT_MISSING`), gets no interval for the targets that hold that prompt: every interval
+needs a complete attempted-rollout ledger. Those targets keep their places and their alpha in
+their frontiers all the same, with the block supports a complete ledger would give them. Under
+the `rollout` profile each has blocks of its own. Under a profile that blocks only by manifest
+columns, `prompt_id`, `question_id` or `task_id`, the manifest rows of its prompts name its
+blocks. Every other cohort and group is then calibrated as with a complete ledger. Under any other
+profile, such as `[run_key]` or `[repeat]`, the blocks depend on rollouts that are not there, so
+the frontier is split into singleton frontiers as if its siblings crossed blocks. That spends the
+most alpha: the other intervals under such a profile can be wider than a complete ledger would
+make them, never narrower. Comparisons are compiled the same way, with both arms' ledgers.
+
 An alias is important when a level has one node. In the HarmBench harmful-behavior group, the group
 root and the sole harmful-compliance task are exactly the same weighted statistic. Reporting both
 is useful for navigation, but charging alpha twice would not add a coverage guarantee. They share
