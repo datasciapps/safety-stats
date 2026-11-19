@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
+from inspect_safety_stats.registry import SourceKind
 from tests.diagnostic_codes.harness import BASE_RUN, Case, Inputs, Outcome, Run, analysis, rollout
 
 FAMILY = {"purpose": "simultaneous_intervals", "method": "bonferroni", "alpha": 0.05}
@@ -338,11 +339,16 @@ def _newcombe_withheld(triggered: Outcome, control: Outcome) -> None:
     assert (row.lower, row.upper) == (kept.lower, kept.upper)
 
 
+# The kind of input, as inspect_safety_stats.registry.SOURCE_KINDS names them, that these
+# cases' triggers break. A case whose trigger breaks another kind names it as its source.
+SOURCE: SourceKind = "analysis"
+
 CASES = [
     Case(
         # Nothing of task t2 was drawn into the sample.
         code="HIERARCHY_NODE_UNSAMPLED",
         shows="withheld",
+        source="manifest",
         trigger=analysis(_sampled(p3_drawn=False, nodes=True)),
         control=analysis(_sampled(p3_drawn=True, nodes=True)),
         effect=_node_unsampled,

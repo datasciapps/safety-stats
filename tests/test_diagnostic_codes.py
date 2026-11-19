@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 import tests.diagnostic_codes
-from inspect_safety_stats.registry import CODES
+from inspect_safety_stats.registry import CODES, SourceKind
 from tests.diagnostic_codes.harness import Case
 
 # Every module of tests/diagnostic_codes whose name ends in "_cases".
@@ -25,16 +25,20 @@ MODULES = tuple(
 )
 
 
-def _cases() -> dict[str, Case]:
+def _cases() -> tuple[dict[str, Case], dict[str, SourceKind]]:
     cases: dict[str, Case] = {}
+    sources: dict[str, SourceKind] = {}
     for module in MODULES:
         for case in module.CASES:
             assert case.code not in cases, f"{case.code} has two cases"
+            assert case.source != module.SOURCE, f"{case.code} names its module's source"
             cases[case.code] = case
-    return cases
+            sources[case.code] = module.SOURCE if case.source is None else case.source
+    return cases, sources
 
 
-CASES = _cases()
+# Each code's case, and the kind of input the case's trigger breaks.
+CASES, SOURCES = _cases()
 
 # Codes whose trigger emits two diagnostics with one scope. A generative report lists its
 # diagnostics in the order its stages emit them, and its trigger repeats one sample many times.
@@ -76,6 +80,11 @@ def test_a_case_triggers_the_code_and_shows_its_source_and_effect(
     # agree, so an entry that reclassifies a code without changing what it does fails here.
     assert case.shows == entry.effect, (
         f"the registry gives {code} the effect {entry.effect!r}; its case shows {case.shows!r}"
+    )
+    # Likewise the kind of input the trigger breaks, which the case's module or the case says.
+    assert SOURCES[code] == entry.source, (
+        f"the registry gives {code} the source {entry.source!r}; its case breaks "
+        f"{SOURCES[code]!r}"
     )
     if case.shows == "invalid":
         assert (triggered.status, control.status != "invalid") == ("invalid", True)
