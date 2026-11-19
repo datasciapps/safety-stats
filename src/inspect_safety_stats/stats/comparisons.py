@@ -8,8 +8,14 @@ from typing import Literal
 import numpy as np
 from numpy.typing import ArrayLike
 
-from inspect_safety_stats.config.methods import DEFAULT_STATS_FUNCTION_METHOD, ComparisonMethod
-from inspect_safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES, DirectMeanBounds
+from inspect_safety_stats.config.methods import (
+    DEFAULT_STATS_FUNCTION_METHOD,
+    ComparisonMethod,
+)
+from inspect_safety_stats.stats.direct_mean import (
+    COMPARISON_ENGINES,
+    DirectMeanBounds,
+)
 
 ComparisonIndependenceUnit = Literal["rollout", "prompt_cluster"]
 
@@ -113,7 +119,12 @@ def _arrays(
 
 
 def _direct_function(method: ComparisonMethod) -> Callable[..., DirectMeanBounds]:
-    return DIRECT_MEAN_ENGINES[method].counts
+    engine = COMPARISON_ENGINES.get(method)
+    if engine is None:
+        raise ValueError(
+            f"unsupported comparison method {method!r}; use one of {sorted(COMPARISON_ENGINES)}"
+        )
+    return engine.counts
 
 
 def _variance_centers(method: ComparisonMethod, centers: np.ndarray) -> dict[str, np.ndarray]:

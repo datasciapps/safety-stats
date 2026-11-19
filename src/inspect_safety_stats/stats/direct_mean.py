@@ -9,7 +9,11 @@ from typing import Final, Literal
 import numpy as np
 from numpy.typing import ArrayLike
 
-from inspect_safety_stats.config.methods import DirectMeanMethod
+from inspect_safety_stats.config.methods import (
+    COMPARISON_METHODS,
+    ComparisonMethod,
+    DirectMeanMethod,
+)
 
 from .risk import worst_of_k_shares
 
@@ -1020,3 +1024,8 @@ DIRECT_MEAN_ENGINES: Final[Mapping[DirectMeanMethod, DirectMeanEngine]] = Mappin
     }
 )
 """The one dispatch table: the functions of each method in ``config.methods``."""
+
+COMPARISON_ENGINES: Final[Mapping[ComparisonMethod, DirectMeanEngine]] = MappingProxyType(
+    {method: DIRECT_MEAN_ENGINES[method] for method in COMPARISON_METHODS}
+)
+"""The engines of the comparison methods only: comparisons refuse ``weighted_betting``."""
