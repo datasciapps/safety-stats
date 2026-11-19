@@ -7,6 +7,13 @@ described in their pull requests.
 
 ### Fixed
 
+- **`inspect-safety-stats schema report` accepts the report.json files the package writes.**
+  The schema left out `summary`, which every `report.json` now holds, while allowing no field
+  it does not list, so every report failed validation against it with "'summary' was
+  unexpected". It now lists `summary` with its fields, as optional and read-only: a report
+  written before it validates, and reading a report back recomputes it.
+  `SafetyReport.model_json_schema()` gives the same schema.
+
 - **The summary's headline gives the true risk where a judge correction applies (changes
   `report.json`, `index.json`, `index.md` and `analyze`'s output for such plans).** A
   headline's bounds are those of the rate the judge reports, and the headline gave nothing

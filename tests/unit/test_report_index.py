@@ -9,7 +9,10 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+from jsonschema import Draft202012Validator
+from typer.testing import CliRunner
 
+from inspect_safety_stats.cli import app
 from inspect_safety_stats.report.index import (
     AGENT_GUIDE_URL,
     DIAGNOSTICS_URL,
@@ -94,10 +97,10 @@ def test_every_pointer_in_the_index_resolves_in_report_json(tmp_path: Path) -> N
                 _resolve(report, occurrence["item"])
 
 
-def _judged_report() -> SafetyReport:
+def _judged_report(*, include_decisions: bool = False) -> SafetyReport:
     """The example with a validated correction of its headline rate and comparison."""
 
-    report = _report()
+    report = _report(include_decisions=include_decisions)
     report.presentation.judge_calibration = JudgeCalibrationPresentation(mode="validated")
     for row in (report.group_risks[2], report.comparisons[1]):
         row.intervals.append(
@@ -137,6 +140,30 @@ def test_a_judge_corrected_headline_gives_the_true_risk_in_both_files(tmp_path: 
             "validated",
         )
         assert row["True risk pointer"] == f"`{corrected['item']}`"
+
+
+@pytest.mark.parametrize("include_decisions", [False, True])
+def test_a_written_report_follows_the_report_schema(
+    tmp_path: Path, include_decisions: bool
+) -> None:
+    """The CLI's schema accepts every part of the summary: decisions, claims, corrections."""
+
+    result = CliRunner().invoke(app, ["schema", "report"])
+    assert result.exit_code == 0, result.output
+    directory = _judged_report(include_decisions=include_decisions).write(tmp_path / "report")
+    payload = json.loads((directory / "report.json").read_text(encoding="utf-8"))
+
+    assert ("claims" in payload["summary"]) is include_decisions
+    assert all("judge_corrected" in item for item in payload["summary"]["headline"])
+    errors = [
+        f"{error.json_path}: {error.message}"
+        for error in Draft202012Validator(json.loads(result.stdout)).iter_errors(payload)
+    ]
+    assert errors == []
+    # The schema says summary is derived: optional, and read-only.
+    schema = json.loads(result.stdout)
+    assert "summary" not in schema["required"]
+    assert schema["properties"]["summary"]["readOnly"] is True
 
 
 def test_an_index_without_a_judge_correction_has_no_true_risk_columns() -> None:
