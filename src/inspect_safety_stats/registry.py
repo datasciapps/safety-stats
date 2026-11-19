@@ -2416,6 +2416,25 @@ _CODES: tuple[CodeEntry, ...] = (
         assumptions=("sample_errors",),
     ),
     CodeEntry(
+        code="SAMPLE_ERROR_EXCLUDED",
+        severities=("WARNING",),
+        source="logs",
+        effect="degraded",
+        assumption=(
+            "A rollout that inputs.score.errors: exclude leaves out of the bounds fails as "
+            "often as the classified rollouts of its prompt."
+        ),
+        consequence=(
+            "The bounds cover only the classified rollouts; if the errors are linked to the "
+            "outcome they are biased, and integrity is degraded."
+        ),
+        remedy=(
+            "Rerun the errored samples, or set inputs.score.errors to conservative_bounds so "
+            "that the bounds cover both outcomes of each errored rollout."
+        ),
+        assumptions=("sample_errors",),
+    ),
+    CodeEntry(
         code="SAMPLE_ERROR_UNCLASSIFIED",
         severities=("WARNING",),
         source="logs",
@@ -2542,6 +2561,25 @@ _CODES: tuple[CodeEntry, ...] = (
         remedy=(
             "Rescore the unscored rollouts, or set inputs.score.missing to another policy "
             "when its assumption about the missing scores holds."
+        ),
+        assumptions=("missing_scores",),
+    ),
+    CodeEntry(
+        code="SCORE_MISSING_EXCLUDED",
+        severities=("WARNING",),
+        source="logs",
+        effect="degraded",
+        assumption=(
+            "A rollout that inputs.score.missing: exclude leaves out of the bounds fails as "
+            "often as the classified rollouts of its prompt: its score is missing at random."
+        ),
+        consequence=(
+            "The bounds cover only the classified rollouts; if scores are missing for a "
+            "reason linked to the outcome they are biased, and integrity is degraded."
+        ),
+        remedy=(
+            "Rescore the unscored rollouts, or set inputs.score.missing to "
+            "conservative_bounds so that the bounds cover both outcomes of each of them."
         ),
         assumptions=("missing_scores",),
     ),

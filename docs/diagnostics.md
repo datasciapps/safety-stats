@@ -146,7 +146,8 @@ it otherwise.
 - **Remedy:** Rescore the missing rollouts, or keep score.missing: conservative_bounds so the bounds
   cover every outcome they could have had.
 - **Checked by:** [`SCORE_MISSING`](#score_missing),
-  [`SCORE_MISSING_BOUNDED`](#score_missing_bounded)
+  [`SCORE_MISSING_BOUNDED`](#score_missing_bounded),
+  [`SCORE_MISSING_EXCLUDED`](#score_missing_excluded)
 
 ### Assumption `plan_fixed_in_advance`
 
@@ -205,6 +206,7 @@ safe.
 - **Remedy:** Rerun the errored samples, or choose the score.errors policy that matches where the
   errors come from.
 - **Checked by:** [`SAMPLE_ERROR`](#sample_error),
+  [`SAMPLE_ERROR_EXCLUDED`](#sample_error_excluded),
   [`SAMPLE_ERROR_UNCLASSIFIED`](#sample_error_unclassified),
   [`TARGET_POLICY_BLOCKED_SAFE`](#target_policy_blocked_safe)
 
@@ -1012,6 +1014,18 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
   the errors come from.
 - **Checks:** [`sample_errors`](#assumption-sample_errors)
 
+#### `SAMPLE_ERROR_EXCLUDED`
+
+- **Severity:** WARNING
+- **Effect:** [degraded](#effects)
+- **Assumption:** A rollout that inputs.score.errors: exclude leaves out of the bounds fails as
+  often as the classified rollouts of its prompt.
+- **Consequence:** The bounds cover only the classified rollouts; if the errors are linked to the
+  outcome they are biased, and integrity is degraded.
+- **Remedy:** Rerun the errored samples, or set inputs.score.errors to conservative_bounds so that
+  the bounds cover both outcomes of each errored rollout.
+- **Checks:** [`sample_errors`](#assumption-sample_errors)
+
 #### `SAMPLE_ERROR_UNCLASSIFIED`
 
 - **Severity:** WARNING
@@ -1079,6 +1093,18 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
   outcomes, and integrity is degraded.
 - **Remedy:** Rescore the unscored rollouts, or set inputs.score.missing to another policy when its
   assumption about the missing scores holds.
+- **Checks:** [`missing_scores`](#assumption-missing_scores)
+
+#### `SCORE_MISSING_EXCLUDED`
+
+- **Severity:** WARNING
+- **Effect:** [degraded](#effects)
+- **Assumption:** A rollout that inputs.score.missing: exclude leaves out of the bounds fails as
+  often as the classified rollouts of its prompt: its score is missing at random.
+- **Consequence:** The bounds cover only the classified rollouts; if scores are missing for a reason
+  linked to the outcome they are biased, and integrity is degraded.
+- **Remedy:** Rescore the unscored rollouts, or set inputs.score.missing to conservative_bounds so
+  that the bounds cover both outcomes of each of them.
 - **Checks:** [`missing_scores`](#assumption-missing_scores)
 
 #### `SCORE_UNMAPPED`

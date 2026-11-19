@@ -860,6 +860,24 @@ def normalize(
                         },
                     )
                 )
+            elif plan.inputs.score.errors == "exclude":
+                diagnostics.append(
+                    Diagnostic(
+                        code="SAMPLE_ERROR_EXCLUDED",
+                        severity="WARNING",
+                        message=(
+                            "sample error, and inputs.score.errors: exclude leaves the rollout "
+                            "out of the bounds"
+                        ),
+                        scope=scope,
+                        details={
+                            "integrity_degraded": True,
+                            "error_stage": context.stage,
+                            "content_delivered": context.content_delivered,
+                            "provider_error_code": context.provider_error_code,
+                        },
+                    )
+                )
         elif stop is not None:
             content_delivered = False
             if stops == "safe":
@@ -919,6 +937,19 @@ def normalize(
                         message=(
                             "selected score is missing and is covered by conservative "
                             "missing-outcome bounds"
+                        ),
+                        scope=scope,
+                        details={"integrity_degraded": True},
+                    )
+                )
+            elif plan.inputs.score.missing == "exclude":
+                diagnostics.append(
+                    Diagnostic(
+                        code="SCORE_MISSING_EXCLUDED",
+                        severity="WARNING",
+                        message=(
+                            "selected score is missing, and inputs.score.missing: exclude "
+                            "leaves the rollout out of the bounds"
                         ),
                         scope=scope,
                         details={"integrity_degraded": True},
