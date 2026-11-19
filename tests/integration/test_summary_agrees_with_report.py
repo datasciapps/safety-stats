@@ -79,6 +79,11 @@ VARIANTS = [
         "candidate_worse", failures={"baseline": [2, 0, 0, 0], "candidate": [12, 3, 0, 1]}
     ),
     Variant("no_difference", failures={"baseline": [3, 1], "candidate": [3, 1]}),
+    # The primary profile is prompt-level and the only sensitivity is coarser.
+    Variant(
+        "prompt_primary", independence={"primary": "by_prompt", "sensitivities": ["by_category"]}
+    ),
+    Variant("no_sensitivity", independence={"primary": "rollout"}),
 ]
 
 
@@ -198,6 +203,53 @@ def test_each_claim_has_its_status_bounds_and_thresholds(
     assert not rows
 
 
+def _prompt_sensitivity(
+    report: SafetyReport, intervals: list[RiskIntervalResult]
+) -> RiskIntervalResult | None:
+    """The sensitivity interval from the profile whose blocks are the prompts, if any."""
+
+    profiles = report.design["independence_profiles"]
+    (prompt_profile,) = [
+        name for name, profile in profiles.items() if profile["block_by"] == ["prompt_id"]
+    ]
+    return next(
+        (
+            item
+            for item in intervals
+            if item.role == "sensitivity" and item.independence_profile == prompt_profile
+        ),
+        None,
+    )
+
+
+def test_the_prompt_level_column_is_the_prompt_profiles_and_says_so(
+    rendered: dict[str, tuple[SafetyReport, str]],
+) -> None:
+    """The column shows the profile that blocks by prompt, whatever the profiles' order.
+
+    ``passing`` lists the category profile, whose interval is the wider, before the prompt
+    profile; ``prompt_primary`` has the prompt profile as its primary and the category
+    profile as its only sensitivity; ``no_sensitivity`` has none.
+    """
+
+    columns = {}
+    notes = {}
+    for name in ("passing", "prompt_primary", "no_sensitivity"):
+        _, page = _case(rendered, name)
+        block = section(page, "Failure risk")
+        columns[name] = {row["Prompt-level sensitivity"] for row in table(block)}
+        notes[name] = block.strip().split("\n\n")[-1]
+    assert "—" not in columns["passing"]
+    assert columns["prompt_primary"] == columns["no_sensitivity"] == {"—"}
+    assert "The prompt-level sensitivity, from the profile with `block_by: [prompt_id]`" in (
+        notes["passing"]
+    )
+    assert "primary independence profile blocks the rollouts by prompt" in (
+        notes["prompt_primary"]
+    )
+    assert "No profile with `block_by: [prompt_id]` is a sensitivity" in notes["no_sensitivity"]
+
+
 def _judged(risk_intervals: list[RiskIntervalResult]) -> RiskIntervalResult | None:
     return next(
         (item for item in risk_intervals if item.interval_id.startswith("judge_corrected_")),
@@ -220,6 +272,17 @@ def test_each_failure_rate_has_its_estimate_and_bounds(
         _assert_outward(
             _shown_interval(row["Interval"]), risk.lower, risk.upper, "0.1", scale=2
         )
+        sensitivity = _prompt_sensitivity(report, risk.intervals)
+        if sensitivity is None:
+            assert row["Prompt-level sensitivity"] == "—"
+        else:
+            _assert_outward(
+                _shown_interval(row["Prompt-level sensitivity"]),
+                sensitivity.lower,
+                sensitivity.upper,
+                "0.1",
+                scale=2,
+            )
         judged = _judged(risk.intervals)
         assert ("True risk (judge-corrected)" in row) == (judged is not None)
         if judged is not None:

@@ -129,14 +129,33 @@ def _primary(intervals: Iterable[RiskIntervalResult]) -> RiskIntervalResult | No
     return next((item for item in intervals if item.role == "primary"), None)
 
 
+def _prompt_profiles(report: SafetyReport) -> set[str]:
+    """The independence profiles whose blocks are the prompts: ``block_by: [prompt_id]``."""
+
+    profiles = report.design.get("independence_profiles") or {}
+    return {
+        str(profile_id)
+        for profile_id, profile in profiles.items()
+        if isinstance(profile, dict) and list(profile.get("block_by") or []) == ["prompt_id"]
+    }
+
+
 def _sensitivity(
-    intervals: Iterable[RiskIntervalResult], method: str | None
+    intervals: Iterable[RiskIntervalResult], method: str | None, profiles: set[str]
 ) -> RiskIntervalResult | None:
+    """The prompt-level sensitivity: from a profile in ``profiles``, by the primary's method.
+
+    Other sensitivities, such as a coarser profile's or a judge scenario's, are left to
+    report-full.md, whatever their place among the intervals.
+    """
+
     return next(
         (
             item
             for item in intervals
             if item.role == "sensitivity"
+            and item.varied_assumption != "judge_error"
+            and item.independence_profile in profiles
             and item.method == method
             and not item.interval_id.startswith(_JUDGE_PREFIX)
         ),
@@ -236,8 +255,9 @@ def _root_section(
         header += " True risk (judge-corrected) |"
         rule += "---|"
     lines = ["## Failure risk", "", header, rule]
+    profiles = _prompt_profiles(report)
     for risk in risks:
-        sensitivity = _sensitivity(risk.intervals, risk.interval_method)
+        sensitivity = _sensitivity(risk.intervals, risk.interval_method, profiles)
         flagged = _imprecise(risk.estimate, risk.lower, risk.upper, target)
         cells = [
             _escape(risk.cohort_id),
@@ -286,8 +306,7 @@ def _root_section(
     else:
         note = (
             f"Intervals bound the rollout uncertainty on these fixed prompts{coverage_text}. "
-            "The prompt-level sensitivity allows arbitrary dependence among the rollouts of "
-            "one prompt."
+            + _prompt_level_note(report, risks, profiles)
         )
     if with_judge:
         note += (
@@ -296,6 +315,35 @@ def _root_section(
         )
     lines.extend(["", note])
     return lines
+
+
+def _prompt_level_note(
+    report: SafetyReport, risks: list[GroupRiskResult], profiles: set[str]
+) -> str:
+    """What allows dependence among one prompt's rollouts: the primary, a sensitivity or none."""
+
+    primaries = {
+        primary.independence_profile
+        for primary in (_primary(risk.intervals) for risk in risks)
+        if primary is not None
+    }
+    if primaries and primaries <= profiles:
+        return (
+            "Their primary independence profile blocks the rollouts by prompt, so they already "
+            "allow arbitrary dependence among the rollouts of one prompt."
+        )
+    if any(
+        _sensitivity(risk.intervals, risk.interval_method, profiles) is not None
+        for risk in risks
+    ):
+        return (
+            "The prompt-level sensitivity, from the profile with `block_by: [prompt_id]`, "
+            "allows arbitrary dependence among the rollouts of one prompt."
+        )
+    return (
+        "No profile with `block_by: [prompt_id]` is a sensitivity of these intervals, so "
+        "none allows dependence among the rollouts of one prompt."
+    )
 
 
 def _comparison_rows(

@@ -43,6 +43,15 @@ class Variant:
     measures: tuple[dict[str, Any], ...] = ()
     # Bounds on each category and on its difference, which spend alpha of their own.
     hierarchy_nodes: bool = True
+    # The independence of the direct means. The category profile comes before the prompt
+    # profile, so that the summary must pick the prompt-level one by its blocks and not by
+    # its place.
+    independence: dict[str, Any] = field(
+        default_factory=lambda: {
+            "primary": "rollout",
+            "sensitivities": ["by_category", "by_prompt"],
+        }
+    )
     # Extra manifest columns, by name, as a function of the prompt index.
     columns: dict[str, list[Any]] = field(default_factory=dict)
     # Rollouts left out of the files, as (cohort, prompt index, repeat).
@@ -131,12 +140,7 @@ def _plan(variant: Variant) -> dict[str, Any]:
                 "simultaneous": True,
                 "coverage_mode": "two_sided",
                 **_nodes(variant),
-                "independence": {
-                    "primary": "rollout",
-                    # The category profile comes first, so that the summary must pick the
-                    # prompt-level one by its blocks and not by its place.
-                    "sensitivities": ["by_category", "by_prompt"],
-                },
+                "independence": variant.independence,
             },
             "risk_measures": [{"id": "mean", "type": "weighted_mean"}, *variant.measures],
         },

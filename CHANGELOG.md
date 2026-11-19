@@ -19,6 +19,15 @@ described in their pull requests.
   decimals where a threshold needs them, so that a bound shows at or below its threshold exactly
   when it is. `report.json`, `report-full.md` and the CSV files keep their bytes.
 
+- **report.md's prompt-level sensitivity is the prompt profile's (changes `report.md`).** The
+  column showed the first sensitivity interval of the primary's method, whatever its profile:
+  with a category profile listed before the prompt profile it showed the category interval,
+  and with a prompt-level primary and a category sensitivity, as in
+  `examples/attack_confirmation`, it showed the category interval as prompt-level. It now shows
+  the sensitivity from a profile with `block_by: [prompt_id]`, or `—` when there is none, and
+  the note under the table says whether such a sensitivity is shown, the primary profile
+  already blocks by prompt, or no interval allows dependence among one prompt's rollouts.
+
 - **A judge's input files are named relative to the plan (changes report bytes).** With
   validated judge calibration, `report.json` recorded the labels file under
   `provenance.judge_calibration.validation_manifest` by the absolute path the plan loader
