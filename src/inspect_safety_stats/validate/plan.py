@@ -311,7 +311,12 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope=plan_scope("outputs", "direct_mean_intervals"),
                 )
             )
-        if not any(measure.type == "weighted_mean" for measure in measures.values()):
+        # A direct worst_of_k interval is calibrated in the direct-mean family, so the section
+        # is in use even without a weighted mean.
+        if not any(
+            measure.type == "weighted_mean" or measure.direct_interval
+            for measure in measures.values()
+        ):
             diagnostics.append(
                 Diagnostic(
                     code="PLAN_METHOD_UNUSED",

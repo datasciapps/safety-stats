@@ -4109,6 +4109,32 @@ def test_analyze_withholds_the_worst_of_k_interval_of_a_refused_plan(
     assert message in row.warnings[0]
 
 
+def test_a_worst_of_k_interval_alone_puts_the_direct_mean_intervals_to_use(
+    tmp_path: Path,
+) -> None:
+    from inspect_safety_stats.validate.plan import validate_plan_references
+
+    plan_path = _write_inputs(tmp_path)
+    text = plan_path.read_text(encoding="utf-8")
+    for old, new in (
+        ("    - {id: mean, type: weighted_mean}\n", ""),
+        ("    measure: mean\n", "    measure: worst_of_2\n"),
+    ):
+        assert old in text
+        text = text.replace(old, new)
+    plan_path.write_text(text, encoding="utf-8")
+
+    def codes() -> set[str]:
+        return {item.code for item in validate_plan_references(load_plan(plan_path))}
+
+    # Without a weighted mean the direct-mean intervals bound nothing, and the plan is told so,
+    assert "PLAN_METHOD_UNUSED" in codes()
+    # but a worst_of_k interval is calibrated in their family, and needs them enabled.
+    _opt_in_worst_of_k_interval(plan_path)
+    assert "PLAN_METHOD_UNUSED" not in codes()
+    assert "PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED" not in codes()
+
+
 def test_only_worst_of_k_measures_take_a_direct_interval(tmp_path: Path) -> None:
     from pydantic import ValidationError
 
