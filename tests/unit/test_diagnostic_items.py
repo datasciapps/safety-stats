@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from inspect_safety_stats.report.artifacts import json_text
 from inspect_safety_stats.schema.reports import (
     STORED_REPORT,
     ClaimResult,
@@ -17,7 +18,15 @@ from inspect_safety_stats.schema.reports import (
     PromptEstimate,
     SafetyReport,
 )
-from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope, prompt_scope, scope_path
+from inspect_safety_stats.schema.scopes import (
+    cohort_scope,
+    node_id,
+    plan_scope,
+    prompt_scope,
+    scope_path,
+)
+
+NODE = scope_path("comparisons", "on_vs_off", "levels", "domain", "nodes", "domain=cyber")
 
 
 def _comparison(level: str | None) -> ComparisonResult:
@@ -111,6 +120,9 @@ def _report(scopes: list[str | None], **context: Any) -> SafetyReport:
         (plan_scope("comparisons", "on_vs_off"), "/comparisons/1"),
         (scope_path("comparisons", "on_vs_off", "methods", "m", "units", "prompt"), "/comparisons/1"),  # noqa: E501
         (scope_path("comparisons"), "/comparisons"),
+        # A hierarchy node's result, not the overall one.
+        (NODE, "/comparisons/0"),
+        (f"{NODE}/methods/m/profiles/rollout", "/comparisons/0"),
         (plan_scope("multiplicity", "families", "claims"), "/multiplicity/1"),
         (scope_path("families", "displayed"), "/multiplicity/0"),
         (cohort_scope("on"), "/cohorts/1"),
@@ -135,6 +147,9 @@ def test_a_diagnostic_points_at_the_record_its_scope_names(scope: str, item: str
         cohort_scope("on", "strata", "s1"),  # not the cohort: never an enclosing record
         scope_path("runs", "r1"),
         "decision_policy/versions",  # the report has no decision policy
+        # A node the comparison has no result for, and a level: never the overall result.
+        scope_path("comparisons", "on_vs_off", "levels", "domain", "nodes", "domain=bio"),
+        scope_path("comparisons", "on_vs_off", "levels", "domain"),
     ],
 )
 def test_a_diagnostic_whose_item_the_report_does_not_hold_points_nowhere(
@@ -159,6 +174,26 @@ def test_a_stored_item_is_recomputed_on_read_back() -> None:
     report = SafetyReport.model_validate_json(json.dumps(document))
 
     assert report.integrity.diagnostics[0].item == "/prompt_estimates/1"
+
+
+def test_a_node_pointer_survives_the_sorted_keys_of_report_json() -> None:
+    """A node's id lists its levels root first; report.json writes its path's keys sorted."""
+
+    path = {"task_id": "t1", "question_id": "q1"}
+    scope = scope_path(
+        "comparisons", "on_vs_off", "levels", "question_id", "nodes", node_id(path)
+    )
+    document = _report([scope]).model_dump(mode="json")
+    document["design"]["hierarchy"] = ["task_id", "question_id", "prompt_id"]
+    document["comparisons"][0] |= {"level": "question_id", "path": path}
+    report = SafetyReport.model_validate(document)
+    assert report.integrity.diagnostics[0].item == "/comparisons/0"
+
+    text = json_text(json.loads(report.model_dump_json()))
+    assert list(json.loads(text)["comparisons"][0]["path"]) == ["question_id", "task_id"]
+    again = SafetyReport.model_validate_json(text)
+
+    assert again.integrity.diagnostics[0].item == "/comparisons/0"
 
 
 def test_a_diagnostic_outside_a_report_has_no_item() -> None:

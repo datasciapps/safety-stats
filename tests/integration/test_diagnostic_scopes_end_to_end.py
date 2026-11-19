@@ -16,7 +16,8 @@ from typing import NoReturn
 import pytest
 
 from inspect_safety_stats.analysis.estimates import prompt_blocked
-from inspect_safety_stats.schema.scopes import scope_segments
+from inspect_safety_stats.schema.reports import SafetyReport
+from inspect_safety_stats.schema.scopes import node_id, scope_segments
 from tests.diagnostic_codes import interval_cases, judge_analysis_cases, logs_cases, plan_cases
 from tests.diagnostic_codes.harness import Inputs, base_inputs, run_analysis
 
@@ -166,3 +167,25 @@ def test_a_scope_names_the_row_method_and_profile_it_concerns(
 ) -> None:
     found = CASES[code].trigger(tmp_path).with_code(code)
     assert sorted(item.scope or "" for item in found) == sorted(scopes)
+
+
+def test_a_comparison_node_s_diagnostic_points_at_that_node_s_row(tmp_path: Path) -> None:
+    """Not at the overall comparison, which is another row, also after a read-back."""
+
+    report = CASES["COMPARISON_INTERVAL_INVALID"].trigger(tmp_path).report
+    again = SafetyReport.model_validate_json(report.model_dump_json())
+    for document in (report, again):
+        found = [
+            item
+            for item in document.integrity.diagnostics
+            if item.code == "COMPARISON_INTERVAL_INVALID"
+        ]
+        assert len(found) == 6
+        for diagnostic in found:
+            assert diagnostic.scope is not None and diagnostic.item is not None
+            row = document.comparisons[int(diagnostic.item.rsplit("/", 1)[1])]
+            segments = scope_segments(diagnostic.scope)
+            if segments[2] == "levels":
+                assert (row.level, node_id(row.path)) == (segments[3], segments[5])
+            else:
+                assert row.level is None

@@ -7,6 +7,14 @@ described in their pull requests.
 
 ### Fixed
 
+- **A diagnostic about a comparison's hierarchy node points at that node's row (changes
+  `item` in `report.json` and `index.json` for such diagnostics).** Every scope below
+  `comparisons/<id>` pointed at the comparison's overall row, so a `COMPARISON_INTERVAL_INVALID`
+  for one node of the hierarchy sent a reader to the overall result, which may certify. A scope
+  `comparisons/<id>/levels/<level>/nodes/<node>`, and any scope below it, now points at the
+  node's row, or is null when the report holds none; other scopes below the comparison, such
+  as a projection region's units, still point at the overall row.
+
 - **`inspect-safety-stats schema report` accepts the report.json files the package writes.**
   The schema left out `summary`, which every `report.json` now holds, while allowing no field
   it does not list, so every report failed validation against it with "'summary' was
