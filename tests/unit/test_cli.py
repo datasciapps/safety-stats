@@ -363,8 +363,8 @@ def test_comparison_planning_cli_splits_alpha_and_reports_both_directions(
     assert "Independent blocks: 800" in output
     # The numbers hold for one interval only, and the output names it.
     assert (
-        "Interval method: weighted_hoeffding in a comparisons entry; no guarantee for "
-        "comparison_sets or other methods"
+        "Interval method: weighted_hoeffding in a comparisons entry only; not comparison_sets "
+        "(as init writes) or other methods, where power can fall far below the target"
     ) in output
     assert f"at or below the margin: {0.05 - gap:.8g}" in output
     assert f"at or above the margin: {0.05 + gap:.8g}" in output

@@ -368,8 +368,13 @@ Rollout counts come from the manifest's `expected_rollouts` column for both arms
 alpha between the two bounds. `--family-size M` plans at the share `alpha / M`.
 
 The numbers hold only for a `comparisons` entry with `method: weighted_hoeffding`, which bounds
-the difference directly, and the output's `Interval method` line says so. They do not hold
-for:
+the difference directly, and the output's `Interval method` line says so. This is not the
+setup `init` writes, nor the one this guide recommends for two or more configurations: both
+use a `comparison_sets` entry with `method: weighted_kl_chernoff`, so the numbers do not apply
+to such a plan as written. To rely on them, declare the contrast as a `comparisons` entry with
+`method: weighted_hoeffding`.
+
+The numbers do not hold for:
 
 - **A `comparison_sets` entry, whatever its method.** A comparison set bounds each arm at half
   the alpha and subtracts the arms' endpoints, which is wider unless the baseline's lower

@@ -990,8 +990,11 @@ def comparison_planning_command(
     The difference is candidate minus baseline risk over the manifest's weighted design.
     Reports the largest true difference whose upper bound falls at or below --margin, and
     the smallest whose lower bound reaches it, each with --power, under the Hoeffding
-    guarantee of a comparisons entry with method weighted_hoeffding. The numbers do not hold
-    for a comparison_sets entry or another method: a comparison set bounds each arm
+    guarantee of a comparisons entry with method weighted_hoeffding. That is not the setup
+    init writes, nor the one the guide recommends for two or more configurations: both use a
+    comparison_sets entry with method weighted_kl_chernoff. To rely on the numbers, declare
+    the contrast as a comparisons entry with method weighted_hoeffding. The numbers do not
+    hold for a comparison_sets entry or another method: a comparison set bounds each arm
     separately, which is usually wider, and weighted_kl_chernoff and
     weighted_empirical_bernstein, often narrower on sparse failures when prompt weights are
     even, can be wider with uneven weights or at moderate failure rates. Rollout counts per
@@ -1050,8 +1053,8 @@ def comparison_planning_command(
     typer.echo(f"Margin: {margin:.8g}")
     typer.echo(f"Target power: {power:.8g}")
     typer.echo(
-        "Interval method: weighted_hoeffding in a comparisons entry; no guarantee for "
-        "comparison_sets or other methods"
+        "Interval method: weighted_hoeffding in a comparisons entry only; not comparison_sets "
+        "(as init writes) or other methods, where power can fall far below the target"
     )
     typer.echo(
         "Largest difference with upper bound at or below the margin: "

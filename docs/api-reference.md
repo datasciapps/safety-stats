@@ -629,7 +629,8 @@ plan's for the claims it sets, and `hash-plan --inference` prints the hash such 
 (experimental; see [Decision policies](decision-policy.md)).
 
 `plan comparison` (experimental) reads the manifest as `plan fixed-design --manifest` does and
-reports the risk differences a two-arm design resolves at `--margin`; see
+reports the risk differences a two-arm design resolves at `--margin`, guaranteed only for a
+`comparisons` entry with `method: weighted_hoeffding`; see
 [Planning a comparison](model-comparisons.md#planning-a-comparison-experimental).
 
 `plan pilot` (experimental) draws `K` prompts at random from each combination of the
