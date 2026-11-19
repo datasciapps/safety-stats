@@ -302,6 +302,42 @@ def _nodes(inputs: Inputs) -> None:
     _direct_means(inputs, hierarchy_nodes=True)
 
 
+def _paired_unscored(inputs: Inputs) -> None:
+    """A comparison of the two cohorts with paired diagnostics, one baseline rollout unscored."""
+
+    _second_cohort(inputs)
+    _family(inputs, "comparisons")
+    inputs.plan["design"] = {"independence_profiles": {"rollout": {"block_by": ["rollout"]}}}
+    inputs.plan["comparisons"] = [
+        {
+            "id": "versus",
+            "candidate": "candidate",
+            "baseline": "baseline",
+            "group": "all",
+            "measure": "mean",
+            "family": "comparisons",
+            "independence": {"primary": "rollout"},
+            "pair_key": ["prompt_id", "repeat"],
+            "diagnostic_methods": ["exact_mcnemar", "newcombe_paired"],
+        }
+    ]
+    (unscored,) = [
+        item
+        for item in inputs.rollouts
+        if (item["run_key"], item["item_id"], item["repeat"]) == ("r2", "p1", 1)
+    ]
+    unscored["score_harmful"] = None
+
+
+def _newcombe_withheld(triggered: Outcome, control: Outcome) -> None:
+    # Withheld: newcombe_paired is not reported; exact_mcnemar and the interval are as before.
+    row, kept = _comparison_root(triggered), _comparison_root(control)
+    assert "newcombe_paired" not in row.diagnostic_outputs
+    assert "newcombe_paired" in kept.diagnostic_outputs
+    assert row.diagnostic_outputs["exact_mcnemar"] == kept.diagnostic_outputs["exact_mcnemar"]
+    assert (row.lower, row.upper) == (kept.lower, kept.upper)
+
+
 CASES = [
     Case(
         # Nothing of task t2 was drawn into the sample.
@@ -386,5 +422,18 @@ CASES = [
         ),
         control=analysis(_comparison_set),
         effect=_multi_arm_unprojected,
+    ),
+    Case(
+        # A patch lowers the limit on the tables newcombe_paired evaluates to one, below the two
+        # that the unscored rollout's completions produce. Without it, the case would need 668
+        # pairs unscored in both arms.
+        code="PAIR_NEWCOMBE_UNAVAILABLE",
+        trigger=patched(
+            "inspect_safety_stats.stats.paired._PARTIAL_NEWCOMBE_COMPLETION_LIMIT",
+            1,
+            analysis(_paired_unscored),
+        ),
+        control=analysis(_paired_unscored),
+        effect=_newcombe_withheld,
     ),
 ]
