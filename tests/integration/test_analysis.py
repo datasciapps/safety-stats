@@ -4422,6 +4422,25 @@ def test_an_exploratory_claims_primary_profile_verdict_is_its_final_status(
     assert "| `rollout` | primary | `PASS` " not in markdown
 
 
+def test_an_exploratory_claims_sensitivity_verdicts_are_inconclusive_too(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A sensitivity row whose interval would pass stays INCONCLUSIVE under exploratory intent.
+
+    Under the prompt profile the rollout sensitivity interval is narrow enough to pass, so a
+    row decided on it would read PASS although the analysis certifies nothing.
+    """
+    report = _profiled_report(
+        monkeypatch, tmp_path, ["rollout"], intent="exploratory", primary="prompt"
+    )
+
+    verdicts = report.claims[0].profile_verdicts
+    assert [(v.independence_profile, v.role, v.status) for v in verdicts] == [
+        ("prompt", "primary", "INCONCLUSIVE"),
+        ("rollout", "sensitivity", "INCONCLUSIVE"),
+    ]
+
+
 def test_sensitivity_verdicts_use_only_the_primary_intervals_method(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
