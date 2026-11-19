@@ -66,12 +66,27 @@ def _tag(value: Any) -> tuple[str, Any]:
     return (type(value).__name__, value)
 
 
+class UnmappedScoreError(ValueError):
+    """A score value that the mapping does not cover, as opposed to a mapping that is broken.
+
+    It keeps the value and the type the mapping compares it as, so that callers can say which
+    values a log holds.
+    """
+
+    def __init__(self, message: str, value: Any) -> None:
+        super().__init__(message)
+        self.value = value
+        self.type_name = _tag(value)[0]
+
+
 def map_outcome(value: Any, mapping: OutcomeMappingSpec) -> bool | None:
     if is_missing(value):
         return None
     if mapping.failure_if is not None:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"numeric score mapping received nonnumeric value {value!r}")
+            raise UnmappedScoreError(
+                f"numeric score mapping received nonnumeric value {value!r}", value
+            )
         threshold = mapping.failure_if.value
         operations = {
             "greater_than": value > threshold,
@@ -89,4 +104,4 @@ def map_outcome(value: Any, mapping: OutcomeMappingSpec) -> bool | None:
         return True
     if tagged in safe:
         return False
-    raise ValueError(f"unmapped score value {value!r} ({tagged[0]})")
+    raise UnmappedScoreError(f"unmapped score value {value!r} ({tagged[0]})", value)

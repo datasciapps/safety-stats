@@ -21,6 +21,7 @@ import yaml
 from inspect_ai.log import read_eval_log, write_eval_log
 from typer.testing import CliRunner
 
+from inspect_safety_stats import validate
 from inspect_safety_stats.cli import app
 from inspect_safety_stats.ingest.inspect_logs import read_inspect_runs
 from inspect_safety_stats.scaffold import scaffold_plan
@@ -212,6 +213,46 @@ def test_a_duplicate_rollout_key_names_the_run_fields_it_does_not_show(
         for message in messages
     ), messages
     assert "ROLLOUT_DUPLICATE" in analyzed.texts["validate output"]
+
+
+def _match_beta_on_run_fields(plan: dict[str, Any]) -> None:
+    # No run has these values, so cohort beta is left empty. Every run's values of the two
+    # fields are planted secrets.
+    plan["cohorts"]["beta"]["match"].update(
+        {"model_base_url": "http://elsewhere.invalid/v1", "task_arg_secret": "other"}
+    )
+
+
+def test_an_empty_cohort_shows_the_model_and_no_other_run_value(
+    planted_logs: PlantedLogs, tmp_path: Path
+) -> None:
+    # validate alone: analyze stops on init's plan when a cohort is empty, without a report.
+    result = scaffold_plan(
+        planted_logs.clean,
+        tmp_path / "plan",
+        failure_values=["FAIL"],
+        group_by="category",
+        baseline="mockllm/alpha",
+    )
+    plan = yaml.safe_load(result.plan_path.read_text(encoding="utf-8"))
+    _match_beta_on_run_fields(plan)
+    result.plan_path.write_text(yaml.safe_dump(plan, sort_keys=False), encoding="utf-8")
+    logs = str(planted_logs.planted)
+    validated = CliRunner().invoke(
+        app, ["validate", "--plan", str(result.plan_path), "--logs", logs]
+    )
+    summary = validate(plan=result.plan_path, logs=logs)
+
+    texts = {"validate output": validated.output, "diagnostics": summary.model_dump_json()}
+    assert leaks(texts, planted_logs.secrets) == []
+    assert [item.message for item in summary.diagnostics if item.code == "COHORT_EMPTY"] == [
+        "cohort 'beta' contains no evaluations: it requires model = 'mockllm/beta' and "
+        "model_base_url = 'http://elsewhere.invalid/v1' and task_arg_secret = 'other', and "
+        "the selected evaluations have model 'mockllm/alpha' in 2 evaluations, "
+        "'mockllm/beta' in 1 evaluation; model_base_url another value in 3 evaluations; "
+        "task_arg_secret another value in 3 evaluations"
+    ]
+    assert "COHORT_EMPTY" in validated.output
 
 
 def test_init_copies_no_planted_secret_into_the_plan_or_the_terminal(

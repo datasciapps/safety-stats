@@ -643,7 +643,21 @@ def test_cohorts_matched_on_the_declared_attack_keep_other_attacks_out(
     declared = _live_declaration(1)
     across = analyze(plan=_live_plan(tmp_path / "across", match=declared), logs=cross_budget_logs)
     assert across.integrity.status == "invalid"
-    assert ("COHORT_EMPTY", "cohort 'candidate' contains no evaluations") in _errors(across)
+    # The message shows the evaluations' models, and of each task argument only whether it
+    # has the value the cohort requires: a task argument is run configuration.
+    assert (
+        "COHORT_EMPTY",
+        "cohort 'candidate' contains no evaluations: it requires model = 'mockllm/candidate' "
+        "and task_arg_attack_id = 'pair' and task_arg_budget_k = 1 and task_arg_attacker_model "
+        "= 'mockllm/attacker' and task_arg_attacker_judge = 'mockllm/attacker-judge' and "
+        "task_arg_confirmation_judge = 'mockllm/confirmation-judge', and the selected "
+        "evaluations have model 'mockllm/baseline' in 1 evaluation, 'mockllm/candidate' in 1 "
+        "evaluation; task_arg_attack_id the required value in 2 evaluations; task_arg_budget_k "
+        "another value in 1 evaluation, the required value in 1 evaluation; "
+        "task_arg_attacker_model the required value in 2 evaluations; task_arg_attacker_judge "
+        "the required value in 2 evaluations; task_arg_confirmation_judge the required value "
+        "in 2 evaluations",
+    ) in _errors(across)
 
     within = analyze(plan=_live_plan(tmp_path / "within", match=declared), logs=split_budget_logs)
     assert within.integrity.status == "invalid"

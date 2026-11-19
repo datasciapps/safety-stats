@@ -752,6 +752,29 @@ described in their pull requests.
 
 ### Changed
 
+- **Errors about a plan that does not fit the logs say what the logs hold (changes
+  diagnostics).** These errors named only what the plan asked for, so a user had to open the
+  logs to see what the plan should say:
+  - `COHORT_EMPTY` for a cohort now names the values the cohort matches on and, for each of
+    those fields, what the selected evaluations have and how many have it, for example
+    `it requires model = 'openai/gpt-4o', and the selected evaluations have model
+    'mockllm/model' in 1 evaluation`. Only the model is shown: any other field, such as a task
+    argument, is run configuration, so the message says only how many evaluations have the
+    required value, another value or none. When the evaluations it matches also match another
+    cohort, and so were put in neither, it says so instead.
+  - `SCORE_MISSING` and `JUDGE_SCORE_MISSING` for an absent score now list the scores the logs
+    have.
+  - A new `SCORE_MAPPING_MISMATCH` error, or `JUDGE_SCORE_MAPPING_MISMATCH` for a judge, lists
+    the score values that the mapping does not cover, with their types and how many rollouts
+    have each, at most ten of them, and says how to map them. It sorts ahead of the
+    `SCORE_UNMAPPED` errors, one per rollout, which are unchanged and still withhold their
+    prompts' bounds. Its scope is the plan path, so it withholds no other bounds.
+
+  Reports of valid analyses are unchanged, except that an outcome mapping sensitivity
+  (`inputs.score.mapping_sensitivities`) whose mapping leaves an observed value uncovered
+  counts one `SCORE_MAPPING_MISMATCH` in its `diagnostic_counts`, beside its `SCORE_UNMAPPED`
+  errors, while the primary analysis stays valid.
+
 - **A duplicate rollout key no longer shows a run's configuration (changes `report.json`).** A
   field of `design.rollout_key` that a rollout does not record is read from its run, and the
   `ROLLOUT_DUPLICATE` message showed its value. A key that named a run field such as

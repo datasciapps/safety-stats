@@ -148,7 +148,10 @@ mapping:
     value: 0.5
 ```
 
-Mappings are type-sensitive: `true`, `1`, `1.0`, and `"1"` are distinct.
+Mappings are type-sensitive: `true`, `1`, `1.0`, and `"1"` are distinct. A score value that the
+mapping does not cover is an error for its rollout, `SCORE_UNMAPPED`, which withholds the bounds
+of that rollout's prompt. One `SCORE_MAPPING_MISMATCH` error lists every such value, with its
+type and how many rollouts have it.
 
 `missing` accepts `conservative_bounds`, `block`, `count_as_failure`, or `exclude`.
 `conservative_bounds` is the default: integrity becomes `degraded`, and exact bounds cover both
@@ -437,9 +440,9 @@ Only the primary mapping enters claims and the decision. Each alternative's inte
 the coverage the plan declares for that mapping alone; the readings are not simultaneous
 across mappings, so the side-by-side view is a sensitivity analysis, not a set of tests to
 pick from. A mapping that leaves some observed value unmapped makes its own integrity
-`invalid` (`SCORE_UNMAPPED` in its diagnostic counts) without affecting the primary
-analysis. Each alternative carries what the plan itself, its decision policy and its
-registration receipt were checked for, so a receipt for another plan
+`invalid` (`SCORE_UNMAPPED` and `SCORE_MAPPING_MISMATCH` in its diagnostic counts) without
+affecting the primary analysis. Each alternative carries what the plan itself, its decision
+policy and its registration receipt were checked for, so a receipt for another plan
 (`PLAN_RECEIPT_MISMATCH`) or a decision policy that fails its checks makes every alternative
 `invalid`, as it does the primary analysis.
 
@@ -487,7 +490,8 @@ when a missing vote could still change it or when `majority` ties. The report ga
 panel** section with per-judge counts, each composite's Kish **effective votes** over the declared
 blocks, and pairwise agreement with Cohen's kappa. Agreement is a diagnostic, not evidence: judges
 that share a blind spot agree and are both wrong. Missing judge columns and unmappable judge
-values are errors (`JUDGE_SCORE_MISSING`, `JUDGE_SCORE_UNMAPPED`).
+values are errors (`JUDGE_SCORE_MISSING`, `JUDGE_SCORE_UNMAPPED`), and one
+`JUDGE_SCORE_MAPPING_MISMATCH` per judge lists the values its mapping does not cover.
 
 A judge may declare prevalence-free accuracy ranges, `accuracy: {sensitivity: {lower, upper},
 specificity: {lower, upper}}`. When the primary outcome is an `any` or `all` composite whose judges
