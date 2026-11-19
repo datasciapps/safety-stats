@@ -43,9 +43,12 @@ design:
 
 cohorts:
   # A cohort's runs must declare one attack. The task's metadata holds the whole declaration,
-  # fingerprint included; in live mode the task arguments hold it too. A plan for live runs
-  # also matches every cohort on the declared attack, so that two cohorts cannot differ in it
-  # (README.md, "Running it against real models").
+  # fingerprint included, and any `inspect eval --metadata` values, so pass the same ones, or
+  # none, to every run of a cohort. In live mode the task arguments hold the declaration too,
+  # without the fingerprint. A plan for live runs also matches every cohort on the attack id,
+  # budget, attacker and judges, so two cohorts cannot differ in those. Fingerprints are
+  # compared only within a cohort, so give any change to the attack, templates included, a new
+  # attack_id (README.md, "Running it against real models").
   candidate:
     match: {model: mockllm/candidate}
     require_uniform:

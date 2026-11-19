@@ -128,11 +128,13 @@ The design manifest declares the attack in every row: `attack_id`, `attack_finge
 `budget_k`, `attacker_model`, `attacker_judge` and `confirmation_judge`. The fingerprint is a
 digest of the attack id, the budget, the attacker model, the attacker's judge and the prompt
 templates. It does not cover the attacker's code, the stopping rule, generation settings or,
-offline, the simulated rates, so give the attack a new `attack_id` whenever one of those
-changes. The task refuses to run against a design that declares a different attack, so
-write a design for the attack you are about to run. The task checks the design once, when it
-starts. `analyze` never compares the logs with the design's declaration; the plan's cohorts,
-below, keep runs of another attack out of the analysis.
+offline, the simulated rates. The task refuses to run against a design that declares a
+different attack, so write a design for the attack you are about to run. The task checks the
+design once, when it starts, and `analyze` never compares the logs with the design's
+declaration. The plan's cohorts, below, match on the attack id, the budget, the attacker
+model and the two judges, and compare the fingerprint only among the runs of one cohort. So
+give the attack a new `attack_id` whenever any part of it changes: its prompt templates and
+the judge rubric as well as anything the fingerprint does not cover.
 
 Put your behaviours in `run/attack/behaviours.csv`, with the columns `prompt_id`,
 `category_id` and `goal`, and write the design from the repository root:
@@ -182,14 +184,20 @@ cohorts:
     require_uniform: [...]  # as in plan.yaml
 ```
 
-The baseline takes the same match with its own model. Then run `analyze` as above. A run of
-another attack, budget, attacker or judge joins no cohort, so it cannot enter a claim or the
-comparison: the behaviours it leaves without a run are reported as `PROMPT_MISSING`, a cohort
-it leaves empty as `COHORT_EMPTY`, and either makes integrity invalid. Matching on the model
-alone would let two arms attacked at different budgets, or judged by different judges, be
-compared (see [one judge for every arm](../../docs/model-comparisons.md#one-judge-for-every-arm)).
+The baseline takes the same match with its own model. Then run `analyze` as above. A run
+whose attack id, budget, attacker model or judges differ joins no cohort, so it cannot enter a
+claim or the comparison: the behaviours it leaves without a run are reported as
+`PROMPT_MISSING`, a cohort it leaves empty as `COHORT_EMPTY`, and either makes integrity
+invalid. Matching on the model alone would let two arms attacked at different budgets, or
+judged by different judges, be compared (see
+[one judge for every arm](../../docs/model-comparisons.md#one-judge-for-every-arm)).
 `require_uniform` names the task's metadata, which holds the whole declaration, fingerprint
-included, so runs of two attacks within one cohort are reported as `CONFIG_DRIFT`.
+included, so runs of two declarations within one cohort are reported as `CONFIG_DRIFT`.
+Nothing compares fingerprints across cohorts: two arms whose attacks differ only in their
+prompt templates would be compared as if they were one attack, hence a new `attack_id` for
+every change. The metadata also holds any values passed with `inspect eval --metadata`; pass
+the same ones, or none, to every run of a cohort, or its runs are reported as `CONFIG_DRIFT`
+too.
 
 The attacker in live mode is a minimal PAIR-style loop: each attacker call sees the goal, its
 previous prompt, the target's answer and the judge's verdict. Replace `ModelAttacker` with the

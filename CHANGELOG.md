@@ -15,8 +15,10 @@ described in their pull requests.
   which inflate the attacker's own report to 1 − (1 − f)^K. Every design-manifest row
   declares the attack. The task refuses a design that declares another attack, and relative
   paths to its files, which `inspect eval` would read from the task file's directory. The
-  plan requires one declared attack per cohort, and the README has a plan for live runs match
-  every cohort on it. The README also says what the confirmed rate still depends on: the
+  plan requires one declared attack per cohort, fingerprint included, and the README has a
+  plan for live runs match every cohort on the attack id, budget, attacker and judges. Nothing
+  compares fingerprints across cohorts, so the README asks for a new attack id whenever the
+  attack changes, its prompt templates included. The README also says what the confirmed rate still depends on: the
   attacker's judge, whose false positives end runs on prompts that do not work and so lower
   it; a target that samples; and two judges that err independently. It runs offline with no
   API key, and against real models with `-T mode=live`. The package itself is unchanged.
