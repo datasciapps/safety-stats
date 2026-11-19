@@ -51,6 +51,20 @@ described in their pull requests.
   every platform, like the other text artifacts. A resume writes them afresh before it runs
   anything, which converts the files a development version left with CRLF.
 
+- **`analyze` reports a direct-mean hierarchy it cannot calibrate instead of crashing.** With
+  `outputs.direct_mean_intervals` set to `hierarchy_nodes: true` and `hierarchy_calibration:
+  frontier_sidak`, a hierarchy node of zero weight is left out of the nodes, so its level no
+  longer partitions the group, and `analyze` stopped with "ValueError: hierarchy level ... does
+  not partition the group" and wrote no report. It now writes the report with a new error,
+  `DIRECT_MEAN_CALIBRATION_INVALID`, as comparisons report the same condition with
+  `COMPARISON_CALIBRATION_INVALID`: integrity is invalid, so no claim can pass, no direct-mean
+  interval of the family is calibrated, group rows keep only the propagated prompt envelope and
+  hierarchy-node rows have no interval. Giving every node a positive weight, or
+  `hierarchy_calibration: flat_bonferroni`, avoids it. `plan fixed-design --plan` still refuses
+  such a plan, which `analyze` decides no claim of, but now as it refuses a plan that
+  `validate` finds invalid: it names `DIRECT_MEAN_CALIBRATION_INVALID` and its remedy, where
+  it gave only "hierarchy level ... does not partition the group".
+
 ### Added
 
 - **A fixed-design template for prompt variants, and the profile that coupled wordings need.**
@@ -94,9 +108,13 @@ described in their pull requests.
 
 - **`analyze` prints the errors and warnings in the terminal.** After the headline failure
   rates, `analyze` prints each error and warning code of the report on standard error, one line
-  per code: its severity, how often it occurred and the assumption it rests on, under a line
-  that names the report's `index.md` and its section "Errors and warnings by code". A user or a
-  coding agent that reads only the command's output now sees what qualifies the headline.
+  per code: its severity, how often it occurred, its effect on the results and what follows
+  from that effect, as `report.md` gives them. A header line names the report's `index.md` and
+  its section "Errors and warnings by code", which lists each code's diagnostics, and
+  `report.md` and its section "Warnings", which also gives the assumption each code checks.
+  The assumption is not printed in the terminal: it is phrased as what the results rest on,
+  so printed alone it would read as a fact where the code reports that it may not hold. A user
+  or a coding agent that reads only the command's output now sees what qualifies the headline.
   Report files are unchanged.
 
 - **`validate` and `analyze` report how much a grouping column shrinks the evidence
@@ -927,7 +945,9 @@ described in their pull requests.
 - **The generative commands' help says the pipeline is experimental (#24).** The help of
   `generative` and of each of its commands, and of `schema generative-plan`, ends with the
   caveat the README and the generative docs already carry: the generative pipeline is
-  experimental, and its public surface may change in any minor release.
+  experimental, and its public surface may change in any minor release. `schema --help`, which
+  lists `generative-plan` beside the other schemas, marks it "(experimental)" as it marks
+  `claims` and `decision-policy`.
 
 - **`generative analyze` exits `3`, not `2`, on `ERROR` diagnostics.** Exit `2` means
   INCONCLUSIVE under `analyze --decision-exit-codes`, so a generative report with errors could

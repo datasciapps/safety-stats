@@ -413,7 +413,9 @@ def _centered_second_moment(
     completions: an unknown outcome contributes whichever completion lies farther from its
     center. Each term of the sum lies in ``[0, a^2 r]`` with ``r = max(c^2, (1 - c)^2)``, so the
     sum of the squared term ranges is the fourth-power sum weighted by ``r^2``. For centers 0
-    and 1, ``r = 1`` and these are exactly Q+, Q- and the unweighted fourth-power sum.
+    and 1, ``r = 1``, and on the rollout unit these are exactly Q+, Q- and the unweighted
+    fourth-power sum. On the prompt-cluster unit each term is a prompt, with its failure rate
+    as the outcome and its weight as the coefficient.
     """
 
     n = trials.astype(float)
