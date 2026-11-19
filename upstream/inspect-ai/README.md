@@ -55,8 +55,8 @@ That is a separate defect and would be a separate pull request.
 
 ### The problem
 
-A task can take an input from outside its arguments. The open-weights example on this
-repository's `demo/open-weights` branch does: it reads the path of its XSTest CSV from the
+A task can take an input from outside its arguments. This repository's open-weights example,
+`examples/open_weights`, does: it reads the path of its XSTest CSV from the
 environment variable `OPEN_WEIGHTS_XSTEST_CSV`. Inspect records a task's arguments in the log, but not such an
 input. `inspect eval-retry` rebuilds the task from the arguments, so it reads whatever file the
 variable names at retry time. It then reuses each completed sample of the earlier log by sample
