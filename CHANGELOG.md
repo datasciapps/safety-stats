@@ -481,7 +481,8 @@ described in their pull requests.
   prompt and repeat, or prompt clusters. The guarantee is Hoeffding's, for a `comparisons`
   entry with `method: weighted_hoeffding` only: a `comparison_sets` entry bounds each arm
   separately, which is wider, and `weighted_kl_chernoff` and `weighted_empirical_bernstein`
-  can be wider at moderate failure rates, so the numbers do not hold for them. In Python:
+  can be wider at moderate failure rates, so the numbers do not hold for them. The output's
+  `Interval method` line says so. In Python:
   `stats.planning.comparison_resolvable_differences`. See
   [Planning a comparison](docs/model-comparisons.md#planning-a-comparison-experimental).
 

@@ -1049,6 +1049,10 @@ def comparison_planning_command(
     typer.echo(f"Margin: {margin:.8g}")
     typer.echo(f"Target power: {power:.8g}")
     typer.echo(
+        "Interval method: weighted_hoeffding in a comparisons entry; no guarantee for "
+        "comparison_sets or other methods"
+    )
+    typer.echo(
         "Largest difference with upper bound at or below the margin: "
         + (
             "unattainable"

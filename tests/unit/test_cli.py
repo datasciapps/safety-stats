@@ -350,6 +350,11 @@ def test_comparison_planning_cli_splits_alpha_and_reports_both_directions(
     assert "Candidate rollouts: 400" in output
     assert "Baseline rollouts: 400" in output
     assert "Independent blocks: 800" in output
+    # The numbers hold for one interval only, and the output names it.
+    assert (
+        "Interval method: weighted_hoeffding in a comparisons entry; no guarantee for "
+        "comparison_sets or other methods"
+    ) in output
     assert f"at or below the margin: {0.05 - gap:.8g}" in output
     assert f"at or above the margin: {0.05 + gap:.8g}" in output
     assert "One-sided alpha per direction: 0.025" in output
