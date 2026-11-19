@@ -626,6 +626,58 @@ def test_thresholds_moved_on_two_simultaneous_families_do_not_certify_an_overall
     assert events["g1_worst"].endswith("of family displayed")
 
 
+def _judge_corrected(tmp_path: Path, groups: list[str]) -> Path:
+    """The gate plan on one simultaneous direct-mean family, with a judge calibration per group.
+
+    Every classified rollout is labelled with its judge verdict, so each group's validated
+    calibration certifies the corrected mean of its group.
+    """
+
+    plan = _gate_plan(groups, direct={"simultaneous": True})
+    for claim in cast(list[dict[str, object]], plan["claims"]):
+        claim["acceptable_upper"] = 0.5
+    plan_path = _gate_inputs(tmp_path, plan, groups)
+    labels = ["observation_id,human_label"] + [
+        f"{item.observation_id},{'unsafe' if item.failure else 'safe'}"
+        for item in _gate_analysis(plan_path)._observations
+        if item.failure is not None
+    ]
+    (tmp_path / "labels.csv").write_text("\n".join(labels) + "\n", encoding="utf-8")
+    cast(dict[str, object], plan["inputs"])["judge_calibration"] = {
+        "mode": "validated",
+        "validation_manifest": "labels.csv",
+        "family": "judge_error",
+        "groups": groups,
+    }
+    cast(dict[str, list[dict[str, object]]], plan["multiplicity"])["families"].append(
+        {"id": "judge_error", "purpose": "simultaneous_intervals", "method": "bonferroni",
+         "alpha": 0.05}
+    )
+    plan_path.write_text(json.dumps(plan), encoding="utf-8")
+    return plan_path
+
+
+def test_judge_corrected_claims_rest_on_coverage_events_of_their_own(tmp_path: Path) -> None:
+    groups = ["g1", "g2"]
+    plan_path = _judge_corrected(tmp_path, groups)
+    frozen = _gate_analysis(plan_path)
+    assert frozen.decision == "PASS"
+    assert {item.method for item in frozen.claims} == {
+        "validated_judge_misclassification_correction"
+    }
+    # Both means rest on one simultaneous direct-mean family, but each corrected bound also
+    # needs its own group's calibration to cover, a separate event, so two events decide them.
+    report = _gate_analysis(plan_path, _at_the_bounds(plan_path, frozen))
+    assert {item.status for item in report.claims} == {"PASS"}
+    assert report.decision == "INCONCLUSIVE"
+    warning = _overall_warning(report)
+    assert warning is not None
+    assert warning.details["coverage_events"] == {
+        "g1_mean": "risk:candidate:g1:mean judge_corrected_validated",
+        "g2_mean": "risk:candidate:g2:mean judge_corrected_validated",
+    }
+
+
 @pytest.mark.parametrize("simultaneous", [False, True], ids=["pointwise", "simultaneous"])
 def test_one_moved_threshold_keeps_an_overall_pass_only_on_one_coverage_event(
     tmp_path: Path, simultaneous: bool
