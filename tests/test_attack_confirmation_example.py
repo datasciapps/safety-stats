@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import csv
 import importlib.util
 import math
 import random
 import sys
+from collections.abc import Iterable
+from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 import pytest
 import yaml
@@ -249,3 +253,147 @@ def test_the_attackers_own_verdicts_would_report_most_behaviours_jailbroken(
     # 1 - 0.95^20 is about 0.64 for a target that never complies.
     assert candidate(reported) > 0.5
     assert candidate(confirmed) <= 0.05
+
+
+# --- Live mode against mock models: what ties the runs to the declared attack ---------------
+
+LIVE_MODELS = {
+    "attacker_model": "mockllm/attacker",
+    "attacker_judge": "mockllm/attacker-judge",
+    "confirmation_judge": "mockllm/confirmation-judge",
+}
+
+
+def _live_declaration(budget: int) -> AttackDeclaration:
+    return AttackDeclaration(attack_id="pair", budget_k=budget, **LIVE_MODELS)
+
+
+def _write_behaviours(path: Path, numbers: Iterable[int]) -> Path:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.writer(handle, lineterminator="\n")
+        writer.writerow(["prompt_id", "category_id", "goal"])
+        for number in numbers:
+            writer.writerow([f"b{number}", f"c{number % 2}", f"[placeholder] behaviour {number}"])
+    return path
+
+
+def _live_run(
+    directory: Path, logs: Path, model: str, budget: int, numbers: Iterable[int]
+) -> None:
+    """One live-mode run with mock models, against a design written for its attack.
+
+    The mock judges never answer with a grade, so each run spends its budget and finds no
+    prompt. What matters here is what the logs record about the attack.
+    """
+
+    directory.mkdir(parents=True)
+    behaviours = _write_behaviours(directory / "behaviours.csv", numbers)
+    design = directory / "design.csv"
+    write_design(design, _live_declaration(budget), behaviours)
+    inspect_eval(
+        attack_confirmation(
+            mode="live",
+            behaviours=str(behaviours),
+            design=str(design),
+            attack_id="pair",
+            budget_k=budget,
+            **LIVE_MODELS,
+        ),
+        model=model,
+        log_dir=str(logs),
+        display="none",
+    )
+
+
+@pytest.fixture(scope="module")
+def split_budget_logs(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The candidate's behaviours attacked half at budget 1 and half at budget 2."""
+
+    root = tmp_path_factory.mktemp("split-budget")
+    logs = root / "logs"
+    _live_run(root / "candidate-1", logs, "mockllm/candidate", 1, [0, 1])
+    _live_run(root / "candidate-2", logs, "mockllm/candidate", 2, [2, 3])
+    _live_run(root / "baseline-1", logs, "mockllm/baseline", 1, range(4))
+    return logs
+
+
+@pytest.fixture(scope="module")
+def cross_budget_logs(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The candidate attacked at budget 2 and the baseline at budget 1."""
+
+    root = tmp_path_factory.mktemp("cross-budget")
+    logs = root / "logs"
+    _live_run(root / "candidate-2", logs, "mockllm/candidate", 2, range(4))
+    _live_run(root / "baseline-1", logs, "mockllm/baseline", 1, range(4))
+    return logs
+
+
+def _live_plan(directory: Path, *, match: AttackDeclaration | None = None) -> Path:
+    """The example plan over the four behaviours, with a design declaring budget 1.
+
+    With ``match``, every cohort also matches on that attack, as README.md tells a plan for
+    live runs to do.
+    """
+
+    directory.mkdir(parents=True, exist_ok=True)
+    design = directory / "design.csv"
+    write_design(
+        design, _live_declaration(1), _write_behaviours(directory / "behaviours.csv", range(4))
+    )
+    plan: dict[str, Any] = yaml.safe_load((EXAMPLE_DIR / "plan.yaml").read_text(encoding="utf-8"))
+    plan["inputs"]["design_manifest"] = str(design)
+    if match is not None:
+        for cohort in plan["cohorts"].values():
+            cohort["match"].update(
+                {f"task_arg_{name}": value for name, value in asdict(match).items()}
+            )
+    path = directory / "plan.yaml"
+    path.write_text(yaml.safe_dump(plan, sort_keys=False), encoding="utf-8", newline="\n")
+    return path
+
+
+def _errors(report: Any) -> list[tuple[str, str]]:
+    return [
+        (item.code, item.message)
+        for item in report.integrity.diagnostics
+        if item.severity == "ERROR"
+    ]
+
+
+def test_the_example_plan_flags_a_cohort_attacked_at_two_budgets(
+    split_budget_logs: Path, tmp_path: Path
+) -> None:
+    """Each run passed its own design check, so only the plan can see the two attacks."""
+
+    report = analyze(plan=_live_plan(tmp_path), logs=split_budget_logs)
+
+    assert report.integrity.status == "invalid"
+    drift = [message for code, message in _errors(report) if code == "CONFIG_DRIFT"]
+    assert len(drift) == 1 and "'candidate'" in drift[0]
+
+
+def test_cohorts_matched_on_the_declared_attack_keep_other_attacks_out(
+    split_budget_logs: Path, cross_budget_logs: Path, tmp_path: Path
+) -> None:
+    """The cohort match README.md gives for live runs, against runs of another budget."""
+
+    readme = (EXAMPLE_DIR / "README.md").read_text(encoding="utf-8")
+    for name in asdict(_live_declaration(1)):
+        assert f"task_arg_{name}:" in readme
+
+    # Matched on the model alone, a candidate attacked at budget 2 is compared with a
+    # baseline attacked at budget 1, and nothing says so.
+    alone = analyze(plan=_live_plan(tmp_path / "alone"), logs=cross_budget_logs)
+    assert alone.integrity.status == "valid"
+
+    declared = _live_declaration(1)
+    across = analyze(plan=_live_plan(tmp_path / "across", match=declared), logs=cross_budget_logs)
+    assert across.integrity.status == "invalid"
+    assert ("COHORT_EMPTY", "cohort 'candidate' contains no evaluations") in _errors(across)
+
+    within = analyze(plan=_live_plan(tmp_path / "within", match=declared), logs=split_budget_logs)
+    assert within.integrity.status == "invalid"
+    missing = sorted(message for code, message in _errors(within) if code == "PROMPT_MISSING")
+    assert missing == [
+        f"prompt 'b{number}' has no observations in cohort 'candidate'" for number in (2, 3)
+    ]

@@ -92,7 +92,9 @@ The design manifest declares the attack in every row: `attack_id`, `attack_finge
 `budget_k`, `attacker_model`, `attacker_judge` and `confirmation_judge`. The fingerprint is a
 digest of the attack id, the budget, the attacker model, the attacker's judge and the prompt
 templates. The task refuses to run against a design that declares a different attack, so
-write a design for the attack you are about to run (from the repository root):
+write a design for the attack you are about to run (from the repository root). The task
+checks the design once, when it starts. `analyze` never compares the logs with the design's
+declaration; the plan's cohorts, below, keep runs of another attack out of the analysis.
 
 ```bash
 python -c "
@@ -122,7 +124,30 @@ inspect eval examples/attack_confirmation/attack_confirmation.py \
 
 The behaviours file has the columns `prompt_id`, `category_id` and `goal`. Pass the same file
 to `write_design` with its `behaviours` argument. Point a copy of `plan.yaml` at the new
-design and at your model names in `cohorts`, and run `analyze` as above.
+design, and match every cohort on the attack as well as the model, with the values the design
+declares:
+
+```yaml
+cohorts:
+  candidate:
+    match:
+      model: <provider/target-model>
+      task_arg_attack_id: pair
+      task_arg_budget_k: 20
+      task_arg_attacker_model: <provider/attacker-model>
+      task_arg_attacker_judge: <provider/attacker-judge>
+      task_arg_confirmation_judge: <provider/confirmation-judge>
+    require_uniform: [...]  # as in plan.yaml
+```
+
+The baseline takes the same match with its own model. Then run `analyze` as above. A run of
+another attack, budget, attacker or judge joins no cohort, so it cannot enter a claim or the
+comparison: the behaviours it leaves without a run are reported as `PROMPT_MISSING`, a cohort
+it leaves empty as `COHORT_EMPTY`, and either makes integrity invalid. Matching on the model
+alone would let two arms attacked at different budgets, or judged by different judges, be
+compared (see [one judge for every arm](../../docs/model-comparisons.md#one-judge-for-every-arm)).
+`require_uniform` names the task's metadata, which holds the whole declaration, fingerprint
+included, so runs of two attacks within one cohort are reported as `CONFIG_DRIFT`.
 
 The attacker in live mode is a minimal PAIR-style loop: each attacker call sees the goal, its
 previous prompt, the target's answer and the judge's verdict. Replace `ModelAttacker` with the
