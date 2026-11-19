@@ -6,6 +6,7 @@ import hashlib
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import pytest
 from pydantic import ValidationError
 
@@ -135,6 +136,32 @@ def test_the_queue_hash_is_of_the_bytes_the_check_parsed(
     prefix = check_labelled_prefix(path, {"a": True, "b": False})
     assert prefix.queue_sha256 == hashlib.sha256(first).hexdigest()
     assert prefix.queue_rows == 2
+
+
+@pytest.mark.parametrize(
+    "suffix",
+    [".gz", ".bz2", ".zip", ".xz", ".zst", ".tar", ".tar.gz", ".tar.bz2", ".tar.xz", ".GZ"],
+)
+def test_a_compressed_queue_is_read_as_pandas_reads_its_path(
+    tmp_path: Path, suffix: str
+) -> None:
+    # The queue is parsed from the bytes it is hashed from, which carry no file name, so the
+    # check must take the compression pandas infers from the name, as reading the path did.
+    if suffix == ".zst":
+        pytest.importorskip("zstandard")
+    path = tmp_path / f"queue.csv{suffix}"
+    rows = pd.DataFrame({"observation_id": ["a", "b", "c"], "tier": ["x", "x", "y"]})
+    # A byte-order mark and CRLF line endings inside the archive read as they do uncompressed.
+    rows.to_csv(path, index=False, encoding="utf-8-sig", lineterminator="\r\n")
+    by_path = pd.read_csv(path, dtype=str, keep_default_na=False)
+
+    prefix = check_labelled_prefix(path, {"a": True}, tier="x")
+
+    assert prefix.observation_ids == tuple(by_path.loc[by_path["tier"] == "x", "observation_id"])
+    assert prefix.observation_ids == ("a", "b")
+    assert (prefix.queue_rows, prefix.labelled) == (2, 1)
+    # The hash is of the file as stored, compressed.
+    assert prefix.queue_sha256 == hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 @pytest.mark.parametrize(

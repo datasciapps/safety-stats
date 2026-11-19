@@ -5,6 +5,7 @@ import io
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Literal
 
 import pandas as pd
 
@@ -87,6 +88,33 @@ def load_validation_strata(path: str | Path) -> dict[str, str]:
     return strata
 
 
+_Compression = Literal["tar", "gzip", "bz2", "zip", "xz", "zstd"]
+
+# The compression pandas infers from a file name when it reads a path, case-insensitively
+# (pandas.io.common.extension_to_compression). A byte buffer has no name, so the labelling
+# queue, which is parsed from the bytes it is hashed from, takes its compression from here.
+# ORDER MATTERS: the first suffix the name ends with wins, so each ".tar" suffix comes before
+# the compression suffix it ends in; otherwise a .tar.gz archive would be read as a gzip file.
+_COMPRESSION_BY_SUFFIX: tuple[tuple[str, _Compression], ...] = (
+    (".tar", "tar"),
+    (".tar.gz", "tar"),
+    (".tar.bz2", "tar"),
+    (".tar.xz", "tar"),
+    (".gz", "gzip"),
+    (".bz2", "bz2"),
+    (".zip", "zip"),
+    (".xz", "xz"),
+    (".zst", "zstd"),
+)
+
+
+def _compression(path: Path) -> _Compression | None:
+    """The compression pandas would infer from ``path``'s name, or ``None`` for plain text."""
+
+    name = path.name.lower()
+    return next((kind for suffix, kind in _COMPRESSION_BY_SUFFIX if name.endswith(suffix)), None)
+
+
 @dataclass(frozen=True)
 class LabelledPrefix:
     """What the labelling-protocol check found: the queue, and how far down it labels reach.
@@ -121,11 +149,16 @@ def check_labelled_prefix(
 
     The file is read once: the hash it reports is of the bytes the check parsed, so a queue
     rewritten while the analysis reads it cannot be hashed in one version and checked in
-    another.
+    another. Those bytes are decompressed as pandas would decompress the file read by its
+    path, by its suffix (``.gz``, ``.bz2``, ``.zip``, ``.xz``, ``.zst`` or a ``.tar``
+    archive), and the hash is of the bytes as stored.
     """
 
-    content = Path(queue_path).read_bytes()
-    frame = pd.read_csv(io.BytesIO(content), dtype=str, keep_default_na=False)
+    path = Path(queue_path)
+    content = path.read_bytes()
+    frame = pd.read_csv(
+        io.BytesIO(content), dtype=str, keep_default_na=False, compression=_compression(path)
+    )
     if "observation_id" not in frame.columns:
         raise ValueError("labelling queue is missing the observation_id column")
     where = "labelling queue"

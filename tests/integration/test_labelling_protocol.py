@@ -202,10 +202,10 @@ def _labels(directory: Path, ids: dict[int, str], observation_ids: list[str]) ->
     (directory / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
 
-def _protocol(stopping: str, **extra: object) -> str:
+def _protocol(stopping: str, *, queue: str = "queue.csv", **extra: object) -> str:
     lines = [
         "    protocol:",
-        "      queue: queue.csv",
+        f"      queue: {queue}",
         "      tier: calibration",
         "      seed: 41",
         f"      stopping: {stopping}",
@@ -215,7 +215,11 @@ def _protocol(stopping: str, **extra: object) -> str:
 
 
 def _run(
-    tmp_path: Path, protocol: str, take: int = 40, edit: str = "none"
+    tmp_path: Path,
+    protocol: str,
+    take: int = 40,
+    edit: str = "none",
+    queue_file: str = "queue.csv",
 ) -> tuple[SafetyReport, pd.DataFrame]:
     ids = _observation_ids(tmp_path)
     queue = _queue(ids, complete=edit == "complete")
@@ -227,7 +231,8 @@ def _run(
             at = int(queue.index[queue["tier"] == "calibration"][take - 1]) + 1
         stray = pd.DataFrame([{"observation_id": ABSENT, "tier": "calibration"}])
         queue = pd.concat([queue.iloc[:at], stray, queue.iloc[at:]], ignore_index=True)
-    queue.to_csv(tmp_path / "queue.csv", index=False, lineterminator="\n")
+    # pandas compresses the queue as its name says, as for queue.csv.gz.
+    queue.to_csv(tmp_path / queue_file, index=False, lineterminator="\n")
     calibration = list(queue.loc[queue["tier"] == "calibration", "observation_id"])
     labelled = calibration[:take]
     if edit == "skip":
@@ -272,12 +277,18 @@ def _violations(report: SafetyReport) -> list[str]:
 
 
 @pytest.mark.usefixtures("logs")
-def test_a_labelled_prefix_is_recorded_and_keeps_clopper_pearson(tmp_path: Path) -> None:
-    report, _ = _run(tmp_path, _protocol("label_independent"))
+@pytest.mark.parametrize("queue_file", ["queue.csv", "queue.csv.gz"])
+def test_a_labelled_prefix_is_recorded_and_keeps_clopper_pearson(
+    tmp_path: Path, queue_file: str
+) -> None:
+    # A compressed queue is read as pandas reads its path, and hashed as stored.
+    report, _ = _run(
+        tmp_path, _protocol("label_independent", queue=queue_file), queue_file=queue_file
+    )
 
     assert _violations(report) == []
     record = report.provenance["judge_calibration"]["protocol"]
-    queue_bytes = (tmp_path / "queue.csv").read_bytes()
+    queue_bytes = (tmp_path / queue_file).read_bytes()
     assert record == {
         "queue_sha256": hashlib.sha256(queue_bytes).hexdigest(),
         "queue_rows": 60,
