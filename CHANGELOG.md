@@ -38,6 +38,19 @@ described in their pull requests.
   silently held no prompt to zero tolerance. It now stops with an error that names the column.
   The default field `zero_tolerance` stays optional.
 
+- **A generative run resumed after errors can be analyzed.** `generative materialize --resume`
+  reruns the units whose rewrite hit an operational error, from the kernel or from the
+  validator, but left each one's error row in `rewrites.csv` beside the row of its rerun. The
+  ledger then recorded those units twice, and `generative analyze`, like any later resume,
+  refused it. A resume now drops the error rows before it runs anything, replacing the file in
+  one step. Resuming a directory an earlier version left in that state repairs it.
+
+- **Generative ledgers end their lines with LF.** `rewrites.csv` and `prompts.restricted.csv`,
+  written row by row since materialization could be resumed, ended every row with CRLF, and
+  `attempts.csv` mixed CRLF and LF after a resume. All three now end every line with LF on
+  every platform, like the other text artifacts. A resume writes them afresh before it runs
+  anything, which converts the files a development version left with CRLF.
+
 ### Added
 
 - **A fixed-design template for prompt variants, and the profile that coupled wordings need.**
@@ -362,13 +375,15 @@ described in their pull requests.
   generative plan, `rewrite.validation.invoke: true` makes materialization call the validator
   the plan names, supplied with `--validator` (or `validator=`), on every rewrite the kernel
   accepts. Its rejections enter the retry path. `rewrite.deduplication.near_duplicate:
-  normalized_text` also treats rewrites that differ only in case, punctuation, symbols or
-  spacing as duplicates. With either setting, materialization writes `attempts.csv`, one row
-  per kernel call without prompt text. Analysis then writes `fidelity.csv` and a `fidelity`
-  section of `report.json`, which give for each arm why attempts failed. It also adds the
-  diagnostics `GENERATIVE_FIDELITY_UNEVEN`, `GENERATIVE_VALIDATOR_MISMATCH` and
-  `GENERATIVE_RETRY_DEPENDENCE`. Plans that use neither setting keep their fingerprints and
-  outputs. See
+  normalized_text` also treats rewrites that differ only in case, compatibility forms,
+  punctuation, symbols, spacing or characters that render as nothing, such as variation
+  selectors, as duplicates, comparing their letters, marks and digits alone; a plan that also
+  sets `deduplication.scope: none`, which compares nothing, is refused. With either setting,
+  materialization writes `attempts.csv`, one row per kernel call without prompt text.
+  Analysis then writes `fidelity.csv` and a `fidelity` section of `report.json`, which give
+  for each arm why attempts failed. It also adds the diagnostics `GENERATIVE_FIDELITY_UNEVEN`,
+  `GENERATIVE_VALIDATOR_MISMATCH` and `GENERATIVE_RETRY_DEPENDENCE`. Plans that use neither
+  setting keep their fingerprints and outputs. See
   [Validation and near-duplicates](docs/generative-evaluation.md#validation-and-near-duplicates-experimental).
 
 - **Outcome mapping sensitivities (experimental).** A score with more than two values, such

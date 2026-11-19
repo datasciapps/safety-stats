@@ -203,7 +203,12 @@ interrupted run would have gone on to draw.
 A unit whose retries were **exhausted** is not retried. It is part of the accepted distribution
 the estimand is defined against, and re-running it would grant it more than `maximum_attempts`.
 A unit that **errored** is retried, because an operational failure says nothing about the
-kernel. Both artifacts are append-only, so resuming cannot destroy the work it builds on.
+kernel. Before it runs anything, `--resume` writes `rewrites.csv`, `prompts.restricted.csv`
+and `attempts.csv` afresh, each once and in one step, with the rows of every finished unit.
+The errored units' rows are dropped from `rewrites.csv`, so each unit keeps one row, and the
+attempts of every unit that will run again from `attempts.csv`. After that the ledgers are
+only appended to, so resuming cannot destroy the work it builds on. All three end every line
+with LF; a resume converts the CRLF line endings a development version wrote.
 
 The plan is re-compiled and checked against the recorded selection ledger first, so a directory
 belonging to a different design is refused rather than silently continued.
@@ -503,9 +508,19 @@ differs from the plan's is reported as a warning.
 
 **`deduplication.near_duplicate: normalized_text`** also counts a rewrite as a duplicate when
 its text matches an accepted one within the deduplication scope after Unicode NFKC
-normalization, case folding, removal of punctuation and symbols, and whitespace collapsing.
-`on_duplicate` handles it like an exact repeat. Nothing compares embeddings, which would
-need a model the plan does not declare.
+normalization and case folding, compared on its letters, combining marks and digits alone.
+Punctuation, symbols, whitespace and enclosing marks such as a keycap are removed, and so are
+the characters that render as nothing (Unicode's default-ignorable code points: a zero-width
+space, a soft hyphen, the variation selector that asks for an emoji, a Hangul filler) and
+the Arabic tatweel, which only stretches a word. They are removed, not replaced, so "don't"
+matches "dont", "step-by-step" matches "step by step" and "⚠️ Warning" matches "Warning".
+Where the words break does not count either: "a part" matches "apart". Nor does what
+separates two digits, so numbers can join: "1.5 mg" matches "15 mg", and "10-20" matches
+"1020". Such a false match only makes a unit try again under `on_duplicate: retry`; it never
+lets a duplicate through. The letters, their order and their accents still distinguish two
+rewrites. `on_duplicate` handles a near duplicate like an exact repeat. The setting needs a
+deduplication scope: with `scope: none` nothing is compared, so the plan is refused. Nothing
+compares embeddings, which would need a model the plan does not declare.
 
 Either setting enters the kernel fingerprint, so runs with and without it cannot be pooled.
 Plans that use neither keep their fingerprints and their outputs byte for byte.
@@ -529,9 +544,13 @@ neither the file nor the section.
 Three diagnostics read it:
 
 - `GENERATIVE_FIDELITY_UNEVEN` (warning): the validator's rejection rates across the values
-  of a level spread by more than five percentage points. The rates are in its details.
+  of a level spread by more than five percentage points. The rates are in its details. No
+  sample size is required and the spread is not tested against chance, so the message gives
+  the fewest rewrites judged for one value: among few, a spread that wide can be noise.
 - `GENERATIVE_VALIDATOR_MISMATCH` (warning): the attempt ledger records another validator
-  than the one the plan declares.
+  than the one the plan declares, or kept rewrites that no validator judged, as when
+  `validation.invoke` was set after materialization or before a resume. A run in which no
+  rewrite reached the validator and none was kept gets no such warning.
 - `GENERATIVE_RETRY_DEPENDENCE` (info): some units kept a rewrite only after a duplicate
   rejection. Deduplication compares against rewrites accepted for earlier units, so those
   units' prompts depend on the order of selection. This weakens the independence across
@@ -549,6 +568,8 @@ Three diagnostics read it:
 - a rewrite ledger and prompt store that disagree about which units were accepted;
 - a plan that invokes a validator materialized without `--validator`, or `--validator`
   without such a plan;
+- `rewrite.deduplication.near_duplicate` together with `deduplication.scope: none`, under
+  which nothing is compared, so near duplicates would go undetected;
 - a missing attempt ledger, or one that disagrees with the rewrite ledger, when the plan
   records attempts;
 - a log whose samples match no accepted rewrite, or the same sample twice;

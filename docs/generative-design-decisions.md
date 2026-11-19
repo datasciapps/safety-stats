@@ -141,10 +141,15 @@ groups, independence profiles and a prompt manifest from an `AnalysisPlan`. A ge
 none of those: the sample identifier written at materialization is the whole join key, and the
 cohort follows from the model. The score mapper is shared; nothing else is.
 
-**Ledgers are append-only.** Materialization writes each unit as it completes, and resume never
-rewrites what is there. An earlier draft deleted the ledger and re-emitted every unit, which
-would have destroyed the first run's work had the resumed run also died. Rows therefore land in
-completion order rather than selection order, which nothing downstream reads.
+**Ledgers are appended to, and a resume replaces each once.** Materialization writes each unit
+as it completes. A resume replaces the rewrite ledger, the prompt store and the attempt ledger
+once each, before any work: it writes the rows of every finished unit to a sibling file, syncs
+it to disk and renames it over the ledger in one step, dropping the rows of units that will run
+again. After that it only appends. An interruption therefore leaves each ledger as it was or
+fully replaced, never cut short. An earlier draft deleted the ledger and re-emitted every unit
+as the resumed run went, which would have destroyed the first run's work had the resumed run
+also died. Rows land in completion order rather than selection order, which nothing downstream
+reads.
 
 ## Where the implementation departs from the proposal's structure
 
