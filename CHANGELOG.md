@@ -77,11 +77,16 @@ described in their pull requests.
   blocks, the design effect and the effective number of rollouts. For each primary profile of a
   result the plan computes that splits the profile's blocks, such as one at the item level, it
   gives the same figures on that primary's units, for example its prompts with their failure
-  rates, and the effective number of units; disabled direct mean intervals name no primary. It
-  is a warning when, in a cohort, the design effect on a primary's units reaches 2, so that
-  their effective number is at most half of them. Figures on rollouts would warn about a
-  prompt-level primary with repeated rollouts whenever prompts differ in failure rate, however
-  little the grouping adds. Otherwise it is informational. No bound changes. See
+  rates, and the effective number of units; disabled direct mean intervals name no primary.
+  Where some unit has several rollouts, the correlation on units is the covariance of two units
+  of one block over the variance of all units. The one-way ANOVA estimate on the rates would
+  read small blocks of units with few rollouts, beside a large block of well-replicated ones, as
+  a correlation where there is none. It is a warning when, in a cohort, the design effect on a
+  primary's units reaches 2, so that their effective number is at most half of them. Figures on
+  rollouts would warn about a prompt-level primary with repeated rollouts whenever prompts
+  differ in failure rate, however little the grouping adds. Otherwise it is informational. No
+  bound changes. With few blocks the figures are noisy and can warn with no grouping effect.
+  See
   [How much the grouping matters](docs/independence-profiles.md#how-much-the-grouping-matters-cluster_design_effect).
 
 - **Assumed judge scenarios can give each cohort its own box.** A scenario under

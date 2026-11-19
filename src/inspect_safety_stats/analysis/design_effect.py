@@ -10,12 +10,14 @@ number of rollouts, so that a user sees how much the choice between the profiles
 A primary profile that splits those blocks counts its own blocks as the independent units, not
 the rollouts: a prompt-level primary already treats a prompt's rollouts as one block. For each
 such primary the same figures are computed on its units, the scored rollouts of one of its
-blocks within one of the profile's blocks, with each unit's failure rate as its outcome. These
-figures decide whether the diagnostic warns. Figures on rollouts would not do: whenever prompts
-differ in failure rate, the rollouts of one prompt are correlated, and with repeated rollouts
-that correlation alone would make the warning fire about a prompt-level primary, however little
-the grouping adds. For a primary whose units are single rollouts, such as ``[rollout]``, the
-figures on its units are the figures on rollouts, computed by the same arithmetic.
+blocks within one of the profile's blocks, with each unit's failure rate as its outcome and the
+correlation taken from pairs of units in one block, which units with few rollouts do not raise.
+These figures decide whether the diagnostic warns. Figures on rollouts would not do: whenever
+prompts differ in failure rate, the rollouts of one prompt are correlated, and with repeated
+rollouts that correlation alone would make the warning fire about a prompt-level primary,
+however little the grouping adds. For a primary whose units are single rollouts, such as
+``[rollout]``, the figures on its units are the figures on rollouts, computed by the same
+arithmetic.
 
 The figures describe the data and change no bound: the bounds still rest on the profiles the
 plan declares.
@@ -78,21 +80,27 @@ def intracluster_correlation(sizes: Sequence[int], failures: Sequence[int]) -> f
 
 
 def unit_intracluster_correlation(blocks: Sequence[Sequence[tuple[int, int]]]) -> float | None:
-    """The one-way ANOVA estimate of the intra-cluster correlation of units' failure rates.
+    """The pairwise estimate of the intra-cluster correlation of units' failure rates.
 
     Each block is a sequence of units, and each unit a pair ``(rollouts, failures)`` whose
     outcome is its failure rate ``y_u = failures / rollouts``. Every unit counts once,
-    whatever its number of rollouts. With ``K`` units in ``G`` blocks of ``k_g`` units, block
-    means ``ybar_g`` and overall mean ``ybar``, the mean squares are
-    ``MSB = sum k_g (ybar_g - ybar)^2 / (G - 1)`` and
-    ``MSW = sum (y_u - ybar_g)^2 / (K - G)``, and the estimate is
-    ``(MSB - MSW) / (MSB + (k0 - 1) MSW)`` with ``k0 = (K - sum k_g^2 / K) / (G - 1)``. It
-    can be negative. None when it is undefined: fewer than two blocks, no block with two units,
-    or every unit with the same failure rate.
+    whatever its number of rollouts. With ``K`` units in ``G`` blocks of ``k_g`` units, overall
+    mean ``ybar`` and deviations ``d_u = y_u - ybar``, the estimate is the covariance of two
+    distinct units of one block over the variance of all units:
+    ``C = sum_g [(sum_{u in g} d_u)^2 - sum_{u in g} d_u^2] / sum_g k_g (k_g - 1)`` over
+    ``S^2 = sum_u d_u^2 / K``. It can be negative. None when it is undefined: fewer than two
+    blocks, no block with two units, or every unit with the same failure rate.
 
-    When every unit is one rollout, the outcomes are binary and the estimate is
-    :func:`intracluster_correlation` of the blocks' rollout and failure counts, which computes
-    it, so that a ``[rollout]`` primary's figures keep the bits of the figures on rollouts.
+    Units with fewer rollouts have noisier rates. The one-way ANOVA estimator compares the
+    spread of block means with the spread within blocks, so small blocks of noisy units beside
+    a large block of well-replicated ones raise it with no dependence at all. The products of
+    two independent units' deviations have mean about zero, however noisy each unit is, so the
+    pairwise estimate does not.
+
+    When every unit is one rollout, the outcomes are binary, every unit is as noisy as the
+    others, and the estimate is the one-way ANOVA estimate of :func:`intracluster_correlation`
+    on the blocks' rollout and failure counts, so that a ``[rollout]`` primary's figures keep
+    the bits of the figures on rollouts.
     """
 
     if any(not units for units in blocks) or any(
@@ -113,8 +121,9 @@ def unit_intracluster_correlation(blocks: Sequence[Sequence[tuple[int, int]]]) -
     clusters = len(counts)
     if clusters < 2 or total == clusters:
         return None
-    # Equal rates, compared exactly as fractions: their float means could differ in the last
-    # bit and leave a ratio of rounding errors.
+    # Equal rates, compared exactly as fractions: their float mean could differ from them in
+    # the last bit and leave a ratio of rounding errors. Rates that differ leave a variance
+    # above zero.
     first_rollouts, first_failed = blocks[0][0]
     if all(
         failed * first_rollouts == first_failed * rollouts
@@ -124,18 +133,17 @@ def unit_intracluster_correlation(blocks: Sequence[Sequence[tuple[int, int]]]) -
         return None
     rates = [[failed / rollouts for rollouts, failed in units] for units in blocks]
     overall = math.fsum(rate for block in rates for rate in block) / total
-    means = [math.fsum(block) / len(block) for block in rates]
-    between = math.fsum(
-        count * (mean - overall) ** 2 for count, mean in zip(counts, means, strict=True)
-    ) / (clusters - 1)
-    within = math.fsum(
-        (rate - mean) ** 2 for block, mean in zip(rates, means, strict=True) for rate in block
-    ) / (total - clusters)
-    typical = (total - math.fsum(count * count for count in counts) / total) / (clusters - 1)
-    denominator = between + (typical - 1) * within
-    if denominator <= 0:
-        return None
-    return (between - within) / denominator
+    deviations = [[rate - overall for rate in block] for block in rates]
+    variance = math.fsum(value * value for block in deviations for value in block) / total
+    pairs = sum(count * (count - 1) for count in counts)
+    covariance = (
+        math.fsum(
+            math.fsum(block) ** 2 - math.fsum(value * value for value in block)
+            for block in deviations
+        )
+        / pairs
+    )
+    return covariance / variance
 
 
 def design_effect(sizes: Sequence[int], correlation: float) -> float:
@@ -161,6 +169,12 @@ def unit_design_effect(
     :func:`design_effect` with the blocks' sizes counted in units, so ``m`` is the number of
     units in the block a unit sits in, averaged over units. Both are None when the
     correlation is undefined.
+
+    With the pairwise correlation at 0 or above, the design effect is
+    ``sum_g (sum_{u in g} d_u)^2 / sum_u d_u^2``: the variance of the units' total with the
+    blocks as the independent units, over its variance with the units as independent. It is
+    at most the number of units in the largest block, though the correlation can pass 1 when
+    blocks differ in size.
     """
 
     correlation = unit_intracluster_correlation(blocks)
@@ -302,11 +316,11 @@ def cluster_design_effects(
     cohort's intra-cluster correlation, design effect and effective rollout count. For each
     primary profile of a result the plan computes that puts rollouts of one of the profile's
     blocks in different blocks of its own, which it treats as independent, it gives the same
-    figures on that primary's units: the scored rollouts of one of its blocks within one of
-    the profile's blocks, each with its failure rate as the outcome. The diagnostic is a
-    warning when, in some cohort, the design effect on a primary's units is at least
-    ``DESIGN_EFFECT_WARNING``, so that their effective number is at most half of them;
-    otherwise it is informational.
+    figures on that primary's units, from :func:`unit_design_effect`: the scored rollouts of
+    one of its blocks within one of the profile's blocks, each with its failure rate as the
+    outcome. The diagnostic is a warning when, in some cohort, the design effect on a
+    primary's units is at least ``DESIGN_EFFECT_WARNING``, so that their effective number is
+    at most half of them; otherwise it is informational.
     """
 
     profiles = plan.design.independence_profiles

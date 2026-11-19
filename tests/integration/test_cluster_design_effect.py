@@ -1,9 +1,9 @@
-"""CLUSTER_DESIGN_EFFECT on a clustered synthetic set: 80 prompts in 10 conversations of 8,
-with the conversation in a manifest column, and one rollout per prompt or ten."""
+"""CLUSTER_DESIGN_EFFECT on clustered synthetic sets, with the conversation in a manifest
+column: mostly 80 prompts in 10 conversations of 8, with one rollout per prompt or ten."""
 
 from __future__ import annotations
 
-from collections.abc import Collection, Mapping
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -42,19 +42,36 @@ def _inputs(
     primary: str = "item",
     rollouts: int = 1,
 ) -> Inputs:
-    """Each prompt's ``rollouts`` rollouts. ``failures`` gives the (conversation, item) pairs
-    whose rollouts all fail, or each prompt's number of failing rollouts."""
+    """10 conversations of 8 prompts, each with ``rollouts`` rollouts. ``failures`` gives the
+    (conversation, item) pairs whose rollouts all fail, or each prompt's number of failing
+    rollouts."""
 
     failing = (
         failures
         if isinstance(failures, Mapping)
         else {key: rollouts for key in failures}
     )
+    return _layout_inputs(
+        [
+            [(rollouts, failing.get((conversation, item), 0)) for item in range(8)]
+            for conversation in range(10)
+        ],
+        primary,
+    )
+
+
+def _layout_inputs(
+    conversations: Sequence[Sequence[tuple[int, int]]], primary: str = "item"
+) -> Inputs:
+    """Prompt ``p`` of conversation ``c`` is ``c{c}p{p}``, with the (rollouts, failures) at
+    ``conversations[c][p]``: its first ``failures`` rollouts fail. Every prompt is its own
+    question."""
+
     inputs = base_inputs()
     inputs.manifest = []
     inputs.rollouts = []
-    for conversation in range(10):
-        for item in range(8):
+    for conversation, prompts in enumerate(conversations):
+        for item, (rollouts, failures) in enumerate(prompts):
             prompt = f"c{conversation}p{item}"
             inputs.manifest.append(
                 {
@@ -66,7 +83,7 @@ def _inputs(
                 }
             )
             for repeat in range(1, rollouts + 1):
-                failed = repeat <= failing.get((conversation, item), 0)
+                failed = repeat <= failures
                 inputs.rollouts.append(rollout(prompt, repeat, "FAIL" if failed else "PASS"))
     profiles = {"item": {"block_by": ["prompt_id"]}, "conversation": {"block_by": ["conversation"]}}
     if primary == "rollout":
@@ -124,13 +141,17 @@ def test_co_failing_conversations_warn_on_the_units_of_repeated_rollouts(
     (cohort,) = found.details["cohorts"]
     assert (cohort["rollouts"], cohort["blocks"], cohort["largest_block"]) == (800, 10, 80)
     # Every rollout of a failing prompt fails, so the prompts' failure rates are 0 or 1, as the
-    # single rollouts were: the same correlation, design effect and effective number, now of
-    # the item primary's 80 units, not of the 800 rollouts.
+    # single rollouts were, and the figures are now of the item primary's 80 units, not of the
+    # 800 rollouts. Units of several rollouts take the pairwise estimate: around the mean rate
+    # 11/40, deviations 29/40 and -11/40, so S^2 = (11/40)(29/40) = 319/1600. The products of
+    # deviations of two units in one conversation sum to 3 (23.04 - 3.755) + (1.44 - 1.055) +
+    # 6 (4.84 - 0.605) = 1673/20 over 560 ordered pairs, so rho = 239/319, close to the 10/13
+    # of single rollouts, and the design effect is 1 + 7 rho = 1992/319.
     (units,) = cohort["primaries"]
     assert units["units"] == 80
-    assert units["intracluster_correlation"] == pytest.approx(10 / 13, rel=1e-12, abs=0)
-    assert units["design_effect"] == pytest.approx(83 / 13, rel=1e-12, abs=0)
-    assert units["effective_units"] == pytest.approx(80 * 13 / 83, rel=1e-12, abs=0)
+    assert units["intracluster_correlation"] == pytest.approx(239 / 319, rel=1e-12, abs=0)
+    assert units["design_effect"] == pytest.approx(1992 / 319, rel=1e-12, abs=0)
+    assert units["effective_units"] == pytest.approx(80 * 319 / 1992, rel=1e-12, abs=0)
     assert "about 13 effective units" in found.message
 
 
@@ -149,15 +170,43 @@ def test_prompt_differences_alone_do_not_warn_an_item_primary(tmp_path: Path) ->
     assert cohort["design_effect"] == pytest.approx(1 + 79 * on_rollouts, rel=1e-12, abs=0)
     assert cohort["design_effect"] > 3.8
     # The item primary already counts each prompt's rollouts as one block. On its 80 units,
-    # the prompts' failure rates: MSB = 4/45, MSW = 719/5600 and k0 = 8, a negative
-    # correlation, so no design effect.
+    # the prompts' failure rates around 29/80 have S^2 = 783/6400, and the products of two
+    # units' deviations within a conversation sum to -271/80 over 560 ordered pairs: a
+    # negative correlation, so no design effect.
     (units,) = cohort["primaries"]
     assert units["units"] == 80
     assert units["intracluster_correlation"] == pytest.approx(
-        -1991 / 49777, rel=1e-12, abs=0
+        -271 / 5481, rel=1e-12, abs=0
     )
     assert (units["design_effect"], units["effective_units"]) == (1.0, 80.0)
     assert "about 80 effective units." in found.message
+
+
+def test_noisy_units_in_small_conversations_do_not_warn_an_item_primary(
+    tmp_path: Path,
+) -> None:
+    # One conversation of 12 prompts with 20 rollouts each, failing 1 to 12 times, beside six
+    # conversations of two prompts with one rollout each. The single rollouts' rates of 0 or 1
+    # are far noisier than the rates of 20 rollouts, and nothing ties a conversation's prompts
+    # together beyond chance: three of the six pairs agree.
+    quiet = [(20, failures) for failures in range(1, 13)]
+    noisy = [[(1, 1), (1, 0)], [(1, 0), (1, 0)], [(1, 1), (1, 1)], [(1, 0), (1, 1)]]
+    noisy += [[(1, 0), (1, 0)], [(1, 1), (1, 0)]]
+    (found,) = _found(run_analysis(_layout_inputs([quiet, *noisy]), tmp_path).diagnostics)
+    # The one-way ANOVA estimate on the units' rates sets the six pairs' spread of block means
+    # against the quiet units' small spread within their conversation, and gives a design
+    # effect of about 2.8. The pairwise estimate does not: around the mean rate 89/240, with
+    # S^2 = 7979/57600, the products of two units' deviations within a conversation sum to
+    # -83/600 over 144 ordered pairs.
+    assert found.severity == "INFO"
+    assert found.details["primaries_splitting_blocks"] == []
+    (cohort,) = found.details["cohorts"]
+    (units,) = cohort["primaries"]
+    assert units["units"] == 24
+    assert units["intracluster_correlation"] == pytest.approx(
+        -166 / 23937, rel=1e-12, abs=0
+    )
+    assert (units["design_effect"], units["effective_units"]) == (1.0, 24.0)
 
 
 def test_a_rollout_primary_gets_the_figures_on_rollouts(tmp_path: Path) -> None:

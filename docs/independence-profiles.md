@@ -253,14 +253,21 @@ that primary's units, under `primaries` in each cohort's details:
   blocks. Where the primary's blocks lie within the profile's, as a prompt lies within its
   conversation, the units are the primary's blocks. A block of the primary that spans several of
   the profile's blocks gives one unit in each;
-- the intra-cluster correlation of the units' failure rates within the blocks, from the same
-  estimator, with each unit counted once;
+- the intra-cluster correlation of the units' failure rates within the blocks, with each unit
+  counted once. Where some unit holds several rollouts, it is the covariance of the rates of two
+  units in one block, averaged over all such pairs, over the variance of all the units' rates.
+  A unit with few rollouts has a noisy rate,
+  and this pairwise estimate, unlike the one-way ANOVA estimate on the rates, does not read
+  small blocks of such units beside a large block of well-replicated ones as a correlation;
 - the design effect, with $m$ counted in units: the number of units in the block a unit sits in,
-  averaged over the $K$ units;
+  averaged over the $K$ units. With a correlation of 0 or more it is the variance of the units'
+  total with the blocks as independent, over that with the units as independent, so it is at
+  most the number of units in the largest block, though the correlation itself can pass 1 when
+  the blocks differ in size;
 - the effective number of units, $K$ divided by the design effect.
 
 For a `[rollout]` primary, and for any primary whose units each hold one rollout, the units are
-the rollouts and the figures are those on rollouts.
+the rollouts and the figures are those on rollouts, from the one-way ANOVA estimate.
 
 To get it for a column, declare a profile that blocks by that column, for example as a
 sensitivity of the item-level primary:
@@ -288,13 +295,24 @@ several failing rollouts. A prompt-level primary already accounts for that corre
 repeated rollouts it can dominate the figures on rollouts. In simulated runs of 10 conversations
 of 8 prompts with 10 rollouts each, where prompts differ widely and conversations add nothing,
 the design effect on rollouts reaches 2 in about 60% of runs, and on the units of a prompt-level
-primary in about 2.5%.
+primary in about 1.5%. Where a conversation effect with a standard deviation of 1 or 1.5 on the
+logit scale is added, it does in about 90% and 99% of runs.
 
 The figures describe the data, and they have limits:
 
 - Under a fixed design, the correlation also includes fixed differences in failure rates between
   the prompts of different blocks. It can therefore overstate the dependence between rollouts.
   A near-zero correlation is still a sign that the grouping matters little.
+- With few blocks the correlation rests on few block means, and the diagnostic can warn though
+  the blocks add nothing. In simulated runs with no conversation effect and single-rollout
+  prompts, it warned in about 17% of runs with 2 conversations of 40 prompts, 14% with 3 of 30,
+  9% with 5 of 16 and 2.5% with 10 of 8; with 10 rollouts per prompt, in about 5.5%, 4.6%, 3.8%
+  and 1.5%.
+- A block that holds most of the units also holds most of the pairs and dominates the
+  correlation on units, so a grouping effect can go unnoticed. Beside one conversation of 40
+  prompts with 10 or 20 rollouts each, five conversations of two single-rollout prompts with a
+  conversation effect of standard deviation 1.5 made it warn in about a third of runs, and twenty
+  in about half.
 - The correlation is undefined when every rollout falls in one block, when no block holds two
   rollouts, or when all rollouts have the same outcome, and on a primary's units also when they
   all have the same failure rate. The diagnostic then says so, and gives no design effect.

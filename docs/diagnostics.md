@@ -690,8 +690,10 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
   about N / design effect effective rollouts. For each primary profile of a result the plan computes
   that splits the blocks, the same figures on its units, the scored rollouts of one of its blocks
   within one of the profile's blocks with their failure rate as the outcome and m counted in units,
-  give its effective units. It is a warning when, in a cohort, the design effect on a primary's
-  units reaches 2, so that their effective number is at most half of them.
+  give its effective units. For units of several rollouts the correlation is the covariance of two
+  units of one block over the variance of all units, which units with few rollouts do not raise. It
+  is a warning when, in a cohort, the design effect on a primary's units reaches 2, so that their
+  effective number is at most half of them.
 - **Consequence:** Nothing is computed differently: the diagnostic records how much the rollouts'
   grouping shrinks their evidence, so a reader can judge results that rest on a finer profile. Under
   a fixed design the correlation also includes fixed differences in failure rates between the
