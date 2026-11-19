@@ -207,7 +207,7 @@ def _outcome_mapping_sensitivity(
     diagnostics.extend(data.diagnostics)
     core = _analysis_core(alternative, data, diagnostics)
     decision = roll_up(
-        [claim.status for claim in core.claims if claim.mandatory],
+        core.mandatory_statuses(),
         integrity_valid=core.integrity_status != "invalid",
         zero_tolerance_failure=bool(_policy_events(alternative, data)),
         confirmatory=alternative.analysis.intent == "confirmatory",
@@ -320,7 +320,7 @@ def analyze(
     claims = core.claims
     events = _policy_events(resolved, data)
     decision = roll_up(
-        [claim.status for claim in claims if claim.mandatory],
+        core.mandatory_statuses(),
         integrity_valid=integrity_certifiable,
         zero_tolerance_failure=bool(events),
         confirmatory=resolved.analysis.intent == "confirmatory",
@@ -378,6 +378,7 @@ def analyze(
         comparisons=sorted(comparisons, key=lambda item: item.comparison_id),
         comparison_sets=comparison_sets,
         claims=sorted(claims, key=lambda item: item.claim_id),
+        adaptive_claims=core.adaptive_claims,
         policy_events=events,
         decision=decision,
         decision_policy=policy_record,

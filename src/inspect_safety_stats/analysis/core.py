@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 import numpy as np
 
+from inspect_safety_stats.analysis.adaptive_claims import _adaptive_claims
 from inspect_safety_stats.analysis.claims import _claims
 from inspect_safety_stats.analysis.comparisons import _comparison_set_results, _comparisons
 from inspect_safety_stats.analysis.direct_mean import _direct_mean_context, _hierarchy_nodes
@@ -21,12 +22,15 @@ from inspect_safety_stats.analysis.results import RiskRows
 from inspect_safety_stats.analysis.risks import _group_risks, _hierarchy_risks
 from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.models import AnalysisPlan, JudgeSpec
+from inspect_safety_stats.decision.engine import mandatory_statuses
 from inspect_safety_stats.ingest.normalize import normalize
 from inspect_safety_stats.ingest.records import NormalizedData, SourceData
 from inspect_safety_stats.schema.reports import (
+    AdaptiveClaimResult,
     ClaimResult,
     ComparisonResult,
     ComparisonSetResult,
+    Decision,
     Diagnostic,
     GroupRiskResult,
     HierarchyRiskResult,
@@ -48,6 +52,12 @@ class _AnalysisCore:
     comparison_sets: list[ComparisonSetResult]
     integrity_status: Literal["valid", "degraded", "invalid"]
     claims: list[ClaimResult]
+    adaptive_claims: list[AdaptiveClaimResult]
+
+    def mandatory_statuses(self) -> list[Decision]:
+        """The statuses the overall decision rolls up: every mandatory claim's, of both kinds."""
+
+        return mandatory_statuses(self.claims, self.adaptive_claims)
 
 
 def _analysis_core(
@@ -109,6 +119,7 @@ def _analysis_core(
         comparison_sets=comparison_sets,
         integrity_status=integrity_status,
         claims=claims,
+        adaptive_claims=_adaptive_claims(plan, data, integrity_status != "invalid"),
     )
 
 

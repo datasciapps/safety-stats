@@ -2421,6 +2421,55 @@ It is simple and conservative, which makes it an appropriate first implementatio
 
 The analysis plan must freeze each claim's \(\alpha_i\) before monitoring begins. Adding claims midstream requires reserving alpha in advance or starting a new declared family.
 
+### 11.1 Attackers that adapt across behaviours (experimental)
+
+**Release status:** implemented as `adaptive_claims` in the plan (#125), in `stats/adaptive.py`. The rest of this section's sequential module remains deferred.
+
+An attacker that carries what it learned on one behaviour into the next makes its runs dependent: the success probability of run \(i\) depends on runs \(1,\ldots,i-1\). The binomial bounds of Section 4 assume independent runs and do not apply. Let \(X_i\in\{0,1\}\) indicate that run \(i\) succeeded, \(S_t=\sum_{i\le t}X_i\), and
+
+\[
+m_i=\Pr(X_i=1\mid X_1,\ldots,X_{i-1}),\qquad
+\bar m_t=\frac1t\sum_{i\le t}m_i .
+\]
+
+The estimand is \(\bar m_t\), the attacker's running average of conditional success probabilities for the declared attacker, budget, behaviours and order. The order of the behaviours must be fixed in advance or randomised; the attacker may adapt within and across runs.
+
+**Guarantee.** Fix \(\lambda>0\) and let \(\psi_\lambda(m)=\log(1-m+m e^\lambda)\), the cumulant generating function of a Bernoulli(\(m\)) variable. Since \(\mathbb E[e^{\lambda X_i}\mid X_1,\ldots,X_{i-1}]=e^{\psi_\lambda(m_i)}\), the process
+
+\[
+N_t(\lambda)=\exp\Bigl(\lambda S_t-\sum_{i\le t}\psi_\lambda(m_i)\Bigr)
+\]
+
+is a nonnegative martingale with \(N_0=1\). \(\psi_\lambda\) is concave, so by Jensen's inequality \(\sum_{i\le t}\psi_\lambda(m_i)\le t\,\psi_\lambda(\bar m_t)\), and
+
+\[
+G_t(\lambda)=\exp\bigl(\lambda S_t-t\,\psi_\lambda(\bar m_t)\bigr)\le N_t(\lambda).
+\]
+
+For weights \(w_j>0\) summing to one on values \(\lambda_j>0\), all fixed before the data, \(N_t=\sum_j w_j N_t(\lambda_j)\) is again a nonnegative martingale with \(N_0=1\), and \(G_t=\sum_j w_j G_t(\lambda_j)\le N_t\). Ville's inequality [40] gives \(\Pr(\exists t:N_t\ge 1/\alpha)\le\alpha\). Define
+
+\[
+L_t=\inf\Bigl\{m\in[0,1]:\sum_j w_j\exp\bigl(\lambda_j S_t-t\,\psi_{\lambda_j}(m)\bigr)<1/\alpha\Bigr\}.
+\]
+
+Each term falls in \(m\), because \(\psi_\lambda\) rises in \(m\) for \(\lambda>0\), so the set is an interval \([L_t,1]\). If \(L_t>\bar m_t\) then \(G_t\ge 1/\alpha\), hence \(N_t\ge 1/\alpha\), and therefore
+
+\[
+\Pr\bigl(\exists t: L_t>\bar m_t\bigr)\le\alpha .
+\]
+
+The mixture must not depend on \(m\): a mixture chosen at each \(m\) separately would be evaluated at the random \(\bar m_t\), and \(N_t\) would no longer be a martingale. The construction is that of Howard et al. [3], with the Bernoulli cumulant generating function in place of a sub-exponential bound; Waudby-Smith and Ramdas [33] study the betting form of such processes.
+
+**What is implemented.** The mixture is 20 values of \(\lambda\), spaced geometrically from 0.05 to 5, with equal weights. \(L_t\) is the root of the mixture against \(1/\alpha\), found to an absolute tolerance of \(10^{-12}\) and then lowered by that tolerance, with \(\psi_\lambda(m)\) evaluated as `log1p(m * expm1(λ))` so that tiny \(m\) stay exact. The claim is `FAIL` when \(L_t\) is at or above `unacceptable_lower`, at the family's alpha.
+
+**Counting what is missing.** A behaviour inside the stream with no run, or with an unclassified outcome, is counted as \(X_i=0\). That lowers \(S_t\) pathwise, so \(G_t\) only falls and the guarantee holds as stated.
+
+**Why FAIL only.** An upper bound would also be valid for this attacker. It is not offered, because a small success rate for one adaptive attacker at one budget is no evidence about other attackers or larger budgets, and a `PASS` would read as such evidence. A large one is evidence enough to fail a gate.
+
+**Width.** With \(\alpha=0.05\), 20 successes in 50 runs give \(L_{50}=0.2097\), against 0.2831 for the fixed-horizon one-sided Clopper–Pearson lower bound, which assumes independent runs and one look. 2 in 20 give 0.0033 against 0.0181, and 30 in 300 give 0.0552 against 0.0729.
+
+**Coverage.** `research/adaptive_attacker_coverage.py` draws 20,000 streams of 300 runs from four attackers and recomputes the bound after every run. At \(\alpha=0.05\), the bound rose above \(\bar m_t\) at some \(t\) on 0.0135 of streams for an attacker whose success probability grows with each success (0.05 up to 0.6), 0.0187 for one that loses with each failure (0.6 down to 0.02), 0.0049 for one at 0.9 after a success and 0.1 after a failure, and 0.0232 for independent runs at 0.3. `tests/unit/test_adaptive_bound.py` repeats the first check at a smaller size.
+
 ---
 
 ## 12. Relationship to Optstop
@@ -2735,6 +2784,7 @@ That is the role this Inspect extension should fill.
 37. Z. Zhou, Z. Ye, Z. Chen, B. Li, and F. Liu, “CELEUS: Certifiable and Efficient LLM Evaluation via E-Processes,” 2026. [arXiv:2606.20820](https://arxiv.org/abs/2606.20820)
 38. Y. Gao, “How Reliable Is Your Jailbreak Judge? Calibration and Adversarial Robustness of Automated ASR Scoring,” 2026. [arXiv:2606.25487](https://arxiv.org/abs/2606.25487)
 39. I. Waudby-Smith and A. Ramdas, “Confidence sequences for sampling without replacement,” *Advances in Neural Information Processing Systems* 33, 2020. [arXiv:2006.04347](https://arxiv.org/abs/2006.04347)
+40. J. Ville, *Étude critique de la notion de collectif*, Gauthier-Villars, Paris, 1939.
 
 ---
 
