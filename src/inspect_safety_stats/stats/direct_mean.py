@@ -206,6 +206,57 @@ def weighted_bounded_empirical_bernstein_mean_bounds(
     )
 
 
+def _bounded_chernoff_kernel(
+    weights: np.ndarray,
+) -> tuple[str, Callable[[float], float], Callable[[float, float], float]]:
+    """The KL/Chernoff kernel for independent [0,1]-valued blocks with these weights.
+
+    Returns the kernel's name, the divergence target as a function of alpha, and the
+    divergence. Equal weights use the Bernoulli KL divergence with target
+    ``log(1 / alpha) / n``; unequal weights use the Poisson deviance with target
+    ``max A * log(1 / alpha)``.
+    """
+
+    if bool(np.allclose(weights, np.full_like(weights, 1 / len(weights)), rtol=1e-10, atol=1e-14)):
+        count = len(weights)
+        return (
+            "bernoulli_kl_equal_atomic_weights",
+            lambda alpha: math.log(1 / alpha) / count,
+            _bernoulli_kl,
+        )
+    maximum_increment = float(np.max(weights))
+    return (
+        "weighted_poisson_chernoff_max_increment",
+        lambda alpha: maximum_increment * math.log(1 / alpha),
+        _poisson_deviance,
+    )
+
+
+def bounded_kl_chernoff_upper_bound(
+    estimate: float, weights: ArrayLike, *, alpha: float
+) -> tuple[float, str]:
+    """Upper KL/Chernoff bound on ``sum_g A_g E[Y_g]`` from ``estimate = sum_g A_g Y_g``.
+
+    The blocks ``Y_g`` are independent and [0,1]-valued, and ``weights`` are the ``A_g``. The
+    bound is the one ``weighted_bounded_kl_chernoff_mean_bounds`` reports, and it is
+    nondecreasing in ``estimate``, so an upper bound on the estimate gives a valid upper bound
+    here too. Returns the bound and the kernel's name.
+    """
+
+    w = np.asarray(weights, dtype=float)
+    if w.ndim != 1 or len(w) == 0:
+        raise ValueError("weights must be a nonempty one-dimensional array")
+    if np.any(w < 0) or not math.isclose(float(np.sum(w)), 1.0, rel_tol=1e-10, abs_tol=1e-12):
+        raise ValueError("weights must be nonnegative and sum to one")
+    if not 0 <= estimate <= 1:
+        raise ValueError("estimate must lie in [0, 1]")
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0, 1)")
+    kernel, target, divergence = _bounded_chernoff_kernel(w)
+    bound = _invert_divergence(estimate, target(alpha), direction="upper", divergence=divergence)
+    return bound, kernel
+
+
 def weighted_bounded_kl_chernoff_mean_bounds(
     completion_lower: ArrayLike,
     completion_upper: ArrayLike,
@@ -228,22 +279,12 @@ def weighted_bounded_kl_chernoff_mean_bounds(
     estimate_upper = float(np.dot(w, upper_values))
     c2 = float(np.sum(np.square(w)))
     maximum_increment = float(np.max(w))
-    equal_weights = bool(np.allclose(w, np.full_like(w, 1 / len(w)), rtol=1e-10, atol=1e-14))
-    if equal_weights:
-        kernel = "bernoulli_kl_equal_atomic_weights"
-        lower_target = math.log(1 / alpha_lower) / len(w)
-        upper_target = math.log(1 / alpha_upper) / len(w)
-        divergence = _bernoulli_kl
-    else:
-        kernel = "weighted_poisson_chernoff_max_increment"
-        lower_target = maximum_increment * math.log(1 / alpha_lower)
-        upper_target = maximum_increment * math.log(1 / alpha_upper)
-        divergence = _poisson_deviance
+    kernel, target, divergence = _bounded_chernoff_kernel(w)
     lower = _invert_divergence(
-        estimate_lower, lower_target, direction="lower", divergence=divergence
+        estimate_lower, target(alpha_lower), direction="lower", divergence=divergence
     )
     upper = _invert_divergence(
-        estimate_upper, upper_target, direction="upper", divergence=divergence
+        estimate_upper, target(alpha_upper), direction="upper", divergence=divergence
     )
     return DirectMeanBounds(
         lower=lower,

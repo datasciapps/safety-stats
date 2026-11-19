@@ -786,6 +786,32 @@ class DirectMeanIntervalsSpec(StrictModel):
         return self
 
 
+class AnytimeBoundsSpec(StrictModel):
+    """Experimental: anytime-valid upper bounds for runs stopped early (#126).
+
+    For each cohort and group, a one-sided upper bound on the weighted mean failure
+    probability that holds at every prefix of the run's sample order at once, and so wherever
+    a rule such as optstop's stopped the run. The order must be Inspect's ``sample_shuffle``
+    with a recorded integer seed; the stream is the first ``rollouts_per_item`` epochs of each
+    item, in that order. ``independence_profile`` names a profile of
+    ``design.independence_profiles``: ``[rollout]`` treats an item's rollouts as independent,
+    and any profile that blocks by ``prompt_id`` treats only items as independent. The bounds
+    split the ``family``'s alpha equally. They are reported as diagnostics beside the claims,
+    and never change a claim's status.
+    """
+
+    order: Literal["inspect_sample_shuffle"] = "inspect_sample_shuffle"
+    rollouts_per_item: PlanInt = Field(default=1, ge=1)
+    independence_profile: str = Field(min_length=1)
+    family: str = Field(min_length=1)
+    groups: list[str] | None = None
+
+    @model_validator(mode="after")
+    def validate_groups(self) -> AnytimeBoundsSpec:
+        _group_scope(self.groups, "anytime bound")
+        return self
+
+
 class OutputsSpec(StrictModel):
     prompt_bounds: PromptBoundsSpec = Field(default_factory=PromptBoundsSpec)
     direct_mean_intervals: DirectMeanIntervalsSpec = Field(default_factory=DirectMeanIntervalsSpec)
@@ -793,6 +819,9 @@ class OutputsSpec(StrictModel):
     # Experimental. Decide every claim again on each declared judge's own verdicts, as if the
     # plan named that judge as its primary outcome, and record the judges' configurations.
     judge_claims: bool = False
+    # Experimental (#126): anytime-valid upper bounds for runs stopped early. Left out of the
+    # dump while absent, so plans without it keep their hash.
+    anytime_bounds: AnytimeBoundsSpec | None = None
 
     @model_serializer(mode="wrap")
     def leave_out_judge_claims_when_off(
@@ -803,6 +832,8 @@ class OutputsSpec(StrictModel):
         data: dict[str, Any] = handler(self)
         if not self.judge_claims:
             data.pop("judge_claims", None)
+        if self.anytime_bounds is None:
+            data.pop("anytime_bounds", None)
         return data
 
 

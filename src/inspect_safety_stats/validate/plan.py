@@ -419,6 +419,7 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                 )
             )
     diagnostics.extend(_worst_of_k_interval_problems(plan))
+    diagnostics.extend(anytime_bound_problems(plan))
     if not plan.outputs.risk_measures:
         diagnostics.append(
             Diagnostic(
@@ -473,6 +474,46 @@ def _worst_of_k_interval_problems(plan: AnalysisPlan) -> list[Diagnostic]:
             severity="ERROR",
             message=f"the direct worst_of_k interval of {', '.join(requested)}: {problem}",
             scope="outputs.risk_measures",
+        )
+        for problem in problems
+    ]
+
+
+def anytime_bound_problems(plan: AnalysisPlan) -> list[Diagnostic]:
+    """What keeps the experimental anytime-valid bounds (#126) from being computed."""
+
+    spec = plan.outputs.anytime_bounds
+    if spec is None:
+        return []
+    problems: list[str] = []
+    if plan.design.type != "fixed":
+        problems.append(
+            f"they bound a fixed design's weighted mean, so they need design.type: fixed, not "
+            f"{plan.design.type!r}"
+        )
+    if spec.family not in {family.id for family in plan.multiplicity.families}:
+        problems.append(f"family {spec.family!r} is not declared in multiplicity.families")
+    unknown = sorted(set(spec.groups or []) - {group.id for group in plan.groups})
+    if unknown:
+        problems.append(f"groups {unknown!r} are not declared")
+    profile = plan.design.independence_profiles.get(spec.independence_profile)
+    if profile is None:
+        problems.append(
+            f"independence profile {spec.independence_profile!r} is not declared in "
+            "design.independence_profiles"
+        )
+    elif profile.block_by != ["rollout"] and "prompt_id" not in profile.block_by:
+        problems.append(
+            f"independence profile {spec.independence_profile!r} blocks by "
+            f"{profile.block_by!r}: the bound needs independent items, so the profile must "
+            "block by rollout or by prompt_id"
+        )
+    return [
+        Diagnostic(
+            code="PLAN_ANYTIME_BOUNDS_INVALID",
+            severity="ERROR",
+            message=f"outputs.anytime_bounds: {problem}",
+            scope="outputs.anytime_bounds",
         )
         for problem in problems
     ]
