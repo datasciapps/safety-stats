@@ -1223,7 +1223,6 @@ def generative_compile_command(
     member the analysis could not estimate is refused before anything is generated.
     """
 
-    from inspect_safety_stats.generative.runner import check_declared_slice_family
     from inspect_safety_stats.generative.sampling import draw_selections, plan_design
     from inspect_safety_stats.generative.schema import load_generative_plan
     from inspect_safety_stats.generative.taxonomy import compile_taxonomy
@@ -1233,6 +1232,9 @@ def generative_compile_command(
         taxonomy = compile_taxonomy(parsed, base_path=plan.parent)
         design = plan_design(taxonomy, parsed)
         if parsed.inference.slice_family is not None:
+            # The runner imports Inspect and pandas, which a plan without a family never needs.
+            from inspect_safety_stats.generative.runner import check_declared_slice_family
+
             # The selected paths do not depend on the stage: these are the ones materialize
             # selects under --stage pilot or main.
             check_declared_slice_family(
