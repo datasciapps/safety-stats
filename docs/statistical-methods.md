@@ -852,10 +852,15 @@ through the exponents \(c_g\), which lowers the growth rate in proportion to \(1
 much as the KL fallback pays through its largest increment.
 
 Compared with the other engines, the betting interval needs no estimated variance proxy and so
-avoids the empirical-Bernstein padding term, which dominates at small block counts. It is
-therefore usually the tightest construction when blocks are fractional rates, as under a
-prompt-level or coarser independence profile, and it is competitive with, though not sharper
-than, the exact Bernoulli-KL inversion on sparse binary rollouts with equal weights. As with every
+avoids the empirical-Bernstein padding term, which dominates at small block counts. With equal
+or near-equal block weights it is therefore usually the tightest construction when blocks are
+fractional rates, as under a prompt-level or coarser independence profile, and it is competitive
+with, though not sharper than, the exact Bernoulli-KL inversion on sparse binary rollouts with
+equal weights. Unequal weights cost it more than they cost Hoeffding: the exponents sum to
+\(1/\max_g A_g\), so its capital grows like that of \(1/\max_g A_g\) equally weighted blocks,
+while the Hoeffding width is set by \(1/\sum_g A_g^2\), which is never smaller. With tasks of 2, 10 and 50 equally weighted prompts,
+every prompt observed at a failure rate of 0.05, the betting upper bound at \(\alpha=0.05\) is
+0.459 and the Hoeffding one 0.371. As with every
 engine, showing it as a prespecified primary or reference is valid; selecting it after seeing that
 it is narrowest is not [33].
 
