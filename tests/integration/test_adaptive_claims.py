@@ -687,3 +687,75 @@ def test_report_html_shows_an_adaptive_claim_on_its_cohort_card(
     run = run_page(node, html, hidden)
     assert run.error is None and run.event_errors == []
     assert run.texts["claims"] == ""
+
+
+SHARED = {
+    "id": "shared",
+    "purpose": "simultaneous_intervals",
+    "method": "bonferroni",
+    "alpha": 0.05,
+}
+
+
+@pytest.mark.parametrize(
+    ("outputs", "section"),
+    [
+        ({"prompt_bounds": {"enabled": True, "family": "shared"}}, "outputs.prompt_bounds"),
+        (
+            {
+                "direct_mean_intervals": {
+                    "enabled": True,
+                    "family": "shared",
+                    "independence": {"primary": "prompt"},
+                }
+            },
+            "outputs.direct_mean_intervals",
+        ),
+    ],
+    ids=["prompt-bounds", "direct-mean-intervals"],
+)
+def test_an_adaptive_claim_cannot_take_alpha_other_bounds_draw_on(
+    tmp_path: Path, outputs: dict[str, Any], section: str
+) -> None:
+    """The adaptive bound takes its family's whole alpha. In a family whose alpha prompt
+    bounds or direct-mean intervals already split, it spent that alpha again, unrefused."""
+
+    plan = load_plan(
+        _write(
+            tmp_path,
+            adaptive=[{**ADAPTIVE, "family": "shared"}],
+            outputs={**PLAN["outputs"], **outputs},
+            multiplicity={"families": [*PLAN["multiplicity"]["families"], SHARED]},
+            design={
+                "independence_profiles": {
+                    "prompt": {"block_by": ["prompt_id"], "comparison_coupling": "independent"}
+                }
+            },
+        )
+    )
+    (diagnostic,) = [
+        item
+        for item in validate_plan_references(plan)
+        if item.code == "PLAN_INVALID_MULTIPLICITY"
+    ]
+    assert diagnostic.severity == "ERROR"
+    assert diagnostic.scope == "plan/multiplicity/families/shared"
+    assert f"which {section} also draw on" in diagnostic.message
+
+
+def test_an_adaptive_claim_may_share_its_family_with_claims(tmp_path: Path) -> None:
+    # Each claim under `claims` takes the family's whole alpha as the adaptive bound does.
+    claim = {
+        "id": "mean_ok",
+        "title": "Mean",
+        "cohort": "attacker",
+        "group": "all",
+        "measure": "mean",
+        "family": "gate",
+        "acceptable_upper": 0.1,
+        "unacceptable_lower": 0.3,
+    }
+    plan = load_plan(_write(tmp_path, adaptive=[ADAPTIVE], claims=[claim]))
+    assert "PLAN_INVALID_MULTIPLICITY" not in {
+        item.code for item in validate_plan_references(plan)
+    }
