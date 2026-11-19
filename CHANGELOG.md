@@ -423,7 +423,9 @@ described in their pull requests.
   `sampling: simple_random`), a judge's run bounds the claim as a `corrected_interval` claim,
   since the test needs labels of that judge's verdicts; where it cannot, the claim is the same
   plan error in each judge's run as in the primary's. The scorer's options and metadata, which
-  can hold request headers, tokens, endpoints and local paths, never reach the report. A model role
+  can hold request headers, tokens, endpoints and local paths, never reach the report; their
+  fingerprint is unsalted, so a value with few possibilities, such as an internal address, can
+  be guessed back from it by someone who knows the rest of the entry. A model role
   keeps only its name and model id: its `base_url`, `args` and `extra_headers`, which can hold
   endpoints and credentials, never reach the report. A run whose scorers or model roles cannot
   be read, such as text that is not JSON or a role without a model id, is left out of the

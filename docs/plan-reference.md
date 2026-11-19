@@ -530,8 +530,9 @@ Each judge in `provenance.judge_panel.judges` of `report.json` gains:
   `lower`, `upper`, `method` and `reasons`. Under `intent: exploratory` every `status` is
   `INCONCLUSIVE` and `descriptive_status` holds what a confirmatory analysis would decide, as
   for the report's own claims; otherwise it is `null`. The bounds are on that judge's reported
-  risk, since its run has no calibration. When the plan declares a validated `judge_calibration`, the plan's thresholds are
-  about true risk, and the primary outcome's claims are not decided on judge-reported bounds.
+  risk, since its run has no calibration. When the plan declares a validated
+  `judge_calibration`, the plan's thresholds are about true risk, and the primary outcome's
+  claims are not decided on judge-reported bounds.
   The rows are not either: every `status` is `INCONCLUSIVE`, and `reasons` says why. A
   `noisy_valid_test` claim's test needs labels of the judge's verdicts, so a judge's run bounds
   such a claim as a `corrected_interval` claim. Where the plan's calibration cannot run the
@@ -545,6 +546,15 @@ Each judge in `provenance.judge_panel.judges` of `report.json` gains:
     equal recorded configurations. The options and metadata themselves can hold request
     headers, tokens, endpoints and local paths, such as a template file, and Inspect redacts
     only some of them, so they never reach the report.
+
+    The fingerprint hides a value only as well as the value is hard to guess. It has no salt,
+    so the same entry always gives the same fingerprint, which is what lets two reports be
+    compared. Someone who knows the rest of the entry, such as the scorer's other options, can
+    hash candidate values for the one they do not know and compare: a value with few
+    possibilities, such as an internal IP address, a port or a user name in a path, can be
+    recovered that way in seconds. A long random credential, such as an API key or a
+    bearer token, cannot. If an entry holds a guessable value that must stay private, remove
+    it from the logs' scorer options before the analysis, or leave `judge_claims` off.
   - Each model role keeps only its name and model id, as `{"<role>": {"model": "<model id>"}}`.
     The rest of its configuration (`base_url`, `args` and the generate config with its
     `extra_headers`) can hold endpoints and credentials, so it never reaches the report.

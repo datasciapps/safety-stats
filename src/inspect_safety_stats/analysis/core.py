@@ -282,6 +282,11 @@ def scorer_configurations(value: Any, score_name: str) -> list[dict[str, str]] |
     The entry itself is never copied: scorer options and metadata can hold credentials,
     endpoints and local paths, such as a request header, a token or a template file, and
     Inspect redacts only some of them. Equal fingerprints mean equal recorded configurations.
+    The digest is unsalted, so reports stay comparable and byte-identical; it therefore hides
+    a value only as well as the value is hard to guess. Someone who knows the rest of the
+    entry can hash candidates for one unknown value, which recovers a value with few
+    possibilities, such as an internal IP address or a user name in a path, in seconds; a long
+    random credential, such as an API key or a bearer token, cannot be recovered so.
     None when the run records no scorers at all, an empty list when none has that name.
     Raises ``UnreadableField`` when the value is not a JSON list of scorers, or the scorer's
     entry is not JSON data.
