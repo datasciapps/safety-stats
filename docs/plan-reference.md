@@ -497,8 +497,11 @@ Each judge in `provenance.judge_panel.judges` of `report.json` gains:
   `method`.
 - `configuration`: per cohort, the distinct configurations of the scorer named like the judge's
   score (`scorer`) and the model roles (`model_roles`) that the cohort's runs record. Inspect
-  logs record them under `eval.scorers` and `eval.model_roles`. Where the runs record none, the
-  value is `null`.
+  logs record them under `eval.scorers` and `eval.model_roles`. Each model role keeps only its
+  name and model id, as `{"<role>": {"model": "<model id>"}}`. The rest of its configuration
+  (`base_url`, `args` and the generate config with its `extra_headers`) can hold endpoints and
+  credentials, so it never reaches the report. A role recorded without a model id is an error.
+  Where the runs record none, the value is `null`.
 
 `report-full.md` shows the same rows under **Claims by judge (experimental)** in the judge panel
 section, without the status column when `report.include_decisions` is false. The rows compare

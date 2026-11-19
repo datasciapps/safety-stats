@@ -195,6 +195,26 @@ def scorer_configurations(value: Any, score_name: str) -> list[Any] | None:
     ]
 
 
+def _role_models(roles: dict[str, Any], run_key: str) -> dict[str, Any]:
+    """Each model role's name and model id, without the rest of its configuration.
+
+    A run's roles also record ``base_url``, ``args`` and the generate config with its
+    ``extra_headers``, which can hold endpoints and credentials; none of it reaches a report.
+    """
+
+    named: dict[str, Any] = {}
+    for name in sorted(roles):
+        role = roles[name]
+        model = role.get("model") if isinstance(role, dict) else None
+        if not isinstance(model, str):
+            raise ValueError(
+                f"run {run_key} records model role {name!r} without a model id; "
+                "eval.model_roles must map each role to a configuration with a 'model'"
+            )
+        named[name] = {"model": model}
+    return named
+
+
 def _add_judge_configurations(
     panel: dict[str, Any], plan: AnalysisPlan, data: NormalizedData, source_data: SourceData
 ) -> None:
@@ -222,7 +242,8 @@ def _add_judge_configurations(
                 if isinstance(role_value, str):
                     role_value = json.loads(role_value)
                 if isinstance(role_value, dict):
-                    roles[sha256_value(role_value)] = role_value
+                    named = _role_models(role_value, run_key)
+                    roles[sha256_value(named)] = named
             configuration[summary["cohort_id"]] = {
                 "scorer": [scorers[key] for key in sorted(scorers)] or None,
                 "model_roles": [roles[key] for key in sorted(roles)] or None,
