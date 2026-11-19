@@ -19,7 +19,12 @@ import pandas as pd
 import pytest
 
 from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.schema.reports import ComparisonResult, GroupRiskResult, SafetyReport
+from inspect_safety_stats.schema.reports import (
+    ComparisonResult,
+    GroupRiskResult,
+    HierarchyRiskResult,
+    SafetyReport,
+)
 
 EPOCHS = 200
 PROMPTS = [("h1", "qh", "tH", "hard")] + [(f"e{i}", f"qe{i}", "tE", "easy") for i in range(1, 10)]
@@ -180,6 +185,7 @@ def _write_plan(
     calibrated: bool,
     compare: bool,
     judge_groups: str | None = None,
+    edit: Callable[[str], str] = lambda text: text,
 ) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "design.csv").write_text(
@@ -206,7 +212,7 @@ def _write_plan(
         .strip()
     )
     plan = directory / "plan.yaml"
-    plan.write_text(text + "\n", encoding="utf-8")
+    plan.write_text(edit(text) + "\n", encoding="utf-8")
     return plan
 
 
@@ -221,6 +227,7 @@ def _analyze(
     judge_groups: str | None = None,
     label: Callable[[str, int], bool] = lambda prompt_id, epoch: True,
     judge: Callable[[str, int], bool] = _judge_unsafe,
+    edit: Callable[[str], str] = lambda text: text,
 ) -> SafetyReport:
     """Label the classified rollouts that ``label`` picks with their truth, then analyse."""
 
@@ -241,6 +248,7 @@ def _analyze(
         sampling=None,
         calibrated=False,
         compare=compare,
+        edit=edit,
     )
     baseline = analyze(plan=load_plan(unlabelled), logs="ignored")
     rows = ["observation_id,human_label"]
@@ -261,6 +269,7 @@ def _analyze(
         calibrated=True,
         compare=compare,
         judge_groups=judge_groups,
+        edit=edit,
     )
     return analyze(plan=load_plan(plan), logs="ignored")
 
@@ -273,7 +282,7 @@ def _risk(report: SafetyReport, group: str, measure: str) -> GroupRiskResult:
     )
 
 
-def _corrected(row: GroupRiskResult | ComparisonResult) -> object:
+def _corrected(row: GroupRiskResult | HierarchyRiskResult | ComparisonResult) -> object:
     return next(item for item in row.intervals if item.interval_id == "judge_corrected_validated")
 
 
@@ -608,6 +617,7 @@ def test_an_assumed_calibration_scoped_to_a_group_corrects_only_its_rows(
         calibrated=False,
         compare=False,
     )
+    uncalibrated = analyze(plan=load_plan(path), logs="ignored")
     path.write_text(
         path.read_text(encoding="utf-8").replace(
             "design:\n",
@@ -640,9 +650,70 @@ def test_an_assumed_calibration_scoped_to_a_group_corrects_only_its_rows(
     assert report.provenance["judge_calibration"]["groups"] == ["hard"]
     # Scoping declared accuracies certifies nothing, so it is not experimental.
     assert "experimental" not in report.provenance["judge_calibration"]
-    # An assumed correction never moves a claim, scoped or not.
-    claim = next(item for item in report.claims if item.claim_id == "mean_hard")
-    assert claim.method != "assumed_judge_misclassification_correction"
+    # An assumed correction never moves a claim, scoped or not: each claim is decided as it
+    # is without the calibration.
+    assert report.claims == uncalibrated.claims
+
+
+def _hierarchy_nodes(text: str) -> str:
+    return text.replace(
+        "    groups: [all, hard]\n    simultaneous: true\n",
+        "    groups: [all, hard]\n    hierarchy_nodes: true\n    simultaneous: true\n",
+        1,
+    )
+
+
+def test_a_group_scoped_calibration_corrects_the_hierarchy_nodes_of_its_groups_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = _analyze(
+        tmp_path, monkeypatch, claims=HARD_CLAIMS, judge_groups="[hard]", edit=_hierarchy_nodes
+    )
+
+    nodes = [row for row in report.hierarchy_risks if row.cohort_id == "candidate"]
+    hard = [row for row in nodes if row.group_id == "hard"]
+    # The hard group's task and question nodes each hold its one prompt, so each is a whole-
+    # group mean that the group's calibration certifies, and covers the true risk 0.30.
+    assert sorted(row.level for row in hard) == ["question_id", "task_id"]
+    for row in hard:
+        corrected = _corrected(row)
+        assert corrected.eligibility == "certifying"
+        assert corrected.warnings == []
+        assert corrected.lower is not None and corrected.upper is not None
+        assert corrected.lower <= 0.30 <= corrected.upper
+        assert any("scoped to group 'hard'" in item for item in corrected.assumptions)
+    # The nodes of group all are not corrected, not even the ones that hold the hard prompt.
+    others = [row for row in nodes if row.group_id == "all"]
+    assert {row.path.get("task_id") for row in others} == {"tE", "tH"}
+    for row in others:
+        assert not [item for item in row.intervals if item.interval_id.startswith("judge_")]
+
+
+def test_a_comparison_of_a_group_outside_the_scope_is_not_corrected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    claims = """
+  - {id: hard_diff, title: Hard difference, comparison: hard_candidate_vs_baseline,
+     family: gate, acceptable_upper: 0.1, unacceptable_lower: 0.3}
+""".strip("\n")
+    report = _analyze(tmp_path, monkeypatch, claims=claims, compare=True, judge_groups="[all]")
+
+    (comparison,) = report.comparisons
+    assert not [item for item in comparison.intervals if item.interval_id.startswith("judge_")]
+    # The plan scoped the calibration away from the comparison, so it is not reported as one
+    # that could not be corrected. Its claim says why it is not decided.
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON" not in codes
+    (claim,) = report.claims
+    assert claim.status == "INCONCLUSIVE"
+    assert (
+        "The judge calibration is scoped to groups that do not include this row's group "
+        "'hard', so no labels calibrate it."
+    ) in claim.reasons
+    unavailable = next(
+        item for item in report.integrity.diagnostics if item.code == "JUDGE_CORRECTION_UNAVAILABLE"
+    )
+    assert unavailable.details["claim_ids"] == ["hard_diff"]
 
 
 @pytest.mark.parametrize("sampling", [None, "simple_random"])
