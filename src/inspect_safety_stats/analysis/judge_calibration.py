@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
+from inspect_safety_stats.analysis.direct_mean import _HierarchyNode
 from inspect_safety_stats.analysis.estimates import _bounds_carry_unknown_outcome
 from inspect_safety_stats.config.models import (
     AnalysisPlan,
@@ -260,6 +261,27 @@ def _policy_rollouts(
         if weight > 0 and (item := population.get(prompt_id)) is not None
     ]
     return sum(item.policy_safe for item in found), sum(item.policy_failures for item in found)
+
+
+def _row_weights(
+    data: NormalizedData, hierarchy_nodes: list[_HierarchyNode]
+) -> Callable[[GroupRiskResult | HierarchyRiskResult], dict[str, float]]:
+    """The prompt weights behind a group-risk or hierarchy row."""
+
+    group_weights = {group.id: group.weights for group in data.groups}
+    node_weights = {
+        (node.group_id, node.level, tuple(node.path.items())): dict(
+            zip(node.prompt_ids, node.weights, strict=True)
+        )
+        for node in hierarchy_nodes
+    }
+
+    def weights(result: GroupRiskResult | HierarchyRiskResult) -> dict[str, float]:
+        if isinstance(result, GroupRiskResult):
+            return group_weights[result.group_id]
+        return node_weights[(result.group_id, result.level, tuple(result.path.items()))]
+
+    return weights
 
 
 def _policy_free_box(calibration: JudgeCalibration) -> JudgeCalibration:

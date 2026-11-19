@@ -18,6 +18,7 @@ from inspect_safety_stats.analysis.judge_calibration import (
     _labelled_population,
     _per_cohort_scenarios,
     _policy_rollouts,
+    _row_weights,
     _scope_population,
     _transported_judge_interval,
     _uncertified_correction_warning,
@@ -379,22 +380,18 @@ def _add_judge_corrections(
         *hierarchy_risks,
     ]
     population = _labelled_population(plan, data)
-    group_weights = {group.id: group.weights for group in data.groups}
     measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
-    node_weights = {
-        (node.group_id, node.level, tuple(node.path.items())): dict(
-            zip(node.prompt_ids, node.weights, strict=True)
-        )
-        for node in hierarchy_nodes
-    }
+    row_weights = _row_weights(data, hierarchy_nodes)
 
     def weighting(result: GroupRiskResult | HierarchyRiskResult) -> tuple[dict[str, float], str]:
         """The prompt weights behind a row, and its measure type."""
-        if isinstance(result, GroupRiskResult):
-            return group_weights[result.group_id], measure_types[result.measure_id]
         # Hierarchy nodes are weighted means over their own prompts.
-        key = (result.group_id, result.level, tuple(result.path.items()))
-        return node_weights[key], "weighted_mean"
+        measure_type = (
+            measure_types[result.measure_id]
+            if isinstance(result, GroupRiskResult)
+            else "weighted_mean"
+        )
+        return row_weights(result), measure_type
 
     if spec.mode == "transported":
         published = spec.published_set
