@@ -1311,6 +1311,47 @@ The library can search integer pairs \((n,c)\) satisfying both constraints and o
 
 Although explicit zero-failure planning is still uncommon in public frontier-model reports, the need is visible wherever harmful events are rare. C3LLM and probabilistic LLM-safety certification work use exact binomial bounds [16, 18], from which the zero-event requirement follows directly. OpenAI's public deployment-safety reports compare evaluation metrics and confidence intervals with Preparedness Framework thresholds [25], illustrating why the threshold, uncertainty target, and sample size need to be designed together rather than reported independently.
 
+### 5.7 Drawing a random pilot (experimental)
+
+A pilot informs the plan: how many rollouts the study needs, what they cost and roughly what
+the rates are. `plan pilot` ([user guide](design-based-sampling.md#drawing-a-random-pilot))
+draws it by stratified simple random sampling without replacement. In stratum \(h\), of
+\(N_h\) prompts, each prompt is ranked by the SHA-256 digest of the text `{seed}|{prompt_id}`
+in UTF-8, compared as bytes, and the \(k\) lowest-ranked prompts are drawn. Treating the
+digest as a random function of its input, the ranks order each stratum uniformly at random,
+independently across strata, so the draw is a simple random sample of \(k\) from each
+stratum with
+
+\[
+\pi_j=\frac{k}{N_h},\qquad
+\pi_{jl}=\frac{k(k-1)}{N_h(N_h-1)}\ \text{for } j\ne l \text{ in one stratum},\qquad
+\pi_{jl}=\pi_j\pi_l\ \text{across strata}.
+\]
+
+These are the inclusion probabilities of the fixed-size sampled design that analyses the pilot
+frame. Because \(\pi_j\) differs between strata of different size, the pilot's unweighted
+mean is biased for the frame's, and the Horvitz–Thompson mean
+\(\frac1N\sum_{j\in S}y_j/\pi_j\) is not.
+
+The rank is a hash rather than a draw from `numpy.random.default_rng(seed)`, the generator
+the [contributing guide](../CONTRIBUTING.md#53-numerics) asks for, because a prompt's hash
+depends only on the seed and its own identifier. The draw is therefore the same whatever the
+order of the manifest's rows and whatever the other strata hold; the \(k\) lowest ranks
+contain the \(k'<k\) lowest, so draws with one seed are nested; and SHA-256 gives the same
+digest on every platform and library version, which numpy does not promise for a generator's
+methods. The seed is recorded as it would be for a generator: the pilot frame carries it in
+`pilot_seed`, and a report whose design manifest is that frame covers it with the manifest's
+hash. Choose the seed before drawing and draw once: trying seeds until the pilot looks
+favourable selects the prompts.
+
+The unit tests pin the prompts one seed draws, including identifiers outside ASCII, and check
+that over 2,000 seeds every prompt of a stratum of ten is drawn at a rate close to \(k/N_h\).
+
+A pilot enlarged after its outcomes were seen, and analysed again until a claim passes, is
+the repeated peeking of section 6.1 rather than a fixed-size design. Pilots are analysed as
+exploratory; the [user guide](design-based-sampling.md#what-a-pilot-can-show) gives a
+simulation of the inflated false-pass rate.
+
 ---
 
 ## 6. Stretch goal: Bernoulli confidence sequences
