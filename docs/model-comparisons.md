@@ -419,8 +419,9 @@ bounds that hold for every way of scoring the unknown outcomes, instead of faili
   produce.
 - `fixed_cluster_bootstrap` takes its lower bound from the completion that scores every unknown
   candidate outcome safe and every unknown baseline outcome a failure, and its upper bound from
-  the opposite completion. The resampling draws do not depend on the outcomes, so no completion
-  gives a lower or a higher bound.
+  the opposite completion. The resampling draws do not depend on the outcomes, and every
+  replicate mean grows with each pair's difference, so no completion gives a lower lower bound
+  or a higher upper bound.
 
 The point estimate depends on the unknown outcomes, so each of these outputs carries
 `estimate_lower` and `estimate_upper` in place of `estimate`. `diagnostic_outputs` gains a
