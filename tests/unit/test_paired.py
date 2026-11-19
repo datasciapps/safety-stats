@@ -393,6 +393,37 @@ def test_partial_newcombe_bounds_hold_when_the_margin_product_outgrows_integers(
     assert interval.upper == pytest.approx(max(high for _, high in expected), rel=1e-12, abs=0)
 
 
+def test_partial_newcombe_bounds_hold_over_many_large_tables() -> None:
+    # 120,000 scored pairs with a correlation near -0.5, and 600 pairs unscored in the
+    # candidate arm with a failing baseline and 600 with a safe one: 601 ** 2 tables of
+    # 121,200 pairs, more than one block. Each table's margins multiply past 2 ** 63, and the
+    # int64 product gave [-0.00829, 0.00829].
+    n11, n10, n01, n00 = 15_000, 45_000, 45_000, 15_000
+    complete_candidate, complete_baseline = _paired_lists(n11, n10, n01, n00)
+    candidate: list[bool | None] = [*complete_candidate, *[None] * 1200]
+    baseline: list[bool | None] = [*complete_baseline, *[True] * 600, *[False] * 600]
+    interval = newcombe_paired_interval_partial(candidate, baseline)
+    assert interval.completion_count == 601**2 > paired._PARTIAL_NEWCOMBE_BLOCK
+    lows, highs = zip(
+        *(
+            _reference_newcombe(
+                n11 + failing,
+                n10 + safe,
+                n01 + 600 - failing,
+                n00 + 600 - safe,
+                alpha_lower=0.05,
+                alpha_upper=0.05,
+            )
+            # How many unscored candidates fail, of those with a failing and a safe baseline.
+            for failing in range(601)
+            for safe in range(601)
+        ),
+        strict=True,
+    )
+    assert interval.lower == pytest.approx(min(lows), rel=1e-12, abs=0)
+    assert interval.upper == pytest.approx(max(highs), rel=1e-12, abs=0)
+
+
 @pytest.mark.parametrize(
     "cells",
     [(100, 400, 400, 100), (5_000, 20_000, 20_000, 5_000)],
