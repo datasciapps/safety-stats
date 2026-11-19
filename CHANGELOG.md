@@ -316,7 +316,8 @@ described in their pull requests.
   could silently plan a different design. Claims it cannot plan are listed with the reason,
   and so is every claim of an exploratory plan, which `analyze` reports INCONCLUSIVE. A plan
   with the errors `validate` reports is refused with them, since `analyze` decides none of its
-  claims, and so is a design manifest the command cannot read.
+  claims, and so is a design manifest the command cannot read. The output names the manifest
+  it reads, the plan's or the one `--manifest` gives in its place.
   See [Command-line interface](docs/api-reference.md#command-line-interface).
 
 - **Plan registration receipts (experimental).** `hash-plan --register RECEIPT.json` writes the

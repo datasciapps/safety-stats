@@ -562,6 +562,27 @@ def test_cli_refuses_a_design_manifest_it_cannot_read(tmp_path: Path) -> None:
     assert "which inputs.design_manifest names" in output
 
 
+def test_cli_names_the_design_manifest_it_reads(tmp_path: Path) -> None:
+    """--manifest replaces the plan's manifest, and the output says which one was read."""
+    plan_path = _write(tmp_path)
+    result = runner.invoke(app, ["plan", "fixed-design", "--plan", str(plan_path)])
+    output = plain(result.output)
+    assert result.exit_code == 0, output
+    assert f"Design manifest: {tmp_path.resolve() / 'design.csv'} (inputs.design_manifest)" in (
+        output
+    )
+    other = tmp_path / "other.csv"
+    other.write_text(MANIFEST, encoding="utf-8")
+    result = runner.invoke(
+        app, ["plan", "fixed-design", "--plan", str(plan_path), "--manifest", str(other)]
+    )
+    output = plain(result.output)
+    assert result.exit_code == 0, output
+    assert (
+        f"Design manifest: {other} (--manifest, in place of the plan's inputs.design_manifest)"
+    ) in output
+
+
 def test_cli_fails_when_no_claim_can_be_planned(tmp_path: Path) -> None:
     disabled = PLAN.replace(
         "direct_mean_intervals:\n    enabled: true", "direct_mean_intervals:\n    enabled: false"

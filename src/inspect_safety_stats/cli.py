@@ -759,6 +759,14 @@ def _plan_fixed_design_from_plan(
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     claims = design.claims
+    typer.echo(
+        f"Design manifest: {source} "
+        + (
+            "(inputs.design_manifest)"
+            if manifest is None
+            else "(--manifest, in place of the plan's inputs.design_manifest)"
+        )
+    )
     typer.echo(f"Claims: {len(claims)}")
     typer.echo(f"Target power: {power:.8g}")
     if design.method is not None:
