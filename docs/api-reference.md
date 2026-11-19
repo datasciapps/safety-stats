@@ -552,8 +552,9 @@ comparison when there are several models. `init` never guesses which scores are 
 them with `--failure-values` or `--failure-threshold`. Nor does it take a value nobody named as
 safe: when the score has more than two values, name the safe ones with `--safe-values`, or
 `init` refuses and lists the values left over. With two, the one `--failure-values` does not
-name is safe, and `init` says so. The plan's header lists each choice
-`init` made and the assumption it rests on, from `inspect_safety_stats.registry`: rollout
+name is safe, and `init` says so. `design.csv` has no `zero_tolerance` column, so the plan turns
+the zero-tolerance gate off, and its header says how to turn it on. The plan's header lists each
+choice `init` made and the assumption it rests on, from `inspect_safety_stats.registry`: rollout
 independence first, then the rest. Each note says what goes wrong if the assumption does not
 hold and how to change it. The command prints the same list. A plan written after the logs
 exist cannot be confirmatory, so `--intent confirmatory` is refused with exit status `3`;

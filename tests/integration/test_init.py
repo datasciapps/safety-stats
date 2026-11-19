@@ -109,6 +109,29 @@ def test_init_plan_analyzes_end_to_end(mock_logs: Path, tmp_path: Path) -> None:
     assert {item.estimand for item in overall} == {"risk_difference", "risk_ratio"}
 
 
+def test_init_turns_off_the_zero_tolerance_gate_its_manifest_cannot_feed(
+    mock_logs: Path, tmp_path: Path
+) -> None:
+    # Left at its default, the gate was enabled, and report-full.md listed enabled: true among
+    # the defaults applied, although design.csv has no column to flag a prompt with.
+    result = scaffold_plan(mock_logs, tmp_path, failure_values=["FAIL"])
+    columns = (tmp_path / "design.csv").read_text(encoding="utf-8").splitlines()[0].split(",")
+    assert "zero_tolerance" not in columns
+    plan = yaml.safe_load(result.plan_path.read_text(encoding="utf-8"))
+    assert plan["policy"] == {
+        "zero_tolerance": {"enabled": False, "manifest_field": "zero_tolerance"}
+    }
+    assert "Zero tolerance is off (policy.zero_tolerance.enabled: false)" in _header_text(
+        result.plan_path
+    )
+
+    report = analyze(plan=result.plan_path, logs=str(mock_logs))
+    assert report.integrity.status == "valid"
+    assert not any(entry.path.startswith("policy.zero_tolerance") for entry in report.plan_defaults)
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    assert "zero_tolerance" not in markdown
+
+
 def test_init_without_baseline_picks_a_reference_and_says_so(
     mock_logs: Path, tmp_path: Path
 ) -> None:

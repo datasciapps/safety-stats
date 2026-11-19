@@ -40,6 +40,7 @@ from inspect_safety_stats.registry import ASSUMPTIONS, AssumptionEntry
 _IDENTIFIER = re.compile(r"[^A-Za-z0-9_.-]+")
 _UNIFORM_FIELDS = ("task_version", "model_generate_config", "solver")
 _SCHEMA_VERSION = "2.0"
+_ZERO_TOLERANCE_FIELD = "zero_tolerance"
 
 
 class _PlainDumper(yaml.SafeDumper):
@@ -288,6 +289,16 @@ def _header(stamp: datetime, assumptions: Sequence[AssumptionNote]) -> str:
         "Review the score mapping, cohorts and weights before running `analyze`.",
         "Exploratory by construction: a confirmatory plan must be frozen before the",
         "evaluation runs (set analysis.intent and analysis.plan_frozen_at).",
+        "",
+        *textwrap.wrap(
+            "Zero tolerance is off (policy.zero_tolerance.enabled: false): design.csv has no "
+            f"{_ZERO_TOLERANCE_FIELD} column, so the gate would hold no prompt. To hold prompts "
+            f"to zero tolerance, add a {_ZERO_TOLERANCE_FIELD} column, true for those prompts, "
+            "and set enabled: true.",
+            width=88,
+            break_long_words=False,
+            break_on_hyphens=False,
+        ),
         "",
         "The choices init made, and the assumptions they rest on (from",
         "inspect_safety_stats.registry):",
@@ -607,6 +618,11 @@ def scaffold_plan(
                 "hierarchy_calibration": "frontier_sidak" if has_nodes else "flat_bonferroni",
             }
         ]
+    # The manifest has no zero-tolerance column, so an enabled gate could flag nothing, and a
+    # report would list the default enabled: true as if it held prompts to zero tolerance.
+    plan["policy"] = {
+        "zero_tolerance": {"enabled": False, "manifest_field": _ZERO_TOLERANCE_FIELD}
+    }
     AnalysisPlan.model_validate(plan)
     assumptions = _assumption_notes(
         score=score,
