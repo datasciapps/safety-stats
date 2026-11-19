@@ -390,7 +390,7 @@ def estimate_tree(
                 coefficient_ratio=float(normalized.max() / normalized.min()),
                 effective_sample_size=_effective_sample_size(normalized),
                 raw_failure_rate=_raw_failure_rate(node_outcomes),
-        unclassified_share=_unclassified_share(node_outcomes, normalized),
+                unclassified_share=_unclassified_share(node_outcomes, normalized),
             )
         )
 
