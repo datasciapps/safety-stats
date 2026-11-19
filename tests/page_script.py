@@ -138,6 +138,7 @@ process.stdout.write(JSON.stringify({
   eventErrors,
   audit,
   footer: byId.get("footer").textContent,
+  texts: Object.fromEntries([...byId].map(([id, element]) => [id, element.textContent])),
 }));
 """
 
@@ -158,6 +159,9 @@ class PageRun:
     event_errors: list[str]
     audit: list[AuditPanel]
     footer: str
+    # The text each element with an id holds once the script has run, by id: the text a reader
+    # sees there when the page loads, before any control is changed.
+    texts: dict[str, str]
 
 
 def node_or_skip() -> str:
@@ -208,4 +212,5 @@ def run_page(node: str, html: str, directory: Path) -> PageRun:
         event_errors=result["eventErrors"],
         audit=[AuditPanel(title=item["title"], text=item["text"]) for item in result["audit"]],
         footer=result["footer"],
+        texts=result["texts"],
     )

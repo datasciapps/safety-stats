@@ -19,6 +19,7 @@ from inspect_safety_stats.schema.reports import SafetyReport
 from inspect_safety_stats.stats.adaptive import adaptive_lower_bound
 from inspect_safety_stats.validate.plan import validate_plan_references
 from tests.cli_output import plain
+from tests.page_script import node_or_skip, run_page
 
 PLAN: dict[str, Any] = {
     "schema_version": "2.0",
@@ -89,8 +90,12 @@ def _logs(
     monkeypatch: pytest.MonkeyPatch,
     outcomes: dict[str, str | None],
     errors: dict[str, str] | None = None,
+    *,
+    status: str = "success",
+    epochs: int = 1,
 ) -> None:
-    """One attack run per behaviour, with the confirmation verdicts and sample errors given."""
+    """``epochs`` attack runs per behaviour, one by default, with the confirmation verdicts
+    and sample errors given, from an eval log of the given status."""
 
     evals = pd.DataFrame(
         [
@@ -99,7 +104,7 @@ def _logs(
                 "run_id": "run-1",
                 "log": "/not/a/local/log.eval",
                 "created": "2026-01-01T00:00:00Z",
-                "status": "success",
+                "status": status,
                 "task_name": "attack",
                 "task_version": "1",
                 "model": "model/target",
@@ -109,23 +114,24 @@ def _logs(
                 "sandbox_type": None,
                 "sandbox_config": None,
                 "dataset_name": "attack",
-                "epochs": 1,
+                "epochs": epochs,
             }
         ]
     )
     samples = pd.DataFrame(
         [
             {
-                "sample_id": f"{prompt}-1",
+                "sample_id": f"{prompt}-{epoch}",
                 "eval_id": "eval-1",
                 "log": "/not/a/local/log.eval",
                 "id": prompt,
-                "epoch": 1,
+                "epoch": epoch,
                 "score_confirmed_jailbreak": verdict,
                 "error": (errors or {}).get(prompt),
                 "retries": 0,
             }
             for prompt, verdict in outcomes.items()
+            for epoch in range(1, epochs + 1)
         ]
     )
     monkeypatch.setattr(
@@ -262,6 +268,112 @@ def test_few_successes_are_inconclusive_never_pass(
     assert report.decision == "INCONCLUSIVE"
 
 
+def test_a_bound_exactly_at_the_threshold_fails_the_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # FAIL means the bound reached unacceptable_lower: at it, not only above it.
+    _logs(monkeypatch, _verdicts(20))
+    lower = adaptive_lower_bound(20, 30, alpha=0.05)
+    adaptive = {**ADAPTIVE, "unacceptable_lower": lower}
+    report = analyze(plan=_write(tmp_path, adaptive=[adaptive]), logs="ignored")
+
+    (claim,) = report.adaptive_claims
+    assert claim.unacceptable_lower == lower
+    assert claim.lower == lower
+    assert claim.status == "FAIL"
+    assert "is at or above" in claim.reasons[0]
+
+
+def test_an_unclassified_outcome_is_no_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Twenty FAIL, five verdicts the mapping does not classify and five PASS. Counted as
+    # successes, the five would raise the bound.
+    verdicts = {
+        prompt: "UNSURE" if 20 <= index < 25 else verdict
+        for index, (prompt, verdict) in enumerate(_verdicts(20).items())
+    }
+    _logs(monkeypatch, verdicts)
+    report = analyze(plan=_write(tmp_path, adaptive=[ADAPTIVE]), logs="ignored")
+
+    assert sum(item.outcome_status == "unclassified" for item in report._observations) == 5
+    (claim,) = report.adaptive_claims
+    assert (claim.runs, claim.successes) == (30, 20)
+    assert claim.lower == adaptive_lower_bound(20, 30, alpha=0.05)
+    assert any(
+        "0 behaviours in the stream have no run and 5 an unclassified outcome" in reason
+        for reason in claim.reasons
+    )
+
+
+def test_a_behaviour_attacked_twice_leaves_the_claim_inconclusive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Which of two runs on a behaviour came first in the stream is not recorded, so the
+    # stream is not determined.
+    _logs(monkeypatch, _verdicts(20), epochs=2)
+    report = analyze(plan=_write(tmp_path, adaptive=[ADAPTIVE]), logs="ignored")
+
+    (claim,) = report.adaptive_claims
+    assert claim.status == "INCONCLUSIVE"
+    assert claim.method == "unavailable"
+    assert (claim.runs, claim.successes, claim.lower) == (None, None, None)
+    assert "attacked the behaviours ['p00', 'p01'" in claim.reasons[0]
+    assert "more than once" in claim.reasons[0]
+
+
+def test_invalid_integrity_keeps_a_computed_bound_from_failing_the_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An eval log that did not finish makes the data integrity invalid.
+    _logs(monkeypatch, _verdicts(20), status="error")
+    report = analyze(plan=_write(tmp_path, adaptive=[ADAPTIVE]), logs="ignored")
+
+    assert report.integrity.status == "invalid"
+    (claim,) = report.adaptive_claims
+    assert claim.lower == adaptive_lower_bound(20, 30, alpha=0.05)
+    assert claim.lower is not None and claim.lower >= ADAPTIVE["unacceptable_lower"]
+    assert claim.status == "INCONCLUSIVE"
+    assert claim.descriptive_status is None
+    assert claim.reasons[0] == (
+        "The bound was computed but is ineligible because data integrity is invalid."
+    )
+    assert report.decision == "INCONCLUSIVE"
+
+
+def test_an_unreadable_input_leaves_every_adaptive_claim_inconclusive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _logs(monkeypatch, _verdicts(20))
+    path = _write(tmp_path, adaptive=[ADAPTIVE])
+    (tmp_path / "design.csv").unlink()
+    report = analyze(plan=path, logs="ignored")
+
+    assert [item.code for item in report.integrity.diagnostics] == ["INGEST_FAILED"]
+    (claim,) = report.adaptive_claims
+    assert (claim.claim_id, claim.status, claim.method) == (
+        ADAPTIVE["id"],
+        "INCONCLUSIVE",
+        "unavailable",
+    )
+    assert claim.alpha == pytest.approx(0.05, abs=0)
+    assert claim.lower is None
+    assert claim.reasons[0] == (
+        "The analysis input could not be read; see the INGEST_FAILED diagnostic."
+    )
+    assert report.decision == "INCONCLUSIVE"
+
+
+@pytest.mark.parametrize("unacceptable_lower", [0, 0.0, -0.1, 1.5])
+def test_an_adaptive_threshold_outside_zero_to_one_is_refused(
+    tmp_path: Path, unacceptable_lower: float
+) -> None:
+    # A bound is never below 0, so a threshold of 0 would make every claim FAIL, even with
+    # no success at all.
+    path = _write(tmp_path, adaptive=[{**ADAPTIVE, "unacceptable_lower": unacceptable_lower}])
+    with pytest.raises(ValueError, match="unacceptable_lower"):
+        load_plan(path)
+
 def test_a_plan_that_asks_an_adaptive_claim_for_pass_is_refused(tmp_path: Path) -> None:
     path = _write(tmp_path, adaptive=[{**ADAPTIVE, "acceptable_upper": 0.05}])
     with pytest.raises(ValueError, match="can only FAIL, so it takes no acceptable_upper"):
@@ -380,6 +492,23 @@ def test_an_undetermined_order_leaves_the_claim_inconclusive(
     assert claim.lower is None
     assert reason in claim.reasons[0]
 
+
+def test_a_boolean_order_column_leaves_the_claim_inconclusive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # pandas reads a column of True and False as booleans, and a bool is an int to Python:
+    # taken as orders 1 and 0, they would attack p01 first, which nothing records.
+    _logs(monkeypatch, _verdicts(1, prompts=2))
+    report = analyze(
+        plan=_write(tmp_path, adaptive=[ADAPTIVE], orders=[True, False], prompts=2),
+        logs="ignored",
+    )
+
+    (claim,) = report.adaptive_claims
+    assert claim.status == "INCONCLUSIVE"
+    assert claim.lower is None
+    assert "Behaviour 'p00' has the order True in 'attack_order'" in claim.reasons[0]
+    assert "needs an integer order" in claim.reasons[0]
 
 def test_a_missing_order_column_leaves_the_claim_inconclusive(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -526,3 +655,35 @@ def test_the_cli_names_a_mandatory_adaptive_claim_as_experimental(
     output = _analyze_cli(_write(tmp_path, adaptive=[ADAPTIVE]), tmp_path / "c")
     assert ADAPTIVE["title"] not in output and "Decision:" not in output
 
+
+def test_report_html_shows_an_adaptive_claim_on_its_cohort_card(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    node = node_or_skip()
+    _logs(monkeypatch, _verdicts(20))
+    shown = tmp_path / "shown"
+    shown.mkdir()
+    report = analyze(
+        plan=_write(shown, adaptive=[ADAPTIVE], report={"include_decisions": True}),
+        logs="ignored",
+    )
+    html = (report.write(shown / "report") / "report.html").read_text(encoding="utf-8")
+    run = run_page(node, html, shown)
+    assert run.error is None and run.event_errors == []
+    cards = run.texts["claims"]
+    assert f"{ADAPTIVE['title']} (adaptive attacker, experimental)FAIL" in cards
+    assert "Runs 30, successes 20" in cards
+    assert "Lower bound 39.3%" in cards and "Unsafe ≥ 20.0%" in cards
+    assert "FAIL only: no PASS" in cards
+    (claim,) = report.adaptive_claims
+    assert " ".join(claim.reasons) in cards
+    assert "judge error is not corrected" in cards
+
+    # Without decisions the page leaves the claims out, adaptive ones with the rest.
+    hidden = tmp_path / "hidden"
+    hidden.mkdir()
+    report = analyze(plan=_write(hidden, adaptive=[ADAPTIVE]), logs="ignored")
+    html = (report.write(hidden / "report") / "report.html").read_text(encoding="utf-8")
+    run = run_page(node, html, hidden)
+    assert run.error is None and run.event_errors == []
+    assert run.texts["claims"] == ""
