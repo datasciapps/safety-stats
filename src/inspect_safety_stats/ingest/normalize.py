@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import functools
 import math
+from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -188,6 +189,52 @@ def _run_field(plan: AnalysisPlan, run: RunRecord, name: str) -> Any:
     return neutral.get(name, _ABSENT)
 
 
+# A message that lists the values found in the source names at most this many, the most
+# frequent first, and says how many more there are.
+_LISTED_VALUES = 10
+
+
+def _listing(counts: Counter[str], unit: str) -> str:
+    """Quoted values with how often each occurs, the most frequent first."""
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    listed = ", ".join(
+        f"{value} in {count} {unit}{'' if count == 1 else 's'}"
+        for value, count in ordered[:_LISTED_VALUES]
+    )
+    rest = len(ordered) - _LISTED_VALUES
+    return f"{listed}, and {rest} more" if rest > 0 else listed
+
+
+def _cohort_empty_message(
+    plan: AnalysisPlan, cohort_id: str, match: dict[str, Any], runs: list[RunRecord]
+) -> str:
+    """Say what a cohort requires and what the selected evaluations have instead."""
+    message = f"cohort {cohort_id!r} contains no evaluations"
+    if not runs:
+        return f"{message}, and no evaluation was selected"
+    # An evaluation that matches several cohorts is put in none of them (COHORT_OVERLAP).
+    overlapping = sum(cohort_id in _match_cohorts(run, plan) for run in runs)
+    if overlapping:
+        return (
+            f"{message}: the {overlapping} evaluation(s) it matches also match another cohort "
+            "(COHORT_OVERLAP)"
+        )
+    required = " and ".join(f"{field} = {expected!r}" for field, expected in match.items())
+    observed = "; ".join(
+        f"{field} "
+        + _listing(
+            Counter(
+                "(absent)" if (value := _run_field(plan, run, field)) is _ABSENT
+                else repr(_native(value))
+                for run in runs
+            ),
+            "evaluation",
+        )
+        for field in match
+    )
+    return f"{message}: it requires {required}, and the selected evaluations have {observed}"
+
+
 def _rollout_field(
     plan: AnalysisPlan, rollout: RolloutRecord, run: RunRecord, name: str
 ) -> tuple[Any, bool]:
@@ -345,7 +392,9 @@ def normalize(
                 Diagnostic(
                     code="COHORT_EMPTY",
                     severity="ERROR",
-                    message=f"cohort {cohort_id!r} contains no evaluations",
+                    message=_cohort_empty_message(
+                        plan, cohort_id, cohort.match, list(source.runs)
+                    ),
                     scope=cohort_scope(cohort_id),
                 )
             )

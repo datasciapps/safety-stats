@@ -643,7 +643,10 @@ def test_cohorts_matched_on_the_declared_attack_keep_other_attacks_out(
     declared = _live_declaration(1)
     across = analyze(plan=_live_plan(tmp_path / "across", match=declared), logs=cross_budget_logs)
     assert across.integrity.status == "invalid"
-    assert ("COHORT_EMPTY", "cohort 'candidate' contains no evaluations") in _errors(across)
+    assert any(
+        code == "COHORT_EMPTY" and message.startswith("cohort 'candidate' contains no evaluations")
+        for code, message in _errors(across)
+    )
 
     within = analyze(plan=_live_plan(tmp_path / "within", match=declared), logs=split_budget_logs)
     assert within.integrity.status == "invalid"

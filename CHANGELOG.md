@@ -733,6 +733,17 @@ described in their pull requests.
 
 ### Changed
 
+- **Errors about a plan that does not fit the logs say what the logs hold (changes
+  diagnostics).** These errors named only what the plan asked for, so a user had to open the
+  logs to see what the plan should say:
+  - `COHORT_EMPTY` for a cohort now names the values the cohort matches on and the values the
+    selected evaluations have, with how many have each, for example
+    `it requires model = 'openai/gpt-4o', and the selected evaluations have model
+    'mockllm/model' in 1 evaluation`. When the evaluations it matches also match another
+    cohort, and so were put in neither, it says so instead.
+
+  Reports of valid analyses are unchanged.
+
 - **A duplicate rollout key no longer shows a run's configuration (changes `report.json`).** A
   field of `design.rollout_key` that a rollout does not record is read from its run, and the
   `ROLLOUT_DUPLICATE` message showed its value. A key that named a run field such as
