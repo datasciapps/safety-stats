@@ -15,6 +15,7 @@ _RECORD_FIELDS: dict[tuple[str, str], tuple[str, str]] = {
     ("", "status"): ("claim", "status"),
     ("", "descriptive_status"): ("claim", "descriptive_status"),
     ("", "mandatory"): ("claim", "mandatory"),
+    ("", "reasons"): ("claim", "reasons"),
     ("estimand", "cohort"): ("estimand", "cohort"),
     ("estimand", "group"): ("estimand", "group"),
     ("estimand", "measure"): ("estimand", "measure"),
@@ -38,9 +39,20 @@ _RECORD_FIELDS: dict[tuple[str, str], tuple[str, str]] = {
     ("evidence", "independence_profile"): ("evidence_interval", "independence_profile"),
     ("evidence", "assumptions"): ("evidence_interval", "assumptions"),
 }
-# Checked on their own (judge_corrected, evidence.test) or containers of the fields above.
+# Checked on their own (judge_corrected, judge_correction_unavailable, evidence.test) or
+# containers of the fields above.
 _UNMAPPED = {
-    *(("", name) for name in ("judge_corrected", "estimand", "bound", "evidence", "sources")),
+    *(
+        ("", name)
+        for name in (
+            "judge_corrected",
+            "judge_correction_unavailable",
+            "estimand",
+            "bound",
+            "evidence",
+            "sources",
+        )
+    ),
     ("evidence", "test"),
 }
 
@@ -92,12 +104,16 @@ def round_trip_differences(directory: Path) -> list[str]:
         [item["claim_id"] for item in claims["claims"]],
         [item["claim_id"] for item in report["claims"]],
     )
-    corrected = {
-        claim_id
-        for diagnostic in report["integrity"]["diagnostics"]
-        if diagnostic["code"] == "JUDGE_CORRECTED_CLAIMS"
-        for claim_id in diagnostic["details"]["claim_ids"]
-    }
+    def named(code: str) -> set[str]:
+        return {
+            claim_id
+            for diagnostic in report["integrity"]["diagnostics"]
+            if diagnostic["code"] == code
+            for claim_id in diagnostic["details"]["claim_ids"]
+        }
+
+    corrected = named("JUDGE_CORRECTED_CLAIMS")
+    uncorrected = named("JUDGE_CORRECTION_UNAVAILABLE")
     claims_by_id = {item["claim_id"]: item for item in report["claims"]}
     for record in claims["claims"]:
         name = record["claim_id"]
@@ -106,6 +122,11 @@ def round_trip_differences(directory: Path) -> list[str]:
         if unmapped:
             differences.append(f"{name}: fields without a report.json counterpart: {unmapped}")
         expect(f"{name}.judge_corrected", record["judge_corrected"], name in corrected)
+        expect(
+            f"{name}.judge_correction_unavailable",
+            record["judge_correction_unavailable"],
+            name in uncorrected,
+        )
         tests = [
             ref.removeprefix("test:")
             for ref in claims_by_id[name]["evidence_refs"]

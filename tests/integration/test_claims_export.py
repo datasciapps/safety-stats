@@ -347,3 +347,32 @@ def test_a_noisy_valid_claim_exports_the_interval_its_test_was_applied_to(
     assert (record["bound"]["lower"], record["bound"]["upper"]) == (claim["lower"], claim["upper"])
     assert not record["judge_corrected"]
     assert round_trip_differences(output) == []
+
+
+def test_a_claim_the_validated_calibration_cannot_correct_is_flagged(tmp_path: Path) -> None:
+    plan = _calibrated(tmp_path, sampling="simple_random_within_judge_stratum")
+    report = analyze(plan=plan, logs="ignored")
+    output = report.write(tmp_path / "report")
+
+    exported = json.loads((output / "claims.json").read_text(encoding="utf-8"))
+    records = {item["claim_id"]: item for item in exported["claims"]}
+    claims = {item.claim_id: item for item in report.claims}
+    # worst_of_k has no judge correction, so under a validated calibration its claim is
+    # INCONCLUSIVE, though report.json still gives it the uncorrected judge-reported bound.
+    worst = records["worst_of_2_safe"]
+    assert worst["judge_correction_unavailable"] is True
+    assert worst["judge_corrected"] is False
+    assert worst["status"] == "INCONCLUSIVE"
+    assert worst["bound"]["upper"] is not None
+    assert worst["bound"]["upper"] == claims["worst_of_2_safe"].upper
+    assert worst["reasons"] == claims["worst_of_2_safe"].reasons
+    assert worst["reasons"][0].startswith(
+        "The plan declares a validated judge calibration, but this claim's evidence has no "
+        "certifying correction"
+    )
+    # The mean is decided on its validated correction.
+    mean = records["mean_safe"]
+    assert mean["judge_corrected"] is True
+    assert mean["judge_correction_unavailable"] is False
+    assert mean["reasons"] == claims["mean_safe"].reasons
+    assert round_trip_differences(output) == []

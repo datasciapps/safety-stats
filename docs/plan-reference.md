@@ -1142,11 +1142,12 @@ manifest's hash, the integrity status and the overall decision. Each claim recor
 
 | Part | Fields | Copied from |
 |---|---|---|
-| top level | `claim_id`, `title`, `status`, `descriptive_status`, `mandatory` | the claim in `report.json` |
+| top level | `claim_id`, `title`, `status`, `descriptive_status`, `mandatory`, `reasons` | the claim in `report.json` |
 | top level | `judge_corrected` | whether the `JUDGE_CORRECTED_CLAIMS` diagnostic names the claim |
+| top level | `judge_correction_unavailable` | whether the `JUDGE_CORRECTION_UNAVAILABLE` diagnostic names the claim |
 | `estimand` | `cohort`, `group`, `measure`, `measure_type`, `comparison` | the claim's record in `presentation.claim_evidence` |
 | `estimand` | `acceptable_upper`, `unacceptable_lower` | the claim |
-| `bound` | `estimate`, `lower`, `upper`, `alpha`, `method`, `multiplicity_family` | the claim: the bound it was decided on |
+| `bound` | `estimate`, `lower`, `upper`, `alpha`, `method`, `multiplicity_family` | the claim: the bound it was decided on, or the bound it has when it was not decided on one (below) |
 | `evidence` | `refs` | the claim's `evidence_refs` |
 | `evidence` | `test` | the test the claim was decided by, as a `test:` evidence ref names it; null for a claim decided on an interval |
 | `evidence` | `eligibility` | the group risk or comparison the claim is about |
@@ -1159,10 +1160,17 @@ evidence interval is the correction's. For a claim decided by the noisy-but-vali
 holds the test's set of true risks with the same combined `alpha`, `evidence.test` is
 `noisy_valid_certification`, and the evidence interval is the judge-reported primary interval
 the test was applied to, although the claim's refs also name the validated correction. Its
-`assumptions` are then the interval's own; the claim's reasons in `report.json` state the
-test's. In an exploratory analysis, `status` stays `INCONCLUSIVE` and `descriptive_status`
-gives what a confirmatory analysis would decide; it certifies nothing. Fields of `evidence`
-are null when the report holds no such result or interval.
+`assumptions` are then the interval's own, and the record's `reasons` state the test's. In an
+exploratory analysis, `status` stays `INCONCLUSIVE` and `descriptive_status` gives what a
+confirmatory analysis would decide; it certifies nothing. Fields of `evidence` are null when
+the report holds no such result or interval.
+
+A claim can be `INCONCLUSIVE` without a decision on its bound, and its record still carries the
+bound `report.json` gives it. That happens when its multiplicity family is undeclared (`alpha`
+is null), and when the plan declares a validated judge calibration but the claim's evidence has
+no certifying correction. Then `judge_correction_unavailable` is true and the bound is the
+uncorrected judge-reported one: it is not a bound on the true risk the claim is about, so do
+not read it as one. `reasons` says why each claim has its status.
 
 The file has its own `schema_version` (now `"1.0"`) and `"experimental": true`.
 `inspect-safety-stats schema claims` prints its JSON schema.

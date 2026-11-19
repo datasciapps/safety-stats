@@ -26,11 +26,13 @@ from inspect_safety_stats.schema.reports import (
 CLAIMS_JSON = "claims.json"
 
 
-def _judge_corrected_ids(report: SafetyReport) -> set[str]:
+def _named_claims(report: SafetyReport, code: str) -> set[str]:
+    """The claims the diagnostics with ``code`` name."""
+
     return {
         str(claim_id)
         for diagnostic in report.integrity.diagnostics
-        if diagnostic.code == "JUDGE_CORRECTED_CLAIMS"
+        if diagnostic.code == code
         for claim_id in diagnostic.details.get("claim_ids") or []
     }
 
@@ -69,7 +71,8 @@ def claims_export(report: SafetyReport) -> ClaimsExport:
         item.claim_id: (index, item)
         for index, item in enumerate(report.presentation.claim_evidence or [])
     }
-    corrected = _judge_corrected_ids(report)
+    corrected = _named_claims(report, "JUDGE_CORRECTED_CLAIMS")
+    uncorrected = _named_claims(report, "JUDGE_CORRECTION_UNAVAILABLE")
     records: list[ClaimRecord] = []
     for index, claim in enumerate(report.claims):
         if claim.claim_id not in evidence_records:
@@ -101,6 +104,7 @@ def claims_export(report: SafetyReport) -> ClaimsExport:
                 descriptive_status=claim.descriptive_status,
                 mandatory=claim.mandatory,
                 judge_corrected=claim.claim_id in corrected,
+                judge_correction_unavailable=claim.claim_id in uncorrected,
                 estimand=ClaimEstimand(
                     cohort=estimand.cohort,
                     group=estimand.group,
@@ -136,6 +140,7 @@ def claims_export(report: SafetyReport) -> ClaimsExport:
                     evidence=evidence_pointer,
                     evidence_interval=interval_pointer,
                 ),
+                reasons=list(claim.reasons),
             )
         )
     analysis: dict[str, Any] = report.analysis

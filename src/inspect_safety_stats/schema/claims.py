@@ -27,12 +27,18 @@ class ClaimEstimand(ResultModel):
 
 
 class ClaimBound(ResultModel):
-    """The bound the claim was decided on.
+    """The bound the claim was decided on, as the claim in report.json gives it.
 
     For a claim decided on a validated judge correction this is the corrected bound, and
     ``alpha`` is the error budget of the claim family and the judge calibration together. For
     a claim decided by the noisy-but-valid test it is the test's set of true risks, with the
     same combined ``alpha``.
+
+    A claim that is INCONCLUSIVE without a decision on its bound still carries the bound
+    report.json gives it: when its multiplicity family is undeclared (``alpha`` is None), and
+    when the plan's validated judge calibration has no certifying correction for it
+    (``judge_correction_unavailable``). There the bound is the uncorrected judge-reported one,
+    not a bound on the true risk the claim is about. The record's ``reasons`` say why.
     """
 
     estimate: float | None = None
@@ -51,9 +57,8 @@ class ClaimEvidence(ResultModel):
     (``test:<name>``, now only ``noisy_valid_certification``) has the test's bound, which the
     test computes from the result's primary interval and the judge calibration: ``test`` names
     the test, and the interval is that primary interval, whatever interval the refs name. Its
-    assumptions are then the interval's alone; the claim's reasons in report.json state the
-    test's. The interval fields are None when that result, or that interval, is not in the
-    report.
+    assumptions are then the interval's alone, and the record's ``reasons`` state the test's.
+    The interval fields are None when that result, or that interval, is not in the report.
     """
 
     refs: list[str] = Field(default_factory=list)
@@ -87,10 +92,16 @@ class ClaimRecord(ResultModel):
     descriptive_status: Decision | None = None
     mandatory: bool
     judge_corrected: bool
+    # The plan declares a validated judge calibration, but the claim's evidence has no
+    # certifying correction: the claim is INCONCLUSIVE, and its bound is the uncorrected
+    # judge-reported one, on which it was not decided.
+    judge_correction_unavailable: bool = False
     estimand: ClaimEstimand
     bound: ClaimBound
     evidence: ClaimEvidence
     sources: ClaimSources
+    # Why the claim has its status, as report.json gives them.
+    reasons: list[str] = Field(default_factory=list)
 
 
 class ClaimsAnalysis(ResultModel):
