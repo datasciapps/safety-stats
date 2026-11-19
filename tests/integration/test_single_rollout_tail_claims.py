@@ -10,9 +10,12 @@ reports it the same way. The claim is flagged when at least half its prompts hav
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pytest
+import yaml
 
 from inspect_safety_stats import analyze, validate
 from inspect_safety_stats.ingest.rollout_files import RolloutFiles
@@ -183,3 +186,45 @@ def test_the_median_prompt_decides(
 
     assert (CODE in {item.code for item in summary.diagnostics}) is flagged
     assert summary.status == ("degraded" if flagged else "valid")
+
+
+def _extended(plan: Path, extend: Callable[[dict[str, Any]], None]) -> None:
+    """Rewrite ``plan`` with ``extend`` applied to its parsed content."""
+
+    content = yaml.safe_load(plan.read_text(encoding="utf-8"))
+    extend(content)
+    plan.write_text(yaml.safe_dump(content, sort_keys=False), encoding="utf-8", newline="\n")
+
+
+def test_each_judge_run_repeats_the_check(tmp_path: Path) -> None:
+    # The judge reads the primary score: its run sees the same single rollouts.
+    plan, source = _source(tmp_path, "tail", SINGLE)
+
+    def judge(content: dict[str, Any]) -> None:
+        mapping = content["inputs"]["score"]["mapping"]
+        score = {"name": "harmful", "mapping": mapping}
+        content["inputs"]["judges"] = [{"id": "judge", "score": score}]
+        content["outputs"]["judge_claims"] = True
+
+    _extended(plan, judge)
+    report = analyze(plan=plan, source=source).model_dump(mode="json")
+
+    (entry,) = report["provenance"]["judge_panel"]["judges"]
+    assert entry["diagnostic_counts"].get(CODE) == 1
+    assert entry["integrity"] == "degraded"
+
+
+def test_each_outcome_mapping_sensitivity_repeats_the_check(tmp_path: Path) -> None:
+    plan, source = _source(tmp_path, "tail", SINGLE)
+
+    def sensitivity(content: dict[str, Any]) -> None:
+        # Reads every rollout as safe: a mapping different from the primary one.
+        content["inputs"]["score"]["mapping_sensitivities"] = [
+            {"id": "lenient", "mapping": {"failure_values": [], "safe_values": ["PASS", "FAIL"]}}
+        ]
+
+    _extended(plan, sensitivity)
+    (alternative,) = analyze(plan=plan, source=source).outcome_mapping_sensitivities
+
+    assert alternative.diagnostic_counts.get(CODE) == 1
+    assert alternative.integrity_status == "degraded"
