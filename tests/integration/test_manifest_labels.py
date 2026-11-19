@@ -191,19 +191,23 @@ def test_strata_stay_as_written_beyond_the_parser_s_first_chunk(tmp_path: Path) 
     assert not [item for item in caught if issubclass(item.category, pd.errors.DtypeWarning)]
 
 
-@pytest.mark.parametrize("label", ["NA", "None", "N/A", "null", "nan"])
-def test_a_stratum_label_pandas_reads_as_missing_is_a_label(tmp_path: Path, label: str) -> None:
-    """Such a label is text in the manifest; it was a missing value or an INGEST_FAILED."""
+@pytest.mark.parametrize("label", ["NA", "None", "N/A", "null", "nan", "#N/A", "<NA>", " NULL "])
+def test_a_stratum_label_that_marks_a_missing_value_is_an_error(
+    tmp_path: Path, label: str
+) -> None:
+    """R, spreadsheets, databases and pandas write these for a missing value. pandas read them
+    as missing, so the analysis failed with an unrelated message or formed one stratum of
+    them, depending on its version; read as text, they would have been a stratum silently."""
 
     plan, source = _write(tmp_path, _frame(label, "b"), ["a1", "a2", "b1", "b2"], design=_SAMPLED)
-    labelled = analyze(plan=plan, source=source)
-    assert labelled.integrity.status == "valid", labelled.integrity.diagnostics
-
-    plan, source = _write(tmp_path, _frame("a", "b"), ["a1", "a2", "b1", "b2"], design=_SAMPLED)
-    lettered = analyze(plan=plan, source=source)
-    labelled_mean = next(row for row in labelled.group_risks if row.measure_id == "mean")
-    lettered_mean = next(row for row in lettered.group_risks if row.measure_id == "mean")
-    assert (labelled_mean.lower, labelled_mean.upper) == (lettered_mean.lower, lettered_mean.upper)
+    report = analyze(plan=plan, source=source)
+    assert report.integrity.status == "invalid"
+    message = _ingest_message(report)
+    assert (
+        "design manifest column 'stratum' has no value in "
+        f"row 2 (prompt_id 'a1', written {label!r}), row 3 (prompt_id 'a2', written {label!r})"
+    ) in message
+    assert "recode a label meant literally" in message
 
 
 _FIXED = """  type: fixed
@@ -347,51 +351,62 @@ def test_a_group_filter_value_that_is_not_text_is_refused(tmp_path: Path, value:
     assert "in quotes" in message
 
 
-_BLANKS = {
+# Each manifest holds one cell without a value, written @, and the row it is in.
+_EMPTY = {
     "prompt_id": (
-        "prompt_id,question_id,task_id\np1,q1,t\n,q2,t\np3,q3,t\n",
+        "prompt_id,question_id,task_id\np1,q1,t\n@,q2,t\np3,q3,t\n",
         _FIXED,
         "  - {id: all}",
-        "row 3,",
+        "row 3",
     ),
     "question_id": (
-        "prompt_id,question_id,task_id\np1,q1,t\np2, ,t\np3,q3,t\n",
+        "prompt_id,question_id,task_id\np1,q1,t\np2,@,t\np3,q3,t\n",
         _FIXED,
         "  - {id: all}",
-        "row 3 (prompt_id 'p2')",
+        "row 3 (prompt_id 'p2'",
     ),
     "stratum": (
-        _frame("a", "b").replace("a3,qa3,t,a,", "a3,qa3,t,,"),
+        _frame("a", "b").replace("a3,qa3,t,a,", "a3,qa3,t,@,"),
         _SAMPLED,
         "  - {id: all}",
-        "row 4 (prompt_id 'a3')",
+        "row 4 (prompt_id 'a3'",
     ),
     "cluster": (
-        "prompt_id,question_id,task_id,cluster\np1,q1,t,c\np2,q2,t,\np3,q3,t,c\n",
+        "prompt_id,question_id,task_id,cluster\np1,q1,t,c\np2,q2,t,@\np3,q3,t,c\n",
         _CLUSTERS,
         "  - {id: all}",
-        "row 3 (prompt_id 'p2')",
+        "row 3 (prompt_id 'p2'",
     ),
     "category": (
-        "prompt_id,category\np1,c\np2,c\np3,\n",
+        "prompt_id,category\np1,c\np2,c\np3,@\n",
         _CATEGORIES,
         "  - {id: all}",
-        "row 4 (prompt_id 'p3')",
+        "row 4 (prompt_id 'p3'",
     ),
     "tier": (
-        "prompt_id,question_id,task_id,tier\np1,q1,t,x\np2,q2,t,\np3,q3,t,x\n",
+        "prompt_id,question_id,task_id,tier\np1,q1,t,x\np2,q2,t,@\np3,q3,t,x\n",
         _FIXED,
         "  - {id: all}\n  - {id: x, filter: {tier: x}}",
-        "row 3 (prompt_id 'p2')",
+        "row 3 (prompt_id 'p2'",
     ),
 }
 
 
-@pytest.mark.parametrize("column", sorted(_BLANKS))
-def test_a_blank_label_is_an_error_naming_the_column_and_row(tmp_path: Path, column: str) -> None:
-    """A blank value merged, split, dropped or crashed, depending on the pandas version."""
+@pytest.mark.parametrize("cell", ["", " ", "NA", "None"], ids=["blank", "space", "NA", "None"])
+@pytest.mark.parametrize("column", sorted(_EMPTY))
+def test_a_label_without_a_value_is_an_error_naming_the_column_and_row(
+    tmp_path: Path, column: str, cell: str
+) -> None:
+    """A blank value merged, split, dropped or crashed, depending on the column and the pandas
+    version. A missing-value marker did the same at first, and was then read as a label: an
+    `NA` cluster was one independence block, an `NA` question one question."""
 
-    manifest, design, groups, row = _BLANKS[column]
+    manifest, design, groups, row = _EMPTY[column]
+    manifest = manifest.replace("@", cell)
+    if cell.strip():
+        row += f", written {cell!r})" if "(" in row else f" (written {cell!r})"
+    elif "(" in row:
+        row += ")"
     plan, source = _write(tmp_path, manifest, ["p1", "p3", "a1", "a2", "b1", "b2"], design=design)
     plan.write_text(
         plan.read_text(encoding="utf-8").replace("  - {id: all}", groups),
@@ -401,4 +416,4 @@ def test_a_blank_label_is_an_error_naming_the_column_and_row(tmp_path: Path, col
     report = analyze(plan=plan, source=source)
     assert report.integrity.status == "invalid"
     message = _ingest_message(report)
-    assert f"design manifest column {column!r} is blank in {row}" in message
+    assert f"design manifest column {column!r} has no value in {row}, counting" in message

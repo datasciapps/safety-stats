@@ -18,7 +18,32 @@ REQUIRED_COLUMNS = ("prompt_id", "question_id", "task_id")
 _PROMPT_LEVEL_COLUMNS = ("question_id", "task_id")
 # Columns that load_manifest converts to numbers or booleans itself; they are never labels.
 _TYPED_COLUMNS = frozenset({"expected_rollouts", "mandatory", "zero_tolerance"})
-# How many blank rows an error names before it counts the rest.
+# The markers that R, spreadsheets, databases and pandas write for a missing value: pandas'
+# default set, pinned here so that what is missing does not change with the pandas version. A
+# label cell that holds one, ignoring surrounding whitespace, has no value, as a blank one has.
+MISSING_MARKERS = frozenset(
+    {
+        "#N/A",
+        "#N/A N/A",
+        "#NA",
+        "-1.#IND",
+        "-1.#QNAN",
+        "-NaN",
+        "-nan",
+        "1.#IND",
+        "1.#QNAN",
+        "<NA>",
+        "N/A",
+        "NA",
+        "NULL",
+        "NaN",
+        "None",
+        "n/a",
+        "nan",
+        "null",
+    }
+)
+# How many rows without a value an error names before it counts the rest.
 _SHOWN_ROWS = 5
 
 
@@ -173,10 +198,10 @@ def load_manifest(
     The identifier columns of ``REQUIRED_COLUMNS`` and the ``grouping`` columns present are
     read as text, exactly as written; the analysis passes ``plan_grouping_columns(plan)``. With
     pandas' type inference, labels such as ``1`` and ``01``, ``1`` and ``1.0``, or ``true`` and
-    ``True`` would read as one value, and ``NA`` or ``None`` as a missing one, whose handling
-    differs between pandas versions. A blank value in one of these columns raises
-    ``ValueError`` naming the column and the rows. Every other column keeps pandas' reading, so
-    numeric columns stay numbers.
+    ``True`` would read as one value. A cell in one of these columns that is blank or holds one
+    of ``MISSING_MARKERS``, such as ``NA`` or ``None``, has no value, and raises ``ValueError``
+    naming the column and the rows. Every other column keeps pandas' reading, so numeric
+    columns stay numbers.
     """
 
     required = tuple(required)
@@ -201,13 +226,14 @@ def load_manifest(
     # The file is read a second time, wholly as text and with no missing-value markers, so that
     # every other column keeps exactly the values pandas' inference gives it.
     text = pd.read_csv(path, dtype=str, keep_default_na=False)
-    # ORDER MATTERS: prompt_id comes first in labels, so a blank in a later column can name
-    # each of its rows by a prompt_id that is known not to be blank.
+    # ORDER MATTERS: prompt_id comes first in labels, so a cell without a value in a later
+    # column can name its row by a prompt_id that is known to have one.
     for column in labels:
         cells = text[column]
-        blank = cells.isna() | (cells.str.strip() == "")
-        if blank.any():
-            raise ValueError(_blank_message(text, column, blank.to_numpy(dtype=bool)))
+        stripped = cells.str.strip()
+        empty = cells.isna() | (stripped == "") | stripped.isin(MISSING_MARKERS)
+        if empty.any():
+            raise ValueError(_no_value_message(text, column, empty.to_numpy(dtype=bool)))
         manifest[column] = cells
     for column in _PROMPT_LEVEL_COLUMNS:
         if column not in manifest.columns:
@@ -226,20 +252,26 @@ def load_manifest(
     return manifest
 
 
-def _blank_message(text: pd.DataFrame, column: str, blank: np.ndarray) -> str:
-    rows = np.flatnonzero(blank)
+def _no_value_message(text: pd.DataFrame, column: str, empty: np.ndarray) -> str:
+    rows = np.flatnonzero(empty)
     shown = []
     for position in rows[:_SHOWN_ROWS]:
-        # The header is row 1, as a spreadsheet numbers it.
-        row = f"row {position + 2}"
+        details = []
         if column != "prompt_id" and "prompt_id" in text.columns:
-            row += f" (prompt_id {text['prompt_id'].iat[position]!r})"
-        shown.append(row)
+            details.append(f"prompt_id {text['prompt_id'].iat[position]!r}")
+        cell = text[column].iat[position]
+        if isinstance(cell, str) and cell.strip():
+            details.append(f"written {cell!r}")
+        # The header is row 1, as a spreadsheet numbers it.
+        shown.append(f"row {position + 2}" + (f" ({', '.join(details)})" if details else ""))
     more = f" and {len(rows) - _SHOWN_ROWS} more" if len(rows) > _SHOWN_ROWS else ""
     return (
-        f"design manifest column {column!r} is blank in {', '.join(shown)}{more}, counting "
-        "the header as row 1. The analysis reads this column as labels that identify or group "
-        "prompts, so give every row a value"
+        f"design manifest column {column!r} has no value in {', '.join(shown)}{more}, counting "
+        "the header as row 1. A cell is without a value when it is blank or holds a marker "
+        "that R, spreadsheets, databases or pandas write for a missing value, such as NA, N/A, "
+        "None or null. The analysis reads this column as labels that identify or group "
+        "prompts, so give every row a value, and recode a label meant literally, for example "
+        "as 'none'"
     )
 
 

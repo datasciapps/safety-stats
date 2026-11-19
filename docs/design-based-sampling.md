@@ -152,7 +152,8 @@ design:
 ```
 
 Stratum labels are read as text, as written: `1` and `01`, or `true` and `True`, are two
-strata, and a blank label stops the analysis with an error that names the rows.
+strata. A label that is blank or marks a missing value, such as `NA` or `None`, stops the
+analysis with an error that names the rows.
 
 Drawing exactly \(n_h\) of stratum \(h\)'s \(N_h\) frame items makes the inclusion
 indicators **negatively correlated** -- they must sum to \(n_h\) -- so the independence the

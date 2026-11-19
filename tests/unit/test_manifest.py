@@ -246,14 +246,15 @@ def test_numeric_columns_stay_numbers_beside_text_labels(tmp_path: Path) -> None
     assert weights.tolist() == pytest.approx([0.25, 0.75], rel=1e-12, abs=0)
 
 
-def test_a_blank_label_names_its_column_and_rows(tmp_path: Path) -> None:
+def test_a_label_without_a_value_names_its_column_and_rows(tmp_path: Path) -> None:
     path = tmp_path / "design.csv"
-    rows = "".join(f"p{index},{'' if index % 2 else 'c'}\n" for index in range(1, 15))
+    cells = ["", "c", "NA", "c", " ", "c", "null", "c", "", "c", "", "c", "None", "c"]
+    rows = "".join(f"p{index},{cell}\n" for index, cell in enumerate(cells, start=1))
     path.write_text("prompt_id,cluster\n" + rows, encoding="utf-8")
     with pytest.raises(ValueError) as raised:
         load_manifest(path, ["prompt_id"], ["cluster"])
     assert str(raised.value).startswith(
-        "design manifest column 'cluster' is blank in row 2 (prompt_id 'p1'), row 4 "
-        "(prompt_id 'p3'), row 6 (prompt_id 'p5'), row 8 (prompt_id 'p7'), row 10 "
-        "(prompt_id 'p9') and 2 more, counting the header as row 1."
+        "design manifest column 'cluster' has no value in row 2 (prompt_id 'p1'), row 4 "
+        "(prompt_id 'p3', written 'NA'), row 6 (prompt_id 'p5'), row 8 (prompt_id 'p7', "
+        "written 'null'), row 10 (prompt_id 'p9') and 2 more, counting the header as row 1."
     )
