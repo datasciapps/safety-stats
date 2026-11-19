@@ -40,7 +40,7 @@ from inspect_safety_stats.schema.reports import (
     HierarchyRiskResult,
     RiskIntervalResult,
 )
-from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope
+from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope, scope_path
 from inspect_safety_stats.stats.misclassification import (
     JudgeStratumCounts,
     TruthStratumCounts,
@@ -329,7 +329,9 @@ def _add_judge_corrections(
     of every comparison. In
     ``validated`` mode one calibration is estimated per cohort from human labels. A
     calibration scoped to groups corrects only the rows of those groups, and validated mode
-    then estimates one calibration per cohort and group.
+    then estimates one calibration per cohort and group. ``transported`` mode corrects risk
+    rows and hierarchy nodes only, and names the comparisons it leaves uncorrected in
+    ``JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON``.
     """
 
     spec = plan.inputs.judge_calibration
@@ -417,6 +419,23 @@ def _add_judge_corrections(
                 scope=plan_scope("inputs", "judge_calibration"),
             )
         )
+        # Comparisons stay on the judge-reported scale, and the report says which.
+        uncorrected = sorted({result.result_id or result.comparison_id for result in comparisons})
+        if uncorrected:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON",
+                    severity="WARNING",
+                    message=(
+                        "a transported calibration corrects no comparison: with a lower end of "
+                        "zero on each arm, a corrected effect would only span minus the "
+                        "baseline's corrected upper bound to the candidate's, so these effects "
+                        "remain on the judge-reported scale"
+                    ),
+                    scope=scope_path("comparisons"),
+                    details={"result_ids": uncorrected[:20], "count": len(uncorrected)},
+                )
+            )
         return {
             "mode": "transported",
             "experimental": True,
@@ -478,7 +497,7 @@ def _add_judge_corrections(
         plan, data, diagnostics
     )
     scope_count = len(_judge_scopes(plan))
-    stratified = spec.sampling == "stratified_without_replacement"
+    stratified = spec.sampling == "stratified_within_judge_stratum"
     for result in targets:
         scope = _judge_scope(plan, result.cohort_id, result.group_id)
         measured = by_scope.get(scope) if scope is not None else None
@@ -569,6 +588,7 @@ def _add_judge_corrections(
         {scope: [calibration] for scope, calibration in by_scope.items()},
         spec.family,
         diagnostics,
+        stratified=stratified,
     )
     per_calibration_alpha = judge_alpha / scope_count if judge_alpha is not None else None
     summary: dict[str, Any]
@@ -579,7 +599,10 @@ def _add_judge_corrections(
             "family_alpha": judge_alpha,
             "per_cohort_alpha": per_calibration_alpha,
             "sampling": spec.sampling,
-            "validation_manifest": str(spec.validation_manifest),
+            # As the report names every input: relative to the plan, never by its absolute path.
+            "validation_manifest": None
+            if spec.validation_manifest is None
+            else report_path(spec.validation_manifest, plan),
             "cohorts": {cohort_id: item for (cohort_id, _), item in summaries.items()},
             "truth_strata": {cohort_id: item for (cohort_id, _), item in truth_strata.items()},
         }
@@ -598,7 +621,10 @@ def _add_judge_corrections(
             "groups": list(spec.groups),
             "per_calibration_alpha": per_calibration_alpha,
             "sampling": spec.sampling,
-            "validation_manifest": str(spec.validation_manifest),
+            # As the report names every input: relative to the plan, never by its absolute path.
+            "validation_manifest": None
+            if spec.validation_manifest is None
+            else report_path(spec.validation_manifest, plan),
             "cohorts": nested(summaries),
             "truth_strata": nested(truth_strata),
         }
@@ -610,4 +636,7 @@ def _add_judge_corrections(
         summary["experimental"] = True
         if spec.validation_strata is not None:
             summary["validation_strata"] = report_path(spec.validation_strata, plan)
+    if spec.groups is not None:
+        # A scope to groups is experimental too, and only a scoped plan records it.
+        summary["experimental"] = True
     return summary

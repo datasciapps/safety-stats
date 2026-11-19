@@ -11,6 +11,7 @@ from inspect_safety_stats.analysis.judge_calibration import (
     _judge_scope,
     _JudgeScope,
     _scope_population,
+    _stratified_assumptions,
     _uncertified_base_warning,
     _uncertified_correction_warning,
     pooled_calibration_gap,
@@ -41,10 +42,12 @@ def _judge_corrected_comparison_interval(
     primary_scenario: str | None = None,
     scoped_groups: list[str] | None = None,
     per_cohort: bool = False,
+    stratified: bool = False,
 ) -> RiskIntervalResult | None:
     """Correct a comparison by correcting each arm, then recombining.
 
-    A validated calibration gives each arm its own cohort's measured box. An assumed
+    A validated calibration gives each arm its own cohort's measured box; ``stratified``
+    says it was measured from labels of the experimental stratified design. An assumed
     scenario gives both arms the same declared box, or with ``per_cohort`` each arm the box
     it declares for that arm's cohort; each arm is free within its box independently of the
     other, and the result is a sensitivity analysis like every assumed correction.
@@ -113,6 +116,9 @@ def _judge_corrected_comparison_interval(
     ) + sum(share.alpha for share in (candidate_share, baseline_share) if share is not None)
     base_alpha = primary.family_alpha
     certified = gap is None and result.eligibility == "certifying"
+    # A stratified design labels some fine strata more often than others; its fine strata,
+    # weighted by their sizes, weight the rollouts equally, not its labels.
+    weights = "fine strata weight back to" if stratified else "labels weight"
     warnings: list[str] = []
     if gap is not None:
         warnings.append(_uncertified_correction_warning(gap, scoped_group))
@@ -168,11 +174,20 @@ def _judge_corrected_comparison_interval(
             "no independence assumption between arms beyond the one the underlying "
             "two-arm region already makes.",
             *(
+                _stratified_assumptions(
+                    "each cohort"
+                    if scoped_group is None
+                    else f"group {scoped_group!r} in each cohort"
+                )
+                if stratified
+                else []
+            ),
+            *(
                 [
                     (
-                        "Each cohort's labels weight its classified rollouts equally"
+                        f"Each cohort's {weights} its classified rollouts equally"
                         if scoped_group is None
-                        else f"Each cohort's labels weight the classified rollouts of group "
+                        else f"Each cohort's {weights} the classified rollouts of group "
                         f"{scoped_group!r} equally"
                     )
                     + ", and so does "
@@ -304,6 +319,7 @@ def _apply_judge_correction_to_comparisons(
     diagnostics: list[Diagnostic],
     primary_scenario: str | None = None,
     per_cohort: set[str] | frozenset[str] = frozenset(),
+    stratified: bool = False,
 ) -> None:
     """Append judge corrections to comparisons that expose both arm bounds.
 
@@ -311,7 +327,8 @@ def _apply_judge_correction_to_comparisons(
     mode, every declared scenario in assumed mode, with the box it declares for the scope's
     cohort. A comparison gets one corrected interval per scenario both its arms carry, each
     arm corrected with its own scope's box. ``per_cohort`` names the assumed scenarios that
-    declare boxes by cohort.
+    declare boxes by cohort, and ``stratified`` says the measured boxes come from labels of
+    the experimental stratified design.
 
     A comparison of a group the calibration is not scoped to stays uncorrected, silently:
     the plan scoped the calibration away from it. Any other comparison left uncorrected is
@@ -398,6 +415,7 @@ def _apply_judge_correction_to_comparisons(
                 primary_scenario=primary_scenario,
                 scoped_groups=scoped_groups,
                 per_cohort=candidate.scenario_id in per_cohort,
+                stratified=stratified,
             )
             if interval is not None:
                 result.intervals.append(interval)

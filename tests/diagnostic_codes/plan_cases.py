@@ -139,6 +139,17 @@ def _sampled(inputs: Inputs) -> None:
     _direct_means()(inputs)
 
 
+def _sampled_prompt_sensitivity(inputs: Inputs) -> None:
+    """A sampled design that declares a prompt-level sensitivity profile."""
+
+    _sampled(inputs)
+    inputs.plan["design"]["independence_profiles"]["prompt"] = {
+        "block_by": ["prompt_id"],
+        "comparison_coupling": "joint",
+    }
+    _outputs(inputs)["direct_mean_intervals"]["independence"]["sensitivities"] = ["prompt"]
+
+
 def _sampled_without_direct_means(inputs: Inputs) -> None:
     _sampled(inputs)
     _outputs(inputs)["direct_mean_intervals"]["enabled"] = False
@@ -200,6 +211,52 @@ def _policy(
         inputs.decision_policy = "policy.json"
 
     return change
+
+
+def _two_gates_loosened(*claim_ids: str) -> Change:
+    """Claims ``low`` on direct means and ``worst_low`` on prompt bounds, and a policy.
+
+    The two claims' bounds rest on two coverage events, the direct-mean family and the
+    prompt family. The policy loosens acceptable_upper of the claims in ``claim_ids`` and
+    restates the plan's for the others, for both claims when ``claim_ids`` is empty.
+    """
+
+    def text(plan: Path) -> str:
+        from inspect_safety_stats.config.decision_policy import inference_plan_hash
+        from inspect_safety_stats.config.loader import load_plan
+
+        thresholds = {
+            claim_id: {
+                "acceptable_upper": 0.91 if claim_id in claim_ids else 0.9,
+                "unacceptable_lower": 0.95,
+            }
+            for claim_id in ("low", "worst_low")
+        }
+        version = {"id": "v1", "set_at": "2026-01-15T00:00:00Z", "thresholds": thresholds}
+        return json.dumps(
+            {"inference_plan_sha256": inference_plan_hash(load_plan(plan)), "versions": [version]}
+        )
+
+    def change(inputs: Inputs) -> None:
+        _measures(MEAN, WORST)(inputs)
+        _direct_means()(inputs)
+        inputs.plan["claims"].append(
+            {**inputs.plan["claims"][0], "id": "worst_low", "measure": "worst"}
+        )
+        inputs.files["policy.json"] = text
+        inputs.decision_policy = "policy.json"
+
+    return change
+
+
+def _overall_pass_withheld(triggered: Outcome, control: Outcome) -> None:
+    # Every claim keeps its bounds and passes in both; only the overall decision differs.
+    def verdicts(outcome: Outcome) -> list[tuple[str, str, float | None]]:
+        return [(item.claim_id, item.status, item.upper) for item in outcome.report.claims]
+
+    assert verdicts(triggered) == verdicts(control)
+    assert {item.status for item in control.report.claims} == {"PASS"}
+    assert (triggered.report.decision, control.report.decision) == ("INCONCLUSIVE", "PASS")
 
 
 def _fixed_claim(method: str) -> Callable[[Inputs, list[Any]], None]:
@@ -334,6 +391,21 @@ def _sampled_prompt_bounds_recorded(triggered: Outcome, control: Outcome) -> Non
     assert bounded(triggered) == bounded(control) == ["p1", "p2"]
 
 
+def _sampled_sensitivities_withheld(triggered: Outcome, control: Outcome) -> None:
+    # Only the frame intervals are reported, as without the sensitivity profile.
+    def profiles(outcome: Outcome) -> list[str | None]:
+        return sorted(
+            {
+                interval.independence_profile
+                for row in outcome.report.group_risks
+                for interval in row.intervals
+                if interval.independence_profile is not None
+            }
+        )
+
+    assert profiles(triggered) == profiles(control) == ["frame_item"]
+
+
 CASES = [
     Case(
         code="ALPHA_ALLOCATION_INVALID",
@@ -364,6 +436,25 @@ CASES = [
         # The policy's version is set after r1 started, on 2026-02-01.
         trigger=analysis(_policy(set_at="2026-02-02T00:00:00Z")),
         control=analysis(_policy(set_at="2026-01-15T00:00:00Z")),
+        effect=lambda triggered, control: (
+            _policy_applied(True)(triggered, control),
+            _claim_unchanged(triggered, control),
+        ),
+    ),
+    Case(
+        code="DECISION_POLICY_OVERALL_UNCERTIFIED",
+        # The policy moves one claim's acceptable_upper, and the two mandatory claims rest on
+        # two coverage events; the control's policy restates the plan's thresholds.
+        trigger=analysis(_two_gates_loosened("low")),
+        control=analysis(_two_gates_loosened()),
+        effect=_overall_pass_withheld,
+    ),
+    Case(
+        code="DECISION_POLICY_SELF_DECLARED",
+        # The policy's version states a time before r1 started, on 2026-02-01, which nothing
+        # checks; the control's states a time after it.
+        trigger=analysis(_policy(set_at="2026-01-15T00:00:00Z")),
+        control=analysis(_policy(set_at="2026-02-02T00:00:00Z")),
         effect=lambda triggered, control: (
             _policy_applied(True)(triggered, control),
             _claim_unchanged(triggered, control),
@@ -500,6 +591,12 @@ CASES = [
         ),
         control=analysis(_sampled),
         effect=_sampled_prompt_bounds_recorded,
+    ),
+    Case(
+        code="PLAN_SAMPLED_SENSITIVITY_PROFILES",
+        trigger=analysis(_sampled_prompt_sensitivity),
+        control=analysis(_sampled),
+        effect=_sampled_sensitivities_withheld,
     ),
     Case(
         code="PLAN_SAMPLED_REQUIRES_DIRECT_MEAN",

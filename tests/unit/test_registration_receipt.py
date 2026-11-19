@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import shutil
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -33,17 +33,20 @@ def test_hash_plan_register_writes_a_receipt_after_the_unchanged_hash_line(
 ) -> None:
     plan = _plan(tmp_path)
     receipt_path = tmp_path / "plan.receipt.json"
-    before = datetime.now(timezone.utc).replace(microsecond=0)
+    before = datetime.now(timezone.utc)
 
     result = runner.invoke(app, ["hash-plan", "--plan", str(plan), "--register", str(receipt_path)])
 
+    after = datetime.now(timezone.utc)
     assert result.exit_code == 0, result.output
     digest = canonical_plan_hash(load_plan(plan))
     assert result.output.splitlines()[0] == digest
     receipt = load_receipt(receipt_path)
     assert receipt.plan_sha256 == digest
     assert receipt.registered_at.utcoffset() is not None
-    assert before <= receipt.registered_at <= datetime.now(timezone.utc)
+    # Rounded up to the second, so never before the moment the command ran.
+    assert receipt.registered_at.microsecond == 0
+    assert before <= receipt.registered_at < after + timedelta(seconds=1)
     assert "Anchor the receipt externally" in plain(result.output)
     assert b"\r\n" not in receipt_path.read_bytes()
 
@@ -58,6 +61,19 @@ def test_hash_plan_never_overwrites_a_receipt(tmp_path: Path) -> None:
     assert result.exit_code == 3
     assert "never overwritten" in plain(result.output)
     assert receipt_path.read_text(encoding="utf-8") == "earlier"
+
+
+def test_hash_plan_reports_a_receipt_it_cannot_write_and_exits_3(tmp_path: Path) -> None:
+    plan = _plan(tmp_path)
+    receipt_path = tmp_path / "missing" / "plan.receipt.json"
+
+    result = runner.invoke(app, ["hash-plan", "--plan", str(plan), "--register", str(receipt_path)])
+
+    assert result.exit_code == 3
+    output = plain(result.output)
+    assert "Registration failed: cannot write " in output
+    assert "Traceback" not in output
+    assert not receipt_path.parent.exists()
 
 
 def test_hash_plan_without_register_prints_only_the_hash(tmp_path: Path) -> None:
@@ -87,7 +103,7 @@ def test_hash_plan_refuses_to_register_the_inference_hash(tmp_path: Path) -> Non
         ("decimal_places: 6", "decimal_places: true", "report.decimal_places: "),
         ('schema_version: "2.0"', 'schema_version: "2.0"\nunknown_field: 1', "unknown_field: "),
         ('schema_version: "2.0"', 'schema_version: "9.9"', "'9.9'"),
-        ('schema_version: "2.0"', 'schema_version: ["unclosed', "Plan invalid: "),
+        ('schema_version: "2.0"', 'schema_version: ["unclosed', "while parsing a flow sequence"),
     ],
     ids=["boolean-field", "unknown-field", "schema-version", "yaml-syntax"],
 )
@@ -109,16 +125,76 @@ def test_hash_plan_reports_an_invalid_plan_on_one_line_and_exits_3(
     assert "Traceback" not in output
 
 
-def test_a_receipt_records_utc_to_the_second(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("name", "content", "named"),
+    [
+        ("plan.txt", None, "analysis plan must be YAML or JSON"),
+        ("plan.yaml", "[1, 2]\n", "analysis plan root must be an object"),
+        ("plan.json", '{"schema_version": ', "Plan invalid: "),
+    ],
+    ids=["suffix", "root-not-object", "json-syntax"],
+)
+def test_hash_plan_reports_an_unreadable_plan_on_one_line_and_exits_3(
+    tmp_path: Path, name: str, content: str | None, named: str
+) -> None:
+    plan = tmp_path / name
+    if content is None:
+        shutil.copy(_plan(tmp_path), plan)
+    else:
+        plan.write_text(content, encoding="utf-8", newline="\n")
+
+    result = runner.invoke(app, ["hash-plan", "--plan", str(plan)])
+
+    assert result.exit_code == 3
+    output = plain(result.output)
+    assert output.startswith("Plan invalid: ")
+    assert named in output
+    assert "\n" not in output.strip()
+    assert "Traceback" not in output
+
+
+def test_a_validator_message_with_a_line_break_stays_on_one_line() -> None:
+    from pydantic import BaseModel, ValidationError, field_validator
+
+    from inspect_safety_stats.cli import _one_line_error
+
+    class _Spec(BaseModel):
+        size: int
+
+        @field_validator("size")
+        @classmethod
+        def _two_lines(cls, value: int) -> int:
+            raise ValueError("first line\n  second line")
+
+    with pytest.raises(ValidationError) as caught:
+        _Spec(size=1)
+
+    assert _one_line_error(caught.value) == "size: Value error, first line second line"
+
+
+
+@pytest.mark.parametrize(
+    ("now", "recorded"),
+    [
+        (datetime(2026, 3, 1, 14, 30, 5, tzinfo=timezone.utc), "2026-03-01T14:30:05Z"),
+        (datetime(2026, 3, 1, 14, 30, 5, 1, tzinfo=timezone.utc), "2026-03-01T14:30:06Z"),
+        (datetime(2026, 3, 1, 14, 30, 5, 999999, tzinfo=timezone.utc), "2026-03-01T14:30:06Z"),
+        (datetime(2026, 3, 1, 23, 59, 59, 500000, tzinfo=timezone.utc), "2026-03-02T00:00:00Z"),
+    ],
+    ids=["whole-second", "one-microsecond-past", "just-before-the-next", "next-day"],
+)
+def test_a_receipt_records_utc_rounded_up_to_the_second(
+    tmp_path: Path, now: datetime, recorded: str
+) -> None:
+    # Truncating would record a time before the registration, in the author's favour.
     path = tmp_path / "r.json"
-    local = datetime(2026, 3, 1, 14, 30, 5, 999, tzinfo=timezone.utc).astimezone()
-    write_receipt(path, "a" * 64, package_version="0", now=local)
+    write_receipt(path, "a" * 64, package_version="0", now=now.astimezone())
     data = json.loads(path.read_text(encoding="utf-8"))
     assert data == {
         "package_version": "0",
         "plan_sha256": "a" * 64,
         "receipt_version": "1",
-        "registered_at": "2026-03-01T14:30:05Z",
+        "registered_at": recorded,
     }
 
 
@@ -260,6 +336,25 @@ def test_a_receipt_at_the_first_generation_time_predates_it(tmp_path: Path) -> N
     assert "PLAN_REGISTERED" in codes
 
 
+@pytest.mark.parametrize(
+    "started_at",
+    ["2026-02-01T00:00:00.300Z", "2026-02-01T00:00:00Z"],
+    ids=["start-to-the-millisecond", "start-truncated-as-inspect-records-it"],
+)
+def test_a_receipt_written_within_the_second_after_the_first_generation_is_an_error(
+    tmp_path: Path, started_at: str
+) -> None:
+    # Registered 0.6 s after generation started: a receipt truncated to 00:00:00 would read
+    # as no later than either start, and so pass.
+    codes = _codes(
+        tmp_path, registered_at="2026-02-01T00:00:00.900+00:00", started_at=started_at
+    )
+    posthoc = codes["PLAN_RECEIPT_POSTHOC"]
+    assert posthoc["severity"] == "ERROR"
+    assert posthoc["registered_at"] == "2026-02-01T00:00:01+00:00"
+    assert not {"PLAN_REGISTERED", "PLAN_SELF_DECLARED"} & set(codes)
+
+
 def test_a_receipt_for_another_plan_is_an_error_and_proves_no_timing(tmp_path: Path) -> None:
     codes = _codes(tmp_path, sha256="0" * 64)
     assert codes["PLAN_RECEIPT_MISMATCH"]["severity"] == "ERROR"
@@ -291,6 +386,23 @@ def test_validate_reports_a_malformed_receipt_instead_of_crashing(tmp_path: Path
     assert summary.status == "invalid"
     assert any(
         item.code == "INGEST_FAILED" and "registration receipt" in item.message
+        for item in summary.diagnostics
+    )
+
+
+@pytest.mark.parametrize("unreadable", ["missing", "directory"])
+def test_validate_reports_an_unreadable_receipt_instead_of_crashing(
+    tmp_path: Path, unreadable: str
+) -> None:
+    plan = tmp_path / "plan.yaml"
+    plan.write_text(PLAN.replace("INTENT", "confirmatory"), encoding="utf-8")
+    receipt = tmp_path / "receipt.json"
+    if unreadable == "directory":
+        receipt.mkdir()
+    summary = validate(plan=plan, source=_source(tmp_path), registration_receipt=receipt)
+    assert summary.status == "invalid"
+    assert any(
+        item.code == "INGEST_FAILED" and "receipt.json" in item.message
         for item in summary.diagnostics
     )
 

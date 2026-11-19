@@ -586,17 +586,47 @@ _CODES: tuple[CodeEntry, ...] = (
         assumptions=("run_stability",),
     ),
     CodeEntry(
+        code="CONTENT_FILTER_STOP_SCORED",
+        severities=("WARNING", "INFO"),
+        source="logs",
+        effect="recorded",
+        assumption=(
+            "inputs.score.content_filter_stops decides the outcome of a provider "
+            "content-filter stop only when the target delivered no content in the sample "
+            "before it: no text, readable reasoning or tool call in the stopped output or in "
+            "an earlier generation, such as an earlier turn. Under safe, it decides only a "
+            "missing or safe score, never a failure or a value the mapping does not cover."
+        ),
+        consequence=(
+            "Nothing changes from the default: the rollout's score decides, as for any other "
+            "answer, and a missing score follows inputs.score.missing. It is a warning when "
+            "a stop that delivered nothing has a failure or unmapped score, which the "
+            "transcript does not explain."
+        ),
+        remedy=(
+            "None needed when content was delivered. For a warning, check how the scorer reads "
+            "an empty answer and whether harm reached the user outside the transcript. When "
+            "the transcript does not record the stopped generation, keep each sample's model "
+            "events in the log."
+        ),
+        assumptions=("content_filter_stops",),
+    ),
+    CodeEntry(
         code="DECISION_POLICY_AFTER_GENERATION",
         severities=("INFO",),
         source="registration",
         effect="recorded",
         assumption=(
-            "A decision policy's thresholds do not enter the bounds, so a version set after the "
-            "first evaluation started leaves the verdicts at them certifying."
+            "A decision policy's thresholds were set before the evidence. They do not enter "
+            "the bounds, so each claim's verdict keeps its error bound at a later threshold, "
+            "but such a threshold may describe the bounds rather than a requirement fixed in "
+            "advance."
         ),
         consequence=(
             "The policy's thresholds stay in force and the claims keep their status; the "
-            "versions set after the first evaluation started are listed in the diagnostic."
+            "versions set after the first evaluation started are listed in the diagnostic. "
+            "Whether the overall decision still certifies is DECISION_POLICY_OVERALL_UNCERTIFIED's "
+            "concern."
         ),
         remedy=(
             "No change is needed; to avoid the note, set the policy's versions before the runs "
@@ -638,6 +668,49 @@ _CODES: tuple[CodeEntry, ...] = (
             "Apply the policy to the plan it was written for, or set its inference_plan_sha256 "
             "to the hash `inspect-safety-stats hash-plan --inference` prints for this plan."
         ),
+    ),
+    CodeEntry(
+        code="DECISION_POLICY_OVERALL_UNCERTIFIED",
+        severities=("WARNING",),
+        source="plan",
+        effect="adjusted",
+        assumption=(
+            "An overall PASS has the error bound of one claim only when every mandatory "
+            "claim's acceptable_upper was fixed before the data, or when one simultaneous "
+            "coverage event covers every mandatory claim's bound."
+        ),
+        consequence=(
+            "The overall decision is INCONCLUSIVE where every mandatory claim passes, since a "
+            "wrong PASS is bounded only by the sum of the separate events' error budgets; a "
+            "FAIL stays FAIL, and every claim keeps its status."
+        ),
+        remedy=(
+            "Set these thresholds in the plan before the runs, or decide every mandatory claim "
+            "on one simultaneous family, such as the default simultaneous prompt bounds or "
+            "simultaneous direct-mean intervals."
+        ),
+        assumptions=("plan_fixed_in_advance",),
+    ),
+    CodeEntry(
+        code="DECISION_POLICY_SELF_DECLARED",
+        severities=("WARNING",),
+        source="plan",
+        effect="recorded",
+        assumption=(
+            "A decision policy version's set_at, which only its author states, is when its "
+            "thresholds were decided."
+        ),
+        consequence=(
+            "The report records the versions listed in the diagnostic as set before the first "
+            "evaluation, as they state; no result changes, and the overall decision does not "
+            "rely on the stated time."
+        ),
+        remedy=(
+            "Keep the policy file where others can check when each version was written, such "
+            "as a version-controlled repository or a registry, and say where in each "
+            "version's reason."
+        ),
+        assumptions=("plan_fixed_in_advance",),
     ),
     CodeEntry(
         code="DECISION_POLICY_UNKNOWN_CLAIM",
@@ -1022,8 +1095,10 @@ _CODES: tuple[CodeEntry, ...] = (
             "declared fine stratum, of a size fixed independently of the labels."
         ),
         consequence=(
-            "The validated calibration uses exact hypergeometric bounds over the declared fine "
-            "strata, and the asymptotic delta-method reference interval is not reported."
+            "The validated calibration bounds each judge stratum's truly unsafe count with "
+            "exact hypergeometric bounds over the declared fine strata, and its conditional "
+            "accuracy at those counts with Clopper-Pearson bounds; the asymptotic delta-method "
+            "reference interval is not reported."
         ),
         remedy=(
             "None needed when the labels were drawn by the declared strata; otherwise set "
@@ -1069,6 +1144,25 @@ _CODES: tuple[CodeEntry, ...] = (
             "or use a more accurate judge, and rerun the analysis."
         ),
         assumptions=("judge_accuracy",),
+    ),
+    CodeEntry(
+        code="JUDGE_CONFIGURATION_UNREADABLE",
+        severities=("WARNING",),
+        source="logs",
+        effect="recorded",
+        assumption=(
+            "With outputs.judge_claims, every run records its scorers and model roles, when it "
+            "records them at all, as JSON: a list of scorers and a mapping from each role to a "
+            "configuration with a model id."
+        ),
+        consequence=(
+            "Nothing is computed differently and integrity is unchanged; the judges' recorded "
+            "configurations leave out the field of that run."
+        ),
+        remedy=(
+            "Record the run's scorers and model_roles as Inspect logs record them, or leave "
+            "the field out of the rollout files' runs."
+        ),
     ),
     CodeEntry(
         code="JUDGE_CORRECTED_CLAIMS",
@@ -1121,8 +1215,8 @@ _CODES: tuple[CodeEntry, ...] = (
         remedy=(
             "On the fixed-design path, use a comparison whose primary interval exposes both arm "
             "bounds (comparisons[].method: weighted_kl_chernoff, or a comparison_sets entry) and "
-            "resolve any calibration refusal for either cohort; generative comparisons have no "
-            "correction."
+            "resolve any calibration refusal for either cohort. Generative comparisons, and "
+            "comparisons under inputs.judge_calibration.mode: transported, have no correction."
         ),
     ),
     CodeEntry(
@@ -1187,7 +1281,9 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
         consequence=(
             "The flip rate and its Clopper-Pearson interval are reported, as a WARNING above "
-            "inputs.judge_flip.warn_above and as INFO otherwise, and no claim status changes."
+            "inputs.judge_flip.warn_above and as INFO otherwise, and no claim status changes. "
+            "The interval treats the rescored completions as independent; under sampling: all "
+            "it is descriptive, since completions of one prompt can flip together."
         ),
         remedy=(
             "When the rate is high, validate the judge with inputs.judge_calibration.mode: "
@@ -1280,6 +1376,25 @@ _CODES: tuple[CodeEntry, ...] = (
             "Label rollouts from the named judge stratum in inputs.judge_calibration."
             "validation_manifest (judge_calibration.validation_manifest in a generative plan) "
             "and rerun the analysis."
+        ),
+    ),
+    CodeEntry(
+        code="JUDGE_STRESS_BOX_UNMATCHED",
+        severities=("WARNING",),
+        source="plan",
+        effect="withheld",
+        assumption=(
+            "The declared accuracy box the judge-error stress uses describes the primary "
+            "verdict: one judge with declared accuracy reads the primary score with the primary "
+            "mapping, or the primary mapping reads a composite's verdict as it is."
+        ),
+        consequence=(
+            "The judge-error stress reports its tipping lines but no verdict over a declared box."
+        ),
+        remedy=(
+            "Declare accuracy on exactly one judge whose inputs.judges[].score has the primary "
+            "score's name and mapping, or map the primary composite's true verdict to failure "
+            "and its false verdict to safe."
         ),
     ),
     CodeEntry(
@@ -1442,6 +1557,26 @@ _CODES: tuple[CodeEntry, ...] = (
             "Rerun the missing rollouts so both arms hold the same keys, or correct "
             "comparisons[].pair_key, and give comparisons[].cluster_key when "
             "comparisons[].diagnostic_methods lists fixed_cluster_bootstrap."
+        ),
+    ),
+    CodeEntry(
+        code="PAIR_NEWCOMBE_UNAVAILABLE",
+        severities=("WARNING",),
+        source="analysis",
+        effect="withheld",
+        assumption=(
+            "The completions of a comparison's unscored pair outcomes produce at most 50,000,000 "
+            "distinct 2x2 tables, the most newcombe_paired evaluates; 668 pairs unscored in both "
+            "arms produce more."
+        ),
+        consequence=(
+            "The comparison's newcombe_paired diagnostic is not reported; its other paired "
+            "diagnostics, its interval and the integrity status are unaffected."
+        ),
+        remedy=(
+            "Rescore or rerun the unscored rollouts, or leave newcombe_paired out of "
+            "comparisons[].diagnostic_methods: exact_mcnemar and fixed_cluster_bootstrap bound "
+            "the completions of any number of unscored pairs."
         ),
     ),
     CodeEntry(
@@ -1769,6 +1904,24 @@ _CODES: tuple[CodeEntry, ...] = (
         remedy="Set outputs.direct_mean_intervals.enabled: true, with its family.",
     ),
     CodeEntry(
+        code="PLAN_SAMPLED_SENSITIVITY_PROFILES",
+        severities=("WARNING",),
+        source="plan",
+        effect="withheld",
+        assumption=(
+            "A sampled design's frame intervals take the frame item as the independent block, "
+            "whatever independence profiles the plan declares."
+        ),
+        consequence=(
+            "No interval and no claim verdict is reported under the declared sensitivity "
+            "profiles; the frame intervals and the claims' statuses are unaffected."
+        ),
+        remedy=(
+            "Remove outputs.direct_mean_intervals.independence.sensitivities under design.type: "
+            "sampled, or analyse the prompts as a fixed design to see verdicts under them."
+        ),
+    ),
+    CodeEntry(
         code="PLAN_SELF_DECLARED",
         severities=("WARNING",),
         source="registration",
@@ -1835,7 +1988,11 @@ _CODES: tuple[CodeEntry, ...] = (
             "intervals enabled without frontier_sidak calibration and a primary independence "
             "profile that blocks by rollout."
         ),
-        consequence="The integrity status is invalid, so no claim can pass.",
+        consequence=(
+            "The integrity status is invalid, so no claim can pass. The measure's group rows "
+            "get no direct interval: they keep the propagated prompt envelope as primary and "
+            "warn why."
+        ),
         remedy=(
             "Set design.type: fixed, outputs.direct_mean_intervals.enabled: true with "
             "hierarchy_calibration: flat_bonferroni and a primary profile blocking by rollout; "
@@ -2223,8 +2380,9 @@ _CODES: tuple[CodeEntry, ...] = (
         source="logs",
         effect="adjusted",
         assumption=(
-            "A provider content-filter stop that delivered no content is a refusal of the "
-            "end-to-end system, as inputs.score.content_filter_stops: failure declares."
+            "A provider content-filter stop before the target delivered any content in the "
+            "sample is a refusal of the end-to-end system, as "
+            "inputs.score.content_filter_stops: failure declares."
         ),
         consequence=(
             "The rollout counts as a failure, a refusal under an over-refusal estimand, "
@@ -2242,13 +2400,13 @@ _CODES: tuple[CodeEntry, ...] = (
         source="logs",
         effect="adjusted",
         assumption=(
-            "A target-side provider policy block that delivered no content is a safe outcome "
-            "of the end-to-end system."
+            "A target-side provider policy block before the target delivered any content in "
+            "the sample is a safe outcome of the end-to-end system."
         ),
         consequence=(
             "The rollout counts as safe: a policy-blocked sample error under "
-            "inputs.score.errors: end_to_end, or a content-filter stop under "
-            "inputs.score.content_filter_stops: safe, whatever its score."
+            "inputs.score.errors: end_to_end, whatever its score, or a content-filter stop "
+            "under inputs.score.content_filter_stops: safe whose score is missing or safe."
         ),
         remedy=(
             "Set inputs.estimand: underlying_model, or another inputs.score.errors policy, to "

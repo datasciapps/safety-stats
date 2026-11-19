@@ -162,7 +162,9 @@ inspect-safety-stats generative compile --plan plan.yaml
 ```
 
 Compiles the taxonomy and reports what it contains -- node counts, terminal paths, what the
-constraints pruned, the fingerprint -- without generating anything.
+constraints pruned, the fingerprint -- without generating anything. A declared
+[slice family](#arm-contrasts-and-a-simultaneous-slice-family-experimental) is checked against
+the paths `materialize` will select.
 
 ```bash
 inspect-safety-stats generative materialize \
@@ -239,15 +241,21 @@ rewrite:
   deduplicated. A validator invoked by the package (`rewrite.validation.invoke`) receives
   that JSON, with the system turn attached, as its prompt text.
 - **`system_prompts`.** The procedure attaches `texts[value]` as the system turn of every
-  conversation on a path where `level` takes that value. The kernel sees it as
-  `request.system_prompt` and must not write a system turn itself. If it writes one on a
-  path whose value has a non-empty text, the run stops. The arm needs a text for every value the taxonomy can draw. This key works with
-  `output: prompt` too: the prompt becomes a one-turn conversation behind the system prompt.
+  conversation on a path where `level` takes that value; an empty text gives that value's
+  conversations no system prompt. The kernel sees the text as `request.system_prompt`, or
+  `None` where it is empty, and must not write a system turn itself. If it writes one on any
+  path, including one whose value has an empty text, the run stops. The arm needs a text for
+  every value the taxonomy can draw. This key works with `output: prompt` too: the prompt
+  becomes a one-turn conversation behind the system prompt.
 - **`conversation_turns`.** Each value must be a positive integer. The kernel sees it as
   `request.conversation_turns`. Every conversation is checked: one with another number of
-  user turns is rejected as an invalid attempt and retried, so no conversation is counted
-  under an arm value it does not have. Needs `output: conversation`, and must not name the
-  same arm as `system_prompts`.
+  user turns is rejected as an invalid attempt, so no conversation is counted under an arm
+  value it does not have. Like any invalid attempt, it uses up one of
+  `rewrite.validation.maximum_attempts` and follows `rewrite.validation.on_invalid`: with
+  `retry` the unit is retried while attempts remain, and with `fail` the unit is exhausted
+  at the first such conversation. An exhausted unit counts in `acceptance.csv` and is
+  completed as unclassified in the join (see [Rewrite acceptance](#rewrite-acceptance)).
+  Needs `output: conversation`, and must not name the same arm as `system_prompts`.
 
 Each key that is set enters the kernel fingerprint. The estimand stays what it was: the
 failure rate over the distribution the declared procedure induces. With these keys that
@@ -420,12 +428,17 @@ within the slice, so the two can differ.
 Declaring the family in the plan is what makes it simultaneous: a member added after seeing the
 results would change the family the error budget was spent on. For the same reason a member
 that cannot be estimated -- an unknown value, an arm without draws, a contrast whose values
-share no seed -- stops the analysis rather than being dropped. Levels must be arm levels:
-slices of fixed levels are nodes of the tree.
+share no seed -- is refused rather than dropped. Whether a member can be estimated depends only
+on the compiled taxonomy and the selected paths, so `generative compile` and
+`generative materialize` refuse it before anything is generated, and `generative analyze`
+refuses a family declared after materialization before it reads the logs. Raise
+`sampling.total_rewrites` when an arm receives no draws. Levels must be arm levels: slices of
+fixed levels are nodes of the tree.
 
 This is experimental. The family covers the primary cohort only; a contrast between cohorts is
-`--compare`. It stays on the judge-reported scale, and with `judge_calibration` declared,
-`JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY` says so. The derivation is in
+`--compare`. It stays on the judge-reported scale: `generative analyze` prints it under a
+heading that says so, and with `judge_calibration` declared,
+`JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY` says so in the report. The derivation is in
 [statistical methods](statistical-methods.md#78-arm-contrasts-on-a-generative-design-experimental).
 
 ## Sensitivity to the declared design
@@ -543,6 +556,8 @@ Three diagnostics read it:
 - a missing attempt ledger, or one that disagrees with the rewrite ledger, when the plan
   records attempts;
 - a log whose samples match no accepted rewrite, or the same sample twice;
+- a slice family member whose value no compiled path carries or no selected path reaches, or
+  whose two values share no seed, before anything is generated;
 - a plan edited between materialization and analysis.
 
 ## Reading the report

@@ -224,6 +224,28 @@ def test_an_incomplete_alternative_mapping_is_invalid_on_its_own(tmp_path: Path)
     assert sensitivity.diagnostic_counts["SCORE_UNMAPPED"] == 4
 
 
+def test_a_receipt_for_another_plan_makes_each_alternative_invalid_too(tmp_path: Path) -> None:
+    from datetime import datetime, timezone
+
+    from inspect_safety_stats.config.registration import write_receipt
+
+    plan, files = _analysis(tmp_path, [{"id": "partial_safe", "mapping": LENIENT}])
+    (sensitivity,) = analyze(plan=plan, source=files).outcome_mapping_sensitivities
+    assert sensitivity.integrity_status == "valid"
+    receipt = tmp_path / "plan.receipt.json"
+    write_receipt(
+        receipt, "0" * 64, package_version="0", now=datetime(2024, 6, 1, tzinfo=timezone.utc)
+    )
+
+    report = analyze(plan=plan, source=files, registration_receipt=receipt)
+
+    # The receipt is for another plan, which voids every analysis of this one.
+    assert report.integrity.status == "invalid"
+    (sensitivity,) = report.outcome_mapping_sensitivities
+    assert sensitivity.integrity_status == "invalid"
+    assert sensitivity.diagnostic_counts["PLAN_RECEIPT_MISMATCH"] == 1
+
+
 def test_the_report_shows_the_mappings_side_by_side(tmp_path: Path) -> None:
     plan, files = _analysis(tmp_path, [{"id": "partial_safe", "mapping": LENIENT}])
     directory = analyze(plan=plan, source=files).write(tmp_path / "report")

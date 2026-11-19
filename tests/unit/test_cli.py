@@ -1,3 +1,4 @@
+import json
 import math
 import shutil
 import subprocess
@@ -324,6 +325,17 @@ def _comparison_manifest(tmp_path: Path, *, counts: bool = True) -> Path:
     return manifest
 
 
+def _resolvable(output: str, direction: str) -> float:
+    """The difference plan comparison prints for the bound ``direction`` the margin.
+
+    ``output`` is ``plain`` text, whose words are separated by single spaces.
+    """
+
+    prefix = f"bound at or {direction} the margin: "
+    assert output.count(prefix) == 1, output
+    return float(output.split(prefix)[1].split(" ")[0])
+
+
 def test_comparison_planning_cli_splits_alpha_and_reports_both_directions(
     tmp_path: Path,
 ) -> None:
@@ -349,13 +361,27 @@ def test_comparison_planning_cli_splits_alpha_and_reports_both_directions(
     assert "Candidate rollouts: 400" in output
     assert "Baseline rollouts: 400" in output
     assert "Independent blocks: 800" in output
+    # The numbers hold for one interval only, and the output names it.
+    assert (
+        "Interval method: weighted_hoeffding in a comparisons entry only; not comparison_sets "
+        "(as init writes) or other methods, where power can fall far below the target"
+    ) in output
     assert f"at or below the margin: {0.05 - gap:.8g}" in output
     assert f"at or above the margin: {0.05 + gap:.8g}" in output
     assert "One-sided alpha per direction: 0.025" in output
 
     per_direction = runner.invoke(app, [*arguments, "--coverage-mode", "per_direction"])
     assert per_direction.exit_code == 0, per_direction.output
-    assert "One-sided alpha per direction: 0.05" in plain(per_direction.output)
+    per_direction_output = plain(per_direction.output)
+    assert "One-sided alpha per direction: 0.05" in per_direction_output
+    # per_direction spends all of 0.05 on each bound, and the differences say so.
+    gap = math.sqrt(0.5 * ranges * math.log(20)) + math.sqrt(0.5 * ranges * math.log(5))
+    assert _resolvable(per_direction_output, "below") == pytest.approx(
+        0.05 - gap, rel=1e-7, abs=0
+    )
+    assert _resolvable(per_direction_output, "above") == pytest.approx(
+        0.05 + gap, rel=1e-7, abs=0
+    )
 
 
 def test_comparison_planning_cli_pairs_and_overrides_counts(tmp_path: Path) -> None:
@@ -386,6 +412,53 @@ def test_comparison_planning_cli_pairs_and_overrides_counts(tmp_path: Path) -> N
     assert "Margin: -0.02" in output
     assert "Local alpha: 0.025" in output
     assert "One-sided alpha per direction: 0.0125" in output
+    # Each prompt, of weight 1/4, has 20 pair blocks whose difference ranges over
+    # 1/4 * (1/30 + 1/20), and 10 candidate-only rollouts ranging over 1/4 / 30. The family
+    # share 0.05 / 2 is split between the bounds, and the default power is 0.9.
+    ranges = 4 * (20 * (0.25 * (1 / 30 + 1 / 20)) ** 2 + 10 * (0.25 / 30) ** 2)
+    gap = math.sqrt(0.5 * ranges * math.log(1 / 0.0125)) + math.sqrt(0.5 * ranges * math.log(10))
+    assert _resolvable(output, "below") == pytest.approx(-0.02 - gap, rel=1e-7, abs=0)
+    assert _resolvable(output, "above") == pytest.approx(-0.02 + gap, rel=1e-7, abs=0)
+
+
+def test_comparison_planning_cli_plans_prompt_clusters_with_the_manifest_weights(
+    tmp_path: Path,
+) -> None:
+    # nested_equal over a task of 10 prompts and one of 30 gives the first task's prompts
+    # weight 1/20 and the second's 1/60, so equal weights would give other numbers.
+    manifest = tmp_path / "design.csv"
+    rows = [
+        f"p{task}-{index},q{task}-{index},t{task},5"
+        for task, size in ((1, 10), (2, 30))
+        for index in range(size)
+    ]
+    manifest.write_text(
+        "prompt_id,question_id,task_id,expected_rollouts\n" + "\n".join(rows) + "\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "comparison",
+            "--manifest",
+            str(manifest),
+            "--margin",
+            "0.05",
+            "--independence-unit",
+            "prompt_cluster",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    output = plain(result.output)
+    assert "Independence unit: prompt_cluster" in output
+    assert "Independent blocks: 40" in output
+    # Each prompt is one block, whose weighted rate difference ranges over twice its weight,
+    # whatever its rollout counts. Alpha 0.05 is split between the bounds; power is 0.9.
+    ranges = 10 * (2 / 20) ** 2 + 30 * (2 / 60) ** 2
+    gap = math.sqrt(0.5 * ranges * math.log(40)) + math.sqrt(0.5 * ranges * math.log(10))
+    assert _resolvable(output, "below") == pytest.approx(0.05 - gap, rel=1e-7, abs=0)
+    assert _resolvable(output, "above") == pytest.approx(0.05 + gap, rel=1e-7, abs=0)
 
 
 def test_comparison_planning_cli_needs_counts_for_both_arms(tmp_path: Path) -> None:
@@ -441,11 +514,11 @@ def test_direct_script_invocation_registers_all_commands() -> None:
         assert command in result.stdout, output
 
 
-def test_every_command_explains_itself_in_help() -> None:
-    """A command without a docstring shows an empty line in --help."""
+def _leaf_commands() -> list[tuple[tuple[str, ...], str]]:
+    """Every command that runs, as its words on the command line and its help text."""
     import typer.main
 
-    def leaves(command: Any, path: tuple[str, ...]) -> list[tuple[str, str]]:
+    def leaves(command: Any, path: tuple[str, ...]) -> list[tuple[tuple[str, ...], str]]:
         # Typer's groups need not subclass the click package's Group, so look for children.
         children = getattr(command, "commands", None)
         if isinstance(children, dict):
@@ -454,12 +527,34 @@ def test_every_command_explains_itself_in_help() -> None:
                 for name, child in sorted(children.items())
                 for leaf in leaves(child, (*path, name))
             ]
-        return [(" ".join(path), (command.help or "").strip())]
+        return [(path, (command.help or "").strip())]
 
     commands = leaves(typer.main.get_command(app), ())
     # Guards the walk itself: one that stopped at the root would pass without looking.
     assert len(commands) > 10
-    assert [name for name, text in commands if not text] == []
+    return commands
+
+
+def test_every_command_explains_itself_in_help() -> None:
+    """A command without a docstring shows an empty line in --help."""
+    assert [" ".join(path) for path, text in _leaf_commands() if not text] == []
+
+
+def test_every_word_of_a_command_docstring_reaches_its_help() -> None:
+    """Rich reads square brackets in help text as markup and drops what they enclose.
+
+    plan comparison's help lost its block_by lists that way. Every word of each docstring
+    must appear in the rendered --help.
+    """
+    lost: dict[str, list[str]] = {}
+    for path, text in _leaf_commands():
+        result = runner.invoke(app, [*path, "--help"])
+        assert result.exit_code == 0, result.output
+        shown = plain(result.output)
+        missing = [word for word in text.split() if word not in shown]
+        if missing:
+            lost[" ".join(path)] = missing
+    assert lost == {}
 
 
 def _pilot_manifest(tmp_path: Path) -> Path:
@@ -576,3 +671,23 @@ def test_pilot_cli_requires_a_seed(tmp_path: Path) -> None:
     )
     assert result.exit_code != 0
     assert "--seed" in plain(result.output)
+
+
+@pytest.mark.parametrize(
+    ("acceptable_upper", "unacceptable_lower", "decision", "expected"),
+    [("0.99", "0.995", "PASS", 0), ("0.01", "0.05", "FAIL", 1)],
+)
+def test_decision_exit_codes_map_pass_to_zero_and_fail_to_one(
+    tmp_path: Path, acceptable_upper: str, unacceptable_lower: str, decision: str, expected: int
+) -> None:
+    plan = _simpleqa_plan(tmp_path)
+    text = plan.read_text(encoding="utf-8")
+    for old, new in (("0.25", acceptable_upper), ("0.60", unacceptable_lower)):
+        assert f"{old}\n" in text
+        text = text.replace(f"{old}\n", f"{new}\n")
+    plan.write_text(text, encoding="utf-8")
+    code, _ = _analyze(plan, tmp_path / "report", "--decision-exit-codes")
+    # Decisions are hidden from the terminal by default, so read the report's.
+    report = json.loads((tmp_path / "report" / "report.json").read_text(encoding="utf-8"))
+    assert report["decision"] == decision
+    assert code == expected

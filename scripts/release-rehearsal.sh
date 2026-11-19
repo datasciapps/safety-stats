@@ -58,7 +58,8 @@ for PY in "${PYTHONS[@]}"; do
   step "6. Python $PY: fresh venv, install wheel, smoke test"
   VENV="$WORK/venv-$PY"; rm -rf "$VENV"
   uv venv --python "$PY" "$VENV" >/dev/null 2>&1 || fail "uv venv $PY"
-  uv pip install --python "$VENV/bin/python" --quiet "$WHEEL" || fail "install on $PY"
+  # The smoke test reads the example's Inspect log, which needs the inspect extra.
+  uv pip install --python "$VENV/bin/python" --quiet "${WHEEL}[inspect]" || fail "install on $PY"
   BIN="$VENV/bin/inspect-safety-stats"
   "$VENV/bin/python" --version | sed 's/^/  /'
   "$BIN" version | sed 's/^/  /'

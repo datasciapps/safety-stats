@@ -19,7 +19,7 @@ warning's code means.
 from __future__ import annotations
 
 import math
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from statistics import median
 
 from inspect_safety_stats.config.models import DEFAULT_PRECISION_TARGET
@@ -240,12 +240,22 @@ def _root_section(
     coverage = next(
         (risk.simultaneous_coverage for risk in risks if risk.simultaneous_coverage), None
     )
-    note = (
-        "Intervals bound the rollout uncertainty on these fixed prompts"
-        + (f" with {_rate(coverage)} simultaneous coverage" if coverage else "")
-        + ". The prompt-level sensitivity allows arbitrary dependence among the rollouts of "
-        "one prompt."
-    )
+    coverage_text = f" with {_rate(coverage)} simultaneous coverage" if coverage else ""
+    if report.scope.get("design") == "sampled":
+        # A sampled design's intervals are about the frame its items were drawn from, and it
+        # has no sensitivity profiles: each drawn item is one observation, its failure rate.
+        note = (
+            f"Intervals bound the risk over the declared item frame{coverage_text}, allowing "
+            "for both the draw of items from the frame and the rollouts of the drawn items. "
+            "Each drawn item enters as one observation, so the rollouts of one item may "
+            "depend on each other arbitrarily."
+        )
+    else:
+        note = (
+            f"Intervals bound the rollout uncertainty on these fixed prompts{coverage_text}. "
+            "The prompt-level sensitivity allows arbitrary dependence among the rollouts of "
+            "one prompt."
+        )
     if with_judge:
         note += (
             " The judge-corrected column bounds the true failure risk; it is marked "
@@ -515,7 +525,53 @@ def _claims_section(report: SafetyReport) -> list[str]:
         lines.append("| " + " | ".join(cells) + " |")
     if not report.claims:
         lines.append("| _No claims declared_ | — | — | — | — | — |")
+    policy = decision_policy_note(report)
+    if policy:
+        lines.extend(["", policy])
     return lines
+
+
+def decision_policy_note(
+    report: SafetyReport,
+    code: Callable[[str], str] = lambda text: f"`{_escape(text)}`",
+    *,
+    pointer: bool = True,
+) -> str:
+    """One paragraph on the decision policy the thresholds come from, or "" without one.
+
+    It says which thresholds the policy set, and which versions state a time after the first
+    evaluation started. The summary lists errors and warnings only, so without it the latter
+    would be left to an ``INFO`` diagnostic in ``report-full.md``. ``code`` formats an
+    identifier or a file name; ``pointer`` adds where the versions are listed.
+    """
+
+    record = report.decision_policy
+    if record is None:
+        return ""
+    if not record.applied:
+        return (
+            "A decision policy (experimental) was given but not applied, because it failed a "
+            "check; the claims keep the plan's thresholds."
+        )
+    claims = [item.claim_id for item in record.claims if item.set_by != "plan"]
+    later = [item.id for item in record.versions if item.set_after_first_evaluation]
+    text = (
+        "Thresholds of "
+        + (", ".join(code(item) for item in claims) or "no claim")
+        + " come from a decision policy (experimental), not the plan; the others are the "
+        "plan's."
+    )
+    if later:
+        text += (
+            " Version(s) "
+            + ", ".join(code(item) for item in later)
+            + " state a time after the first evaluation started, so those thresholds may "
+            "describe the bounds rather than a requirement fixed in advance."
+        )
+    if pointer:
+        text += " The versions and their times are under Decision policy in "
+        text += code("report-full.md") + "."
+    return text
 
 
 def _warnings_section(diagnostics: list[Diagnostic]) -> list[str]:
@@ -599,6 +655,8 @@ def summary_markdown(report: SafetyReport) -> str:
     primary_scenario = calibration.primary if calibration is not None else None
     budget = _Budget(report)
     prompts = len({item.prompt_id for item in report.prompt_estimates})
+    # A sampled design's manifest is its frame: most of its items were never drawn.
+    sampled = report.scope.get("design") == "sampled"
     cohorts = sorted({item.cohort_id for item in report.prompt_estimates})
     diagnostics = report.integrity.diagnostics
     errors = sum(item.severity == "ERROR" for item in diagnostics)
@@ -610,7 +668,7 @@ def summary_markdown(report: SafetyReport) -> str:
     lines = [
         f"# {_escape(report.analysis.get('title') or report.analysis.get('id'))}",
         "",
-        f"{_count(prompts, 'fixed prompt')} · "
+        f"{_count(prompts, 'frame item' if sampled else 'fixed prompt')} · "
         f"{_count(budget.per_prompt, 'rollout')} per prompt (median) · "
         f"{_count(len(cohorts), 'model')} · data integrity "
         f"**{report.integrity.status}**" + (f" ({', '.join(counts)})" if counts else ""),

@@ -4,12 +4,16 @@ import math
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Final, Literal
+from typing import Final, Literal, Protocol
 
 import numpy as np
 from numpy.typing import ArrayLike
 
-from inspect_safety_stats.config.methods import DirectMeanMethod
+from inspect_safety_stats.config.methods import (
+    COMPARISON_METHODS,
+    ComparisonMethod,
+    DirectMeanMethod,
+)
 
 from .risk import worst_of_k_shares
 
@@ -737,6 +741,10 @@ def worst_of_k_kl_chernoff_bounds(
     ``floor(n_i / k)`` blocks at its share, each of weight ``w_i / floor(n_i / k)``. At
     ``k = 1`` this is the rollout-level :func:`weighted_kl_chernoff_mean_bounds`.
 
+    The rollouts of prompt ``i`` must be independent and identically distributed, each failing
+    with probability ``p_i``, and the prompts independent of one another; prompts may differ in
+    ``p_i``.
+
     Unclassified rollouts count as safe for the lower endpoint and as failures for the upper
     one; the share only grows with failures, so the completion is conservative. ``trials`` are
     the attempted rollouts, and every prompt needs at least ``k`` of them: for ``k > n`` no
@@ -987,6 +995,37 @@ def weighted_betting_mean_bounds(
     )
 
 
+class BoundedFunction(Protocol):
+    """The signature of a method's function on per-block completion bounds."""
+
+    def __call__(
+        self,
+        completion_lower: ArrayLike,
+        completion_upper: ArrayLike,
+        weights: ArrayLike,
+        *,
+        alpha_lower: float,
+        alpha_upper: float,
+        independence_profile: str,
+    ) -> DirectMeanBounds: ...
+
+
+class CountsFunction(Protocol):
+    """The signature of a method's function on failure, unclassified and trial counts."""
+
+    def __call__(
+        self,
+        failures: ArrayLike,
+        unclassified: ArrayLike,
+        trials: ArrayLike,
+        weights: ArrayLike,
+        *,
+        alpha_lower: float,
+        alpha_upper: float,
+        independence_unit: IndependenceUnit = "rollout",
+    ) -> DirectMeanBounds: ...
+
+
 @dataclass(frozen=True)
 class DirectMeanEngine:
     """The two forms of one direct-mean method.
@@ -995,8 +1034,8 @@ class DirectMeanEngine:
     ``counts`` takes failure, unclassified and trial counts and an independence unit.
     """
 
-    bounded: Callable[..., DirectMeanBounds]
-    counts: Callable[..., DirectMeanBounds]
+    bounded: BoundedFunction
+    counts: CountsFunction
 
 
 DIRECT_MEAN_ENGINES: Final[Mapping[DirectMeanMethod, DirectMeanEngine]] = MappingProxyType(
@@ -1020,3 +1059,8 @@ DIRECT_MEAN_ENGINES: Final[Mapping[DirectMeanMethod, DirectMeanEngine]] = Mappin
     }
 )
 """The one dispatch table: the functions of each method in ``config.methods``."""
+
+COMPARISON_ENGINES: Final[Mapping[ComparisonMethod, DirectMeanEngine]] = MappingProxyType(
+    {method: DIRECT_MEAN_ENGINES[method] for method in COMPARISON_METHODS}
+)
+"""The engines of the comparison methods only: comparisons refuse ``weighted_betting``."""

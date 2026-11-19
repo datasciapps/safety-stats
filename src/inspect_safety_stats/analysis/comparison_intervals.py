@@ -22,9 +22,10 @@ from inspect_safety_stats.schema.reports import Diagnostic, Eligibility, RiskInt
 from inspect_safety_stats.schema.scopes import scope_path
 from inspect_safety_stats.stats.clusters import paired_cluster_bootstrap
 from inspect_safety_stats.stats.comparisons import DirectComparisonBounds, RatioComparisonBounds
-from inspect_safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES, DirectMeanBounds
+from inspect_safety_stats.stats.direct_mean import COMPARISON_ENGINES, DirectMeanBounds
 from inspect_safety_stats.stats.independence import BoundedBlocks, comparison_contrast_blocks
 from inspect_safety_stats.stats.paired import (
+    CompletionLimitError,
     PartialPairing,
     exact_mcnemar,
     exact_mcnemar_partial,
@@ -393,7 +394,7 @@ def _bounded_comparison_mean(
     alpha_upper: float,
     profile_id: str,
 ) -> DirectMeanBounds:
-    function = DIRECT_MEAN_ENGINES[method].bounded
+    function = COMPARISON_ENGINES[method].bounded
     return function(
         blocks.lower,
         blocks.upper,
@@ -708,9 +709,16 @@ def _paired_comparison_diagnostics(
     spec: ComparisonSpec,
     data: NormalizedData,
     prompt_ids: set[str],
-) -> tuple[int | None, dict[str, int], float | None, int | None, dict[str, Any]]:
+) -> tuple[int | None, dict[str, int], float | None, int | None, dict[str, Any], str | None]:
+    """The paired diagnostics of a comparison over ``prompt_ids``.
+
+    Returns the pair count, the discordant counts, the exact McNemar p-value, the cluster
+    count, the outputs of each diagnostic method, and the reason newcombe_paired is not
+    reported when it was asked for and cannot be computed, or None. Raises ValueError when
+    the pairing or the plan's paired fields are broken.
+    """
     if not spec.pair_key or not spec.diagnostic_methods:
-        return None, {}, None, None, {}
+        return None, {}, None, None, {}, None
     # Unscored rows stay in: a pair with an unscored arm is bounded by the completions of its
     # unknown outcome instead of breaking the pairing (L1). A key absent from one arm still does.
     arm_rows = {
@@ -754,7 +762,7 @@ def _complete_paired_diagnostics(
     keys: list[tuple[Any, ...]],
     cand: list[bool],
     base: list[bool],
-) -> tuple[int | None, dict[str, int], float | None, int | None, dict[str, Any]]:
+) -> tuple[int | None, dict[str, int], float | None, int | None, dict[str, Any], str | None]:
     mcnemar = exact_mcnemar(cand, base)
     discordant = {
         "candidate_safe_baseline_failure": mcnemar.candidate_safe_baseline_failure,
@@ -806,7 +814,7 @@ def _complete_paired_diagnostics(
             "seed": boot.seed,
             "label": "diagnostic_fixed_design_resampling",
         }
-    return len(keys), discordant, p_value, cluster_count, outputs
+    return len(keys), discordant, p_value, cluster_count, outputs, None
 
 
 def _partial_paired_diagnostics(
@@ -816,12 +824,14 @@ def _partial_paired_diagnostics(
     cand: list[bool | None],
     base: list[bool | None],
     pairing: PartialPairing,
-) -> tuple[int | None, dict[str, int], float | None, int | None, dict[str, Any]]:
+) -> tuple[int | None, dict[str, int], float | None, int | None, dict[str, Any], str | None]:
     """Paired diagnostics when some pairs have an unscored arm.
 
     Every bound and p-value holds for each completion of the unscored outcomes. The point
     estimate is not identified, so each method reports estimate_lower and estimate_upper in its
-    place. The discordant counts are those of the scored pairs.
+    place. The discordant counts are those of the scored pairs. When the completions are too
+    many for newcombe_paired to evaluate, it alone is left out, and the last value returned
+    says why.
     """
 
     mcnemar = exact_mcnemar_partial(cand, base)
@@ -854,19 +864,26 @@ def _partial_paired_diagnostics(
             "p_value_candidate_worse": mcnemar.p_value_candidate_worse,
             "p_value_candidate_better": mcnemar.p_value_candidate_better,
         }
+    newcombe_withheld = None
     if "newcombe_paired" in spec.diagnostic_methods:
-        paired_interval = newcombe_paired_interval_partial(cand, base)
-        outputs["newcombe_paired"] = {
-            "estimate_lower": paired_interval.estimate_lower,
-            "estimate_upper": paired_interval.estimate_upper,
-            "lower": paired_interval.lower,
-            "upper": paired_interval.upper,
-            "alpha_lower": paired_interval.alpha_lower,
-            "alpha_upper": paired_interval.alpha_upper,
-            "method": paired_interval.method,
-            "completion_count": paired_interval.completion_count,
-            "label": "diagnostic_requires_independent_pairs",
-        }
+        try:
+            paired_interval = newcombe_paired_interval_partial(cand, base)
+        except CompletionLimitError as exc:
+            newcombe_withheld = (
+                f"{exc}, so newcombe_paired is not reported; the other paired diagnostics are"
+            )
+        else:
+            outputs["newcombe_paired"] = {
+                "estimate_lower": paired_interval.estimate_lower,
+                "estimate_upper": paired_interval.estimate_upper,
+                "lower": paired_interval.lower,
+                "upper": paired_interval.upper,
+                "alpha_lower": paired_interval.alpha_lower,
+                "alpha_upper": paired_interval.alpha_upper,
+                "method": paired_interval.method,
+                "completion_count": paired_interval.completion_count,
+                "label": "diagnostic_requires_independent_pairs",
+            }
     cluster_count = None
     if "fixed_cluster_bootstrap" in spec.diagnostic_methods:
         if not spec.cluster_key:
@@ -907,5 +924,5 @@ def _partial_paired_diagnostics(
             "seed": favourable.seed,
             "label": "diagnostic_fixed_design_resampling",
         }
-    return len(keys), discordant, p_value, cluster_count, outputs
+    return len(keys), discordant, p_value, cluster_count, outputs, newcombe_withheld
 

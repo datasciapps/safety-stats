@@ -1,11 +1,15 @@
 """Decision policies: claim thresholds kept apart from the analysis plan (experimental).
 
 A claim's thresholds never enter its bounds. The decision rule only compares a finished bound
-with them, so the confidence statement behind a verdict holds at any thresholds. The analysis
-plan freezes what shapes the bounds and the family of claims; a decision policy sets or revises
-the thresholds of ``corrected_interval`` claims, possibly after the run, without changing the
-plan or its hash. A policy names the plan it applies to by the plan's inference hash, the
-plan's canonical hash with those thresholds left out (``inference_plan_hash``).
+with them, so the confidence statement behind one claim's verdict holds at any thresholds. The
+analysis plan freezes what shapes the bounds and the family of claims; a decision policy sets or
+revises the thresholds of ``corrected_interval`` claims, possibly after the run, without
+changing the plan or its hash. A policy names the plan it applies to by the plan's inference
+hash, the plan's canonical hash with those thresholds left out (``inference_plan_hash``).
+
+The overall decision's error bound needs more: once a policy moves a threshold, a wrong overall
+PASS stays as rare as one wrong claim only when one coverage event covers every mandatory claim.
+``analysis.policy._policy_roll_up`` holds back an overall PASS otherwise.
 
 ``noisy_valid_test`` claims use their thresholds inside the test, so their thresholds stay in
 the inference hash and a policy cannot revise them.
@@ -21,14 +25,14 @@ import yaml
 from pydantic import AwareDatetime, Field, model_validator
 
 from .canonicalize import sha256_value
-from .models import AnalysisPlan, PlanFloat, StrictModel
+from .models import THRESHOLD_MAX, THRESHOLD_MIN, AnalysisPlan, PlanFloat, StrictModel
 
 DECISION_POLICY_SCHEMA_VERSIONS = ("1.0",)
 
 
 class PolicyThresholds(StrictModel):
-    acceptable_upper: PlanFloat = Field(ge=-1, le=1)
-    unacceptable_lower: PlanFloat = Field(ge=-1, le=1)
+    acceptable_upper: PlanFloat = Field(ge=THRESHOLD_MIN, le=THRESHOLD_MAX)
+    unacceptable_lower: PlanFloat = Field(ge=THRESHOLD_MIN, le=THRESHOLD_MAX)
 
     @model_validator(mode="after")
     def ordered(self) -> PolicyThresholds:

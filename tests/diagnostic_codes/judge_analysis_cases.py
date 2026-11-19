@@ -15,6 +15,7 @@ from tests.diagnostic_codes.harness import (
     Inputs,
     Outcome,
     Run,
+    analysis,
     base_inputs,
     claim,
     rollout,
@@ -254,20 +255,38 @@ def _transported(inputs: Inputs, _: list[Any]) -> None:
 
 def _transported_effect(triggered: Outcome, control: Outcome) -> None:
     # Adjusted: the row gains a transported sensitivity interval with a lower end of zero,
-    # which decides no claim.
+    # which decides no claim. The lower end is zero although the judge-system lower bound is
+    # not: with no specificity declared, every judged failure may be a false positive.
     interval = _interval(triggered, "judge_corrected_transported")
-    assert interval.lower == 0.0
+    assert interval.lower == 0.0 < _row(triggered).lower
     assert (interval.role, interval.eligibility) == ("sensitivity", "diagnostic")
     assert interval.upper > _row(triggered).upper
     assert _interval(control, "judge_corrected_transported") is None
     assert claim(triggered) == claim(control)
 
 
-def _strata(observations: list[Any], drop: int = 0, extra: bool = False) -> str:
-    """Every classified rollout's declared stratum, its prompt."""
+FEW = 2
+"""The first few rollouts of p1, a fine stratum of their own in some cases."""
 
+
+def _first_of_p1(observations: list[Any]) -> set[str]:
+    """The identifiers of p1's first few classified rollouts."""
+
+    p1 = [item for item in observations if item.prompt_id == "p1" and item.failure is not None]
+    return {item.observation_id for item in p1[:FEW]}
+
+
+def _strata(
+    observations: list[Any], drop: int = 0, extra: bool = False, few: bool = False
+) -> str:
+    """Every classified rollout's declared stratum, its prompt, or with ``few`` the first
+    few rollouts of p1 a stratum of their own."""
+
+    first = _first_of_p1(observations) if few else set()
     rows = [
-        (item.observation_id, item.prompt_id) for item in observations if item.failure is not None
+        (item.observation_id, "p1-first" if item.observation_id in first else item.prompt_id)
+        for item in observations
+        if item.failure is not None
     ][drop:]
     if extra:
         rows.append(("not-a-rollout", "p1"))
@@ -275,16 +294,19 @@ def _strata(observations: list[Any], drop: int = 0, extra: bool = False) -> str:
 
 
 def stratified(
-    labels: Callable[[list[Any]], Labels] = census, drop: int = 0, extra: bool = False
+    labels: Callable[[list[Any]], Labels] = census,
+    drop: int = 0,
+    extra: bool = False,
+    few: bool = False,
 ) -> Callable[..., None]:
     def change(inputs: Inputs, observations: list[Any]) -> None:
         validated(
             inputs,
             labels(observations),
-            sampling="stratified_without_replacement",
+            sampling="stratified_within_judge_stratum",
             validation_strata="strata.csv",
         )
-        inputs.files["strata.csv"] = _strata(observations, drop, extra)
+        inputs.files["strata.csv"] = _strata(observations, drop, extra, few)
 
     return change
 
@@ -297,24 +319,21 @@ def _stratified_effect(triggered: Outcome, control: Outcome) -> None:
     assert _interval(control, CORRECTED + "_delta") is not None
 
 
-def _unlabelled_p1(observations: list[Any]) -> Labels:
-    """Every label but those of p1, whose rollouts are all judge-safe."""
+def _unlabelled_few(observations: list[Any]) -> Labels:
+    """Every label but those of p1's first few rollouts, which are all judge-safe."""
 
-    return [
-        label
-        for item, label in zip(observations, _all(observations), strict=True)
-        if item.prompt_id != "p1"
-    ]
+    first = _first_of_p1(observations)
+    return [label for label in _all(observations) if label[0] not in first]
 
 
 def _fine_completed(triggered: Outcome, control: Outcome) -> None:
-    # Adjusted: p1's unlabelled fine stratum is completed from none to all of its rollouts,
-    # which widens the correction.
+    # Adjusted: the unlabelled fine stratum is completed from none to all of its rollouts,
+    # which widens the correction. The stratum is small, so the box stays informative.
     wide, narrow = _interval(triggered, CORRECTED), _interval(control, CORRECTED)
     assert wide.upper > narrow.upper
     (found,) = triggered.with_code("JUDGE_FINE_STRATUM_UNLABELLED_COMPLETED")
     assert found.details["fine_strata"] == [
-        {"judge_stratum": "judge_safe", "stratum": "p1", "stratum_size": ROLLOUTS}
+        {"judge_stratum": "judge_safe", "stratum": "p1-first", "stratum_size": FEW}
     ]
 
 
@@ -462,7 +481,9 @@ def _tail_recorded(triggered: Outcome, control: Outcome) -> None:
     assert triggered.report.claims == control.report.claims
 
 
-def panel(rule: str, groups_a: list[str] | None, groups_b: list[str] | None) -> Run:
+def composite_primary(
+    rule: str, groups_a: list[str] | None, groups_b: list[str] | None
+) -> Callable[[Inputs], None]:
     """A composite primary of judges a and b, each with declared, optionally scoped, accuracy."""
 
     def change(inputs: Inputs) -> None:
@@ -494,12 +515,52 @@ def panel(rule: str, groups_a: list[str] | None, groups_b: list[str] | None) -> 
         for item in inputs.rollouts:
             item["score_harmful_a"] = item["score_harmful_b"] = item.pop("score_harmful")
 
+    return change
+
+
+def panel(rule: str, groups_a: list[str] | None, groups_b: list[str] | None) -> Run:
+    """The main analysis with the composite of ``composite_primary`` as its primary outcome."""
+
+    change = composite_primary(rule, groups_a, groups_b)
+
     def run(directory: Path) -> Outcome:
         inputs = base_inputs()
         change(inputs)
         return run_analysis(inputs, directory)
 
     return run
+
+
+def stressed_judge(*mappings: dict[str, Any]) -> Run:
+    """The judge-error stress, with one judge per mapping reading the primary score.
+
+    Every judge declares the same accuracy box.
+    """
+
+    def change(inputs: Inputs) -> None:
+        inputs.plan.setdefault("report", {})["judge_error_stress"] = True
+        inputs.plan["inputs"]["judges"] = [
+            {
+                "id": f"judge_{index}",
+                "score": {"name": "harmful", "mapping": mapping},
+                "accuracy": {
+                    "sensitivity": {"lower": 0.8, "upper": 0.95},
+                    "specificity": {"lower": 0.9, "upper": 0.99},
+                },
+            }
+            for index, mapping in enumerate(mappings, start=1)
+        ]
+
+    return analysis(change)
+
+
+def _stress_box_withheld(triggered: Outcome, control: Outcome) -> None:
+    # Withheld: the claim keeps its tipping lines but gets no verdict over the box.
+    stressed, plain = claim(triggered).judge_error_stress, claim(control).judge_error_stress
+    assert stressed.applicable and stressed.pass_sensitivity_at_perfect_specificity is not None
+    assert (stressed.accuracy_source, stressed.stressed_status) == (None, None)
+    assert plain.accuracy_source == "judge:judge_1" and plain.stressed_status is not None
+    assert claim(triggered).status == claim(control).status
 
 
 PANEL = "judge_corrected_panel_derived"
@@ -591,10 +652,10 @@ CASES = [
         effect=_stratified_effect,
     ),
     Case(
-        # p1's fine stratum of the judge-safe stratum has no label.
+        # The fine stratum of p1's first rollouts, all judge-safe, has no label.
         code="JUDGE_FINE_STRATUM_UNLABELLED_COMPLETED",
-        trigger=judged(stratified(_unlabelled_p1)),
-        control=judged(stratified()),
+        trigger=judged(stratified(_unlabelled_few, few=True)),
+        control=judged(stratified(few=True)),
         effect=_fine_completed,
     ),
     Case(
@@ -669,6 +730,14 @@ CASES += [
         trigger=panel("any", ["all"], ["b"]),
         control=panel("any", ["all", "b"], ["b"]),
         effect=_panel_withheld,
+    ),
+    Case(
+        # The judge with declared accuracy reads the primary score, but counts a third value
+        # as safe that the primary mapping does not know.
+        code="JUDGE_STRESS_BOX_UNMATCHED",
+        trigger=stressed_judge({"failure_values": ["FAIL"], "safe_values": ["PASS", "MAYBE"]}),
+        control=stressed_judge({"failure_values": ["FAIL"], "safe_values": ["PASS"]}),
+        effect=_stress_box_withheld,
     ),
 ]
 
