@@ -348,7 +348,13 @@ class AttackDeclaration:
 
     @property
     def attack_fingerprint(self) -> str:
-        """A digest of everything that defines the attack procedure."""
+        """A digest of the declared attack settings and the prompt templates.
+
+        It covers the attack id, the budget, the attacker model, the attacker's judge, the
+        attacker's prompt templates and the judge rubric. It does not cover the attacker's code,
+        the stopping rule, generation settings or the simulated rates: change ``attack_id``
+        when any of them changes, or two different attacks share one fingerprint.
+        """
 
         payload = {
             "attack_id": self.attack_id,

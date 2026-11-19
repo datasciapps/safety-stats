@@ -127,7 +127,9 @@ what else the confirmation needs of the judges, and of the target's temperature,
 The design manifest declares the attack in every row: `attack_id`, `attack_fingerprint`,
 `budget_k`, `attacker_model`, `attacker_judge` and `confirmation_judge`. The fingerprint is a
 digest of the attack id, the budget, the attacker model, the attacker's judge and the prompt
-templates. The task refuses to run against a design that declares a different attack, so
+templates. It does not cover the attacker's code, the stopping rule, generation settings or,
+offline, the simulated rates, so give the attack a new `attack_id` whenever one of those
+changes. The task refuses to run against a design that declares a different attack, so
 write a design for the attack you are about to run. The task checks the design once, when it
 starts. `analyze` never compares the logs with the design's declaration; the plan's cohorts,
 below, keep runs of another attack out of the analysis.
@@ -191,7 +193,8 @@ included, so runs of two attacks within one cohort are reported as `CONFIG_DRIFT
 
 The attacker in live mode is a minimal PAIR-style loop: each attacker call sees the goal, its
 previous prompt, the target's answer and the judge's verdict. Replace `ModelAttacker` with the
-attack you want to evaluate; the declaration and the confirmation step stay as they are.
+attack you want to evaluate, and give it its own `attack_id`: the fingerprint cannot tell two
+attackers' code apart. The declaration and the confirmation step stay as they are.
 
 ## What a result means
 
