@@ -52,6 +52,9 @@ class Variant:
             "sensitivities": ["by_category", "by_prompt"],
         }
     )
+    # Comparisons declared after the risk difference and ratio of candidate and baseline. A
+    # family one names that the plan does not declare is added, with Bonferroni at 0.05.
+    comparisons: tuple[dict[str, Any], ...] = ()
     # Extra manifest columns, by name, as a function of the prompt index.
     columns: dict[str, list[Any]] = field(default_factory=dict)
     # Rollouts left out of the files, as (cohort, prompt index, repeat).
@@ -84,6 +87,13 @@ def _nodes(variant: Variant) -> dict[str, Any]:
     if not variant.hierarchy_nodes:
         return {}
     return {"hierarchy_nodes": True, "hierarchy_calibration": "frontier_sidak"}
+
+
+def _families(variant: Variant) -> list[str]:
+    """The multiplicity families the variant's own comparisons name, beyond the plan's."""
+
+    named = {comparison["family"] for comparison in variant.comparisons}
+    return sorted(named - {"displayed", "direct_means", "comparisons", "gate"})
 
 
 def _plan(variant: Variant) -> dict[str, Any]:
@@ -158,7 +168,8 @@ def _plan(variant: Variant) -> dict[str, Any]:
                 **(_nodes(variant) if estimand == "risk_difference" else {}),
             }
             for estimand in ("risk_difference", "risk_ratio")
-        ],
+        ]
+        + list(variant.comparisons),
         "multiplicity": {
             "families": [
                 {
@@ -167,7 +178,7 @@ def _plan(variant: Variant) -> dict[str, Any]:
                     "method": "bonferroni",
                     "alpha": 0.05,
                 }
-                for family in ("displayed", "direct_means", "comparisons")
+                for family in ("displayed", "direct_means", "comparisons", *_families(variant))
             ]
             + [
                 {

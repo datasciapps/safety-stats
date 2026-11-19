@@ -12,10 +12,12 @@ read each way.
 from __future__ import annotations
 
 from decimal import Decimal
+from itertools import zip_longest
 
 import pytest
 
 from inspect_safety_stats.schema.reports import (
+    ComparisonResult,
     Diagnostic,
     HierarchyRiskResult,
     RiskIntervalResult,
@@ -104,6 +106,24 @@ VARIANTS = [
         "prompt_primary", independence={"primary": "by_prompt", "sensitivities": ["by_category"]}
     ),
     Variant("no_sensitivity", independence={"primary": "rollout"}),
+    # The same difference again, under the prompt profile: a row of its own.
+    Variant(
+        "two_differences",
+        comparisons=(
+            {
+                "id": "candidate_vs_baseline_by_prompt",
+                "group": "all",
+                "measure": "mean",
+                "baseline": "baseline",
+                "candidate": "candidate",
+                "estimand": "risk_difference",
+                "method": "weighted_kl_chernoff",
+                # Comparisons sharing a family must share their independence profiles.
+                "family": "comparisons_by_prompt",
+                "independence": {"primary": "by_prompt"},
+            },
+        ),
+    ),
 ]
 
 
@@ -208,6 +228,7 @@ REASONS = {
     "no_difference": "mandatory claim *Candidate risk is acceptable* is inconclusive",
     "prompt_primary": "mandatory claim *Candidate risk is acceptable* is inconclusive",
     "no_sensitivity": "every mandatory claim passed",
+    "two_differences": "every mandatory claim passed",
 }
 
 
@@ -418,25 +439,56 @@ def test_an_assumed_judge_correction_is_marked_assumed(
 def test_each_comparison_has_its_bounds_and_reading(
     rendered: dict[str, tuple[SafetyReport, str]], name: str
 ) -> None:
+    """Each root comparison is on a row; a second one of an estimand is on a row of its own.
+
+    The cases compare one pair of cohorts in one group, so the n-th difference and the n-th
+    ratio share the n-th row.
+    """
+
     report, page = _case(rendered, name)
-    (row,) = table(section(page, "Comparisons"))
-    by_estimand = {item.estimand: item for item in report.comparisons if item.level is None}
-    difference = by_estimand["risk_difference"]
-    ratio = by_estimand["risk_ratio"]
-    _assert_outward(
-        _shown_interval(row["Interval"]), difference.lower, difference.upper, "0.1", scale=2
-    )
-    # A ratio without an upper bound has no finite one, which reads ∞; one without a lower
-    # bound reads —.
-    left, right = row["Interval 2"].strip("[]").split(", ")
-    if ratio.lower is None:
-        assert left == "—"
+    rows = table(section(page, "Comparisons"))
+    root = [item for item in report.comparisons if item.level is None]
+    differences = [item for item in root if item.estimand == "risk_difference"]
+    ratios = [item for item in root if item.estimand == "risk_ratio"]
+    assert len(rows) == max(len(differences), len(ratios))
+    for row, difference, ratio in zip_longest(rows, differences, ratios):
+        _check_comparison_row(row, difference, ratio, named=len(rows) > 1)
+
+
+def _check_comparison_row(
+    row: dict[str, str],
+    difference: ComparisonResult | None,
+    ratio: ComparisonResult | None,
+    *,
+    named: bool,
+) -> None:
+    ids = [item.comparison_id for item in (difference, ratio) if item is not None]
+    label = "candidate vs baseline"
+    if named:
+        label += " (" + ", ".join(f"`{item}`" for item in ids) + ")"
+    assert row["Candidate vs baseline"] == label
+    if difference is None:
+        assert row["Interval"] == row["Reading"] == "—"
     else:
-        assert Decimal(left) <= Decimal(repr(ratio.lower)) < Decimal(left) + Decimal("0.01")
-    if ratio.upper is None:
-        assert right == "∞"
+        _assert_outward(
+            _shown_interval(row["Interval"]), difference.lower, difference.upper, "0.1", scale=2
+        )
+    if ratio is None:
+        assert row["Interval 2"] == "—"
     else:
-        assert Decimal(right) - Decimal("0.01") < Decimal(repr(ratio.upper)) <= Decimal(right)
+        # A ratio without an upper bound has no finite one, which reads ∞; one without a
+        # lower bound reads —.
+        left, right = row["Interval 2"].strip("[]").split(", ")
+        if ratio.lower is None:
+            assert left == "—"
+        else:
+            assert Decimal(left) <= Decimal(repr(ratio.lower)) < Decimal(left) + Decimal("0.01")
+        if ratio.upper is None:
+            assert right == "∞"
+        else:
+            assert Decimal(right) - Decimal("0.01") < Decimal(repr(ratio.upper)) <= Decimal(right)
+    if difference is None:
+        return
     reading = row["Reading"].removesuffix(" †")
     if difference.lower is None or difference.upper is None:
         assert reading == "—"
@@ -446,6 +498,21 @@ def test_each_comparison_has_its_bounds_and_reading(
         assert reading == "candidate fails more"
     else:
         assert reading == "no difference resolved"
+
+
+def test_a_repeated_comparison_keeps_its_own_row(
+    rendered: dict[str, tuple[SafetyReport, str]],
+) -> None:
+    report, page = _case(rendered, "two_differences")
+    rows = table(section(page, "Comparisons"))
+    # The rows follow the report's order of comparisons, which puts this one first.
+    assert [row["Candidate vs baseline"] for row in rows] == [
+        "candidate vs baseline (`candidate_vs_baseline_by_prompt`, "
+        "`candidate_vs_baseline_risk_ratio`)",
+        "candidate vs baseline (`candidate_vs_baseline_risk_difference`)",
+    ]
+    # The prompt profile's difference is the wider one, so the rows differ.
+    assert rows[0]["Interval"] != rows[1]["Interval"]
 
 
 def test_the_comparisons_read_each_way(rendered: dict[str, tuple[SafetyReport, str]]) -> None:

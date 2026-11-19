@@ -363,13 +363,31 @@ def _prompt_level_note(
 
 def _comparison_rows(
     report: SafetyReport,
-) -> dict[tuple[str, str, str, str], dict[str, ComparisonResult]]:
-    rows: dict[tuple[str, str, str, str], dict[str, ComparisonResult]] = {}
+) -> list[tuple[tuple[str, str, str, str], dict[str, ComparisonResult]]]:
+    """The root comparisons, a row per cohorts, group and measure, with its estimands.
+
+    A difference and a ratio of the same cohorts, group and measure share a row. A second
+    comparison of an estimand already in the row, such as the same difference under another
+    independence profile, starts a row of its own rather than replace the first.
+    """
+
+    rows: list[tuple[tuple[str, str, str, str], dict[str, ComparisonResult]]] = []
     for item in report.comparisons:
         if item.level is not None:
             continue
         key = (item.candidate_cohort, item.baseline_cohort, item.group_id, item.measure_id)
-        rows.setdefault(key, {})[item.estimand] = item
+        row = next(
+            (
+                estimands
+                for row_key, estimands in rows
+                if row_key == key and item.estimand not in estimands
+            ),
+            None,
+        )
+        if row is None:
+            row = {}
+            rows.append((key, row))
+        row[item.estimand] = item
     return rows
 
 
@@ -385,7 +403,8 @@ def _comparison_section(
         "| Candidate vs baseline | Group | Difference | Interval | Ratio | Interval | Reading |",
         "|---|---|---:|---|---:|---|---|",
     ]
-    for (candidate, baseline, group, _measure), estimands in rows.items():
+    labels = [(candidate, baseline, group) for (candidate, baseline, group, _), _ in rows]
+    for (candidate, baseline, group, _measure), estimands in rows:
         difference = estimands.get("risk_difference")
         ratio = estimands.get("risk_ratio")
         reading = "—"
@@ -403,8 +422,13 @@ def _comparison_section(
                     for value in (difference.candidate_estimate, difference.baseline_estimate, 0.0)
                     if value is not None
                 )
+                named = (
+                    f" (`{_escape(difference.comparison_id)}`)"
+                    if labels.count((candidate, baseline, group)) > 1
+                    else ""
+                )
                 flags.append(
-                    f"{_escape(candidate)} − {_escape(baseline)} · {_escape(group)}: "
+                    f"{_escape(candidate)} − {_escape(baseline)} · {_escape(group)}{named}: "
                     f"{_signed_points(difference.estimate)} "
                     f"{_signed_interval(difference.lower, difference.upper)}: "
                     + budget.advice(
@@ -414,8 +438,14 @@ def _comparison_section(
                         target,
                     )
                 )
+        label = f"{_escape(candidate)} vs {_escape(baseline)}"
+        if labels.count((candidate, baseline, group)) > 1:
+            # Rows that would read alike name their comparisons.
+            label += " (" + ", ".join(
+                f"`{_escape(item.comparison_id)}`" for item in estimands.values()
+            ) + ")"
         cells = [
-            f"{_escape(candidate)} vs {_escape(baseline)}",
+            label,
             _escape(group),
             _signed_points(difference.estimate) if difference is not None else "—",
             (

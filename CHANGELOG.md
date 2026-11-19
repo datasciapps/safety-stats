@@ -56,6 +56,11 @@ described in their pull requests.
   one of zero width, as the widest, which it then showed as "unavailable". It now counts every
   node, says how many have no interval, and names the widest among those that have one.
 
+- **report.md keeps a repeated comparison on a row of its own (changes `report.md`).** Two
+  root comparisons of the same estimand, cohorts, group and measure, such as one difference
+  under two independence profiles, shared a row, and the second replaced the first. Each now
+  has a row, and rows that would read alike name their comparisons.
+
 - **report.md's prompt-level sensitivity is the prompt profile's (changes `report.md`).** The
   column showed the first sensitivity interval of the primary's method, whatever its profile:
   with a category profile listed before the prompt profile it showed the category interval,
