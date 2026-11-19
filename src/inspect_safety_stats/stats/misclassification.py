@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import itertools
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -286,22 +287,180 @@ def estimate_judge_calibration(
         for name, stratum in (("judge_unsafe", unsafe_stratum), ("judge_safe", safe_stratum))
         if stratum.labelled == 0
     )
-    if not completed and rho_1_lower <= rho_0_upper:
+    return _validated_calibration(
+        scenario_id=scenario_id,
+        rho_1=(rho_1_lower, rho_1_upper),
+        rho_0=(rho_0_lower, rho_0_upper),
+        alpha=alpha,
+        completed=completed,
+    )
+
+
+def _validated_calibration(
+    *,
+    scenario_id: str,
+    rho_1: tuple[float, float],
+    rho_0: tuple[float, float],
+    alpha: float,
+    completed: tuple[str, ...],
+) -> JudgeCalibration:
+    """The measured box, or the refusal of one that does not establish an informative judge."""
+
+    if not completed and rho_1[0] <= rho_0[1]:
         raise ValueError(
             "the validation sample does not establish a strictly informative judge: the "
-            f"rho_1 lower bound ({rho_1_lower:.6g}) does not exceed the rho_0 upper bound "
-            f"({rho_0_upper:.6g}); more labels or a better judge are required"
+            f"rho_1 lower bound ({rho_1[0]:.6g}) does not exceed the rho_0 upper bound "
+            f"({rho_0[1]:.6g}); more labels or a better judge are required"
         )
     return JudgeCalibration(
         scenario_id=scenario_id,
-        rho_1_lower=rho_1_lower,
-        rho_1_upper=rho_1_upper,
-        rho_0_lower=rho_0_lower,
-        rho_0_upper=rho_0_upper,
+        rho_1_lower=rho_1[0],
+        rho_1_upper=rho_1[1],
+        rho_0_lower=rho_0[0],
+        rho_0_upper=rho_0[1],
         source="validated",
         alpha=alpha,
         completed_strata=completed,
     )
+
+
+def hypergeometric_count_bounds(
+    *, truly_unsafe: int, labelled: int, stratum_size: int, alpha_lower: float, alpha_upper: float
+) -> tuple[int, int]:
+    """Exact bounds on the number of truly unsafe rollouts in a finite stratum.
+
+    The ``labelled`` rows are a simple random sample without replacement of the
+    ``stratum_size`` rows, so ``truly_unsafe`` is hypergeometric given the unknown count
+    ``K``. The lower bound is the smallest ``K`` whose upper tail ``P(X >= truly_unsafe)``
+    exceeds ``alpha_lower``, the upper bound the largest ``K`` whose lower tail
+    ``P(X <= truly_unsafe)`` exceeds ``alpha_upper``; both tails are monotone in ``K``, so
+    each bound is one-sided at its level. A census gives the count exactly, and a stratum
+    without labels is completed as ``[0, stratum_size]``, with certainty.
+    """
+
+    import numpy as np
+    from scipy.stats import hypergeom
+
+    counts = JudgeStratumCounts(
+        labelled=labelled, truly_unsafe=truly_unsafe, stratum_size=stratum_size
+    )
+    if counts.labelled == 0:
+        return 0, counts.stratum_size
+    if counts.labelled == counts.stratum_size:
+        return counts.truly_unsafe, counts.truly_unsafe
+    for name, level in (("alpha_lower", alpha_lower), ("alpha_upper", alpha_upper)):
+        if not 0 < level < 1:
+            raise ValueError(f"{name} must be in (0, 1)")
+    candidates = np.arange(counts.stratum_size + 1)
+    upper_tail = hypergeom.sf(truly_unsafe - 1, stratum_size, candidates, labelled)
+    lower_tail = hypergeom.cdf(truly_unsafe, stratum_size, candidates, labelled)
+    # Neither set below is empty: the upper tail is 1 at the largest count the labels admit,
+    # stratum_size - (labelled - truly_unsafe), and the lower tail at the smallest,
+    # truly_unsafe.
+    lower = int(candidates[upper_tail > alpha_lower].min())
+    upper = int(candidates[lower_tail > alpha_upper].max())
+    return lower, upper
+
+
+@dataclass(frozen=True)
+class FineStratumBounds:
+    """One declared fine stratum within a judge stratum, its labels and its count bounds.
+
+    ``alpha`` is the level each one-sided count bound spends; it is zero for a census,
+    which is exact, and for a stratum without labels, completed as ``[0, stratum_size]``.
+    """
+
+    judge_stratum: str
+    stratum: str
+    counts: JudgeStratumCounts
+    unsafe_lower: int
+    unsafe_upper: int
+    alpha: float
+
+
+@dataclass(frozen=True)
+class StratifiedJudgeCalibration:
+    """A validated calibration from labels drawn by a stratified design without replacement."""
+
+    calibration: JudgeCalibration
+    fine_strata: tuple[FineStratumBounds, ...]
+
+    @property
+    def unlabelled_fine_strata(self) -> tuple[FineStratumBounds, ...]:
+        """The fine strata completed as ``[0, stratum_size]`` because none was labelled."""
+
+        return tuple(item for item in self.fine_strata if item.counts.labelled == 0)
+
+
+def estimate_stratified_judge_calibration(
+    *,
+    scenario_id: str,
+    unsafe_strata: Mapping[str, JudgeStratumCounts],
+    safe_strata: Mapping[str, JudgeStratumCounts],
+    alpha: float,
+) -> StratifiedJudgeCalibration:
+    """Estimate rho_1 and rho_0 from labels in declared fine strata of each judge stratum.
+
+    Each fine stratum ``h`` of a judge stratum of size ``N`` holds ``N_h`` rollouts, of which
+    ``n_h`` were labelled as a simple random sample without replacement whose size was fixed
+    independently of the labels. Its truly unsafe count ``K_h`` then has exact hypergeometric
+    bounds, and the judge stratum's parameter is ``sum_h K_h / N``: each fine stratum is
+    weighted back by its own size, whatever share of it was labelled.
+
+    ``alpha`` is split as in :func:`estimate_judge_calibration`: a quarter per endpoint of
+    the pair. An endpoint's quarter is split equally over the fine strata of its judge
+    stratum that are labelled but not censused, so a union bound over every count bound
+    spends no more than ``alpha``. A census is exact and an unlabelled fine stratum is
+    completed as ``[0, N_h]``; neither spends any of it. A judge stratum without any label
+    is completed as ``[0, 1]`` and named in ``completed_strata``; with both unlabelled the
+    estimate is refused.
+    """
+
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0, 1)")
+    endpoint_alpha = alpha / 4
+    fine: list[FineStratumBounds] = []
+
+    def bounds(judge_stratum: str, strata: Mapping[str, JudgeStratumCounts]) -> tuple[float, float]:
+        total = sum(item.stratum_size for item in strata.values())
+        if total == 0:
+            raise ValueError(f"the {judge_stratum} judge stratum holds no rollout")
+        sampled = sum(
+            1 for item in strata.values() if 0 < item.labelled < item.stratum_size
+        )
+        level = endpoint_alpha / sampled if sampled else 0.0
+        lower = upper = 0
+        for name in sorted(strata):
+            item = strata[name]
+            if item.stratum_size == 0:
+                raise ValueError(f"fine stratum {name!r} of {judge_stratum} holds no rollout")
+            spent = level if 0 < item.labelled < item.stratum_size else 0.0
+            low, high = hypergeometric_count_bounds(
+                truly_unsafe=item.truly_unsafe,
+                labelled=item.labelled,
+                stratum_size=item.stratum_size,
+                # A census or an unlabelled stratum returns before any level is read.
+                alpha_lower=spent,
+                alpha_upper=spent,
+            )
+            fine.append(FineStratumBounds(judge_stratum, name, item, low, high, spent))
+            lower += low
+            upper += high
+        return lower / total, upper / total
+
+    labelled = {
+        name: sum(item.labelled for item in strata.values())
+        for name, strata in (("judge_unsafe", unsafe_strata), ("judge_safe", safe_strata))
+    }
+    if not any(labelled.values()):
+        raise ValueError("at least one judge stratum requires a human-labelled observation")
+    rho_1 = bounds("judge_unsafe", unsafe_strata)
+    rho_0 = bounds("judge_safe", safe_strata)
+    completed = tuple(name for name, count in labelled.items() if count == 0)
+    calibration = _validated_calibration(
+        scenario_id=scenario_id, rho_1=rho_1, rho_0=rho_0, alpha=alpha, completed=completed
+    )
+    return StratifiedJudgeCalibration(calibration=calibration, fine_strata=tuple(fine))
 
 
 def completion_warning(calibration: JudgeCalibration) -> str | None:

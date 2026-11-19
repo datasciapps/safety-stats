@@ -229,24 +229,35 @@ class JudgeCalibrationSpec(OmitsAbsentFields):
 
     # Left out of the serialised plan when absent, so the hash and the resolved plan of a
     # plan without them are what they were before the fields existed.
-    absent_when_none = ("published_set", "groups")
+    absent_when_none = ("published_set", "groups", "validation_strata")
 
     mode: Literal["assumed", "validated", "transported"] = "assumed"
     scenarios: list[JudgeCalibrationScenarioSpec] = Field(default_factory=list)
     primary: str | None = None
     validation_manifest: Path | None = None
     family: str | None = None
-    sampling: Literal["simple_random_within_judge_stratum", "simple_random"] = (
-        "simple_random_within_judge_stratum"
-    )
+    sampling: Literal[
+        "simple_random_within_judge_stratum", "simple_random", "stratified_without_replacement"
+    ] = "simple_random_within_judge_stratum"
     published_set: PublishedValidationSetSpec | None = None
     groups: list[str] | None = None
+    # Experimental: the declared fine stratum of every classified observation, for
+    # sampling: stratified_without_replacement.
+    validation_strata: Path | None = None
 
     @model_validator(mode="after")
     def validate_mode(self) -> JudgeCalibrationSpec:
         _group_scope(self.groups, "judge calibration")
         if self.mode != "transported" and self.published_set is not None:
             raise ValueError("published_set requires mode: transported")
+        stratified = self.sampling == "stratified_without_replacement"
+        if stratified and self.mode != "validated":
+            raise ValueError("sampling: stratified_without_replacement requires mode: validated")
+        if stratified != (self.validation_strata is not None):
+            raise ValueError(
+                "validation_strata and sampling: stratified_without_replacement go together; "
+                "declare both or neither"
+            )
         if self.mode == "transported":
             if self.published_set is None:
                 raise ValueError("transported judge calibration requires a published_set")
