@@ -221,8 +221,8 @@ described in their pull requests.
   at nominal 95% where prevalence is 2% or below and labels number 300 or fewer, and not
   uniformly narrower than the box. Where they cannot be computed,
   `JUDGE_LANG_REICZIGEL_UNAVAILABLE` says why. Python callers get
-  `lang_reiczigel_corrected_risk`. Labels drawn within judge strata, or under
-  `stratified_without_replacement`, get no such interval.
+  `lang_reiczigel_corrected_risk`. Labels drawn within judge strata, simply or by a
+  stratified design (`stratified_within_judge_stratum`), get no such interval.
 
 - **Judge flip rate under content-preserving wrappers (experimental, #122).**
   `inputs.judge_flip` reads a CSV of the primary judge's verdicts on the run's judge-positive
@@ -394,14 +394,18 @@ described in their pull requests.
   and the [plan reference](docs/plan-reference.md#inputs).
 
 - **Stratified validation labels (experimental).** `inputs.judge_calibration.sampling:
-  stratified_without_replacement`, with `validation_strata` (a CSV of
+  stratified_within_judge_stratum`, with `validation_strata` (a CSV of
   `observation_id,stratum` for every classified observation), reads human labels drawn by a
   stratified design, such as one that labels the judges' disagreements more often. Each
   declared stratum within a cohort's judge stratum gets exact hypergeometric bounds on its
-  truly unsafe count and is weighted by its size. A stratum labelled in full is therefore
-  exact, and oversampled strata count as often as they occur, not as often as they were
-  labelled. `report.json` records each fine stratum's counts and bounds as `fine_strata` in
-  each calibration's entry of `provenance.judge_calibration.cohorts`, per cohort or, with
+  truly unsafe count and is weighted by its size, so oversampled strata count as often as they
+  occur, not as often as they were labelled. The judge's accuracy then gets Clopper-Pearson
+  bounds at the summed counts, out of the judge stratum's size, because the run's rollouts only
+  sample it: even a stratum labelled in full keeps a binomial width. Each endpoint's budget is
+  halved between the two steps, so with a single declared stratum the ranges are wider than
+  the default `sampling` gives the same labels. `report.json` records each fine stratum's
+  counts and bounds as `fine_strata` in each calibration's entry of
+  `provenance.judge_calibration.cohorts`, per cohort or, with
   `groups`, per cohort and group. `report.md` lists them. New diagnostics:
   `JUDGE_VALIDATION_STRATA_INCOMPLETE` and `JUDGE_VALIDATION_STRATA_UNMATCHED` (errors),
   `JUDGE_FINE_STRATUM_UNLABELLED_COMPLETED` (warning) and `JUDGE_CALIBRATION_STRATIFIED`

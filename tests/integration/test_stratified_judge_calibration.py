@@ -4,15 +4,21 @@ One prompt, 1,000 rollouts. The judge calls epochs 1-100 unsafe and 101-1000 saf
 judge disagrees on epochs 1-20 and 101-130, which form the "disagree" fine strata; the rest
 are "agree". The truly unsafe rollouts are epochs 1-8, 21-100 and 101-110. The labelling
 design labels every disagreement and samples the agreements: epochs 21-40 and 131-230.
+
+Some tests add a second prompt, "p2", of another suite and so outside the group "all". The
+judge calls its epochs 1-300 unsafe, epochs 1-250 are truly unsafe, all of them are "agree",
+and every tenth is labelled.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
 from pydantic import ValidationError
+from scipy.stats import binom
 
 from inspect_safety_stats import analyze, load_plan
 from inspect_safety_stats.config.loader import canonical_plan_hash
@@ -24,6 +30,13 @@ from inspect_safety_stats.schema.reports import RiskIntervalResult, SafetyReport
 from inspect_safety_stats.stats.misclassification import (
     JudgeStratumCounts,
     estimate_stratified_judge_calibration,
+)
+from tests.diagnostic_codes.judge_analysis_cases import (
+    census,
+    comparison,
+    judged,
+    stratified,
+    with_labels,
 )
 
 ROLLOUTS = 1000
@@ -43,6 +56,10 @@ def _truly_unsafe(epoch: int) -> bool:
 
 def _labelled(epoch: int) -> bool:
     return _stratum(epoch) == "disagree" or 21 <= epoch <= 40 or 131 <= epoch <= 230
+
+
+OUTSIDE = "p2"
+"""A second prompt, outside the group "all"."""
 
 
 PLAN = """
@@ -100,13 +117,13 @@ STRATIFIED = (
     "  judge_calibration:\n"
     "    mode: validated\n"
     "    validation_manifest: labels.csv\n"
-    "    sampling: stratified_without_replacement\n"
+    "    sampling: stratified_within_judge_stratum\n"
     "    validation_strata: strata.csv\n"
     "    family: judge_error\n"
 )
 
 
-def _frames() -> tuple[pd.DataFrame, pd.DataFrame]:
+def _frames(*, outside: bool = False) -> tuple[pd.DataFrame, pd.DataFrame]:
     evals = pd.DataFrame(
         [
             {
@@ -142,15 +159,29 @@ def _frames() -> tuple[pd.DataFrame, pd.DataFrame]:
             }
             for epoch in range(1, ROLLOUTS + 1)
         ]
+        + [
+            {
+                "sample_id": f"candidate-{OUTSIDE}-{epoch}",
+                "eval_id": "eval-candidate",
+                "log": "/not/a/local/log.eval",
+                "id": OUTSIDE,
+                "epoch": epoch,
+                "score_harmful": "FAIL" if epoch <= 300 else "PASS",
+                "error": None,
+                "retries": 0,
+            }
+            for epoch in (range(1, ROLLOUTS + 1) if outside else ())
+        ]
     )
     return evals, samples
 
 
-def _write_plan(directory: Path, judge: str) -> Path:
+def _write_plan(directory: Path, judge: str, *, outside: bool = False) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "design.csv").write_text(
         "prompt_id,question_id,task_id,suite,expected_rollouts,zero_tolerance\n"
-        f"p1,q1,t1,s,{ROLLOUTS},false\n",
+        f"p1,q1,t1,s,{ROLLOUTS},false\n"
+        + (f"{OUTSIDE},q2,t1,t,{ROLLOUTS},false\n" if outside else ""),
         encoding="utf-8",
     )
     plan = directory / "plan.yaml"
@@ -239,9 +270,18 @@ def test_stratified_labels_certify_a_correction_weighted_by_fine_stratum(
     assert f"[{expected.rho_1_lower:.6g}, {expected.rho_1_upper:.6g}]" in corrected.assumptions[1]
     assert f"[{expected.rho_0_lower:.6g}, {expected.rho_0_upper:.6g}]" in corrected.assumptions[2]
     assert any("hypergeometric" in text for text in corrected.assumptions)
-    assert not any("Clopper-Pearson" in text for text in corrected.assumptions)
-    # The judge-safe disagreements are a census: their ten truly unsafe rollouts are known.
-    assert expected.rho_0_lower == pytest.approx(10 / 900, rel=0, abs=1e-15)
+    assert any("Clopper-Pearson" in text for text in corrected.assumptions)
+    assert any("is binomial" in text for text in corrected.assumptions)
+    assert (
+        "Coverage is the union bound over the underlying interval, every calibration count "
+        "bound and the four Clopper-Pearson bounds."
+    ) in corrected.assumptions
+    # The judge-safe disagreements are a census, so their ten truly unsafe rollouts are known,
+    # and no sampled judge-safe agreement is unsafe. The 900 judge-safe rollouts still only
+    # sample P(truly unsafe | judge said safe): its lower bound is the Clopper-Pearson bound at
+    # 10 of 900, at half of an endpoint's quarter of the family alpha, not 10 / 900.
+    assert binom.sf(9, 900, expected.rho_0_lower) == pytest.approx(0.05 / 8, rel=1e-9, abs=0)
+    assert expected.rho_0_lower < 10 / 900
 
     # The delta-method reference assumes simple random samples within judge strata.
     mean = next(row for row in report.group_risks if row.measure_id == "mean")
@@ -251,7 +291,7 @@ def test_stratified_labels_certify_a_correction_weighted_by_fine_stratum(
     assert "JUDGE_FINE_STRATUM_UNLABELLED_COMPLETED" not in codes
 
     summary = report.provenance["judge_calibration"]
-    assert summary["sampling"] == "stratified_without_replacement"
+    assert summary["sampling"] == "stratified_within_judge_stratum"
     assert summary["experimental"] is True
     assert summary["validation_strata"] == "strata.csv"
     cohort = summary["cohorts"]["candidate"]
@@ -271,15 +311,16 @@ def test_stratified_labels_certify_a_correction_weighted_by_fine_stratum(
     )
 
     markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
-    assert "exact hypergeometric bounds over the declared fine strata" in markdown
+    assert "summing exact hypergeometric bounds over its declared fine strata" in markdown
+    assert "exact Clopper-Pearson bounds, since a run's rollouts only sample it" in markdown
     assert "| candidate | judge_safe | disagree | 30 / 30 | 10 | 10–10 |" in markdown
 
 
 def test_an_unlabelled_fine_stratum_is_completed_with_a_warning(
     tmp_path: Path, observations: dict[int, str]
 ) -> None:
-    # No judge-unsafe agreement is labelled.
-    labelled = {e for e in observations if _labelled(e) and not 21 <= e <= 40}
+    # No judge-unsafe disagreement is labelled.
+    labelled = {e for e in observations if _labelled(e) and not 1 <= e <= 20}
     report = _analyze(tmp_path / "run", observations, labelled=labelled)
 
     warning = next(
@@ -290,15 +331,18 @@ def test_an_unlabelled_fine_stratum_is_completed_with_a_warning(
     assert warning.severity == "WARNING"
     assert warning.scope == "cohorts/candidate"
     assert warning.details == {
-        "fine_strata": [{"judge_stratum": "judge_unsafe", "stratum": "agree", "stratum_size": 80}]
+        "fine_strata": [
+            {"judge_stratum": "judge_unsafe", "stratum": "disagree", "stratum_size": 20}
+        ]
     }
     fine = report.provenance["judge_calibration"]["cohorts"]["candidate"]["fine_strata"]
-    agree = next(
+    disagree = next(
         item
         for item in fine
-        if (item["judge_stratum"], item["stratum"]) == ("judge_unsafe", "agree")
+        if (item["judge_stratum"], item["stratum"]) == ("judge_unsafe", "disagree")
     )
-    assert (agree["truly_unsafe_lower"], agree["truly_unsafe_upper"]) == (0, 80)
+    assert (disagree["truly_unsafe_lower"], disagree["truly_unsafe_upper"]) == (0, 20)
+    assert _corrected(report) is not None
 
 
 @pytest.mark.parametrize("defect", ["missing", "extra"])
@@ -308,8 +352,10 @@ def test_a_strata_file_that_is_not_the_design_stops_the_correction(
     strata: dict[int, str] = {e: _stratum(e) for e in observations}
     if defect == "missing":
         del strata[500]
+        named = observations[500]
     else:
-        observations = {**observations, ROLLOUTS + 1: "not-an-observation"}
+        named = "not-an-observation"
+        observations = {**observations, ROLLOUTS + 1: named}
         strata[ROLLOUTS + 1] = "agree"
     report = _analyze(
         tmp_path / "run",
@@ -324,6 +370,9 @@ def test_a_strata_file_that_is_not_the_design_stops_the_correction(
         else "JUDGE_VALIDATION_STRATA_UNMATCHED"
     )
     assert _codes(report)[code] == "ERROR"
+    # Both name observations as the labels and strata files do, by bare identifier.
+    error = next(item for item in report.integrity.diagnostics if item.code == code)
+    assert error.details == {"observation_ids": [named]}
     assert _corrected(report) is None
 
 
@@ -333,7 +382,7 @@ def test_the_plan_requires_both_fields_and_hashes_as_before_without_them() -> No
             mode="validated",
             validation_manifest=Path("labels.csv"),
             family="judge_error",
-            sampling="stratified_without_replacement",
+            sampling="stratified_within_judge_stratum",
         )
     with pytest.raises(ValidationError, match="go together"):
         JudgeCalibrationSpec(
@@ -345,7 +394,7 @@ def test_the_plan_requires_both_fields_and_hashes_as_before_without_them() -> No
     with pytest.raises(ValidationError, match="requires mode: validated"):
         JudgeCalibrationSpec(
             mode="assumed",
-            sampling="stratified_without_replacement",
+            sampling="stratified_within_judge_stratum",
             validation_strata=Path("strata.csv"),
         )
     plain = JudgeCalibrationSpec(
@@ -368,37 +417,121 @@ def test_the_generative_pipeline_rejects_the_stratified_design() -> None:
             {
                 "mode": "validated",
                 "validation_manifest": "labels.csv",
-                "sampling": "stratified_without_replacement",
+                "sampling": "stratified_within_judge_stratum",
             }
         )
 
 
-def test_a_group_scoped_calibration_counts_the_group_s_fine_strata(
-    tmp_path: Path, observations: dict[int, str]
+def test_a_group_scoped_calibration_counts_only_the_group_s_fine_strata(
+    tmp_path: Path, observations: dict[int, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    directory = tmp_path / "run"
-    report = _analyze(directory, observations)
-    plan = directory / "plan.yaml"
-    plan.write_text(
-        plan.read_text(encoding="utf-8").replace(
-            "    family: judge_error\n", "    family: judge_error\n    groups: [all]\n", 1
+    # The reference: the group's prompt alone, calibrated over the whole cohort.
+    reference = _analyze(tmp_path / "one", observations)
+
+    # The same prompt beside a second one outside the group, whose rollouts the strata file
+    # places, some of them labelled. A calibration scoped to the group must not count them.
+    eval_frame, sample_frame = _frames(outside=True)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    unlabelled = analyze(
+        plan=load_plan(_write_plan(tmp_path / "unlabelled-two", "", outside=True)),
+        logs="ignored",
+    )
+    ids = {
+        (item.prompt_id, int(item.rollout_id.rsplit("-", 1)[1])): item.observation_id
+        for item in unlabelled._observations
+    }
+    assert len(ids) == 2 * ROLLOUTS
+    directory = tmp_path / "two"
+    plan = _write_plan(directory, STRATIFIED + "    groups: [all]\n", outside=True)
+    rows = [
+        (ids[("p1", e)], _truly_unsafe(e), _labelled(e), _stratum(e))
+        for e in range(1, ROLLOUTS + 1)
+    ] + [(ids[(OUTSIDE, e)], e <= 250, e % 10 == 0, "agree") for e in range(1, ROLLOUTS + 1)]
+    (directory / "labels.csv").write_text(
+        "observation_id,human_label\n"
+        + "".join(
+            f"{key},{'unsafe' if unsafe else 'safe'}\n"
+            for key, unsafe, labelled, _ in rows
+            if labelled
         ),
+        encoding="utf-8",
+    )
+    (directory / "strata.csv").write_text(
+        "observation_id,stratum\n" + "".join(f"{key},{name}\n" for key, _, _, name in rows),
         encoding="utf-8",
     )
     scoped = analyze(plan=load_plan(plan), logs="ignored")
 
-    unscoped_corrected, scoped_corrected = _corrected(report), _corrected(scoped)
-    assert unscoped_corrected is not None and scoped_corrected is not None
-    # The one group spans the cohort, so the calibration and the correction are the same.
-    assert (scoped_corrected.lower, scoped_corrected.upper) == (
-        unscoped_corrected.lower,
-        unscoped_corrected.upper,
-    )
-    assert any("scoped to group 'all'" in text for text in scoped_corrected.assumptions)
-    cohorts = scoped.provenance["judge_calibration"]["cohorts"]
+    calibration = scoped.provenance["judge_calibration"]["cohorts"]["candidate"]["all"]
+    sizes = {
+        (item["judge_stratum"], item["stratum"]): (item["labelled"], item["stratum_size"])
+        for item in calibration["fine_strata"]
+    }
+    # The group's own rollouts only: the second prompt would add 300 judge-unsafe and 700
+    # judge-safe agreements, 100 of them labelled.
+    assert sizes == {
+        ("judge_unsafe", "agree"): (20, 80),
+        ("judge_unsafe", "disagree"): (20, 20),
+        ("judge_safe", "agree"): (100, 870),
+        ("judge_safe", "disagree"): (30, 30),
+    }
+    assert calibration["judge_unsafe"] == {"labelled": 40, "truly_unsafe": 28, "stratum_size": 100}
     assert (
-        cohorts["candidate"]["all"]["fine_strata"]
-        == report.provenance["judge_calibration"]["cohorts"]["candidate"]["fine_strata"]
+        calibration["fine_strata"]
+        == reference.provenance["judge_calibration"]["cohorts"]["candidate"]["fine_strata"]
     )
+    # So the group's row is corrected exactly as the prompt alone was.
+    alone, beside = _corrected(reference), _corrected(scoped)
+    assert alone is not None and beside is not None
+    assert (beside.lower, beside.upper) == (alone.lower, alone.upper)
+    assert beside.eligibility == "certifying"
+    assert any("scoped to group 'all'" in text for text in beside.assumptions)
+    assert _codes(scoped)["JUDGE_VALIDATION_OUT_OF_SCOPE"] == "WARNING"
     markdown = (scoped.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
     assert "| candidate | all | judge_safe | disagree | 30 / 30 | 10 | 10–10 |" in markdown
+
+
+def _comparison_correction(outcome: Any) -> RiskIntervalResult:
+    (row,) = [item for item in outcome.report.comparisons if item.level is None]
+    (found,) = [item for item in row.intervals if item.interval_id == "judge_corrected_validated"]
+    return found
+
+
+def test_a_comparison_corrected_with_stratified_labels_states_their_design(
+    tmp_path: Path,
+) -> None:
+    # Two cohorts of two prompts, every classified rollout labelled, each prompt a stratum.
+    method = comparison("weighted_kl_chernoff")
+    outcome = judged(stratified(), method)(tmp_path / "stratified")
+    default = judged(with_labels(census), method)(tmp_path / "default")
+
+    corrected = _comparison_correction(outcome)
+    assert corrected.eligibility == "certifying"
+    experimental = [text for text in corrected.assumptions if text.startswith("Experimental")]
+    assert len(experimental) == 1
+    assert "hypergeometric" in experimental[0]
+    assert any("is binomial" in text for text in corrected.assumptions)
+    assert any("simple random sample without replacement" in text for text in corrected.assumptions)
+    assert (
+        "The declared validation strata place every classified rollout of each cohort."
+        in corrected.assumptions
+    )
+    assert any(
+        text.startswith(
+            "Each cohort's fine strata weight back to its classified rollouts equally"
+        )
+        for text in corrected.assumptions
+    )
+    # The default design's comparison keeps its own text.
+    plain = _comparison_correction(default)
+    assert not any("Experimental" in text for text in plain.assumptions)
+    assert any(
+        text.startswith("Each cohort's labels weight its classified rollouts equally")
+        for text in plain.assumptions
+    )

@@ -230,6 +230,35 @@ def _unclassified_assumption(share: float) -> str:
     )
 
 
+def _stratified_assumptions(cohort: str = "the cohort") -> list[str]:
+    """The stratified calibration's method and design, as risk rows and comparisons state it.
+
+    ``cohort`` names the cohorts whose classified rollouts the strata must place.
+    """
+
+    return [
+        "Experimental: each judge stratum's truly unsafe count is bounded by the sum "
+        "of exact hypergeometric bounds over its declared fine strata, so each fine "
+        "stratum counts by its size; a census gives its count exactly and a fine "
+        "stratum without labels counts from none to all of its rollouts.",
+        "Each range is the exact Clopper-Pearson bound on the conditional probability "
+        "at the lower and at the upper count, out of the judge stratum's size: the "
+        "stratum's rollouts only sample that probability, so even a census leaves it "
+        "uncertain.",
+        "Each endpoint's budget is halved: one half for its Clopper-Pearson bound, the "
+        "other split equally over the count bounds of the fine strata that were "
+        "sampled but not censused.",
+        "Given a judge stratum's size, its rollouts are independent and each is truly "
+        "unsafe with the stratum's conditional probability, so its truly unsafe count "
+        "is binomial.",
+        "The labelled rows of each fine stratum are a simple random sample without "
+        "replacement of it, of a size fixed independently of the labels; this is a "
+        "property of the declared collection protocol, not of the data.",
+        f"The declared validation strata place every classified rollout of {cohort}.",
+        "Human adjudication is treated as ground truth.",
+    ]
+
+
 def _uncertified_base_warning(eligibility: str) -> str:
     return (
         f"Sensitivity analysis, not a certified bound: the judge-system interval it corrects "
@@ -342,7 +371,7 @@ def _validated_judge_calibrations(
     )
 
     declared: dict[str, str] | None = None
-    if spec.sampling == "stratified_without_replacement":
+    if spec.sampling == "stratified_within_judge_stratum":
         if spec.validation_strata is None:
             raise ValueError("stratified judge-calibration sampling requires validation_strata")
         try:
@@ -510,9 +539,11 @@ def _validated_judge_calibrations(
                 severity="INFO",
                 message=(
                     "Experimental: the judge calibration reads its labels as a stratified "
-                    "sample without replacement within declared fine strata, with exact "
-                    "hypergeometric bounds; the asymptotic delta-method reference, which "
-                    "assumes simple random samples within the judge strata, is not reported"
+                    "sample without replacement within declared fine strata, bounds each judge "
+                    "stratum's truly unsafe count with exact hypergeometric bounds, and its "
+                    "conditional accuracy at those counts with Clopper-Pearson bounds; the "
+                    "asymptotic delta-method reference, which assumes simple random samples "
+                    "within the judge strata, is not reported"
                 ),
                 scope=plan_scope("inputs", "judge_calibration"),
             )
@@ -636,21 +667,7 @@ def _judge_corrected_interval(
                 + " judge stratum has no human label, so its range is [0, 1], which holds "
                 "with certainty."
             )
-        assumptions.extend(
-            [
-                "Experimental: each range sums exact hypergeometric bounds on the truly unsafe "
-                "count of every declared fine stratum within its judge stratum, weighted by "
-                "the fine stratum's size; a census is exact and a fine stratum without labels "
-                "is completed from none to all of its rollouts.",
-                "Each endpoint's budget is split equally over the fine strata that were "
-                "sampled but not censused.",
-                "The labelled rows of each fine stratum are a simple random sample without "
-                "replacement of it, of a size fixed independently of the labels; this is a "
-                "property of the declared collection protocol, not of the data.",
-                "The declared validation strata place every classified rollout of the cohort.",
-                "Human adjudication is treated as ground truth.",
-            ]
-        )
+        assumptions.extend(_stratified_assumptions())
         if scoped_group is not None:
             assumptions.append(
                 f"The calibration is scoped to group {scoped_group!r}: its fine strata are the "
@@ -665,8 +682,8 @@ def _judge_corrected_interval(
                     f"The fine strata weight back to every classified rollout of {population} "
                     "equally, and so does this row, so they measure the judge's accuracy for "
                     "its estimand.",
-                    "Coverage is the union bound over the underlying interval and every "
-                    "calibration count bound.",
+                    "Coverage is the union bound over the underlying interval, every "
+                    "calibration count bound and the four Clopper-Pearson bounds.",
                 ]
             )
     elif validated:

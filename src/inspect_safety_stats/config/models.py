@@ -358,8 +358,13 @@ class JudgeCalibrationSpec(OmitsAbsentFields):
     diagnostic sensitivity result. ``mode: transported`` (experimental) bounds true risk
     from the judge's sensitivity on a published human-labelled set and is likewise a
     diagnostic sensitivity result. ``mode: validated`` estimates the two conditional
-    accuracies from human labels drawn within each judge stratum, and its corrected
-    intervals are certifying at the combined error budget.
+    accuracies from human labels, and its corrected intervals are certifying at the combined
+    error budget. ``sampling`` says how the labels were drawn: a simple random sample within
+    each judge stratum (the default); a simple random sample of the classified rollouts
+    (``simple_random``), which also estimates the judge's sensitivity and false-positive
+    rate by true class; or, experimental, a stratified design whose declared strata, given
+    in ``validation_strata``, nest within the judge strata
+    (``stratified_within_judge_stratum``).
 
     ``groups`` scopes an assumed or validated calibration to declared groups. Without it
     there is one calibration per cohort, for every row of the cohort. With it the assumed
@@ -377,12 +382,12 @@ class JudgeCalibrationSpec(OmitsAbsentFields):
     validation_manifest: Path | None = None
     family: str | None = None
     sampling: Literal[
-        "simple_random_within_judge_stratum", "simple_random", "stratified_without_replacement"
+        "simple_random_within_judge_stratum", "simple_random", "stratified_within_judge_stratum"
     ] = "simple_random_within_judge_stratum"
     published_set: PublishedValidationSetSpec | None = None
     groups: list[str] | None = None
     # Experimental: the declared fine stratum of every classified observation, for
-    # sampling: stratified_without_replacement.
+    # sampling: stratified_within_judge_stratum.
     validation_strata: Path | None = None
     # Experimental: how the labels were collected, which the analysis checks.
     protocol: LabellingProtocolSpec | None = None
@@ -405,12 +410,12 @@ class JudgeCalibrationSpec(OmitsAbsentFields):
             )
         if self.mode != "transported" and self.published_set is not None:
             raise ValueError("published_set requires mode: transported")
-        stratified = self.sampling == "stratified_without_replacement"
+        stratified = self.sampling == "stratified_within_judge_stratum"
         if stratified and self.mode != "validated":
-            raise ValueError("sampling: stratified_without_replacement requires mode: validated")
+            raise ValueError("sampling: stratified_within_judge_stratum requires mode: validated")
         if stratified != (self.validation_strata is not None):
             raise ValueError(
-                "validation_strata and sampling: stratified_without_replacement go together; "
+                "validation_strata and sampling: stratified_within_judge_stratum go together; "
                 "declare both or neither"
             )
         if self.mode == "transported":

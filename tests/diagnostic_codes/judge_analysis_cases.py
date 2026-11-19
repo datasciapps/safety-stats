@@ -262,11 +262,28 @@ def _transported_effect(triggered: Outcome, control: Outcome) -> None:
     assert claim(triggered) == claim(control)
 
 
-def _strata(observations: list[Any], drop: int = 0, extra: bool = False) -> str:
-    """Every classified rollout's declared stratum, its prompt."""
+FEW = 2
+"""The first few rollouts of p1, a fine stratum of their own in some cases."""
 
+
+def _first_of_p1(observations: list[Any]) -> set[str]:
+    """The identifiers of p1's first few classified rollouts."""
+
+    p1 = [item for item in observations if item.prompt_id == "p1" and item.failure is not None]
+    return {item.observation_id for item in p1[:FEW]}
+
+
+def _strata(
+    observations: list[Any], drop: int = 0, extra: bool = False, few: bool = False
+) -> str:
+    """Every classified rollout's declared stratum, its prompt, or with ``few`` the first
+    few rollouts of p1 a stratum of their own."""
+
+    first = _first_of_p1(observations) if few else set()
     rows = [
-        (item.observation_id, item.prompt_id) for item in observations if item.failure is not None
+        (item.observation_id, "p1-first" if item.observation_id in first else item.prompt_id)
+        for item in observations
+        if item.failure is not None
     ][drop:]
     if extra:
         rows.append(("not-a-rollout", "p1"))
@@ -274,16 +291,19 @@ def _strata(observations: list[Any], drop: int = 0, extra: bool = False) -> str:
 
 
 def stratified(
-    labels: Callable[[list[Any]], Labels] = census, drop: int = 0, extra: bool = False
+    labels: Callable[[list[Any]], Labels] = census,
+    drop: int = 0,
+    extra: bool = False,
+    few: bool = False,
 ) -> Callable[..., None]:
     def change(inputs: Inputs, observations: list[Any]) -> None:
         validated(
             inputs,
             labels(observations),
-            sampling="stratified_without_replacement",
+            sampling="stratified_within_judge_stratum",
             validation_strata="strata.csv",
         )
-        inputs.files["strata.csv"] = _strata(observations, drop, extra)
+        inputs.files["strata.csv"] = _strata(observations, drop, extra, few)
 
     return change
 
@@ -296,24 +316,21 @@ def _stratified_effect(triggered: Outcome, control: Outcome) -> None:
     assert _interval(control, CORRECTED + "_delta") is not None
 
 
-def _unlabelled_p1(observations: list[Any]) -> Labels:
-    """Every label but those of p1, whose rollouts are all judge-safe."""
+def _unlabelled_few(observations: list[Any]) -> Labels:
+    """Every label but those of p1's first few rollouts, which are all judge-safe."""
 
-    return [
-        label
-        for item, label in zip(observations, _all(observations), strict=True)
-        if item.prompt_id != "p1"
-    ]
+    first = _first_of_p1(observations)
+    return [label for label in _all(observations) if label[0] not in first]
 
 
 def _fine_completed(triggered: Outcome, control: Outcome) -> None:
-    # Adjusted: p1's unlabelled fine stratum is completed from none to all of its rollouts,
-    # which widens the correction.
+    # Adjusted: the unlabelled fine stratum is completed from none to all of its rollouts,
+    # which widens the correction. The stratum is small, so the box stays informative.
     wide, narrow = _interval(triggered, CORRECTED), _interval(control, CORRECTED)
     assert wide.upper > narrow.upper
     (found,) = triggered.with_code("JUDGE_FINE_STRATUM_UNLABELLED_COMPLETED")
     assert found.details["fine_strata"] == [
-        {"judge_stratum": "judge_safe", "stratum": "p1", "stratum_size": ROLLOUTS}
+        {"judge_stratum": "judge_safe", "stratum": "p1-first", "stratum_size": FEW}
     ]
 
 
@@ -590,10 +607,10 @@ CASES = [
         effect=_stratified_effect,
     ),
     Case(
-        # p1's fine stratum of the judge-safe stratum has no label.
+        # The fine stratum of p1's first rollouts, all judge-safe, has no label.
         code="JUDGE_FINE_STRATUM_UNLABELLED_COMPLETED",
-        trigger=judged(stratified(_unlabelled_p1)),
-        control=judged(stratified()),
+        trigger=judged(stratified(_unlabelled_few, few=True)),
+        control=judged(stratified(few=True)),
         effect=_fine_completed,
     ),
     Case(
