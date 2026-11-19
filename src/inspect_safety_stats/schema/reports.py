@@ -631,10 +631,12 @@ class ReportPresentation(ResultModel):
 
 
 class MappingSensitivityResult(ResultModel):
-    """One displayed result as an alternative outcome mapping reads it.
+    """One displayed result as one outcome mapping reads it.
 
-    Descriptive: its interval and its claim status never enter a claim's status or the
-    decision. ``outcome-mapping-sensitivity.csv`` marks such rows with ``descriptive``.
+    ``mapping_results`` gives the primary mapping's rows, from the report's own results; each
+    ``OutcomeMappingSensitivity`` holds an alternative's. An alternative's rows are
+    descriptive: their intervals and claim statuses never enter a claim's status or the
+    decision. ``outcome-mapping-sensitivity.csv`` marks them with ``descriptive``.
     """
 
     kind: Literal["group_risk", "comparison", "claim"]
@@ -645,7 +647,8 @@ class MappingSensitivityResult(ResultModel):
     estimate: float | None = None
     lower: float | None = None
     upper: float | None = None
-    # A claim's status under this mapping. It certifies nothing and never enters the decision.
+    # A claim's status under this mapping: the claim's own under the primary mapping; under an
+    # alternative it certifies nothing and never enters the decision.
     status: Decision | None = None
 
 
