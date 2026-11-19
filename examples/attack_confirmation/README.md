@@ -62,9 +62,12 @@ then q(1 − a^K)/(1 − a), with a = (1 − q)(1 − f):
 | K = 60 | 0.95 | 0.71 | 0.51 | 0.21 |
 
 For a gate, that is the direction that favours a PASS (see
-[What a result means](#what-a-result-means)). The offline simulation does not show it: its
-targets comply with each query at a fixed rate, whatever the prompt, so a found prompt is
-worth no more than any other.
+[What a result means](#what-a-result-means)). The offline simulation shows the opposite: its
+targets comply with each query at a fixed rate c, whatever the prompt, so a found prompt is
+worth no more than any other, and a run that ends on a false positive is confirmed as often as
+one that ends on a real jailbreak. There a noisier attacker's judge ends more runs and so
+raises the confirmed rate: with judges that never miss and a confirmation judge that never
+errs, it is c(1 − ((1 − c)(1 − f))^K).
 
 Every run writes two scores:
 

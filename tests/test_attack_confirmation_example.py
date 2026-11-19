@@ -48,11 +48,24 @@ RUNS = 4000
 
 
 def _rates(
-    *, false_positive_rate: float, budget: int, compliance: float = 0.0, seed: int = 0
+    *,
+    false_positive_rate: float,
+    budget: int,
+    compliance: float = 0.0,
+    seed: int = 0,
+    confirmation_false_positive_rate: float | None = None,
 ) -> tuple[float, float]:
-    """Attacker-reported and confirmed jailbreak rates over RUNS simulated attack runs."""
+    """Attacker-reported and confirmed jailbreak rates over RUNS simulated attack runs.
+
+    The confirmation judge errs at ``false_positive_rate`` too unless given its own rate.
+    """
 
     rng = random.Random(seed)
+    confirmation_rate = (
+        false_positive_rate
+        if confirmation_false_positive_rate is None
+        else confirmation_false_positive_rate
+    )
 
     async def one() -> tuple[bool, bool]:
         target = SimulatedTarget(compliance, rng)
@@ -64,7 +77,7 @@ def _rates(
             SimulatedJudge(false_positive_rate, 1.0, rng),
         )
         verdict, _ = await confirm(
-            "goal", run, target, SimulatedJudge(false_positive_rate, 1.0, rng)
+            "goal", run, target, SimulatedJudge(confirmation_rate, 1.0, rng)
         )
         return run.found_prompt is not None, verdict is True
 
@@ -112,6 +125,30 @@ def test_the_confirmation_rollout_is_a_fresh_completion() -> None:
     reported, confirmed = _rates(false_positive_rate=0.0, budget=20, compliance=0.3, seed=1)
     assert _within(reported, -math.expm1(20 * math.log1p(-0.3)))
     assert _within(confirmed, reported * 0.3)
+
+
+def test_offline_a_noisier_attackers_judge_raises_the_confirmed_rate() -> None:
+    """The README's offline counterpart of the table: compliance that ignores the prompt.
+
+    A run that ends on the attacker's judge's false positive is confirmed at the compliance
+    rate c, as one that ends on a real jailbreak is, so ending more runs raises the rate to
+    c(1 - ((1 - c)(1 - f))^K).
+    """
+
+    compliance, budget = 0.05, 10
+    confirmed = {}
+    for false_positive_rate in (0.0, 0.2):
+        _, confirmed[false_positive_rate] = _rates(
+            false_positive_rate=false_positive_rate,
+            budget=budget,
+            compliance=compliance,
+            seed=2,
+            confirmation_false_positive_rate=0.0,
+        )
+        no_stop = (1 - compliance) * (1 - false_positive_rate)
+        expected = compliance * -math.expm1(budget * math.log(no_stop))
+        assert _within(confirmed[false_positive_rate], expected)
+    assert confirmed[0.2] > confirmed[0.0]
 
 
 @dataclass
