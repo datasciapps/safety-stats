@@ -108,6 +108,35 @@ def test_init_names_the_logs_it_ignored_and_analyzes_only_those_it_used(
     assert analyze_with(str(logs)) == 3
 
 
+def test_init_refuses_logs_of_several_tasks_for_the_reason_they_cannot_be_analysed(
+    tmp_path_factory: pytest.TempPathFactory, tmp_path: Path
+) -> None:
+    # One model on two tasks was refused as double-counting rollouts, and models on different
+    # tasks got a plan analyze rejected. A cohort is one model, and analyze finds a cohort
+    # whose runs differ in task (CONFIG_DRIFT) invalid, so init takes one task at a time.
+    two_tasks = [mock_task("task_a"), mock_task("task_b", prefix="q")]
+    one_model = write_mock_logs(
+        tmp_path_factory.mktemp("two-tasks") / "logs", models=("mockllm/alpha",), tasks=two_tasks
+    )
+    disjoint = tmp_path_factory.mktemp("disjoint-tasks") / "logs"
+    write_mock_logs(disjoint, models=("mockllm/alpha",), tasks=[mock_task("task_a")])
+    write_mock_logs(
+        disjoint, models=("mockllm/beta",), tasks=[mock_task("task_b", prefix="q")]
+    )
+    for logs in (one_model, disjoint):
+        with pytest.raises(ValueError, match=r"2 tasks \(task_a, task_b\); init writes a plan "
+                           "for one task") as refused:
+            scaffold_plan(logs, tmp_path, failure_values=["FAIL"])
+        assert "double-count" not in str(refused.value)
+    assert not (tmp_path / "safety-plan.yaml").exists()
+
+    again = tmp_path_factory.mktemp("repeated-task") / "logs"
+    write_mock_logs(again, models=("mockllm/alpha",), tasks=[mock_task("task_a")], epochs=2)
+    write_mock_logs(again, models=("mockllm/alpha",), tasks=[mock_task("task_a")], epochs=2)
+    with pytest.raises(ValueError, match="double-count rollouts: mockllm/alpha\\. "):
+        scaffold_plan(again, tmp_path, failure_values=["FAIL"])
+
+
 def test_init_plan_analyzes_end_to_end(mock_logs: Path, tmp_path: Path) -> None:
     result = scaffold_plan(
         mock_logs,

@@ -548,12 +548,14 @@ inspect-safety-stats version
 `init` (experimental) reads completed Inspect logs and writes a starter `design.csv` and
 `safety-plan.yaml` into `--output`. The plan has one cohort per model, the root failure risk
 with a prompt-level sensitivity, an optional one-level breakdown by `--group-by`, and a
-comparison when there are several models. `init` never guesses which scores are failures: name
-them with `--failure-values` or `--failure-threshold`. Nor does it take a value nobody named as
-safe: when the score has more than two values, name the safe ones with `--safe-values`, or
-`init` refuses and lists the values left over. With two, the one `--failure-values` does not
-name is safe, and `init` says so. `design.csv` has no `zero_tolerance` column, so the plan turns
-the zero-tolerance gate off, and its header says how to turn it on. `init` uses only the
+comparison when there are several models. It covers one task: `analyze` requires a cohort's
+evaluations to share one configuration, task included, so `init` refuses logs of several tasks;
+run it once for each task. `init` never guesses which scores are failures: name them with
+`--failure-values` or `--failure-threshold`. Nor does it take a value nobody named as safe: when
+the score has more than two values, name the safe ones with `--safe-values`, or `init` refuses
+and lists the values left over. With two, the one `--failure-values` does not name is safe, and
+`init` says so. `design.csv` has no `zero_tolerance` column, so the plan turns the
+zero-tolerance gate off, and its header says how to turn it on. `init` uses only the
 evaluations that finished successfully and names the logs it ignored; its suggested `analyze`
 command then lists the logs it used, since `analyze` would report the others incomplete. The
 plan's header lists each choice `init` made and the assumption it rests on, from

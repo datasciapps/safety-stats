@@ -4,9 +4,10 @@ Five prompts in two metadata categories; prompt ``p0`` fails on odd epochs and e
 other prompt is safe, so the fixed-design root risk is exactly 0.1 for any epoch count
 that is a multiple of two.
 
-``mock_task`` takes other names and sample metadata, for logs of several tasks, of a score
-with more values, or of metadata a sample lacks: a sample whose metadata lists ``verdicts``
-gets them in turn, one per epoch, and one with ``error`` set makes its evaluation fail.
+``mock_task`` takes other names, sample identifier prefixes and sample metadata, for logs of
+several tasks, of a score with more values, or of metadata a sample lacks: a sample whose
+metadata lists ``verdicts`` gets them in turn, one per epoch, and one with ``error`` set makes
+its evaluation fail.
 """
 
 from __future__ import annotations
@@ -49,12 +50,15 @@ def fail_where_asked():  # type: ignore[no-untyped-def]
 
 
 def mock_task(
-    name: str = "mock_safety", metadata: Sequence[Mapping[str, Any]] = DEFAULT_METADATA
+    name: str = "mock_safety",
+    metadata: Sequence[Mapping[str, Any]] = DEFAULT_METADATA,
+    *,
+    prefix: str = "p",
 ) -> Task:
     return Task(
         name=name,
         dataset=[
-            Sample(input=f"question {index}", id=f"p{index}", metadata=dict(item))
+            Sample(input=f"question {index}", id=f"{prefix}{index}", metadata=dict(item))
             for index, item in enumerate(metadata)
         ],
         # The default task keeps its single solver, so the logs it writes stay as they were.
