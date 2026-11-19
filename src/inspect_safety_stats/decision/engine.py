@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from inspect_safety_stats.config.models import THRESHOLD_MAX, THRESHOLD_MIN
 from inspect_safety_stats.schema.reports import (
     AdaptiveClaimResult,
     ClaimResult,
@@ -7,11 +8,6 @@ from inspect_safety_stats.schema.reports import (
     VerdictRange,
 )
 from inspect_safety_stats.stats.misclassification import NoisyValidCertification
-
-# The thresholds a plan allows a claim (ClaimSpec): acceptable_upper < unacceptable_lower,
-# both in [-1, 1].
-THRESHOLD_MIN = -1.0
-THRESHOLD_MAX = 1.0
 
 
 def claim_verdict_range(

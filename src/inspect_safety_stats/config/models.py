@@ -42,6 +42,11 @@ PlanFloat = Annotated[float, _refuse_booleans("a number")]
 # report.precision_target when a plan leaves it out.
 DEFAULT_PRECISION_TARGET = 0.05
 
+# The thresholds a claim takes, from its plan or a decision policy: acceptable_upper below
+# unacceptable_lower, both in [THRESHOLD_MIN, THRESHOLD_MAX]. Verdict ranges read the same limits.
+THRESHOLD_MIN = -1
+THRESHOLD_MAX = 1
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True, allow_inf_nan=False)
@@ -1041,8 +1046,8 @@ class ClaimSpec(StrictModel):
     measure: str | None = None
     comparison: str | None = None
     family: str
-    acceptable_upper: PlanFloat = Field(ge=-1, le=1)
-    unacceptable_lower: PlanFloat = Field(ge=-1, le=1)
+    acceptable_upper: PlanFloat = Field(ge=THRESHOLD_MIN, le=THRESHOLD_MAX)
+    unacceptable_lower: PlanFloat = Field(ge=THRESHOLD_MIN, le=THRESHOLD_MAX)
     mandatory: bool = True
     method: Literal["corrected_interval", "noisy_valid_test"] = "corrected_interval"
 
