@@ -19,9 +19,13 @@ from inspect_safety_stats.analysis.judge_calibration import (
     _stratified_assumptions,
     _uncertified_base_warning,
     _uncertified_correction_warning,
-    _unclassified_assumption,
-    _unclassified_share,
     pooled_calibration_gap,
+)
+from inspect_safety_stats.analysis.unclassified_share import (
+    UnclassifiedShare,
+    share_alpha,
+    unclassified_assumption,
+    unclassified_share_bound,
 )
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.records import NormalizedData
@@ -37,8 +41,8 @@ def _judge_corrected_comparison_interval(
     baseline_calibration: JudgeCalibration,
     family_id: str | None,
     gap: str | None = None,
-    candidate_share: float = 0.0,
-    baseline_share: float = 0.0,
+    candidate_share: UnclassifiedShare | None = None,
+    baseline_share: UnclassifiedShare | None = None,
     tail: bool = False,
     scoped_group: str | None = None,
     primary_scenario: str | None = None,
@@ -68,6 +72,10 @@ def _judge_corrected_comparison_interval(
     requires an interval that exposes both arm bounds -- the two-arm rectangle used by
     weighted KL/Chernoff and by every comparison set. A direct contrast interval, which
     bounds only the difference, is skipped.
+
+    ``candidate_share`` and ``baseline_share`` bound each arm's share of unclassified
+    rollouts; without one, that arm is taken to have none. A measured calibration adds each
+    bound's alpha to its own.
     """
 
     primary = next((item for item in result.intervals if item.role == "primary"), None)
@@ -81,6 +89,12 @@ def _judge_corrected_comparison_interval(
     )
     if any(value is None for value in arms):
         return None
+    # Over the policy-free box an arm's share that its bounds complete drops out of both
+    # ends, so that arm needs no bound on it and spends no alpha on one.
+    if any(candidate_policy) and candidate_share is not None and candidate_share.in_bounds:
+        candidate_share = None
+    if any(baseline_policy) and baseline_share is not None and baseline_share.in_bounds:
+        baseline_share = None
     candidate = correct_judge_risk(
         observed_lower=cast(float, primary.candidate_lower),
         observed_upper=cast(float, primary.candidate_upper),
@@ -90,7 +104,9 @@ def _judge_corrected_comparison_interval(
             if any(candidate_policy)
             else candidate_calibration
         ),
-        unclassified_share=0.0 if any(candidate_policy) else candidate_share,
+        unclassified_share=candidate_share.upper if candidate_share is not None else 0.0,
+        unclassified_in_bounds=candidate_share.in_bounds if candidate_share is not None else True,
+        unclassified_share_per_prompt=candidate_share is not None and candidate_share.per_prompt,
         tail=tail,
     )
     baseline = correct_judge_risk(
@@ -102,7 +118,9 @@ def _judge_corrected_comparison_interval(
             if any(baseline_policy)
             else baseline_calibration
         ),
-        unclassified_share=0.0 if any(baseline_policy) else baseline_share,
+        unclassified_share=baseline_share.upper if baseline_share is not None else 0.0,
+        unclassified_in_bounds=baseline_share.in_bounds if baseline_share is not None else True,
+        unclassified_share_per_prompt=baseline_share is not None and baseline_share.per_prompt,
         tail=tail,
     )
     arm_notes = _arm_notes(
@@ -130,7 +148,7 @@ def _judge_corrected_comparison_interval(
         )
     spent = sum(
         item.alpha or 0.0 for item in (candidate_calibration, baseline_calibration)
-    )
+    ) + sum(share.alpha for share in (candidate_share, baseline_share) if share is not None)
     base_alpha = primary.family_alpha
     certified = gap is None and result.eligibility == "certifying"
     # A stratified design labels some fine strata more often than others; its fine strata,
@@ -209,7 +227,7 @@ def _judge_corrected_comparison_interval(
                     )
                     + ", and so does "
                     "the comparison, so they measure the judge's accuracy for both arms.",
-                    "Coverage is the union bound over that region and both arm calibrations.",
+                    _comparison_coverage(candidate_share, baseline_share),
                 ]
                 if certified
                 else []
@@ -221,19 +239,50 @@ def _judge_corrected_comparison_interval(
     )
 
 
-def _arm_notes(arms: tuple[tuple[str, float, tuple[int, int], bool], ...]) -> list[str]:
-    """What each arm's correction assumed of the rollouts the judge did not classify."""
+def _arm_notes(
+    arms: tuple[tuple[str, UnclassifiedShare | None, tuple[int, int], bool], ...],
+) -> list[str]:
+    """What each arm's correction assumed of the rollouts the judge did not classify.
+
+    An arm's share is None where it needs no bound: an arm without one is taken to have no
+    unclassified rollouts, and over the policy-free box a share the bounds complete drops out.
+    """
 
     notes = []
     for arm, share, policy, possible in arms:
         if any(policy):
-            notes.append(f"{arm.capitalize()} arm: {_policy_assumption(*policy)}")
-            continue
-        if possible:
+            notes.append(
+                f"{arm.capitalize()} arm: "
+                + _policy_assumption(*policy, excluded=share is not None)
+            )
+        elif possible:
             notes.append(f"{arm.capitalize()} arm: {_policy_absent_assumption()}")
-        if share > 0:
-            notes.append(f"{arm.capitalize()} arm: {_unclassified_assumption(share)}")
+        if share is not None and share.upper > 0:
+            notes.append(f"{arm.capitalize()} arm: {unclassified_assumption(share)}")
     return notes
+
+
+def _comparison_coverage(
+    candidate_share: UnclassifiedShare | None, baseline_share: UnclassifiedShare | None
+) -> str:
+    """The union a certified corrected comparison's coverage rests on."""
+
+    bounded = [
+        arm
+        for arm, share in (("candidate", candidate_share), ("baseline", baseline_share))
+        if share is not None
+    ]
+    if not bounded:
+        return "Coverage is the union bound over that region and both arm calibrations."
+    if len(bounded) == 2:
+        return (
+            "Coverage is the union bound over that region, both arm calibrations and both "
+            "arms' bounds on their unclassified share."
+        )
+    return (
+        "Coverage is the union bound over that region, both arm calibrations and the "
+        f"{bounded[0]} arm's bound on its unclassified share."
+    )
 
 
 def _assumed_comparison_interval(
@@ -411,12 +460,7 @@ def _apply_judge_correction_to_comparisons(
             )
             if gap is not None:
                 gaps.append(f"{arm} cohort {scope[0]!r}: {gap}")
-        candidate_share = _unclassified_share(
-            _scope_population(population, data, candidate_scope), weights, measure_type
-        )
-        baseline_share = _unclassified_share(
-            _scope_population(population, data, baseline_scope), weights, measure_type
-        )
+        primary = next((item for item in result.intervals if item.role == "primary"), None)
         candidate_policy = _policy_rollouts(
             _scope_population(population, data, candidate_scope), weights
         )
@@ -432,6 +476,22 @@ def _apply_judge_correction_to_comparisons(
                     policy_rows.setdefault(scope[0], set()).add(result.group_id)
         corrected = False
         for candidate, baseline in pairs:
+            candidate_share, baseline_share = (
+                unclassified_share_bound(
+                    plan,
+                    data,
+                    _scope_population(population, data, scope),
+                    cohort_id=cohort_id,
+                    weights=weights,
+                    measure_type=measure_type,
+                    independence_profile=primary.independence_profile if primary else None,
+                    alpha=share_alpha(calibration.alpha, primary),
+                )
+                for scope, cohort_id, calibration in (
+                    (candidate_scope, result.candidate_cohort, candidate),
+                    (baseline_scope, result.baseline_cohort, baseline),
+                )
+            )
             interval = _judge_corrected_comparison_interval(
                 result=result,
                 candidate_calibration=candidate,

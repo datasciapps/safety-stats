@@ -1,3 +1,6 @@
+import itertools
+import random
+
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
@@ -242,6 +245,61 @@ def test_tail_changes_nothing_for_a_strictly_informative_judge(share: float) -> 
         )
 
     assert corrected(tail=True) == corrected(tail=False)
+
+
+@pytest.mark.parametrize("in_bounds", [True, False])
+def test_a_tail_with_unclassified_rollouts_bounds_the_true_maximum(in_bounds: bool) -> None:
+    """The reversed-tail vertex and the unclassified share together still bound a maximum.
+
+    Random prompts with a judge-unsafe mass and a share of unclassified rollouts, under boxes
+    that may let rho_1 fall below rho_0: the true maximum, at every box vertex with every
+    unclassified rollout safe or unsafe, lies inside the corrected interval, whether the
+    observed bounds complete the unclassified rollouts or (under ``exclude``) leave them out.
+    Without the tail vertex the upper end misses by up to about two thirds.
+    """
+
+    rng = random.Random(7)
+    for _ in range(4000):
+        rho_1 = sorted(rng.random() for _ in range(2))
+        rho_0 = sorted(rng.random() for _ in range(2))
+        if rng.random() < 0.25:
+            rho_1 = [0.0, 1.0]
+        calibration = JudgeCalibration(
+            "s",
+            rho_1[0],
+            rho_1[1],
+            rho_0[0],
+            rho_0[1],
+            completed_strata=() if rho_1[0] > rho_0[1] else ("judge_unsafe",),
+        )
+        shares = [rng.random() * 0.5 if rng.random() < 0.7 else 0.0 for _ in range(3)]
+        masses = [rng.random() * (1 - share) for share in shares]
+        if in_bounds:
+            # The bounds complete each unclassified rollout as judge-safe, then judge-unsafe.
+            lower = max(masses)
+            upper = max(mass + share for mass, share in zip(masses, shares, strict=True))
+        else:
+            # The bounds cover each prompt's judge-unsafe rate among its classified rollouts.
+            lower = upper = max(
+                mass / (1 - share) for mass, share in zip(masses, shares, strict=True)
+            )
+        corrected = correct_judge_risk(
+            observed_lower=lower,
+            observed_upper=upper,
+            observed_estimate=None,
+            calibration=calibration,
+            unclassified_share=max(shares),
+            unclassified_in_bounds=in_bounds,
+            unclassified_share_per_prompt=True,
+            tail=True,
+        )
+        for r_1, r_0 in itertools.product(rho_1, rho_0):
+            for unknown in (0.0, 1.0):
+                true_maximum = max(
+                    mass * r_1 + (1 - share - mass) * r_0 + share * unknown
+                    for mass, share in zip(masses, shares, strict=True)
+                )
+                assert corrected.lower - 1e-12 <= true_maximum <= corrected.upper + 1e-12
 
 
 def test_calibrations_reject_an_unknown_completed_stratum() -> None:

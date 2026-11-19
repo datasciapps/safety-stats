@@ -327,10 +327,14 @@ under the primary only, which keeps the artifact readable on a large taxonomy.
 **`validated` mode measures the same two parameters** from human labels. The labels weight
 every classified unit of the cohort equally, so they certify the corrected root only, and
 only when every unit carries the same weight in it: a direct design does, while
-`minimum_rewrites_per_stratum` oversampling small strata does not. Corrected nodes, slices
+`minimum_rewrites_per_stratum` oversampling small strata does not, and neither, usually, does
+plain `proportional_stratified`, whose largest-remainder rounding of `total_rewrites` rarely
+makes every stratum's draw count exactly proportional to its weight. Corrected nodes, slices
 and an unequally weighted root are sensitivity results (`eligibility: diagnostic`) with a
 warning that names the reason, because the judge's accuracy within them can differ from the
-pooled one. Point it at a `validation_manifest` keyed on the sample identifier materialization wrote --
+pooled one. The certified root rests on independent draws, one rollout per unit, and labels
+drawn as a simple random sample within each judge verdict stratum; see
+[on the generative path](judge-misclassification.md#on-the-generative-path) for the argument. Point it at a `validation_manifest` keyed on the sample identifier materialization wrote --
 a generative run has no prompt manifest to key on. It needs `rollouts_per_rewrite: 1`, so
 that each unit carries a single binary verdict, and it refuses rather than correcting when
 the labels do not establish a strictly informative judge.
@@ -587,10 +591,16 @@ that declares `inference.slice_family` also gets `family.csv`, one row per membe
 `slice_family` block in `report.json`. `generative analyze` exits `3` when the report carries
 an `ERROR` diagnostic; the report is still written, so the diagnostics can be read.
 
-Three fields are easy to misread:
+Four fields are easy to misread:
 
 - `estimate` applies the declared design weights; `raw_failure_rate` does not. They coincide
   only when every draw carries the same coefficient.
+- `unclassified_share` is the design weight, in this run, on units with no judge verdict:
+  rejected or unevaluated rewrites and missing scores. The bounds complete those units, safe at
+  the lower end and failing at the upper, while `estimate` leaves them out, so a large share
+  widens the interval around an estimate that describes only the classified units. A judge
+  correction uses an upper confidence bound on the design's share instead, reported as
+  `unclassified_upper` in each `corrected` row.
 - `effective_sample_size` is weight geometry, not information. Precision is governed by how
   many draws there are.
 - `coefficient_ratio` above 1 means the sharp exact kernel was unavailable. Under

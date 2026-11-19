@@ -23,11 +23,16 @@ from inspect_safety_stats.analysis.judge_calibration import (
     _scope_population,
     _transported_judge_interval,
     _uncertified_correction_warning,
-    _unclassified_share,
     _validated_judge_calibrations,
     pooled_calibration_gap,
 )
 from inspect_safety_stats.analysis.results import RiskRows
+from inspect_safety_stats.analysis.unclassified_share import (
+    UnclassifiedShare,
+    bounds_complete_unclassified,
+    share_alpha,
+    unclassified_share_bound,
+)
 from inspect_safety_stats.config.loader import report_path
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.records import NormalizedData
@@ -396,6 +401,25 @@ def _add_judge_corrections(
         )
         return row_weights(result), measure_type
 
+    def unclassified(
+        result: GroupRiskResult | HierarchyRiskResult,
+        rollouts: dict[str, PromptRollouts],
+        spent: float | None,
+    ) -> UnclassifiedShare:
+        """A row's share of unclassified rollouts, bounded under the row's own assumption."""
+        weights, measure_type = weighting(result)
+        base = next((item for item in result.intervals if item.role == "primary"), None)
+        return unclassified_share_bound(
+            plan,
+            data,
+            rollouts,
+            cohort_id=result.cohort_id,
+            weights=weights,
+            measure_type=measure_type,
+            independence_profile=base.independence_profile if base is not None else None,
+            alpha=share_alpha(spent, base),
+        )
+
     if spec.mode == "transported":
         published = spec.published_set
         if published is None:
@@ -405,9 +429,19 @@ def _add_judge_corrections(
             human_unsafe=published.human_unsafe,
             alpha=published.sensitivity_alpha,
         )
+        # Bounds that complete every unclassified rollout already hold its worst case, and
+        # dividing by the sensitivity only enlarges it; bounds that drop some need the share.
+        completing = bounds_complete_unclassified(plan)
         for result in targets:
             interval = _transported_judge_interval(
-                result=result, published=published, sensitivity_lower=sensitivity_lower
+                result=result,
+                published=published,
+                sensitivity_lower=sensitivity_lower,
+                unclassified=(
+                    None
+                    if completing
+                    else unclassified(result, population.get(result.cohort_id, {}), None)
+                ),
             )
             if interval is not None:
                 result.intervals.append(interval)
@@ -464,7 +498,7 @@ def _add_judge_corrections(
                 continue
             weights, measure_type = weighting(result)
             cohort_population = population.get(result.cohort_id, {})
-            share = _unclassified_share(cohort_population, weights, measure_type)
+            share = unclassified(result, cohort_population, None)
             by_policy = _policy_rollouts(cohort_population, weights)
             if any(by_policy):
                 policy_rows.setdefault(result.cohort_id, set()).add(result.group_id)
@@ -475,7 +509,7 @@ def _add_judge_corrections(
                     primary_scenario=spec.primary,
                     family_id=None,
                     judge_alpha=None,
-                    unclassified_share=share,
+                    unclassified=share,
                     tail=measure_type != "weighted_mean",
                     scoped_groups=spec.groups,
                     per_cohort=calibration.scenario_id in per_cohort,
@@ -528,7 +562,11 @@ def _add_judge_corrections(
             weights=weights,
             group_id=scope[1],
         )
-        share = _unclassified_share(scope_population, weights, measure_type)
+        share = unclassified(
+            result,
+            scope_population,
+            measured.alpha if measured.alpha is not None else judge_alpha,
+        )
         by_policy = _policy_rollouts(scope_population, weights)
         if any(by_policy):
             policy_rows.setdefault(result.cohort_id, set()).add(result.group_id)
@@ -539,7 +577,7 @@ def _add_judge_corrections(
             family_id=spec.family,
             judge_alpha=judge_alpha,
             gap=gap,
-            unclassified_share=share,
+            unclassified=share,
             tail=measure_type != "weighted_mean",
             scoped_group=scope[1],
             stratified=stratified,
@@ -569,7 +607,7 @@ def _add_judge_corrections(
                     alpha=judge_alpha / scope_count,
                     family_id=spec.family,
                     gap=gap,
-                    unclassified_share=share,
+                    unclassified_share=share.observed,
                     scoped_group=scope[1],
                 )
             )
@@ -585,7 +623,7 @@ def _add_judge_corrections(
                     alpha=judge_alpha / scope_count,
                     family_id=spec.family,
                     gap=gap,
-                    unclassified_share=share,
+                    unclassified_share=share.observed,
                     scoped_group=scope[1],
                     policy_classified=by_policy,
                 )

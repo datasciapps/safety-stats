@@ -15,15 +15,19 @@ from typing import Any
 
 import pytest
 
+from inspect_safety_stats.stats import JudgeCalibration, correct_judge_risk
+from inspect_safety_stats.stats.binomial import binomial_upper_bound
 from inspect_safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
 from tests.diagnostic_codes.harness import Inputs, Outcome, claim
 from tests.diagnostic_codes.judge_analysis_cases import (
     DECLARED,
     RHO_0,
     RHO_1,
+    ROLLOUTS,
     assumed,
     census,
     comparison,
+    declared_correction,
     judge_verdicts,
     judged,
     panel,
@@ -109,15 +113,14 @@ def test_an_assumed_correction_credits_no_judge_error_on_a_row_a_policy_classifi
         )
         for item in widened.assumptions
     )
-    # Group b does not, so it keeps the declared box.
+    # Over that box the row's unclassified share drops out, so it states no bound on one.
+    assert not any(item.startswith("Unclassified rollouts") for item in widened.assumptions)
+    # Group b does not, so it keeps the declared box and bounds its share.
     row = _row(outcome, "b")
     plain = _interval(row, DECLARED)
-    assert plain.lower == pytest.approx(
-        row.lower * RHO_1[0] + (1 - row.lower) * RHO_0[0], abs=1e-12
-    )
-    assert plain.upper == pytest.approx(
-        row.upper * RHO_1[1] + (1 - row.upper) * RHO_0[1], abs=1e-12
-    )
+    expected = declared_correction(row, prompts=1)
+    assert plain.lower == pytest.approx(expected.lower, abs=1e-12)
+    assert plain.upper == pytest.approx(expected.upper, abs=1e-12)
     _assumes_none(plain)
     (found,) = outcome.with_code("JUDGE_CORRECTION_POLICY_CLASSIFIED")
     assert found.details == {"groups": ["all"], "policy_safe": safe, "policy_failures": failures}
@@ -174,6 +177,57 @@ def test_a_validated_correction_of_such_a_row_still_certifies_and_has_no_referen
     assert _interval(other, "judge_corrected_validated_delta") is not None
     plain = _interval(other, corrected.interval_id)
     _assumes_none(plain)
+    # Over the widened box the share of unclassified rollouts drops out, so the policy row
+    # spends no alpha on a bound on it, and its coverage names none. Group b bounds its share
+    # at a quarter of the calibration's alpha, on top of it.
+    assert plain.family_alpha == pytest.approx(corrected.family_alpha * 1.25, rel=1e-12, abs=0)
+    assert not any("nclassified rollouts hold" in item for item in corrected.assumptions)
+    assert (
+        "Coverage is the union bound over the underlying interval and the four calibration "
+        "endpoints." in corrected.assumptions
+    )
+    assert any(item.startswith("Unclassified rollouts hold") for item in plain.assumptions)
+
+
+def test_a_row_whose_bounds_exclude_unclassified_rollouts_still_bounds_their_share(
+    tmp_path: Any,
+) -> None:
+    """Under ``missing: exclude`` the row's bounds cover only its classified rollouts' rate.
+
+    The widened box corrects that rate, policy-classified rollouts included, and the share of
+    unclassified rollouts still moves it: a weighted mean's share bound holds only for the
+    prompts' mean share, so each end moves outward by the whole bound.
+    """
+
+    def data(inputs: Inputs) -> None:
+        _classify_first_by_policy("blocked_safe")(inputs)
+        inputs.plan["inputs"]["score"]["missing"] = "exclude"
+        # p2's last rollout has no score, so the plan leaves it out of p2's bounds.
+        last = inputs.rollouts[-1]
+        assert last["item_id"] == "p2"
+        last["score_harmful"] = None
+
+    outcome = judged(assumed, data)(tmp_path)
+
+    row = _row(outcome)
+    widened = _interval(row, DECLARED)
+    primary = next(item for item in row.intervals if item.role == "primary")
+    assert primary.independence_profile is None
+    alpha = primary.directional_family_alpha
+    # Each prompt's share takes an exact Clopper-Pearson bound at the row's one-sided alpha
+    # over its two prompts; p2 has one unclassified rollout of twenty.
+    share = 0.5 * binomial_upper_bound(0, ROLLOUTS, alpha=alpha / 2) + 0.5 * (
+        binomial_upper_bound(1, ROLLOUTS, alpha=alpha / 2)
+    )
+    assert widened.lower == pytest.approx(max(0.0, row.lower * RHO_1[0] - share), abs=1e-12)
+    assert widened.upper == pytest.approx(
+        min(1.0, row.upper + (1 - row.upper) * RHO_0[1] + share), abs=1e-12
+    )
+    assert any(
+        "The plan's missing or error policy leaves the unclassified rollouts out" in item
+        for item in widened.assumptions
+    )
+    assert any(item.startswith("Unclassified rollouts hold") for item in widened.assumptions)
 
 
 def test_each_arm_of_a_comparison_is_corrected_by_its_own_rollouts(tmp_path: Any) -> None:
@@ -193,19 +247,31 @@ def test_each_arm_of_a_comparison_is_corrected_by_its_own_rollouts(tmp_path: Any
     assert corrected.candidate_upper == pytest.approx(
         primary.candidate_upper + (1 - primary.candidate_upper) * RHO_0[1], abs=1e-12
     )
-    assert corrected.baseline_lower == pytest.approx(
-        primary.baseline_lower * RHO_1[0] + (1 - primary.baseline_lower) * RHO_0[0], abs=1e-12
+    # The baseline keeps the declared box and bounds its share: none of its rollouts went
+    # unclassified, so the KL/Chernoff bound over the arm's 40 independent rollouts at the
+    # comparison's one-sided alpha is 1 - alpha ** (1 / 40).
+    assert primary.independence_profile == "rollout"
+    assert primary.directional_family_alpha is not None
+    baseline = correct_judge_risk(
+        observed_lower=primary.baseline_lower,
+        observed_upper=primary.baseline_upper,
+        observed_estimate=result.baseline_estimate,
+        calibration=JudgeCalibration("declared", *RHO_1, *RHO_0),
+        unclassified_share=1 - primary.directional_family_alpha ** (1 / 40),
     )
-    assert corrected.baseline_upper == pytest.approx(
-        primary.baseline_upper * RHO_1[1] + (1 - primary.baseline_upper) * RHO_0[1], abs=1e-12
-    )
+    assert corrected.baseline_lower == pytest.approx(baseline.lower, abs=1e-12)
+    assert corrected.baseline_upper == pytest.approx(baseline.upper, abs=1e-12)
     assert any(
         item.startswith("Candidate arm: 1 of the row's rollouts were classified by a plan policy")
         for item in corrected.assumptions
     )
     # The baseline's cohort holds no such rollout, and the plan sets no policy that classifies
-    # rollouts, so its arm states nothing of them.
-    assert not any(item.startswith("Baseline arm:") for item in corrected.assumptions)
+    # rollouts, so its arm states nothing of them, only its bound on the unclassified share.
+    assert [
+        item[: len("Baseline arm: Unclassified")]
+        for item in corrected.assumptions
+        if item.startswith("Baseline arm:")
+    ] == ["Baseline arm: Unclassified"]
     (found,) = outcome.with_code("JUDGE_CORRECTION_POLICY_CLASSIFIED")
     assert found.details["groups"] == ["all"]
 
@@ -224,7 +290,10 @@ def test_an_arm_without_such_rollouts_states_what_its_correction_assumes(tmp_pat
     notes = [item for item in corrected.assumptions if item.startswith(("Candidate", "Baseline"))]
     assert notes[0].startswith("Candidate arm: 1 of the row's rollouts were classified")
     assert notes[1].startswith(f"Baseline arm: {ABSENT}")
-    assert len(notes) == 2
+    # The baseline arm also bounds its unclassified share; over the candidate's widened box
+    # that share drops out.
+    assert notes[2].startswith("Baseline arm: Unclassified rollouts hold 0 of the row's weight")
+    assert len(notes) == 3
 
 
 # --- The judge strata leave such rollouts out -----------------------------------------------

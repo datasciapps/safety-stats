@@ -274,7 +274,7 @@ def test_stratified_labels_certify_a_correction_weighted_by_fine_stratum(
     assert any("is binomial" in text for text in corrected.assumptions)
     assert (
         "Coverage is the union bound over the underlying interval, every calibration count "
-        "bound and the four Clopper-Pearson bounds."
+        "bound, the four Clopper-Pearson bounds and the bound on the unclassified share."
     ) in corrected.assumptions
     # The judge-safe disagreements are a census, so their ten truly unsafe rollouts are known,
     # and no sampled judge-safe agreement is unsafe. The 900 judge-safe rollouts still only

@@ -790,10 +790,13 @@ def test_validated_judge_calibration_produces_certifying_corrections(
     assert corrected.role == "reference"
     assert corrected.method == "validated_judge_misclassification_correction"
     assert corrected.calibration_method == "validated_judge_calibration"
-    # Coverage is the union bound over the base interval and the calibration budget.
+    # Coverage is the union bound over the base interval, the calibration budget and the
+    # bound on the unclassified share, taken at a quarter of the calibration's budget.
     base = next(item for item in mean.intervals if item.role == "primary")
     assert base.family_alpha is not None
-    assert corrected.simultaneous_coverage == pytest.approx(1 - base.family_alpha - 0.05)
+    assert corrected.simultaneous_coverage == pytest.approx(
+        1 - base.family_alpha - 0.05 - 0.05 / 4, abs=1e-12
+    )
     assert corrected.raw_lower == pytest.approx(mean.lower)
 
     # A node spanning the whole cohort is the same estimand, so it stays certified. A node
@@ -826,8 +829,9 @@ def test_validated_judge_calibration_produces_certifying_corrections(
         assert "interval:judge_corrected_validated" in result.evidence_refs
         assert result.lower == pytest.approx(corrected.lower)
         assert result.upper == pytest.approx(corrected.upper)
-        # The error budget is the union of the claim family and the calibration.
-        assert result.alpha == pytest.approx(0.05 + 0.05)
+        # The error budget is the union of the claim family, the calibration and the bound
+        # on the unclassified share.
+        assert result.alpha == pytest.approx(0.05 + 0.05 + 0.05 / 4, abs=1e-12)
         # A calibration box gives a range of corrected estimates, not a single one.
         assert result.estimate is None
         assert any("validated judge correction" in reason for reason in result.reasons)
@@ -850,7 +854,7 @@ def test_validated_judge_calibration_produces_certifying_corrections(
         assert record["judge_corrected"] is True
         assert record["bound"]["lower"] == result.lower
         assert record["bound"]["upper"] == result.upper
-        assert record["bound"]["alpha"] == pytest.approx(0.05 + 0.05, rel=1e-12, abs=0)
+        assert record["bound"]["alpha"] == pytest.approx(0.05 + 0.05 + 0.05 / 4, rel=1e-12, abs=0)
         assert record["evidence"]["interval_id"] == "judge_corrected_validated"
         assert record["evidence"]["interval_method"] == corrected.method
 
@@ -1230,6 +1234,64 @@ def test_a_transported_plan_without_a_corrected_risk_row_still_names_its_publish
     assert "Judge flagged 100 of 120 human-unsafe items" in markdown
 
 
+def test_a_transported_bound_adds_back_the_rollouts_an_excluding_policy_drops(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Under ``missing: exclude`` the prompt bounds leave unscored rollouts out of p1's rate.
+
+    Ten of p1's twenty scores are missing and the rest PASS. If the ten are truly unsafe,
+    p1's true risk is 0.5, and so are the maximum and the CVaR at beta 0.5 over the two
+    prompts. Dividing the judge-system upper bound by the sensitivity bound gave 0.4625.
+    """
+    from inspect_safety_stats.stats.binomial import binomial_upper_bound
+
+    plan_path = _write_inputs(tmp_path)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8")
+        .replace("    missing: block\n", "    missing: exclude\n", 1)
+        .replace("  require_expected_rollouts: true\n", "  require_expected_rollouts: false\n", 1)
+        .replace("design:\n", _TRANSPORTED_CALIBRATION + "design:\n", 1),
+        encoding="utf-8",
+    )
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    unscored = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[unscored, "score_harmful"] = None
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    report = analyze(plan=load_plan(plan_path), logs="ignored")
+
+    sensitivity_lower = report.provenance["judge_calibration"]["sensitivity_lower"]
+    rows = {row.measure_id: row for row in report.group_risks}
+    for measure, worst_case in (("worst", 0.5), ("cvar", 0.5), ("mean", 0.25)):
+        row = rows[measure]
+        transported = next(
+            item for item in row.intervals if item.interval_id == "judge_corrected_transported"
+        )
+        assert transported.upper is not None and transported.upper >= worst_case
+        assert row.upper is not None
+        primary = next(item for item in row.intervals if item.role == "primary")
+        if measure != "mean":
+            # A tail row bounds each prompt's share at its share of the row's one-sided
+            # alpha, and takes the largest.
+            alpha = primary.directional_family_alpha
+            assert alpha is not None
+            share = binomial_upper_bound(10, 20, alpha=alpha / 2)
+            assert transported.upper == pytest.approx(
+                (1 - share) * min(1.0, row.upper / sensitivity_lower) + share,
+                rel=1e-12,
+                abs=0,
+            )
+        assert any(
+            "excludes unclassified rollouts" in text for text in transported.assumptions
+        )
+
+
 def test_transported_judge_calibration_never_moves_a_claim(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -1400,8 +1462,9 @@ def test_two_arm_comparisons_are_judge_corrected_per_cohort(
     assert corrected.upper == pytest.approx(
         min(1.0, corrected.candidate_upper - corrected.baseline_lower)
     )
-    # It spends one share of the judge budget per cohort it spans, not the whole family.
-    assert corrected.family_alpha == pytest.approx(2 * (0.05 / 2))
+    # It spends one share of the judge budget per cohort it spans, not the whole family, and
+    # a quarter of each share on that arm's unclassified share.
+    assert corrected.family_alpha == pytest.approx(2 * (0.05 / 2 + 0.05 / 2 / 4), abs=1e-12)
     assert primary.family_alpha is not None
     assert corrected.simultaneous_coverage == pytest.approx(
         1 - primary.family_alpha - corrected.family_alpha
@@ -1519,6 +1582,13 @@ def test_assumed_scenarios_correct_each_cohort_and_arm_with_its_own_box(
     rows = [item for item in report.group_risks if item.measure_id == "mean"]
     assert {item.cohort_id for item in rows} == {"candidate", "baseline"}
     for risk in rows:
+        # No rollout went unclassified, but the population may still hold some: the share
+        # takes the KL/Chernoff bound over the row's 40 independent rollouts at the row's
+        # one-sided alpha, 1 - alpha ** (1 / 40) when none was seen.
+        primary = next(item for item in risk.intervals if item.role == "primary")
+        assert primary.independence_profile == "rollout"
+        assert primary.directional_family_alpha is not None
+        share = 1 - primary.directional_family_alpha ** (1 / 40)
         for scenario in ("declared", "pessimistic"):
             corrected = next(
                 item for item in risk.intervals if item.interval_id == f"judge_corrected_{scenario}"
@@ -1528,6 +1598,7 @@ def test_assumed_scenarios_correct_each_cohort_and_arm_with_its_own_box(
                 observed_upper=risk.upper,
                 observed_estimate=risk.estimate,
                 calibration=boxes[(scenario, risk.cohort_id)],
+                unclassified_share=share,
             )
             assert corrected.lower == pytest.approx(expected.lower, abs=1e-12)
             assert corrected.upper == pytest.approx(expected.upper, abs=1e-12)
@@ -1541,6 +1612,10 @@ def test_assumed_scenarios_correct_each_cohort_and_arm_with_its_own_box(
 
     row = next(item for item in report.comparisons if item.level is None)
     primary = next(item for item in row.intervals if item.role == "primary")
+    # Each arm bounds its own share the same way, at the comparison's one-sided alpha.
+    assert primary.independence_profile == "rollout"
+    assert primary.directional_family_alpha is not None
+    arm_share = 1 - primary.directional_family_alpha ** (1 / 40)
     for scenario in ("declared", "pessimistic"):
         corrected = next(
             item for item in row.intervals if item.interval_id == f"judge_corrected_{scenario}"
@@ -1554,6 +1629,7 @@ def test_assumed_scenarios_correct_each_cohort_and_arm_with_its_own_box(
                 observed_upper=getattr(primary, f"{arm}_upper"),
                 observed_estimate=estimate,
                 calibration=boxes[(scenario, cohort)],
+                unclassified_share=arm_share,
             )
             assert getattr(corrected, f"{arm}_lower") == pytest.approx(expected.lower, abs=1e-12)
             assert getattr(corrected, f"{arm}_upper") == pytest.approx(expected.upper, abs=1e-12)
@@ -4677,8 +4753,9 @@ def test_validated_correction_reports_directional_coverage_and_a_delta_reference
     # Each endpoint of the exact correction spends the base endpoint's alpha plus two of
     # the four calibration endpoints: half the calibration budget, not all of it.
     assert base.directional_family_alpha is not None
+    # The bound on the unclassified share spends a quarter of the budget on top.
     assert exact.upper_one_sided_coverage == pytest.approx(
-        1 - (base.directional_family_alpha + 0.05 / 2)
+        1 - (base.directional_family_alpha + 0.05 / 2 + 0.05 / 4), abs=1e-12
     )
     assert exact.lower_one_sided_coverage == exact.upper_one_sided_coverage
 
@@ -5456,7 +5533,8 @@ def test_a_judge_correction_of_a_projected_base_keeps_its_simultaneous_floor(
 ) -> None:
     """A projected base endpoint covers only at the simultaneous floor, not one-sided.
 
-    The corrected endpoint inherits that error plus half the calibration budget.
+    The corrected endpoint inherits that error plus half the calibration budget and the
+    alpha of the bound on the unclassified share, a quarter of the calibration budget.
     """
     _label_everything(tmp_path, monkeypatch)
     plan_path = _random_sample_validated_plan(
@@ -5473,7 +5551,7 @@ def test_a_judge_correction_of_a_projected_base_keeps_its_simultaneous_floor(
         item for item in mean.intervals if item.interval_id == "judge_corrected_validated"
     )
     assert corrected.upper_one_sided_coverage == pytest.approx(
-        1 - ((1 - base.simultaneous_coverage) + 0.05 / 2)
+        1 - ((1 - base.simultaneous_coverage) + 0.05 / 2 + 0.05 / 4), abs=1e-12
     )
     assert corrected.lower_one_sided_coverage == corrected.upper_one_sided_coverage
 

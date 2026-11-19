@@ -938,6 +938,59 @@ described in their pull requests.
   the field and the value and says what a mapping can list. Plans that loaded before and list
   none of these values are unchanged, and so are their hashes and reports.
 
+- **Judge corrections bound the population share of unclassified rollouts (changes
+  results).** A judge correction keeps rollouts with no judge verdict at their worst case and
+  maps only the classified mass through rho. It took the run's own share of such rollouts as
+  the population's, so a corrected upper bound could fall below true risk whenever the run saw
+  fewer than the population holds, a run that saw none included. In a seeded simulation of a
+  certified generative root with 30% of units unscored, the bound missed true risk in 23% of
+  runs against a reported alpha of 0.10. Every judge correction now takes a one-sided upper
+  confidence bound on the population share, under the row's own independence assumption:
+  fixed-design rows in `assumed`, `validated` and `transported` mode, comparison arms in
+  `assumed` and `validated` mode, and generative estimates. Its effects:
+  - A `validated` correction bounds the share at a quarter of the calibration's alpha and adds
+    that to its budget. `family_alpha`, the coverages and a claim's `alpha` grow by it: a claim
+    at family alpha 0.05 decided on a correction with judge alpha 0.05 now reports 0.1125.
+    Each row bounds its own share, so these hold for each row or claim, not jointly over rows.
+  - Corrected bounds widen where few rollouts bound the share. With none unclassified the
+    bound is about `log(1/alpha) / n` over `n` independent rollouts, and about
+    `log(P/alpha) / n` for each of `P` prompts of `n` rollouts when the row assumes nothing
+    between prompts. The lower end can fall by that times `rho_0` and the upper end rise by
+    that times `1 - rho_1`, so a box whose `rho_1` reaches 1 and `rho_0` reaches 0 is
+    unchanged but for floating-point rounding, which can move a bound by a unit in the last
+    place either way.
+  - The maximum and the top-k mean ignore weights, so a prompt of weight zero can set their
+    bounds. Their share bound counts every prompt the row lists, that one included; a
+    weighted mean and a CVaR count only the prompts they weight.
+  - A sampled design's share is taken at 1, even when the run has no unclassified rollout.
+    Its judge corrections therefore no longer lower the upper bound below the judge-system
+    upper bound: they can no longer show that the judge's false positives make true risk
+    lower than judge-reported risk. Under an excluding policy they are `[0, 1]`.
+  - Under `missing: exclude` or `errors: exclude` the judge-system bounds cover only the
+    classified rollouts' rate. The correction now corrects that rate and lets the share move
+    it at its worst case. A weighted mean's share bound holds only for the prompts' mean
+    share, which may sit on the prompts with the lowest classified rate or on those with the
+    highest, so each end moves by the whole bound; a tail measure's holds for every prompt, so
+    it is mixed in, `[(1 - s_U) A_L, (1 - s_U) A_U + s_U]`. It used to subtract the share from
+    an upper bound that never held it, and a `transported` correction left the excluded
+    rollouts out entirely: a maximum over two prompts, half of one prompt's scores missing,
+    got an upper bound of 0.4625 where true risk could be 0.5.
+  - A row or comparison arm holding rollouts a plan policy classified is corrected with
+    `rho_1` free to reach 1 and `rho_0` to fall to 0. Where its bounds complete the
+    unclassified rollouts, the share drops out of both ends of that correction, so such a row
+    bounds no share and spends no alpha on one. Under an excluding policy it bounds the share
+    like any other row. See
+    [Rollouts a policy classifies](docs/judge-misclassification.md#rollouts-a-policy-classifies).
+  - Generative corrected rows in `report.json` gain `unclassified_upper` and
+    `unclassified_alpha`.
+
+  See [Unclassified rollouts](docs/judge-misclassification.md#unclassified-rollouts).
+
+- **The generative report page says why a judge correction is a sensitivity (changes
+  `report.html`).** The judge misclassification section lists the warnings of the corrected
+  root and slices it shows, which `report.json` already held, and says that the labels weight
+  every classified unit equally rather than every unit.
+
 - **Errors about a plan that does not fit the logs say what the logs hold (changes
   diagnostics).** These errors named only what the plan asked for, so a user had to open the
   logs to see what the plan should say:
@@ -1141,8 +1194,8 @@ described in their pull requests.
   slices and an unequally weighted root, for example under `minimum_rewrites_per_stratum`,
   are `diagnostic`, with a warning that names the reason. Corrected estimates also no longer
   shrink units with no judge verdict by `rho_1`: they keep their worst case, as on the
-  fixed-design path (#97), so corrected upper bounds can rise. Each node and slice reports the
-  design weight on those units as `unclassified_share`. See
+  fixed-design path (#97), so corrected upper bounds can rise. Each node, slice and comparison
+  arm in `report.json` reports the design weight on those units as `unclassified_share`. See
   [judge misclassification](docs/judge-misclassification.md#on-the-generative-path).
 
 - **Unscored pairs are bounded, not a broken pairing (changes results).** With `pair_key`, one

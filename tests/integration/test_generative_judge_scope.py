@@ -16,6 +16,8 @@ import pandas as pd
 import pytest
 import yaml
 
+from inspect_safety_stats.generative.inference import NodeEstimate
+from inspect_safety_stats.generative.judge import pooled_calibration_gap
 from inspect_safety_stats.generative.ledger import read_rewrites, read_selections
 from inspect_safety_stats.generative.runner import analyze_run, materialize_run
 from tests.generative_fixtures import SEEDS_WITH_TEXT, base_plan
@@ -95,7 +97,10 @@ def run_with_judge_misses(
     )
 
     in_node = [labels[prompt_id] for prompt_id, node_id in units if node_id.startswith(HARD_NODE)]
-    truth = {HARD_NODE: in_node.count("unsafe") / len(in_node)}
+    truth = {
+        HARD_NODE: in_node.count("unsafe") / len(in_node),
+        "all": list(labels.values()).count("unsafe") / len(labels),
+    }
     report = analyze_run(
         plan, artifacts, "logs", cohort="candidate", slices=("language=maltese",)
     )
@@ -129,7 +134,7 @@ def test_a_node_the_judge_misreads_is_not_certified_from_pooled_labels(
 def test_the_root_of_an_equal_weight_design_is_still_certified(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    report, _ = run_with_judge_misses(
+    report, truth = run_with_judge_misses(
         monkeypatch, tmp_path, {"method": "direct", "total_rewrites": 200}
     )
     assert report.tree.root.equal_coefficients
@@ -137,6 +142,8 @@ def test_the_root_of_an_equal_weight_design_is_still_certified(
     assert root.eligibility == "certifying"
     assert root.warnings == ()
     assert root.alpha > report.tree.alpha
+    # The pooled labels measure the root's accuracy, so its bound covers its true risk.
+    assert truth["all"] <= root.upper
 
 
 def test_an_unequally_weighted_root_is_not_certified(
@@ -156,3 +163,36 @@ def test_an_unequally_weighted_root_is_not_certified(
     root = next(item for item in report.corrected if item.node_id == "all")
     assert root.eligibility == "diagnostic"
     assert "the root gives some units" in root.warnings[0]
+
+
+@pytest.mark.parametrize(
+    ("ratio", "printed"), [(1.0004, "1.0004"), (2.5, "2.5"), (12.3456, "12.3")]
+)
+def test_the_warning_never_prints_unequal_weights_as_equal(ratio: float, printed: str) -> None:
+    # Three significant digits round a ratio just above 1 to "1", which reads as equal weight.
+    root = NodeEstimate(
+        node_id="all",
+        level="root",
+        depth=0,
+        node_weight=1.0,
+        draws=3,
+        trials=3,
+        failures=0,
+        unclassified=0,
+        estimate=0.0,
+        lower=0.0,
+        upper=0.5,
+        method="weighted_kl_chernoff",
+        alpha_lower=0.05,
+        alpha_upper=0.05,
+        frontier_id=None,
+        equal_coefficients=False,
+        maximum_coefficient=0.34,
+        coefficient_ratio=ratio,
+        effective_sample_size=3.0,
+        raw_failure_rate=None,
+        unclassified_share=0.0,
+    )
+    assert pooled_calibration_gap(root, root_id="all") == (
+        f"the root gives some units {printed} times the weight of others"
+    )
