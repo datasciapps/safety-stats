@@ -7,6 +7,8 @@ from typing import Literal
 
 from inspect_safety_stats.stats.binomial import binomial_bounds, binomial_lower_bound
 
+CalibrationBound = Literal["clopper_pearson", "confidence_sequence"]
+
 
 @dataclass(frozen=True)
 class JudgeCalibration:
@@ -21,6 +23,9 @@ class JudgeCalibration:
     parameter no label measured and which the box therefore completes as ``[0, 1]``. Such a
     box cannot be strictly informative, so the informativeness check applies only when no
     stratum is completed.
+
+    ``bound`` names how a validated box bounds each measured stratum: exact Clopper-Pearson
+    intervals, or anytime-valid confidence sequences for labelling that may stop on results.
     """
 
     scenario_id: str
@@ -31,6 +36,7 @@ class JudgeCalibration:
     source: str = "assumed"
     alpha: float | None = None
     completed_strata: tuple[str, ...] = ()
+    bound: CalibrationBound = "clopper_pearson"
 
     def __post_init__(self) -> None:
         for name, low, high in (
@@ -236,12 +242,57 @@ class JudgeStratumCounts:
             raise ValueError("labelled count cannot exceed the stratum size")
 
 
+def hypergeometric_confidence_sequence(
+    stratum: JudgeStratumCounts, *, alpha: float
+) -> tuple[float, float]:
+    """An anytime-valid range for the share of truly unsafe rows in a finite stratum.
+
+    The labelled rows are drawn one at a time without replacement, in a random order, from
+    a stratum of ``N = stratum_size`` rows of which an unknown ``K`` are truly unsafe. With
+    a uniform prior on ``K`` in ``{0, ..., N}``, the ratio of prior to posterior mass at the
+    true ``K`` is a nonnegative martingale starting at one (the prior-posterior ratio
+    martingale of Waudby-Smith and Ramdas, "Confidence sequences for sampling without
+    replacement", NeurIPS 2020). By Ville's inequality it ever exceeds ``1 / alpha`` with
+    probability at most ``alpha``, so the set of ``K`` whose posterior-to-prior ratio
+    exceeds ``alpha`` holds the true ``K`` at every sample size simultaneously. Labelling may
+    therefore stop at any time, also because of the labels seen so far.
+
+    After ``n`` labels with ``S`` unsafe, the posterior-to-prior ratio at ``K`` is
+    ``(n + 1) * P(S | N, K, n)``, with ``P`` the hypergeometric probability, because the
+    uniform prior's marginal likelihood of ``S`` is ``1 / (n + 1)``. That probability is
+    log-concave in ``K``, so the set is an interval. It is returned as shares of ``N``. With
+    no labels it is ``[0, 1]``, and a census pins the share exactly.
+
+    ``alpha`` bounds the probability that the range ever misses on either side, and so each
+    endpoint's too.
+    """
+
+    import numpy as np
+    from scipy.stats import hypergeom
+
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0, 1)")
+    size = stratum.stratum_size
+    if stratum.labelled == 0:
+        return 0.0, 1.0
+    candidates = np.arange(size + 1)
+    log_ratio = np.log(stratum.labelled + 1) + hypergeom.logpmf(
+        stratum.truly_unsafe, size, candidates, stratum.labelled
+    )
+    kept = candidates[log_ratio > np.log(alpha)]
+    if kept.size == 0:
+        # The ratio at the maximum-likelihood K is at least one, so this cannot happen.
+        raise ValueError("the confidence sequence is empty; the counts are inconsistent")
+    return float(kept[0]) / size, float(kept[-1]) / size
+
+
 def estimate_judge_calibration(
     *,
     scenario_id: str,
     unsafe_stratum: JudgeStratumCounts,
     safe_stratum: JudgeStratumCounts,
     alpha: float,
+    bound: CalibrationBound = "clopper_pearson",
 ) -> JudgeCalibration:
     """Estimate rho_1 and rho_0 from human labels drawn within each judge stratum.
 
@@ -252,8 +303,13 @@ def estimate_judge_calibration(
     spends no more than ``alpha``.
 
     Validity requires the labelled rows to be a simple random sample within their
-    stratum. That is a property of the collection protocol, not of the data, and is
-    recorded as a declared assumption rather than checked here.
+    stratum, of a size that did not depend on the labels. That is a property of the
+    collection protocol, not of the data, and is recorded as a declared assumption rather
+    than checked here; a plan's labelling protocol checks what the data can show.
+
+    ``bound="confidence_sequence"`` replaces each Clopper-Pearson interval with the
+    anytime-valid range of ``hypergeometric_confidence_sequence`` at the same endpoint
+    budget, which stays valid when labelling stopped because of the labels seen so far.
 
     A stratum without labels is completed conservatively: its parameter is a
     probability, so ``[0, 1]`` contains it with certainty and spends none of ``alpha``.
@@ -272,6 +328,9 @@ def estimate_judge_calibration(
     def bounds(stratum: JudgeStratumCounts) -> tuple[float, float]:
         if stratum.labelled == 0:
             return 0.0, 1.0
+        if bound == "confidence_sequence":
+            # Two-sided at the endpoint budget, so each endpoint keeps its alpha / 4.
+            return hypergeometric_confidence_sequence(stratum, alpha=endpoint_alpha)
         interval = binomial_bounds(
             stratum.truly_unsafe,
             stratum.labelled,
@@ -293,6 +352,7 @@ def estimate_judge_calibration(
         rho_0=(rho_0_lower, rho_0_upper),
         alpha=alpha,
         completed=completed,
+        bound=bound,
     )
 
 
@@ -303,6 +363,7 @@ def _validated_calibration(
     rho_0: tuple[float, float],
     alpha: float,
     completed: tuple[str, ...],
+    bound: CalibrationBound = "clopper_pearson",
 ) -> JudgeCalibration:
     """The measured box, or the refusal of one that does not establish an informative judge."""
 
@@ -321,6 +382,7 @@ def _validated_calibration(
         source="validated",
         alpha=alpha,
         completed_strata=completed,
+        bound=bound,
     )
 
 

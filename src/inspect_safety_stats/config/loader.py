@@ -78,6 +78,10 @@ def load_plan(path: str | Path) -> AnalysisPlan:
         strata = calibration.validation_strata
         if not strata.is_absolute():
             calibration.validation_strata = (source.parent / strata).resolve()
+    if calibration is not None and calibration.protocol is not None:
+        queue = calibration.protocol.queue
+        if not queue.is_absolute():
+            calibration.protocol.queue = (source.parent / queue).resolve()
     return plan
 
 
@@ -125,6 +129,10 @@ def report_plan(plan: AnalysisPlan) -> dict[str, Any]:
         value["inputs"]["judge_calibration"]["validation_strata"] = report_path(
             calibration.validation_strata, plan
         )
+    if calibration is not None and calibration.protocol is not None:
+        value["inputs"]["judge_calibration"]["protocol"]["queue"] = report_path(
+            calibration.protocol.queue, plan
+        )
     return value
 
 
@@ -152,4 +160,8 @@ def canonical_plan_value(plan: AnalysisPlan) -> dict[str, Any]:
             strata = _plan_relative(calibration.validation_strata, source)
             if strata is not None:
                 value["inputs"]["judge_calibration"]["validation_strata"] = strata
+        if calibration is not None and calibration.protocol is not None:
+            queue = _plan_relative(calibration.protocol.queue, source)
+            if queue is not None:
+                value["inputs"]["judge_calibration"]["protocol"]["queue"] = queue
     return value
