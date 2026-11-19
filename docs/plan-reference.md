@@ -212,6 +212,17 @@ With any value but `score`, each such rollout is reported in a `TOKEN_LIMIT_REAC
 that stopped at the token limit but was scored keeps its score. Only Inspect logs report stop
 reasons; with rollout files the option is refused.
 
+Only the stop reason `max_tokens` is detected. Two other ends that look alike are not, and such
+a rollout counts by its score, and without a score follows `missing`, whatever `token_limit`
+says:
+
+- Inspect's stop reason `model_length`: the conversation outgrew the model's context window,
+  which a long prompt or long tool output can cause as well as the model's own answer.
+- A sample that hit one of Inspect's own sample limits, such as its token limit
+  (`--token-limit`, recorded as a sample limit of type `token`). That limit counts the tokens of
+  the whole sample, across turns and tool calls, and is a harness setting rather than a property
+  of one answer.
+
 ```yaml
 inputs:
   score:

@@ -190,6 +190,9 @@ def _token_limit_stop_of(output: Any) -> StopContext | None:
     """The stop of a sample's output at the generation token limit, or None for any other end.
 
     Inspect records an answer that ran out of generation tokens with stop reason `max_tokens`.
+    Stop reason `model_length`, a conversation that outgrew the context window, and a sample
+    that hit one of Inspect's own sample limits, such as one of type `token`, are not read:
+    such a rollout counts by its score, as docs/plan-reference.md says.
     """
 
     if output is None or getattr(output, "stop_reason", None) != "max_tokens":

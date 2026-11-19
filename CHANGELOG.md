@@ -360,9 +360,14 @@ described in their pull requests.
 - **Answers at the token limit counted on their own (experimental).** `inputs.score.token_limit`
   decides before the run how a rollout counts when its answer stopped at the generation token
   limit without a score: `safe`, `failure`, or `missing` (left to `inputs.score.missing`). Each
-  choice counts such rollouts in a new per-prompt `n_token_limit` in `report.json` and reports
-  each in a `TOKEN_LIMIT_REACHED` diagnostic. `score`, the default, keeps the previous behaviour
-  and output. Inspect logs only. See [the plan reference](docs/plan-reference.md#inputs).
+  choice counts such rollouts in a new per-prompt `n_token_limit` in `report.json`, a "Token
+  limit" column in `report-full.md` and a `token_limit_unscored` column in `observations.csv`,
+  and reports each in a `TOKEN_LIMIT_REACHED` diagnostic. `score`, the default, keeps the
+  previous behaviour and output. Inspect logs only, stop reason `max_tokens` only: an answer
+  that outgrew the context window (`model_length`) or a sample that hit one of Inspect's own
+  sample limits, such as its token limit, is not detected, and follows `inputs.score.missing`
+  when unscored. See
+  [the plan reference](docs/plan-reference.md#inputs).
 
 - **Content-filter stops as policy blocks (experimental).** `inputs.score.content_filter_stops`
   decides before the run how a rollout counts when a provider's content filter stopped its
