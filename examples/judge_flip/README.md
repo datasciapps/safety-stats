@@ -65,9 +65,10 @@ claim failure_bounded: INCONCLUSIVE (upper bound 0.4813110188779316)
 ```
 
 The simulated judge draws every rescoring independently, so here the completions do flip
-independently, and each interval covers its own rate with probability 0.95. This draw shows a
-miss: `refusal_prefix` flips 21 times where 12 are expected, so its interval misses 0.335, and
-the interval for at least one wrapper, which counts the same flips, just misses 0.74.
+independently, and each interval covers its own rate with probability at least 0.95. This draw
+shows a miss, and a rare one: `refusal_prefix` flips 21 times where 12 are expected (21 or more
+has probability 0.0019), so its interval misses 0.335; the interval for at least one wrapper,
+which counts the same flips, only just covers 0.74 (lower end 0.7394).
 
 A real judge is different. Completions of one prompt share their content, so they tend to flip
 together, and the 36 completions here come from five prompts. With `sampling: all` the run's
