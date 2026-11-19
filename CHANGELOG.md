@@ -5,6 +5,13 @@ described in their pull requests.
 
 ## Unreleased
 
+### Fixed
+
+- **A zero-tolerance column that the manifest lacks is an error.** When a plan sets
+  `policy.zero_tolerance.manifest_field` and the manifest has no such column, the analysis
+  silently held no prompt to zero tolerance. It now stops with an error that names the column.
+  The default field `zero_tolerance` stays optional.
+
 ### Added
 
 - **An offline example compares two versions of a harness around the same model.**
@@ -738,12 +745,12 @@ described in their pull requests.
 - **A manifest needs only the identifier columns the plan uses.** The design manifest used to
   need `question_id` and `task_id` even when the plan never named them. Now `prompt_id` is
   always required, and `question_id` and `task_id` only when the plan names them, for example in
-  `design.hierarchy` (whose default names both), a weight hierarchy, a group filter or an
-  independence profile's `block_by`. A level that the plan doesn't name and the manifest omits
-  is set to each prompt's `prompt_id`, so each prompt counts as its own question or task.
-  `plan fixed-design --manifest` requires the levels that its `--weights` name. Manifests that
-  were accepted before give the same results. See
-  [`inputs`](docs/plan-reference.md#inputs).
+  `design.hierarchy` and `design.weights` (whose defaults name both), a weight hierarchy, a group
+  filter, an independence profile's `block_by` or a comparison's `pair_key` or `cluster_key`. A
+  level that the plan doesn't name and the manifest omits is set to each prompt's `prompt_id`,
+  so each prompt counts as its own question or task. `plan fixed-design --manifest` requires the
+  levels that its `--weights` name. Manifests that were accepted before give the same results.
+  See [`inputs`](docs/plan-reference.md#inputs).
 
 - **A sampled design's report states the frame as its scope (changes report text).** Every
   report stated the fixed-design scope, `design: fixed` and "Results apply to the declared
