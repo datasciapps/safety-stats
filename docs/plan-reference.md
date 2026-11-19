@@ -48,7 +48,7 @@ fields. Experimental
 fields are listed too, although `plan.resolved.yaml` leaves them out while they are at their
 defaults. A field that does not exist in the plan, such as `inputs.sample_join` under schema
 3.0, has no entry. The
-"Defaults applied" section of `report.md` lists the defaults that set a value, and counts those
+"Defaults applied" section of `report-full.md` lists the defaults that set a value, and counts those
 that leave an optional feature off or a parameter unused (null, false or empty).
 
 ## `analysis`
@@ -207,7 +207,7 @@ run.
 - `failure`: the rollout counts as a failure, whatever `missing` says.
 
 With any value but `score`, each such rollout is reported in a `TOKEN_LIMIT_REACHED` diagnostic
-(INFO). Every prompt estimate in `report.json` gets an `n_token_limit` count, `report.md` gets a
+(INFO). Every prompt estimate in `report.json` gets an `n_token_limit` count, `report-full.md` gets a
 "Token limit" column, and `observations.csv` gets a `token_limit_unscored` column. An answer
 that stopped at the token limit but was scored keeps its score. Only Inspect logs report stop
 reasons; with rollout files the option is refused.
@@ -382,7 +382,7 @@ report shows every reading side by side:
   `presentation.primary_outcome_mapping` records the primary mapping beside them;
 - `outcome-mapping-sensitivity.csv` holds one row per result and mapping, `primary` first,
   with each result's readings adjacent, and is listed in `checksums.json`;
-- `report.md` has an "Outcome mapping sensitivity (experimental)" section. Claims and
+- `report-full.md` has an "Outcome mapping sensitivity (experimental)" section. Claims and
   decisions appear in it only when `report.include_decisions` is true.
 
 Only the primary mapping enters claims and the decision. Each alternative's intervals carry
@@ -470,7 +470,7 @@ inputs:
 ```
 
 Every judge, composite and judge pair in `provenance.judge_panel` then carries `groups`, with
-the same counts and agreement figures for each listed group's rollouts, per cohort. `report.md`
+the same counts and agreement figures for each listed group's rollouts, per cohort. `report-full.md`
 shows them under **Judge panel by group**. The cohort-wide figures are reported as before. The
 field requires `inputs.judges`, and its groups must be declared.
 
@@ -500,7 +500,7 @@ Each judge in `provenance.judge_panel.judges` of `report.json` gains:
   logs record them under `eval.scorers` and `eval.model_roles`. Where the runs record none, the
   value is `null`.
 
-`report.md` shows the same rows under **Claims by judge (experimental)** in the judge panel
+`report-full.md` shows the same rows under **Claims by judge (experimental)** in the judge panel
 section, without the status column when `report.include_decisions` is false. The rows compare
 judge configurations. They do not enter the decision and are not adjusted for multiplicity
 across judges. The option requires `inputs.judges`. A plan that leaves it off keeps its hash and
@@ -537,7 +537,7 @@ failed must be rerun before the file is written: the analysis does not drop rows
   and it must be judge-positive in the run.
 
 `analyze` adds a `JUDGE_FLIP_RATE` diagnostic to the integrity section of `report.json` and
-`report.md`. Its `details` hold `judge_positive` (the run's judge-positive completions),
+`report-full.md`. Its `details` hold `judge_positive` (the run's judge-positive completions),
 `any_wrapper` (the completions that flip under at least one wrapper) and `by_wrapper` (one entry
 per wrapper). Each entry holds `flipped`, `rescored`, `estimate`, `lower` and `upper`. The
 interval is the two-sided exact Clopper-Pearson interval at `alpha`, split equally between its
@@ -834,7 +834,7 @@ interval for system models such as fault trees: M, the smallest value of U_δ + 
 needs no alpha and has P(M < R) ≤ R: its miss probability is the unknown risk R itself. It is not
 simultaneous, does not enter claims, and is usually above a 95% bound. Each interval in
 `report.json` then carries `single_valued_bound`, `single_valued_bound_delta` and
-`single_valued_bound_guarantee`, and `report.md` lists them under "Single-valued bounds
+`single_valued_bound_guarantee`, and `report-full.md` lists them under "Single-valued bounds
 (experimental)". The option is refused with `PLAN_SINGLE_VALUED_BOUND_UNSUPPORTED` under a
 sampled design and with judge calibration. See
 [Single-valued bound for system models](statistical-methods.md#single-valued-bound-for-system-models-experimental).
@@ -1074,7 +1074,7 @@ What the claim assumes and reports:
 
 An order that is missing, not an integer or repeated, or a behaviour attacked more than once,
 leaves the claim `INCONCLUSIVE` and says why. The report lists adaptive claims in their own
-section of `report.md` and `report.json` (`adaptive_claims`), and beside the cohort's claims
+section of `report-full.md` and `report.json` (`adaptive_claims`), and beside the cohort's claims
 in `report.html`. Identifiers are unique across `claims` and `adaptive_claims`.
 `report.claims_export` cannot be combined with adaptive claims yet: `claims.json` has no form
 for a claim that can only fail. Plans without `adaptive_claims` keep their hash.
@@ -1093,7 +1093,7 @@ for a claim that can only fail. Plans without `adaptive_claims` keep their hash.
 | `decimal_places` | 6 | Markdown display precision; JSON retains full precision |
 | `judge_error_stress` | false | Experimental. Add to every claim the judge accuracy at which its verdict would change for true risk, and the verdict over the primary judge's declared accuracy box; diagnostic only. See [Stressing a threshold verdict](judge-misclassification.md#stressing-a-threshold-verdict-experimental) |
 | `claims_export` | false | Experimental. Write `claims.json`, one record per claim; needs `include_decisions: true`. See [claims.json](#claimsjson-experimental) |
-| `precision_target` | 0.05 | The widest a bound may lie from its estimate and still count as precise, in (0, 0.5). When tail or threshold measures are declared and, at the median rollouts per prompt, a prompt with no failures is still bounded above it, `TAIL_MEASURES_UNINFORMATIVE` warns and names the rollouts per prompt that would be needed. Left out of the resolved plan at its default |
+| `precision_target` | 0.05 | The widest a bound may lie from its estimate and still count as precise, in (0, 0.5). When tail or threshold measures are declared and, at the median rollouts per prompt, a prompt with no failures is still bounded above it, `TAIL_MEASURES_UNINFORMATIVE` warns and names the rollouts per prompt that would be needed. The summary in `report.md` marks every interval that lies further than this from its estimate and lists the rollouts that would narrow it. Left out of the resolved plan at its default; a value other than the default is recorded in `report.json` as `presentation.precision_target` |
 
 ### `claims.json` (experimental)
 

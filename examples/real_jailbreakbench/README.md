@@ -138,7 +138,8 @@ live-runs/RUN_ID/
   logs/                    Inspect logs containing sensitive prompts and responses
   report/
     report.html            self-contained visualizer
-    report.md              concise numerical report
+    report.md              one-page summary
+    report-full.md         full numerical report
     report.json            machine-readable results
     hierarchy-risks.csv    all category-level intervals
     comparisons.csv        all model effects and sensitivity intervals

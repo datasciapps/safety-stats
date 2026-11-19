@@ -139,7 +139,7 @@ def test_analyze_records_the_defaults_in_report_json_and_report_md(tmp_path: Pat
     expected = [entry.model_dump(mode="json") for entry in report.plan_defaults]
     assert data["plan_defaults"] == expected
 
-    markdown = (tmp_path / "report" / "report.md").read_text(encoding="utf-8")
+    markdown = (tmp_path / "report" / "report-full.md").read_text(encoding="utf-8")
     section = markdown.split("## Defaults applied", 1)[1].split("\n## ", 1)[0]
     assert '- `inputs.score.token_limit`: `"score"`' in section
     # Defaults that leave a feature off are counted, not listed.

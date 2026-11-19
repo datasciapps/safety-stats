@@ -270,7 +270,7 @@ def test_stratified_labels_certify_a_correction_weighted_by_fine_stratum(
         0.0,
     )
 
-    markdown = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
     assert "exact hypergeometric bounds over the declared fine strata" in markdown
     assert "| candidate | judge_safe | disagree | 30 / 30 | 10 | 10–10 |" in markdown
 
@@ -400,5 +400,5 @@ def test_a_group_scoped_calibration_counts_the_group_s_fine_strata(
         cohorts["candidate"]["all"]["fine_strata"]
         == report.provenance["judge_calibration"]["cohorts"]["candidate"]["fine_strata"]
     )
-    markdown = (scoped.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    markdown = (scoped.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
     assert "| candidate | all | judge_safe | disagree | 30 / 30 | 10 | 10–10 |" in markdown

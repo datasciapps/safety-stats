@@ -263,7 +263,7 @@ def test_the_written_report_carries_the_diagnostic(
     codes = [item["code"] for item in written["integrity"]["diagnostics"]]
     assert "JUDGE_FLIP_RATE" in codes
     assert "JUDGE_FLIP_RATE" in (tmp_path / "out" / "report.html").read_text(encoding="utf-8")
-    markdown = (tmp_path / "out" / "report.md").read_text(encoding="utf-8")
+    markdown = (tmp_path / "out" / "report-full.md").read_text(encoding="utf-8")
     assert "14 of 40 rescored judge-positive completions flip" in markdown
 
 

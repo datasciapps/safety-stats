@@ -187,7 +187,7 @@ def test_an_analysis_without_a_policy_reports_none(plan_path: Path, tmp_path: Pa
     assert report.decision_policy is None
     output = report.write(tmp_path / "report")
     assert "decision_policy" not in json.loads((output / "report.json").read_text("utf-8"))
-    assert "## Decision policy" not in (output / "report.md").read_text("utf-8")
+    assert "## Decision policy" not in (output / "report-full.md").read_text("utf-8")
 
 
 def test_thresholds_revised_after_the_run_decide_without_voiding_certification(
@@ -248,7 +248,7 @@ def test_thresholds_revised_after_the_run_decide_without_voiding_certification(
     assert saved["decision_policy"]["versions"][1]["reason"] == "v2 reason"
     # The resolved plan the report keeps is the frozen plan, not the policy's.
     assert "acceptable_upper: 0.3" in (output / "plan.resolved.yaml").read_text("utf-8")
-    markdown = (output / "report.md").read_text("utf-8")
+    markdown = (output / "report-full.md").read_text("utf-8")
     assert "## Decision policy" in markdown
     assert "| `v2` | 2026-02-01T00:00:00+01:00 | yes | `mean_safe` | v2 reason |" in markdown
 

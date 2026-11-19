@@ -375,7 +375,7 @@ joint methods for stratified finite populations exist (Wendell and Schmee, *JASA
 
 **What changes in the report.** Provenance records `validation_strata` and, per cohort,
 `fine_strata`: each fine stratum's counts, its count bounds and the level each bound spent.
-`report.md` lists them. The asymptotic `judge_corrected_validated_delta` reference assumes simple
+`report-full.md` lists them. The asymptotic `judge_corrected_validated_delta` reference assumes simple
 random samples within the judge strata, so it is not reported under this design, and an INFO
 diagnostic, `JUDGE_CALIBRATION_STRATIFIED`, says so. With `groups`, each scoped
 calibration counts the declared strata of its group's rollouts. The strata file is still
@@ -680,7 +680,7 @@ Each interval lists these assumptions, together with the published set and the s
 bound. `report.json` adds a `judge_corrected_transported` interval on every correctable row,
 with `method: transported_judge_sensitivity_correction`. Its provenance records the published
 set and `sensitivity_lower`, and the analysis emits the `INFO` diagnostic
-`JUDGE_CALIBRATION_TRANSPORTED`. `report.md` describes the published set in the judge
+`JUDGE_CALIBRATION_TRANSPORTED`. `report-full.md` describes the published set in the judge
 misclassification section.
 
 `mode: transported` takes only `published_set`. It cannot be combined with scenarios, a
@@ -840,7 +840,7 @@ does not apply, the record has `applicable: false` and a `reason`. That is the c
 - claims that a validated calibration leaves INCONCLUSIVE;
 - measures other than `weighted_mean`, `maximum`, `cvar` and `top_k_mean`.
 
-`report.md` gains a **Judge-error stress (experimental)** section after the claims, with one row
+`report-full.md` gains a **Judge-error stress (experimental)** section after the claims, with one row
 per claim, the declared box of each source, and the reasons for claims that were not stressed.
 When `report.include_decisions` is false, the section only points to `report.json`. With the
 switch off, the field is left out of the plan's dump and of every claim, so plans that do not

@@ -132,6 +132,7 @@ multilingual-live-runs/RUN_ID/
   report/
     report.html
     report.md
+    report-full.md
     report.json
     hierarchy-risks.csv
     comparisons.csv

@@ -13,7 +13,7 @@ from inspect_safety_stats.config.loader import (
     report_path,
     report_plan,
 )
-from inspect_safety_stats.config.models import AnalysisPlan
+from inspect_safety_stats.config.models import DEFAULT_PRECISION_TARGET, AnalysisPlan
 from inspect_safety_stats.decision.engine import mandatory_statuses, roll_up
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.reports import (
@@ -158,6 +158,11 @@ def _presentation(plan: AnalysisPlan) -> ReportPresentation:
             )
         ),
         claims_export=True if plan.report.claims_export else None,
+        precision_target=(
+            None
+            if plan.report.precision_target == DEFAULT_PRECISION_TARGET
+            else plan.report.precision_target
+        ),
         primary_outcome_mapping=(
             plan.inputs.score.mapping.model_dump(mode="json", exclude_none=True)
             if plan.inputs.score.mapping_sensitivities

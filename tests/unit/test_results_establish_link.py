@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from inspect_safety_stats.analysis.report import RESULTS_ESTABLISH_URL
+from inspect_safety_stats.report.summary import summary_markdown
 from inspect_safety_stats.report.writer import _markdown
 from inspect_safety_stats.schema.reports import IntegritySummary, SafetyReport
 
@@ -77,9 +78,21 @@ def test_report_md_shows_the_link_under_scope() -> None:
     )
 
 
+def test_the_summary_shows_the_link_under_scope() -> None:
+    markdown = summary_markdown(
+        _report({"disclaimer": "Fixed design.", "what_results_establish": RESULTS_ESTABLISH_URL})
+    )
+    scope = markdown.split("## Scope", 1)[1].split("\n## ", 1)[0]
+    assert f"What these results establish, and what they do not: <{RESULTS_ESTABLISH_URL}>" in (
+        scope
+    )
+
+
 def test_a_report_written_before_the_link_renders_without_it() -> None:
     markdown = _markdown(_report({"disclaimer": "Fixed design."}))
     assert "What these results establish" not in markdown
+    summary = summary_markdown(_report({"disclaimer": "Fixed design."}))
+    assert "What these results establish" not in summary
 
 
 def test_report_html_shows_the_link() -> None:

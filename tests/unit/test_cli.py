@@ -50,6 +50,18 @@ def test_analyze_exits_zero_for_a_valid_analysis(tmp_path: Path) -> None:
     assert "Integrity: valid" in stdout
 
 
+def test_analyze_prints_the_headline_rates_and_the_summary_path(tmp_path: Path) -> None:
+    code, stdout = _analyze(_simpleqa_plan(tmp_path), tmp_path / "report")
+    assert code == 0
+    # Plain typer.echo lines, uncoloured; plain() would join them into one.
+    lines = stdout.splitlines()
+    start = lines.index("Failure rate (weighted mean):")
+    rates = [line for line in lines[start + 1 :] if line.startswith("  ")]
+    assert rates
+    assert all(" / " in line and "%" in line for line in rates)
+    assert f"Summary: {tmp_path / 'report' / 'report.md'}" in lines
+
+
 def test_analyze_exits_three_but_writes_the_report_when_integrity_is_invalid(
     tmp_path: Path,
 ) -> None:

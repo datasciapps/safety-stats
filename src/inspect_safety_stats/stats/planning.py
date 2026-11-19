@@ -8,6 +8,7 @@ from typing import Final, Literal
 import numpy as np
 from numpy.typing import ArrayLike
 from scipy.optimize import brentq
+from scipy.stats import beta as beta_distribution
 from scipy.stats import binom
 
 from inspect_safety_stats.config.methods import DirectMeanMethod
@@ -635,3 +636,99 @@ def rejection_sample_size(
         ):
             return trials
     raise ValueError("requested rejection power exceeds max_trials search limit")
+
+
+def exact_half_width(rate: float, trials: float, alpha: float) -> float:
+    """Larger one-sided Clopper-Pearson distance from ``rate`` at a real-valued count."""
+
+    failures = rate * trials
+    upper = (
+        1.0
+        if failures >= trials
+        else float(beta_distribution.ppf(1.0 - alpha, failures + 1.0, trials - failures))
+    )
+    lower = (
+        0.0
+        if failures <= 0
+        else float(beta_distribution.ppf(alpha, failures, trials - failures + 1.0))
+    )
+    return max(upper - rate, rate - lower)
+
+
+def rollouts_for_half_width(
+    *,
+    rate: float,
+    half_width: float,
+    alpha: float,
+    maximum: int = 10_000_000,
+) -> int | None:
+    """Equally weighted rollouts needed for an exact bound within ``half_width`` of ``rate``.
+
+    The count is the smallest ``n`` at which both one-sided Clopper-Pearson endpoints,
+    each at level ``alpha``, lie within ``half_width`` of the assumed failure rate. It
+    is a planning figure: it assumes the rate stays where it is, and for a weighted or
+    clustered design it applies to the effective sample size rather than the raw count.
+    Returns ``None`` when more than ``maximum`` rollouts would be needed.
+    """
+
+    if not 0 <= rate <= 1:
+        raise ValueError("rate must lie in [0, 1]")
+    if not 0 < half_width < 1:
+        raise ValueError("half_width must lie in (0, 1)")
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must lie in (0, 1)")
+    if exact_half_width(rate, float(maximum), alpha) > half_width:
+        return None
+    low, high = 1, maximum
+    while low < high:
+        middle = (low + high) // 2
+        if exact_half_width(rate, float(middle), alpha) <= half_width:
+            high = middle
+        else:
+            low = middle + 1
+    return low
+
+
+def rollout_scale_for_half_width(
+    *,
+    rate: float,
+    observed_half_width: float,
+    observed_trials: float,
+    target_half_width: float,
+    alpha: float,
+    maximum_scale: float = 1e6,
+) -> float | None:
+    """Factor by which rollouts must grow to shrink an observed interval to a target width.
+
+    The observed interval anchors the answer, so it holds for whichever concentration
+    bound produced it; only the rate at which width falls with more rollouts is taken
+    from the exact binomial bound at ``rate``. Returns ``1.0`` when the interval already
+    meets the target and ``None`` when no factor up to ``maximum_scale`` does.
+    """
+
+    if observed_half_width <= target_half_width:
+        return 1.0
+    if observed_trials <= 0 or not 0 < alpha < 1 or not 0 < target_half_width < 1:
+        raise ValueError("observed_trials, alpha and target_half_width are out of range")
+    rate = min(max(rate, 0.0), 1.0)
+    reference = exact_half_width(rate, observed_trials, alpha)
+    if reference <= 0:
+        return None
+
+    def projected(scale: float) -> float:
+        return observed_half_width * exact_half_width(rate, observed_trials * scale, alpha) / (
+            reference
+        )
+
+    if projected(maximum_scale) > target_half_width:
+        return None
+    low, high = 1.0, maximum_scale
+    for _ in range(200):
+        middle = math.sqrt(low * high)
+        if projected(middle) <= target_half_width:
+            high = middle
+        else:
+            low = middle
+        if high / low < 1.001:
+            break
+    return high
