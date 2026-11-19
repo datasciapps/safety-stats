@@ -290,8 +290,10 @@ described in their pull requests.
   repeated under each on the same rollouts, and the report shows every reading side by side
   in `report.json` (`outcome_mapping_sensitivities`), a new
   `outcome-mapping-sensitivity.csv` and a section of `report.md`. Only the primary mapping
-  enters claims and the decision. Opt-in: plans without the field keep their hash and their
-  report bytes. See
+  enters claims and the decision. Each alternative carries what the plan, its decision policy
+  and its registration receipt were checked for, so a receipt for another plan or a failed
+  decision policy makes it `invalid` as it does the primary analysis. Opt-in: plans without the
+  field keep their hash and their report bytes. See
   [Outcome mapping sensitivities](docs/plan-reference.md#outcome-mapping-sensitivities-experimental).
 
 - **The fixed-design planner uses the analysis method.** `plan fixed-design --plan PLAN`
@@ -429,13 +431,15 @@ described in their pull requests.
   keeps only its name and model id: its `base_url`, `args` and `extra_headers`, which can hold
   endpoints and credentials, never reach the report. A run whose scorers or model roles cannot
   be read, such as text that is not JSON or a role without a model id, is left out of the
-  record with a `JUDGE_CONFIGURATION_UNREADABLE` warning. A judge whose own `score` asks for
-  what the source cannot give, such as the stop reasons `token_limit` needs, gets an `invalid`
-  run with `INGEST_FAILED` and rows that decide nothing, instead of stopping the analysis.
-  `report-full.md` adds a "Claims by judge (experimental)" table to the judge panel section.
-  The rows do not enter the decision.
-  The option requires `inputs.judges`. Plans that leave it off keep their hash and write the
-  same report bytes as before. See
+  record with a `JUDGE_CONFIGURATION_UNREADABLE` warning. Each judge's run carries what the
+  plan, its decision policy and its registration receipt were checked for, so a receipt for
+  another plan or a failed decision policy makes it `invalid` as it does the primary analysis.
+  A judge whose own `score` asks for what the source cannot give, such as the stop reasons
+  `token_limit` needs, gets an `invalid` run with `INGEST_FAILED` and rows that decide nothing,
+  instead of stopping the analysis. `report-full.md` adds a "Claims by judge (experimental)"
+  table to the judge panel section. The rows do not enter the decision. The option requires
+  `inputs.judges`. Plans that leave it off keep their hash and write the same report bytes as
+  before. See
   [Claims by judge](docs/plan-reference.md#claims-by-judge-experimental).
 
 - **Transported judge calibration (experimental).** `inputs.judge_calibration.mode:

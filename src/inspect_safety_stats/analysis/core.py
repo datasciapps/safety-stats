@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -12,7 +13,11 @@ from inspect_safety_stats.analysis.claims import _claims
 from inspect_safety_stats.analysis.comparisons import _comparison_set_results, _comparisons
 from inspect_safety_stats.analysis.direct_mean import _direct_mean_context, _hierarchy_nodes
 from inspect_safety_stats.analysis.estimates import _prompt_estimates
-from inspect_safety_stats.analysis.inputs import _integrity_status, _JudgeInputs
+from inspect_safety_stats.analysis.inputs import (
+    _derived_run_diagnostics,
+    _integrity_status,
+    _JudgeInputs,
+)
 from inspect_safety_stats.analysis.judge_correction import apply_judge_correction
 from inspect_safety_stats.analysis.judge_panel import apply_panel_derived_correction
 from inspect_safety_stats.analysis.regions import project_hierarchy_regions
@@ -37,7 +42,7 @@ from inspect_safety_stats.schema.reports import (
     PromptEstimate,
 )
 from inspect_safety_stats.schema.scopes import scope_path
-from inspect_safety_stats.validate.plan import noisy_valid_test_supported, validate_plan_references
+from inspect_safety_stats.validate.plan import noisy_valid_test_supported
 
 
 @dataclass
@@ -228,11 +233,18 @@ def _unread_judge_claim_rows(plan: AnalysisPlan, why: str) -> list[dict[str, Any
     ]
 
 
-def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeInputs) -> None:
+def _add_judge_claims(
+    panel: dict[str, Any],
+    plan: AnalysisPlan,
+    inputs: _JudgeInputs,
+    plan_diagnostics: Sequence[Diagnostic],
+) -> None:
     """Decide every claim again on each declared judge's verdicts, beside the primary's.
 
     Each judge's run is the analysis the plan would give with that judge as its primary
-    outcome, over the same rollouts, so comparing judge configurations is one analysis. Its
+    outcome, over the same rollouts, so comparing judge configurations is one analysis. It
+    carries the primary run's ``plan_diagnostics`` (``_derived_run_diagnostics``), so a
+    registration receipt for another plan or a failed decision policy makes it invalid too. Its
     bounds are on that judge's reported risk; under a validated calibration its rows decide
     nothing (``_judge_claim_row``). Beside its integrity status, each judge records how often
     each diagnostic code occurred in its run, so the report says why a run is not valid. A
@@ -251,7 +263,7 @@ def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeI
     by_id = {judge.id: judge for judge in plan.inputs.judges}
     for entry in panel["judges"]:
         judge_plan = _judge_plan(plan, by_id[entry["id"]])
-        diagnostics = validate_plan_references(judge_plan)
+        diagnostics = _derived_run_diagnostics(judge_plan, plan_diagnostics)
         try:
             data = normalize(
                 judge_plan,

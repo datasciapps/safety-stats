@@ -3358,6 +3358,99 @@ def test_a_judges_option_the_source_cannot_serve_invalidates_only_that_judges_ru
     assert "| judge_a | `invalid` | `INGEST_FAILED` (1) |" in section
 
 
+def _mirroring_judge_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Judge a gives the primary outcome's verdicts, so on its own its row would PASS."""
+
+    eval_frame, sample_frame = _judge_frames_with_configuration()
+    sample_frame = sample_frame.assign(score_harmful_a=sample_frame["score_harmful"])
+    return eval_frame, sample_frame
+
+
+def _decision_policy_file(plan_path: Path, *, sha: str | None, set_at: str) -> Path:
+    from inspect_safety_stats.config.decision_policy import inference_plan_hash
+
+    path = plan_path.parent / "policy.json"
+    path.write_text(
+        json.dumps(
+            {
+                "inference_plan_sha256": sha or inference_plan_hash(load_plan(plan_path)),
+                "versions": [
+                    {
+                        "id": "v1",
+                        "set_at": set_at,
+                        "thresholds": {
+                            "mean_safe": {"acceptable_upper": 0.25, "unacceptable_lower": 0.6}
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+@pytest.mark.parametrize("problem", ["receipt for another plan", "policy for another plan"])
+def test_judge_runs_carry_the_plans_own_errors(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, problem: str
+) -> None:
+    from datetime import datetime, timezone
+
+    from inspect_safety_stats.config.registration import write_receipt
+
+    plan_path = _judge_claims_plan(tmp_path)
+    _patch_frames(monkeypatch, _mirroring_judge_frames())
+    mirrored = analyze(plan=plan_path, logs="ignored")
+    mirrored_rows = {item["id"]: item for item in mirrored.provenance["judge_panel"]["judges"]}
+    # Without the problem, judge a's row is the primary's PASS.
+    assert mirrored.claims[0].status == "PASS"
+    assert mirrored_rows["judge_a"]["integrity"] == "valid"
+    assert mirrored_rows["judge_a"]["claims"][0]["status"] == "PASS"
+
+    if problem == "receipt for another plan":
+        code = "PLAN_RECEIPT_MISMATCH"
+        receipt = tmp_path / "plan.receipt.json"
+        write_receipt(
+            receipt, "0" * 64, package_version="0", now=datetime(2024, 6, 1, tzinfo=timezone.utc)
+        )
+        report = analyze(plan=plan_path, logs="ignored", registration_receipt=receipt)
+    else:
+        code = "DECISION_POLICY_MISMATCH"
+        policy = _decision_policy_file(plan_path, sha="0" * 64, set_at="2024-06-01T00:00:00Z")
+        report = analyze(plan=plan_path, logs="ignored", decision_policy=policy)
+
+    # The plan's own error makes the primary invalid, and every judge's run of the same plan.
+    assert report.integrity.status == "invalid"
+    assert report.claims[0].status == "INCONCLUSIVE"
+    for judge in report.provenance["judge_panel"]["judges"]:
+        assert judge["integrity"] == "invalid", judge["id"]
+        assert judge["diagnostic_counts"][code] == 1
+        assert {row["status"] for row in judge["claims"]} == {"INCONCLUSIVE"}
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert f"`{code}` (1)" in section
+
+
+def test_judge_runs_decide_at_an_applied_policys_thresholds_and_carry_its_note(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _judge_claims_plan(tmp_path)
+    _patch_frames(monkeypatch, _mirroring_judge_frames())
+    # Set after the run started, and stricter than the primary's upper bound.
+    policy = _decision_policy_file(plan_path, sha=None, set_at="2026-02-01T00:00:00Z")
+
+    report = analyze(plan=plan_path, logs="ignored", decision_policy=policy)
+
+    assert report.decision_policy is not None and report.decision_policy.applied
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "DECISION_POLICY_AFTER_GENERATION" in codes
+    judges = {item["id"]: item for item in report.provenance["judge_panel"]["judges"]}
+    assert judges["judge_a"]["diagnostic_counts"]["DECISION_POLICY_AFTER_GENERATION"] == 1
+    (primary,) = report.claims
+    (row,) = judges["judge_a"]["claims"]
+    assert (row["status"], row["upper"]) == (primary.status, primary.upper)
+
+
 def test_judge_claims_are_opt_in_and_leave_plan_hashes_alone(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

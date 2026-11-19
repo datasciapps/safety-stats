@@ -407,7 +407,10 @@ the coverage the plan declares for that mapping alone; the readings are not simu
 across mappings, so the side-by-side view is a sensitivity analysis, not a set of tests to
 pick from. A mapping that leaves some observed value unmapped makes its own integrity
 `invalid` (`SCORE_UNMAPPED` in its diagnostic counts) without affecting the primary
-analysis.
+analysis. Each alternative carries what the plan itself, its decision policy and its
+registration receipt were checked for, so a receipt for another plan
+(`PLAN_RECEIPT_MISMATCH`) or a decision policy that fails its checks makes every alternative
+`invalid`, as it does the primary analysis.
 
 Identifiers must be unique and cannot be `primary`, which names the primary mapping in the
 outputs; an alternative may not repeat the primary mapping. Only `inputs.score` takes
@@ -523,7 +526,10 @@ inputs:
 
 Each judge in `provenance.judge_panel.judges` of `report.json` gains:
 
-- `integrity`: the integrity status of that judge's run. A judge whose own `score` asks for
+- `integrity`: the integrity status of that judge's run. Each judge's run carries what the
+  plan itself, its decision policy and its registration receipt were checked for, so a receipt
+  for another plan (`PLAN_RECEIPT_MISMATCH`) or a decision policy that fails its checks makes
+  every judge's run `invalid`, as it does the primary run. A judge whose own `score` asks for
   what the source cannot give, such as the stop reasons that `token_limit` or
   `content_filter_stops` need from rollout files, gets an `invalid` run with `INGEST_FAILED`, as
   the primary run would, and rows that decide nothing. The rest of the report stands.
