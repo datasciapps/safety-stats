@@ -3312,6 +3312,8 @@ def test_judge_claims_have_a_report_section(
     assert report.presentation.include_decisions is False
     assert "| Judge | Integrity | Claim | Estimate |" in section
     assert f"| judge_a | `valid` | {claim.claim_id} | 0.250000 |" in section
+    # The primary blocks missing and errored scores; the judges keep their own defaults.
+    assert "by that judge's own `score.missing` and `score.errors`" in section
     assert "| judge_b | `degraded` |" in section
     (scorer,) = report.provenance["judge_panel"]["judges"][0]["configuration"]["candidate"][
         "scorer"

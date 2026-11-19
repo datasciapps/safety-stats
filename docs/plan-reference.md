@@ -507,6 +507,20 @@ outputs:
   judge_claims: true
 ```
 
+A judge's run takes the whole of that judge's `score`, including its `missing` and `errors`
+policies, not the primary outcome's. A judge that leaves them out gets their defaults,
+`conservative_bounds` and `end_to_end`, so with a primary `score` set to `missing: block` and
+`errors: block`, the rows also differ by how missing and errored verdicts are handled. To compare
+judges alone, give each judge the primary outcome's policies:
+
+```yaml
+inputs:
+  score: {name: harmful, mapping: {...}, missing: block, errors: block}
+  judges:
+    - id: judge_a
+      score: {name: harmful_a, mapping: {...}, missing: block, errors: block}
+```
+
 Each judge in `provenance.judge_panel.judges` of `report.json` gains:
 
 - `integrity`: the integrity status of that judge's run.

@@ -461,6 +461,8 @@ def _judge_claim_lines(
         "primary outcome, over the same rollouts, without the panel or the judge calibration. "
         "Their bounds are on that judge's reported risk. Under a validated judge calibration, "
         "which makes the plan's thresholds ones on true risk, every row is `INCONCLUSIVE`. "
+        "A judge's run handles missing and errored verdicts by that judge's own "
+        "`score.missing` and `score.errors`, not the primary outcome's. "
         "The rows compare judge configurations. The report's decision rests on the primary "
         "outcome alone, and these rows are not adjusted for their number.",
         "",
