@@ -73,7 +73,15 @@ def _fill_from_directory(report: SafetyReport, directory: Path) -> None:
 
 def _payload(report: SafetyReport) -> dict[str, Any]:
     # The page reads the report alone, so that a saved report.json renders it again.
-    return {"report": report.model_dump(mode="json")}
+    data = report.model_dump(mode="json")
+    # The page makes scope.what_results_establish a link. `visualize` renders any report.json
+    # it is given, and a javascript: or data: address there would run in the page when the
+    # link is clicked, so only an https:// address reaches the page. The package writes an
+    # https:// address, so its own reports keep their bytes.
+    address = data["scope"].get("what_results_establish")
+    if address is not None and not (isinstance(address, str) and address.startswith("https://")):
+        del data["scope"]["what_results_establish"]
+    return {"report": data}
 
 
 def _report_from_path(source: Path) -> tuple[SafetyReport, Path]:

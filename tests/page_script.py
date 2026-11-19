@@ -133,11 +133,25 @@ const audit = byId.get("audit").children.map(details => ({
   title: details.children[0] ? details.children[0].textContent : "",
   text: details.children.slice(1).map(node => node.textContent).join("\n"),
 }));
+// Every link the script made, with the address it was given, in document order.
+const links = [];
+const seen = new Set();
+const collect = node => {
+  if (!(node instanceof Element) || seen.has(node)) return;
+  seen.add(node);
+  if (node.tagName === "A") {
+    const href = node.href === undefined ? null : String(node.href);
+    links.push({ text: node.textContent, href });
+  }
+  node.childNodes.forEach(collect);
+};
+byId.forEach(collect);
 process.stdout.write(JSON.stringify({
   error,
   eventErrors,
   audit,
   footer: byId.get("footer").textContent,
+  links,
 }));
 """
 
@@ -158,6 +172,8 @@ class PageRun:
     event_errors: list[str]
     audit: list[AuditPanel]
     footer: str
+    # Every link the script made, as (text, address); the address is None when it set none.
+    links: list[tuple[str, str | None]]
 
 
 def node_or_skip() -> str:
@@ -208,4 +224,5 @@ def run_page(node: str, html: str, directory: Path) -> PageRun:
         event_errors=result["eventErrors"],
         audit=[AuditPanel(title=item["title"], text=item["text"]) for item in result["audit"]],
         footer=result["footer"],
+        links=[(item["text"], item["href"]) for item in result["links"]],
     )

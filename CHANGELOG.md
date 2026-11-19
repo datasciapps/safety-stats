@@ -17,6 +17,13 @@ described in their pull requests.
   shared report revealed the local directory layout. Each now gives the path relative to the
   plan.
 
+- **report.html links only an https:// address for what results establish.** The page made
+  `scope.what_results_establish` from the `report.json` it renders into a link, whatever its
+  address, and `visualize` renders any `report.json` it is given: a `javascript:` address there
+  ran in the page when the link was clicked. An address that does not start with `https://` is
+  now left out of the page, which then shows no link. The package writes an `https://`
+  address, so no report it writes changes bytes.
+
 - **A zero-tolerance column that the manifest lacks is an error.** When a plan sets
   `policy.zero_tolerance.manifest_field` and the manifest has no such column, the analysis
   silently held no prompt to zero tolerance. It now stops with an error that names the column.
