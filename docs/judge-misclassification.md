@@ -736,6 +736,29 @@ misclassification section.
 validation manifest or a judge family, and only fixed-design analyses offer it: a generative
 plan that declares it is refused.
 
+### How it differs from issue #123
+
+Issue #123 proposed a transported mode that declares ranges for both sensitivity and
+specificity and inverts Rogan--Gladen over that box. This mode departs from that proposal in
+four ways, for the reasons above:
+
+- **No specificity is declared.** A published set's specificity does not carry over to
+  another model's outputs, so the plan gives none. There is therefore no informativeness
+  condition \(Se+Sp>1\) to check, and no plan is refused for failing it.
+- **The lower end is always zero.** Without a specificity, every judged failure may be a false
+  positive. The interval is \([0,U]\) even for a perfectly sensitive judge, where #123 asked for
+  the uncorrected interval \([L,U]\) when both accuracies are one. Only the upper end keeps that
+  identity.
+- **The sensitivity comes from counts.** The plan gives the published set's counts, not a
+  declared range, and the mode turns them into a one-sided Clopper--Pearson lower bound at
+  `sensitivity_alpha`. The interval's coverage therefore spends `sensitivity_alpha` on top of
+  the row's own alpha.
+- **Transport is one-sided.** The judge need only be at least as sensitive on this run's
+  outputs as on the published set, not equally accurate.
+
+With the same lower end on sensitivity, the upper end is what #123's correction gives for any
+declared specificity range that reaches one, because Rogan--Gladen's maximum lies at \(Sp=1\).
+
 ## On the generative path
 
 The same correction is available for

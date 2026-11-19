@@ -502,8 +502,14 @@ def test_plans_without_a_published_set_serialise_as_before() -> None:
     assert "published_set" not in spec.model_dump(mode="json", by_alias=True)
 
 
-def test_a_perfectly_sensitive_judge_leaves_the_upper_bound_unchanged() -> None:
-    """#123's identity check: with sensitivity one nothing is inflated."""
+def test_a_perfectly_sensitive_judge_keeps_the_upper_bound_but_not_the_lower() -> None:
+    """With sensitivity one the interval is ``[0, U]``, not the judge-system ``[L, U]``.
+
+    #123 asked for the uncorrected interval when sensitivity and specificity are both one.
+    Only the upper end keeps that identity here: no specificity is declared, so every judged
+    failure may be a false positive and the lower end is zero whatever the judge-system
+    lower bound and estimate were.
+    """
     from inspect_safety_stats.stats.misclassification import transport_judge_risk
 
     for upper in (0.0, 3e-17, 0.0106, 0.5, 1.0):
@@ -512,6 +518,8 @@ def test_a_perfectly_sensitive_judge_leaves_the_upper_bound_unchanged() -> None:
         )
         assert result.upper == upper
         assert result.completion_estimate_upper == upper
+        assert result.lower == 0.0
+        assert result.completion_estimate_lower == 0.0
 
 
 @settings(max_examples=300, deadline=None)
