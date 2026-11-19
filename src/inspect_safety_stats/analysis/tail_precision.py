@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from collections import Counter
+
 from inspect_safety_stats.config.models import AnalysisPlan, RiskMeasureSpec
+from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.reports import Diagnostic, PromptEstimate
 from inspect_safety_stats.schema.scopes import plan_scope
 from inspect_safety_stats.stats.binomial import binomial_upper_bound
@@ -11,6 +14,69 @@ from inspect_safety_stats.stats.planning import zero_failure_sample_size
 _PROPAGATED_TYPES = frozenset(
     {"maximum", "cvar", "top_k_mean", "entropic", "threshold_exceedance", "threshold_excess"}
 )
+# The nonlinear measures docs/statistical-methods.md (section 2.4.9) calls misleading or
+# vacuous when each prompt has one rollout, whose empirical rate is then 0 or 1.
+_SINGLE_ROLLOUT_TYPES = frozenset({"cvar", "maximum", "entropic"})
+
+
+def single_rollout_tail_claims(plan: AnalysisPlan, data: NormalizedData) -> list[Diagnostic]:
+    """Degrade integrity when a claim rests on a nonlinear measure of single-rollout prompts.
+
+    For each claim on a ``cvar``, ``maximum`` or ``entropic`` measure, the classified rollouts
+    of each prompt in the claim's cohort and group are counted. When the median count, over
+    the prompts with any, is one, every typical per-prompt rate is 0 or 1 and the plug-in
+    measure is driven by single trials, so the claim rests on an assumption the logs do not
+    support. Data only: ``validate`` reports it as ``analyze`` does.
+    """
+
+    measures = {measure.id: measure for measure in plan.outputs.risk_measures}
+    groups = {group.id: group for group in data.groups}
+    classified = Counter(
+        (item.cohort_id, item.prompt_id) for item in data.observations if item.failure is not None
+    )
+    found: list[Diagnostic] = []
+    for claim in plan.claims:
+        measure = measures.get(claim.measure or "")
+        group = groups.get(claim.group or "")
+        cohort = claim.cohort
+        # A claim without a measure, group or cohort is reported by the plan checks.
+        if measure is None or group is None or cohort is None:
+            continue
+        if measure.type not in _SINGLE_ROLLOUT_TYPES:
+            continue
+        counts = sorted(
+            count
+            for count in (classified[(cohort, prompt)] for prompt in group.prompt_ids)
+            if count > 0
+        )
+        if not counts or counts[len(counts) // 2] > 1:
+            continue
+        single = sum(count == 1 for count in counts)
+        found.append(
+            Diagnostic(
+                code="TAIL_MEASURE_SINGLE_ROLLOUT",
+                severity="WARNING",
+                message=(
+                    f"claim {claim.id!r} uses {measure.type} measure {measure.id!r}, but "
+                    f"{single} of the {len(counts)} prompts with a classified rollout in "
+                    f"cohort {claim.cohort!r}, group {group.id!r} have only one, so their "
+                    "rates are 0 or 1 and the measure is misleading or vacuous; run "
+                    "repeated rollouts per prompt, or claim on a weighted mean."
+                ),
+                scope=plan_scope("claims", claim.id),
+                details={
+                    "integrity_degraded": True,
+                    "measure": measure.id,
+                    "measure_type": measure.type,
+                    "cohort": claim.cohort,
+                    "group": group.id,
+                    "prompts_with_rollouts": len(counts),
+                    "single_rollout_prompts": single,
+                    "median_rollouts_per_prompt": counts[len(counts) // 2],
+                },
+            )
+        )
+    return found
 
 
 def _propagated(measure: RiskMeasureSpec) -> bool:

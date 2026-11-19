@@ -25,7 +25,10 @@ from inspect_safety_stats.analysis.report import (
     _resolved_design,
     _unread_input_report,
 )
-from inspect_safety_stats.analysis.tail_precision import tail_measure_precision
+from inspect_safety_stats.analysis.tail_precision import (
+    single_rollout_tail_claims,
+    tail_measure_precision,
+)
 from inspect_safety_stats.config.canonicalize import canonical_value, sha256_value
 from inspect_safety_stats.config.decision_policy import DecisionPolicy
 from inspect_safety_stats.config.loader import canonical_plan_hash, report_path, report_plan
@@ -175,6 +178,7 @@ def _read_input(
         diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=message))
         return None
     diagnostics.extend(data.diagnostics)
+    diagnostics.extend(single_rollout_tail_claims(plan, data))
     return data, judge_inputs
 
 
@@ -207,6 +211,7 @@ def _outcome_mapping_sensitivity(
     except ValueError as exc:
         raise ValueError(f"outcome mapping sensitivity {spec.id!r}: {exc}") from exc
     diagnostics.extend(data.diagnostics)
+    diagnostics.extend(single_rollout_tail_claims(alternative, data))
     core = _analysis_core(alternative, data, diagnostics)
     decision = roll_up(
         core.mandatory_statuses(),

@@ -910,6 +910,19 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
 - **Remedy:** Record each run's start time in the source, such as started_at in rollout files.
 - **Checks:** [`plan_fixed_in_advance`](#assumption-plan_fixed_in_advance)
 
+#### `TAIL_MEASURE_SINGLE_ROLLOUT`
+
+- **Severity:** WARNING
+- **Effect:** [degraded](#effects)
+- **Assumption:** A claim on a cvar, maximum or entropic measure rests on repeated rollouts per
+  prompt, since these measures are defined on each prompt's failure probability and one rollout
+  estimates it only as 0 or 1.
+- **Consequence:** Integrity is degraded: the claim is evaluated, but with one rollout for the
+  median prompt of its cohort and group the measure is driven by single trials and is misleading or
+  vacuous.
+- **Remedy:** Run repeated rollouts per prompt, or make the claim on a weighted_mean measure, whose
+  interval handles one rollout per prompt.
+
 #### `TARGET_POLICY_BLOCKED_REFUSAL`
 
 - **Severity:** INFO
