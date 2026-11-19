@@ -203,22 +203,42 @@ phase 2 needs.
 
 ## Cost
 
-Anytime validity costs width. The figures below are for one-sided \(\alpha=0.05\), a pass
-threshold of 0.05 and at most 1,200 draws. Only the peeking row has been reproduced here, with
-`python research/sequential_peeking.py`. The others come from a simulation reported in the
-review of #10 tracked in #128, which did not name the sequence it used. Phase 1 reproduces them
-with its own sequence before they are relied on.
+Anytime validity costs width, and with it draws. The figures below are for one-sided
+\(\alpha=0.05\), a pass threshold of 0.05 and at most 1,200 draws with replacement. The
+sequence is a betting mixture: the capital of step 1 of #126 without its finite-population
+correction, mixed over the fixed bet fractions of the betting bounds (#3), with the running
+intersection over draws. A run passes at the first draw whose upper bound is at or below the
+threshold. A fixed design is one-sided Clopper–Pearson at a number of draws fixed in advance.
+`python research/sequential_cost.py` (about 75 s, 20,000 runs per rate, 1,000 per width cell)
+gives every figure except Clopper–Pearson re-checked after every draw, which
+`python research/sequential_peeking.py` gives from 200,000 runs.
 
-| quantity | value | source |
+| quantity | sequence | fixed design |
 |---|---|---|
-| sequence width at a fixed \(n\), against Clopper–Pearson | 1.1–1.5× | review |
-| draws to pass at a true rate of 0.005 (median) | 72, against 1,200 | review |
-| probability of passing at a true rate of 0.03 | 0.76, against 0.97 | review |
-| false-pass rate when Clopper–Pearson is re-checked after every draw, true rate 0.05 | 0.242 (0.247 in the review), against a nominal 0.05 | `research/sequential_peeking.py`, 200,000 runs |
+| upper bound minus estimate after 100, 300 or 1,200 draws, at true rates 0.005 to 0.05: median ratio to Clopper–Pearson's | 1.13–1.89× | 1 |
+| draws to pass at a true rate of 0.005 | median 67, mean 101; every run passes | 59 draws pass 0.744 of runs, 93 pass 0.90, 153 pass 0.99 |
+| probability of passing at a true rate of 0.03 | 0.708 by 1,200 draws; a run uses 745 draws on average | 0.970 with 1,200 draws; 482 draws pass 0.708 |
+| false-pass rate at a true rate of 0.05, checked after every draw | 0.040 (s.e. 0.0014) | Clopper–Pearson: 0.242 (s.e. 0.0010); a single look at 1,200 draws: 0.045 |
 
-A single look at the horizon passes 0.045 of those runs, within the nominal 0.05. Re-checking
-after every draw multiplies the false-pass rate about five-fold, which is the peeking
+The sequence saves draws only where the failure rate is well below the threshold and not known
+in advance. At 0.005 it passes after a mean of 101 draws, where a fixed design needs 153 to pass
+0.99 of the time; the zero-failure design of 59 draws is smaller but passes only 0.744 of the
+time. Near the threshold the sequence costs draws: at 0.03 a fixed design of 482 draws passes as
+often as the sequence, which uses 745 on average. The Hoeffding-spending reference passes none
+of these runs. After 1,200 draws without a failure its bound is still 0.085, and its margin over
+the estimate is 4.7 to 17 times Clopper–Pearson's. It is a reference for tests, not a sequence
+to run.
+
+Re-checking Clopper–Pearson after every draw multiplies the false-pass rate about five-fold,
+while the sequence, checked as often, stays within the nominal 0.05. This is the peeking
 demonstration phase 1 must turn into a test.
+
+The review of #10, tracked in #128, reported figures of the same kind from a sequence it did not
+name: 1.1–1.5× for the width, 72 draws at 0.005, 0.76 at 0.03 and 0.247 for Clopper–Pearson
+re-checked. It set its 72 draws against the 1,200-draw horizon, not against a fixed design, and
+its 0.247 is about five Monte Carlo standard errors from the 0.242 reproduced here, so its set-up
+differed in some detail it did not report. The table above replaces those figures. Phase 1
+measures them again for the sequence it builds.
 
 ## Related work
 
