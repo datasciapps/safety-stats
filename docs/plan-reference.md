@@ -740,6 +740,10 @@ groups:
 
 `prompt_bounds` declares the simultaneous-bound family and alpha allocation. Prompt bounds are on by default and take their alpha from `family`, simultaneous or not, and `family` has no default: name a declared multiplicity family, or set `enabled: false`. `risk_measures` contains named measures. A plan without one reports no group risk, and the analysis warns (`PLAN_NO_RISK_MEASURES`).
 
+`judge_claims: true` (experimental, off by default) also decides every claim on each declared
+judge's verdicts, for comparing judges; it requires `inputs.judges`. See
+[Claims by judge](#claims-by-judge-experimental).
+
 ```yaml
 outputs:
   prompt_bounds:
