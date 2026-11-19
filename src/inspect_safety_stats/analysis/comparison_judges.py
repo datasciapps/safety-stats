@@ -37,12 +37,14 @@ def _judge_corrected_comparison_interval(
     scoped_group: str | None = None,
     primary_scenario: str | None = None,
     scoped_groups: list[str] | None = None,
+    per_cohort: bool = False,
 ) -> RiskIntervalResult | None:
     """Correct a comparison by correcting each arm, then recombining.
 
     A validated calibration gives each arm its own cohort's measured box. An assumed
-    scenario gives both arms the same declared box, each arm free within it independently
-    of the other, and the result is a sensitivity analysis like every assumed correction.
+    scenario gives both arms the same declared box, or with ``per_cohort`` each arm the box
+    it declares for that arm's cohort; each arm is free within its box independently of the
+    other, and the result is a sensitivity analysis like every assumed correction.
 
     rho is prevalence-dependent, so the two arms carry different calibrations and the
     effect cannot be corrected from the contrast alone: rescaling a difference by a
@@ -88,13 +90,14 @@ def _judge_corrected_comparison_interval(
         return _assumed_comparison_interval(
             result=result,
             primary=primary,
-            calibration=candidate_calibration,
+            calibrations=(candidate_calibration, baseline_calibration),
             bounds=(lower, upper),
             arms=(candidate.lower, candidate.upper, baseline.lower, baseline.upper),
             candidate_share=candidate_share,
             baseline_share=baseline_share,
             primary_scenario=primary_scenario,
             scoped_groups=scoped_groups,
+            per_cohort=per_cohort,
         )
     spent = sum(
         item.alpha or 0.0 for item in (candidate_calibration, baseline_calibration)
@@ -185,16 +188,42 @@ def _assumed_comparison_interval(
     *,
     result: ComparisonResult,
     primary: RiskIntervalResult,
-    calibration: JudgeCalibration,
+    calibrations: tuple[JudgeCalibration, JudgeCalibration],
     bounds: tuple[float | None, float | None],
     arms: tuple[float, float, float, float],
     candidate_share: float,
     baseline_share: float,
     primary_scenario: str | None,
     scoped_groups: list[str] | None,
+    per_cohort: bool,
 ) -> RiskIntervalResult:
-    """One declared scenario's correction of a comparison, applied to both arms."""
+    """One declared scenario's correction of a comparison, applied to both arms.
 
+    ``calibrations`` are the candidate's and the baseline's boxes, which differ only when
+    the scenario declares boxes by cohort (``per_cohort``)."""
+
+    calibration, baseline_calibration = calibrations
+    scope = (
+        ""
+        if scoped_groups is None
+        else ", on the rows of groups " + ", ".join(repr(item) for item in scoped_groups)
+        + " only"
+    )
+    boxes = (
+        [
+            f"{arm.capitalize()} P(truly unsafe | judge said unsafe) lies in "
+            f"[{box.rho_1_lower:.6g}, {box.rho_1_upper:.6g}]; P(truly unsafe | judge said "
+            f"safe) in [{box.rho_0_lower:.6g}, {box.rho_0_upper:.6g}]."
+            for arm, box in (("candidate", calibration), ("baseline", baseline_calibration))
+        ]
+        if per_cohort
+        else [
+            f"On both arms P(truly unsafe | judge said unsafe) lies in "
+            f"[{calibration.rho_1_lower:.6g}, {calibration.rho_1_upper:.6g}] and "
+            f"P(truly unsafe | judge said safe) in "
+            f"[{calibration.rho_0_lower:.6g}, {calibration.rho_0_upper:.6g}]."
+        ]
+    )
     warnings: list[str] = []
     if primary_scenario is not None and calibration.scenario_id != primary_scenario:
         warnings.append("Non-primary judge-calibration scenario; reported for sensitivity only.")
@@ -221,24 +250,25 @@ def _assumed_comparison_interval(
         assumptions=[
             "The reported effect is a contrast of true failure risks, not of "
             "judge-reported risks.",
-            f"On both arms P(truly unsafe | judge said unsafe) lies in "
-            f"[{calibration.rho_1_lower:.6g}, {calibration.rho_1_upper:.6g}] and "
-            f"P(truly unsafe | judge said safe) in "
-            f"[{calibration.rho_0_lower:.6g}, {calibration.rho_0_upper:.6g}].",
+            *boxes,
             "These conditional accuracies are declared assumptions, not measurements; "
             "the interval inherits no coverage guarantee from them.",
             (
-                "The declared accuracies are prevalence-dependent and are applied unchanged "
-                "to both arms' cohorts."
-                if scoped_groups is None
+                "The declared accuracies are prevalence-dependent; the scenario declares "
+                f"each arm's box for that arm's cohort{scope}."
+                if per_cohort
                 else "The declared accuracies are prevalence-dependent and are applied "
-                "unchanged to both arms' cohorts, on the rows of groups "
-                + ", ".join(repr(item) for item in scoped_groups)
-                + " only."
+                f"unchanged to both arms' cohorts{scope}."
             ),
-            "Each arm is corrected over the whole declared box independently of the other, "
-            "so a judge whose accuracy differs between the arms within that box is covered; "
-            "one whose accuracy leaves the box on either arm is not.",
+            (
+                "Each arm is corrected over its own declared box independently of the other, "
+                "so a judge whose accuracy on each arm stays within that arm's box is covered; "
+                "one whose accuracy leaves its box on either arm is not."
+                if per_cohort
+                else "Each arm is corrected over the whole declared box independently of the "
+                "other, so a judge whose accuracy differs between the arms within that box is "
+                "covered; one whose accuracy leaves the box on either arm is not."
+            ),
             "The effect is recombined from the two corrected arm intervals, so it makes "
             "no independence assumption between arms beyond the one the underlying "
             "two-arm region already makes.",
@@ -263,12 +293,15 @@ def _apply_judge_correction_to_comparisons(
     family_id: str | None,
     diagnostics: list[Diagnostic],
     primary_scenario: str | None = None,
+    per_cohort: set[str] | frozenset[str] = frozenset(),
 ) -> None:
     """Append judge corrections to comparisons that expose both arm bounds.
 
     ``by_scope`` gives each calibration scope its calibrations: one measured box in validated
-    mode, every declared scenario in assumed mode. A comparison gets one corrected interval
-    per scenario both its arms carry, each arm corrected with its own scope's box.
+    mode, every declared scenario in assumed mode, with the box it declares for the scope's
+    cohort. A comparison gets one corrected interval per scenario both its arms carry, each
+    arm corrected with its own scope's box. ``per_cohort`` names the assumed scenarios that
+    declare boxes by cohort.
 
     A comparison of a group the calibration is not scoped to stays uncorrected, silently:
     the plan scoped the calibration away from it. Any other comparison left uncorrected is
@@ -344,6 +377,7 @@ def _apply_judge_correction_to_comparisons(
                 scoped_group=candidate_scope[1],
                 primary_scenario=primary_scenario,
                 scoped_groups=scoped_groups,
+                per_cohort=candidate.scenario_id in per_cohort,
             )
             if interval is not None:
                 result.intervals.append(interval)

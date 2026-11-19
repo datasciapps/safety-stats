@@ -364,6 +364,14 @@ class JudgeCalibrationSpec(StrictModel):
                 raise ValueError(f"primary scenario {self.primary!r} is not declared")
             if self.validation_manifest is not None:
                 raise ValueError("validation_manifest applies only to mode: validated")
+            # The generative correction reads one box per scenario; a per-cohort box would
+            # be ignored, so it is refused.
+            per_cohort = [scenario.id for scenario in self.scenarios if scenario.cohorts]
+            if per_cohort:
+                raise ValueError(
+                    "per-cohort judge calibration boxes are not supported in generative "
+                    "plans; remove cohorts from scenarios " + ", ".join(map(repr, per_cohort))
+                )
         else:
             if self.validation_manifest is None:
                 raise ValueError("validated judge calibration requires a validation_manifest")

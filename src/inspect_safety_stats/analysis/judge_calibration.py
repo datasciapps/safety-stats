@@ -252,22 +252,37 @@ def _uncertified_correction_warning(gap: str, group_id: str | None = None) -> st
     )
 
 
-def _assumed_judge_calibrations(plan: AnalysisPlan) -> list[JudgeCalibration]:
+def _assumed_judge_calibrations(plan: AnalysisPlan, cohort_id: str) -> list[JudgeCalibration]:
+    """Every declared scenario's box for one cohort: its own box where the scenario gives
+    the cohort one, the scenario's default box otherwise."""
+
     spec = plan.inputs.judge_calibration
     if spec is None or spec.mode != "assumed":
         return []
     ordered = sorted(spec.scenarios, key=lambda item: (item.id != spec.primary, item.id))
-    return [
-        JudgeCalibration(
-            scenario_id=item.id,
-            rho_1_lower=item.rho_1.lower,
-            rho_1_upper=item.rho_1.upper,
-            rho_0_lower=item.rho_0.lower,
-            rho_0_upper=item.rho_0.upper,
-            source=spec.mode,
+    calibrations = []
+    for item in ordered:
+        rho_1, rho_0 = item.box(cohort_id)
+        calibrations.append(
+            JudgeCalibration(
+                scenario_id=item.id,
+                rho_1_lower=rho_1.lower,
+                rho_1_upper=rho_1.upper,
+                rho_0_lower=rho_0.lower,
+                rho_0_upper=rho_0.upper,
+                source=spec.mode,
+            )
         )
-        for item in ordered
-    ]
+    return calibrations
+
+
+def _per_cohort_scenarios(plan: AnalysisPlan) -> set[str]:
+    """The assumed scenarios that give some cohort a box of its own."""
+
+    spec = plan.inputs.judge_calibration
+    if spec is None or spec.mode != "assumed":
+        return set()
+    return {item.id for item in spec.scenarios if item.cohorts is not None}
 
 
 def _validated_judge_calibrations(
@@ -565,9 +580,12 @@ def _judge_corrected_interval(
     scoped_group: str | None = None,
     scoped_groups: list[str] | None = None,
     stratified: bool = False,
+    per_cohort: bool = False,
 ) -> RiskIntervalResult | None:
     """Correct one row; ``scoped_group`` names a validated calibration's group, and
-    ``scoped_groups`` the groups an assumed calibration is scoped to."""
+    ``scoped_groups`` the groups an assumed calibration is scoped to. ``per_cohort`` says
+    that the assumed scenario declares boxes by cohort, so ``calibration`` is the row's
+    cohort's box."""
 
     if result.lower is None or result.upper is None:
         return None
@@ -712,17 +730,23 @@ def _judge_corrected_interval(
                 ]
             )
     else:
+        scope = (
+            ""
+            if scoped_groups is None
+            else ", on the rows of groups " + ", ".join(repr(item) for item in scoped_groups)
+            + " only"
+        )
         assumptions.extend(
             [
                 "These conditional accuracies are declared assumptions, not measurements; "
                 "the interval inherits no coverage guarantee from them.",
-                "The declared accuracies are prevalence-dependent and are applied unchanged "
-                "to every cohort."
-                if scoped_groups is None
-                else "The declared accuracies are prevalence-dependent and are applied "
-                "unchanged to every cohort, on the rows of groups "
-                + ", ".join(repr(item) for item in scoped_groups)
-                + " only.",
+                (
+                    f"The declared accuracies are prevalence-dependent; the scenario declares "
+                    f"this box for cohort {result.cohort_id!r}{scope}."
+                    if per_cohort
+                    else "The declared accuracies are prevalence-dependent and are applied "
+                    f"unchanged to every cohort{scope}."
+                ),
             ]
         )
     if unclassified_share > 0:

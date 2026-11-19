@@ -1282,7 +1282,16 @@ def _markdown(report: SafetyReport) -> str:
                         f"[{item.rho_1.lower}, {item.rho_1.upper}]; "
                         f"P(truly unsafe | judge said safe) in "
                         f"[{item.rho_0.lower}, {item.rho_0.upper}]"
+                        + ("" if item.cohorts is None else ", for every cohort not listed below")
                     )
+                    for cohort_id, box in (item.cohorts or {}).items():
+                        lines.append(
+                            f"  - cohort `{_escape(cohort_id)}`: "
+                            f"P(truly unsafe | judge said unsafe) in "
+                            f"[{box.rho_1.lower}, {box.rho_1.upper}]; "
+                            f"P(truly unsafe | judge said safe) in "
+                            f"[{box.rho_0.lower}, {box.rho_0.upper}]"
+                        )
     if report.hierarchy_risks:
         lines.extend(
             [

@@ -81,12 +81,46 @@ Each scenario must be **strictly informative**: the \(\rho_1\) lower endpoint mu
 the \(\rho_0\) upper endpoint. A plan asserting otherwise is rejected rather than silently
 producing a meaningless correction.
 
+### Per-cohort boxes
+
+A judge can be more accurate on one model's outputs than on another's. To stress-test that
+without human labels, a scenario can give some cohorts a box of their own under `cohorts`:
+
+```yaml
+  judge_calibration:
+    mode: assumed
+    primary: declared
+    scenarios:
+      - id: declared
+        rho_1: {lower: 0.85, upper: 1.0}
+        rho_0: {lower: 0.0, upper: 0.02}
+      - id: worse_on_candidate
+        rho_1: {lower: 0.85, upper: 1.0}
+        rho_0: {lower: 0.0, upper: 0.02}
+        cohorts:
+          candidate:
+            rho_1: {lower: 0.60, upper: 0.85}
+            rho_0: {lower: 0.0, upper: 0.08}
+```
+
+Each entry maps a declared cohort to its box, and replaces the scenario's `rho_1` and `rho_0`
+on that cohort's rows only. A cohort the scenario does not list takes the scenario's own box.
+Every cohort box must be strictly informative too. `cohorts` cannot be empty, and a cohort
+that the plan does not declare is a `PLAN_UNKNOWN_REFERENCE` error. With `groups`, a cohort box
+applies to the listed groups' rows of that cohort, like the default box.
+
+A plan with no `cohorts` in any scenario gives the same results, report bytes and plan hash as
+before the field existed. The report records each scenario's cohort boxes under
+`presentation.judge_calibration.scenarios[].cohorts` and lists them in the report's text.
+Generative plans reject the field.
+
 Reports gain a **Judge misclassification sensitivity** section listing, for every corrected
 row and scenario, the judge-system bounds, the true-risk bounds, and the corrected estimate
 range. The original interval is untouched and remains primary.
 
 Each scenario also corrects every comparison whose primary interval exposes both arm bounds,
-as [Comparisons](#comparisons) describes: both arms take the scenario's box, and the
+as [Comparisons](#comparisons) describes: each arm takes the scenario's box for its own
+cohort, which is the same box on both arms unless the scenario gives a cohort its own. The
 comparison gains one interval `judge_corrected_<scenario>` per scenario, with the same
 `diagnostic` eligibility. A comparison that cannot be corrected, such as a direct contrast
 interval, stays on the judge-reported scale and is named in
@@ -114,13 +148,16 @@ not a defect.
   judge on a particular output distribution, so applying one declared scenario to several
   cohorts with materially different failure rates is itself an approximation. The report
   states this in the interval's assumption list.
-- A single declared scenario is applied to every cohort, so comparisons corrected in
-  `assumed` mode inherit that approximation on both arms. Each arm is corrected over the
-  whole box independently of the other, so the corrected comparison covers a judge whose
-  accuracy differs between the arms only as far as both stay inside the box.
+- Unless a scenario declares [per-cohort boxes](#per-cohort-boxes), it applies one box to
+  every cohort, so comparisons corrected in `assumed` mode inherit that approximation on both
+  arms. Each arm is corrected over its box independently of the other, so the corrected
+  comparison covers a judge whose accuracy differs between the arms only as far as each arm
+  stays inside its own box.
 - Nothing here detects a judge whose errors depend on which model produced the output.
   Differential misclassification across arms can manufacture an apparent difference from
-  nothing, and no declared scenario will reveal it.
+  nothing. Per-cohort boxes let a plan state such a dependence as a scenario and see what it
+  does to the comparison, but they do not measure it: whether the judge actually behaves
+  that way is still an assumption.
 
 ## Validated mode: measured accuracies
 
@@ -428,8 +465,9 @@ is not a function of \(\Delta\) alone. Risk ratios and relative reductions are d
 the same two corrected arm intervals. Each arm must be a row its own cohort's labels
 certify, as [below](#what-it-certifies); otherwise the corrected comparison is a sensitivity.
 
-In `assumed` mode the same recombination runs once per declared scenario, with the
-scenario's box on both arms. Each corrected comparison is a sensitivity
+In `assumed` mode the same recombination runs once per declared scenario, with the box the
+scenario declares for each arm's cohort: the same box on both arms unless the scenario gives
+one of the cohorts a box of its own. Each corrected comparison is a sensitivity
 (`eligibility: diagnostic`, `role: sensitivity`, no `family_alpha`), and a scenario other
 than `primary` carries a warning that it is reported for sensitivity only.
 

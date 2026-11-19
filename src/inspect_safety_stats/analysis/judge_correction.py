@@ -15,6 +15,7 @@ from inspect_safety_stats.analysis.judge_calibration import (
     _judge_scopes,
     _JudgeScope,
     _labelled_population,
+    _per_cohort_scenarios,
     _scope_population,
     _transported_judge_interval,
     _uncertified_correction_warning,
@@ -397,7 +398,7 @@ def _add_judge_corrections(
         }
 
     if spec.mode == "assumed":
-        calibrations = _assumed_judge_calibrations(plan)
+        per_cohort = _per_cohort_scenarios(plan)
         for result in targets:
             if _judge_scope(plan, result.cohort_id, result.group_id) is None:
                 continue
@@ -405,7 +406,7 @@ def _add_judge_corrections(
             share = _unclassified_share(
                 population.get(result.cohort_id, {}), weights, measure_type
             )
-            for calibration in calibrations:
+            for calibration in _assumed_judge_calibrations(plan, result.cohort_id):
                 interval = _judge_corrected_interval(
                     result=result,
                     calibration=calibration,
@@ -415,24 +416,29 @@ def _add_judge_corrections(
                     unclassified_share=share,
                     tail=measure_type != "weighted_mean",
                     scoped_groups=spec.groups,
+                    per_cohort=calibration.scenario_id in per_cohort,
                 )
                 if interval is not None:
                     result.intervals.append(interval)
-        # Every scope carries every declared scenario, so both arms of a comparison take
-        # the same declared box.
+        # Every scope carries every declared scenario, each with its cohort's box, so each
+        # arm of a comparison takes its own cohort's box: the same box on both arms unless
+        # the scenario declares boxes by cohort.
         _apply_judge_correction_to_comparisons(
             plan,
             data,
             population,
             comparisons,
-            {scope: calibrations for scope in _judge_scopes(plan)},
+            {scope: _assumed_judge_calibrations(plan, scope[0]) for scope in _judge_scopes(plan)},
             None,
             diagnostics,
             primary_scenario=spec.primary,
+            per_cohort=per_cohort,
         )
         return {
             "mode": "assumed",
-            "scenarios": [item.scenario_id for item in calibrations],
+            "scenarios": sorted(
+                (item.id for item in spec.scenarios), key=lambda item: (item != spec.primary, item)
+            ),
             "primary": spec.primary,
             **({"groups": list(spec.groups)} if spec.groups is not None else {}),
         }

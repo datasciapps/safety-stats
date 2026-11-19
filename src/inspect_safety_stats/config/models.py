@@ -239,16 +239,32 @@ class JudgeRateRangeSpec(StrictModel):
         return self
 
 
-class JudgeCalibrationScenarioSpec(StrictModel):
+class JudgeCohortBoxSpec(StrictModel):
+    """A scenario's declared accuracy box for one cohort, replacing its default box there."""
+
+    rho_1: JudgeRateRangeSpec
+    rho_0: JudgeRateRangeSpec
+
+
+class JudgeCalibrationScenarioSpec(OmitsAbsentFields):
     """One named assumption about the judge's conditional accuracy.
 
     ``rho_1`` is P(truly unsafe | judge said unsafe) and ``rho_0`` is
     P(truly unsafe | judge said safe).
+
+    ``cohorts`` gives some cohorts a box of their own, for a judge whose accuracy depends on
+    the model that produced the output. A cohort it does not list takes ``rho_1`` and
+    ``rho_0``. Each arm of a corrected comparison takes its own cohort's box.
     """
+
+    # Left out of the serialised plan when absent, so the hash and the resolved plan of a
+    # plan without it are what they were before the field existed.
+    absent_when_none = ("cohorts",)
 
     id: str = Field(min_length=1)
     rho_1: JudgeRateRangeSpec
     rho_0: JudgeRateRangeSpec
+    cohorts: dict[str, JudgeCohortBoxSpec] | None = None
 
     @model_validator(mode="after")
     def strictly_informative(self) -> JudgeCalibrationScenarioSpec:
@@ -257,7 +273,25 @@ class JudgeCalibrationScenarioSpec(StrictModel):
                 f"judge calibration scenario {self.id!r} is not strictly informative: "
                 "the rho_1 lower endpoint must exceed the rho_0 upper endpoint"
             )
+        if self.cohorts is not None and not self.cohorts:
+            raise ValueError(
+                f"judge calibration scenario {self.id!r} cohorts cannot be empty; leave the "
+                "field out to give every cohort the scenario's box"
+            )
+        for cohort_id, box in (self.cohorts or {}).items():
+            if box.rho_1.lower <= box.rho_0.upper:
+                raise ValueError(
+                    f"judge calibration scenario {self.id!r} is not strictly informative for "
+                    f"cohort {cohort_id!r}: the rho_1 lower endpoint must exceed the rho_0 "
+                    "upper endpoint"
+                )
         return self
+
+    def box(self, cohort_id: str) -> tuple[JudgeRateRangeSpec, JudgeRateRangeSpec]:
+        """The (rho_1, rho_0) box this scenario declares for one cohort."""
+
+        own = (self.cohorts or {}).get(cohort_id)
+        return (self.rho_1, self.rho_0) if own is None else (own.rho_1, own.rho_0)
 
 
 class PublishedValidationSetSpec(StrictModel):
