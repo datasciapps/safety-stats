@@ -8,12 +8,13 @@ from typing import Any
 
 from inspect_safety_stats.analysis.direct_mean import _HierarchyNode
 from inspect_safety_stats.analysis.estimates import _bounds_carry_unknown_outcome
+from inspect_safety_stats.config.loader import report_message
 from inspect_safety_stats.config.models import (
     AnalysisPlan,
     JudgeCalibrationSpec,
     PublishedValidationSetSpec,
 )
-from inspect_safety_stats.ingest.outcomes import is_missing
+from inspect_safety_stats.ingest.outcomes import classified_by_policy
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.ingest.validation import (
     check_labelled_prefix,
@@ -23,7 +24,6 @@ from inspect_safety_stats.ingest.validation import (
     load_validation_strata,
     truth_stratum_counts,
 )
-from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import (
     Diagnostic,
     GroupRiskResult,
@@ -67,7 +67,7 @@ class PromptRollouts:
     bounded: int
     attempted: int
     # Of the classified rollouts, those a plan policy counted safe and counted as failures
-    # (see _classified_by_policy): their classification is not a judge verdict.
+    # (see classified_by_policy): their classification is not a judge verdict.
     policy_safe: int = 0
     policy_failures: int = 0
 
@@ -109,7 +109,8 @@ def _scope_population(
     rollouts = population.get(cohort_id, {})
     if group_id is None:
         return rollouts
-    prompts = set(next(group for group in data.groups if group.id == group_id).prompt_ids)
+    # An undeclared group, which plan validation reports, has no prompts.
+    prompts = next((set(group.prompt_ids) for group in data.groups if group.id == group_id), set())
     return {prompt_id: item for prompt_id, item in rollouts.items() if prompt_id in prompts}
 
 
@@ -128,24 +129,6 @@ def _scope_rollouts(group_id: str | None, noun: str = "rollouts") -> str:
     return f"the {noun} of group {group_id!r} in the cohort"
 
 
-def _classified_by_policy(row: Observation) -> bool:
-    """Whether a plan policy, not the primary score's mapping, classified the rollout.
-
-    That is a policy block counted safe, a sample error counted as a failure, a content-filter
-    stop or an unscored truncated answer the plan classifies, or a missing score counted as a
-    failure. Each leaves its mark on the observation: a sample error, a content-filter stop's
-    undelivered content, the token-limit flag, or a missing score.
-    """
-
-    return row.failure is not None and (
-        row.outcome_status == "target_policy_blocked_safe"
-        or row.error is not None
-        or row.content_delivered is False
-        or bool(row.token_limit_unscored)
-        or is_missing(row.score_raw)
-    )
-
-
 def _labelled_population(
     plan: AnalysisPlan, data: NormalizedData
 ) -> dict[str, dict[str, PromptRollouts]]:
@@ -161,7 +144,7 @@ def _labelled_population(
         if row.failure is not None:
             tally[0] += 1
             tally[1] += 1
-            if _classified_by_policy(row):
+            if classified_by_policy(row):
                 tally[4 if row.failure else 3] += 1
         elif _bounds_carry_unknown_outcome(plan, row):
             tally[1] += 1
@@ -322,6 +305,35 @@ def _unclassified_assumption(share: float) -> str:
     )
 
 
+def _stratified_assumptions(cohort: str = "the cohort") -> list[str]:
+    """The stratified calibration's method and design, as risk rows and comparisons state it.
+
+    ``cohort`` names the cohorts whose classified rollouts the strata must place.
+    """
+
+    return [
+        "Experimental: each judge stratum's truly unsafe count is bounded by the sum "
+        "of exact hypergeometric bounds over its declared fine strata, so each fine "
+        "stratum counts by its size; a census gives its count exactly and a fine "
+        "stratum without labels counts from none to all of its rollouts.",
+        "Each range is the exact Clopper-Pearson bound on the conditional probability "
+        "at the lower and at the upper count, out of the judge stratum's size: the "
+        "stratum's rollouts only sample that probability, so even a census leaves it "
+        "uncertain.",
+        "Each endpoint's budget is halved: one half for its Clopper-Pearson bound, the "
+        "other split equally over the count bounds of the fine strata that were "
+        "sampled but not censused.",
+        "Given a judge stratum's size, its rollouts are independent and each is truly "
+        "unsafe with the stratum's conditional probability, so its truly unsafe count "
+        "is binomial.",
+        "The labelled rows of each fine stratum are a simple random sample without "
+        "replacement of it, of a size fixed independently of the labels; this is a "
+        "property of the declared collection protocol, not of the data.",
+        f"The declared validation strata place every classified rollout of {cohort}.",
+        "Human adjudication is treated as ground truth.",
+    ]
+
+
 def _uncertified_base_warning(eligibility: str) -> str:
     return (
         f"Sensitivity analysis, not a certified bound: the judge-system interval it corrects "
@@ -418,13 +430,13 @@ def _validated_judge_calibrations(
             Diagnostic(
                 code="JUDGE_VALIDATION_INVALID",
                 severity="ERROR",
-                message=str(exc),
+                message=report_message(str(exc), plan, (spec.validation_manifest,)),
                 scope=plan_scope("inputs", "judge_calibration"),
             )
         )
         return {}, {}, None, {}, None
 
-    protocol = _labelling_protocol(spec, labels, diagnostics)
+    protocol = _labelling_protocol(plan, spec, labels, diagnostics)
     if spec.protocol is not None and protocol is None:
         return {}, {}, None, {}, None
     bound: CalibrationBound = (
@@ -436,10 +448,10 @@ def _validated_judge_calibrations(
     # A rollout a plan policy classified is in neither judge stratum: the policy, not the
     # judge, set its failure column, and the corrections do not read it as a verdict. The
     # strata, their sizes and their labels are the judge's verdicts only.
-    judged = [row for row in data.observations if not _classified_by_policy(row)]
-    by_policy = {row.observation_id for row in data.observations if _classified_by_policy(row)}
+    judged = [row for row in data.observations if not classified_by_policy(row)]
+    by_policy = {row.observation_id for row in data.observations if classified_by_policy(row)}
     declared: dict[str, str] | None = None
-    if spec.sampling == "stratified_without_replacement":
+    if spec.sampling == "stratified_within_judge_stratum":
         if spec.validation_strata is None:
             raise ValueError("stratified judge-calibration sampling requires validation_strata")
         try:
@@ -449,7 +461,7 @@ def _validated_judge_calibrations(
                 Diagnostic(
                     code="JUDGE_VALIDATION_INVALID",
                     severity="ERROR",
-                    message=str(exc),
+                    message=report_message(str(exc), plan, (spec.validation_strata,)),
                     scope=plan_scope("inputs", "judge_calibration"),
                 )
             )
@@ -487,15 +499,19 @@ def _validated_judge_calibrations(
 
     _, unmatched = judge_stratum_counts(judged, labels)
     scopes = _judge_scopes(plan)
+    group_prompts = {group.id: set(group.prompt_ids) for group in data.groups}
+    # A group the plan does not declare is reported as PLAN_UNKNOWN_REFERENCE. It has no
+    # rollouts and gets no calibration, but still takes its share of the budget below.
+    calibrated = [scope for scope in scopes if scope[1] is None or scope[1] in group_prompts]
     counts: dict[_JudgeScope, JudgeStrata] = {}
     fine: dict[_JudgeScope, FineStrata] = {}
     truth_strata: dict[_JudgeScope, Any] = {}
     in_scope: set[str] = set()
-    for scope in scopes:
+    for scope in calibrated:
         cohort_id, group_id = scope
         observations = judged
         if group_id is not None:
-            prompts = set(next(item for item in data.groups if item.id == group_id).prompt_ids)
+            prompts = group_prompts[group_id]
             observations = [row for row in observations if row.prompt_id in prompts]
             in_scope.update(row.observation_id for row in observations)
         if declared is not None:
@@ -551,7 +567,7 @@ def _validated_judge_calibrations(
     per_calibration_alpha = cohort_alpha_share(family.alpha, len(scopes))
     calibrations: dict[_JudgeScope, JudgeCalibration] = {}
     summaries: dict[_JudgeScope, dict[str, Any]] = {}
-    for scope in scopes:
+    for scope in calibrated:
         cohort_id, group_id = scope
         where = (
             cohort_scope(cohort_id)
@@ -586,7 +602,12 @@ def _validated_judge_calibrations(
                 Diagnostic(
                     code="JUDGE_CALIBRATION_UNINFORMATIVE",
                     severity="WARNING",
-                    message=str(outcome.refusal),
+                    # A scoped refusal must not read as the cohort's own calibration's.
+                    message=(
+                        str(outcome.refusal)
+                        if group_id is None
+                        else f"group {group_id!r} of cohort {cohort_id!r}: {outcome.refusal}"
+                    ),
                     scope=where,
                 )
             )
@@ -609,9 +630,11 @@ def _validated_judge_calibrations(
                 severity="INFO",
                 message=(
                     "Experimental: the judge calibration reads its labels as a stratified "
-                    "sample without replacement within declared fine strata, with exact "
-                    "hypergeometric bounds; the asymptotic delta-method reference, which "
-                    "assumes simple random samples within the judge strata, is not reported"
+                    "sample without replacement within declared fine strata, bounds each judge "
+                    "stratum's truly unsafe count with exact hypergeometric bounds, and its "
+                    "conditional accuracy at those counts with Clopper-Pearson bounds; the "
+                    "asymptotic delta-method reference, which assumes simple random samples "
+                    "within the judge strata, is not reported"
                 ),
                 scope=plan_scope("inputs", "judge_calibration"),
             )
@@ -663,6 +686,7 @@ def _without_policy_classified(
 
 
 def _labelling_protocol(
+    plan: AnalysisPlan,
     spec: JudgeCalibrationSpec,
     labels: dict[str, bool],
     diagnostics: list[Diagnostic],
@@ -688,7 +712,7 @@ def _labelling_protocol(
             Diagnostic(
                 code="JUDGE_LABELLING_PROTOCOL_VIOLATED",
                 severity="ERROR",
-                message=str(exc),
+                message=report_message(str(exc), plan, (protocol.queue,)),
                 scope=plan_scope("inputs", "judge_calibration", "protocol"),
             )
         )
@@ -781,21 +805,7 @@ def _judge_corrected_interval(
                 + " judge stratum has no human label, so its range is [0, 1], which holds "
                 "with certainty."
             )
-        assumptions.extend(
-            [
-                "Experimental: each range sums exact hypergeometric bounds on the truly unsafe "
-                "count of every declared fine stratum within its judge stratum, weighted by "
-                "the fine stratum's size; a census is exact and a fine stratum without labels "
-                "is completed from none to all of its rollouts.",
-                "Each endpoint's budget is split equally over the fine strata that were "
-                "sampled but not censused.",
-                "The labelled rows of each fine stratum are a simple random sample without "
-                "replacement of it, of a size fixed independently of the labels; this is a "
-                "property of the declared collection protocol, not of the data.",
-                "The declared validation strata place every classified rollout of the cohort.",
-                "Human adjudication is treated as ground truth.",
-            ]
-        )
+        assumptions.extend(_stratified_assumptions())
         if scoped_group is not None:
             assumptions.append(
                 f"The calibration is scoped to group {scoped_group!r}: its fine strata are the "
@@ -810,14 +820,15 @@ def _judge_corrected_interval(
                     f"The fine strata weight back to every classified rollout of {population} "
                     "equally, and so does this row, so they measure the judge's accuracy for "
                     "its estimand.",
-                    "Coverage is the union bound over the underlying interval and every "
-                    "calibration count bound.",
+                    "Coverage is the union bound over the underlying interval, every "
+                    "calibration count bound and the four Clopper-Pearson bounds.",
                 ]
             )
     elif validated:
         sequence = calibration.bound == "confidence_sequence"
         method = (
-            "anytime-valid hypergeometric confidence sequence (Waudby-Smith and Ramdas, 2020)"
+            "anytime-valid binomial confidence sequence (a prior-posterior ratio, "
+            "Waudby-Smith and Ramdas, 2020)"
             if sequence
             else "exact Clopper-Pearson bound"
         )
@@ -836,6 +847,18 @@ def _judge_corrected_interval(
                 if sequence
                 else "Those two ranges are exact Clopper-Pearson bounds from human labels "
                 "drawn within each judge stratum."
+            )
+        if sequence:
+            assumptions.extend(
+                [
+                    "Each sequence bounds the judge stratum's conditional probability, which "
+                    "the stratum's rollouts only sample, not the share of them that is truly "
+                    "unsafe; it does not use the stratum's size, and even a census leaves the "
+                    "probability uncertain.",
+                    "Given a judge stratum's size, its rollouts are independent and each is "
+                    "truly unsafe with the stratum's conditional probability, so its labels, "
+                    "in the queue's random order, are independent draws at that probability.",
+                ]
             )
         assumptions.extend(
             [
@@ -981,6 +1004,10 @@ def _transported_judge_interval(
             f"Clopper-Pearson lower bound at alpha {published.sensitivity_alpha:.6g} from "
             f"{published.judge_flagged_unsafe} of {published.human_unsafe} human-unsafe items "
             f"flagged on the published set {published.name!r} ({published.source}).",
+            "The Clopper-Pearson bound treats the published set's human-unsafe items as "
+            "independent draws that share one sensitivity. Several completions of the same "
+            "behaviour are not independent, so counts that include them overstate the bound's "
+            "precision.",
             f"Transport assumption: the same judge ({published.judge}) and rubric "
             f"({published.rubric}), applied to this run's outputs, is at least as sensitive "
             "on every prompt as on the published set, whose outputs came from other "

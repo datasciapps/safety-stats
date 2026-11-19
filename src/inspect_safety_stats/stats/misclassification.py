@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import itertools
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from inspect_safety_stats.stats.binomial import binomial_bounds, binomial_lower_bound
+from inspect_safety_stats.stats.binomial import (
+    binomial_bounds,
+    binomial_lower_bound,
+    binomial_upper_bound,
+)
 
 CalibrationBound = Literal["clopper_pearson", "confidence_sequence"]
 
@@ -151,7 +156,9 @@ def transported_sensitivity_lower(
     ``human_unsafe`` items of the set are truly unsafe by human adjudication, and the judge
     flagged ``judge_flagged_unsafe`` of them. The bound is the Clopper-Pearson lower endpoint
     at ``alpha``; it describes the published set, and holds for another run's outputs only
-    under the transport assumption the caller declares.
+    under the transport assumption the caller declares. It treats the ``human_unsafe`` items
+    as independent draws that share one sensitivity, so it is too narrow for counts that
+    include several completions of the same behaviour.
     """
 
     return binomial_lower_bound(judge_flagged_unsafe, human_unsafe, alpha=alpha)
@@ -230,48 +237,71 @@ class JudgeStratumCounts:
             raise ValueError("labelled count cannot exceed the stratum size")
 
 
-def hypergeometric_confidence_sequence(
+def judge_accuracy_confidence_sequence(
     stratum: JudgeStratumCounts, *, alpha: float
 ) -> tuple[float, float]:
-    """An anytime-valid range for the share of truly unsafe rows in a finite stratum.
+    """An anytime-valid range for the probability that a rollout of a judge stratum is unsafe.
 
-    The labelled rows are drawn one at a time without replacement, in a random order, from
-    a stratum of ``N = stratum_size`` rows of which an unknown ``K`` are truly unsafe. With
-    a uniform prior on ``K`` in ``{0, ..., N}``, the ratio of prior to posterior mass at the
-    true ``K`` is a nonnegative martingale starting at one (the prior-posterior ratio
-    martingale of Waudby-Smith and Ramdas, "Confidence sequences for sampling without
-    replacement", NeurIPS 2020). By Ville's inequality it ever exceeds ``1 / alpha`` with
-    probability at most ``alpha``, so the set of ``K`` whose posterior-to-prior ratio
-    exceeds ``alpha`` holds the true ``K`` at every sample size simultaneously. Labelling may
-    therefore stop at any time, also because of the labels seen so far.
+    A validated calibration needs rho, the probability that a rollout the judge put in this
+    stratum is truly unsafe, not the share ``K / N`` of the run's ``N`` rollouts in it that
+    are. The run's rollouts only sample rho: given ``N``, ``K`` is binomial with rate rho
+    when the stratum's rollouts are independent, each truly unsafe with probability rho, the
+    rollout model under which the labels of a fixed-size calibration are binomial too. Even
+    a census, which knows ``K``, leaves ``K / N`` about ``sqrt(rho (1 - rho) / N)`` from rho.
 
-    After ``n`` labels with ``S`` unsafe, the posterior-to-prior ratio at ``K`` is
-    ``(n + 1) * P(S | N, K, n)``, with ``P`` the hypergeometric probability, because the
-    uniform prior's marginal likelihood of ``S`` is ``1 / (n + 1)``. That probability is
-    log-concave in ``K``, so the set is an interval. It is returned as shares of ``N``. With
-    no labels it is ``[0, 1]``, and a census pins the share exactly.
+    The labelled rows are drawn one at a time, in a random order fixed before labelling, so
+    under that model their labels are independent draws, each unsafe with probability rho.
+    With a uniform prior on rho, the ratio of prior to posterior density at the true rho is
+    then a nonnegative martingale starting at one: the prior-posterior ratio martingale of
+    Waudby-Smith and Ramdas ("Confidence sequences for sampling without replacement",
+    NeurIPS 2020), here for the binomial model rather than a finite population. It is the
+    likelihood ratio of a uniform mixture of rates against the true rate. By Ville's
+    inequality it ever exceeds ``1 / alpha`` with probability at most ``alpha``, so the set
+    of rho whose posterior density exceeds ``alpha`` holds the true rho at every number of
+    labels simultaneously. Labelling may therefore stop at any time, also because of the
+    labels seen so far.
+
+    After ``n`` labels with ``S`` unsafe the posterior is Beta(S + 1, n - S + 1). Its
+    density is log-concave, so the set is an interval, and the endpoints are where the
+    density equals ``alpha``. The stratum's size does not enter: the labels carry everything
+    the run says about rho. With no labels the range is ``[0, 1]``.
 
     ``alpha`` bounds the probability that the range ever misses on either side, and so each
     endpoint's too.
     """
 
-    import numpy as np
-    from scipy.stats import hypergeom
-
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
-    size = stratum.stratum_size
+    unsafe = stratum.truly_unsafe
+    safe = stratum.labelled - unsafe
     if stratum.labelled == 0:
         return 0.0, 1.0
-    candidates = np.arange(size + 1)
-    log_ratio = np.log(stratum.labelled + 1) + hypergeom.logpmf(
-        stratum.truly_unsafe, size, candidates, stratum.labelled
-    )
-    kept = candidates[log_ratio > np.log(alpha)]
-    if kept.size == 0:
-        # The ratio at the maximum-likelihood K is at least one, so this cannot happen.
-        raise ValueError("the confidence sequence is empty; the counts are inconsistent")
-    return float(kept[0]) / size, float(kept[-1]) / size
+    # The upper end for the unsafe count is one minus the lower end for the safe count.
+    lower = _posterior_density_crossing(unsafe, safe, alpha) if unsafe else 0.0
+    upper = 1.0 - _posterior_density_crossing(safe, unsafe, alpha) if safe else 1.0
+    return lower, upper
+
+
+def _posterior_density_crossing(successes: int, failures: int, alpha: float) -> float:
+    """Where the Beta(successes + 1, failures + 1) density rises through ``alpha``.
+
+    ``successes`` is positive, so the density is zero at zero and increases up to its mode,
+    ``successes / (successes + failures)``, where it is at least one, above ``alpha``.
+    """
+
+    from scipy.optimize import brentq
+    from scipy.special import betaln, xlog1py
+
+    threshold = math.log(alpha) + float(betaln(successes + 1, failures + 1))
+
+    def excess(rate: float) -> float:
+        return successes * math.log(rate) + float(xlog1py(failures, -rate)) - threshold
+
+    mode = successes / (successes + failures)
+    # The smallest positive double keeps the logarithm finite; the density there is far
+    # below alpha. The tolerances leave only the relative precision of a double.
+    tiny = math.ulp(0.0)
+    return float(brentq(excess, tiny, mode, xtol=tiny, rtol=4 * math.ulp(1.0)))
 
 
 def estimate_judge_calibration(
@@ -296,8 +326,10 @@ def estimate_judge_calibration(
     than checked here; a plan's labelling protocol checks what the data can show.
 
     ``bound="confidence_sequence"`` replaces each Clopper-Pearson interval with the
-    anytime-valid range of ``hypergeometric_confidence_sequence`` at the same endpoint
-    budget, which stays valid when labelling stopped because of the labels seen so far.
+    anytime-valid range of :func:`judge_accuracy_confidence_sequence` at the same endpoint
+    budget, which stays valid when labelling stopped because of the labels seen so far. It
+    rests on the same rollout model as the Clopper-Pearson bounds, and a sweep of every
+    count up to 400 labels found it never narrower than they are.
 
     A stratum without labels is completed conservatively: its parameter is a
     probability, so ``[0, 1]`` contains it with certainty and spends none of ``alpha``.
@@ -318,7 +350,7 @@ def estimate_judge_calibration(
             return 0.0, 1.0
         if bound == "confidence_sequence":
             # Two-sided at the endpoint budget, so each endpoint keeps its alpha / 4.
-            return hypergeometric_confidence_sequence(stratum, alpha=endpoint_alpha)
+            return judge_accuracy_confidence_sequence(stratum, alpha=endpoint_alpha)
         interval = binomial_bounds(
             stratum.truly_unsafe,
             stratum.labelled,
@@ -430,10 +462,15 @@ class FineStratumBounds:
 
 @dataclass(frozen=True)
 class StratifiedJudgeCalibration:
-    """A validated calibration from labels drawn by a stratified design without replacement."""
+    """A validated calibration from labels drawn by a stratified design without replacement.
+
+    ``rate_alpha`` is the level each of the four one-sided Clopper-Pearson bounds spends in
+    turning a judge stratum's count bounds into a range for its conditional probability.
+    """
 
     calibration: JudgeCalibration
     fine_strata: tuple[FineStratumBounds, ...]
+    rate_alpha: float
 
     @property
     def unlabelled_fine_strata(self) -> tuple[FineStratumBounds, ...]:
@@ -454,21 +491,40 @@ def estimate_stratified_judge_calibration(
     Each fine stratum ``h`` of a judge stratum of size ``N`` holds ``N_h`` rollouts, of which
     ``n_h`` were labelled as a simple random sample without replacement whose size was fixed
     independently of the labels. Its truly unsafe count ``K_h`` then has exact hypergeometric
-    bounds, and the judge stratum's parameter is ``sum_h K_h / N``: each fine stratum is
-    weighted back by its own size, whatever share of it was labelled.
+    bounds, and their sums ``K_L`` and ``K_U`` bound the judge stratum's truly unsafe count
+    ``K = sum_h K_h``: each fine stratum is weighted back by its own size, whatever share of
+    it was labelled.
+
+    ``K / N`` is the share of this run's rollouts that are truly unsafe, not the conditional
+    probability rho that :func:`correct_judge_risk` needs. The run's rollouts only sample
+    rho, so even a census, which knows ``K`` exactly, leaves ``K / N`` about
+    ``sqrt(rho (1 - rho) / N)`` from it. Given ``N``, ``K`` is binomial with rate rho when the
+    judge stratum's rollouts are independent draws with that common conditional
+    probability, the rollout model under which the labels of
+    :func:`estimate_judge_calibration` are binomial too. The range of rho is therefore the
+    one-sided Clopper-Pearson lower bound at ``K_L`` and upper bound at ``K_U``, out of
+    ``N``. Both bounds are nondecreasing in the count, so rho falls below the range only if
+    ``K < K_L`` or rho falls below the Clopper-Pearson lower bound at ``K`` itself, and
+    likewise above it.
 
     ``alpha`` is split as in :func:`estimate_judge_calibration`: a quarter per endpoint of
-    the pair. An endpoint's quarter is split equally over the fine strata of its judge
-    stratum that are labelled but not censused, so a union bound over every count bound
-    spends no more than ``alpha``. A census is exact and an unlabelled fine stratum is
-    completed as ``[0, N_h]``; neither spends any of it. A judge stratum without any label
-    is completed as ``[0, 1]`` and named in ``completed_strata``; with both unlabelled the
-    estimate is refused.
+    the pair. Each endpoint's quarter is halved, always: one half is the level of its
+    Clopper-Pearson bound (``rate_alpha``), and the other is split equally over the count
+    bounds of the fine strata of its judge stratum that are labelled but not censused. A
+    union bound over all of them therefore spends no more than ``alpha``. The halves stay
+    fixed when no fine stratum is sampled: whether a design censuses a fine stratum can
+    depend on the stratum's size, which is not independent of ``K``, while the
+    Clopper-Pearson bound holds only over those sizes, not given them. A census gives its
+    count exactly and an unlabelled fine stratum is completed as ``[0, N_h]``; neither count
+    bound spends anything. A judge stratum without any label is completed as ``[0, 1]`` and
+    named in ``completed_strata``; with both unlabelled the estimate is refused.
     """
 
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     endpoint_alpha = alpha / 4
+    rate_alpha = endpoint_alpha / 2
+    count_alpha = endpoint_alpha - rate_alpha
     fine: list[FineStratumBounds] = []
 
     def bounds(judge_stratum: str, strata: Mapping[str, JudgeStratumCounts]) -> tuple[float, float]:
@@ -478,7 +534,7 @@ def estimate_stratified_judge_calibration(
         sampled = sum(
             1 for item in strata.values() if 0 < item.labelled < item.stratum_size
         )
-        level = endpoint_alpha / sampled if sampled else 0.0
+        level = count_alpha / sampled if sampled else 0.0
         lower = upper = 0
         for name in sorted(strata):
             item = strata[name]
@@ -496,7 +552,11 @@ def estimate_stratified_judge_calibration(
             fine.append(FineStratumBounds(judge_stratum, name, item, low, high, spent))
             lower += low
             upper += high
-        return lower / total, upper / total
+        # A judge stratum without labels has counts [0, N], and so the range [0, 1].
+        return (
+            binomial_lower_bound(lower, total, alpha=rate_alpha),
+            binomial_upper_bound(upper, total, alpha=rate_alpha),
+        )
 
     labelled = {
         name: sum(item.labelled for item in strata.values())
@@ -510,7 +570,9 @@ def estimate_stratified_judge_calibration(
     calibration = _validated_calibration(
         scenario_id=scenario_id, rho_1=rho_1, rho_0=rho_0, alpha=alpha, completed=completed
     )
-    return StratifiedJudgeCalibration(calibration=calibration, fine_strata=tuple(fine))
+    return StratifiedJudgeCalibration(
+        calibration=calibration, fine_strata=tuple(fine), rate_alpha=rate_alpha
+    )
 
 
 def completion_warning(calibration: JudgeCalibration) -> str | None:

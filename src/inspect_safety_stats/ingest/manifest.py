@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from inspect_safety_stats.config.models import AnalysisPlan, GroupSpec, WeightSpec
+from inspect_safety_stats.schema.observations import observation_field
 
 REQUIRED_COLUMNS = ("prompt_id", "question_id", "task_id")
 # Every observation and prompt estimate carries a question and a task. A manifest that omits
@@ -43,9 +44,10 @@ def load_inclusion_probabilities(manifest: pd.DataFrame, column: str) -> np.ndar
 def plan_manifest_columns(plan: AnalysisPlan) -> tuple[str, ...]:
     """The columns of ``REQUIRED_COLUMNS`` the plan names, ``prompt_id`` always among them.
 
-    A plan names a column through its hierarchy, a nested weight hierarchy, a group filter, an
-    independence profile, a sampling column, an explicit weight column, a threshold column or
-    the zero-tolerance field. A level it never names takes the prompt's own identity.
+    A plan names a column through its hierarchy, a nested weight hierarchy, an explicit weight
+    column, a group filter, an independence profile, a comparison's pair or cluster key, a
+    sampling column, a threshold column or the zero-tolerance field. A level it never names takes
+    the prompt's own identity.
     """
 
     named: set[str] = set(plan.design.hierarchy)
@@ -60,6 +62,11 @@ def plan_manifest_columns(plan: AnalysisPlan) -> tuple[str, ...]:
         named.update(group.filter)
     for profile in plan.design.independence_profiles.values():
         named.update(profile.block_by)
+    for comparison in plan.expanded_comparisons():
+        # A pair or cluster key may name an identifier the observations carry.
+        named.update(observation_field(name) for name in comparison.pair_key or [])
+        if comparison.cluster_key:
+            named.add(observation_field(comparison.cluster_key))
     for column in (
         plan.design.inclusion_probability_column,
         plan.design.stratum_column,
@@ -69,6 +76,24 @@ def plan_manifest_columns(plan: AnalysisPlan) -> tuple[str, ...]:
         if column is not None:
             named.add(column)
     return tuple(column for column in REQUIRED_COLUMNS if column == "prompt_id" or column in named)
+
+
+def check_zero_tolerance_field(plan: AnalysisPlan, manifest: pd.DataFrame) -> None:
+    """Refuse a manifest that lacks the zero-tolerance column the plan names.
+
+    The default field is optional: a manifest without it flags no prompt. A plan that sets
+    ``policy.zero_tolerance.manifest_field`` itself asks for the gate, and a manifest that
+    lacks the column would silently switch the gate off.
+    """
+
+    spec = plan.policy.zero_tolerance
+    if spec.enabled and "manifest_field" in spec.model_fields_set:
+        if spec.manifest_field not in manifest.columns:
+            raise ValueError(
+                f"design manifest has no column {spec.manifest_field!r}, which the plan names "
+                "as policy.zero_tolerance.manifest_field; without it no prompt is held to zero "
+                "tolerance. Add the column or set policy.zero_tolerance.enabled: false"
+            )
 
 
 def load_manifest(path: str | Path, required: Iterable[str] = REQUIRED_COLUMNS) -> pd.DataFrame:

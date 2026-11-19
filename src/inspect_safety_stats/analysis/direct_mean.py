@@ -43,6 +43,16 @@ from inspect_safety_stats.stats.tree_calibration import (
     any_overlap,
     calibrate_independent_frontiers,
 )
+from inspect_safety_stats.validate.plan import worst_of_k_interval_problems
+
+_BETTING_ASSUMPTION = (
+    "Experimental: a common betting fraction, mixed over a prior fixed before any "
+    "outcome was seen, is applied to every block with exponent A_g / max A; validity "
+    "follows from Jensen's and the weighted AM-GM inequalities and needs no variance "
+    "proxy."
+)
+"""States a betting interval's assumptions and marks it experimental, on fixed and sampled
+designs alike (CONTRIBUTING sections 3 and 8.5)."""
 
 
 @dataclass(frozen=True)
@@ -493,12 +503,7 @@ def _direct_interval_result(
             "exponent determined by the largest atomic weight."
         )
     elif bounds.chernoff_kernel == BETTING_KERNEL:
-        assumptions.append(
-            "Experimental: a common betting fraction, mixed over a prior fixed before any "
-            "outcome was seen, is applied to every block with exponent A_g / max A; validity "
-            "follows from Jensen's and the weighted AM-GM inequalities and needs no variance "
-            "proxy."
-        )
+        assumptions.append(_BETTING_ASSUMPTION)
     scope_prefix = "simultaneous" if spec.simultaneous else "pointwise"
     calibration_scope = "_frontier_sidak" if calibration.method == "frontier_sidak" else ""
     return RiskIntervalResult(
@@ -567,12 +572,18 @@ def _worst_of_k_direct_interval(
     """Experimental direct interval of a worst_of_k row, and the row's warnings about it.
 
     Each prompt's unbiased share enters the KL-Chernoff bound as floor(n / k) blocks, which
-    needs independent rollouts; plan validation refuses any other primary profile.
+    needs a fixed design and independent rollouts. A plan that plan validation refuses, such as
+    one whose primary profile does not block by rollout, gets no interval and a warning per
+    reason on the row.
     """
 
     spec = plan.outputs.direct_mean_intervals
-    independence = _independence(spec)
     k = int(_parameter(measure, "k", measure.k))
+    problems = worst_of_k_interval_problems(plan)
+    if problems:
+        # validate_plan_references reports each as a PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED error.
+        return None, [f"No direct interval of {k} attempts: {problem}." for problem in problems]
+    independence = _independence(spec)
     target_id = _worst_of_k_target_id(group_id, measure.id)
     calibration = direct.calibrations.get(
         _calibration_key(cohort_id, target_id, independence.primary)
@@ -647,7 +658,7 @@ def _worst_of_k_direct_interval(
     if bounds.chernoff_kernel == "bernoulli_kl_equal_atomic_weights":
         assumptions.append(
             "Equal block weights permit inversion of the Bernoulli-KL Chernoff exponent; "
-            "identical failure probabilities are not required."
+            "identical failure probabilities across prompts are not required."
         )
     elif bounds.chernoff_kernel == "weighted_poisson_chernoff_max_increment":
         assumptions.append(
@@ -775,6 +786,45 @@ def _sampled_frame_intervals(
                 alpha_upper=calibration.endpoint_alpha,
                 method=method,
             )
+        # The design-based bounds do not carry their engine's kernel, so the experimental
+        # betting rows are recognised by name. They state their own construction and their
+        # own reason the without-replacement reduction holds: the other engines' reason is
+        # that each bounds a moment generating function, and betting bounds none.
+        betting = method == "weighted_betting"
+        if not stratified:
+            draw = (
+                "Frame items were included independently with the declared "
+                "probabilities (Poisson sampling)."
+            )
+        elif betting:
+            draw = (
+                "Each stratum drew exactly its planned number of frame items without "
+                "replacement; the bound uses Hoeffding's reduction on the capital of each "
+                "fixed betting fraction, which, averaged over the rollouts, is at most the "
+                "exponential of a without-replacement sum of per-item log wealth factors, so "
+                "its expectation is dominated by the with-replacement one and the bound is "
+                "conservative."
+            )
+        else:
+            draw = (
+                "Each stratum drew exactly its planned number of frame items "
+                "without replacement; the bound uses Hoeffding's reduction, under "
+                "which a convex function of a without-replacement sum is dominated "
+                "by the with-replacement one, so it is conservative."
+            )
+        assumptions = [
+            draw,
+            "Inclusion was determined before, and independently of, the outcomes.",
+            "Design weights are declared over the whole frame and are not "
+            "renormalized to the realized sample.",
+            f"Inverse-probability weighting widens every endpoint by a factor of "
+            f"{bounds.inflation:.6g}.",
+            f"The largest single frame item carries {bounds.maximum_weight:.6g} of "
+            "the estimator's weight.",
+            "Every unclassified attempted outcome has a latent binary safety label.",
+        ]
+        if betting:
+            assumptions.append(_BETTING_ASSUMPTION)
         results.append(
             RiskIntervalResult(
                 interval_id=f"{estimator}_{method}",
@@ -798,6 +848,7 @@ def _sampled_frame_intervals(
                 completion_estimate_upper=bounds.completion_estimate_upper,
                 effective_sample_size=bounds.effective_sample_size,
                 maximum_increment=bounds.maximum_weight,
+                chernoff_kernel=BETTING_KERNEL if betting else None,
                 calibration_method=calibration.method,
                 calibration_frontier=calibration.frontier_id,
                 calibration_frontier_alpha=calibration.frontier_alpha,
@@ -805,25 +856,7 @@ def _sampled_frame_intervals(
                 independence_profile="frame_item",
                 independent_block_count=bounds.sampled_count,
                 missingness_method="all_safe_all_failure_completion",
-                assumptions=[
-                    (
-                        "Each stratum drew exactly its planned number of frame items "
-                        "without replacement; the bound uses Hoeffding's reduction, under "
-                        "which a convex function of a without-replacement sum is dominated "
-                        "by the with-replacement one, so it is conservative."
-                        if stratified
-                        else "Frame items were included independently with the declared "
-                        "probabilities (Poisson sampling)."
-                    ),
-                    "Inclusion was determined before, and independently of, the outcomes.",
-                    "Design weights are declared over the whole frame and are not "
-                    "renormalized to the realized sample.",
-                    f"Inverse-probability weighting widens every endpoint by a factor of "
-                    f"{bounds.inflation:.6g}.",
-                    f"The largest single frame item carries {bounds.maximum_weight:.6g} of "
-                    "the estimator's weight.",
-                    "Every unclassified attempted outcome has a latent binary safety label.",
-                ],
+                assumptions=assumptions,
                 eligibility="certifying",
             )
         )

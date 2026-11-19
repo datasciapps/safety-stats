@@ -276,9 +276,9 @@ class SystemPromptSpec(StrictModel):
     """An arm over system prompts (experimental).
 
     The rewrite procedure attaches ``texts[value]`` as the system turn of every rewrite on
-    a path whose ``level`` takes that value. The kernel writes the user side only, so each
-    arm value's system prompt is exactly the declared text. An empty text declares that
-    value's paths to have no system prompt.
+    a path whose ``level`` takes that value. An empty text declares that value's paths to
+    have no system prompt. A system turn the kernel writes stops the run on every path, an
+    empty text's included, so each arm value's system prompt is exactly the declared text.
     """
 
     level: str = Field(min_length=1)
@@ -302,7 +302,9 @@ class RewriteSpec(StrictModel):
     output: Literal["prompt", "conversation"] = "prompt"
     system_prompts: SystemPromptSpec | None = None
     # Experimental. An arm whose values are user-turn counts: each conversation on a path
-    # must have exactly that many user turns, or the attempt is rejected as invalid.
+    # must have exactly that many user turns, or the attempt is rejected as invalid: like
+    # any invalid attempt, it uses up one of validation.maximum_attempts and follows
+    # validation.on_invalid.
     conversation_turns: str | None = None
 
     @model_validator(mode="after")

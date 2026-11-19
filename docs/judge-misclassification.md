@@ -241,11 +241,12 @@ labelling stopped where it did:
 | `data_dependent` | possibly because of the labels, such as once the corrected bound cleared a threshold | anytime-valid confidence sequences instead of Clopper-Pearson |
 
 A confidence sequence holds at every number of labels at once, so it stays valid whenever
-labelling stops. When a small share of a stratum is labelled it is wider than
-Clopper-Pearson at the same number of labels (60 labels with one unsafe in a stratum of
-2,000 give an upper bound of 0.165 against 0.102 at the same budget). It counts a stratum's
-size, though, so when most of a stratum is labelled it can be narrower, and a stratum
-labelled in full is known exactly. The derivation is in
+labelling stops. It bounds the judge's accuracy in a stratum, the probability that one of its
+rollouts is truly unsafe, which the run's rollouts only sample. The stratum's size therefore
+does not enter, and even a stratum labelled in full keeps a width. The sequence is wider than
+Clopper-Pearson at the same labels (60 labels with one unsafe give an upper bound of 0.167
+against 0.102 at the same budget), so declare `data_dependent` only when labelling may
+really have stopped on results. The derivation is in
 [Statistical methods, section 6.9](statistical-methods.md#69-implemented-human-labels-for-a-judge-calibration-experimental).
 It spends the same budget per endpoint, so the coverage the corrected interval states is
 unchanged. `data_dependent` requires `sampling: simple_random_within_judge_stratum`, because
@@ -355,7 +356,7 @@ Labels drawn within judge strata (`simple_random_within_judge_stratum`) estimate
 \(\rho_0\), not \(Se\) and \(Sp\), and get no such interval. In that parameterisation the identity
 \(R^*=R\rho_1+(1-R)\rho_0\) is affine, so the Lang--Reiczigel bias term vanishes. What remains
 is an Agresti--Coull-adjusted Wald interval, which is what the delta reference already is.
-Stratified labels (`stratified_without_replacement`, below) get no such interval either. Where
+Stratified labels (`stratified_within_judge_stratum`, below) get no such interval either. Where
 the limits cannot be computed, for example when no labelled rollout is truly unsafe, the analysis
 emits `JUDGE_LANG_REICZIGEL_UNAVAILABLE` with the reason.
 
@@ -364,18 +365,16 @@ emits `JUDGE_LANG_REICZIGEL_UNAVAILABLE` with the reason.
 A labelling design often wants more than a simple random sample within each judge stratum.
 For example, it may label every rollout on which a second judge disagrees, and only a sample of
 the rest. Read as one simple random sample, such labels are biased: the oversampled
-disagreements count as often as they were labelled, not as often as they occur. The binomial
-bound also gives no credit for labelling a small stratum in full. A census of it still keeps a
-binomial width, as if its rows had been drawn with replacement.
+disagreements count as often as they were labelled, not as often as they occur.
 
-`sampling: stratified_without_replacement` reads the labels as the design drew them:
+`sampling: stratified_within_judge_stratum` reads the labels as the design drew them:
 
 ```yaml
 inputs:
   judge_calibration:
     mode: validated
     validation_manifest: judge-labels.csv
-    sampling: stratified_without_replacement
+    sampling: stratified_within_judge_stratum
     validation_strata: judge-strata.csv
     family: judge_error
 ```
@@ -400,35 +399,75 @@ K_{h,L}=\min\{K: P(X\ge x_h\mid N_h,K,n_h)>a_h\},\qquad
 K_{h,U}=\max\{K: P(X\le x_h\mid N_h,K,n_h)>a_h\},
 \]
 
-and the judge stratum's parameter, \(\rho=\sum_h K_h/N\), lies in
-\([\sum_h K_{h,L}/N,\ \sum_h K_{h,U}/N]\). Each fine stratum is weighted back by its size,
-whatever share of it was labelled. A census (\(n_h=N_h\)) gives \(K_h=x_h\) exactly. A fine
-stratum without labels is completed as \([0, N_h]\), which holds with certainty, and the
-analysis warns with `JUDGE_FINE_STRATUM_UNLABELLED_COMPLETED`. A judge stratum without any
-label is completed as \([0,1]\) and refused when both are unlabelled, as described above.
+so the judge stratum's truly unsafe count \(K=\sum_h K_h\) lies in
+\([K_L, K_U]=[\sum_h K_{h,L},\ \sum_h K_{h,U}]\). Each fine stratum is weighted back by its
+size, whatever share of it was labelled. A census (\(n_h=N_h\)) gives \(K_h=x_h\) exactly. A
+fine stratum without labels is completed as \([0, N_h]\), which holds with certainty, and the
+analysis warns with `JUDGE_FINE_STRATUM_UNLABELLED_COMPLETED`.
 
-**Error budget.** Each of the four endpoints keeps a quarter of the cohort's share, as in the
-binomial case. That quarter is split equally over the fine strata of its judge stratum that
-were sampled but not censused, \(a_h=\alpha_{\text{endpoint}}/H_{\text{sampled}}\). Censused
-and unlabelled strata spend nothing. A union bound over every count bound then gives the same
-guarantee as before: under the design, \(\rho_1\) and \(\rho_0\) lie in their ranges together
-with probability at least \(1-\alpha_{\text{cohort}}\). With a single fine stratum the
-range narrows below the Clopper--Pearson one as the labelled share of the stratum grows. When
-only a few rows of a stratum are labelled, the two nearly agree. Because counts are whole
-numbers, the hypergeometric range can then be slightly wider. A sweep of every stratum of up
-to 60 rollouts found 4 such cases among about 119,000, each wider by less than one
-rollout's share, \(1/N\). With many sampled fine strata, the Bonferroni split widens each one; exact
-joint methods for stratified finite populations exist (Wendell and Schmee, *JASA* 91(434),
-1996) but are not implemented.
+\(K/N\) is the share of this run's rollouts that are truly unsafe. The correction needs
+\(\rho\), the probability that a rollout the judge put in this stratum is truly unsafe, as
+\(R\) is a probability too. The run's \(N\) rollouts only sample \(\rho\): even a census,
+which knows \(K\) exactly, leaves \(K/N\) about \(\sqrt{\rho(1-\rho)/N}\) away from it. Given
+\(N\), \(K\) is binomial with rate \(\rho\) when the stratum's rollouts are independent, the
+rollout model under which a simple random sample's labels are binomial too. So the range of
+\(\rho\) is the one-sided Clopper--Pearson lower bound at \(K_L\) and upper bound at
+\(K_U\), out of \(N\), each at level \(b\):
+
+\[
+\rho\in\bigl[\mathrm{CP}_{L}(K_L, N; b),\ \mathrm{CP}_{U}(K_U, N; b)\bigr].
+\]
+
+Both bounds increase with the count. So \(\rho\) falls below the range only if \(K<K_L\), or
+if it falls below the Clopper--Pearson bound at \(K\) itself, and likewise above. A judge
+stratum without any label gets counts \([0, N]\) and so the range \([0,1]\); it is
+refused when both are unlabelled, as described above.
+
+**Error budget.** Each of the four endpoints keeps a quarter of the cohort's share,
+\(\alpha_{\text{endpoint}}\), as in the binomial case. Half of it is the level of the
+endpoint's Clopper--Pearson bound, \(b=\alpha_{\text{endpoint}}/2\). The other half is split
+equally over the count bounds of the fine strata of its judge stratum that were sampled but
+not censused, \(a_h=\alpha_{\text{endpoint}}/(2H_{\text{sampled}})\). Censused and unlabelled
+strata spend nothing. A union bound over every count bound and every Clopper--Pearson bound
+then gives the same guarantee as the binomial calibration: under the design and the rollout
+model, \(\rho_1\) and \(\rho_0\) lie in their ranges together with probability at least
+\(1-\alpha_{\text{cohort}}\).
+
+The halves stay fixed even when no fine stratum is sampled. Which fine strata a design
+censuses can depend on their sizes, which are not independent of \(K\). The Clopper--Pearson
+bound holds averaged over those sizes, not given them, so moving the whole quarter to it
+whenever every stratum happens to be censused could overspend. Labels that census every fine
+stratum are also a simple random sample within each judge stratum. Read with the default
+`sampling`, they spend the whole quarter on the Clopper--Pearson bound and get a narrower
+range.
+
+With a single fine stratum, the stratified range was never narrower than the binomial one in
+a sweep of every stratum of up to 40 rollouts. The binomial width is the uncertainty that
+matters, since the run's rollouts only sample the judge's accuracy. The design pays off only
+when the labelled share differs between fine strata, where the binomial reading is biased.
+With many sampled fine strata, the Bonferroni split widens each one; exact joint methods for
+stratified finite populations exist (Wendell and Schmee, *JASA* 91(434), 1996) but are not
+implemented.
+
+**Coverage.** `tests/unit/test_stratified_calibration.py` draws every rollout anew in each of
+2,000 runs. With every rollout labelled and alpha 0.4, each endpoint missed its rate 3.65% to
+4.2% of the time, against the 5% its Clopper--Pearson bound may spend. Under the documented
+design (all disagreements and a fixed number of agreements labelled), each missed 1.2% to
+2.15%, against 10%. A corrected interval on 400 labelled rollouts, at 0.05 for the
+judge-reported interval and 0.05 for the calibration, never missed the true risk. An earlier
+version took \(K/N\) itself as the range. It missed each endpoint about half of the time under
+a census, and the corrected interval missed the true risk 18.4% of the time against a claimed
+10%.
 
 **What changes in the report.** Provenance records `validation_strata` and, per cohort,
-`fine_strata`: each fine stratum's counts, its count bounds and the level each bound spent.
-`report-full.md` lists them. The asymptotic `judge_corrected_validated_delta` reference assumes simple
-random samples within the judge strata, so it is not reported under this design, and an INFO
-diagnostic, `JUDGE_CALIBRATION_STRATIFIED`, says so. With `groups`, each scoped
+`fine_strata`: each fine stratum's counts, its count bounds and the level each count bound
+spent. `report-full.md` lists them. The asymptotic `judge_corrected_validated_delta`
+reference assumes simple random samples within the judge strata, so it is not reported under
+this design, and an INFO diagnostic, `JUDGE_CALIBRATION_STRATIFIED`, says so. With `groups`, each scoped
 calibration counts the declared strata of its group's rollouts. The strata file is still
 checked against every classified observation, before any scope, and `fine_strata` is
-recorded per cohort and group. Generative plans do not offer this design.
+recorded per cohort and group. A corrected comparison states the design's assumptions as a
+corrected row does. Generative plans do not offer this design.
 
 ### Unclassified rollouts
 
@@ -538,19 +577,21 @@ binary failures is already `weighted_kl_chernoff`, the recommended path is cover
 
 The judge family alpha is divided equally among the **declared cohorts**, or, when the
 calibration is [scoped to groups](#scoping-the-calibration-to-groups), among the cohorts
-times the listed groups. A single risk row consumes one share; a comparison consumes the two
-shares of the cohorts it spans. A union
-over every corrected row therefore stays inside the declared family budget, and each interval
-reports the share it actually spent in `family_alpha`.
+times the listed groups. A single risk row consumes one share; a comparison consumes two,
+those of its two arms' calibrations: each cohort's, or with `groups` each cohort's calibration
+for the comparison's group. A union over every corrected row therefore stays inside the
+declared family budget, and each interval reports the share it actually spent in
+`family_alpha`.
 
 ### What it assumes
 
 - The labelled rows are a **simple random sample within their judge stratum**. This is a
   property of the collection protocol, not of the data, and nothing in the package can check
   it. It is recorded in the interval's assumption list. Under
-  `sampling: stratified_without_replacement`, the requirement is instead that each fine
+  `sampling: stratified_within_judge_stratum`, the requirement is instead that each fine
   stratum's labelled rows are a simple random sample without replacement of it, of a size
-  fixed independently of the labels.
+  fixed independently of the labels, and that each judge stratum's rollouts are independent,
+  each truly unsafe with the stratum's conditional probability.
 - **Human adjudication is ground truth.** Labeller error is not modelled.
 
 ### What it certifies
@@ -592,8 +633,14 @@ Weighting the labels by the design, which would certify more rows, is future wor
 A cohort often holds several benchmarks, and a judge's accuracy can differ between them. The
 labels of one benchmark then say little about another's rows, yet a cohort-wide calibration
 pools them. `judge_calibration.groups` estimates one calibration per cohort and listed group
-instead, from the labels and judge-stratum sizes of that group's rollouts. Each listed group
-is then calibrated the way a cohort is otherwise:
+instead, from the labels and judge-stratum sizes of that group's rollouts.
+
+In `validated` mode the scope is **experimental**. It certifies rows, such as a mean over one
+benchmark of a cohort, that a cohort-wide calibration reports only as sensitivity analyses,
+so it is less conservative than leaving `groups` out. The report marks it with
+`experimental: true` under `provenance.judge_calibration`.
+
+Each listed group is calibrated the way a cohort is otherwise:
 
 - the conditions above apply with "the cohort" read as "the group". A `weighted_mean` over a
   whole listed group, in a fixed design, that weights every classified rollout of the group
@@ -609,16 +656,48 @@ calibrate nothing, and the warning `JUDGE_VALIDATION_OUT_OF_SCOPE` reports them.
 mode, `groups` limits the declared scenarios to the listed groups' rows. Groups may overlap;
 each listed group is calibrated from its own rollouts.
 
+The labels need not be drawn group by group. A sample drawn as the [workflow](#workflow) says,
+within each judge stratum over the whole cohort, serves every listed group. Take the labels
+that land on one group's part of a judge stratum. Given how many land there, they are a
+simple random sample of that part, since every set of that size was equally likely to be
+drawn. How many land there depends on the draw, not on the labels, so the exact bounds hold
+for the group's counts as they do for a cohort's. The same holds for a stratified design's
+fine strata within the group, for the simple random sample the noisy-but-valid test needs,
+and for every prefix of a labelling queue that orders each judge stratum at random.
+
+**A small group gets few labels.** A sample drawn over the cohort puts on each group about
+its share of each judge stratum. A group that holds a tenth of a cohort's rollouts gets about
+a tenth of the labels, and its calibration is often refused as uninformative. In a simulation
+of such a group, whose judge is worse than elsewhere in the cohort, with `groups: [all,
+small]` and 4,000 runs per budget, the small group's calibration was refused in 92% of runs at
+30 labels per judge stratum of the cohort, 83% at 100, and none at 400. A reported box, the
+small group's or that of `all`, which spans the cohort, missed its \(\rho_1\) or
+\(\rho_0\) in at most 0.5% of runs, against the 5% the judge family allows.
+`tests/unit/test_scoped_judge_calibration_coverage.py` runs the same simulation, 400 runs per
+budget.
+
+Plan the labels for the smallest listed group. When the listed groups do not overlap, each
+group's labels may instead be drawn within its own judge strata, at the size it needs: each
+calibration counts only its own group's labels, and a sample within each of a group's judge
+strata is what it needs. When they overlap, as `all` and a group inside it do, oversampling
+one of them leaves the other's labels no simple random sample of its strata, so draw over the
+cohort and label more.
+
 ### When it refuses
 
 The module produces no correction, and says why, when:
 
-- a cohort has an empty judge stratum (`JUDGE_VALIDATION_STRATUM_EMPTY`);
+- a cohort, or with `groups` a listed group of a cohort, has an empty judge stratum
+  (`JUDGE_VALIDATION_STRATUM_EMPTY`);
 - the labels do not establish a strictly informative judge -- the \(\rho_1\) lower bound
   fails to exceed the \(\rho_0\) upper bound, meaning more labels or a better judge are
   needed -- or neither judge stratum has a label (`JUDGE_CALIBRATION_UNINFORMATIVE`); or
 - a validation row references an observation absent from the analysed logs, or one whose
   outcome was never classified (`JUDGE_VALIDATION_UNMATCHED`, an error).
+
+With `groups`, each listed group of a cohort is refused on its own.
+`JUDGE_VALIDATION_STRATUM_EMPTY` and `JUDGE_CALIBRATION_UNINFORMATIVE` then name the group
+and the cohort, and their scope is `cohorts/<cohort>/groups/<group>`.
 
 ### Effect on threshold claims
 
@@ -785,6 +864,13 @@ coverage is at least one minus the sum of the row's own alpha and `sensitivity_a
 - **Transport.** The same judge and rubric, applied to this run's outputs, is at least as
   sensitive on every prompt as on the published set. Nothing in the run checks this, and a
   judge under attack can fail it.
+- **Independent items.** The Clopper--Pearson bound treats the published set's `human_unsafe`
+  items as independent draws that share one sensitivity, and the coverage stated above rests
+  on it. A set with several completions of each behaviour, such as HarmBench's classifier
+  validation set, does not meet it: completions of one behaviour tend to be caught or missed
+  together, so counts over all of them overstate the bound's precision. Enter counts over
+  independent items instead, for example one human-unsafe completion per behaviour, chosen
+  without looking at the judge's verdict.
 - Human adjudication on the published set is the ground truth.
 
 Each interval lists these assumptions, together with the published set and the sensitivity
@@ -794,9 +880,41 @@ set and `sensitivity_lower`, and the analysis emits the `INFO` diagnostic
 `JUDGE_CALIBRATION_TRANSPORTED`. `report-full.md` describes the published set in the judge
 misclassification section.
 
+Comparisons are not corrected. With a lower end of zero on each arm, a corrected effect would
+run from minus the baseline's corrected upper bound to the candidate's, so it would say little
+about the difference. Every comparison stays on the judge-reported scale, and the analysis
+names them in the warning `JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON`.
+
 `mode: transported` takes only `published_set`. It cannot be combined with scenarios, a
-validation manifest or a judge family, and only fixed-design analyses offer it: a generative
-plan that declares it is refused.
+validation manifest or a judge family. Fixed and sampled designs run it. Under a sampled design
+the interval bounds the frame mean, so the transport assumption must hold on every prompt of
+the frame, drawn or not. The generative path does not offer it: a generative plan that declares
+it is refused.
+
+### How it differs from issue #123
+
+Issue #123 proposed a transported mode that declares ranges for both sensitivity and
+specificity and inverts Rogan--Gladen over that box. This mode departs from that proposal in
+four ways, for the reasons above:
+
+- **No specificity is declared.** A published set's specificity does not carry over to
+  another model's outputs, so the plan gives none. There is therefore no informativeness
+  condition \(Se+Sp>1\) to check, and no plan is refused for failing it.
+- **The lower end is always zero.** Without a specificity, every judged failure may be a false
+  positive. The interval is \([0,U]\) even for a perfectly sensitive judge, where #123 asked for
+  the uncorrected interval \([L,U]\) when both accuracies are one. Only the upper end keeps that
+  identity.
+- **The sensitivity comes from counts.** The plan gives the published set's counts, not a
+  declared range, and the mode turns them into a one-sided Clopper--Pearson lower bound at
+  `sensitivity_alpha`. The interval's coverage therefore spends `sensitivity_alpha` on top of
+  the row's own alpha.
+- **Transport is one-sided.** The judge need only be at least as sensitive on this run's
+  outputs as on the published set, not equally accurate.
+
+With the same lower end on sensitivity, the upper end is what #123's correction gives for any
+declared specificity range that reaches one, because Rogan--Gladen's maximum lies at \(Sp=1\).
+The derivation is in
+[Statistical methods, section 15.3.1](statistical-methods.md#1531-transported-sensitivity-experimental).
 
 ## On the generative path
 
@@ -834,6 +952,13 @@ about dependence among the judges it combines, because it measures the composite
 directly. That is the recommended route to evidence for a panel. The panel section of the report
 adds pairwise agreement and Cohen's kappa as diagnostics; neither carries a coverage guarantee and
 neither identifies the true failure rate on its own.
+
+To see what each judge alone would decide, set `outputs.judge_claims: true` (experimental). The
+report's judge panel section then gains each judge's claim rows, decided as the plan would decide
+them with that judge as its primary outcome, and the configuration its runs record. The rows bound
+each judge's *reported* risk: no correction on this page applies to them, and under a `validated`
+calibration every row is `INCONCLUSIVE`. They compare judges and do not enter the decision. See
+[Claims by judge](plan-reference.md#claims-by-judge-experimental).
 
 ### Deriving a panel's accuracy box
 
@@ -1024,12 +1149,13 @@ sensitivity, which a high flip rate puts in doubt.
 `inputs.judge_flip` reads the rescored verdicts and reports a `JUDGE_FLIP_RATE` diagnostic: the
 share of rescored completions that flip under at least one wrapper, and under each wrapper,
 each with an exact Clopper-Pearson interval (see
-[the plan reference](plan-reference.md#judge-flip-rate-experimental)). With `sampling: all`
-the interval is about the run's judge-positive completions. With `simple_random` it is about
-the same population, through the sample. Above the declared `warn_above` the diagnostic is a
-warning. The package does not rescore: [`examples/judge_flip`](../examples/judge_flip/README.md)
-has an Inspect task that rescores a run's judge-positive completions under four wrappers and
-writes the manifest, offline with simulated models or live with the run's judge.
+[the plan reference](plan-reference.md#judge-flip-rate-experimental)). Above the declared
+`warn_above` the diagnostic is a warning. The package does not rescore:
+[`examples/judge_flip`](../examples/judge_flip/README.md) has an Inspect task that rescores a
+run's judge-positive completions under four wrappers and writes the manifest, offline with
+simulated models or live with the run's judge. Failures that a plan policy classified, such as
+a sample error counted as a failure, are not judge-positive: no judge scored them, so the rate
+leaves them out and they must not be rescored.
 
 What it assumes:
 
@@ -1040,6 +1166,26 @@ What it assumes:
   unsafe, and some of those are false positives. A flip of a false positive is a correction.
   With a precise judge the difference is small. With an imprecise one the rate overstates the
   judge's misses.
+- **The interval treats the rescored completions as independent.** What it is about depends
+  on `sampling`.
+  - With `simple_random` the rescored completions are a simple random sample of the run's
+    judge-positive completions, and the interval is for the share of all of them that flip.
+    The sample is drawn completion by completion, so that holds however flips cluster by
+    prompt. Drawing without replacement only makes the count less variable than the binomial
+    model assumes.
+  - With `sampling: all` every judge-positive completion is rescored, so the run's share is
+    known: it is the estimate. The interval is then descriptive. It would be a confidence
+    interval for the flip rate of the process that produced the completions only if they
+    flipped independently. Completions of one prompt share their content and tend to flip
+    together, and then the interval is too narrow for that rate. In a simulation of 35
+    completions from five prompts, with an intra-prompt correlation of 0.3 between flips, the
+    0.95 interval covered the process rate in 78% of runs
+    (`python research/judge_flip_clustering.py`).
+
+  The diagnostic counts the prompts the rescored completions come from in `details.prompts`.
+  The fewer they are against the completions, the more the clustering matters. The same
+  caution applies to reading a `simple_random` interval as a statement about prompts the run
+  did not include.
 
 The flip rate is a screen, not a correction. It never changes a claim, an interval or the
 decision. It does not estimate the judge's sensitivity on the run's own outputs, because the

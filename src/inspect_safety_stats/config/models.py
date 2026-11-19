@@ -42,6 +42,11 @@ PlanFloat = Annotated[float, _refuse_booleans("a number")]
 # report.precision_target when a plan leaves it out.
 DEFAULT_PRECISION_TARGET = 0.05
 
+# The thresholds a claim takes, from its plan or a decision policy: acceptable_upper below
+# unacceptable_lower, both in [THRESHOLD_MIN, THRESHOLD_MAX]. Verdict ranges read the same limits.
+THRESHOLD_MIN = -1
+THRESHOLD_MAX = 1
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True, allow_inf_nan=False)
@@ -226,6 +231,45 @@ class ScoreSpec(StrictModel):
         return self
 
 
+def judge_run_score(primary: ScoreSpec, judge: ScoreSpec) -> ScoreSpec:
+    """The score a judge's run under ``outputs.judge_claims`` reads: the judge's own, except
+    the stop reasons the judge leaves at ``score``, which it takes from the primary score.
+
+    ``content_filter_stops`` and ``token_limit`` say how rollouts count that the target's
+    provider stopped, which is the same for every judge of the same rollouts. Left at
+    ``score`` the judge's score says nothing about them, so its run counts them as the plan's
+    primary analysis does, and differs from it in the judge's verdicts alone. A judge's score
+    cannot set ``content_filter_stops`` (``JudgeSpec`` refuses it), so every judge's run takes
+    the primary's; a ``token_limit`` the judge sets is kept.
+    """
+
+    update: dict[str, Any] = {}
+    if judge.content_filter_stops == "score":
+        update["content_filter_stops"] = primary.content_filter_stops
+    if judge.token_limit == "score":
+        update["token_limit"] = primary.token_limit
+    return judge.model_copy(update=update) if update else judge
+
+
+def _content_filter_stops_problem(score: ScoreSpec, estimand: str) -> str | None:
+    """Why ``score.content_filter_stops`` does not fit the estimand or ``score.errors``, if it
+    does not."""
+
+    stops = score.content_filter_stops
+    if stops != "score" and estimand != "end_to_end_system":
+        return (
+            "score.content_filter_stops counts a provider's block as the outcome of the "
+            "end-to-end system; it needs estimand end_to_end_system"
+        )
+    if stops == "failure" and score.errors == "end_to_end":
+        return (
+            "score.content_filter_stops: failure counts a block as a refusal, but "
+            "score.errors: end_to_end counts a policy-blocked sample error as safe; "
+            "choose another score.errors"
+        )
+    return None
+
+
 class JudgeRateRangeSpec(StrictModel):
     """A declared closed range for one conditional judge accuracy."""
 
@@ -358,8 +402,13 @@ class JudgeCalibrationSpec(OmitsAbsentFields):
     diagnostic sensitivity result. ``mode: transported`` (experimental) bounds true risk
     from the judge's sensitivity on a published human-labelled set and is likewise a
     diagnostic sensitivity result. ``mode: validated`` estimates the two conditional
-    accuracies from human labels drawn within each judge stratum, and its corrected
-    intervals are certifying at the combined error budget.
+    accuracies from human labels, and its corrected intervals are certifying at the combined
+    error budget. ``sampling`` says how the labels were drawn: a simple random sample within
+    each judge stratum (the default); a simple random sample of the classified rollouts
+    (``simple_random``), which also estimates the judge's sensitivity and false-positive
+    rate by true class; or, experimental, a stratified design whose declared strata, given
+    in ``validation_strata``, nest within the judge strata
+    (``stratified_within_judge_stratum``).
 
     ``groups`` scopes an assumed or validated calibration to declared groups. Without it
     there is one calibration per cohort, for every row of the cohort. With it the assumed
@@ -377,12 +426,12 @@ class JudgeCalibrationSpec(OmitsAbsentFields):
     validation_manifest: Path | None = None
     family: str | None = None
     sampling: Literal[
-        "simple_random_within_judge_stratum", "simple_random", "stratified_without_replacement"
+        "simple_random_within_judge_stratum", "simple_random", "stratified_within_judge_stratum"
     ] = "simple_random_within_judge_stratum"
     published_set: PublishedValidationSetSpec | None = None
     groups: list[str] | None = None
     # Experimental: the declared fine stratum of every classified observation, for
-    # sampling: stratified_without_replacement.
+    # sampling: stratified_within_judge_stratum.
     validation_strata: Path | None = None
     # Experimental: how the labels were collected, which the analysis checks.
     protocol: LabellingProtocolSpec | None = None
@@ -405,12 +454,12 @@ class JudgeCalibrationSpec(OmitsAbsentFields):
             )
         if self.mode != "transported" and self.published_set is not None:
             raise ValueError("published_set requires mode: transported")
-        stratified = self.sampling == "stratified_without_replacement"
+        stratified = self.sampling == "stratified_within_judge_stratum"
         if stratified and self.mode != "validated":
-            raise ValueError("sampling: stratified_without_replacement requires mode: validated")
+            raise ValueError("sampling: stratified_within_judge_stratum requires mode: validated")
         if stratified != (self.validation_strata is not None):
             raise ValueError(
-                "validation_strata and sampling: stratified_without_replacement go together; "
+                "validation_strata and sampling: stratified_within_judge_stratum go together; "
                 "declare both or neither"
             )
         if self.mode == "transported":
@@ -501,6 +550,18 @@ class JudgeSpec(StrictModel):
         return self
 
     @model_validator(mode="after")
+    def no_content_filter_stops(self) -> JudgeSpec:
+        # A content-filter stop is the target's, the same whichever judge reads the rollout,
+        # so every judge's run takes inputs.score's content_filter_stops (judge_run_score). A
+        # judge's own value would count the same stops differently, so it is refused.
+        if self.score.content_filter_stops != "score":
+            raise ValueError(
+                f"judge {self.id!r}: content_filter_stops applies to inputs.score only, and "
+                "every judge's run takes it from there; remove it from the judge's score"
+            )
+        return self
+
+    @model_validator(mode="after")
     def resolve_block(self) -> JudgeSpec:
         if self.block is None:
             return self.model_copy(update={"block": self.id})
@@ -522,12 +583,14 @@ class JudgeFlipSpec(StrictModel):
 
     ``manifest`` is a CSV with columns ``observation_id``, ``wrapper`` and ``verdict``: the
     primary judge's verdict (``safe`` or ``unsafe``) on a judge-positive completion of the run
-    after it was rescored inside one wrapper, one row per completion and wrapper. Every rescored
-    completion carries a row for every declared wrapper. With ``sampling: all`` every
-    judge-positive completion of the run was rescored; with ``simple_random`` a simple random
-    sample of them was. The flip rate is a diagnostic: it never changes a claim status, and a
-    rate above ``warn_above`` gives a warning. ``alpha`` is the two-sided error level of its
-    Clopper-Pearson interval.
+    after it was rescored inside one wrapper, one row per completion and wrapper. A
+    judge-positive completion is one the primary judge scored unsafe; a failure that a plan
+    policy classified, such as a sample error counted as a failure, is not one and is not
+    rescored. Every rescored completion carries a row for every declared wrapper. With
+    ``sampling: all`` every judge-positive completion of the run was rescored; with
+    ``simple_random`` a simple random sample of them was. The flip rate is a diagnostic: it
+    never changes a claim status, and a rate above ``warn_above`` gives a warning. ``alpha`` is
+    the two-sided error level of its Clopper-Pearson interval.
     """
 
     manifest: Path
@@ -540,6 +603,14 @@ class JudgeFlipSpec(StrictModel):
     def distinct_wrappers(self) -> JudgeFlipSpec:
         if any(not item.strip() for item in self.wrappers):
             raise ValueError("judge_flip wrappers must be non-empty names")
+        # The manifest's wrapper names are read stripped, so a padded name here could never
+        # match one of its rows.
+        padded = [item for item in self.wrappers if item != item.strip()]
+        if padded:
+            raise ValueError(
+                "judge_flip wrappers must not start or end with whitespace: "
+                + ", ".join(repr(item) for item in padded)
+            )
         if len(set(self.wrappers)) != len(self.wrappers):
             raise ValueError("judge_flip wrappers must be unique")
         return self
@@ -584,18 +655,9 @@ class InputsSpec(OmitsAbsentFields):
 
     @model_validator(mode="after")
     def content_filter_stops_fit_the_estimand(self) -> InputsSpec:
-        stops = self.score.content_filter_stops
-        if stops != "score" and self.estimand != "end_to_end_system":
-            raise ValueError(
-                "score.content_filter_stops counts a provider's block as the outcome of the "
-                "end-to-end system; it needs estimand end_to_end_system"
-            )
-        if stops == "failure" and self.score.errors == "end_to_end":
-            raise ValueError(
-                "score.content_filter_stops: failure counts a block as a refusal, but "
-                "score.errors: end_to_end counts a policy-blocked sample error as safe; "
-                "choose another score.errors"
-            )
+        problem = _content_filter_stops_problem(self.score, self.estimand)
+        if problem is not None:
+            raise ValueError(problem)
         return self
 
 
@@ -1041,8 +1103,8 @@ class ClaimSpec(StrictModel):
     measure: str | None = None
     comparison: str | None = None
     family: str
-    acceptable_upper: PlanFloat = Field(ge=-1, le=1)
-    unacceptable_lower: PlanFloat = Field(ge=-1, le=1)
+    acceptable_upper: PlanFloat = Field(ge=THRESHOLD_MIN, le=THRESHOLD_MAX)
+    unacceptable_lower: PlanFloat = Field(ge=THRESHOLD_MIN, le=THRESHOLD_MAX)
     mandatory: bool = True
     method: Literal["corrected_interval", "noisy_valid_test"] = "corrected_interval"
 
@@ -1291,6 +1353,26 @@ class AnalysisPlan(StrictModel):
                 "but inputs.judges declares no judge. Declare the judges, or set "
                 "outputs.judge_claims: false"
             )
+        return self
+
+    @model_validator(mode="after")
+    def judge_runs_count_content_filter_stops_consistently(self) -> AnalysisPlan:
+        # Each judge's run reads the judge's score with the primary's content_filter_stops,
+        # which a judge cannot set (judge_run_score), so the value must fit each judge's own
+        # errors as it fits the primary's. The estimand is the plan's, which the primary's
+        # value already fits. Without judge_claims no run reads a judge's stop reasons.
+        if not self.outputs.judge_claims:
+            return self
+        for judge in self.inputs.judges:
+            score = judge_run_score(self.inputs.score, judge.score)
+            problem = _content_filter_stops_problem(score, self.inputs.estimand)
+            if problem is not None:
+                raise ValueError(
+                    f"outputs.judge_claims runs judge {judge.id!r} on its own score, where "
+                    f"{problem}. Every judge's run takes content_filter_stops from "
+                    f"inputs.score, so the judge's run takes {score.content_filter_stops} "
+                    "from inputs.score."
+                )
         return self
 
     def source_path(self) -> Path | None:

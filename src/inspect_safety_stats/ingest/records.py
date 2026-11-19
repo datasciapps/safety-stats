@@ -57,8 +57,10 @@ class StopContext:
     """How a rollout's output ended, for one that a provider's content filter or the
     generation token limit stopped."""
 
-    # Whether the output delivered content before the stop. A stop reported as an API error
-    # delivered none, whatever stand-in text the tool put in its place.
+    # Whether the target delivered content before the stop. For a content-filter stop, that is
+    # any text, reasoning or tool call in the stopped output or in an earlier generation of the
+    # same sample, such as an earlier turn. A generation reported as an API error delivered
+    # none, whatever stand-in text the tool put in its place.
     content_delivered: bool
     # The provider's own type and category of the block, when it gave them; None and False
     # for a stop at the token limit.
@@ -68,6 +70,10 @@ class StopContext:
     # Inspect's stop reason: "content_filter", or "max_tokens" for an answer that ran out of
     # generation tokens.
     stop_reason: Literal["content_filter", "max_tokens"] = "content_filter"
+    # For a content-filter stop that delivered content, where: "stopped_output", or
+    # "earlier_generation", or "unverifiable" when the transcript does not record the stopped
+    # generation, so that content delivered before it cannot be ruled out. None otherwise.
+    delivered_in: Literal["stopped_output", "earlier_generation", "unverifiable"] | None = None
 
 
 @dataclass(frozen=True)

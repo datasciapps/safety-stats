@@ -178,8 +178,11 @@ def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, 
     }
     if plan.inputs.panel_groups is not None:
         prompts_by_group = {group.id: set(group.prompt_ids) for group in data.groups}
-        panel["groups"] = list(plan.inputs.panel_groups)
-        for group_id in plan.inputs.panel_groups:
+        # A group the plan does not declare is reported as PLAN_UNKNOWN_REFERENCE and has no
+        # rollouts to break down, so the breakdown lists the declared groups only.
+        listed = [item for item in plan.inputs.panel_groups if item in prompts_by_group]
+        panel["groups"] = listed
+        for group_id in listed:
             by_judge, by_composite, by_pair = section(prompts_by_group[group_id])
             for entry in judges:
                 entry.setdefault("groups", {})[group_id] = by_judge[entry["id"]]
@@ -227,8 +230,18 @@ def _declared_scope(plan: AnalysisPlan, accuracies: list[JudgeAccuracySpec]) -> 
     ]
 
 
-# A declared accuracy box, the verdict it is declared for, and the groups it holds on (None: all).
-_DeclaredBox = tuple[JudgeAccuracyBox, str, list[str] | None]
+@dataclass(frozen=True)
+class _DeclaredBox:
+    """A declared accuracy box, the verdict it is declared for, and the groups it holds on."""
+
+    box: JudgeAccuracyBox
+    # The verdict, as ``judge:<id>`` or ``composite:<id>``.
+    source: str
+    # None when the box holds on every rollout.
+    groups: tuple[str, ...] | None
+
+    def holds_on(self, group_id: str) -> bool:
+        return self.groups is None or group_id in self.groups
 
 
 def _same_classification(first: OutcomeMappingSpec, second: OutcomeMappingSpec) -> bool:
@@ -290,10 +303,11 @@ def _primary_accuracy_box(
                 "as failure and its false verdict as safe"
             )
             return None
-        return (
-            _composite_box(members, accuracies, composite.rule),
-            f"composite:{composite.id}",
-            _declared_scope(plan, accuracies),
+        groups = _declared_scope(plan, accuracies)
+        return _DeclaredBox(
+            box=_composite_box(members, accuracies, composite.rule),
+            source=f"composite:{composite.id}",
+            groups=None if groups is None else tuple(groups),
         )
     declared = [
         (judge, judge.accuracy)
@@ -323,10 +337,11 @@ def _primary_accuracy_box(
             )
         return None
     ((judge, accuracy),) = alike
-    return (
-        _declared_box(accuracy),
-        f"judge:{judge.id}",
-        _declared_scope(plan, [accuracy]),
+    groups = _declared_scope(plan, [accuracy])
+    return _DeclaredBox(
+        box=_declared_box(accuracy),
+        source=f"judge:{judge.id}",
+        groups=None if groups is None else tuple(groups),
     )
 
 

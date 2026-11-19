@@ -200,7 +200,7 @@ def _strata(inputs: Inputs, observations: list[Any], policy_row: bool) -> None:
     validated(
         inputs,
         census(observations) if policy_row else judge_verdicts(observations),
-        sampling="stratified_without_replacement",
+        sampling="stratified_within_judge_stratum",
         validation_strata="strata.csv",
     )
     rows = [
@@ -211,7 +211,7 @@ def _strata(inputs: Inputs, observations: list[Any], policy_row: bool) -> None:
     inputs.files["strata.csv"] = "observation_id,stratum\n" + "".join(rows)
 
 
-@pytest.mark.parametrize("sampling", ["simple_random", "stratified_without_replacement"])
+@pytest.mark.parametrize("sampling", ["simple_random", "stratified_within_judge_stratum"])
 def test_the_judge_strata_hold_the_judge_verdicts_only(tmp_path: Any, sampling: str) -> None:
     def labels(inputs: Inputs, observations: list[Any]) -> None:
         if sampling == "simple_random":

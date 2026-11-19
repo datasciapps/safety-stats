@@ -139,6 +139,17 @@ def _sampled(inputs: Inputs) -> None:
     _direct_means()(inputs)
 
 
+def _sampled_prompt_sensitivity(inputs: Inputs) -> None:
+    """A sampled design that declares a prompt-level sensitivity profile."""
+
+    _sampled(inputs)
+    inputs.plan["design"]["independence_profiles"]["prompt"] = {
+        "block_by": ["prompt_id"],
+        "comparison_coupling": "joint",
+    }
+    _outputs(inputs)["direct_mean_intervals"]["independence"]["sensitivities"] = ["prompt"]
+
+
 def _sampled_without_direct_means(inputs: Inputs) -> None:
     _sampled(inputs)
     _outputs(inputs)["direct_mean_intervals"]["enabled"] = False
@@ -334,6 +345,21 @@ def _sampled_prompt_bounds_recorded(triggered: Outcome, control: Outcome) -> Non
     assert bounded(triggered) == bounded(control) == ["p1", "p2"]
 
 
+def _sampled_sensitivities_withheld(triggered: Outcome, control: Outcome) -> None:
+    # Only the frame intervals are reported, as without the sensitivity profile.
+    def profiles(outcome: Outcome) -> list[str | None]:
+        return sorted(
+            {
+                interval.independence_profile
+                for row in outcome.report.group_risks
+                for interval in row.intervals
+                if interval.independence_profile is not None
+            }
+        )
+
+    assert profiles(triggered) == profiles(control) == ["frame_item"]
+
+
 CASES = [
     Case(
         code="ALPHA_ALLOCATION_INVALID",
@@ -500,6 +526,12 @@ CASES = [
         ),
         control=analysis(_sampled),
         effect=_sampled_prompt_bounds_recorded,
+    ),
+    Case(
+        code="PLAN_SAMPLED_SENSITIVITY_PROFILES",
+        trigger=analysis(_sampled_prompt_sensitivity),
+        control=analysis(_sampled),
+        effect=_sampled_sensitivities_withheld,
     ),
     Case(
         code="PLAN_SAMPLED_REQUIRES_DIRECT_MEAN",

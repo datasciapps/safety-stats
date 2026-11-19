@@ -302,7 +302,7 @@ def test_analyze_command_exits_3_on_error_diagnostics(
         ],
     )
     assert result.exit_code == 3, result.output
-    assert "GENERATIVE_SCORE_ABSENT" in result.output
+    assert "GENERATIVE_SCORE_ABSENT" in plain(result.output)
     assert (tmp_path / "report" / "report.json").is_file()
 
 

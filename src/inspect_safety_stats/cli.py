@@ -44,6 +44,10 @@ app.add_typer(generative_app, name="generative")
 class ExitCode(IntEnum):
     """Every exit status a command chooses, in one table (docs/api-reference.md#exit-codes).
 
+    ERROR is guaranteed only by analyze, hash-plan, init, visualize and the generative commands,
+    and by validate for an invalid integrity. A plan that validate or plan fixed-design --plan
+    cannot load is not routed here (a traceback exiting 1, or a usage error exiting 2).
+
     typer itself exits 2 on a usage error, such as a missing option, before any command runs.
     """
 
@@ -622,12 +626,12 @@ def fixed_design_planning_command(
     ] = IndependenceUnitOption.rollout,
     family_size: Annotated[int, typer.Option("--family-size", min=1)] = 1,
 ) -> None:
-    """Detectable rates for a declared weighted design under a Hoeffding guarantee.
+    """Detectable rates for a declared weighted design.
 
     Reads the design manifest so planning sees the same prompts, weights, and
     expected rollout counts that `analyze` will resolve. Rollout counts come
     from the manifest's `expected_rollouts` column unless `--rollouts` supplies
-    a uniform override.
+    a uniform override. Without --plan the rates are weighted Hoeffding guarantees.
 
     With --plan, every claim is planned as `analyze` will decide it, and the options the
     plan supplies are refused rather than overridden.
@@ -741,10 +745,32 @@ def _plan_fixed_design_from_plan(
 
     try:
         plan = load_plan(plan_path)
-        design = plan_design(plan, power=power, manifest=manifest, rollouts=rollouts)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    source, named_by = (
+        (plan.inputs.design_manifest, "inputs.design_manifest")
+        if manifest is None
+        else (manifest, "--manifest")
+    )
+    try:
+        design = plan_design(plan, power=power, manifest=source, rollouts=rollouts)
+    except OSError as exc:
+        # The design manifest is the only file plan_design reads.
+        raise typer.BadParameter(
+            f"cannot read the design manifest {source}, which {named_by} names: "
+            f"{exc.strerror or exc}"
+        ) from exc
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
     claims = design.claims
+    typer.echo(
+        f"Design manifest: {source} "
+        + (
+            "(inputs.design_manifest)"
+            if manifest is None
+            else "(--manifest, in place of the plan's inputs.design_manifest)"
+        )
+    )
     typer.echo(f"Claims: {len(claims)}")
     typer.echo(f"Target power: {power:.8g}")
     if design.method is not None:
@@ -793,8 +819,15 @@ def _plan_fixed_design_from_plan(
             + _rate(rejection.minimum_detectable_failure_rate if rejection else None)
         )
         typer.echo(
-            f"  Certification floor: {planned.certification_floor:.8g}, the upper bound "
-            "when every rollout is safe"
+            f"  Certification floor: {item.certification_floor:.8g}, the upper bound analyze "
+            "reports when every rollout is safe"
+            + (
+                f" ({item.raw_certification_floor:.8g} before the hierarchy-region projection; "
+                "the rates above are planned before it, and the projection can only raise "
+                "their power)"
+                if item.certification_floor < item.raw_certification_floor
+                else ""
+            )
         )
         for reference in item.references:
             typer.echo(
@@ -811,12 +844,14 @@ def _plan_fixed_design_from_plan(
         typer.echo("")
         typer.echo(
             f"Direct-mean intervals analyze will report ({design.method}); "
-            "floor is the upper bound when every rollout is safe, and a target resolves "
-            "when the floor is at or below its group's smallest acceptable_upper:"
+            "raw floor is the interval's upper bound when every rollout is safe, and floor "
+            "the bound analyze reports then, after the hierarchy-region projection when the "
+            "plan asks for it. A target resolves when its floor is at or below its group's "
+            "smallest acceptable_upper:"
         )
         typer.echo(
             f"  {'profile':<14} {'cohort':<14} {'target':<36} {'blocks':>7} {'ESS':>9} "
-            f"{'alpha':>11} {'calibration':<15} {'floor':>9} {'resolves':>8}"
+            f"{'alpha':>11} {'calibration':<15} {'raw floor':>9} {'floor':>9} {'resolves':>8}"
         )
         for interval in design.intervals:
             target = (
@@ -829,6 +864,7 @@ def _plan_fixed_design_from_plan(
                 f"  {interval.independence_profile:<14} {interval.cohort:<14} {target:<36} "
                 f"{interval.independent_blocks:>7} {interval.effective_sample_size:>9.4g} "
                 f"{interval.alpha.endpoint_alpha:>11.4g} {interval.alpha.calibration:<15} "
+                f"{interval.raw_certification_floor:>9.4g} "
                 f"{interval.certification_floor:>9.4g} {resolves:>8}"
             )
         unresolved: dict[tuple[str, str, str, str], list[int]] = {}
@@ -847,7 +883,8 @@ def _plan_fixed_design_from_plan(
                 tally[0] += 1
         notes = [
             f"  level {level} of group {group} in cohort {cohort} under profile {profile}: "
-            f"{failed} of {total} nodes cannot be certified at the group's acceptable_upper"
+            f"{failed} of {total} nodes cannot be certified at the group's acceptable_upper, "
+            "even when every rollout is safe"
             for (profile, cohort, group, level), (failed, total) in unresolved.items()
             if failed
         ]
@@ -1092,11 +1129,14 @@ def _one_line_error(exc: Exception) -> str:
     from pydantic import ValidationError
 
     if isinstance(exc, ValidationError):
-        return "; ".join(
+        text = "; ".join(
             f"{'.'.join(str(part) for part in error['loc']) or '(root)'}: {error['msg']}"
             for error in exc.errors()
         )
-    return " ".join(str(exc).split())
+    else:
+        text = str(exc)
+    # A validator's own message may hold line breaks; the line is collapsed either way.
+    return " ".join(text.split())
 
 
 @app.command("hash-plan")
@@ -1160,6 +1200,12 @@ def hash_plan_command(
         typer.echo(
             f"Registration failed: {register} exists; a receipt is never overwritten",
             err=True,
+        )
+        raise typer.Exit(code=ExitCode.ERROR) from exc
+    except OSError as exc:
+        # Such as a directory that does not exist or cannot be written: no receipt is written.
+        typer.echo(
+            f"Registration failed: cannot write {register}: {exc.strerror or exc}", err=True
         )
         raise typer.Exit(code=ExitCode.ERROR) from exc
     typer.echo(f"Registered at: {receipt.registered_at.isoformat()}")

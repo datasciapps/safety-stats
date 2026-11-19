@@ -83,11 +83,14 @@ never renormalized to the realized sample.
 
 Enable `outputs.direct_mean_intervals` and the group and hierarchy weighted means are
 estimated by Horvitz--Thompson, reported as `horvitz_thompson_<method>` intervals with
-`independence_profile: frame_item`.
+`independence_profile: frame_item`. The experimental `weighted_betting` method is accepted
+too. As on a fixed design, its rows carry the experimental betting assumption and
+`chernoff_kernel: common_bet_mixture_jensen_exponent`, and a fixed-size design's row states
+why the without-replacement reduction covers the betting capital.
 
 ### What a sampled design refuses
 
-Four checks reject configurations that a sample cannot support:
+Three checks reject configurations that a sample cannot support, and two warn:
 
 - `PLAN_SAMPLED_MEASURE_UNSUPPORTED` -- only `weighted_mean` is available. Maximum, CVaR,
   top-k, entropic, and the threshold measures are nonlinear functionals of the whole frame's
@@ -98,6 +101,9 @@ Four checks reject configurations that a sample cannot support:
   item that was never drawn.
 - `PLAN_SAMPLED_PROMPT_BOUNDS` (warning) -- simultaneous prompt bounds cover the sampled
   items, not the frame.
+- `PLAN_SAMPLED_SENSITIVITY_PROFILES` (warning) -- the frame item is the independent block
+  whatever `independence` declares, so a declared sensitivity profile gets no interval and
+  claims get no verdict under it. A claim's `profile_verdicts` hold only its `frame_item` row.
 
 ### Nodes with nothing drawn
 
@@ -130,7 +136,10 @@ fields deserve care:
 The report's scope statement follows the design. A sampled design's `scope` in `report.json`
 has `design: sampled` and says that results apply to the declared item frame, from which the
 evaluated items were drawn with the recorded inclusion probabilities, and not to prompts
-outside the frame. `report-full.md` and `report.html` print it above the claims.
+outside the frame. `report-full.md` and `report.html` print it above the claims. The rest of
+the report follows it: `report.md` counts frame items rather than fixed prompts and says that
+its intervals allow for both the draw and the rollouts, with each drawn item one observation,
+and `report-full.md` and `report.html` head the intervals "Sampled-design risk measures".
 
 ## Fixed-size designs
 
@@ -155,9 +164,24 @@ It is recovered by **Hoeffding's reduction** (1963, Theorem 4): for any continuo
 \mathbb E\left[f\!\left(\textstyle\sum_{i=1}^{n}v_i'\right)\right].
 \]
 
-Every engine here bounds a moment generating function, which is convex, so the bound each
-computes under independence remains valid without replacement -- and is conservative, since
-sampling without replacement has strictly smaller variance.
+The Hoeffding, empirical-Bernstein and KL/Chernoff engines bound a moment generating function,
+which is convex. The experimental betting engine bounds none. It bounds the capital of each
+fixed betting fraction, a product of per-item wealth factors \(b_j\) raised to an exponent
+\(c\le1\) that is common within a stratum. The item outcomes are independent across items and
+of the draw, so averaging over them first and applying Jensen's inequality gives
+
+\[
+\mathbb E\Big[\textstyle\prod_{j\in S}b_j^{\,c}\;\Big|\;S\Big]
+\le
+\exp\Big(c\textstyle\sum_{j\in S}\log\mathbb E\,b_j\Big),
+\]
+
+a convex function of a without-replacement sum of fixed numbers. The reduction applies to it,
+and so to the fixed mixture over fractions, and the with-replacement capital is bounded as in
+the [betting interval](statistical-methods.md#betting-interval-from-a-fixed-mixture-of-common-bets-experimental).
+
+So the bound each engine computes under independence remains valid without replacement -- and
+is conservative, since sampling without replacement has strictly smaller variance.
 
 The estimator rearranges the same way as the Poisson case. Within stratum \(h\), letting
 \(A_h\) be the largest target weight in that stratum, each drawn item carries the

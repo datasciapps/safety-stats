@@ -86,7 +86,8 @@ An output a provider's content filter stopped without a sample error counts by i
   refusal.
 - **Remedy:** Classify the stops with score.content_filter_stops: safe or failure, under the
   end-to-end estimand.
-- **Checked by:** [`TARGET_POLICY_BLOCKED_REFUSAL`](#target_policy_blocked_refusal),
+- **Checked by:** [`CONTENT_FILTER_STOP_SCORED`](#content_filter_stop_scored),
+  [`TARGET_POLICY_BLOCKED_REFUSAL`](#target_policy_blocked_refusal),
   [`TARGET_POLICY_BLOCKED_SAFE`](#target_policy_blocked_safe)
 
 ### Assumption `fixed_design`
@@ -464,6 +465,17 @@ The analysis plan: its fields, references and their combinations.
 - **Consequence:** The integrity status is invalid, so no claim can pass.
 - **Remedy:** Set outputs.direct_mean_intervals.enabled: true, with its family.
 
+#### `PLAN_SAMPLED_SENSITIVITY_PROFILES`
+
+- **Severity:** WARNING
+- **Effect:** [withheld](#effects)
+- **Assumption:** A sampled design's frame intervals take the frame item as the independent block,
+  whatever independence profiles the plan declares.
+- **Consequence:** No interval and no claim verdict is reported under the declared sensitivity
+  profiles; the frame intervals and the claims' statuses are unaffected.
+- **Remedy:** Remove outputs.direct_mean_intervals.independence.sensitivities under design.type:
+  sampled, or analyse the prompts as a fixed design to see verdicts under them.
+
 #### `PLAN_SINGLE_VALUED_BOUND_UNSUPPORTED`
 
 - **Severity:** ERROR
@@ -495,7 +507,8 @@ The analysis plan: its fields, references and their combinations.
 - **Assumption:** A direct worst_of_k interval is requested under a fixed design, with direct mean
   intervals enabled without frontier_sidak calibration and a primary independence profile that
   blocks by rollout.
-- **Consequence:** The integrity status is invalid, so no claim can pass.
+- **Consequence:** The integrity status is invalid, so no claim can pass. The measure's group rows
+  get no direct interval: they keep the propagated prompt envelope as primary and warn why.
 - **Remedy:** Set design.type: fixed, outputs.direct_mean_intervals.enabled: true with
   hierarchy_calibration: flat_bonferroni and a primary profile blocking by rollout; or drop
   direct_interval from the worst_of_k measure in outputs.risk_measures.
@@ -716,6 +729,23 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
   name recorded fields in cohorts.<id>.require_uniform.
 - **Checks:** [`run_stability`](#assumption-run_stability)
 
+#### `CONTENT_FILTER_STOP_SCORED`
+
+- **Severity:** WARNING, INFO
+- **Effect:** [recorded](#effects)
+- **Assumption:** inputs.score.content_filter_stops decides the outcome of a provider content-filter
+  stop only when the target delivered no content in the sample before it: no text, readable
+  reasoning or tool call in the stopped output or in an earlier generation, such as an earlier turn.
+  Under safe, it decides only a missing or safe score, never a failure or a value the mapping does
+  not cover.
+- **Consequence:** Nothing changes from the default: the rollout's score decides, as for any other
+  answer, and a missing score follows inputs.score.missing. It is a warning when a stop that
+  delivered nothing has a failure or unmapped score, which the transcript does not explain.
+- **Remedy:** None needed when content was delivered. For a warning, check how the scorer reads an
+  empty answer and whether harm reached the user outside the transcript. When the transcript does
+  not record the stopped generation, keep each sample's model events in the log.
+- **Checks:** [`content_filter_stops`](#assumption-content_filter_stops)
+
 #### `INGEST_FAILED`
 
 - **Severity:** ERROR
@@ -726,6 +756,18 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
   comparisons, with every claim INCONCLUSIVE.
 - **Remedy:** Fix the input the message names, such as an unreadable manifest, log or receipt, or a
   plan option the source cannot serve, and rerun.
+
+#### `JUDGE_CONFIGURATION_UNREADABLE`
+
+- **Severity:** WARNING
+- **Effect:** [recorded](#effects)
+- **Assumption:** With outputs.judge_claims, every run records its scorers and model roles, when it
+  records them at all, as JSON: a list of scorers and a mapping from each role to a configuration
+  with a model id.
+- **Consequence:** Nothing is computed differently and integrity is unchanged; the judges' recorded
+  configurations leave out the field of that run.
+- **Remedy:** Record the run's scorers and model_roles as Inspect logs record them, or leave the
+  field out of the rollout files' runs.
 
 #### `JUDGE_SCORE_MISSING`
 
@@ -986,8 +1028,9 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
 
 - **Severity:** INFO
 - **Effect:** [adjusted](#effects)
-- **Assumption:** A provider content-filter stop that delivered no content is a refusal of the
-  end-to-end system, as inputs.score.content_filter_stops: failure declares.
+- **Assumption:** A provider content-filter stop before the target delivered any content in the
+  sample is a refusal of the end-to-end system, as inputs.score.content_filter_stops: failure
+  declares.
 - **Consequence:** The rollout counts as a failure, a refusal under an over-refusal estimand,
   whatever its score.
 - **Remedy:** Set inputs.score.content_filter_stops: score to let the score decide such rollouts.
@@ -997,11 +1040,11 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
 
 - **Severity:** INFO
 - **Effect:** [adjusted](#effects)
-- **Assumption:** A target-side provider policy block that delivered no content is a safe outcome of
-  the end-to-end system.
+- **Assumption:** A target-side provider policy block before the target delivered any content in the
+  sample is a safe outcome of the end-to-end system.
 - **Consequence:** The rollout counts as safe: a policy-blocked sample error under
-  inputs.score.errors: end_to_end, or a content-filter stop under inputs.score.content_filter_stops:
-  safe, whatever its score.
+  inputs.score.errors: end_to_end, whatever its score, or a content-filter stop under
+  inputs.score.content_filter_stops: safe whose score is missing or safe.
 - **Remedy:** Set inputs.estimand: underlying_model, or another inputs.score.errors policy, to keep
   blocked errors unclassified, and inputs.score.content_filter_stops: score to let the score decide
   filter stops.
@@ -1041,8 +1084,10 @@ The judge validation inputs: the human labels, their strata and the labelling pr
 - **Effect:** [adjusted](#effects)
 - **Assumption:** The human labels are a simple random sample without replacement within each
   declared fine stratum, of a size fixed independently of the labels.
-- **Consequence:** The validated calibration uses exact hypergeometric bounds over the declared fine
-  strata, and the asymptotic delta-method reference interval is not reported.
+- **Consequence:** The validated calibration bounds each judge stratum's truly unsafe count with
+  exact hypergeometric bounds over the declared fine strata, and its conditional accuracy at those
+  counts with Clopper-Pearson bounds; the asymptotic delta-method reference interval is not
+  reported.
 - **Remedy:** None needed when the labels were drawn by the declared strata; otherwise set
   inputs.judge_calibration.sampling to the design the labels were drawn by.
 
@@ -1099,7 +1144,9 @@ The judge validation inputs: the human labels, their strata and the labelling pr
 - **Assumption:** The primary judge keeps an unsafe verdict when the same content is shown inside a
   content-preserving wrapper.
 - **Consequence:** The flip rate and its Clopper-Pearson interval are reported, as a WARNING above
-  inputs.judge_flip.warn_above and as INFO otherwise, and no claim status changes.
+  inputs.judge_flip.warn_above and as INFO otherwise, and no claim status changes. The interval
+  treats the rescored completions as independent; under sampling: all it is descriptive, since
+  completions of one prompt can flip together.
 - **Remedy:** When the rate is high, validate the judge with inputs.judge_calibration.mode:
   validated, or use a judge that is less easily talked out of its verdicts.
 - **Checks:** [`judge_accuracy`](#assumption-judge_accuracy)
@@ -1341,7 +1388,8 @@ cannot be computed, or a result it qualifies.
   scale; on the generative path every comparison stays there by design.
 - **Remedy:** On the fixed-design path, use a comparison whose primary interval exposes both arm
   bounds (comparisons[].method: weighted_kl_chernoff, or a comparison_sets entry) and resolve any
-  calibration refusal for either cohort; generative comparisons have no correction.
+  calibration refusal for either cohort. Generative comparisons, and comparisons under
+  inputs.judge_calibration.mode: transported, have no correction.
 
 #### `JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY`
 
@@ -1376,6 +1424,19 @@ cannot be computed, or a result it qualifies.
   common arm region, and its rows keep the intervals they had.
 - **Remedy:** Nothing in the inputs needs to change: the unprojected intervals keep their coverage.
   Set comparison_sets[].hierarchy_region: none to skip the projection.
+
+#### `PAIR_NEWCOMBE_UNAVAILABLE`
+
+- **Severity:** WARNING
+- **Effect:** [withheld](#effects)
+- **Assumption:** The completions of a comparison's unscored pair outcomes produce at most
+  50,000,000 distinct 2x2 tables, the most newcombe_paired evaluates; 668 pairs unscored in both
+  arms produce more.
+- **Consequence:** The comparison's newcombe_paired diagnostic is not reported; its other paired
+  diagnostics, its interval and the integrity status are unaffected.
+- **Remedy:** Rescore or rerun the unscored rollouts, or leave newcombe_paired out of
+  comparisons[].diagnostic_methods: exact_mcnemar and fixed_cluster_bootstrap bound the completions
+  of any number of unscored pairs.
 
 #### `TAIL_MEASURES_UNINFORMATIVE`
 

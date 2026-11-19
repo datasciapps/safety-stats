@@ -19,11 +19,16 @@ import yaml
 from inspect_ai import Task
 from inspect_ai import eval as inspect_eval
 from inspect_ai.dataset import json_dataset
+from inspect_ai.log import read_eval_log, write_eval_log
 from inspect_ai.scorer import Score, Target, scorer
 from inspect_ai.solver import TaskState, generate
+from typer.testing import CliRunner
 
+from inspect_safety_stats.cli import app
 from inspect_safety_stats.generative.runner import analyze_run, materialize_run
+from inspect_safety_stats.ingest.inspect_logs import read_inspect_runs
 from tests.generative_fixtures import SEEDS_WITH_TEXT, base_plan
+from tests.planted_configuration import leaks, plant_configuration, written_texts
 
 MOCK_MODEL = "mockllm/model"
 RISK = {"maltese": 0.5, "english": 0.1}
@@ -136,6 +141,40 @@ def test_the_report_writes_from_a_real_log(
     payload = json.loads((path / "report.json").read_text(encoding="utf-8"))
     assert payload["root"]["draws"] == 40
     assert (path / "report.html").is_file()
+
+
+def test_no_run_configuration_reaches_a_generative_output(
+    evaluated: tuple[Path, Path, Path], tmp_path: Path
+) -> None:
+    """A secret in any configuration field of the log is in no file written or line printed.
+
+    tests/integration/test_run_configuration_privacy.py does the same for the fixed design.
+    """
+
+    plan, artifacts, logs = evaluated
+    (source,) = sorted(logs.glob("*.eval"))
+    log = read_eval_log(str(source))
+    secrets = plant_configuration(log, "generative")
+    planted = tmp_path / "logs"
+    planted.mkdir()
+    write_eval_log(log, str(planted / source.name))
+    # The reader returns every secret, so the check below is not vacuous.
+    (run,) = read_inspect_runs(str(planted))
+    recorded = json.dumps(run.attributes, default=str)
+    assert [secret for secret in secrets if secret not in recorded] == []
+    output = tmp_path / "report"
+
+    result = CliRunner().invoke(
+        app,
+        ["generative", "analyze", "--plan", str(plan), "--artifacts", str(artifacts),
+         "--logs", str(planted), "--output", str(output), "--cohort", "baseline"],
+    )
+
+    assert result.exit_code == 0, result.output
+    texts = written_texts(output)
+    assert {"report.json", "report.html"} <= {Path(name).name for name in texts}
+    texts["generative analyze output"] = result.output
+    assert leaks(texts, secrets) == []
 
 
 def test_a_score_name_the_log_does_not_carry_is_an_error(

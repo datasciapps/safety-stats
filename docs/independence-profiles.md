@@ -71,8 +71,10 @@ Each claim in `report.json` lists its verdict under every profile in `profile_ve
 first row is the primary profile's and repeats the claim's status and bounds. Each sensitivity
 row decides the same `acceptable_upper` and `unacceptable_lower` on that profile's interval,
 computed with the primary interval's method, under the same integrity and confirmatory
-conditions. A row also gives the interval id, the independent block count and the effective
-sample size, so a reader can see how many independent units each verdict rests on.
+conditions. An exploratory claim certifies nothing, so all its rows are `INCONCLUSIVE`, like the
+claim; its `descriptive_status` says what the primary bounds would decide. A row also gives the
+interval id, the independent block count and the effective sample size, so a reader can see how
+many independent units each verdict rests on.
 
 The claim's `status`, and the report's decision, are always the primary profile's verdict.
 Sensitivity verdicts show how far that verdict depends on the primary independence assumption;
@@ -81,9 +83,19 @@ they are never selected in its place. A `PASS` under `rollout` that is `INCONCLU
 
 `report-full.md` adds a "Verdicts by independence profile" table under the mandatory claims when
 any of them has a sensitivity profile, and the HTML claim card lists each profile's verdict
-and bounds. Claims decided on a judge-corrected interval or the noisy-valid test have no
-per-profile counterpart and no rows; when their evidence has sensitivity profiles, a reason
-says so.
+and bounds. Both label each row `primary` or `sensitivity`, under a note that the claim's status
+is the primary profile's verdict and that a sensitivity verdict cannot replace it.
+
+Under a sampled design the frame item is the independent block whatever `independence`
+declares, so a claim has only its `frame_item` row, and a declared sensitivity profile gives a
+`PLAN_SAMPLED_SENSITIVITY_PROFILES` warning (see
+[Design-based sampling](design-based-sampling.md#what-a-sampled-design-refuses)).
+
+Claims decided on a judge-corrected interval or the noisy-valid test have no per-profile
+counterpart and no rows; when their evidence has sensitivity profiles, a reason says so. A claim
+whose evidence has no primary interval, for example because the primary profile's calibration
+failed, is `INCONCLUSIVE` and has no rows either, and its reason says the primary interval is
+missing.
 
 Comparisons use the same selector:
 
