@@ -552,6 +552,14 @@ class JudgeFlipSpec(StrictModel):
     def distinct_wrappers(self) -> JudgeFlipSpec:
         if any(not item.strip() for item in self.wrappers):
             raise ValueError("judge_flip wrappers must be non-empty names")
+        # The manifest's wrapper names are read stripped, so a padded name here could never
+        # match one of its rows.
+        padded = [item for item in self.wrappers if item != item.strip()]
+        if padded:
+            raise ValueError(
+                "judge_flip wrappers must not start or end with whitespace: "
+                + ", ".join(repr(item) for item in padded)
+            )
         if len(set(self.wrappers)) != len(self.wrappers):
             raise ValueError("judge_flip wrappers must be unique")
         return self

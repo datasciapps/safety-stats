@@ -196,6 +196,8 @@ def test_manifest_rejects_malformed_rows(tmp_path: Path, body: str, message: str
         ({"wrappers": []}, "at least 1"),
         ({"wrappers": ["story", "story"]}, "unique"),
         ({"wrappers": [" "]}, "non-empty"),
+        ({"wrappers": ["refusal_prefix", " story"]}, "whitespace: ' story'"),
+        ({"wrappers": ["story\t"]}, "must not start or end with whitespace"),
         ({"warn_above": 0}, "greater than 0"),
         ({"warn_above": 1}, "less than 1"),
         ({"warn_above": True}, "not a boolean"),

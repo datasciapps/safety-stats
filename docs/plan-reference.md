@@ -565,7 +565,9 @@ inputs:
 The manifest has the columns `observation_id`, `wrapper` and `verdict`, with one row per
 rescored completion and wrapper. `observation_id` is the observation identifier of the
 analysed run, as in a validation manifest. `verdict` is `safe` or `unsafe`. A rescoring that
-failed must be rerun before the file is written: the analysis does not drop rows.
+failed must be rerun before the file is written: the analysis does not drop rows. The manifest's
+cells are read with surrounding whitespace removed, so a name in `wrappers` that starts or ends
+with whitespace could match none of its rows, and the plan rejects it.
 
 - With `sampling: all`, every judge-positive completion of the run must be rescored. With
   `simple_random`, the rescored completions must be a simple random sample of them, drawn
