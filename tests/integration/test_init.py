@@ -212,6 +212,21 @@ def test_init_says_each_family_spends_alpha_on_its_own(
     )
 
 
+def test_init_titles_the_plan_with_cohort_ids_not_model_names(
+    mock_logs: Path, tmp_path: Path
+) -> None:
+    # The title copied the model names, which can be paths on the machine that served them,
+    # into the head of every report.
+    result = scaffold_plan(mock_logs, tmp_path, failure_values=["FAIL"])
+    plan = yaml.safe_load(result.plan_path.read_text(encoding="utf-8"))
+    assert plan["analysis"]["title"] == "mock_safety: alpha, beta"
+    judge = next(note for note in result.assumptions if note.assumption == "judge_accuracy")
+    assert judge.choice == (
+        "inputs.judge_calibration is left out, so the score's verdicts are taken as correct, "
+        "as they are under inputs.judge_calibration.mode: assumed, its default."
+    )
+
+
 def test_init_plan_analyzes_end_to_end(mock_logs: Path, tmp_path: Path) -> None:
     result = scaffold_plan(
         mock_logs,
