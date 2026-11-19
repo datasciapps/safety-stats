@@ -147,7 +147,13 @@ def init_command(
     ] = None,
     safe_values: Annotated[
         list[str] | None,
-        typer.Option("--safe-values", help="Score values that count as safe (default: the rest)."),
+        typer.Option(
+            "--safe-values",
+            help=(
+                "Score values that count as safe. Required when the score has more than two "
+                "values; with two, the one --failure-values does not name is safe."
+            ),
+        ),
     ] = None,
     failure_threshold: Annotated[
         float | None,

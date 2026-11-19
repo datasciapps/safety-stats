@@ -517,8 +517,8 @@ see [Hierarchy-aware simultaneous inference](hierarchy-simultaneous-inference.md
 ## Command-line interface
 
 ```text
-inspect-safety-stats init --logs LOGS (--failure-values V | --failure-threshold T) [--score NAME]
-    [--group-by FIELD] [--baseline MODEL] [--output DIRECTORY] [--overwrite]
+inspect-safety-stats init --logs LOGS (--failure-values V [--safe-values V] | --failure-threshold T)
+    [--score NAME] [--group-by FIELD] [--baseline MODEL] [--output DIRECTORY] [--overwrite]
 inspect-safety-stats analyze --plan PLAN --logs LOGS --output DIRECTORY
 inspect-safety-stats validate --plan PLAN --logs LOGS
 inspect-safety-stats analyze --plan PLAN --runs RUNS --rollouts ROLLOUTS --output DIRECTORY
@@ -549,7 +549,10 @@ inspect-safety-stats version
 `safety-plan.yaml` into `--output`. The plan has one cohort per model, the root failure risk
 with a prompt-level sensitivity, an optional one-level breakdown by `--group-by`, and a
 comparison when there are several models. `init` never guesses which scores are failures: name
-them with `--failure-values` or `--failure-threshold`. The plan's header lists each choice
+them with `--failure-values` or `--failure-threshold`. Nor does it take a value nobody named as
+safe: when the score has more than two values, name the safe ones with `--safe-values`, or
+`init` refuses and lists the values left over. With two, the one `--failure-values` does not
+name is safe, and `init` says so. The plan's header lists each choice
 `init` made and the assumption it rests on, from `inspect_safety_stats.registry`: rollout
 independence first, then the rest. Each note says what goes wrong if the assumption does not
 hold and how to change it. The command prints the same list. A plan written after the logs

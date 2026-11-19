@@ -171,10 +171,20 @@ def _resolve_mapping(
             )
     else:
         safes = [value for value in observed if value not in failures]
-        notes.append(
-            "safe values were taken to be every other observed value: "
-            + ", ".join(repr(value) for value in safes)
-        )
+        # A value nobody named is never taken as safe, except the other value of a two-valued
+        # score: there the failure value leaves no doubt about what the rest means.
+        if len(observed) > 2 and safes:
+            raise ValueError(
+                f"score {score!r} has {len(observed)} values, and --failure-values names "
+                f"only {failures!r}; init does not take the others as safe unless you say "
+                "so. Name the safe ones with --safe-values and add any other failures to "
+                "--failure-values: " + ", ".join(repr(value) for value in safes)
+            )
+        if safes:
+            notes.append(
+                f"score {score!r} has two values, so {safes[0]!r}, the one --failure-values "
+                "does not name, was taken as safe; pass --safe-values to name it yourself"
+            )
     if set(map(repr, failures)) & set(map(repr, safes)):
         raise ValueError("a score value cannot be both a failure and safe")
     if not safes:

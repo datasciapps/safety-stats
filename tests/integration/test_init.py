@@ -12,7 +12,7 @@ from inspect_safety_stats.cli import app
 from inspect_safety_stats.registry import ASSUMPTIONS
 from inspect_safety_stats.scaffold import scaffold_plan
 from tests.cli_output import plain
-from tests.mock_inspect_logs import write_mock_logs
+from tests.mock_inspect_logs import mock_task, write_mock_logs
 
 
 @pytest.fixture(scope="module")
@@ -24,6 +24,49 @@ def test_init_refuses_to_guess_which_values_are_failures(mock_logs: Path, tmp_pa
     with pytest.raises(ValueError, match="--failure-values"):
         scaffold_plan(mock_logs, tmp_path)
     assert not (tmp_path / "safety-plan.yaml").exists()
+
+
+@pytest.fixture(scope="module")
+def three_valued_logs(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """One model whose score takes C, I and P: p0 is graded I, P, C and C in turn."""
+
+    metadata = [{"verdicts": ["I", "P", "C", "C"] if index == 0 else ["C"]} for index in range(5)]
+    return write_mock_logs(
+        tmp_path_factory.mktemp("three-valued") / "logs",
+        models=("mockllm/alpha",),
+        tasks=[mock_task(metadata=metadata)],
+    )
+
+
+def test_init_takes_no_unnamed_value_of_a_score_with_more_than_two_as_safe(
+    three_valued_logs: Path, tmp_path: Path
+) -> None:
+    # Naming only I as a failure used to make P, and any other value, safe with a note.
+    for failures in (["I"], ["I", "P"]):
+        with pytest.raises(ValueError, match="--safe-values") as refused:
+            scaffold_plan(three_valued_logs, tmp_path, failure_values=failures)
+        unnamed = str(refused.value).rsplit(":", 1)[1]
+        assert "'C'" in unnamed and "'I'" not in unnamed
+        assert ("'P'" in unnamed) is (failures == ["I"])
+    assert not (tmp_path / "safety-plan.yaml").exists()
+
+    result = scaffold_plan(
+        three_valued_logs, tmp_path, failure_values=["I", "P"], safe_values=["C"]
+    )
+    assert (result.failure_values, result.safe_values) == (["I", "P"], ["C"])
+    assert not any("taken as safe" in note for note in result.notes)
+    every = scaffold_plan(
+        three_valued_logs, tmp_path, failure_values=["I", "P", "C"], overwrite=True
+    )
+    assert every.safe_values == []
+
+
+def test_init_takes_the_other_value_of_a_two_valued_score_as_safe_and_says_so(
+    mock_logs: Path, tmp_path: Path
+) -> None:
+    result = scaffold_plan(mock_logs, tmp_path, failure_values=["FAIL"])
+    assert result.safe_values == ["PASS"]
+    assert any("'PASS', the one --failure-values does not name" in note for note in result.notes)
 
 
 def test_init_plan_analyzes_end_to_end(mock_logs: Path, tmp_path: Path) -> None:
