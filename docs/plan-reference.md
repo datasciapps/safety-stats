@@ -38,7 +38,11 @@ to the plan's directory. A field the plan leaves out is not hashed, whatever its
 release that adds a field or changes a default leaves the hash of an unchanged plan file as it
 was (#56). A field written at its default value is hashed: the plan states it, and its meaning
 does not follow a later default. Writing out a default therefore changes the hash, as any other
-edit does.
+edit does, with one exception: a field that `plan.resolved.yaml` leaves out at its default, so
+that plans written before it existed keep their hashes, is left out of the hash at that value
+whether written or not. Such fields are experimental or were added after plans were frozen, such
+as `report.judge_error_stress: false` and `inputs.score.token_limit: score`; writing one at any
+other value changes the hash.
 
 What the hash leaves out, the report records. `plan_defaults` in `report.json` lists every field
 the plan left out, with the value its default gave the analysis, as `{"path", "value"}` entries
