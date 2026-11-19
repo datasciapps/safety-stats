@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import math
+from collections.abc import Callable
 
 import numpy as np
 import pytest
@@ -454,3 +455,25 @@ def test_empirical_bernstein_difference_covers_in_the_sparse_regime(
         )
         misses += not bounds.lower <= truth <= bounds.upper
     assert misses / replicates <= 0.05 + 3 * math.sqrt(0.05 * 0.95 / replicates)
+
+
+@pytest.mark.parametrize("method", ["weighted_betting", "not_a_method"])
+@pytest.mark.parametrize("independence_unit", ["rollout", "prompt_cluster"])
+@pytest.mark.parametrize("function", [direct_risk_difference_bounds, direct_ratio_bounds])
+def test_the_stats_comparison_functions_refuse_betting_and_unknown_methods(
+    function: Callable[..., object], independence_unit: str, method: str
+) -> None:
+    with pytest.raises(ValueError, match="unsupported comparison method"):
+        function(
+            [1, 2],
+            [0, 0],
+            [10, 10],
+            [3, 1],
+            [0, 0],
+            [10, 10],
+            [0.5, 0.5],
+            alpha_lower=0.05,
+            alpha_upper=0.05,
+            method=method,
+            independence_unit=independence_unit,
+        )
