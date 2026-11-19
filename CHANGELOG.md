@@ -233,10 +233,11 @@ described in their pull requests.
   completions come from. The intervals treat the completions as independent. Under
   `sampling: simple_random` they are for the run's share; under `sampling: all`, a census,
   they are descriptive, and too narrow for the judge's rate beyond the run when completions of
-  one prompt flip together. Above the plan's `warn_above` it is a warning. It never changes a claim or the decision. Failures that a plan policy classified,
-  such as a sample error counted as a failure, are not judge-positive and are left out. A
-  manifest that does not fit the run, or that rescores such a failure, is a
-  `JUDGE_FLIP_INVALID` error. Plans without the section keep their hash and outputs.
+  one prompt flip together. Above the plan's `warn_above` it is a warning. It never changes a
+  claim or the decision. Failures that a plan policy classified, such as a sample error counted
+  as a failure, are not judge-positive and are left out. A manifest that does not fit the run,
+  or that rescores such a failure, is a `JUDGE_FLIP_INVALID` error. Plans without the section
+  keep their hash and outputs.
   [`examples/judge_flip`](examples/judge_flip/README.md) rescores a run under four wrappers
   and writes the manifest; the package itself does not call a model. See
   [Judge flip rate](docs/judge-misclassification.md#judge-flip-rate-under-content-preserving-wrappers-experimental).

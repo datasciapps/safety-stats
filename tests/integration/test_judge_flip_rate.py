@@ -300,7 +300,6 @@ def test_a_plan_without_the_section_leaves_it_out() -> None:
     assert "judge_flip" not in inputs.model_dump(mode="json")
 
 
-
 # Epochs whose failure a plan policy, not the judge, classifies: a sample error and a missing
 # score, each counted as a failure under ``counting``.
 POLICY_FAILURES = {41: "error", 42: "error", 43: "missing", 44: "missing"}

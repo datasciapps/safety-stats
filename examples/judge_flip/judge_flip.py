@@ -172,7 +172,9 @@ def simulated_judge() -> Solver:
     async def solve(state: TaskState, generate: Generate) -> TaskState:
         wrapper = str(state.metadata["wrapper"])
         # Seeded by the rescored rollout's item and epoch, not by its observation identifier,
-        # which changes with the run's eval_id, so that every run prints the same rates.
+        # which changes with the run's eval_id, so that every run prints the same rates. The
+        # key has no run identity: rollouts of two runs with the same item and epoch would
+        # share their draws, which this one-run example never has.
         rng = stream("rescore", state.metadata["rollout"], wrapper)
         verdict = simulated_verdict(
             str(state.metadata["wrapped"]), flip_probability=SIMULATED_FLIP[wrapper], rng=rng

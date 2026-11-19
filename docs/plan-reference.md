@@ -588,8 +588,8 @@ its own rate, not jointly with the others. The rate is pooled over the analysed 
 The interval treats the rescored completions as independent. With `simple_random` it is for the
 share of the run's judge-positive completions that flip, which the random sample justifies.
 With `sampling: all` that share is known exactly, and the interval is descriptive: completions
-of one prompt tend to flip together, so as a range for the judge's flip rate on other
-completions it is too narrow when the completions come from few prompts. See
+of one prompt tend to flip together, so as a range for the judge's flip rate on other prompts
+it is too narrow when the completions come from few prompts. See
 [Judge flip rate](judge-misclassification.md#judge-flip-rate-under-content-preserving-wrappers-experimental).
 
 The diagnostic is `INFO`, or a `WARNING` when the `any_wrapper` estimate exceeds `warn_above`.

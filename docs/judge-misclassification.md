@@ -1072,12 +1072,12 @@ sensitivity, which a high flip rate puts in doubt.
 share of rescored completions that flip under at least one wrapper, and under each wrapper,
 each with an exact Clopper-Pearson interval (see
 [the plan reference](plan-reference.md#judge-flip-rate-experimental)). Above the declared
-`warn_above` the diagnostic is a warning. The package does not rescore: [`examples/judge_flip`](../examples/judge_flip/README.md)
-has an Inspect task that rescores a run's judge-positive completions under four wrappers and
-writes the manifest, offline with simulated models or live with the run's judge.
-Failures that a plan policy classified, such as a sample error counted as a failure, are not
-judge-positive: no judge scored them, so the rate leaves them out and they must not be
-rescored.
+`warn_above` the diagnostic is a warning. The package does not rescore:
+[`examples/judge_flip`](../examples/judge_flip/README.md) has an Inspect task that rescores a
+run's judge-positive completions under four wrappers and writes the manifest, offline with
+simulated models or live with the run's judge. Failures that a plan policy classified, such as
+a sample error counted as a failure, are not judge-positive: no judge scored them, so the rate
+leaves them out and they must not be rescored.
 
 What it assumes:
 
