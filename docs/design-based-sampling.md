@@ -87,7 +87,7 @@ estimated by Horvitz--Thompson, reported as `horvitz_thompson_<method>` interval
 
 ### What a sampled design refuses
 
-Four checks reject configurations that a sample cannot support, and two warn:
+Three checks reject configurations that a sample cannot support, and two warn:
 
 - `PLAN_SAMPLED_MEASURE_UNSUPPORTED` -- only `weighted_mean` is available. Maximum, CVaR,
   top-k, entropic, and the threshold measures are nonlinear functionals of the whole frame's

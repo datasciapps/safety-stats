@@ -558,7 +558,7 @@ described in their pull requests.
   status and bounds, and one row for each sensitivity profile, which decides the same
   thresholds on that profile's interval of the same method. A row carries the profile, its
   role, the status, the interval id, the bounds, the independent block count and the effective
-  sample size. `report.md` adds a "Verdicts by independence profile" table under the mandatory
+  sample size. `report-full.md` adds a "Verdicts by independence profile" table under the mandatory
   claims when a claim has a sensitivity profile, and the HTML claim card lists the verdicts.
   Both label each row primary or sensitivity, under a note that a sensitivity verdict cannot
   replace the primary one.
