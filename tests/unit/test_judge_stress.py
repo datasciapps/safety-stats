@@ -1,15 +1,19 @@
 from __future__ import annotations
 
 import itertools
+import math
 
+import numpy as np
 import pytest
 
+from inspect_safety_stats.stats.binomial import missingness_robust_binomial_bounds
 from inspect_safety_stats.stats.judge_stress import (
     stress_verdict,
     true_risk_bounds,
     verdict_lines,
 )
 from inspect_safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
+from inspect_safety_stats.stats.risk import maximum_risk, top_k_mean, weighted_cvar, weighted_mean
 
 
 def point(sensitivity: float, specificity: float) -> JudgeAccuracyBox:
@@ -180,3 +184,117 @@ def test_invalid_bounds_are_rejected() -> None:
             unacceptable_lower=0.1,
             box=None,
         )
+
+
+# --- Monte Carlo coverage of the true-risk bounds ------------------------------------------
+#
+# Each prompt's rollouts are truly unsafe with probability ``risk``. A rollout goes unscored
+# with probability ``missing_unsafe`` or ``missing_safe`` by its true label, so that the
+# missingness is informative, and the judge flags a scored rollout with probability Se if it
+# is truly unsafe and FPR if it is truly safe. Each prompt gets the pipeline's
+# missingness-robust Clopper-Pearson bounds, the row's bounds are the measure of the prompt
+# bounds, and the stress inverts them over a point box at the judge's true accuracy, the
+# sharpest box there is. With ALPHA_SIDE per prompt and side, a side of the row misses with
+# probability at most PROMPTS * ALPHA_SIDE, whichever prompt the row rests on.
+
+_PROMPTS = 3
+_ALPHA_SIDE = 0.10 / (2 * _PROMPTS)
+_NOMINAL = _PROMPTS * _ALPHA_SIDE
+_REPLICATIONS = 2000
+_ROLLOUTS = 300
+
+# (risk, missing_unsafe, missing_safe) per prompt. The riskiest prompt is fully scored; the
+# others carry large unclassified shares. In the first and last scenarios they go missing only
+# among the rollouts whose completion is least conservative for the side tested: unsafe ones
+# for the upper bound, safe ones for the lower. In the second, a tail row's upper bound rests on
+# the fully scored prompt while another one holds the largest unclassified share, which is
+# where taking that share out of the inversion under-covered.
+_UPPER_SIDE = ((0.5, 0.0, 0.0), (0.25, 1.0, 0.0), (0.1, 0.5, 0.0))
+_TAIL_UPPER_SIDE = ((0.5, 0.0, 0.0), (0.0, 0.0, 0.12), (0.1, 0.5, 0.0))
+_LOWER_SIDE = ((0.5, 0.0, 0.0), (0.05, 0.0, 0.4), (0.2, 0.0, 0.2))
+
+_MEASURES = {
+    "weighted_mean": lambda values: weighted_mean(values, [1 / _PROMPTS] * _PROMPTS),
+    "maximum": maximum_risk,
+    "cvar": lambda values: weighted_cvar(values, [1 / _PROMPTS] * _PROMPTS, beta=0.5),
+    "top_k_mean": lambda values: top_k_mean(values, k=2),
+}
+
+
+def _misses(
+    measure: str,
+    prompts: tuple[tuple[float, float, float], ...],
+    sensitivity: float,
+    specificity: float,
+    side: str,
+    seed: int,
+) -> tuple[float, float]:
+    """The rate at which the stress's bound on ``side`` misses true risk, and the rate at
+    which the judge-reported bound taken as a true-risk bound does."""
+
+    rng = np.random.default_rng(seed)
+    aggregate = _MEASURES[measure]
+    truth = aggregate([risk for risk, _, _ in prompts])
+    fpr = 1 - specificity
+    box = point(sensitivity, specificity)
+    stressed_misses = reported_misses = 0
+    for _ in range(_REPLICATIONS):
+        lowers, uppers = [], []
+        for risk, missing_unsafe, missing_safe in prompts:
+            unsafe = rng.random(_ROLLOUTS) < risk
+            unscored = rng.random(_ROLLOUTS) < np.where(unsafe, missing_unsafe, missing_safe)
+            flagged = ~unscored & (
+                rng.random(_ROLLOUTS) < np.where(unsafe, sensitivity, fpr)
+            )
+            bounds = missingness_robust_binomial_bounds(
+                int(flagged.sum()),
+                int((~unscored).sum()),
+                _ROLLOUTS,
+                alpha_lower=_ALPHA_SIDE,
+                alpha_upper=_ALPHA_SIDE,
+            )
+            lowers.append(bounds.lower)
+            uppers.append(bounds.upper)
+        low, high = aggregate(lowers), aggregate(uppers)
+        lower, upper, identified = true_risk_bounds(
+            judge_reported_lower=low, judge_reported_upper=high, box=box
+        )
+        assert identified
+        if side == "upper":
+            stressed_misses += upper < truth
+            reported_misses += high < truth
+        else:
+            stressed_misses += lower > truth
+            reported_misses += low > truth
+    return stressed_misses / _REPLICATIONS, reported_misses / _REPLICATIONS
+
+
+_SCENARIOS = [
+    (measure, side, prompts, sensitivity, specificity)
+    for side, prompts, sensitivity, specificity, measures in (
+        ("upper", _UPPER_SIDE, 0.4, 0.95, sorted(_MEASURES)),
+        ("upper", _TAIL_UPPER_SIDE, 0.4, 0.95, ["cvar", "maximum", "top_k_mean"]),
+        ("lower", _LOWER_SIDE, 0.95, 0.8, sorted(_MEASURES)),
+    )
+    for measure in measures
+]
+
+
+@pytest.mark.parametrize(
+    ("measure", "side", "prompts", "sensitivity", "specificity"), _SCENARIOS
+)
+def test_the_true_risk_bounds_cover_at_their_nominal_rate(
+    measure: str,
+    side: str,
+    prompts: tuple[tuple[float, float, float], ...],
+    sensitivity: float,
+    specificity: float,
+) -> None:
+    seed = 100 + _SCENARIOS.index((measure, side, prompts, sensitivity, specificity))
+    stressed, reported = _misses(measure, prompts, sensitivity, specificity, side, seed)
+    # Three Monte Carlo standard errors above the nominal one-sided rate.
+    allowance = 3 * math.sqrt(_NOMINAL * (1 - _NOMINAL) / _REPLICATIONS)
+    assert stressed <= _NOMINAL + allowance, (measure, side, stressed)
+    # The scenario is sharp: read as true-risk bounds, the judge-reported ones miss far more
+    # often than nominal, so a stress that corrected too little would fail above.
+    assert reported >= 0.5, (measure, side, reported)
