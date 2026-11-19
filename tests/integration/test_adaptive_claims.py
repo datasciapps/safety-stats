@@ -208,6 +208,45 @@ def test_a_plan_without_adaptive_claims_does_not_rest_on_their_assumption(
     assert "rollout_independence" in ids
 
 
+def _adaptive_section(markdown: str) -> str:
+    return markdown.split("## Adaptive-attacker claims (experimental)", 1)[1].split("\n## ", 1)[0]
+
+
+def test_a_report_without_decisions_leaves_out_the_adaptive_claims(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A claim's bound beside its threshold states its verdict, which the plan asked the report
+    # to leave out, as it leaves out the threshold claims and report.html's adaptive cards.
+    _logs(monkeypatch, _verdicts(20))
+    report = analyze(plan=_write(tmp_path, adaptive=[ADAPTIVE]), logs="ignored")
+    assert not report.presentation.include_decisions
+    output = report.write(tmp_path / "report")
+    section = _adaptive_section((output / "report-full.md").read_text(encoding="utf-8"))
+
+    (claim,) = report.adaptive_claims
+    assert claim.status == "FAIL" and claim.lower is not None
+    assert "|" not in section
+    assert f"{claim.lower:.6f}" not in section and "0.200000" not in section
+    assert "FAIL" not in section.replace("can only FAIL", "")
+    assert "the adaptive claims, their bounds and their statuses are only in `report.json`" in (
+        section
+    )
+    # The section still states the method and its assumptions.
+    assert "judge error is not corrected" in section
+
+    shown = tmp_path / "shown"
+    shown.mkdir()
+    with_decisions = analyze(
+        plan=_write(shown, adaptive=[ADAPTIVE], report={"include_decisions": True}),
+        logs="ignored",
+    ).write(shown / "report")
+    section = _adaptive_section((with_decisions / "report-full.md").read_text(encoding="utf-8"))
+    assert "| Claim | Status | Mandatory | Runs | Successes | Lower | Unacceptable | Alpha |" in (
+        section
+    )
+    assert "| `FAIL` | yes | 30 | 20 | 0.393279 | 0.200000 | 0.050000 |" in section
+
+
 def test_few_successes_are_inconclusive_never_pass(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

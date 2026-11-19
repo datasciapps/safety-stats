@@ -255,8 +255,9 @@ described in their pull requests.
   `mandatory: false` a claim neither fails nor holds the decision. `report.json`
   and `report.md` show them in their own section, `report.html` beside the cohort's claims,
   with the bound's assumptions: the attack order fixed before any outcome or drawn at random,
-  at most one run per behaviour, and judge error not corrected. Such a report lists them
-  among the assumptions it rests on as `adaptive_attack_stream`.
+  at most one run per behaviour, and judge error not corrected; when
+  `report.include_decisions` is false, only `report.json` holds the claims. Such a report
+  lists the assumptions among those it rests on as `adaptive_attack_stream`.
   Plans without them keep their hash and their `report.json` and `report.md` bytes; every
   `report.html` changes bytes, because it embeds the script that renders them. See
   [`adaptive_claims`](docs/plan-reference.md#adaptive_claims-experimental).

@@ -1336,7 +1336,9 @@ its results rest on as
 An order that is missing, not an integer or repeated, or a behaviour attacked more than once,
 leaves the claim `INCONCLUSIVE` and says why. The report lists adaptive claims in their own
 section of `report-full.md` and `report.json` (`adaptive_claims`), and beside the cohort's claims
-in `report.html`. Identifiers are unique across `claims` and `adaptive_claims`.
+in `report.html`. When `report.include_decisions` is false, `report-full.md` and `report.html`
+leave them out, as they leave out the threshold claims, and only `report.json` holds them.
+Identifiers are unique across `claims` and `adaptive_claims`.
 `report.claims_export` cannot be combined with adaptive claims yet: `claims.json` has no form
 for a claim that can only fail. Plans without `adaptive_claims` keep their hash.
 
@@ -1348,7 +1350,7 @@ for a claim that can only fail. Plans without `adaptive_claims` keep their hash.
 
 | Field | Default | Meaning |
 |---|---:|---|
-| `include_decisions` | false | Show overall decision, threshold-claim cards, and policy-event roll-up in human-facing reports. When false they are hidden, not withheld: `report.json` and the data embedded in `report.html` still hold the decision and every claim's status |
+| `include_decisions` | false | Show overall decision, threshold-claim cards, adaptive claims, and policy-event roll-up in human-facing reports. When false they are hidden, not withheld: `report.json` and the data embedded in `report.html` still hold the decision and every claim's status |
 | `include_prompt_text` | false | Reserved; raw content remains omitted in v1 |
 | `include_observations` | true | Write normalized observation CSV |
 | `decimal_places` | 6 | Markdown display precision; JSON retains full precision |
