@@ -9,7 +9,9 @@ missing-score policies, duplicates, completeness and sampled-design checks.
 
 from __future__ import annotations
 
+import functools
 import math
+from dataclasses import replace
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -961,14 +963,17 @@ def read_inputs(
 ) -> tuple[pd.DataFrame, list[ResolvedGroup], SourceData]:
     """Load the plan's design manifest and groups, and read the source, without normalizing.
 
-    Split from ``ingest`` so a caller can normalize what was read more than once.
+    Split from ``ingest`` so a caller can normalize what was read more than once. Each
+    normalization hashes the logs it selects; the source returned remembers each log's hash,
+    so a log is hashed once however often what was read is normalized.
     """
 
     # ORDER MATTERS: the manifest is loaded before the source is read, so a broken manifest
     # is reported before any log is opened, as it always was.
     manifest = load_manifest(plan.inputs.design_manifest, plan_manifest_columns(plan))
     groups = resolve_groups(plan, manifest)
-    return manifest, groups, source.read()
+    read = source.read()
+    return manifest, groups, replace(read, source_sha256=functools.cache(read.source_sha256))
 
 
 def ingest(plan: AnalysisPlan, source: EvaluationSource) -> NormalizedData:

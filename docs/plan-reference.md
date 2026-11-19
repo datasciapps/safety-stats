@@ -500,7 +500,7 @@ The report's claims are decided on the primary outcome alone. To see what each d
 would decide, set `outputs.judge_claims: true`. The analysis then runs the plan again once per
 judge, with that judge's `score` as the primary outcome and without `judges`, `composites` or
 `judge_calibration` (the calibration validates the primary outcome, not the other judges). Every
-run uses the same rollouts, and the logs are read once.
+run uses the same rollouts: each log is read, and hashed, once.
 
 ```yaml
 outputs:

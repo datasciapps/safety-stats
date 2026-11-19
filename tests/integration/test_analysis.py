@@ -3276,6 +3276,27 @@ def test_judge_claims_warn_about_a_configuration_field_they_cannot_read(
     ]
 
 
+def test_judge_claims_hash_each_log_once(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import inspect_safety_stats.ingest.inspect_logs as inspect_logs
+
+    hashed: list[str] = []
+
+    def counting_sha256(path: str) -> str | None:
+        hashed.append(path)
+        return None
+
+    monkeypatch.setattr(inspect_logs, "file_sha256", counting_sha256)
+    _patch_frames(monkeypatch, _judge_frames_with_configuration())
+
+    report = analyze(plan=_judge_claims_plan(tmp_path), logs="ignored")
+
+    # The primary run and both judges' runs normalize the same log, which is hashed once.
+    assert len(report.provenance["judge_panel"]["judges"]) == 2
+    assert hashed == ["/not/a/local/log.eval"]
+
+
 def test_judge_claims_are_opt_in_and_leave_plan_hashes_alone(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
