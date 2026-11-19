@@ -139,7 +139,11 @@ bounds and each judge's error rates.
 
 - The manifests are per task: the package pools a cohort's tasks into one judge stratum and
   rejects labels for rollouts its plan does not hold, so per-benchmark error rates need one plan
-  per task.
+  per task. The calibration tier is a random order within each cohort, task and verdict, not
+  within a cohort's verdict over all tasks, so it is a valid labelling queue
+  (`inputs.judge_calibration.protocol` with `tier: calibration`) only for such a plan per task,
+  and that plan's queue may list only its task's rows: the package refuses a queue row its run
+  did not classify.
 - The demo's plans were frozen without a judge calibration, and adding one afterwards is post
   hoc, so corrections from labels on these runs are exploratory. A plan that is to use them
   declares `inputs.judge_calibration` with `mode: validated` before its rollouts are generated.
