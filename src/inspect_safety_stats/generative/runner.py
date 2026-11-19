@@ -13,6 +13,7 @@ import contextlib
 import importlib
 import importlib.util
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
@@ -21,6 +22,7 @@ from inspect_safety_stats.generative.comparisons import ComparisonResult, compar
 from inspect_safety_stats.generative.contrasts import (
     ContrastMember,
     SliceMember,
+    check_slice_family,
     estimate_slice_family,
 )
 from inspect_safety_stats.generative.execution import (
@@ -79,9 +81,13 @@ from inspect_safety_stats.generative.ledger import (
 )
 from inspect_safety_stats.generative.logs import LogInput, read_evaluated_samples
 from inspect_safety_stats.generative.report import GenerativeReport, plan_sha256
-from inspect_safety_stats.generative.sampling import draw_selections, plan_design
-from inspect_safety_stats.generative.schema import GenerativePlan, load_generative_plan
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+from inspect_safety_stats.generative.sampling import SamplingDesign, draw_selections, plan_design
+from inspect_safety_stats.generative.schema import (
+    GenerativePlan,
+    SliceFamilySpec,
+    load_generative_plan,
+)
+from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy, compile_taxonomy
 from inspect_safety_stats.schema.reports import Diagnostic
 from inspect_safety_stats.schema.scopes import plan_scope
 
@@ -241,6 +247,47 @@ def _load(plan_path: str | Path) -> tuple[GenerativePlan, Path]:
     return load_generative_plan(path), path.parent
 
 
+def _family_members(
+    declared: SliceFamilySpec,
+) -> tuple[list[SliceMember], list[ContrastMember]]:
+    return (
+        [SliceMember(item.level, item.value) for item in declared.slices],
+        [
+            ContrastMember(item.id, item.level, item.candidate, item.baseline)
+            for item in declared.contrasts
+        ],
+    )
+
+
+def check_declared_slice_family(
+    plan: GenerativePlan,
+    taxonomy: CompiledTaxonomy,
+    design: SamplingDesign,
+    selections: Sequence[SelectionRecord],
+) -> None:
+    """Refuse a declared slice family that the analysis could not estimate.
+
+    Whether a member can be estimated depends on the compiled taxonomy and the selected
+    paths only, both known before any rewrite is generated. Checked then, a value no path
+    carries or no draw lands on costs nothing to find; found by the analysis, it would cost
+    the whole generated and evaluated run its report.
+    """
+
+    declared = plan.inference.slice_family
+    if declared is None:
+        return
+    slices, contrasts = _family_members(declared)
+    try:
+        check_slice_family(taxonomy, design, selections, slices=slices, contrasts=contrasts)
+    except ValueError as exc:
+        raise ValueError(
+            f"inference.slice_family cannot be estimated on this design: {exc}. Each member "
+            "must name values that the compiled taxonomy holds and the selected paths reach, "
+            "and a contrast's two values must share a semantic seed; correct or remove the "
+            "member, or raise sampling.total_rewrites if an arm received no draws"
+        ) from exc
+
+
 def _prior_work(
     directory: Path, selections: list[SelectionRecord], *, conversations: bool = False
 ) -> tuple[dict[str, RewriteRecord], dict[str, AcceptedRewrite]]:
@@ -310,7 +357,9 @@ def materialize_run(
 
     ``validator`` resolves like ``kernel``. It is required when the plan sets
     ``rewrite.validation.invoke`` (experimental) and refused otherwise. When the plan asks
-    for per-attempt records, every kernel call is appended to ``attempts.csv``.
+    for per-attempt records, every kernel call is appended to ``attempts.csv``. A declared
+    slice family that the analysis could not estimate on the selected paths is refused
+    before any kernel call.
     """
 
     plan, base = _load(plan_path)
@@ -366,6 +415,10 @@ def materialize_run(
     if stage not in {"pilot", "main"}:
         raise ValueError("stage must be 'pilot' or 'main'")
     selections = draw_selections(taxonomy, design, stage_id=stage)  # type: ignore[arg-type]
+    # ORDER MATTERS: before any kernel call or ledger write. A family the analysis could not
+    # estimate then stops the run while nothing has been spent on it; checked later, every
+    # rewrite would be generated and evaluated, and only the analysis would refuse.
+    check_declared_slice_family(plan, taxonomy, design, selections)
 
     completed, accepted_before = (
         _prior_work(
@@ -614,6 +667,8 @@ def analyze_run(
             "edited after materialization, so the declared design and the evaluated one "
             "differ"
         )
+    # A family declared after materialization is refused here, before the logs are read.
+    check_declared_slice_family(plan, taxonomy, design, selections)
 
     samples, log_diagnostics = read_evaluated_samples(plan, logs, parallel=parallel)
     diagnostics.extend(log_diagnostics)
@@ -726,17 +781,14 @@ def analyze_run(
 
     family = None
     if plan.inference.slice_family is not None:
-        declared = plan.inference.slice_family
+        family_slices, family_contrasts = _family_members(plan.inference.slice_family)
         family = estimate_slice_family(
             taxonomy,
             design,
             selections,
             joined[primary],
-            slices=[SliceMember(item.level, item.value) for item in declared.slices],
-            contrasts=[
-                ContrastMember(item.id, item.level, item.candidate, item.baseline)
-                for item in declared.contrasts
-            ],
+            slices=family_slices,
+            contrasts=family_contrasts,
             alpha=plan.inference.alpha,
             coverage_mode=plan.inference.coverage_mode,
         )

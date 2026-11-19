@@ -344,12 +344,15 @@ described in their pull requests.
   between two values of one arm level, such as one wrapper against another. They are covered
   simultaneously at `1 - alpha` for the primary cohort. A contrast holds the mix of semantic
   seeds fixed between its two values, so declared context weights and constraints cannot move
-  it. The family is written to `family.csv`, to a `slice_family` block in `report.json` and to
-  a section of `report.html`, and `generative analyze` prints each member's upper bound. Plans
-  without the block keep their `report.json` and CSV bytes. Every generative `report.html`
-  changes bytes, because it embeds the script of the new section, and so does
-  `checksums.json`, which holds its digest. With the block, `checksums.json` also covers
-  `family.csv`. See
+  it. A member the analysis could not estimate, such as a value that no compiled path carries
+  or that no selected path reaches, is refused by `generative compile` and
+  `generative materialize` before anything is generated. The family is written to
+  `family.csv`, to a `slice_family` block in `report.json` and to a section of
+  `report.html`, and `generative analyze` prints each member's upper bound under a heading
+  that says it is on the judge-reported scale. Plans without the block keep their
+  `report.json` and CSV bytes. Every generative `report.html` changes bytes, because it embeds
+  the script of the new section, and so does `checksums.json`, which holds its digest. With
+  the block, `checksums.json` also covers `family.csv`. See
   [Arm contrasts](docs/generative-evaluation.md#arm-contrasts-and-a-simultaneous-slice-family-experimental).
 
 - **Rewrite validation and near-duplicate detection in the package (experimental).** In a
@@ -657,9 +660,25 @@ described in their pull requests.
   depends only on the seed and the prompt identifiers, and a larger pilot with the same seed
   contains a smaller one. The output is the whole manifest with `pilot_stratum`,
   `pilot_inclusion_probability` and `pilot_selected`, which is the frame of a fixed-size
-  sampled design as it stands. `draw_pilot` in `inspect_safety_stats.ingest.pilot` does the
-  same in Python. See
-  [Drawing a random pilot](docs/design-based-sampling.md#drawing-a-random-pilot).
+  sampled design as it stands, and with `pilot_seed` and `pilot_per_stratum`, which
+  record the draw. Equal draws from strata of unequal size over-represent the small ones, so
+  weight each pilot prompt by `1 / pilot_inclusion_probability`, as the sampled-design
+  analysis does. Analyse a pilot as exploratory: a pilot enlarged after its outcomes were seen
+  is not a fixed-size confirmatory design, and a confirmatory analysis uses fresh rollouts
+  under a plan frozen before they ran. `draw_pilot` in `inspect_safety_stats.ingest.pilot`
+  does the same in Python, on a manifest read as text (`dtype=str, keep_default_na=False`);
+  it refuses a `prompt_id` that is not text, which would hash differently from the command's.
+  See [Drawing a random pilot](docs/design-based-sampling.md#drawing-a-random-pilot).
+
+- **Checking a sampled design's items against the recorded draw (experimental).** A sampled
+  design's checks counted the items evaluated but not which ones, so a run on the first
+  prompts of each stratum by identifier passed a fixed-size design's checks as if it were
+  the random draw. `design.selection_column` names a manifest column that marks the frame
+  items the draw selected, such as a pilot frame's `pilot_selected`; `analyze` and
+  `validate` then report `SAMPLE_SELECTION_MISMATCH`, an error that makes integrity invalid
+  and withholds the cohort's bounds, when a cohort's observed items differ from them. A plan
+  without the field keeps its hash and writes the same report bytes as before. See
+  [Checking which items were evaluated](docs/design-based-sampling.md#checking-which-items-were-evaluated-experimental).
 
 - **Descriptive verdicts in exploratory reports (changes report bytes).** An exploratory
   analysis makes every claim `INCONCLUSIVE`, so a reader had to compare its bounds with the

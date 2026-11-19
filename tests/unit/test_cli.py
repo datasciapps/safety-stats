@@ -599,11 +599,92 @@ def test_pilot_cli_writes_the_frame_with_the_draw(tmp_path: Path) -> None:
     assert b"\r\n" not in written
     lines = written.decode("utf-8").splitlines()
     original = manifest.read_text(encoding="utf-8").splitlines()
-    assert lines[0] == original[0] + ",pilot_stratum,pilot_inclusion_probability,pilot_selected"
+    assert lines[0] == original[0] + (
+        ",pilot_stratum,pilot_inclusion_probability,pilot_selected,pilot_seed,pilot_per_stratum"
+    )
     # The manifest's own text comes through, including the gap in an integer column.
-    assert [line.rsplit(",", 3)[0] for line in lines[1:]] == original[1:]
-    assert sum(line.endswith(",True") for line in lines[1:]) == 4
-    assert {line.split(",")[-2] for line in lines[1:]} == {"0.3333333333333333"}
+    assert [line.rsplit(",", 5)[0] for line in lines[1:]] == original[1:]
+    added = [line.split(",")[-4:] for line in lines[1:]]
+    assert sum(selected == "True" for _, selected, _, _ in added) == 4
+    assert {probability for probability, _, _, _ in added} == {"0.3333333333333333"}
+    # The frame records the arguments that repeat the draw.
+    assert {(seed, count) for _, _, seed, count in added} == {("13", "2")}
+
+
+def test_pilot_cli_and_python_draw_the_same_prompts(tmp_path: Path) -> None:
+    """draw_pilot on the manifest read as its docs say draws what the command draws."""
+    import pandas as pd
+
+    from inspect_safety_stats.ingest.pilot import draw_pilot
+
+    manifest = tmp_path / "design.csv"
+    manifest.write_text(
+        "prompt_id,question_id,task_id\n"
+        + "".join(f"{index:04d},q{index},t{index % 2}\n" for index in range(1, 21)),
+        encoding="utf-8",
+    )
+    output = tmp_path / "frame.csv"
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--per-stratum",
+            "3",
+            "--seed",
+            "5",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    written = pd.read_csv(output, dtype=str, keep_default_na=False)
+    by_command = set(written.loc[written["pilot_selected"] == "True", "prompt_id"])
+    as_written = pd.read_csv(manifest, dtype=str, keep_default_na=False)
+    frame = draw_pilot(as_written, per_stratum=3, strata=["task_id"], seed=5)
+    assert set(frame.loc[frame["pilot_selected"], "prompt_id"]) == by_command
+    assert len(by_command) == 6
+
+
+@pytest.mark.parametrize(
+    ("strata", "accepted"), [("category", True), ("", True), ("task_id", False)]
+)
+def test_pilot_cli_requires_only_the_columns_it_draws_on(
+    tmp_path: Path, strata: str, accepted: bool
+) -> None:
+    """analyze accepts a manifest without question_id and task_id, so the pilot does too."""
+    manifest = tmp_path / "design.csv"
+    manifest.write_text(
+        "prompt_id,category\n" + "".join(f"p{index},c{index % 2}\n" for index in range(8)),
+        encoding="utf-8",
+    )
+    output = tmp_path / "frame.csv"
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--strata",
+            strata,
+            "--per-stratum",
+            "2",
+            "--seed",
+            "3",
+            "--output",
+            str(output),
+        ],
+    )
+    if accepted:
+        assert result.exit_code == 0, result.output
+        assert output.exists()
+    else:
+        assert result.exit_code != 0
+        assert "missing required columns: task_id" in plain(result.output)
+        assert not output.exists()
 
 
 def test_pilot_cli_rejects_a_stratum_smaller_than_the_draw(tmp_path: Path) -> None:
@@ -647,6 +728,45 @@ def test_pilot_cli_will_not_overwrite_the_manifest(tmp_path: Path) -> None:
             "1",
             "--output",
             str(manifest),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "must not overwrite" in plain(result.output)
+    assert manifest.read_bytes() == before
+
+
+@pytest.mark.parametrize("alias", ["hard link", "other case"])
+def test_pilot_cli_will_not_overwrite_the_manifest_by_another_name(
+    tmp_path: Path, alias: str
+) -> None:
+    """Another name for the manifest's file, which resolve() leaves distinct, is refused too."""
+    import os
+
+    manifest = _pilot_manifest(tmp_path)
+    before = manifest.read_bytes()
+    if alias == "hard link":
+        output = tmp_path / "frame.csv"
+        try:
+            os.link(manifest, output)
+        except OSError as exc:
+            pytest.skip(f"this filesystem has no hard links: {exc}")
+    else:
+        output = tmp_path / manifest.name.upper()
+        if not output.exists():
+            pytest.skip("this filesystem is case-sensitive")
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--per-stratum",
+            "1",
+            "--seed",
+            "1",
+            "--output",
+            str(output),
         ],
     )
     assert result.exit_code != 0
