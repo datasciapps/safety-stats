@@ -6,7 +6,12 @@ from pathlib import Path
 import pandas as pd
 
 from inspect_safety_stats.schema.observations import Observation
-from inspect_safety_stats.stats.judge_calibration import JudgeStrata, count_judge_strata
+from inspect_safety_stats.stats.judge_calibration import (
+    FineStrataCounts,
+    JudgeStrata,
+    count_fine_strata,
+    count_judge_strata,
+)
 from inspect_safety_stats.stats.misclassification import TruthStratumCounts
 
 REQUIRED_COLUMNS = ("observation_id", "human_label")
@@ -45,6 +50,40 @@ def load_validation_manifest(path: str | Path) -> dict[str, bool]:
     return labels
 
 
+STRATA_COLUMNS = ("observation_id", "stratum")
+
+
+def load_validation_strata(path: str | Path) -> dict[str, str]:
+    """Load the declared fine stratum of each observation, keyed by its identifier.
+
+    The file lists every classified observation of the analysed cohorts, labelled or not,
+    since a stratum's size is part of the design. The judge verdict need not appear: the
+    analysis nests each declared stratum within the judge strata itself. A blank stratum is
+    rejected rather than read as a stratum of its own.
+    """
+
+    frame = pd.read_csv(path, dtype=str, keep_default_na=False)
+    missing = [column for column in STRATA_COLUMNS if column not in frame.columns]
+    if missing:
+        raise ValueError(
+            f"validation strata file is missing required columns: {', '.join(missing)}"
+        )
+    strata: dict[str, str] = {}
+    for observation_id, raw in zip(frame["observation_id"], frame["stratum"], strict=True):
+        key = str(observation_id).strip()
+        if not key:
+            raise ValueError("validation strata file contains a blank observation_id")
+        if key in strata:
+            raise ValueError(f"validation strata file has duplicate observation_id {key!r}")
+        stratum = str(raw).strip()
+        if not stratum:
+            raise ValueError(f"validation strata file has a blank stratum for {key!r}")
+        strata[key] = stratum
+    if not strata:
+        raise ValueError("validation strata file contains no rows")
+    return strata
+
+
 def judge_stratum_counts(
     observations: list[Observation],
     labels: dict[str, bool],
@@ -57,6 +96,23 @@ def judge_stratum_counts(
 
     return count_judge_strata(
         ((row.cohort_id, row.observation_id, row.failure) for row in observations), labels
+    )
+
+
+def fine_stratum_counts(
+    observations: list[Observation],
+    labels: dict[str, bool],
+    strata: dict[str, str],
+) -> FineStrataCounts:
+    """Cross human labels against judge verdicts within declared fine strata, per cohort.
+
+    See :func:`count_fine_strata`, which does the counting and the consistency checks.
+    """
+
+    return count_fine_strata(
+        ((row.cohort_id, row.observation_id, row.failure) for row in observations),
+        labels,
+        strata,
     )
 
 

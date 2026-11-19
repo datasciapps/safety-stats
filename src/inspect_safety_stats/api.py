@@ -41,8 +41,10 @@ from inspect_safety_stats.ingest.manifest import (
 from inspect_safety_stats.ingest.normalize import normalize, read_inputs
 from inspect_safety_stats.ingest.records import EvaluationSource, NormalizedData, SourceData
 from inspect_safety_stats.ingest.validation import (
+    fine_stratum_counts,
     judge_stratum_counts,
     load_validation_manifest,
+    load_validation_strata,
     truth_stratum_counts,
 )
 from inspect_safety_stats.schema.observations import Observation, observation_field
@@ -100,10 +102,13 @@ from inspect_safety_stats.stats.independence import (
 )
 from inspect_safety_stats.stats.judge_calibration import (
     NO_STRATA,
+    FineStrata,
     JudgeStrata,
     calibrate_cohort,
     cohort_alpha_share,
     completion_diagnostic,
+    fine_strata_summary,
+    unlabelled_fine_strata_diagnostic,
 )
 from inspect_safety_stats.stats.judge_stress import stress_verdict
 from inspect_safety_stats.stats.judges import (
@@ -2214,9 +2219,55 @@ def _validated_judge_calibrations(
         )
         return {}, {}, None, {}
 
+    declared: dict[str, str] | None = None
+    if spec.sampling == "stratified_without_replacement":
+        if spec.validation_strata is None:
+            raise ValueError("stratified judge-calibration sampling requires validation_strata")
+        try:
+            declared = load_validation_strata(spec.validation_strata)
+        except (OSError, ValueError) as exc:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_VALIDATION_INVALID",
+                    severity="ERROR",
+                    message=str(exc),
+                    scope="inputs.judge_calibration",
+                )
+            )
+            return {}, {}, None, {}
+        design = fine_stratum_counts(data.observations, labels, declared)
+        # The strata file is the design: a classified row it does not place, or a key that
+        # names no classified row, means the sizes it implies are not the design's.
+        for code, keys, what in (
+            (
+                "JUDGE_VALIDATION_STRATA_INCOMPLETE",
+                design.unstratified,
+                "classified observations have no declared stratum",
+            ),
+            (
+                "JUDGE_VALIDATION_STRATA_UNMATCHED",
+                design.unknown_strata,
+                "validation strata rows reference observations absent from the analysed "
+                "logs or with unclassified outcomes",
+            ),
+        ):
+            if keys:
+                diagnostics.append(
+                    Diagnostic(
+                        code=code,
+                        severity="ERROR",
+                        message=f"{len(keys)} {what}; no judge correction is reported",
+                        scope="inputs.judge_calibration",
+                        details={"observation_ids": keys[:20]},
+                    )
+                )
+        if design.unstratified or design.unknown_strata:
+            return {}, {}, None, {}
+
     _, unmatched = judge_stratum_counts(data.observations, labels)
     scopes = _judge_scopes(plan)
     counts: dict[_JudgeScope, JudgeStrata] = {}
+    fine: dict[_JudgeScope, FineStrata] = {}
     truth_strata: dict[_JudgeScope, Any] = {}
     in_scope: set[str] = set()
     for scope in scopes:
@@ -2226,7 +2277,13 @@ def _validated_judge_calibrations(
             prompts = set(next(item for item in data.groups if item.id == group_id).prompt_ids)
             observations = [row for row in observations if row.prompt_id in prompts]
             in_scope.update(row.observation_id for row in observations)
-        if cohort_id in (scoped := judge_stratum_counts(observations, labels)[0]):
+        if declared is not None:
+            # A scoped calibration's fine strata are the declared strata within its group.
+            scoped_fine = fine_stratum_counts(observations, labels, declared)
+            if cohort_id in scoped_fine.by_cohort:
+                counts[scope] = scoped_fine.judge_strata(cohort_id)
+                fine[scope] = scoped_fine.by_cohort[cohort_id]
+        elif cohort_id in (scoped := judge_stratum_counts(observations, labels)[0]):
             counts[scope] = scoped[cohort_id]
         if spec.sampling == "simple_random":
             # A simple random sample of the design also estimates sensitivity and the
@@ -2277,7 +2334,10 @@ def _validated_judge_calibrations(
         cohort_id, group_id = scope
         where = cohort_id if group_id is None else f"{cohort_id}/{group_id}"
         outcome = calibrate_cohort(
-            counts.get(scope, NO_STRATA), scenario_id="validated", alpha=per_calibration_alpha
+            counts.get(scope, NO_STRATA),
+            scenario_id="validated",
+            alpha=per_calibration_alpha,
+            fine=None if declared is None else fine.get(scope, {}),
         )
         if outcome.empty_strata:
             diagnostics.append(
@@ -2309,7 +2369,27 @@ def _validated_judge_calibrations(
         completed = completion_diagnostic(outcome.calibration, where)
         if completed is not None:
             diagnostics.append(completed)
-        summaries[scope] = outcome.strata.summary()
+        summary: dict[str, Any] = dict(outcome.strata.summary())
+        if declared is not None:
+            partial = unlabelled_fine_strata_diagnostic(outcome.fine_strata, where)
+            if partial is not None:
+                diagnostics.append(partial)
+            summary["fine_strata"] = fine_strata_summary(outcome.fine_strata)
+        summaries[scope] = summary
+    if declared is not None and calibrations:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_CALIBRATION_STRATIFIED",
+                severity="INFO",
+                message=(
+                    "Experimental: the judge calibration reads its labels as a stratified "
+                    "sample without replacement within declared fine strata, with exact "
+                    "hypergeometric bounds; the asymptotic delta-method reference, which "
+                    "assumes simple random samples within the judge strata, is not reported"
+                ),
+                scope="inputs.judge_calibration",
+            )
+        )
     return calibrations, summaries, family.alpha, truth_strata
 
 
@@ -2325,6 +2405,7 @@ def _judge_corrected_interval(
     tail: bool = False,
     scoped_group: str | None = None,
     scoped_groups: list[str] | None = None,
+    stratified: bool = False,
 ) -> RiskIntervalResult | None:
     """Correct one row; ``scoped_group`` names a validated calibration's group, and
     ``scoped_groups`` the groups an assumed calibration is scoped to."""
@@ -2372,7 +2453,48 @@ def _judge_corrected_interval(
         f"P(truly unsafe | judge said safe) lies in "
         f"[{calibration.rho_0_lower:.6g}, {calibration.rho_0_upper:.6g}].",
     ]
-    if validated:
+    if validated and stratified:
+        if calibration.completed_strata:
+            assumptions.append(
+                "The "
+                + " and ".join(calibration.completed_strata)
+                + " judge stratum has no human label, so its range is [0, 1], which holds "
+                "with certainty."
+            )
+        assumptions.extend(
+            [
+                "Experimental: each range sums exact hypergeometric bounds on the truly unsafe "
+                "count of every declared fine stratum within its judge stratum, weighted by "
+                "the fine stratum's size; a census is exact and a fine stratum without labels "
+                "is completed from none to all of its rollouts.",
+                "Each endpoint's budget is split equally over the fine strata that were "
+                "sampled but not censused.",
+                "The labelled rows of each fine stratum are a simple random sample without "
+                "replacement of it, of a size fixed independently of the labels; this is a "
+                "property of the declared collection protocol, not of the data.",
+                "The declared validation strata place every classified rollout of the cohort.",
+                "Human adjudication is treated as ground truth.",
+            ]
+        )
+        if scoped_group is not None:
+            assumptions.append(
+                f"The calibration is scoped to group {scoped_group!r}: its fine strata are the "
+                "declared strata of the group's rollouts in the cohort."
+            )
+        if certified:
+            population = (
+                "the cohort" if scoped_group is None else f"group {scoped_group!r} in the cohort"
+            )
+            assumptions.extend(
+                [
+                    f"The fine strata weight back to every classified rollout of {population} "
+                    "equally, and so does this row, so they measure the judge's accuracy for "
+                    "its estimand.",
+                    "Coverage is the union bound over the underlying interval and every "
+                    "calibration count bound.",
+                ]
+            )
+    elif validated:
         if calibration.completed_strata:
             assumptions.append(
                 "The "
@@ -3123,6 +3245,7 @@ def _apply_judge_correction(
         plan, data, diagnostics
     )
     scope_count = len(_judge_scopes(plan))
+    stratified = spec.sampling == "stratified_without_replacement"
     for result in targets:
         scope = _judge_scope(plan, result.cohort_id, result.group_id)
         measured = by_scope.get(scope) if scope is not None else None
@@ -3148,15 +3271,19 @@ def _apply_judge_correction(
             unclassified_share=share,
             tail=measure_type != "weighted_mean",
             scoped_group=scope[1],
+            stratified=stratified,
         )
         if interval is not None:
             result.intervals.append(interval)
         # The reference propagates the weighted mean's variance, so only a weighted-mean
-        # row has one: on a tail row it would describe a different estimand.
+        # row has one: on a tail row it would describe a different estimand. Its stratum
+        # proportions assume simple random samples within the judge strata, so a stratified
+        # design has none.
         if (
             isinstance(result, GroupRiskResult)
             and measure_type == "weighted_mean"
             and judge_alpha is not None
+            and not stratified
         ):
             reference = _delta_reference_interval(
                 result=result,
@@ -3174,8 +3301,9 @@ def _apply_judge_correction(
         plan, data, population, comparisons, by_scope, spec.family, diagnostics
     )
     per_calibration_alpha = judge_alpha / scope_count if judge_alpha is not None else None
+    summary: dict[str, Any]
     if spec.groups is None:
-        return {
+        summary = {
             "mode": "validated",
             "family": spec.family,
             "family_alpha": judge_alpha,
@@ -3185,24 +3313,31 @@ def _apply_judge_correction(
             "cohorts": {cohort_id: item for (cohort_id, _), item in summaries.items()},
             "truth_strata": {cohort_id: item for (cohort_id, _), item in truth_strata.items()},
         }
+    else:
 
-    def nested(by_scope: dict[_JudgeScope, Any]) -> dict[str, dict[str, Any]]:
-        out: dict[str, dict[str, Any]] = {}
-        for (cohort_id, group_id), item in by_scope.items():
-            out.setdefault(cohort_id, {})[str(group_id)] = item
-        return out
+        def nested(by_scope: dict[_JudgeScope, Any]) -> dict[str, dict[str, Any]]:
+            out: dict[str, dict[str, Any]] = {}
+            for (cohort_id, group_id), item in by_scope.items():
+                out.setdefault(cohort_id, {})[str(group_id)] = item
+            return out
 
-    return {
-        "mode": "validated",
-        "family": spec.family,
-        "family_alpha": judge_alpha,
-        "groups": list(spec.groups),
-        "per_calibration_alpha": per_calibration_alpha,
-        "sampling": spec.sampling,
-        "validation_manifest": str(spec.validation_manifest),
-        "cohorts": nested(summaries),
-        "truth_strata": nested(truth_strata),
-    }
+        summary = {
+            "mode": "validated",
+            "family": spec.family,
+            "family_alpha": judge_alpha,
+            "groups": list(spec.groups),
+            "per_calibration_alpha": per_calibration_alpha,
+            "sampling": spec.sampling,
+            "validation_manifest": str(spec.validation_manifest),
+            "cohorts": nested(summaries),
+            "truth_strata": nested(truth_strata),
+        }
+    if stratified:
+        # Only a stratified design records it, so other reports keep their bytes.
+        summary["experimental"] = True
+        if spec.validation_strata is not None:
+            summary["validation_strata"] = report_path(spec.validation_strata, plan)
+    return summary
 
 
 def _observation_attr(observation: Observation, name: str) -> Any:

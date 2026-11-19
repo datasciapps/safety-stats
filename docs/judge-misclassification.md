@@ -191,6 +191,76 @@ whereas the exact box never falls below its nominal level; at very low prevalenc
 frequently refuses to correct at all because the calibration is uninformative. A narrower
 interval that under-covers where failures are rare is not a better interval for a safety claim.
 
+### Stratified labels (experimental)
+
+A labelling design often wants more than a simple random sample within each judge stratum.
+For example, it may label every rollout on which a second judge disagrees, and only a sample of
+the rest. Read as one simple random sample, such labels are biased: the oversampled
+disagreements count as often as they were labelled, not as often as they occur. The binomial
+bound also gives no credit for labelling a small stratum in full. A census of it still keeps a
+binomial width, as if its rows had been drawn with replacement.
+
+`sampling: stratified_without_replacement` reads the labels as the design drew them:
+
+```yaml
+inputs:
+  judge_calibration:
+    mode: validated
+    validation_manifest: judge-labels.csv
+    sampling: stratified_without_replacement
+    validation_strata: judge-strata.csv
+    family: judge_error
+```
+
+`validation_strata` holds `observation_id,stratum` for **every classified observation** of
+the analysed cohorts, labelled or not, since each stratum's size is part of the design. The
+strata may cut across the judge's verdicts. The analysis nests each declared stratum within
+the cohort's two judge strata, so a *fine stratum* is one declared stratum within one cohort
+and one judge verdict. A file that leaves out a classified observation
+(`JUDGE_VALIDATION_STRATA_INCOMPLETE`), or names one that is absent or unclassified
+(`JUDGE_VALIDATION_STRATA_UNMATCHED`), is an error, and no correction is reported.
+
+**Estimation.** Let fine stratum \(h\) of a judge stratum of size \(N\) hold \(N_h\)
+rollouts, \(K_h\) of them truly unsafe, and let \(n_h\) of them be labelled, \(x_h\) unsafe.
+If the labelled rows are a simple random sample without replacement of the stratum, of a size
+fixed independently of the labels, then \(x_h\) is hypergeometric given \(K_h\). Inverting
+the two one-sided hypergeometric tests gives exact bounds
+
+\[
+K_{h,L}=\min\{K: P(X\ge x_h\mid N_h,K,n_h)>a_h\},\qquad
+K_{h,U}=\max\{K: P(X\le x_h\mid N_h,K,n_h)>a_h\},
+\]
+
+and the judge stratum's parameter, \(\rho=\sum_h K_h/N\), lies in
+\([\sum_h K_{h,L}/N,\ \sum_h K_{h,U}/N]\). Each fine stratum is weighted back by its size,
+whatever share of it was labelled. A census (\(n_h=N_h\)) gives \(K_h=x_h\) exactly. A fine
+stratum without labels is completed as \([0, N_h]\), which holds with certainty, and the
+analysis warns with `JUDGE_FINE_STRATUM_UNLABELLED_COMPLETED`. A judge stratum without any
+label is completed as \([0,1]\) and refused when both are unlabelled, as described above.
+
+**Error budget.** Each of the four endpoints keeps a quarter of the cohort's share, as in the
+binomial case. That quarter is split equally over the fine strata of its judge stratum that
+were sampled but not censused, \(a_h=\alpha_{\text{endpoint}}/H_{\text{sampled}}\). Censused
+and unlabelled strata spend nothing. A union bound over every count bound then gives the same
+guarantee as before: under the design, \(\rho_1\) and \(\rho_0\) lie in their ranges together
+with probability at least \(1-\alpha_{\text{cohort}}\). With a single fine stratum the
+range narrows below the Clopper--Pearson one as the labelled share of the stratum grows. When
+only a few rows of a stratum are labelled, the two nearly agree. Because counts are whole
+numbers, the hypergeometric range can then be slightly wider. A sweep of every stratum of up
+to 60 rollouts found 4 such cases among about 119,000, each wider by less than one
+rollout's share, \(1/N\). With many sampled fine strata, the Bonferroni split widens each one; exact
+joint methods for stratified finite populations exist (Wendell and Schmee, *JASA* 91(434),
+1996) but are not implemented.
+
+**What changes in the report.** Provenance records `validation_strata` and, per cohort,
+`fine_strata`: each fine stratum's counts, its count bounds and the level each bound spent.
+`report.md` lists them. The asymptotic `judge_corrected_validated_delta` reference assumes simple
+random samples within the judge strata, so it is not reported under this design, and an INFO
+diagnostic, `JUDGE_CALIBRATION_STRATIFIED`, says so. With `groups`, each scoped
+calibration counts the declared strata of its group's rollouts. The strata file is still
+checked against every classified observation, before any scope, and `fine_strata` is
+recorded per cohort and group. Generative plans do not offer this design.
+
 ### Unclassified rollouts
 
 A rollout the judge never classified, such as one with a missing score under
@@ -249,7 +319,10 @@ reports the share it actually spent in `family_alpha`.
 
 - The labelled rows are a **simple random sample within their judge stratum**. This is a
   property of the collection protocol, not of the data, and nothing in the package can check
-  it. It is recorded in the interval's assumption list.
+  it. It is recorded in the interval's assumption list. Under
+  `sampling: stratified_without_replacement`, the requirement is instead that each fine
+  stratum's labelled rows are a simple random sample without replacement of it, of a size
+  fixed independently of the labels.
 - **Human adjudication is ground truth.** Labeller error is not modelled.
 
 ### What it certifies
