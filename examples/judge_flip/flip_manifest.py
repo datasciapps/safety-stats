@@ -5,9 +5,10 @@
 
 ``positives`` reads the judge-positive observations from a report written with
 ``report.include_observations: true``, finds each completion in the run's Inspect logs by its
-run, item and epoch, and writes ``observation_id, request, completion``. Judge-positive means
-the primary judge scored the completion unsafe: a failure that a plan policy classified, such
-as a sample error counted as a failure, is left out, by the test the analysis applies.
+run, item and epoch, and writes ``observation_id, item_id, repeat, request, completion``.
+Judge-positive means the primary judge scored the completion unsafe: a failure that a plan
+policy classified, such as a sample error counted as a failure, is left out, by the test the
+analysis applies.
 ``manifest`` reads the ``judge_flip`` task's logs and writes ``observation_id, wrapper,
 verdict``, the CSV that ``inputs.judge_flip.manifest`` names. Both fail rather than drop a row:
 a missing completion, an errored or unparsed rescoring, or a completion rescored twice under
@@ -69,8 +70,8 @@ def export_positives(report: Path, logs: Path, output: Path) -> int:
         if key not in texts:
             raise ValueError(f"no completion in {logs} for observation {row['observation_id']}")
         request, completion = texts[key]
-        rows.append([row["observation_id"], request, completion])
-    _write(output, ["observation_id", "request", "completion"], sorted(rows))
+        rows.append([row["observation_id"], row["item_id"], row["repeat"], request, completion])
+    _write(output, ["observation_id", "item_id", "repeat", "request", "completion"], sorted(rows))
     return len(rows)
 
 

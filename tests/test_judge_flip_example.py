@@ -89,6 +89,8 @@ def test_the_export_leaves_out_failures_a_plan_policy_classified(
     assert count == 2
     assert [row["observation_id"] for row in exported] == ["obs-1", "obs-7"]
     assert [row["completion"] for row in exported] == ["completion 1", "completion 7"]
+    # The simulated rescoring is seeded by the rollout's item and epoch.
+    assert [(row["item_id"], row["repeat"]) for row in exported] == [("p1", "1"), ("p1", "7")]
     # The same rows the analysis rates.
     assert {row["observation_id"] for row in exported} == {
         row.observation_id for row in observations if judge_positive(row)
