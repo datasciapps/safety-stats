@@ -228,8 +228,10 @@ integrity invalid and withholds the cohort's bounds, when a cohort has observati
 item the column does not select or none for an item it selects. The column holds `true` or
 `false` (or `yes`/`no`, `1`/`0`) for every frame item; a missing or other value fails
 ingestion with a message that names the column. The check works under Poisson sampling too.
-It compares the run with the recorded draw, not the draw with chance: that the selection was
-random and made before any outcome was seen remains an assumption.
+Every cohort is checked against the same column, so it fits cohorts that all evaluated one
+draw; cohorts whose items were drawn separately cannot use it. It compares the run with the
+recorded draw, not the draw with chance: that the selection was random and made before any
+outcome was seen remains an assumption.
 
 ## Drawing a random pilot
 
