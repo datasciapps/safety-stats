@@ -516,10 +516,12 @@ described in their pull requests.
   sampled design as it stands, and with `pilot_seed` and `pilot_per_stratum`, which
   record the draw. Equal draws from strata of unequal size over-represent the small ones, so
   weight each pilot prompt by `1 / pilot_inclusion_probability`, as the sampled-design
-  analysis does. `draw_pilot` in `inspect_safety_stats.ingest.pilot` does the
-  same in Python, on a manifest read as text (`dtype=str, keep_default_na=False`); it refuses
-  a `prompt_id` that is not text, which would hash differently from the command's. See
-  [Drawing a random pilot](docs/design-based-sampling.md#drawing-a-random-pilot).
+  analysis does. Analyse a pilot as exploratory: a pilot enlarged after its outcomes were seen
+  is not a fixed-size confirmatory design, and a confirmatory analysis uses fresh rollouts
+  under a plan frozen before they ran. `draw_pilot` in `inspect_safety_stats.ingest.pilot`
+  does the same in Python, on a manifest read as text (`dtype=str, keep_default_na=False`);
+  it refuses a `prompt_id` that is not text, which would hash differently from the command's.
+  See [Drawing a random pilot](docs/design-based-sampling.md#drawing-a-random-pilot).
 
 - **Checking a sampled design's items against the recorded draw (experimental).** A sampled
   design's checks counted the items evaluated but not which ones, so a run on the first

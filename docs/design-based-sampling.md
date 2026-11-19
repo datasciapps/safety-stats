@@ -263,7 +263,9 @@ Each prompt's rank is a SHA-256 hash of the seed and its `prompt_id`, so the dra
 - uses only the manifest and the seed, never an outcome;
 - does not depend on the order of the manifest's rows or on the platform;
 - is nested: a pilot drawn with a larger `--per-stratum` and the same seed contains the
-  smaller one, so a pilot can be extended without discarding the prompts already run.
+  smaller one, so a pilot can be enlarged for planning without discarding the prompts
+  already run. An enlarged pilot certifies nothing; see
+  [What a pilot can show](#what-a-pilot-can-show).
 
 The frame records the seed and the per-stratum count, so the frame alone repeats the draw,
 and a report whose design manifest is the frame covers them with the manifest's hash. The
@@ -312,6 +314,29 @@ design:
   inclusion_probability_column: pilot_inclusion_probability
   selection_column: pilot_selected
 ```
+
+### What a pilot can show
+
+Analyse a pilot with `analysis.intent: exploratory`. An exploratory analysis certifies
+nothing, and its descriptive status says what a confirmatory analysis of the same bounds would
+give. A pilot's interval holds for a draw whose size was fixed before the pilot ran, but a
+pilot exists to inform choices made after its outcomes are seen. Enlarging it after seeing
+them and analysing it again until a claim passes is the repeated peeking of
+[Statistical methods, section 6.1](statistical-methods.md#61-why-fixed-sample-bounds-cannot-be-repeatedly-peeked-at):
+each look at a size fixed in advance passes a false claim with probability at most
+\(\alpha\), but stopping at the first pass does so more often. In a simulation with KL/Chernoff
+bounds at a one-sided \(\alpha\) of 0.05, a frame of 2,000 items whose mean risk equals the
+claim's limit of 0.05 was drawn at 20, 40, ..., 600 items, nested as `plan pilot` nests its
+draws. Each size alone passed with probability at most 0.045, but stopping at the first size
+that passed did so with probability 0.068 (Monte Carlo standard error 0.003). An extension
+decided after the outcomes is therefore not a fixed-size confirmatory design, whatever the
+frame and the plan say.
+
+A confirmatory analysis uses fresh rollouts under a plan frozen before they ran: of the whole
+manifest as a fixed design, or of a new draw, with a new seed, whose size the frozen plan
+fixes. Do not enlarge the pilot's own draw for it: with the same seed, the larger sample
+would contain the pilot's prompts, whose outcomes already shaped the decision to run it and
+its size.
 
 ## Not yet supported
 

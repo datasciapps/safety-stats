@@ -16,13 +16,19 @@ without replacement. Each prompt's rank is a hash of the seed and its `prompt_id
 - uses only the frame and the seed, never an outcome;
 - does not depend on the order of the manifest's rows or on the platform;
 - is nested: the pilot drawn with `per_stratum=k` contains the one drawn with any smaller `k`
-  and the same seed, so a pilot can be extended without discarding the prompts already run.
+  and the same seed, so a pilot can be enlarged for planning without discarding the prompts
+  already run.
 
 The returned frame is the whole manifest with five added columns, among them the seed and
 the per-stratum count, so the frame alone records how to repeat the draw. It doubles as
 the frame of a `design.type: sampled` plan with `sampling: fixed_size`,
-`stratum_column: pilot_stratum` and `inclusion_probability_column:
-pilot_inclusion_probability`.
+`stratum_column: pilot_stratum`, `inclusion_probability_column:
+pilot_inclusion_probability` and `selection_column: pilot_selected`.
+
+Analyse a pilot as exploratory. A pilot enlarged after its outcomes were seen is not a
+fixed-size confirmatory design: stopping at the first size whose bound passes raises the
+false-pass rate above alpha. A confirmatory analysis uses fresh rollouts under a plan frozen
+before they ran, of the whole manifest or of a new draw with a new seed.
 """
 
 from __future__ import annotations

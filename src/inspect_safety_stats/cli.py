@@ -919,7 +919,8 @@ def pilot_command(
     pilot_selected, pilot_seed and pilot_per_stratum added. Run the pilot on the rows where
     pilot_selected is true. The same file is the frame of a sampled design (sampling:
     fixed_size, stratum_column: pilot_stratum, inclusion_probability_column:
-    pilot_inclusion_probability).
+    pilot_inclusion_probability, selection_column: pilot_selected). Analyse a pilot as
+    exploratory: a pilot enlarged after its outcomes were seen certifies nothing.
     """
 
     import pandas as pd
