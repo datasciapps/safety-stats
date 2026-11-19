@@ -27,6 +27,7 @@ from inspect_safety_stats.ingest.manifest import (
     check_zero_tolerance_field,
     load_inclusion_probabilities,
     load_manifest,
+    plan_grouping_columns,
     plan_manifest_columns,
     resolve_groups,
 )
@@ -1001,7 +1002,9 @@ def read_inputs(plan: AnalysisPlan, source: EvaluationSource) -> RawInputs:
 
     # ORDER MATTERS: the manifest is loaded before the source is read, so a broken manifest
     # is reported before any log is opened, as it always was.
-    manifest = load_manifest(plan.inputs.design_manifest, plan_manifest_columns(plan))
+    manifest = load_manifest(
+        plan.inputs.design_manifest, plan_manifest_columns(plan), plan_grouping_columns(plan)
+    )
     check_zero_tolerance_field(plan, manifest)
     groups = resolve_groups(plan, manifest)
     read = source.read()

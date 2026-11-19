@@ -578,11 +578,15 @@ def _planning_design(
                 "column": weight_column,
             }
         )
-        # Only the identifier levels the weighting names are required, as in analyze.
-        named = {"prompt_id", *(spec.hierarchy if spec.strategy == "nested_equal" else [])}
+        # Only the identifier levels the weighting names are required, as in analyze, and
+        # its hierarchy levels are read as text, as analyze reads them.
+        levels = spec.hierarchy if spec.strategy == "nested_equal" else []
+        named = {"prompt_id", *levels}
         if spec.column is not None:
             named.add(spec.column)
-        frame = load_manifest(manifest, [column for column in REQUIRED_COLUMNS if column in named])
+        frame = load_manifest(
+            manifest, [column for column in REQUIRED_COLUMNS if column in named], levels
+        )
         return frame, resolve_weights(frame, spec)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc

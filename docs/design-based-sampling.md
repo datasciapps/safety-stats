@@ -151,6 +151,9 @@ design:
   inclusion_probability_column: inclusion_probability
 ```
 
+Stratum labels are read as text, as written: `1` and `01`, or `true` and `True`, are two
+strata, and a blank label stops the analysis with an error that names the rows.
+
 Drawing exactly \(n_h\) of stratum \(h\)'s \(N_h\) frame items makes the inclusion
 indicators **negatively correlated** -- they must sum to \(n_h\) -- so the independence the
 concentration engines assume does not hold.

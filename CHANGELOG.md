@@ -7,6 +7,27 @@ described in their pull requests.
 
 ### Fixed
 
+- **Manifest identifiers and grouping columns are read as written (changes report bytes for
+  numeric-looking labels).** The analysis read the design manifest with pandas' type
+  inference. Labels that read as one number or boolean, such as `1` and `01`, `1` and `1.0`,
+  or `true` and `True`, became one stratum, independence block, hierarchy node or group filter
+  value without a word, so a fixed-size design that drew one item too few from one such stratum
+  and one too many from the other passed its draw checks. An identifier such as `0001` became
+  `1`, so no rollout of item `0001` joined its row, and `1` and `01` were a duplicate
+  `prompt_id`. A stratum label such as `NA` or `None` was read as missing, and a blank value
+  merged, split or crashed depending on the column and the pandas version. `prompt_id`,
+  `question_id`, `task_id` and every column the plan groups by (hierarchy levels, nested weight
+  hierarchies, group filters, manifest columns in a `block_by` and `design.stratum_column`) are
+  now read as text, exactly as written, by `analyze`, `validate`, `plan fixed-design` and
+  `plan comparison`. Weights, inclusion probabilities, thresholds, `expected_rollouts` and the
+  other numeric or boolean columns are read as before. A blank value in a label column is an `INGEST_FAILED`
+  error that names the column and the rows. A group `filter` on a label column takes a quoted
+  value: an unquoted YAML `1`, `01`, `1.0` or `true` is an error that says to quote it. Reports
+  of manifests without such labels, every bundled example among them, keep their bytes. A
+  manifest that zero-pads identifiers that the logs record as integers (`0001` for the sample
+  id `1`) now reports `PROMPT_MISSING` and `PROMPT_UNEXPECTED`: write the identifiers as the
+  logs record them. See [`inputs`](docs/plan-reference.md#inputs).
+
 - **A zero-tolerance column that the manifest lacks is an error.** When a plan sets
   `policy.zero_tolerance.manifest_field` and the manifest has no such column, the analysis
   silently held no prompt to zero tolerance. It now stops with an error that names the column.

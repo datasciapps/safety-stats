@@ -10,11 +10,16 @@ import pandas as pd
 
 from inspect_safety_stats.config.models import AnalysisPlan, GroupSpec, WeightSpec
 from inspect_safety_stats.schema.observations import observation_field
+from inspect_safety_stats.stats.independence import _BLOCK_OBSERVATION_FIELDS
 
 REQUIRED_COLUMNS = ("prompt_id", "question_id", "task_id")
 # Every observation and prompt estimate carries a question and a task. A manifest that omits
 # one of these levels, because its plan never names it, gives each prompt a level of its own.
 _PROMPT_LEVEL_COLUMNS = ("question_id", "task_id")
+# Columns that load_manifest converts to numbers or booleans itself; they are never labels.
+_TYPED_COLUMNS = frozenset({"expected_rollouts", "mandatory", "zero_tolerance"})
+# How many blank rows an error names before it counts the rest.
+_SHOWN_ROWS = 5
 
 
 @dataclass(frozen=True)
@@ -78,6 +83,43 @@ def plan_manifest_columns(plan: AnalysisPlan) -> tuple[str, ...]:
     return tuple(column for column in REQUIRED_COLUMNS if column == "prompt_id" or column in named)
 
 
+def plan_grouping_columns(plan: AnalysisPlan) -> tuple[str, ...]:
+    """The manifest columns whose values the plan uses as labels, to group or identify prompts.
+
+    They are the levels of ``design.hierarchy`` and of every ``nested_equal`` weight
+    hierarchy, the columns of a group ``filter``, the manifest columns of an independence
+    profile's ``block_by`` and ``design.stratum_column``. A column the plan or the loader reads
+    as a number or a boolean is not one: an inclusion probability, a weight or threshold
+    column, the zero-tolerance field, ``expected_rollouts`` or ``mandatory``. The identifier
+    columns of ``REQUIRED_COLUMNS`` are labels whether or not the plan names them.
+    """
+
+    named: set[str] = set(plan.design.hierarchy)
+    numeric: set[str | None] = {
+        plan.design.inclusion_probability_column,
+        plan.policy.zero_tolerance.manifest_field,
+        *(measure.threshold_column for measure in plan.outputs.risk_measures),
+    }
+    for spec in [plan.design.weights, *(group.weights for group in plan.groups)]:
+        if spec is None:
+            continue
+        if spec.strategy == "nested_equal":
+            named.update(spec.hierarchy)
+        numeric.add(spec.column)
+    for group in plan.groups:
+        named.update(group.filter)
+    for profile in plan.design.independence_profiles.values():
+        # The other fields come from the observations, as validate_profile_fields reads them.
+        named.update(
+            field
+            for field in profile.block_by
+            if field != "rollout" and observation_field(field) not in _BLOCK_OBSERVATION_FIELDS
+        )
+    if plan.design.stratum_column is not None:
+        named.add(plan.design.stratum_column)
+    return tuple(sorted(named - numeric - _TYPED_COLUMNS))
+
+
 def check_zero_tolerance_field(plan: AnalysisPlan, manifest: pd.DataFrame) -> None:
     """Refuse a manifest that lacks the zero-tolerance column the plan names.
 
@@ -96,12 +138,24 @@ def check_zero_tolerance_field(plan: AnalysisPlan, manifest: pd.DataFrame) -> No
             )
 
 
-def load_manifest(path: str | Path, required: Iterable[str] = REQUIRED_COLUMNS) -> pd.DataFrame:
+def load_manifest(
+    path: str | Path,
+    required: Iterable[str] = REQUIRED_COLUMNS,
+    grouping: Iterable[str] = (),
+) -> pd.DataFrame:
     """Read a design manifest that has every ``required`` column.
 
     ``required`` is a subset of ``REQUIRED_COLUMNS`` and always holds ``prompt_id``; the
     analysis passes ``plan_manifest_columns(plan)``. An identifier column the manifest omits
     takes each prompt's ``prompt_id``.
+
+    The identifier columns of ``REQUIRED_COLUMNS`` and the ``grouping`` columns present are
+    read as text, exactly as written; the analysis passes ``plan_grouping_columns(plan)``. With
+    pandas' type inference, labels such as ``1`` and ``01``, ``1`` and ``1.0``, or ``true`` and
+    ``True`` would read as one value, and ``NA`` or ``None`` as a missing one, whose handling
+    differs between pandas versions. A blank value in one of these columns raises
+    ``ValueError`` naming the column and the rows. Every other column keeps pandas' reading, so
+    numeric columns stay numbers.
     """
 
     required = tuple(required)
@@ -110,17 +164,30 @@ def load_manifest(path: str | Path, required: Iterable[str] = REQUIRED_COLUMNS) 
         raise ValueError(
             f"required manifest columns must include prompt_id and come from {REQUIRED_COLUMNS}"
         )
-    manifest = pd.read_csv(path)
+    candidates = [
+        column
+        for column in dict.fromkeys([*REQUIRED_COLUMNS, *grouping])
+        if column not in _TYPED_COLUMNS
+    ]
+    # The labels are not inferred even here. In a large file pandas infers a type chunk by
+    # chunk, and warns of a column whose chunks disagree, as `1` and `01` with `x` can.
+    manifest = pd.read_csv(path, dtype=dict.fromkeys(candidates, str))
     missing = [column for column in REQUIRED_COLUMNS if column in required]
     missing = [column for column in missing if column not in manifest.columns]
     if missing:
         raise ValueError(f"design manifest is missing required columns: {', '.join(missing)}")
-    for column in REQUIRED_COLUMNS:
-        if column not in manifest.columns:
-            continue
-        if manifest[column].isna().any():
-            raise ValueError(f"design manifest column {column!r} contains missing values")
-        manifest[column] = manifest[column].astype(str)
+    labels = [column for column in candidates if column in manifest.columns]
+    # The file is read a second time, wholly as text and with no missing-value markers, so that
+    # every other column keeps exactly the values pandas' inference gives it.
+    text = pd.read_csv(path, dtype=str, keep_default_na=False)
+    # ORDER MATTERS: prompt_id comes first in labels, so a blank in a later column can name
+    # each of its rows by a prompt_id that is known not to be blank.
+    for column in labels:
+        cells = text[column]
+        blank = cells.isna() | (cells.str.strip() == "")
+        if blank.any():
+            raise ValueError(_blank_message(text, column, blank.to_numpy(dtype=bool)))
+        manifest[column] = cells
     for column in _PROMPT_LEVEL_COLUMNS:
         if column not in manifest.columns:
             manifest[column] = manifest["prompt_id"]
@@ -138,6 +205,23 @@ def load_manifest(path: str | Path, required: Iterable[str] = REQUIRED_COLUMNS) 
     return manifest
 
 
+def _blank_message(text: pd.DataFrame, column: str, blank: np.ndarray) -> str:
+    rows = np.flatnonzero(blank)
+    shown = []
+    for position in rows[:_SHOWN_ROWS]:
+        # The header is row 1, as a spreadsheet numbers it.
+        row = f"row {position + 2}"
+        if column != "prompt_id" and "prompt_id" in text.columns:
+            row += f" (prompt_id {text['prompt_id'].iat[position]!r})"
+        shown.append(row)
+    more = f" and {len(rows) - _SHOWN_ROWS} more" if len(rows) > _SHOWN_ROWS else ""
+    return (
+        f"design manifest column {column!r} is blank in {', '.join(shown)}{more}, counting "
+        "the header as row 1. The analysis reads this column as labels that identify or group "
+        "prompts, so give every row a value"
+    )
+
+
 def _parse_bool(value: Any) -> bool:
     if isinstance(value, bool):
         return value
@@ -151,11 +235,27 @@ def _parse_bool(value: Any) -> bool:
     raise ValueError(f"invalid boolean manifest value {value!r}")
 
 
-def _filter_group(manifest: pd.DataFrame, group: GroupSpec) -> pd.DataFrame:
+def _filter_group(
+    manifest: pd.DataFrame, group: GroupSpec, labels: Iterable[str] = ()
+) -> pd.DataFrame:
+    """The prompts of ``manifest`` that match every value of ``group.filter``.
+
+    A column in ``labels`` holds text as written, and is matched only by a value written as
+    text. A YAML value that is not text has already lost how it was written: ``01`` and ``1``
+    both load as the number 1, and ``yes`` as true.
+    """
+
+    labels = set(labels)
     selected = manifest
     for column, expected in group.filter.items():
         if column not in selected:
             raise ValueError(f"group {group.id!r} references unknown manifest column {column!r}")
+        if column in labels and not isinstance(expected, str):
+            raise ValueError(
+                f"group {group.id!r} filters manifest column {column!r} on {expected!r}, which "
+                "is not text. The analysis reads the column's values as written, so write the "
+                f"value in quotes, as the manifest writes it, for example {{{column}: '...'}}"
+            )
         selected = selected.loc[selected[column] == expected]
     if selected.empty:
         raise ValueError(f"group {group.id!r} resolves to no prompts")
@@ -198,11 +298,12 @@ def resolve_weights(frame: pd.DataFrame, spec: WeightSpec) -> np.ndarray:
 def resolve_groups(plan: AnalysisPlan, manifest: pd.DataFrame) -> list[ResolvedGroup]:
     resolved: list[ResolvedGroup] = []
     seen: set[str] = set()
+    labels = {*REQUIRED_COLUMNS, *plan_grouping_columns(plan)}
     for group in plan.groups:
         if group.id in seen:
             raise ValueError(f"duplicate group id {group.id!r}")
         seen.add(group.id)
-        selected = _filter_group(manifest, group).sort_values("prompt_id", kind="stable")
+        selected = _filter_group(manifest, group, labels).sort_values("prompt_id", kind="stable")
         weights = resolve_weights(selected, group.weights or plan.design.weights)
         resolved.append(
             ResolvedGroup(
