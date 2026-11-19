@@ -4050,6 +4050,65 @@ def test_plans_refuse_a_worst_of_k_interval_they_cannot_calibrate(
     assert message in problems[0]
 
 
+@pytest.mark.parametrize(
+    ("edit", "message"),
+    [
+        (
+            ("      primary: rollout", "      primary: prompt"),
+            "must block by rollout, not ['prompt_id']",
+        ),
+        (
+            (
+                "design:\n  type: fixed\n",
+                "design:\n  type: sampled\n  inclusion_probability_column: inclusion_probability\n",
+            ),
+            "needs design.type: fixed, not 'sampled'",
+        ),
+        (
+            (
+                "    independence:\n      primary: rollout",
+                "    hierarchy_nodes: true\n    hierarchy_calibration: frontier_sidak\n"
+                "    independence:\n      primary: rollout",
+            ),
+            "frontier_sidak calibration is not supported",
+        ),
+    ],
+)
+def test_analyze_withholds_the_worst_of_k_interval_of_a_refused_plan(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, edit: tuple[str, str], message: str
+) -> None:
+    # The refusal makes integrity invalid, but the row itself must not offer an interval
+    # computed under assumptions the plan does not make, such as rollout blocks under a
+    # prompt-level profile, as primary and certifying.
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+    plan_path = _write_inputs(tmp_path)
+    _opt_in_worst_of_k_interval(plan_path)
+    text = plan_path.read_text(encoding="utf-8")
+    assert edit[0] in text
+    plan_path.write_text(text.replace(edit[0], edit[1]), encoding="utf-8")
+    manifest = tmp_path / "design.csv"
+    header, *rows = manifest.read_text(encoding="utf-8").splitlines()
+    manifest.write_text(
+        "\n".join([f"{header},inclusion_probability", *[f"{row},1.0" for row in rows]]) + "\n",
+        encoding="utf-8",
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert "PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED" in {
+        item.code for item in report.integrity.diagnostics
+    }
+    row = next(item for item in report.group_risks if item.measure_id == "worst_of_2")
+    assert row.primary_interval_id == "propagated_prompt_envelope"
+    assert [item.interval_id for item in row.intervals] == ["propagated_prompt_envelope"]
+    assert len(row.warnings) == 1
+    assert row.warnings[0].startswith("No direct interval of 2 attempts: ")
+    assert message in row.warnings[0]
+
+
 def test_only_worst_of_k_measures_take_a_direct_interval(tmp_path: Path) -> None:
     from pydantic import ValidationError
 

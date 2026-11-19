@@ -559,7 +559,8 @@ Scope:
   independence profile must block by rollout. Sensitivity profiles get no worst-of-k interval,
   and the row says so.
 - It bounds the fixed prompt set only. Sampled designs, `frontier_sidak` calibration and
-  disabled direct-mean intervals are refused when the plan is validated.
+  disabled direct-mean intervals are refused when the plan is validated. A refused plan's rows
+  get no worst-of-k interval from `analyze`: they keep the propagated prompt envelope and say why.
 - If a prompt has fewer than \(k\) attempted rollouts, the row keeps the propagated
   prompt-envelope interval and warns that the design cannot bound \(k\) attempts.
 
