@@ -421,6 +421,46 @@ def test_comparison_planning_cli_pairs_and_overrides_counts(tmp_path: Path) -> N
     assert _resolvable(output, "above") == pytest.approx(-0.02 + gap, rel=1e-7, abs=0)
 
 
+def test_comparison_planning_cli_plans_prompt_clusters_with_the_manifest_weights(
+    tmp_path: Path,
+) -> None:
+    # nested_equal over a task of 10 prompts and one of 30 gives the first task's prompts
+    # weight 1/20 and the second's 1/60, so equal weights would give other numbers.
+    manifest = tmp_path / "design.csv"
+    rows = [
+        f"p{task}-{index},q{task}-{index},t{task},5"
+        for task, size in ((1, 10), (2, 30))
+        for index in range(size)
+    ]
+    manifest.write_text(
+        "prompt_id,question_id,task_id,expected_rollouts\n" + "\n".join(rows) + "\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "comparison",
+            "--manifest",
+            str(manifest),
+            "--margin",
+            "0.05",
+            "--independence-unit",
+            "prompt_cluster",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    output = plain(result.output)
+    assert "Independence unit: prompt_cluster" in output
+    assert "Independent blocks: 40" in output
+    # Each prompt is one block, whose weighted rate difference ranges over twice its weight,
+    # whatever its rollout counts. Alpha 0.05 is split between the bounds; power is 0.9.
+    ranges = 10 * (2 / 20) ** 2 + 30 * (2 / 60) ** 2
+    gap = math.sqrt(0.5 * ranges * math.log(40)) + math.sqrt(0.5 * ranges * math.log(10))
+    assert _resolvable(output, "below") == pytest.approx(0.05 - gap, rel=1e-7, abs=0)
+    assert _resolvable(output, "above") == pytest.approx(0.05 + gap, rel=1e-7, abs=0)
+
+
 def test_comparison_planning_cli_needs_counts_for_both_arms(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
