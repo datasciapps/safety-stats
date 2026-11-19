@@ -439,9 +439,9 @@ Only the primary mapping enters claims and the decision. Each alternative's inte
 the coverage the plan declares for that mapping alone; the readings are not simultaneous
 across mappings, so the side-by-side view is a sensitivity analysis, not a set of tests to
 pick from. A mapping that leaves some observed value unmapped makes its own integrity
-`invalid` (`SCORE_UNMAPPED` in its diagnostic counts) without affecting the primary
-analysis. Each alternative carries what the plan itself, its decision policy and its
-registration receipt were checked for, so a receipt for another plan
+`invalid` (`SCORE_UNMAPPED` and `SCORE_MAPPING_MISMATCH` in its diagnostic counts) without
+affecting the primary analysis. Each alternative carries what the plan itself, its decision
+policy and its registration receipt were checked for, so a receipt for another plan
 (`PLAN_RECEIPT_MISMATCH`) or a decision policy that fails its checks makes every alternative
 `invalid`, as it does the primary analysis.
 

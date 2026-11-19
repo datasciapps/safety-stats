@@ -222,6 +222,8 @@ def test_an_incomplete_alternative_mapping_is_invalid_on_its_own(tmp_path: Path)
     (sensitivity,) = report.outcome_mapping_sensitivities
     assert sensitivity.integrity_status == "invalid"
     assert sensitivity.diagnostic_counts["SCORE_UNMAPPED"] == 4
+    # One summary lists the values the alternative leaves uncovered (CHANGELOG, plan reference).
+    assert sensitivity.diagnostic_counts["SCORE_MAPPING_MISMATCH"] == 1
 
 
 def test_a_receipt_for_another_plan_makes_each_alternative_invalid_too(tmp_path: Path) -> None:

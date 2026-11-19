@@ -751,7 +751,10 @@ described in their pull requests.
     `SCORE_UNMAPPED` errors, one per rollout, which are unchanged and still withhold their
     prompts' bounds. Its scope is the plan path, so it withholds no other bounds.
 
-  Reports of valid analyses are unchanged.
+  Reports of valid analyses are unchanged, except that an outcome mapping sensitivity
+  (`inputs.score.mapping_sensitivities`) whose mapping leaves an observed value uncovered
+  counts one `SCORE_MAPPING_MISMATCH` in its `diagnostic_counts`, beside its `SCORE_UNMAPPED`
+  errors, while the primary analysis stays valid.
 
 - **A duplicate rollout key no longer shows a run's configuration (changes `report.json`).** A
   field of `design.rollout_key` that a rollout does not record is read from its run, and the
