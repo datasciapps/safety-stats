@@ -4031,3 +4031,66 @@ def test_comparisons_refuse_the_betting_method() -> None:
                 "method": "weighted_betting",
             }
         )
+
+
+def _drop_question_level(tmp_path: Path, plan_path: Path) -> None:
+    """Rewrite the inputs so that neither the manifest nor the plan has a question level."""
+
+    manifest = pd.read_csv(tmp_path / "design.csv").drop(columns="question_id")
+    manifest.to_csv(tmp_path / "design.csv", index=False, lineterminator="\n")
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "[task_id, question_id, prompt_id]", "[task_id, prompt_id]"
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def test_a_manifest_needs_no_question_id_when_the_plan_never_names_it(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    _drop_question_level(tmp_path, plan_path)
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+    assert report.decision == "PASS"
+    # Each prompt is a question of its own.
+    assert {(item.prompt_id, item.question_id) for item in report.prompt_estimates} == {
+        ("p1", "p1"),
+        ("p2", "p2"),
+    }
+
+
+def test_blocking_by_question_id_still_requires_the_column(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    _drop_question_level(tmp_path, plan_path)
+    # Filling the level with prompt_id here would quietly block by prompt instead.
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "block_by: [prompt_id]", "block_by: [question_id]"
+        ),
+        encoding="utf-8",
+        newline="\n",
+    )
+    eval_frame, sample_frame = _frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+    assert report.integrity.status == "invalid"
+    failure = next(item for item in report.integrity.diagnostics if item.code == "INGEST_FAILED")
+    assert "missing required columns: question_id" in failure.message
