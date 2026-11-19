@@ -129,7 +129,8 @@ python examples/open_weights/label_queue.py manifest --queue LABELS/queue \
   --labels PRIVATE/sheet.csv --output LABELS/manifests
 ```
 
-`queue` and `manifest` write only identifiers, verdicts and counts. `sheet` writes the prompts and
+`queue` and `manifest` write only identifiers, verdicts, counts, and the paths of the logs and
+reports relative to the queue folder. `sheet` writes the prompts and
 answers to be labelled, with one yes-or-no question per row and the judge's rules in a file beside
 it, but not the judges' verdicts. Its folder must be outside the repository and closed to everyone
 else (mode 700); the sheet is a new file with mode 600. `manifest` writes the calibration rows as
