@@ -79,6 +79,17 @@ def test_assumptions_apply_only_where_the_plan_makes_them() -> None:
     assert APPLIES["plan_fixed_in_advance"](confirmatory)
     sampled = _with(plan, "design", type="sampled")
     assert not APPLIES["fixed_design"](sampled)
+    # A sampled design blocks by the drawn frame item, whatever profile the plan declares.
+    assert APPLIES["probability_sample"](sampled)
+    assert not APPLIES["probability_sample"](plan)
+    # Only its prompt bounds, when enabled, rest on the rollouts of a prompt being independent.
+    bounds = sampled.outputs.prompt_bounds
+    for enabled in (True, False):
+        outputs = sampled.outputs.model_copy(
+            update={"prompt_bounds": bounds.model_copy(update={"enabled": enabled})}
+        )
+        with_bounds = sampled.model_copy(update={"outputs": outputs})
+        assert APPLIES["rollout_independence"](with_bounds) is enabled
 
 
 def test_a_mapping_pattern_names_every_key() -> None:

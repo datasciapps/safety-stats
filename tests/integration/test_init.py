@@ -188,7 +188,8 @@ def test_init_notes_every_assumption_it_rests_on_independence_first(
     result = scaffold_plan(mock_logs, tmp_path, failure_values=["FAIL"])
     ids = [note.assumption for note in result.assumptions]
     assert ids[0] == "rollout_independence"
-    assert sorted(ids) == sorted(ASSUMPTIONS)
+    # init writes a fixed design, which rests on no probability sample.
+    assert sorted(ids) == sorted(set(ASSUMPTIONS) - {"probability_sample"})
     header = _header_text(result.plan_path)
     for note in result.assumptions:
         entry = ASSUMPTIONS[note.assumption]
@@ -232,7 +233,7 @@ def test_init_for_one_model_has_no_comparison_note(tmp_path: Path) -> None:
     result = scaffold_plan(logs, tmp_path / "out", failure_values=["FAIL"])
     ids = [note.assumption for note in result.assumptions]
     assert ids[0] == "rollout_independence"
-    assert sorted(ids) == sorted(set(ASSUMPTIONS) - {"arm_independence"})
+    assert sorted(ids) == sorted(set(ASSUMPTIONS) - {"arm_independence", "probability_sample"})
 
 
 def test_init_refuses_a_confirmatory_plan_and_points_to_exploratory(
@@ -258,7 +259,9 @@ def test_init_command_lists_the_assumptions_independence_first(
     output = plain(result.output)
     heading = "Assumptions (the plan's header says what each means and how to change it):"
     listed = output[output.index(heading) + len(heading):]
-    positions = {name: listed.find(f" {name}: ") for name in ASSUMPTIONS}
+    # init writes a fixed design, which rests on no probability sample.
+    noted = set(ASSUMPTIONS) - {"probability_sample"}
+    positions = {name: listed.find(f" {name}: ") for name in noted}
     assert all(position >= 0 for position in positions.values()), positions
     assert min(positions, key=positions.__getitem__) == "rollout_independence"
     refused = CliRunner().invoke(app, [*arguments, "--overwrite", "--intent", "confirmatory"])

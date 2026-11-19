@@ -149,6 +149,32 @@ outcomes.
   [`PLAN_RECEIPT_POSTHOC`](#plan_receipt_posthoc), [`PLAN_SELF_DECLARED`](#plan_self_declared),
   [`START_TIME_UNOBSERVED`](#start_time_unobserved)
 
+### Assumption `probability_sample`
+
+The evaluated items are a probability sample of the declared frame: each item's inclusion
+probability was fixed before the draw, the draw was made at random and without regard to the
+outcomes, and each item was included independently of the others with its declared probability
+(Poisson sampling). Each drawn item is one independent block: the rollouts of different items are
+independent.
+
+- **Input:** [manifest](#input-kinds)
+- **Plan field:** `design.sampling`, default `poisson`
+- **If it is wrong:** Items drawn with other probabilities than those declared, or chosen with the
+  outcomes in view, bias the frame estimate; rollouts of different items that share a cause make the
+  bounds narrower than their stated coverage.
+- **With `fixed_size`:** The evaluated items are a probability sample of the declared frame: each
+  stratum drew its planned number of items at random without replacement, with the inclusion
+  probabilities fixed before the draw and the draw made without regard to the outcomes. Each drawn
+  item is one independent block: the rollouts of different items are independent.
+- **Remedy:** Draw the items at random with probabilities fixed in advance, before any outcome is
+  seen, record the draw in design.selection_column and each item's inclusion probability in the
+  manifest; otherwise analyse the evaluated items as a fixed design.
+- **Checked by:** [`SAMPLE_DRAWS_MISMATCH`](#sample_draws_mismatch),
+  [`SAMPLE_DRAWS_NOT_INTEGER`](#sample_draws_not_integer),
+  [`SAMPLE_SELECTION_MISMATCH`](#sample_selection_mismatch),
+  [`SAMPLE_SIZE_IMPLAUSIBLE`](#sample_size_implausible),
+  [`SAMPLE_STRATUM_INCONSISTENT`](#sample_stratum_inconsistent)
+
 ### Assumption `rollout_independence`
 
 The blocks of the declared independence profile are independent: under the rollout profile, every
@@ -668,6 +694,7 @@ probabilities and strata.
   not checked.
 - **Remedy:** Correct the inclusion probability column to draws divided by stratum size, or name the
   column that defines the strata in design.stratum_column.
+- **Checks:** [`probability_sample`](#assumption-probability_sample)
 
 #### `SAMPLE_STRATUM_INCONSISTENT`
 
@@ -679,6 +706,7 @@ probabilities and strata.
   not checked.
 - **Remedy:** Name the column that defines the strata in design.stratum_column, correct the
   inclusion probability column, or use design.sampling: poisson when items were drawn independently.
+- **Checks:** [`probability_sample`](#assumption-probability_sample)
 
 ### `logs` codes
 
@@ -965,6 +993,7 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
   misstate the sample the estimate rests on.
 - **Remedy:** Supply the logs of every drawn frame item and no others, or correct the inclusion
   probability column to the design actually drawn.
+- **Checks:** [`probability_sample`](#assumption-probability_sample)
 
 #### `SAMPLE_EMPTY`
 
@@ -1008,6 +1037,7 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
   evaluated are not the recorded draw, so the inclusion probabilities do not describe them.
 - **Remedy:** Evaluate every selected frame item and no other, or correct the selection column to
   the draw actually made, at random and before any outcome was seen.
+- **Checks:** [`probability_sample`](#assumption-probability_sample)
 
 #### `SAMPLE_SIZE_IMPLAUSIBLE`
 
@@ -1019,6 +1049,7 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
   probabilities that misdescribe the draw bias the estimate.
 - **Remedy:** Correct the inclusion probability column to the probabilities the draw used, or supply
   the logs of every drawn frame item.
+- **Checks:** [`probability_sample`](#assumption-probability_sample)
 
 #### `SCORE_MAPPING_MISMATCH`
 

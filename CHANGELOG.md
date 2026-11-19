@@ -246,7 +246,11 @@ described in their pull requests.
   assumptions those intervals record. "Limitations" is generated from the package's registry
   of assumptions: each assumption that applies, with the plan settings it took, marked as
   default or written, and what follows if it is wrong. `report.json` gains
-  `assumptions_used` with the same content. See
+  `assumptions_used` with the same content. A sampled design states `probability_sample`, that
+  the items were drawn at random with inclusion probabilities fixed in advance and without
+  regard to the outcomes, as `design.sampling` declares, in place of `rollout_independence`:
+  its intervals take each drawn item as the independent block. It keeps
+  `rollout_independence` when its prompt bounds are enabled. See
   [Assumptions and defaults a report states](docs/interpretation.md#assumptions-and-defaults-a-report-states).
 
 - **Reports record every default the analysis applied.** `report.json` gains `plan_defaults`:
