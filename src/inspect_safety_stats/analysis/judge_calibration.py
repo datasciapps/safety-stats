@@ -675,8 +675,8 @@ def _judge_corrected_interval(
                     f"The fine strata weight back to every classified rollout of {population} "
                     "equally, and so does this row, so they measure the judge's accuracy for "
                     "its estimand.",
-                    "Coverage is the union bound over the underlying interval and every "
-                    "calibration count bound.",
+                    "Coverage is the union bound over the underlying interval, every "
+                    "calibration count bound and the four Clopper-Pearson bounds.",
                 ]
             )
     elif validated:
