@@ -25,12 +25,24 @@ from tests.diagnostic_codes.judge_analysis_cases import (
     comparison,
     judged,
     panel,
+    stressed_judge,
     validated,
 )
 
 
 def _stressed(inputs: Inputs) -> None:
     inputs.plan.setdefault("report", {})["judge_error_stress"] = True
+
+
+def _stress_panels(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Switch the stress on in the plans ``panel()`` writes, which start from base_inputs."""
+
+    def stressed() -> Inputs:
+        inputs = base_inputs()
+        _stressed(inputs)
+        return inputs
+
+    monkeypatch.setattr("tests.diagnostic_codes.judge_analysis_cases.base_inputs", stressed)
 
 
 def _stress(outcome: Outcome, claim_id: str = "low") -> Any:
@@ -147,15 +159,7 @@ def test_a_claim_of_an_invalid_analysis_is_not_stressed(tmp_path: Path) -> None:
 def test_a_majority_composite_has_no_declared_box(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rule: str, source: str | None
 ) -> None:
-    # panel() builds its inputs from base_inputs, so switch the stress on there.
-    def stressed_base() -> Inputs:
-        inputs = base_inputs()
-        _stressed(inputs)
-        return inputs
-
-    monkeypatch.setattr(
-        "tests.diagnostic_codes.judge_analysis_cases.base_inputs", stressed_base
-    )
+    _stress_panels(monkeypatch)
     outcome = panel(rule, None, None)(tmp_path)
 
     stress = _stress(outcome)
@@ -209,3 +213,57 @@ def test_the_stress_never_moves_a_claim(
     assert on.report.decision == off.report.decision
     assert on.report.group_risks == off.report.group_risks
     assert on.diagnostics == off.diagnostics
+
+
+_PRIMARY = {"failure_values": ["FAIL"], "safe_values": ["PASS"]}
+
+
+@pytest.mark.parametrize(
+    ("mappings", "source"),
+    [
+        # Two judges read the primary score alike: their boxes need not agree.
+        ([_PRIMARY, _PRIMARY], None),
+        # The same, with the values listed in another order.
+        ([_PRIMARY, {"failure_values": ["FAIL"], "safe_values": ["PASS", "PASS"]}], None),
+        # The second reads it differently, so only the first describes the primary verdict.
+        ([_PRIMARY, {"failure_values": ["FAIL"], "safe_values": ["PASS", "MAYBE"]}], "judge_1"),
+        ([{"failure_values": ["FAIL"], "safe_values": ["PASS", "MAYBE"]}, _PRIMARY], "judge_2"),
+        # The only judge reads it differently.
+        ([{"failure_values": ["FAIL", "MAYBE"], "safe_values": ["PASS"]}], None),
+    ],
+)
+def test_a_box_applies_only_from_the_one_judge_that_reads_the_primary_score_alike(
+    tmp_path: Path, mappings: list[dict[str, Any]], source: str | None
+) -> None:
+    outcome = stressed_judge(*mappings)(tmp_path)
+
+    stress = _stress(outcome)
+    assert stress.applicable
+    assert stress.accuracy_source == (None if source is None else f"judge:{source}")
+    assert (stress.stressed_status is None) == (source is None)
+    assert bool(outcome.with_code("JUDGE_STRESS_BOX_UNMATCHED")) == (source is None)
+
+
+def test_a_composite_the_primary_mapping_inverts_has_no_box(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stress_panels(monkeypatch)
+    plain = panel("any", None, None)(tmp_path / "plain")
+    assert _stress(plain).accuracy_source == "composite:panel"
+
+    # panel() writes the primary mapping as [true] / [false]; flip it in the written plan.
+    original = run_analysis
+
+    def flipped(inputs: Inputs, directory: Path) -> Outcome:
+        inputs.plan["inputs"]["score"]["mapping"] = {
+            "failure_values": [False],
+            "safe_values": [True],
+        }
+        return original(inputs, directory)
+
+    monkeypatch.setattr("tests.diagnostic_codes.judge_analysis_cases.run_analysis", flipped)
+    outcome = panel("any", None, None)(tmp_path / "flipped")
+    stress = _stress(outcome)
+    assert (stress.accuracy_source, stress.stressed_status) == (None, None)
+    (found,) = outcome.with_code("JUDGE_STRESS_BOX_UNMATCHED")
+    assert "composite 'panel'" in found.message

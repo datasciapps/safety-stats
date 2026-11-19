@@ -1283,6 +1283,25 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
     ),
     CodeEntry(
+        code="JUDGE_STRESS_BOX_UNMATCHED",
+        severities=("WARNING",),
+        source="plan",
+        effect="withheld",
+        assumption=(
+            "The declared accuracy box the judge-error stress uses describes the primary "
+            "verdict: one judge with declared accuracy reads the primary score with the primary "
+            "mapping, or the primary mapping reads a composite's verdict as it is."
+        ),
+        consequence=(
+            "The judge-error stress reports its tipping lines but no verdict over a declared box."
+        ),
+        remedy=(
+            "Declare accuracy on exactly one judge whose inputs.judges[].score has the primary "
+            "score's name and mapping, or map the primary composite's true verdict to failure "
+            "and its false verdict to safe."
+        ),
+    ),
+    CodeEntry(
         code="JUDGE_VALIDATION_INVALID",
         severities=("ERROR",),
         source="judge_labels",

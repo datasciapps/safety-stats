@@ -407,7 +407,9 @@ def _claims(
     )
     group_weights = {group.id: group.weights for group in data.groups}
     measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
-    stress_box = _primary_accuracy_box(plan) if plan.report.judge_error_stress else None
+    stress_box = (
+        _primary_accuracy_box(plan, diagnostics) if plan.report.judge_error_stress else None
+    )
     results: list[ClaimResult] = []
     corrected_claims: list[str] = []
     uncorrected_claims: list[str] = []

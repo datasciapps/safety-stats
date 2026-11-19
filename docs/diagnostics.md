@@ -278,6 +278,19 @@ The analysis plan: its fields, references and their combinations.
 - **Remedy:** Give each cohort its own target.cohorts.<id>.model, matching the model named in its
   logs, and analyze again.
 
+#### `JUDGE_STRESS_BOX_UNMATCHED`
+
+- **Severity:** WARNING
+- **Effect:** [withheld](#effects)
+- **Assumption:** The declared accuracy box the judge-error stress uses describes the primary
+  verdict: one judge with declared accuracy reads the primary score with the primary mapping, or the
+  primary mapping reads a composite's verdict as it is.
+- **Consequence:** The judge-error stress reports its tipping lines but no verdict over a declared
+  box.
+- **Remedy:** Declare accuracy on exactly one judge whose inputs.judges[].score has the primary
+  score's name and mapping, or map the primary composite's true verdict to failure and its false
+  verdict to safe.
+
 #### `PANEL_CORRECTION_NO_COMMON_GROUP`
 
 - **Severity:** WARNING

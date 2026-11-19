@@ -885,10 +885,15 @@ sensitivity at perfect specificity.
 
 **Declared box.** When the primary outcome's judge declares `accuracy` ranges, the record also
 gives the true-risk bounds over that box, the verdict they give (`stressed_status`), and
-whether it matches the claim's status (`robust`). That judge is either a judge in
-`inputs.judges` whose score is the primary score, or an `any` or `all` composite whose members
-all declare ranges, with its box [derived as above](#deriving-a-panels-accuracy-box).
-`accuracy_source` names it, as `judge:<id>` or `composite:<id>`. Both inversions are separately
+whether it matches the claim's status (`robust`). That judge is either the one judge in
+`inputs.judges` with declared ranges whose score has the primary score's name and classifies its
+values as the primary mapping does, or an `any` or `all` composite whose members all declare
+ranges, with its box [derived as above](#deriving-a-panels-accuracy-box), and whose verdict the
+primary mapping reads as it is (true as failure, false as safe). `accuracy_source` names it, as
+`judge:<id>` or `composite:<id>`. A box that may describe another verdict is not applied: a
+judge that reads the primary score under another mapping, two or more judges that read it alike,
+whose boxes need not agree, or a primary mapping that inverts the composite's verdict. The
+warning `JUDGE_STRESS_BOX_UNMATCHED` then says why. Both inversions are separately
 monotone in \(Se\) and \(FPR\), so the bounds over the box are attained at its vertices. For a
 composite they are the `judge_corrected_panel_derived` interval of the claim's row. When the
 box admits \(Se+Sp\le1\), or no accuracy in it can produce the observed bounds, true risk is not
