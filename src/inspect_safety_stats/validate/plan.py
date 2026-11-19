@@ -642,12 +642,18 @@ def anytime_bound_problems(plan: AnalysisPlan) -> list[Diagnostic]:
             if calibration.groups is not None and group.id not in calibration.groups
         ]
         if covered:
+            # A validated calibration decides every claim on the corrected risk, also on the
+            # groups it leaves out, where a claim is INCONCLUSIVE; a bound there certifies
+            # nothing (analysis.anytime._withheld), so it is not offered as the way out.
             problems.append(
                 f"the {calibration.mode} judge calibration covers the bounded groups "
                 f"{covered!r}, and the bounds describe the judge's reported risk, not the "
                 "corrected risk the calibration is about; "
                 + (
-                    f"bound only groups it leaves out ({outside!r}) with "
+                    "remove outputs.anytime_bounds, since a validated calibration decides "
+                    "every claim on corrected risk"
+                    if calibration.mode == "validated"
+                    else f"bound only groups it leaves out ({outside!r}) with "
                     "outputs.anytime_bounds.groups"
                     if outside
                     else "remove outputs.anytime_bounds, since the calibration covers every "

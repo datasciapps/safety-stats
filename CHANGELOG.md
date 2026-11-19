@@ -577,10 +577,11 @@ described in their pull requests.
   run whose recorded order lists every prompt of the group exactly once and each sample joins
   one prompt. `analyze` adds an `ANYTIME_UPPER_BOUND` diagnostic, marked experimental, with the
   bound and, for each weighted-mean claim, whether it lies at or below the claim's
-  `acceptable_upper`, or, under exploratory intent or invalid integrity, where no claim can
-  pass, `null` with the reason. Claims and the decision keep their fixed-horizon status. The
-  bound is on the judge-reported failure probability, so a plan whose judge calibration, in any
-  mode, covers a bounded group is refused with `PLAN_ANYTIME_BOUNDS_INVALID`. Plans without the
+  `acceptable_upper`, or, under exploratory intent, invalid integrity or a validated judge
+  calibration, where no claim can pass on judge-reported risk, `null` with the reason. Claims and
+  the decision keep their fixed-horizon status. The bound is on the judge-reported failure
+  probability, so a plan whose judge calibration, in any mode, covers a bounded group is refused
+  with `PLAN_ANYTIME_BOUNDS_INVALID`. Plans without the
   section keep their hash and outputs. `research/optstop_coverage.py` simulates optstop's
   stopping rule: the bound misses at most alpha, while Clopper-Pearson at the stop misses up to
   0.208 at a nominal 0.05. See

@@ -756,7 +756,9 @@ def test_a_bound_on_the_judges_risk_never_certifies_a_claim_on_true_risk(
         (VALIDATED, "", "remove outputs.anytime_bounds"),
         (ASSUMED, "", "remove outputs.anytime_bounds"),
         (TRANSPORTED, "", "remove outputs.anytime_bounds"),
-        (VALIDATED + "    groups: [also]\n", "", "bound only groups it leaves out (['all'])"),
+        # Bounding the groups a validated calibration leaves out certifies nothing, since every
+        # claim is decided on corrected risk, so it is not the remedy offered.
+        (VALIDATED + "    groups: [also]\n", "", "a validated calibration decides every claim"),
         (ASSUMED + "    groups: [all]\n", "    groups: [all]\n", "bound only groups"),
     ],
     ids=["validated", "assumed", "transported", "validated-on-other-groups", "assumed-on-it"],
@@ -811,3 +813,46 @@ def test_an_order_inspect_does_not_write_is_refused(
     ]
     assert all(message in item.message for item in found)
     assert not _found(report, "ANYTIME_UPPER_BOUND")
+
+
+def test_a_validated_calibration_on_other_groups_leaves_the_bound_certifying_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The run of the test above, with the calibration scoped to the other group and the bound
+    on the group it leaves out. True risk is 0.10 and judge-reported risk 0.03. The claim on
+    that group has no certifying correction, so it is INCONCLUSIVE; the bound, near 0.04 and at
+    or below its acceptable_upper of 0.06, used to report it as certified."""
+
+    _read_frames(
+        monkeypatch,
+        _judge_frames(lambda epoch: epoch <= 3),
+        [str(item) for item in np.random.default_rng(7).permutation(JUDGE_PROMPTS)],
+    )
+    uncalibrated = analyze(plan=load_plan(_judge_plan(tmp_path / "plain")), logs="ignored")
+    labels = tmp_path / "judged" / "labels.csv"
+    labels.parent.mkdir()
+    labels.write_text(
+        "observation_id,human_label\n"
+        + "".join(
+            f"{row.observation_id},{'unsafe' if row.repeat <= 10 else 'safe'}\n"
+            for row in uncalibrated._observations
+        ),
+        encoding="utf-8",
+    )
+    plan = load_plan(
+        _judge_plan(
+            tmp_path / "judged", VALIDATED + "    groups: [also]\n", "    groups: [all]\n"
+        )
+    )
+    assert not _plan_refusals(plan)
+
+    report = analyze(plan=plan, logs="ignored")
+
+    (claim,) = report.claims
+    assert claim.status == "INCONCLUSIVE"
+    (bound,) = _found(report, "ANYTIME_UPPER_BOUND")
+    assert bound.details["group"] == "all" and bound.details["upper"] <= 0.06
+    assert [item["certified"] for item in bound.details["claims"]] == [None]
+    why = bound.details["certification_withheld"]
+    assert why.startswith("the validated judge calibration decides every claim")
+    assert f"it certifies no claim, because {why}" in bound.message
