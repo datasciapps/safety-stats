@@ -210,9 +210,13 @@ as system-level safe outcomes.
 
 ## Safety scope
 
-Every report states:
+Every report of a fixed design states:
 
 > Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions.
+
+A [sampled design](docs/design-based-sampling.md) states instead that results apply to the
+declared item frame, from which the evaluated items were drawn with the recorded inclusion
+probabilities, and not to prompts outside the frame.
 
 Every bound also assumes that the evaluated model is not sandbagging, that is, not
 strategically underperforming on the evaluation. The statistics here cannot detect that, and harms rarer than the rollout budget can reach remain unmeasured. See

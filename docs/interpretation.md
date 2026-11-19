@@ -54,6 +54,16 @@ The range shows how far the verdict is from changing. It does not license choosi
 after seeing it: the verdict and its error rate hold only at the thresholds the plan declared
 in advance.
 
+### Verdicts under sensitivity profiles
+
+A claim's status is decided under its evidence's primary independence profile. When the plan
+declares sensitivity profiles, `profile_verdicts` in `report.json`, a table in `report.md` and
+the HTML claim card also give the verdict each sensitivity profile's interval would reach at
+the same thresholds. These verdicts never change the claim's status or the decision. A
+`PASS` that is `INCONCLUSIVE` under a coarser profile, such as `prompt`, rests on the primary
+profile's independence assumption. See
+[Verdicts by profile](independence-profiles.md#verdicts-by-profile).
+
 ## Integrity states
 
 `valid` means every required outcome was classified and no structural integrity error occurred.

@@ -178,6 +178,22 @@ def test_frame_mean_is_estimated_by_horvitz_thompson(
     assert mean.lower is not None and mean.upper is not None and mean.lower < mean.upper
 
 
+def test_the_report_scope_names_the_frame_rather_than_a_fixed_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path, evals, samples = _write_frame(tmp_path)
+    _patch(monkeypatch, evals, samples)
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    # The intervals are about the whole frame, so the scope statement must not say the
+    # results apply to a fixed evaluation set.
+    assert report.scope["design"] == "sampled"
+    assert "fixed evaluation set" not in report.scope["disclaimer"]
+    assert "declared item frame" in report.scope["disclaimer"]
+    assert "inclusion probabilities" in report.scope["randomness"]
+
+
 def test_unsampled_hierarchy_nodes_warn_rather_than_invalidate(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

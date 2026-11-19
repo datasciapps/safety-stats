@@ -260,6 +260,24 @@ class ComparisonSetResult(ResultModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class ClaimProfileVerdict(ResultModel):
+    """A claim's verdict under one declared independence profile.
+
+    The primary profile's row repeats the claim's own status. A sensitivity row decides the
+    same thresholds on that profile's interval of the same method; it is shown for
+    robustness and never replaces the primary verdict.
+    """
+
+    independence_profile: str
+    role: Literal["primary", "sensitivity"]
+    status: Decision
+    interval_id: str
+    lower: float | None = None
+    upper: float | None = None
+    independent_block_count: int | None = None
+    effective_sample_size: float | None = None
+
+
 class JudgeErrorStressResult(ResultModel):
     """How good the judge must be for a threshold claim's verdict to hold on true risk.
 
@@ -330,6 +348,7 @@ class ClaimResult(ResultModel):
     evidence_refs: list[str] = Field(default_factory=list)
     reasons: list[str] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    profile_verdicts: list[ClaimProfileVerdict] = Field(default_factory=list)
     # Present only when the plan opts in with report.judge_error_stress.
     judge_error_stress: JudgeErrorStressResult | None = None
 

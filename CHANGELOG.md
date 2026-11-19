@@ -148,7 +148,27 @@ described in their pull requests.
   `plan zero-failure`, `schema plan` and `schema report` showed an empty line in `--help`; each
   now has a one-line description.
 
+- **Claim verdicts under every independence profile.** Each claim in `report.json` gains
+  `profile_verdicts`: one row for its evidence's primary profile, which repeats the claim's
+  status and bounds, and one row for each sensitivity profile, which decides the same
+  thresholds on that profile's interval of the same method. A row carries the profile, its
+  role, the status, the interval id, the bounds, the independent block count and the effective
+  sample size. `report.md` adds a "Verdicts by independence profile" table under the mandatory
+  claims when a claim has a sensitivity profile, and the HTML claim card lists the verdicts.
+  The claim's status and the decision stay the primary profile's; a sensitivity verdict is
+  shown, never selected. Claims decided on a judge correction or the noisy-valid test have no
+  per-profile rows, and say so when their evidence has sensitivity profiles. Reports whose
+  plans declare no sensitivity profile gain only the primary row. See
+  [Verdicts by profile](docs/independence-profiles.md#verdicts-by-profile).
+
 ### Changed
+
+- **A sampled design's report states the frame as its scope (changes report text).** Every
+  report stated the fixed-design scope, `design: fixed` and "Results apply to the declared
+  fixed evaluation set", even under `design.type: sampled`, whose intervals are about the
+  whole declared item frame. A sampled design's `scope` now has `design: sampled`, names the
+  frame and the recorded inclusion probabilities as the randomness, and says that results apply
+  to the frame and not to prompts outside it. Fixed designs keep their statement byte for byte.
 
 - **Generative judge corrections certify less, and keep the worst case of unscored units
   (#109, changes results).** A `validated` judge calibration pools its human labels over the
