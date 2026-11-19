@@ -13,7 +13,7 @@ import pandas as pd
 import pytest
 
 from inspect_safety_stats import analyze, load_plan, render_visualization, write_visualization
-from inspect_safety_stats.analysis.claims import verdicts_by_profile
+from inspect_safety_stats.analysis.claims import _claims, verdicts_by_profile
 from inspect_safety_stats.analysis.core import scorer_configurations
 from inspect_safety_stats.analysis.estimates import alpha_by_prompt, prompt_blocked
 from inspect_safety_stats.config.loader import canonical_plan_hash
@@ -30,6 +30,7 @@ from inspect_safety_stats.schema.reports import (
     GroupRiskResult,
     RiskIntervalResult,
     SafetyReport,
+    VerdictRange,
 )
 from tests.claims_export import round_trip_differences
 from tests.report_rendering import rendering_differences
@@ -1613,6 +1614,45 @@ def test_exploratory_claims_have_no_descriptive_status_without_valid_integrity(
     assert claim.status == "INCONCLUSIVE"
     assert claim.descriptive_status is None
     assert not any("Descriptive" in reason for reason in claim.reasons)
+    assert claim.verdict_range == VerdictRange()
+
+
+@pytest.mark.parametrize("intent", ["confirmatory", "exploratory"])
+def test_bounds_that_invalid_integrity_leaves_standing_decide_nothing_at_any_threshold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, intent: str
+) -> None:
+    """An error about another claim makes integrity invalid but withholds no prompt's bounds."""
+    plan = load_plan(_write_inputs(tmp_path))
+    plan.analysis.intent = intent
+    # A noisy-but-valid claim without a validated calibration is a PLAN_INVALID_CLAIM error
+    # scoped to that claim.
+    plan.claims.append(
+        plan.claims[0].model_copy(update={"id": "needs_labels", "method": "noisy_valid_test"})
+    )
+    _patch_frames(monkeypatch, _frames())
+
+    report = analyze(plan=plan, logs="ignored")
+
+    assert report.integrity.status == "invalid"
+    assert {item.code for item in report.integrity.diagnostics if item.severity == "ERROR"} == {
+        "PLAN_INVALID_CLAIM"
+    }
+    claims = {claim.claim_id: claim for claim in report.claims}
+    claim = claims["mean_safe"]
+    assert claim.lower is not None and claim.upper is not None
+    assert claim.status == "INCONCLUSIVE"
+    assert claim.descriptive_status is None
+    assert claim.reasons[0] == (
+        "Bounds were computed but are ineligible for certification because data integrity is "
+        "invalid."
+        if intent == "confirmatory"
+        else "Bounds were computed but this post hoc exploratory analysis is not eligible for "
+        "certification."
+    )
+    assert claim.verdict_range == VerdictRange()
+    # The noisy-but-valid claim is not tested on bounds it may not use either.
+    assert claims["needs_labels"].method == "noisy_valid_certification_test"
+    assert claims["needs_labels"].verdict_range == VerdictRange()
 
 
 def test_visualization_escapes_inline_report_data(
@@ -2756,6 +2796,38 @@ def test_a_claim_with_an_undeclared_family_is_reported_not_crashed(
     assert claim.alpha is None
     assert claim.multiplicity_family == "undeclared"
     assert any("not declared" in reason for reason in claim.reasons)
+    assert claim.verdict_range == VerdictRange()
+
+
+def test_a_claim_without_an_error_budget_has_no_verdict_range_even_on_certifying_bounds(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The claims stage itself never decides such a claim, whatever its bounds.
+
+    Through ``analyze`` the undeclared family is a PLAN_UNKNOWN_REFERENCE error, which
+    withholds every prompt's bounds, so this hands the stage certifying bounds directly.
+    """
+    plan_path = _write_inputs(tmp_path)
+    _patch_frames(monkeypatch, _frames())
+    valid = analyze(plan=plan_path, logs="ignored")
+    (decided,) = valid.claims
+    assert decided.status == "PASS"
+    plan = load_plan(plan_path)
+    plan.claims[0] = plan.claims[0].model_copy(update={"family": "undeclared"})
+
+    (claim,) = _claims(
+        plan,
+        NormalizedData([], pd.DataFrame(), [], [], [], {}),
+        valid.group_risks,
+        valid.comparisons,
+        True,
+        [],
+    )
+
+    assert (claim.lower, claim.upper) == (decided.lower, decided.upper)
+    assert claim.status == "INCONCLUSIVE"
+    assert claim.alpha is None
+    assert claim.verdict_range == VerdictRange()
 
 
 def test_a_comparison_set_with_an_undeclared_family_is_reported_not_crashed(
@@ -3776,6 +3848,42 @@ def test_noisy_valid_claim_is_decided_from_truth_strata(
     assert claim.status == "INCONCLUSIVE"
 
 
+def test_a_noisy_valid_claim_whose_thresholds_the_test_cannot_take_has_no_known_range(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A plan allows thresholds in [-1, 1], the noisy-but-valid test only those in [0, 1].
+
+    The test does not run, so the thresholds at which it would decide are unknown, which is
+    not the same as INCONCLUSIVE at every threshold.
+    """
+    _label_everything(tmp_path, monkeypatch)
+    plan_path = _random_sample_validated_plan(
+        tmp_path, claim_method="noisy_valid_test", sampling="simple_random"
+    )
+    text = plan_path.read_text(encoding="utf-8")
+    assert text.count("    acceptable_upper: 0.30\n") == 1
+    plan_path.write_text(
+        text.replace("    acceptable_upper: 0.30\n", "    acceptable_upper: -0.10\n"),
+        encoding="utf-8",
+    )
+    plan = load_plan(plan_path)
+    plan.report.include_decisions = True
+
+    report = analyze(plan=plan, logs="ignored")
+
+    assert report.integrity.status == "valid"
+    (claim,) = report.claims
+    assert claim.method == "noisy_valid_certification_test"
+    assert claim.status == "INCONCLUSIVE"
+    assert claim.reasons == [
+        "acceptable_upper must be below unacceptable_lower, both in [0, 1]"
+    ]
+    assert claim.verdict_range is None
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    (row,) = [line for line in markdown.splitlines() if line.startswith(f"| {claim.title} |")]
+    assert row.endswith("| -0.100000 | 0.600000 | — |")
+
+
 def test_random_sample_labels_add_lang_reiczigel_limits_beside_the_exact_box(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -3870,6 +3978,33 @@ def test_missing_lang_reiczigel_limits_are_reported_not_skipped(
     ]
     assert diagnostic.severity == "INFO"
     assert "no labelled rollout is truly unsafe" in diagnostic.message
+
+
+def test_a_noisy_valid_claim_without_both_true_classes_is_inconclusive_at_every_threshold(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _label_everything(tmp_path, monkeypatch)
+    labels = tmp_path / "labels.csv"
+    kept = [
+        line
+        for line in labels.read_text(encoding="utf-8").splitlines()
+        if not line.endswith(",unsafe")
+    ]
+    labels.write_text("\n".join(kept) + "\n", encoding="utf-8")
+    plan_path = _random_sample_validated_plan(
+        tmp_path, claim_method="noisy_valid_test", sampling="simple_random"
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert report.integrity.status == "valid"
+    (claim,) = report.claims
+    assert claim.status == "INCONCLUSIVE"
+    assert claim.reasons == [
+        "The noisy-but-valid test requires a validated judge calibration from a simple random "
+        "sample of labelled rollouts with both true classes represented."
+    ]
+    assert claim.verdict_range == VerdictRange()
 
 
 def test_noisy_valid_claim_requires_a_random_sample_calibration(tmp_path: Path) -> None:
@@ -4200,6 +4335,9 @@ def test_a_refused_judge_calibration_never_lets_a_claim_pass_on_judge_reported_r
     assert claim.status == "INCONCLUSIVE"
     assert report.decision != "PASS"
     assert any("validated judge calibration" in reason for reason in claim.reasons)
+    # Nor would it pass at any other threshold: judge-reported bounds decide nothing here.
+    assert claim.lower is not None and claim.upper is not None
+    assert claim.verdict_range == VerdictRange()
 
 
 def test_a_judge_correction_never_certifies_more_than_its_base_row(
