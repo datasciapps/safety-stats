@@ -2556,9 +2556,12 @@ This asymmetric roll-up reflects the logic of a safety case: all required claims
 ### 10.7 Data-quality gates
 
 The report uses three integrity states. `valid` means all required outcomes are classified;
-`degraded` means attempted outcomes are unclassified but conservative completion bounds cover
-them; `invalid` means a structural or strict-policy error prevents certification. A degraded run
-may certify only if the adverse completion of every unknown outcome supports the claim.
+`degraded` means the results rest on something the inputs could not confirm: either attempted
+outcomes are unclassified but conservative completion bounds cover them, or a safeguard could
+not be checked, or a tail measure rests on one rollout per prompt, and the bounds are unchanged
+([integrity states](interpretation.md#integrity-states)); `invalid` means a structural or
+strict-policy error prevents certification. A degraded run may certify only if the adverse
+completion of every unknown outcome supports the claim.
 
 The default outcome must be `INCONCLUSIVE`, not pass, when any of the following is unresolved and
 not covered by a valid conservative construction:

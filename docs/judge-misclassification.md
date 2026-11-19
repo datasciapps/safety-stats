@@ -1100,7 +1100,9 @@ specificity. A false negative rate above 0.4% is enough to put the true-risk upp
 the threshold.
 
 **Unclassified rollouts.** The bounds complete rollouts the judge never classified as
-judge-safe at the lower end and judge-unsafe at the upper, and the inversion treats each
+judge-safe at the lower end and judge-unsafe at the upper (under `inputs.score.missing:
+exclude` or `inputs.score.errors: exclude` such rollouts are left out of the bounds instead,
+and the report says so), and the inversion treats each
 completion as a verdict. That is conservative on both sides. A rollout completed as
 judge-unsafe adds \((1-FPR)/(Se-FPR)\ge1\) of its weight to the upper bound, at least the 1 it
 can add to true risk. One completed as judge-safe adds \(-FPR/(Se-FPR)\le0\) to the lower

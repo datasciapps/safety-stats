@@ -156,11 +156,18 @@ type and how many rollouts have it.
 `missing` accepts `conservative_bounds`, `block`, `count_as_failure`, or `exclude`.
 `conservative_bounds` is the default: integrity becomes `degraded`, and exact bounds cover both
 the all-safe and all-failure completions of every attempted but unclassified rollout.
+`count_as_failure` counts each such rollout as a failure. `exclude` leaves it out of the
+bounds, which then cover only the classified rollouts and are biased if scores are missing for
+a reason linked to the outcome; integrity is not degraded, and no diagnostic reports the
+excluded rollouts, though `report-full.md` and `report.html` say that the policy leaves them
+out.
 
 `errors` additionally accepts `end_to_end`, which is the default. It recognizes only explicit
 target-side provider policy blocks with no delivered content as safe for the end-to-end estimand.
 Post-generation, grader, network, quota, timeout, and unrecognized errors remain unclassified and
 use conservative bounds. `block` retains the original strict behavior and makes integrity invalid.
+`count_as_failure` and `exclude` treat a rollout with a sample error as `missing` treats one
+without a score.
 
 ```yaml
 inputs:
