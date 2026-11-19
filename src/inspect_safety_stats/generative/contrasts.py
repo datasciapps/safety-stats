@@ -413,7 +413,8 @@ def estimate_slice_family(
 ) -> SliceFamilyResult:
     """Bound every declared slice and arm contrast simultaneously at ``1 - alpha``.
 
-    Coverage is per direction under ``two_sided``, as for the simultaneous tree. A member
+    Under ``two_sided`` each endpoint gets half of its member's level, so every lower and
+    upper bound covers jointly at ``1 - alpha``, and each direction at ``1 - alpha / 2``. A member
     that cannot be estimated -- an unknown value, no draw in an arm, no shared seed -- is an
     error, never a silent omission, because dropping it would change the family the error
     budget was spent on. :func:`check_slice_family` raises the same error before generation.

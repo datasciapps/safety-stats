@@ -285,7 +285,7 @@ def test_the_family_covers_simultaneously(tmp_path: Path, method: str, confounde
     ]
     rng = np.random.default_rng(7)
     alpha, repetitions = 0.10, 300
-    upper_misses = lower_misses = 0
+    upper_misses = lower_misses = misses = 0
     for repetition in range(repetitions):
         drawn = redrawn(taxonomy, design, repetition)
         family = estimate_slice_family(
@@ -300,14 +300,18 @@ def test_the_family_covers_simultaneously(tmp_path: Path, method: str, confounde
         ]
         upper_misses += any(upper < truth for _, upper, truth in pairs)
         lower_misses += any(lower > truth for lower, _, truth in pairs)
-    # The family covers each direction at 1 - alpha: every upper bound together, and every
-    # lower bound together. A binomial allowance of three standard errors keeps the test from
-    # failing by chance. Two random arms make the union bound of a contrast far from tight,
-    # so this test cannot see an arm given too much alpha; the exact-value tests above pin
-    # the levels, and the next test bounds a contrast whose union bound is tight.
+        misses += any(upper < truth or lower > truth for lower, upper, truth in pairs)
+    # Each endpoint gets half of its member's level, so the family covers every lower and upper
+    # bound jointly at 1 - alpha, and each direction at 1 - alpha / 2. A binomial allowance of
+    # three standard errors keeps the test from failing by chance. Two random arms make the
+    # union bound of a contrast far from tight, so this test cannot see an arm given too much
+    # alpha; the exact-value tests above pin the levels, and the next test bounds a contrast
+    # whose union bound is tight.
     allowance = 3 * np.sqrt(alpha * (1 - alpha) / repetitions)
-    assert upper_misses / repetitions <= alpha + allowance
-    assert lower_misses / repetitions <= alpha + allowance
+    assert misses / repetitions <= alpha + allowance
+    half = 3 * np.sqrt(alpha / 2 * (1 - alpha / 2) / repetitions)
+    assert upper_misses / repetitions <= alpha / 2 + half
+    assert lower_misses / repetitions <= alpha / 2 + half
 
 
 @pytest.mark.parametrize(

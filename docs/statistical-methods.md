@@ -2194,8 +2194,9 @@ When members read shared units -- slices under proportional stratified sampling,
 Horvitz--Thompson sum of each slice reads every unit of its strata -- each is a frontier of its
 own. Every contrast is a frontier of its own. Frontiers share $\alpha$ by Bonferroni. Under
 `one_sided_upper` every member's upper bound covers simultaneously with probability at least
-$1-\alpha$; under `two_sided` each endpoint receives half of its member's calibrated level, and
-the guarantee holds for each direction.
+$1-\alpha$; under `two_sided` each endpoint receives half of its member's calibrated level, so
+every lower and upper bound covers jointly with probability at least $1-\alpha$, and each
+direction at $1-\alpha/2$.
 
 **Assumptions and limits.** Sampling units are independent, which path selection and rewrite
 generation deliver; dependence between rollouts within a unit is unrestricted. The family must
