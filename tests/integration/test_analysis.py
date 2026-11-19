@@ -1169,11 +1169,14 @@ def _two_cohort_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
     )
 
 
-def _comparison_judge_plan(tmp_path: Path, *, method: str, calibrated: bool) -> Path:
+def _comparison_judge_plan(
+    tmp_path: Path, *, method: str, calibrated: bool, assumed: bool = False
+) -> Path:
     """Two-cohort comparison plan, with or without the judge calibration block.
 
     Labels are keyed by observation_id, so they must be generated from a run over the
-    same cohorts and logs. The uncalibrated variant produces that ledger.
+    same cohorts and logs. The uncalibrated variant produces that ledger. ``assumed``
+    declares two scenarios instead of a validated calibration.
     """
     plan_path = _write_inputs(tmp_path)
     text = plan_path.read_text(encoding="utf-8")
@@ -1186,7 +1189,21 @@ def _comparison_judge_plan(tmp_path: Path, *, method: str, calibrated: bool) -> 
         "groups:\n",
         1,
     )
-    if calibrated:
+    if assumed:
+        text = text.replace(
+            "design:\n",
+            "  judge_calibration:\n"
+            "    mode: assumed\n"
+            "    primary: declared\n"
+            "    scenarios:\n"
+            "      - {id: declared, rho_1: {lower: 0.9, upper: 1.0}, "
+            "rho_0: {lower: 0.0, upper: 0.02}}\n"
+            "      - {id: pessimistic, rho_1: {lower: 0.7, upper: 1.0}, "
+            "rho_0: {lower: 0.0, upper: 0.05}}\n"
+            "design:\n",
+            1,
+        )
+    elif calibrated:
         text = text.replace(
             "design:\n",
             "  judge_calibration:\n"
@@ -1305,6 +1322,104 @@ def test_contrast_only_comparisons_cannot_be_corrected(
     # Group risks are still corrected; only the contrast is not.
     mean = next(item for item in report.group_risks if item.measure_id == "mean")
     assert any(item.interval_id == "judge_corrected_validated" for item in mean.intervals)
+
+
+def test_two_arm_comparisons_are_judge_corrected_per_assumed_scenario(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Each declared scenario corrects both arms, as the group risks are corrected."""
+    from inspect_safety_stats.stats.misclassification import JudgeCalibration, correct_judge_risk
+
+    plan_path = _comparison_judge_plan(
+        tmp_path, method="weighted_kl_chernoff", calibrated=False, assumed=True
+    )
+    _patch_two_cohort_frames(monkeypatch)
+
+    report = analyze(plan=load_plan(plan_path), logs="ignored")
+
+    row = next(item for item in report.comparisons if item.level is None)
+    primary = next(item for item in row.intervals if item.role == "primary")
+    boxes = {
+        "declared": JudgeCalibration("declared", 0.9, 1.0, 0.0, 0.02),
+        "pessimistic": JudgeCalibration("pessimistic", 0.7, 1.0, 0.0, 0.05),
+    }
+    for scenario, box in boxes.items():
+        corrected = next(
+            item for item in row.intervals if item.interval_id == f"judge_corrected_{scenario}"
+        )
+        assert corrected.method == "assumed_judge_misclassification_correction"
+        assert corrected.eligibility == "diagnostic"
+        assert corrected.role == "sensitivity"
+        assert corrected.varied_assumption == "judge_error"
+        assert corrected.family_alpha is None and corrected.simultaneous_coverage is None
+        assert (corrected.raw_lower, corrected.raw_upper) == (primary.lower, primary.upper)
+        # Both arms take the declared box, each from its own judge-system arm bounds.
+        for arm, estimate in (
+            ("candidate", row.candidate_estimate),
+            ("baseline", row.baseline_estimate),
+        ):
+            expected = correct_judge_risk(
+                observed_lower=getattr(primary, f"{arm}_lower"),
+                observed_upper=getattr(primary, f"{arm}_upper"),
+                observed_estimate=estimate,
+                calibration=box,
+            )
+            assert getattr(corrected, f"{arm}_lower") == pytest.approx(expected.lower, abs=1e-12)
+            assert getattr(corrected, f"{arm}_upper") == pytest.approx(expected.upper, abs=1e-12)
+        # The effect is recombined from the two corrected arms, not rescaled from the contrast.
+        assert corrected.candidate_lower is not None and corrected.baseline_upper is not None
+        assert corrected.lower == pytest.approx(
+            max(-1.0, corrected.candidate_lower - corrected.baseline_upper), abs=1e-12
+        )
+        assert corrected.upper == pytest.approx(
+            min(1.0, corrected.candidate_upper - corrected.baseline_lower), abs=1e-12
+        )
+        non_primary = "Non-primary judge-calibration scenario; reported for sensitivity only."
+        assert (non_primary in corrected.warnings) == (scenario != "declared")
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON" not in codes
+    # Declared accuracies never move a comparison claim's evidence either.
+    assert all(item.eligibility != "certifying" for item in row.intervals if item.role != "primary")
+
+
+def test_contrast_only_comparisons_say_the_assumed_correction_is_unavailable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Corrected group risks beside a raw contrast are reported, not left silent."""
+    plan_path = _comparison_judge_plan(
+        tmp_path, method="weighted_empirical_bernstein", calibrated=False, assumed=True
+    )
+    _patch_two_cohort_frames(monkeypatch)
+
+    report = analyze(plan=load_plan(plan_path), logs="ignored")
+
+    row = next(item for item in report.comparisons if item.level is None)
+    assert not any(item.interval_id.startswith("judge_corrected_") for item in row.intervals)
+    unavailable = [
+        item
+        for item in report.integrity.diagnostics
+        if item.code == "JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON"
+    ]
+    assert len(unavailable) == 1
+    assert unavailable[0].severity == "WARNING"
+    assert row.result_id in unavailable[0].details["result_ids"]
+    mean = next(
+        item
+        for item in report.group_risks
+        if item.measure_id == "mean" and item.cohort_id == "candidate"
+    )
+    assert any(item.interval_id == "judge_corrected_declared" for item in mean.intervals)
+
+
+def _patch_two_cohort_frames(monkeypatch: pytest.MonkeyPatch) -> None:
+    eval_frame, sample_frame = _two_cohort_frames()
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
 
 
 def test_decision_presentation_is_opt_in(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

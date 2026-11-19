@@ -35,8 +35,14 @@ def _judge_corrected_comparison_interval(
     baseline_share: float = 0.0,
     tail: bool = False,
     scoped_group: str | None = None,
+    primary_scenario: str | None = None,
+    scoped_groups: list[str] | None = None,
 ) -> RiskIntervalResult | None:
     """Correct a comparison by correcting each arm, then recombining.
+
+    A validated calibration gives each arm its own cohort's measured box. An assumed
+    scenario gives both arms the same declared box, each arm free within it independently
+    of the other, and the result is a sensitivity analysis like every assumed correction.
 
     rho is prevalence-dependent, so the two arms carry different calibrations and the
     effect cannot be corrected from the contrast alone: rescaling a difference by a
@@ -78,6 +84,18 @@ def _judge_corrected_comparison_interval(
         (candidate.lower, candidate.upper),
         (baseline.lower, baseline.upper),
     )
+    if candidate_calibration.source != "validated":
+        return _assumed_comparison_interval(
+            result=result,
+            primary=primary,
+            calibration=candidate_calibration,
+            bounds=(lower, upper),
+            arms=(candidate.lower, candidate.upper, baseline.lower, baseline.upper),
+            candidate_share=candidate_share,
+            baseline_share=baseline_share,
+            primary_scenario=primary_scenario,
+            scoped_groups=scoped_groups,
+        )
     spent = sum(
         item.alpha or 0.0 for item in (candidate_calibration, baseline_calibration)
     )
@@ -163,19 +181,98 @@ def _judge_corrected_comparison_interval(
     )
 
 
+def _assumed_comparison_interval(
+    *,
+    result: ComparisonResult,
+    primary: RiskIntervalResult,
+    calibration: JudgeCalibration,
+    bounds: tuple[float | None, float | None],
+    arms: tuple[float, float, float, float],
+    candidate_share: float,
+    baseline_share: float,
+    primary_scenario: str | None,
+    scoped_groups: list[str] | None,
+) -> RiskIntervalResult:
+    """One declared scenario's correction of a comparison, applied to both arms."""
+
+    warnings: list[str] = []
+    if primary_scenario is not None and calibration.scenario_id != primary_scenario:
+        warnings.append("Non-primary judge-calibration scenario; reported for sensitivity only.")
+    return RiskIntervalResult(
+        interval_id=f"judge_corrected_{calibration.scenario_id}",
+        lower=bounds[0],
+        upper=bounds[1],
+        method="assumed_judge_misclassification_correction",
+        role="sensitivity",
+        varied_assumption="judge_error",
+        coverage_scope=(
+            f"{primary.coverage_scope}_judge_corrected"
+            if primary.coverage_scope
+            else "judge_corrected"
+        ),
+        raw_lower=primary.lower,
+        raw_upper=primary.upper,
+        candidate_lower=arms[0],
+        candidate_upper=arms[1],
+        baseline_lower=arms[2],
+        baseline_upper=arms[3],
+        calibration_method="assumed_judge_calibration",
+        independence_profile=primary.independence_profile,
+        assumptions=[
+            "The reported effect is a contrast of true failure risks, not of "
+            "judge-reported risks.",
+            f"On both arms P(truly unsafe | judge said unsafe) lies in "
+            f"[{calibration.rho_1_lower:.6g}, {calibration.rho_1_upper:.6g}] and "
+            f"P(truly unsafe | judge said safe) in "
+            f"[{calibration.rho_0_lower:.6g}, {calibration.rho_0_upper:.6g}].",
+            "These conditional accuracies are declared assumptions, not measurements; "
+            "the interval inherits no coverage guarantee from them.",
+            (
+                "The declared accuracies are prevalence-dependent and are applied unchanged "
+                "to both arms' cohorts."
+                if scoped_groups is None
+                else "The declared accuracies are prevalence-dependent and are applied "
+                "unchanged to both arms' cohorts, on the rows of groups "
+                + ", ".join(repr(item) for item in scoped_groups)
+                + " only."
+            ),
+            "Each arm is corrected over the whole declared box independently of the other, "
+            "so a judge whose accuracy differs between the arms within that box is covered; "
+            "one whose accuracy leaves the box on either arm is not.",
+            "The effect is recombined from the two corrected arm intervals, so it makes "
+            "no independence assumption between arms beyond the one the underlying "
+            "two-arm region already makes.",
+            *(
+                f"{arm.capitalize()} arm: {_unclassified_assumption(share)}"
+                for arm, share in (("candidate", candidate_share), ("baseline", baseline_share))
+                if share > 0
+            ),
+            "The underlying judge-system interval retains its own stated guarantee.",
+        ],
+        eligibility="diagnostic",
+        warnings=warnings,
+    )
+
+
 def _apply_judge_correction_to_comparisons(
     plan: AnalysisPlan,
     data: NormalizedData,
     population: dict[str, dict[str, PromptRollouts]],
     comparisons: list[ComparisonResult],
-    by_scope: dict[_JudgeScope, JudgeCalibration],
+    by_scope: dict[_JudgeScope, list[JudgeCalibration]],
     family_id: str | None,
     diagnostics: list[Diagnostic],
+    primary_scenario: str | None = None,
 ) -> None:
-    """Append validated corrections to comparisons that expose both arm bounds.
+    """Append judge corrections to comparisons that expose both arm bounds.
+
+    ``by_scope`` gives each calibration scope its calibrations: one measured box in validated
+    mode, every declared scenario in assumed mode. A comparison gets one corrected interval
+    per scenario both its arms carry, each arm corrected with its own scope's box.
 
     A comparison of a group the calibration is not scoped to stays uncorrected, silently:
-    the plan scoped the calibration away from it.
+    the plan scoped the calibration away from it. Any other comparison left uncorrected is
+    reported in ``JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON``.
     """
 
     if not by_scope:
@@ -191,50 +288,68 @@ def _apply_judge_correction_to_comparisons(
                 zip(target.prompt_ids, target.weights, strict=True)
             )
     measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
+    spec = plan.inputs.judge_calibration
+    scoped_groups = spec.groups if spec is not None else None
     skipped: list[str] = []
     for result in comparisons:
         candidate_scope = _judge_scope(plan, result.candidate_cohort, result.group_id)
         baseline_scope = _judge_scope(plan, result.baseline_cohort, result.group_id)
         if candidate_scope is None or baseline_scope is None:
             continue
-        candidate = by_scope.get(candidate_scope)
-        baseline = by_scope.get(baseline_scope)
-        if candidate is None or baseline is None:
+        candidates = by_scope.get(candidate_scope) or []
+        baselines = {item.scenario_id: item for item in by_scope.get(baseline_scope) or []}
+        pairs = [
+            (item, baselines[item.scenario_id])
+            for item in candidates
+            if item.scenario_id in baselines
+        ]
+        if not pairs:
             skipped.append(result.result_id or result.comparison_id)
             continue
         weights = target_weights[(result.comparison_id, result.result_id or result.comparison_id)]
+        measure_type = measure_types[result.measure_id]
         # Each arm is corrected with its own cohort's labels, so each must be identified.
+        # Declared accuracies are not measured from labels, so they have no such gap.
+        measured = all(item.source == "validated" for item, _ in pairs)
         gaps: list[str] = []
         for arm, scope in (("candidate", candidate_scope), ("baseline", baseline_scope)):
+            if not measured:
+                continue
             gap = pooled_calibration_gap(
                 _scope_population(population, data, scope),
                 design_type=plan.design.type,
-                measure_type=measure_types[result.measure_id],
+                measure_type=measure_type,
                 weights=weights,
                 group_id=scope[1],
             )
             if gap is not None:
                 gaps.append(f"{arm} cohort {scope[0]!r}: {gap}")
-        measure_type = measure_types[result.measure_id]
-        interval = _judge_corrected_comparison_interval(
-            result=result,
-            candidate_calibration=candidate,
-            baseline_calibration=baseline,
-            family_id=family_id,
-            gap="; ".join(gaps) or None,
-            candidate_share=_unclassified_share(
-                _scope_population(population, data, candidate_scope), weights, measure_type
-            ),
-            baseline_share=_unclassified_share(
-                _scope_population(population, data, baseline_scope), weights, measure_type
-            ),
-            tail=measure_type != "weighted_mean",
-            scoped_group=candidate_scope[1],
+        candidate_share = _unclassified_share(
+            _scope_population(population, data, candidate_scope), weights, measure_type
         )
-        if interval is None:
+        baseline_share = _unclassified_share(
+            _scope_population(population, data, baseline_scope), weights, measure_type
+        )
+        corrected = False
+        for candidate, baseline in pairs:
+            interval = _judge_corrected_comparison_interval(
+                result=result,
+                candidate_calibration=candidate,
+                baseline_calibration=baseline,
+                family_id=family_id,
+                gap="; ".join(gaps) or None,
+                candidate_share=candidate_share,
+                baseline_share=baseline_share,
+                tail=measure_type != "weighted_mean",
+                scoped_group=candidate_scope[1],
+                primary_scenario=primary_scenario,
+                scoped_groups=scoped_groups,
+            )
+            if interval is not None:
+                result.intervals.append(interval)
+                corrected = True
+        if not corrected:
             skipped.append(result.result_id or result.comparison_id)
-            continue
-        result.intervals.append(interval)
     if skipped:
         diagnostics.append(
             Diagnostic(
