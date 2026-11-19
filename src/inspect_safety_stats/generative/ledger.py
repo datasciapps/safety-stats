@@ -15,10 +15,10 @@ import csv
 import errno
 import hashlib
 import os
-from collections.abc import Hashable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Literal
+from typing import Any, Literal, TextIO
 
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
@@ -132,34 +132,17 @@ class IncrementalCsvWriter:
     def replace(self, rows: Iterable[Mapping[str, object]]) -> None:
         """Rewrite the file to hold only ``rows``, as :meth:`append` would have written them.
 
-        The rows go to a sibling file first, which then takes the ledger's place in one
-        step, so an interruption leaves the old ledger or the new one, never a truncated
-        one. A failure that the process survives removes the sibling; one it does not is
-        overwritten by the next replace. Call it while the writer is closed: Windows cannot
-        replace an open file.
-
-        The sibling's rows reach the disk before the rename does. Otherwise a power loss
-        soon after could leave the ledger's name on an empty file, on file systems that may
-        commit a rename before the data of the file renamed. On POSIX the directory is then
-        synced as well, so that the rename itself survives one.
+        The file is replaced in one step (see :func:`_replace_file`). Call it while the
+        writer is closed: Windows cannot replace an open file.
         """
 
-        partial = self._path.with_name(self._path.name + ".partial")
-        try:
-            with partial.open("w", newline="", encoding="utf-8") as handle:
-                writer = csv.DictWriter(
-                    handle, fieldnames=self._columns, lineterminator="\n"
-                )
-                writer.writeheader()
-                for row in rows:
-                    writer.writerow({key: row.get(key) for key in self._columns})
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(partial, self._path)
-        except BaseException:
-            partial.unlink(missing_ok=True)
-            raise
-        _sync_directory(self._path.parent)
+        def write(handle: TextIO) -> None:
+            writer = csv.DictWriter(handle, fieldnames=self._columns, lineterminator="\n")
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({key: row.get(key) for key in self._columns})
+
+        _replace_file(self._path, write)
 
     def __exit__(
         self,
@@ -170,6 +153,33 @@ class IncrementalCsvWriter:
         if self._handle is not None:
             self._handle.close()
             self._handle = None
+
+
+def _replace_file(path: Path, write: Callable[[TextIO], None]) -> None:
+    """Give ``path`` the text ``write`` writes, replacing what it held in one step.
+
+    The text goes to a sibling file first, which then takes the file's place, so an
+    interruption leaves the old file or the new one, never a truncated one. A failure that
+    the process survives removes the sibling; one it does not is overwritten by the next
+    replace.
+
+    The sibling's text reaches the disk before the rename does. Otherwise a power loss soon
+    after could leave the file's name on an empty file, on file systems that may commit a
+    rename before the data of the file renamed. On POSIX the directory is then synced as
+    well, so that the rename itself survives one.
+    """
+
+    partial = path.with_name(path.name + ".partial")
+    try:
+        with partial.open("w", newline="", encoding="utf-8") as handle:
+            write(handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(partial, path)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+    _sync_directory(path.parent)
 
 
 def _sync_directory(directory: Path) -> None:
@@ -232,9 +242,16 @@ def prompt_sha256(prompt: str) -> str:
 
 
 def write_selections(records: list[SelectionRecord], path: str | Path) -> None:
+    """Write the selection ledger, replacing any earlier one in one step.
+
+    A resume writes the ledger again over the one it has just checked, so an interruption
+    has to leave that one whole: a truncated ledger blocks every later resume and analysis.
+    """
+
     frame = pd.DataFrame([record.model_dump(mode="json") for record in records])
-    frame.reindex(columns=list(SELECTION_COLUMNS)).to_csv(
-        path, index=False, lineterminator="\n"
+    columns = frame.reindex(columns=list(SELECTION_COLUMNS))
+    _replace_file(
+        Path(path), lambda handle: columns.to_csv(handle, index=False, lineterminator="\n")
     )
 
 
@@ -286,9 +303,25 @@ def read_rewrites(path: str | Path) -> list[RewriteRecord]:
     """
 
     records = read_rewrite_rows(path)
-    identifiers = [record.sampling_unit_id for record in records]
-    if len(set(identifiers)) != len(identifiers):
-        raise ValueError(f"rewrite ledger {path} repeats a sampling_unit_id")
+    rows: dict[str, list[RewriteRecord]] = {}
+    for record in records:
+        rows.setdefault(record.sampling_unit_id, []).append(record)
+    repeated = [unit for unit, kept in rows.items() if len(kept) > 1]
+    if repeated:
+        message = f"rewrite ledger {path} repeats a sampling_unit_id ({repeated[0]!r})"
+        # A resume drops error rows before it checks for repeats, so it repairs a ledger
+        # whose every repeat is an error row beside at most one other.
+        if all(
+            sum(record.validation_status != "error" for record in rows[unit]) <= 1
+            for unit in repeated
+        ):
+            message += (
+                "; each repeat is an errored attempt kept beside its unit's rerun, as a "
+                "resume by an earlier version left them, and running generative "
+                "materialize --resume again, with the same plan and output directory, "
+                "drops them"
+            )
+        raise ValueError(message)
     return records
 
 

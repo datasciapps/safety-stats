@@ -1681,6 +1681,21 @@ evaluated them.
   judged for them; if they are few, the spread can be chance. Otherwise improve the kernel for them,
   or review the validator, and materialize the run again.
 
+#### `GENERATIVE_KERNEL_MISMATCH`
+
+- **Severity:** WARNING
+- **Effect:** [recorded](#effects)
+- **Assumption:** Every rewrite the ledger records was produced under the rewrite procedure the plan
+  declares: its rewrite section and prompt template, whose kernel fingerprint the report gives as
+  kernel_sha256.
+- **Consequence:** Nothing is recomputed: the diagnostic counts the units the rewrite ledger records
+  under another kernel fingerprint, as when the plan's rewrite section or prompt template changed
+  after materialization or before a resume, and its details give the plan's fingerprint and those
+  the ledger records.
+- **Remedy:** Analyse under the plan and prompt template the run was materialized with, or
+  materialize again from the start (--overwrite or a new output directory, not --resume) under the
+  plan as it stands.
+
 #### `GENERATIVE_LOG_INCOMPLETE`
 
 - **Severity:** ERROR

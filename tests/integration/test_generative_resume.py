@@ -425,3 +425,91 @@ def test_overwrite_removes_a_partial_ledger_a_killed_resume_left(tmp_path: Path)
         (artifacts / f"{name}.partial").write_bytes(b"half a ledger\n")
     materialize_run(plan, artifacts, overwrite=True)
     assert sorted(item.name for item in artifacts.glob("*.partial")) == []
+
+
+def test_a_run_killed_between_a_units_two_rows_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An accepted unit is two writes, its prompt row and its rewrite row; a kill can land
+    between them. Before, the rewrite row came first, and the unit it left recorded as
+    accepted without its text made every resume refuse the directory."""
+
+    from inspect_safety_stats.generative.ledger import IncrementalCsvWriter
+
+    plan = write_plan(tmp_path, total=20)
+    artifacts = tmp_path / "run"
+    original = IncrementalCsvWriter.append
+    rows = 0
+
+    def killed_after_eleven_rows(self: IncrementalCsvWriter, row: dict[str, object]) -> None:
+        nonlocal rows
+        if self._path.name in {"rewrites.csv", "prompts.restricted.csv"}:
+            if rows == 11:
+                raise Interrupted("killed between a unit's two rows")
+            rows += 1
+        original(self, row)
+
+    monkeypatch.setattr(IncrementalCsvWriter, "append", killed_after_eleven_rows)
+    with pytest.raises(Interrupted):
+        run_with(ScriptedKernel(), plan, artifacts)
+    monkeypatch.setattr(IncrementalCsvWriter, "append", original)
+
+    run = run_with(ScriptedKernel(), plan, artifacts, resume=True)
+    assert run is not None and run.resumed == 5 and run.accepted == 20
+    assert len(read_rewrites(artifacts / "rewrites.csv")) == 20
+    with (artifacts / "prompts.restricted.csv").open(encoding="utf-8", newline="") as handle:
+        assert len(list(csv.DictReader(handle))) == 20
+
+
+def test_a_resume_that_fails_writing_the_selection_ledger_leaves_it_whole(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A resume writes selections.csv again. Before, it wrote over the ledger in place, so a
+    failure midway left a truncated one that blocked every later resume and analysis."""
+
+    import pandas as pd
+
+    plan = write_plan(tmp_path, total=20)
+    artifacts = tmp_path / "run"
+    run_with(ScriptedKernel(survive=8), plan, artifacts)
+    before = (artifacts / "selections.csv").read_bytes()
+    original = pd.DataFrame.to_csv
+
+    def half_written(self: pd.DataFrame, path_or_buf: object = None, **kwargs: object) -> None:
+        text = original(self, None, **kwargs)
+        half = text[: len(text) // 2]
+        if hasattr(path_or_buf, "write"):
+            path_or_buf.write(half)
+        else:
+            with open(path_or_buf, "w", encoding="utf-8", newline="") as handle:
+                handle.write(half)
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(pd.DataFrame, "to_csv", half_written)
+    with pytest.raises(OSError, match="no space left"):
+        run_with(ScriptedKernel(), plan, artifacts, resume=True)
+    monkeypatch.setattr(pd.DataFrame, "to_csv", original)
+
+    assert (artifacts / "selections.csv").read_bytes() == before
+    assert list(artifacts.glob("*.partial")) == []
+    run = run_with(ScriptedKernel(), plan, artifacts, resume=True)
+    assert run is not None and run.resumed == 8 and run.accepted == 20
+
+
+def test_a_ledger_that_kept_error_rows_names_resume_as_the_repair(tmp_path: Path) -> None:
+    plan = write_plan(tmp_path, total=60)
+    artifacts = tmp_path / "run"
+    run_with(ScriptedKernel(error_every=5), plan, artifacts)
+    lines = (artifacts / "rewrites.csv").read_bytes().splitlines(keepends=True)
+    errors = [line for line in lines if b",error," in line]
+    run_with(ScriptedKernel(), plan, artifacts, resume=True)
+    lines = (artifacts / "rewrites.csv").read_bytes().splitlines(keepends=True)
+    (artifacts / "rewrites.csv").write_bytes(b"".join([lines[0], *errors, *lines[1:]]))
+    with pytest.raises(ValueError, match="repeats a sampling_unit_id.*materialize --resume"):
+        read_rewrites(artifacts / "rewrites.csv")
+
+    # A repeat a resume does not repair, two finished rows for one unit, gets no such advice.
+    (artifacts / "rewrites.csv").write_bytes(b"".join([lines[0], lines[1], *lines[1:]]))
+    with pytest.raises(ValueError, match="repeats a sampling_unit_id") as refused:
+        read_rewrites(artifacts / "rewrites.csv")
+    assert "--resume" not in str(refused.value)
