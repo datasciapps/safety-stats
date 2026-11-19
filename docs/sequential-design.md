@@ -16,7 +16,7 @@ confidence sequence is worth its cost only when observed outcomes decide when sa
 | phase | scope | issue |
 |---|---|---|
 | 0 | this document | #10 |
-| 1 | `stats/sequential.py` with the Hoeffding-spending reference sequence and a betting or empirical-Bernstein sequence; `analyze --sequential` over a growing log directory; no Inspect integration | #10 |
+| 1 | the Hoeffding-spending reference sequence and a betting or empirical-Bernstein sequence for draws with replacement, added to `stats/sequential.py` beside the bound of #126; `analyze --sequential` over a growing log directory; no Inspect integration | #10 |
 | 2 | optional integration with Inspect's early stopping, after shadow mode (below) | separate issue when reached |
 
 Phase 1 is accepted when a simulation shows time-uniform coverage under continuous monitoring
