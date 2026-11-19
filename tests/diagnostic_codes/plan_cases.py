@@ -151,6 +151,17 @@ def _sampled_prompt_sensitivity(inputs: Inputs) -> None:
     _outputs(inputs)["direct_mean_intervals"]["independence"]["sensitivities"] = ["prompt"]
 
 
+def _sampled_nodes(calibration: str) -> Change:
+    """A sampled design with direct-mean intervals for its hierarchy nodes."""
+
+    def change(inputs: Inputs) -> None:
+        _sampled(inputs)
+        direct = _outputs(inputs)["direct_mean_intervals"]
+        direct.update(hierarchy_nodes=True, hierarchy_calibration=calibration)
+
+    return change
+
+
 def _sampled_without_direct_means(inputs: Inputs) -> None:
     _sampled(inputs)
     _outputs(inputs)["direct_mean_intervals"]["enabled"] = False
@@ -607,6 +618,14 @@ CASES = [
         shows="invalid",
         trigger=analysis(_changes(_sampled, _baseline(), _comparison())),
         control=analysis(_changes(_sampled, _baseline())),
+    ),
+    Case(
+        code="PLAN_SAMPLED_FRONTIER_UNSUPPORTED",
+        shows="invalid",
+        # The nodes of a sample, of which p3 was not drawn, under frontier_sidak; the
+        # control calibrates them with flat_bonferroni.
+        trigger=analysis(_sampled_nodes("frontier_sidak")),
+        control=analysis(_sampled_nodes("flat_bonferroni")),
     ),
     Case(
         code="PLAN_SAMPLED_MEASURE_UNSUPPORTED",

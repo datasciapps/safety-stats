@@ -348,6 +348,37 @@ def test_sampled_design_rejects_functionals_it_cannot_evaluate(
     assert report.integrity.status == "invalid"
 
 
+
+@pytest.mark.parametrize("fixed_size", [False, True], ids=["poisson", "fixed_size"])
+def test_frontier_calibration_of_a_sample_is_refused_not_crashed_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, fixed_size: bool
+) -> None:
+    """frontier_sidak needs independent node intervals, which a sample does not give.
+
+    Before, ``validate`` accepted the plan and ``analyze`` raised "independence blocks cannot
+    be formed" because the frame's undrawn items have no rows.
+    """
+    plan_path, evals, samples = _write_frame(tmp_path, fixed_size=fixed_size)
+    text = plan_path.read_text(encoding="utf-8")
+    nodes = "    hierarchy_nodes: true\n"
+    assert text.count(nodes) == 1
+    plan_path.write_text(
+        text.replace(nodes, nodes + "    hierarchy_calibration: frontier_sidak\n"),
+        encoding="utf-8",
+        newline="\n",
+    )
+    _patch(monkeypatch, evals, samples)
+
+    checked = validate(plan=plan_path, logs="ignored")
+    report = analyze(plan=plan_path, logs="ignored")
+
+    for diagnostics in (checked.diagnostics, report.integrity.diagnostics):
+        refused = [item for item in diagnostics if item.code == "PLAN_SAMPLED_FRONTIER_UNSUPPORTED"]
+        assert [item.severity for item in refused] == ["ERROR"]
+    assert report.integrity.status == "invalid"
+    # No direct interval is calibrated, so no row reports one.
+    assert all(row.lower is None for row in report.hierarchy_risks)
+
 def test_a_truncated_run_is_caught_rather_than_silently_biasing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

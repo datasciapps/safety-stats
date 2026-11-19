@@ -385,6 +385,30 @@ def validate_plan_references(plan: AnalysisPlan) -> list[Diagnostic]:
                     scope=plan_scope("comparisons"),
                 )
             )
+        direct = plan.outputs.direct_mean_intervals
+        if (
+            direct.enabled
+            and direct.hierarchy_nodes
+            and direct.hierarchy_calibration == "frontier_sidak"
+        ):
+            # A frontier keeps its nodes' blocks apart and multiplies their coverage. A frame
+            # item that was not drawn has no rows and so no block, and a fixed-size draw makes
+            # the nodes that share a stratum dependent, so no frontier is formed here.
+            diagnostics.append(
+                Diagnostic(
+                    code="PLAN_SAMPLED_FRONTIER_UNSUPPORTED",
+                    severity="ERROR",
+                    message=(
+                        "frontier_sidak calibration is not yet supported under a sampled "
+                        "design: its hierarchy nodes' intervals are not shown to be "
+                        "independent; set outputs.direct_mean_intervals.hierarchy_calibration "
+                        "to flat_bonferroni"
+                    ),
+                    scope=plan_scope(
+                        "outputs", "direct_mean_intervals", "hierarchy_calibration"
+                    ),
+                )
+            )
         if not plan.outputs.direct_mean_intervals.enabled:
             diagnostics.append(
                 Diagnostic(
