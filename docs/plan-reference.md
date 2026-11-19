@@ -839,10 +839,13 @@ same weights—are aliases and do not spend alpha twice.
 It uses the Bernoulli-KL exponent when atomic weights are equal and a rigorous weighted
 Poisson-Chernoff fallback when they are not. `weighted_empirical_bernstein` is variance-adaptive;
 `weighted_hoeffding` uses only boundedness. `weighted_betting` (experimental) inverts a fixed mixture of
-common betting fractions; it is variance-adaptive without an estimated variance proxy, so it is
-usually the tightest choice when blocks are fractional rates (a prompt-level or coarser
-independence profile) and is competitive with KL/Chernoff on sparse binary rollouts. Unequal block
-weights enter as exponents `A_g / max A` and widen it much as they widen the KL fallback.
+common betting fractions; it is variance-adaptive without an estimated variance proxy, so with
+equal or near-equal block weights it is usually the tightest choice when blocks are fractional
+rates (a prompt-level or coarser independence profile) and is competitive with KL/Chernoff on
+sparse binary rollouts. Unequal block weights enter as exponents `A_g / max A` and widen it much
+as they widen the KL fallback, and more than they widen Hoeffding: with tasks of 2, 10 and 50
+equally weighted prompts, every prompt observed at a failure rate of 0.05, its upper bound at
+alpha 0.05 is 0.459 against Hoeffding's 0.371.
 Comparisons do not accept it. See
 [Betting interval](statistical-methods.md#betting-interval-from-a-fixed-mixture-of-common-bets-experimental).
 `reference_methods` reports prespecified alternatives
