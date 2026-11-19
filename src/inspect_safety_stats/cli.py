@@ -622,12 +622,12 @@ def fixed_design_planning_command(
     ] = IndependenceUnitOption.rollout,
     family_size: Annotated[int, typer.Option("--family-size", min=1)] = 1,
 ) -> None:
-    """Detectable rates for a declared weighted design under a Hoeffding guarantee.
+    """Detectable rates for a declared weighted design.
 
     Reads the design manifest so planning sees the same prompts, weights, and
     expected rollout counts that `analyze` will resolve. Rollout counts come
     from the manifest's `expected_rollouts` column unless `--rollouts` supplies
-    a uniform override.
+    a uniform override. Without --plan the rates are weighted Hoeffding guarantees.
 
     With --plan, every claim is planned as `analyze` will decide it, and the options the
     plan supplies are refused rather than overridden.

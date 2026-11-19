@@ -308,8 +308,12 @@ described in their pull requests.
   certification floor: the upper bound `analyze` reports when every rollout is safe, which
   `analyze`'s own stages compute, its hierarchy-region projection included. The raw floor
   before the projection is shown beside it. The output names the levels the declared rollouts
-  cannot resolve at their group's `acceptable_upper` (#9). See
-  [Command-line interface](docs/api-reference.md#command-line-interface).
+  cannot resolve at their group's `acceptable_upper` (#9). The rates are guarantees under
+  stated assumptions (independent blocks of the primary profile, every declared rollout
+  attempted and classified), not the rates at which the power falls to the target. See
+  [Command-line interface](docs/api-reference.md#command-line-interface), and
+  [Statistical methods, section 5.7](docs/statistical-methods.md#57-detectable-failure-rates-under-the-analysis-interval)
+  for the derivation.
 
 - **The fixed-design planner reads the plan.** `plan fixed-design --plan PLAN` takes groups,
   weights, hierarchy, independence profile, multiplicity family and thresholds from the

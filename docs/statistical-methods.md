@@ -1304,6 +1304,99 @@ The library can search integer pairs \((n,c)\) satisfying both constraints and o
 
 Although explicit zero-failure planning is still uncommon in public frontier-model reports, the need is visible wherever harmful events are rare. C3LLM and probabilistic LLM-safety certification work use exact binomial bounds [16, 18], from which the zero-event requirement follows directly. OpenAI's public deployment-safety reports compare evaluation metrics and confidence intervals with Preparedness Framework thresholds [25], illustrating why the threshold, uncertainty target, and sample size need to be designed together rather than reported independently.
 
+### 5.7 Detectable failure rates under the analysis interval
+
+`inspect-safety-stats plan fixed-design --plan PLAN` and
+`inspect_safety_stats.stats.planning.detectable_failure_rates` plan a `weighted_mean` claim on
+the interval that decides it: the group's primary direct-mean interval under the plan's method
+(`weighted_hoeffding`, `weighted_empirical_bernstein` or `weighted_kl_chernoff`) and the
+endpoint alpha \(\alpha\) that `analyze` calibrates for it. Each gives two rates, at a target
+power \(1-\beta\):
+
+- the maximum certifiable failure rate \(R_A\): at every weighted failure rate \(R\le R_A\),
+  the upper bound falls to `acceptable_upper` \(\tau_A\) or below with probability at least
+  \(1-\beta\), so the claim can PASS;
+- the minimum detectable failure rate \(R_U\): at every \(R\ge R_U\), the lower bound reaches
+  `unacceptable_lower` \(\tau_U\) with probability at least \(1-\beta\), so the claim can FAIL.
+
+Both are guarantees, not the rates at which the power falls to \(1-\beta\). The power at
+\(R_A\) is often well above \(1-\beta\), and a rate above \(R_A\) may still certify with
+probability \(1-\beta\): the power side below takes the sharpest of three tail bounds, each of
+which holds for every spread of the rate over the prompts.
+
+**Model and assumptions.** As in section 2.4.10, the primary independence profile partitions
+the declared rollouts into blocks \(b\) with masses \(a_b\ge0\), \(\sum_ba_b=1\), and values
+\(Z_b\in[0,1]\); under `block_by: [rollout]` every rollout is a block. The estimate is
+\(S=\sum_ba_bZ_b\) and the target is its mean \(R=\mathbb ES\), the weighted failure rate.
+The guarantees assume what the interval assumes, and two more things the planner fixes before
+any rollout exists:
+
+1. the blocks are independent (the primary profile is the right one);
+2. every declared rollout is attempted, so the masses \(a_b\) are the planned ones (from the
+   manifest's `expected_rollouts`, or `--rollouts`); and
+3. every rollout is classified. An unclassified outcome enters the interval as a completion
+   that widens it, which the planner does not model.
+
+**Test side.** The Hoeffding and KL-Chernoff endpoints depend on the data only through \(S\).
+The empirical-Bernstein endpoints also read the blocks' second moments. Since
+\(a_b^2Z_b^2\le a_{\max}a_bZ_b\) and \(a_b^2(1-Z_b)^2\le a_{\max}a_b(1-Z_b)\), every data set
+with estimate \(s\) has an upper endpoint at most \(U^*(s)\) and a lower endpoint at least
+\(L^*(s)\), the endpoints at those largest second moments. Write \(U^*\) and \(L^*\) for the
+endpoints as functions of the estimate for every method. They are nondecreasing in \(s\): for
+Hoeffding and KL-Chernoff by construction. For empirical Bernstein the half-width is
+\(h=\ell+\sqrt{2VT+\ell^2}\), with \(T=\log(2/\alpha)\), \(\ell=a_{\max}T/3\), and a variance
+bound \(V\) that is a minimum of a constant, \(a_{\max}s+c\) and \(a_{\max}(1-s)+c\), \(c\ge0\).
+Where \(V\) falls with \(s\), \(s+h\) falls only if \(V<\tfrac49a_{\max}^2T\); but there
+\(V\ge a_{\max}(1-s)\), and \(U^*(s)<1\) needs \(1-s>h\ge2\ell\), so
+\(V>\tfrac23a_{\max}^2T\). The lower endpoint is symmetric. The planner finds by bisection
+
+\[
+r^*=\sup\{s\in[0,1]:U^*(s)\le\tau_A\},\qquad
+r_*=\inf\{s\in[0,1]:L^*(s)\ge\tau_U\}.
+\]
+
+The claim then passes whenever \(S\le r^*\), and fails whenever \(S\ge r_*\). When
+\(U^*(0)>\tau_A\), no outcome passes on the interval alone, and \(R_A\) is reported as
+unattainable; when \(L^*(1)<\tau_U\), \(R_U\) is.
+
+**Power side.** It remains to bound \(\Pr\{S>r^*\}\) for \(R<r^*\). Three bounds hold for
+every configuration of the block means with weighted mean \(R\):
+
+- Hoeffding [32]: \(\Pr\{S-R\ge t\}\le\exp(-2t^2/c^2)\) with \(c^2=\sum_ba_b^2\), so
+  \(R\le r^*-t_\beta\), with \(t_\beta=\sqrt{\tfrac12c^2\log(1/\beta)}\), suffices.
+- The Chernoff kernel of the KL-Chernoff interval (section 2.4.10). With equal masses \(1/m\),
+  \(\Pr\{S\ge r^*\}\le\exp\{-m\,\mathrm{kl}(r^*\Vert R)\}\); otherwise
+  \(\Pr\{S\ge r^*\}\le\exp\{-d_{\mathrm P}(r^*\Vert R)/a_{\max}\}\). So every \(R\) below the
+  root of \(\mathrm{kl}(r^*\Vert R)=\log(1/\beta)/m\), or of
+  \(d_{\mathrm P}(r^*\Vert R)=a_{\max}\log(1/\beta)\), suffices.
+- The same kernel on the safe outcomes \(1-Z_b\), whose weighted mean \(1-S\) has mean
+  \(1-R\). \(S>r^*\) is the event \(1-S<1-r^*\), whose probability is at most
+  \(\exp\{-d_{\mathrm P}(1-r^*\Vert1-R)/a_{\max}\}\). Under equal masses
+  \(\mathrm{kl}(1-s\Vert1-\mu)=\mathrm{kl}(s\Vert\mu)\), so this adds nothing; under unequal
+  masses the Poisson divergence is not symmetric, and this bound is the sharpest at high
+  rates.
+
+Each bound decreases as \(R\) moves away from \(r^*\), so it holds for every \(R\) below its
+root. \(R_A\) is the largest of the three roots, and every \(R\le R_A\) has
+\(\Pr\{S\le r^*\}\ge1-\beta\). The FAIL side is symmetric: \(R_U\) is the smallest of
+\(r_*+t_\beta\) and the two kernel roots above \(r_*\).
+
+**Hierarchy-region projection.** Under `hierarchy_region: linear_program` the claim is decided
+on the bound projected onto the hierarchy region (section 2.4.10), which is never above the
+raw upper endpoint and never below the raw lower one. So both guarantees hold for the
+projected bounds too, and the projection can only raise the power. The certification floor
+the planner reports, the upper bound when every rollout is safe, comes from `analyze`'s own
+interval and projection stages on those rollouts. A claim whose `acceptable_upper` lies below
+it does not PASS even when every rollout is safe.
+
+**Scope.** The rates are conservative by construction: the empirical-Bernstein test side takes
+the widest interval any data with the estimate allow, and the power side takes a tail bound,
+not the distribution of \(S\). The margin can be large. With 800 equally weighted rollouts,
+\(\alpha=0.0125\), \(\tau_A=0.03\) and \(1-\beta=0.9\), empirical Bernstein certifies only when
+no rollout fails, and the planner reports \(R_A=1.7\times10^{-12}\); a simulated common rate of
+\(10^{-4}\) certifies in 91% of 400 draws. The `weighted_betting` interval reads the
+individual block values, so no boundary \(r^*\) exists, and its claims are not planned.
+
 ---
 
 ## 6. Stretch goal: Bernoulli confidence sequences
