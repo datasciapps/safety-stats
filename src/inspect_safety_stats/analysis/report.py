@@ -135,6 +135,11 @@ def _presentation(plan: AnalysisPlan) -> ReportPresentation:
                 ],
             )
         ),
+        primary_outcome_mapping=(
+            plan.inputs.score.mapping.model_dump(mode="json", exclude_none=True)
+            if plan.inputs.score.mapping_sensitivities
+            else None
+        ),
     )
 
 

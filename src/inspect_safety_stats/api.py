@@ -26,12 +26,18 @@ from inspect_safety_stats.analysis.report import (
 from inspect_safety_stats.config.canonicalize import canonical_value, sha256_value
 from inspect_safety_stats.config.decision_policy import DecisionPolicy
 from inspect_safety_stats.config.loader import canonical_plan_hash, report_path, report_plan
-from inspect_safety_stats.config.models import AnalysisPlan
+from inspect_safety_stats.config.models import AnalysisPlan, OutcomeMappingSensitivitySpec
 from inspect_safety_stats.config.registration import RegistrationReceipt, load_receipt
 from inspect_safety_stats.decision.engine import roll_up
 from inspect_safety_stats.ingest.normalize import normalize, read_inputs
 from inspect_safety_stats.ingest.records import EvaluationSource, NormalizedData
-from inspect_safety_stats.schema.reports import Diagnostic, IntegritySummary, SafetyReport
+from inspect_safety_stats.schema.reports import (
+    Diagnostic,
+    IntegritySummary,
+    OutcomeMappingSensitivity,
+    SafetyReport,
+    result_readings,
+)
 from inspect_safety_stats.stats.independence import validate_profile_fields
 from inspect_safety_stats.validate.plan import validate_plan_references
 
@@ -135,7 +141,8 @@ def _read_input(
     same ``INGEST_FAILED`` error, its paths relative to the plan's directory. None when the
     input cannot be read. Passing both ``logs`` and ``source`` is a mistake in the call, not in
     the input, and raises ``ValueError``. Beside the normalized data comes what the per-judge
-    runs need, when the plan asks for them with ``outputs.judge_claims``. ``receipt`` is a
+    runs need, when the plan asks for them with ``outputs.judge_claims``, or the outcome mapping
+    sensitivities, when it declares ``inputs.score.mapping_sensitivities``. ``receipt`` is a
     registration receipt already matched to the plan, for the timing check.
     """
 
@@ -143,11 +150,12 @@ def _read_input(
         raise ValueError("pass either logs or source, not both")
     try:
         manifest, groups, source_data = read_inputs(plan, _source(logs, parallel, source))
-        # ORDER MATTERS: the per-judge runs take copies made before the primary run
-        # normalizes the manifest and groups, so nothing that run does can reach them.
+        # ORDER MATTERS: the per-judge runs and the outcome mapping sensitivities take copies
+        # made before the primary run normalizes the manifest and groups, so nothing that run
+        # does can reach them.
         judge_inputs = (
             _JudgeInputs(manifest.copy(), copy.deepcopy(groups), source_data, receipt)
-            if plan.outputs.judge_claims
+            if plan.outputs.judge_claims or plan.inputs.score.mapping_sensitivities
             else None
         )
         data = normalize(plan, manifest, groups, source_data, receipt)
@@ -165,6 +173,57 @@ def _read_input(
         return None
     diagnostics.extend(data.diagnostics)
     return data, judge_inputs
+
+
+def _mapping_plan(plan: AnalysisPlan, spec: OutcomeMappingSensitivitySpec) -> AnalysisPlan:
+    """The plan as it would read with this alternative as its primary outcome mapping."""
+
+    score = plan.inputs.score.model_copy(
+        update={"mapping": spec.mapping.model_copy(deep=True), "mapping_sensitivities": []}
+    )
+    inputs = plan.inputs.model_copy(update={"score": score})
+    outputs = plan.outputs.model_copy(update={"judge_claims": False})
+    return plan.model_copy(update={"inputs": inputs, "outputs": outputs})
+
+
+def _outcome_mapping_sensitivity(
+    plan: AnalysisPlan, inputs: _JudgeInputs, spec: OutcomeMappingSensitivitySpec
+) -> OutcomeMappingSensitivity:
+    """The analysis repeated under one alternative outcome mapping, on the same rollouts."""
+
+    alternative = _mapping_plan(plan, spec)
+    diagnostics = validate_plan_references(alternative)
+    try:
+        data = normalize(
+            alternative,
+            inputs.manifest.copy(),
+            copy.deepcopy(inputs.groups),
+            inputs.source,
+            inputs.receipt,
+        )
+    except ValueError as exc:
+        raise ValueError(f"outcome mapping sensitivity {spec.id!r}: {exc}") from exc
+    diagnostics.extend(data.diagnostics)
+    core = _analysis_core(alternative, data, diagnostics)
+    decision = roll_up(
+        [claim.status for claim in core.claims if claim.mandatory],
+        integrity_valid=core.integrity_status != "invalid",
+        zero_tolerance_failure=bool(_policy_events(alternative, data)),
+        confirmatory=alternative.analysis.intent == "confirmatory",
+    )
+    integrity = _sorted_integrity(diagnostics)
+    counts: dict[str, int] = {}
+    for item in integrity.diagnostics:
+        counts[item.code] = counts.get(item.code, 0) + 1
+    return OutcomeMappingSensitivity(
+        id=spec.id,
+        title=spec.title,
+        mapping=spec.mapping.model_dump(mode="json", exclude_none=True),
+        integrity_status=integrity.status,
+        diagnostic_counts=dict(sorted(counts.items())),
+        decision=decision,
+        results=result_readings(core.risks, core.comparisons, core.claims),
+    )
 
 
 def validate(
@@ -267,7 +326,7 @@ def analyze(
     judge_panel = _judge_panel_summary(resolved, data)
     if judge_panel is not None and core.panel_correction is not None:
         judge_panel["derived_correction"] = core.panel_correction
-    if judge_panel is not None and judge_inputs is not None:
+    if judge_panel is not None and judge_inputs is not None and resolved.outputs.judge_claims:
         _add_judge_claims(judge_panel, resolved, judge_inputs)
         _add_judge_configurations(judge_panel, resolved, data, judge_inputs.source)
     report = SafetyReport(
@@ -320,6 +379,11 @@ def analyze(
         decision=decision,
         decision_policy=policy_record,
     )
+    if judge_inputs is not None:
+        report.outcome_mapping_sensitivities = [
+            _outcome_mapping_sensitivity(resolved, judge_inputs, spec)
+            for spec in resolved.inputs.score.mapping_sensitivities
+        ]
     report._observations = data.observations
     report._resolved_plan = report_plan(frozen)
     return report
