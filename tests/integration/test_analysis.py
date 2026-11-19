@@ -3901,6 +3901,78 @@ def test_an_opted_in_worst_of_k_row_has_a_direct_interval_in_the_mean_family(
     assert unopted.primary_interval_id == "propagated_prompt_envelope"
 
 
+def _worst_of_k_row_with_an_unscored_rollout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, sensitivities: str = ""
+) -> GroupRiskResult:
+    """The worst_of_2 row when p1 has 5 failures, 14 safe rollouts and 1 unscored, p2 none."""
+    eval_frame, sample_frame = _frames(missing_score=True)
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & sample_frame["epoch"].between(2, 6)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    plan_path = _write_inputs(tmp_path)
+    _opt_in_worst_of_k_interval(plan_path)
+    text = plan_path.read_text(encoding="utf-8")
+    for old, new in (
+        ("    missing: block\n", "    missing: conservative_bounds\n"),
+        ("      primary: rollout\n", f"      primary: rollout\n{sensitivities}"),
+    ):
+        assert old in text
+        text = text.replace(old, new)
+    plan_path.write_text(text, encoding="utf-8")
+    report = analyze(plan=plan_path, logs="ignored")
+    return next(item for item in report.group_risks if item.measure_id == "worst_of_2")
+
+
+def test_a_worst_of_k_interval_completes_an_unscored_rollout_both_ways(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from inspect_safety_stats.stats import worst_of_k_kl_chernoff_bounds
+
+    row = _worst_of_k_row_with_an_unscored_rollout(monkeypatch, tmp_path)
+    assert row.primary_interval_id == "direct_worst_of_k_kl_chernoff"
+    direct = next(item for item in row.intervals if item.role == "primary")
+    # The unscored rollout is attempted: p1 keeps its 20 rollouts and 10 blocks of 2.
+    assert direct.independent_block_count == 20
+    assert direct.missingness_method == "all_safe_all_failure_completion"
+    assert direct.eligibility == "certifying"
+    # The lower endpoint counts it as safe (5 of 20 fail), the upper as a failure (6 of 20).
+    # The share of p1's pairs holding a failure is 1 - C(20 - f, 2) / C(20, 2).
+    assert direct.completion_estimate_lower == pytest.approx(0.5 * 85 / 190, rel=1e-12, abs=0)
+    assert direct.completion_estimate_upper == pytest.approx(0.5 * 99 / 190, rel=1e-12, abs=0)
+
+    def bounds(failures: int) -> tuple[float, float]:
+        result = worst_of_k_kl_chernoff_bounds(
+            [failures, 0], [0, 0], [20, 20], [0.5, 0.5], k=2, alpha_lower=0.0125, alpha_upper=0.0125
+        )
+        return result.lower, result.upper
+
+    assert (row.lower, row.upper) == (bounds(5)[0], bounds(6)[1])
+    assert (row.lower, row.upper) == pytest.approx((0.0402, 0.5870), rel=0, abs=5e-5)
+
+
+def test_a_worst_of_k_interval_says_its_sensitivity_profiles_have_none(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    alone = _worst_of_k_row_with_an_unscored_rollout(monkeypatch, tmp_path / "alone")
+    row = _worst_of_k_row_with_an_unscored_rollout(
+        monkeypatch, tmp_path / "with", sensitivities="      sensitivities: [prompt]\n"
+    )
+    assert alone.warnings == []
+    assert row.warnings == [
+        "The direct interval of 2 attempts assumes independent rollouts; the sensitivity "
+        "profiles prompt have no such interval."
+    ]
+    assert {item.independence_profile for item in row.intervals} == {"rollout", None}
+    # Sensitivity profiles spend no alpha of the primary's, so the interval is unchanged.
+    assert (row.primary_interval_id, row.lower, row.upper) == (
+        alone.primary_interval_id,
+        alone.lower,
+        alone.upper,
+    )
+
+
 def test_a_worst_of_k_interval_beyond_the_rollouts_says_the_design_cannot_bound_it(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
