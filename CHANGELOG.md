@@ -7,6 +7,20 @@ described in their pull requests.
 
 ### Added
 
+- **An example scores attack runs by a confirmation rollout (#124).**
+  [`examples/attack_confirmation`](examples/attack_confirmation/README.md) makes one Inspect
+  sample one attack run with a query budget K. The scorer sends the prompt the attack found to
+  the target once more and grades that fresh completion with a judge the attacker did not
+  search against, so the outcome is not selected for the attacker's judge's false positives,
+  which inflate the attacker's own report to 1 − (1 − f)^K. Every design-manifest row
+  declares the attack. The task refuses a design that declares another attack, and relative
+  paths to its files, which `inspect eval` would read from the task file's directory. The
+  plan requires one declared attack per cohort, and the README has a plan for live runs match
+  every cohort on it. The README also says what the confirmed rate still depends on: the
+  attacker's judge, whose false positives end runs on prompts that do not work and so lower
+  it; a target that samples; and two judges that err independently. It runs offline with no
+  API key, and against real models with `-T mode=live`. The package itself is unchanged.
+
 - **An offline example compares two versions of a harness around the same model.**
   `examples/harness_versions` runs one simulated model inside harness v1 and v2, selects the two
   runs by the task argument `harness`, and reports v2 minus v1 with its interval. On its seeded
