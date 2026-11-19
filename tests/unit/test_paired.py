@@ -358,8 +358,9 @@ _MARGIN_OVERFLOW_TABLES = {
 def test_newcombe_keeps_the_correlation_when_the_margin_product_outgrows_integers(
     cells: tuple[int, int, int, int],
 ) -> None:
-    # The int64 product wrapped: past 2 ** 63 its square root was NaN or 0, so the correlation
-    # became 0, and past 2 ** 64 + 2 ** 63 it was a wrong positive number. As an integer past
+    # The int64 product wrapped modulo 2 ** 64: where the wrapped value was negative its square
+    # root was NaN, so the correlation became 0, and where it was below 2 ** 63 (as for 1e20) it
+    # was a wrong positive number. As an integer past
     # 2 ** 64 the scalar interval's product was an object NumPy could not take a root of.
     expected_lower, expected_upper = _reference_newcombe(
         *cells, alpha_lower=0.01, alpha_upper=0.04

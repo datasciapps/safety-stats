@@ -7,16 +7,14 @@ described in their pull requests.
 
 ### Fixed
 
-- **The Newcombe paired interval no longer overflows on large comparisons (changes results
-  from about 110,000 pairs).** Its correlation divides by the square root of the product of the
-  2×2 table's four margins, which was computed in integers. With every pair scored, the product
-  passed 2^64 from 131,072 pairs and `newcombe_paired_interval` raised a `TypeError`, so
-  `analyze` stopped without a report for any comparison with `diagnostic_methods:
-  [newcombe_paired]`. With an unscored pair, `newcombe_paired_interval_partial` wrapped the
-  product around in 64-bit integers from about 110,000 pairs: the correlation silently became 0
-  or a wrong value, and the interval could be too narrow, by 18% at a correlation of −0.5 and by
-  41% at 0.2 in the cases tested. Both now compute the product in floating point. Smaller tables
-  give the same bounds to the last bit.
+- **The Newcombe paired interval no longer stops `analyze` on large comparisons (changes
+  behaviour from 131,072 pairs).** Its correlation divides by the square root of the product of
+  the 2×2 table's four margins, which was computed in integers. Once the product passed 2^64,
+  `newcombe_paired_interval` raised a `TypeError`, and `analyze` stopped without a report for a
+  comparison with `diagnostic_methods: [newcombe_paired]`. That happened from 131,072 pairs when
+  both arms fail about half the time; the rarer the failures, the more pairs it took (about
+  300,000 when both arms fail 5% of the time). The product is now computed in floating point,
+  and smaller tables give the same bounds to the last bit.
 
 - **`stats.direct_risk_difference_bounds` no longer wraps 32-bit counts.** With
   `independence_unit="prompt_cluster"`, the function multiplies the two arms' counts in the
