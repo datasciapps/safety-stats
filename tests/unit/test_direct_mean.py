@@ -371,6 +371,8 @@ def test_direct_mean_rejects_invalid_inputs() -> None:
         ((8, 8), (0.5, 0.5), (0.02, 0.3), 2),
         ((6, 9), (0.3, 0.7), (0.05, 0.05), 5),
         ((6, 9), (0.3, 0.7), (0.4, 0.1), 3),
+        ((60,), (1.0,), (0.3,), 2),
+        ((40, 40), (0.5, 0.5), (0.1, 0.2), 2),
     ],
 )
 def test_worst_of_k_bounds_have_one_sided_finite_sample_coverage(
@@ -381,6 +383,9 @@ def test_worst_of_k_bounds_have_one_sided_finite_sample_coverage(
 ) -> None:
     # Exact enumeration over the binomial outcomes. Entering every rollout as its own block
     # at the prompt's share, instead of floor(n / k) blocks, covers as little as 40% here.
+    # The small designs have too few blocks to tell the estimand apart, so the last two have
+    # many: bounding the mean failure rate in place of 1 - (1 - p)^k, from the same blocks,
+    # covers the risk from above only 44% and 67% of the time there.
     alpha = 0.1
     risk = float(np.dot(weights, [1 - (1 - p) ** k for p in probabilities]))
     lower_coverage = upper_coverage = 0.0
