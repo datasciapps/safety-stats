@@ -74,6 +74,16 @@ An output a provider's content filter stopped without a sample error counts by i
 - **Plan field:** `inputs.score.content_filter_stops`, default `score`
 - **If it is wrong:** A stop that the scorer reads as a refusal or a failure counts as the model's
   behaviour, though the provider's filter produced it.
+- **With `safe`:** An output a provider's content filter stopped before it delivered any content,
+  without a sample error, counts as safe whatever its score: a policy block of the end-to-end
+  system, as the plan declares. If it is wrong: The rate holds for the system behind this provider's
+  filter. Behind another filter, a stopped output may have been delivered, and may have been
+  harmful.
+- **With `failure`:** An output a provider's content filter stopped before it delivered any content,
+  without a sample error, counts as a failure whatever its score: a refusal of the end-to-end
+  system, as the plan declares. If it is wrong: The rate holds for the system behind this provider's
+  filter. Behind another filter, a stopped output may have been delivered as an answer, not a
+  refusal.
 - **Remedy:** Classify the stops with score.content_filter_stops: safe or failure, under the
   end-to-end estimand.
 - **Checked by:** [`CONTENT_FILTER_STOP_SCORED`](#content_filter_stop_scored),
@@ -104,6 +114,7 @@ Judge verdicts are taken as correct unless the plan validates or transports the 
   transported with a published validation set.
 - **Checked by:** [`JUDGE_CALIBRATION_TRANSPORTED`](#judge_calibration_transported),
   [`JUDGE_CALIBRATION_UNINFORMATIVE`](#judge_calibration_uninformative),
+  [`JUDGE_CORRECTION_POLICY_CLASSIFIED`](#judge_correction_policy_classified),
   [`JUDGE_CORRECTION_UNAVAILABLE`](#judge_correction_unavailable),
   [`JUDGE_FLIP_RATE`](#judge_flip_rate)
 
@@ -203,6 +214,12 @@ missing.
 - **Plan field:** `inputs.score.token_limit`, default `score`
 - **If it is wrong:** A truncated answer may have turned harmful or safe had it continued; its score
   describes the truncation.
+- **With `missing`:** An answer that stopped at the generation token limit counts by its score, and
+  without a score or a sample error as missing, counted on its own.
+- **With `safe`:** An answer that stopped at the generation token limit counts by its score, and
+  without a score or a sample error as safe, as the plan declares.
+- **With `failure`:** An answer that stopped at the generation token limit counts by its score, and
+  without a score or a sample error as a failure, as the plan declares.
 - **Remedy:** Raise the token limit and rerun, or classify truncated answers with score.token_limit.
 - **Checked by:** [`TOKEN_LIMIT_REACHED`](#token_limit_reached)
 
@@ -340,6 +357,17 @@ The analysis plan: its fields, references and their combinations.
 - **Consequence:** No panel-derived judge correction is reported for the majority composite.
 - **Remedy:** Validate the composite's own verdict with inputs.judge_calibration.mode: validated, or
   use inputs.composites[].rule: any or all.
+
+#### `PANEL_CORRECTION_VERDICT_UNMATCHED`
+
+- **Severity:** WARNING
+- **Effect:** [withheld](#effects)
+- **Assumption:** The primary mapping reads the primary composite's verdict as it is: true as
+  failure and false as safe, the verdict the derived accuracy box describes.
+- **Consequence:** No panel-derived judge correction is reported.
+- **Remedy:** Map the composite's verdict with failure_values: [true] and safe_values: [false] in
+  inputs.score.mapping, or validate the outcome the mapping defines with
+  inputs.judge_calibration.mode: validated.
 
 #### `PLAN_ANYTIME_BOUNDS_INVALID`
 
@@ -1234,6 +1262,17 @@ The judge validation inputs: the human labels, their strata and the labelling pr
 - **Remedy:** Add the labelled rollouts' groups to inputs.judge_calibration.groups, or remove the
   labels outside them from the validation manifest.
 
+#### `JUDGE_VALIDATION_POLICY_CLASSIFIED`
+
+- **Severity:** WARNING
+- **Effect:** [recorded](#effects)
+- **Assumption:** Every validation label, and every validation strata row, names a rollout the judge
+  classified.
+- **Consequence:** The labels and strata rows of rollouts a plan policy classified calibrate
+  nothing: such rollouts are in neither judge stratum.
+- **Remedy:** Draw the labels from the rollouts the judge classified only, leaving out those a
+  policy classified, such as policy blocks counted safe or missing scores counted as failures.
+
 #### `JUDGE_VALIDATION_STRATA_INCOMPLETE`
 
 - **Severity:** ERROR
@@ -1378,6 +1417,21 @@ cannot be computed, or a result it qualifies.
   union of the claim family's and the judge calibration's error budgets, with no point estimate.
 - **Remedy:** None needed: the diagnostic records which claims were retargeted to true risk.
 
+#### `JUDGE_CORRECTION_POLICY_CLASSIFIED`
+
+- **Severity:** INFO
+- **Effect:** [adjusted](#effects)
+- **Assumption:** Every classified rollout of a judge-corrected row carries a judge verdict, which
+  the judge's error rates describe.
+- **Consequence:** The judge corrections of rows holding rollouts a plan policy classified, the rho
+  corrections and the panel-derived one, credit the judge with no false alarm at the upper bound and
+  no missed failure at the lower, which widens them, and those rows have no asymptotic reference
+  intervals.
+- **Remedy:** None needed: the policy's classification is the truth the estimand defines. To narrow
+  the correction, rescore the rollouts or classify them by their score, with inputs.score.errors,
+  missing, content_filter_stops or token_limit.
+- **Checks:** [`judge_accuracy`](#assumption-judge_accuracy)
+
 #### `JUDGE_CORRECTION_UNAVAILABLE`
 
 - **Severity:** WARNING
@@ -1418,8 +1472,9 @@ cannot be computed, or a result it qualifies.
 
 - **Severity:** INFO
 - **Effect:** [withheld](#effects)
-- **Assumption:** The labels hold both truly unsafe and truly safe rollouts, and every prompt of the
-  row has a classified rollout, so the judge's sensitivity and specificity can be estimated.
+- **Assumption:** The labels hold both truly unsafe and truly safe rollouts, every prompt of the row
+  has a classified rollout and no rollout of the row was classified by a plan policy, so the judge's
+  sensitivity and specificity can be estimated and applied.
 - **Consequence:** The diagnostic Lang-Reiczigel limits are not reported for the row; the exact
   validated correction is unaffected.
 - **Remedy:** None needed for the certified correction; to obtain the limits, label a simple random
