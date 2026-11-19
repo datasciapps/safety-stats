@@ -143,6 +143,17 @@ described in their pull requests.
 
 ### Changed
 
+- **Generative judge corrections certify less, and keep the worst case of unscored units
+  (#109, changes results).** A `validated` judge calibration pools its human labels over the
+  whole cohort, so it measures the judge's accuracy only for an estimate that weights every
+  unit equally. It now certifies the corrected root of such a design only; corrected nodes,
+  slices and an unequally weighted root, for example under `minimum_rewrites_per_stratum`,
+  are `diagnostic`, with a warning that names the reason. Corrected estimates also no longer
+  shrink units with no judge verdict by `rho_1`: they keep their worst case, as on the
+  fixed-design path (#97), so corrected upper bounds can rise. Each node and slice reports the
+  design weight on those units as `unclassified_share`. See
+  [judge misclassification](docs/judge-misclassification.md#on-the-generative-path).
+
 - **`analyze` reports input it cannot read (changes behaviour).** A missing or broken
   design manifest, or logs or rollout files that cannot be read, made `analyze` raise and
   write no report, while `validate` reported the same input as an `INGEST_FAILED` error. Both

@@ -248,15 +248,21 @@ judge_calibration:
 
 `rho_1` is P(truly unsafe | judge said unsafe) and `rho_0` is P(truly unsafe | judge said
 safe). The identity `R* = R·rho_1 + (1-R)·rho_0` is affine in `R` with positive slope, so it
-applies to the root, every node and every slice unchanged. See
+holds for the root, every node and every slice, with `rho` weighted the way each of them
+weights its units. See
 [judge misclassification](judge-misclassification.md) for the derivation.
 
 **`assumed` mode produces no evidence.** Every interval it emits is a sensitivity result and
 cannot support a claim. The root is corrected under every declared scenario; nodes and slices
 under the primary only, which keeps the artifact readable on a large taxonomy.
 
-**`validated` mode measures the same two parameters** from human labels and is certifying.
-Point it at a `validation_manifest` keyed on the sample identifier materialization wrote --
+**`validated` mode measures the same two parameters** from human labels. The labels weight
+every classified unit of the cohort equally, so they certify the corrected root only, and
+only when every unit carries the same weight in it: a direct design does, while
+`minimum_rewrites_per_stratum` oversampling small strata does not. Corrected nodes, slices
+and an unequally weighted root are sensitivity results (`eligibility: diagnostic`) with a
+warning that names the reason, because the judge's accuracy within them can differ from the
+pooled one. Point it at a `validation_manifest` keyed on the sample identifier materialization wrote --
 a generative run has no prompt manifest to key on. It needs `rollouts_per_rewrite: 1`, so
 that each unit carries a single binary verdict, and it refuses rather than correcting when
 the labels do not establish a strictly informative judge.

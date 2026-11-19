@@ -569,11 +569,23 @@ plan that declares it is refused.
 ## On the generative path
 
 The same correction is available for
-[generative evaluations](generative-evaluation.md), where it applies to the root, every
-hierarchy node and every cross-cutting slice. Two differences: human labels key on the
-sample identifier materialization wrote rather than an observation id, and comparisons are
-**not** corrected -- doing so would either discard the paired construction that makes them
-tight or assume a prevalence-free judge.
+[generative evaluations](generative-evaluation.md), where it is reported for the root, every
+hierarchy node and every cross-cutting slice. A `validated` calibration certifies only the
+root, and only when every unit carries the same weight in it, for the reason in
+[What it certifies](#what-it-certifies): the labels pool the cohort's classified units with
+equal weight, and \(\rho\) depends on prevalence, so a node or slice where the judge misses
+more failures than average would get a corrected upper bound below its true risk. A root with
+unequal unit weights, for example under `minimum_rewrites_per_stratum`, has the same problem.
+Every other corrected estimate is reported as a sensitivity analysis: `eligibility:
+diagnostic`, with a warning that names the reason.
+
+Units with no judge verdict keep their completion through the correction, as on the
+fixed-design path: each estimate reports the design weight on them as
+`unclassified_share`, and only the classified mass is mapped through \(\rho\).
+
+Two further differences: human labels key on the sample identifier materialization wrote
+rather than an observation id, and comparisons are **not** corrected -- doing so would either
+discard the paired construction that makes them tight or assume a prevalence-free judge.
 
 ## Declaring a judge panel
 
