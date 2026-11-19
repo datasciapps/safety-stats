@@ -660,7 +660,11 @@ described in their pull requests.
   fixed evaluation set", even under `design.type: sampled`, whose intervals are about the
   whole declared item frame. A sampled design's `scope` now has `design: sampled`, names the
   frame and the recorded inclusion probabilities as the randomness, and says that results apply
-  to the frame and not to prompts outside it. Fixed designs keep their statement byte for byte.
+  to the frame and not to prompts outside it. The text around it follows: `report.md` counts
+  frame items rather than fixed prompts and says that its intervals allow for both the draw of
+  items and the rollouts, `report-full.md` and `report.html` head the intervals
+  "Sampled-design risk measures", and the hierarchy note of `report-full.md` and the summary
+  and footer of `report.html` speak of the frame. Fixed designs keep their wording.
 
 - **Generative judge corrections certify less, and keep the worst case of unscored units
   (#109, changes results).** A `validated` judge calibration pools its human labels over the

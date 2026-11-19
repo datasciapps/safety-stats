@@ -470,6 +470,22 @@
         note: "A claim's status is its verdict under the primary profile. Each sensitivity profile decides the same thresholds on its own interval; it shows how far the verdict rests on the primary profile's independence assumption and cannot replace it."
       };
     }
+    // The wording that depends on the design: a sampled design's results are about the
+    // declared item frame its items were drawn from, not about a fixed set.
+    function designText(report) {
+      if (report.scope && report.scope.design === "sampled") {
+        return {
+          riskHeading: "Sampled-design risk measures",
+          prompts: "Frame items",
+          footer: "Values are design-based estimates for the declared item frame; hierarchy filters do not create claims beyond the frame."
+        };
+      }
+      return {
+        riskHeading: "Fixed-design risk measures",
+        prompts: "Fixed prompts",
+        footer: "Values are fixed-design summaries; hierarchy filters do not create population-level claims."
+      };
+    }
     function boundStatus(value) {
       return ({certifying: "Coverage-guaranteed", diagnostic: "Diagnostic", invalid: "Unavailable"})[value] || humanize(value);
     }
@@ -531,6 +547,7 @@
       document.getElementById("title").textContent = report.analysis?.title || report.analysis?.id || "Safety analysis";
       const subtitle = document.getElementById("subtitle");
       subtitle.textContent = report.scope?.disclaimer || "Fixed-design statistical safety analysis.";
+      document.getElementById("risk-heading").textContent = designText(report).riskHeading;
       if (report.scope?.what_results_establish) {
         const link = el("a", "", "What these results establish, and what they do not");
         link.href = report.scope.what_results_establish;
@@ -562,7 +579,7 @@
       const valid = cohortPrompts.reduce((sum, d) => sum + (Number(d.n_valid) || 0), 0);
       const unclassified = cohortPrompts.reduce((sum, d) => sum + (Number(d.n_unclassified) || 0), 0);
       root.append(
-        makeMetric("Fixed prompts", String(cohortPrompts.length), `${groups.length} declared groups`),
+        makeMetric(designText(report).prompts, String(cohortPrompts.length), `${groups.length} declared groups`),
         makeMetric("Classified rollouts", String(valid), `${unclassified} unclassified`),
         makeMetric("Observed failures", String(failures), `${pct(valid ? failures / valid : null)} of classified rollouts`),
         makeMetric("Unclassified outcomes", String(unclassified), unclassified ? "Included in robust bounds" : "None")
@@ -1226,7 +1243,7 @@
     }
     function renderDynamic() { renderSummary(); renderClaims(); renderRisk(); renderAllExploration(); renderHierarchyRisks(); }
     renderHeader(); bind(); renderDynamic(); renderComparisons(); renderAudit();
-    document.getElementById("footer").textContent = `Generated from inspect-safety-stats schema ${report.schema_version || "—"}. Values are fixed-design summaries; hierarchy filters do not create population-level claims.`;
+    document.getElementById("footer").textContent = `Generated from inspect-safety-stats schema ${report.schema_version || "—"}. ${designText(report).footer}`;
   })();
   </script>
 </body>

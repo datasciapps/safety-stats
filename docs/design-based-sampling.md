@@ -133,7 +133,10 @@ fields deserve care:
 The report's scope statement follows the design. A sampled design's `scope` in `report.json`
 has `design: sampled` and says that results apply to the declared item frame, from which the
 evaluated items were drawn with the recorded inclusion probabilities, and not to prompts
-outside the frame. `report-full.md` and `report.html` print it above the claims.
+outside the frame. `report-full.md` and `report.html` print it above the claims. The rest of
+the report follows it: `report.md` counts frame items rather than fixed prompts and says that
+its intervals allow for both the draw and the rollouts, with each drawn item one observation,
+and `report-full.md` and `report.html` head the intervals "Sampled-design risk measures".
 
 ## Fixed-size designs
 

@@ -872,7 +872,10 @@ def _markdown(report: SafetyReport) -> str:
     lines.extend(
         [
             "",
-            "## Fixed-design risk measures",
+            # A sampled design's measures are about its frame, not a fixed set (scope.design).
+            "## Sampled-design risk measures"
+            if report.scope.get("design") == "sampled"
+            else "## Fixed-design risk measures",
             "",
             (
                 "Ranges are finite-sample confidence bounds, not standard errors or bootstrap "
@@ -1299,8 +1302,14 @@ def _markdown(report: SafetyReport) -> str:
                 "## Hierarchy marginal risks",
                 "",
                 (
-                    "Node estimates use the declared fixed-design weights normalized within each "
-                    "node. When enabled, displayed endpoints are projections of one common "
+                    (
+                        "Node estimates use the declared design weights over the frame, "
+                        "normalized within each node."
+                        if report.scope.get("design") == "sampled"
+                        else "Node estimates use the declared fixed-design weights normalized "
+                        "within each node."
+                    )
+                    + " When enabled, displayed endpoints are projections of one common "
                     "hierarchy-constrained confidence region. Coverage guarantees apply "
                     "construction-by-construction."
                 ),

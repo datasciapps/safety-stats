@@ -285,9 +285,10 @@ into a population sample.
 Every report lists what its results rest on, built from the analysis rather than from a fixed
 text:
 
-- **The interval methods.** Under "Fixed-design risk measures", `report-full.md` names each method
-  and independence profile its risk intervals used, what the profile blocks by, and the
-  assumptions recorded on those intervals (`intervals[].assumptions` in `report.json`).
+- **The interval methods.** Under "Fixed-design risk measures" ("Sampled-design risk measures"
+  under a sampled design), `report-full.md` names each method and independence profile its risk
+  intervals used, what the profile blocks by, and the assumptions recorded on those intervals
+  (`intervals[].assumptions` in `report.json`).
 - **The assumptions.** "Limitations" lists each assumption from the package's registry that
   applies to the analysis, with the plan fields that set it, the value each had, whether the
   plan wrote it or left it to its default, and what follows if the assumption is wrong

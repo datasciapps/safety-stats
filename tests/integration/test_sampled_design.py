@@ -6,7 +6,10 @@ estimand remains the frame-wide weighted mean rather than the realized sample me
 
 from __future__ import annotations
 
+import json
 import random
+import shutil
+import subprocess
 from pathlib import Path
 
 import pandas as pd
@@ -14,6 +17,8 @@ import pytest
 
 from inspect_safety_stats import analyze
 from inspect_safety_stats.ingest.pilot import draw_pilot
+from inspect_safety_stats.report import visualization
+from tests.template_functions import function_source
 
 FRAME_SIZE = 200
 INCLUSION = 0.3
@@ -195,6 +200,100 @@ def test_the_report_scope_names_the_frame_rather_than_a_fixed_set(
     assert "inclusion probabilities" in report.scope["randomness"]
     assert "not strategically underperforming" in report.scope["disclaimer"]
     assert report.scope["what_results_establish"].endswith("docs/what-results-establish.md")
+
+
+def test_the_report_text_speaks_of_the_frame_rather_than_a_fixed_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The scope statement said the frame while the report around it still said fixed prompts."""
+    plan_path, evals, samples = _write_frame(tmp_path)
+    _patch(monkeypatch, evals, samples)
+
+    output = analyze(plan=plan_path, logs="ignored").write(tmp_path / "report")
+
+    summary = (output / "report.md").read_text(encoding="utf-8")
+    assert f"\n{FRAME_SIZE} frame items · " in summary
+    assert (
+        "Intervals bound the risk over the declared item frame with 95.0% simultaneous "
+        "coverage, allowing for both the draw of items from the frame and the rollouts of the "
+        "drawn items. Each drawn item enters as one observation, so the rollouts of one item "
+        "may depend on each other arbitrarily." in summary
+    )
+    assert "prompt-level sensitivity allows" not in summary
+    full = (output / "report-full.md").read_text(encoding="utf-8")
+    assert "\n## Sampled-design risk measures\n" in full
+    assert "Node estimates use the declared design weights over the frame, normalized" in full
+    assert "fixed prompts" not in summary
+    assert "Fixed-design risk measures" not in full
+    assert "fixed-design weights" not in full
+
+
+_DESIGN_TEXT_DRIVER = """
+const fs = require("fs");
+const [functionsPath, reportPath] = process.argv.slice(2);
+const api = new Function(fs.readFileSync(functionsPath, "utf8") + "\\nreturn {designText};")();
+const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+process.stdout.write(JSON.stringify(api.designText(report)));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is not installed")
+@pytest.mark.parametrize("design", ["sampled", "fixed"])
+def test_the_html_report_names_the_design_its_values_are_about(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, design: str
+) -> None:
+    plan_path, evals, samples = _write_frame(tmp_path)
+    if design == "fixed":
+        # The same inputs analysed as a fixed design (it reports the undrawn items missing).
+        text = plan_path.read_text(encoding="utf-8").replace("  type: sampled\n", "  type: fixed\n")
+        plan_path.write_text(
+            text.replace("  inclusion_probability_column: inclusion_probability\n", ""),
+            encoding="utf-8",
+        )
+    _patch(monkeypatch, evals, samples)
+    report = analyze(plan=plan_path, logs="ignored")
+    template = visualization._TEMPLATE.read_text(encoding="utf-8")
+    (tmp_path / "functions.js").write_text(
+        function_source(template, "designText"), encoding="utf-8"
+    )
+    (tmp_path / "report.json").write_text(
+        json.dumps(report.model_dump(mode="json")), encoding="utf-8"
+    )
+    (tmp_path / "driver.js").write_text(_DESIGN_TEXT_DRIVER, encoding="utf-8")
+    node = shutil.which("node")
+    assert node is not None
+
+    completed = subprocess.run(
+        [
+            node,
+            str(tmp_path / "driver.js"),
+            str(tmp_path / "functions.js"),
+            str(tmp_path / "report.json"),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+
+    text = json.loads(completed.stdout)
+    if design == "sampled":
+        assert text == {
+            "riskHeading": "Sampled-design risk measures",
+            "prompts": "Frame items",
+            "footer": "Values are design-based estimates for the declared item frame; "
+            "hierarchy filters do not create claims beyond the frame.",
+        }
+    else:
+        # A fixed design keeps its wording.
+        assert text == {
+            "riskHeading": "Fixed-design risk measures",
+            "prompts": "Fixed prompts",
+            "footer": "Values are fixed-design summaries; hierarchy filters do not create "
+            "population-level claims.",
+        }
+        # The static heading, shown before the script runs, is the fixed design's.
+        assert '<h2 id="risk-heading">Fixed-design risk measures</h2>' in template
 
 
 def test_unsampled_hierarchy_nodes_warn_rather_than_invalidate(
