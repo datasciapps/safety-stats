@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from inspect_safety_stats.config.loader import report_path
+from inspect_safety_stats.config.loader import report_message, report_path
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.judge_flip import load_judge_flip_manifest
 from inspect_safety_stats.ingest.records import NormalizedData
@@ -53,7 +53,12 @@ def judge_flip_diagnostic(
         )
     except (OSError, ValueError) as exc:
         diagnostics.append(
-            Diagnostic(code="JUDGE_FLIP_INVALID", severity="ERROR", message=str(exc), scope=SCOPE)
+            Diagnostic(
+                code="JUDGE_FLIP_INVALID",
+                severity="ERROR",
+                message=report_message(str(exc), plan, (spec.manifest,)),
+                scope=SCOPE,
+            )
         )
         return
     details: dict[str, Any] = {
