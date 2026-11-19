@@ -233,10 +233,11 @@ random and made before any outcome was seen remains an assumption.
 
 ## Drawing a random pilot
 
-A pilot estimates what the full study will cost and roughly what its rates will be. Its
-means estimate those quantities without bias only if the pilot prompts are a random sample.
-The first prompts of each category are not one: identifiers are often assigned in an order
-that tracks length, difficulty or source.
+A pilot estimates what the full study will cost and roughly what its rates will be. It can
+do so only if its prompts are a random sample, weighted as they were drawn (see
+[Estimating from a pilot](#estimating-from-a-pilot)). The first prompts of each category are
+not a random sample: identifiers are often assigned in an order that tracks length,
+difficulty or source.
 
 `plan pilot` (experimental) draws a pilot at random within strata of a design manifest:
 
@@ -266,14 +267,31 @@ Each prompt's rank is a SHA-256 hash of the seed and its `prompt_id`, so the dra
 
 The frame records the seed and the per-stratum count, so the frame alone repeats the draw,
 and a report whose design manifest is the frame covers them with the manifest's hash. The
-command refuses a stratum with fewer prompts than
-`--per-stratum`, a missing value in a strata column, strata values that would share a label
-once joined, a manifest that already has the added columns, and an `--output` that would
-overwrite the manifest. Values are written back as they appear in the manifest. The draw
-reads strata as text, but `analyze` reads the pilot frame with pandas' type inference, so
-the command also refuses a stratum label that pandas reads as missing (`N/A`, `None`, `NA`)
-and labels that it reads as one value (`1` and `01`, `true` and `True`): `analyze` would
-otherwise check the draw against strata it did not use.
+command refuses a stratum with fewer prompts than `--per-stratum`, a missing value in a
+strata column, strata values that would share a label once joined, a manifest that already
+has the added columns, and an `--output` that would overwrite the manifest. Values are
+written back as they appear in the manifest. The draw reads strata as text, but `analyze`
+reads the pilot frame with pandas' type inference, so the command also refuses a stratum
+label that pandas reads as missing (`N/A`, `None`, `NA`) and labels that it reads as one
+value (`1` and `01`, `true` and `True`): `analyze` would otherwise check the draw against
+strata it did not use.
+
+### Estimating from a pilot
+
+Every stratum gives the same number of prompts, so a prompt in a small stratum is more
+likely to be drawn than one in a large stratum, and the pilot over-represents small strata.
+In the [HarmBench example](../examples/real_harmbench/design.csv), `--per-stratum 2` with
+the default `--strata task_id` draws two of the 100 copyright prompts and two of the 300
+others: copyright is half of the pilot and a quarter of the manifest. The pilot's plain
+mean, of failures or of answer length, is therefore biased for the manifest's whenever
+strata differ in size and in that quantity.
+
+Weight each pilot prompt by `1 / pilot_inclusion_probability`. Over the drawn prompts \(S\)
+of a manifest of \(N\), \(\frac1N\sum_{j\in S}y_j/\pi_j\), which scales each stratum's pilot
+mean by its share of the manifest, is unbiased for the manifest mean, and
+\(\sum_{j\in S}y_j/\pi_j\) for the manifest total, such as the tokens one rollout of every
+prompt would use. Analysing the pilot frame as a sampled design does the weighting and bounds
+the result.
 
 The pilot frame is the frame of a fixed-size sampled design, so the pilot's rates can be
 analysed as a sample of the whole manifest without editing any column. Name

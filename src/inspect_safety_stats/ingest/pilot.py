@@ -1,10 +1,14 @@
 """Random pilot selection within strata of a design manifest.
 
 A pilot is run to estimate what the full study will cost and roughly what its rates will be.
-Its means estimate those quantities without bias only if the pilot prompts are a random sample.
-Taking the first prompts of each category is not one: identifiers are often assigned in an
-order that tracks length, difficulty or source, so the first few can differ systematically
-from the rest.
+It can do so only if the pilot prompts are a random sample. Taking the first prompts of each
+category is not one: identifiers are often assigned in an order that tracks length,
+difficulty or source, so the first few can differ systematically from the rest.
+
+Equal draws from strata of unequal size give unequal inclusion probabilities, so the pilot's
+plain mean over-represents small strata. Weighting each drawn prompt by
+1 / `pilot_inclusion_probability`, as the sampled-design analysis does, makes it unbiased
+for the manifest's mean.
 
 `draw_pilot` draws a fixed number of prompts from each stratum by simple random sampling
 without replacement. Each prompt's rank is a hash of the seed and its `prompt_id`, so the draw:

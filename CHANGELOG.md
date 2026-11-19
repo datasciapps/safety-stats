@@ -514,7 +514,9 @@ described in their pull requests.
   contains a smaller one. The output is the whole manifest with `pilot_stratum`,
   `pilot_inclusion_probability` and `pilot_selected`, which is the frame of a fixed-size
   sampled design as it stands, and with `pilot_seed` and `pilot_per_stratum`, which
-  record the draw. `draw_pilot` in `inspect_safety_stats.ingest.pilot` does the
+  record the draw. Equal draws from strata of unequal size over-represent the small ones, so
+  weight each pilot prompt by `1 / pilot_inclusion_probability`, as the sampled-design
+  analysis does. `draw_pilot` in `inspect_safety_stats.ingest.pilot` does the
   same in Python, on a manifest read as text (`dtype=str, keep_default_na=False`); it refuses
   a `prompt_id` that is not text, which would hash differently from the command's. See
   [Drawing a random pilot](docs/design-based-sampling.md#drawing-a-random-pilot).
