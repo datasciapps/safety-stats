@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import warnings
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -688,6 +689,24 @@ class AssumptionUse(ResultModel):
     settings: list[PlanSetting] = Field(default_factory=list)
 
 
+def design_levels(hierarchy: Sequence[str]) -> list[str]:
+    """The identifier columns of a row of ``design.prompts``: the design's hierarchy levels,
+    then ``task_id``, ``question_id`` and ``prompt_id``, each once."""
+
+    return list(dict.fromkeys([*hierarchy, "task_id", "question_id", "prompt_id"]))
+
+
+def design_columns(hierarchy: Sequence[str]) -> list[str]:
+    """The columns of a row of ``design.prompts``, in the order of ``design.resolved.csv``:
+    ``group_id``, the identifier columns (``design_levels``), then ``weight``.
+
+    ``report.json`` stores each row with its keys sorted, so this is the one place their order
+    is defined.
+    """
+
+    return ["group_id", *design_levels(hierarchy), "weight"]
+
+
 class SafetyReport(ResultModel):
     """The result of ``analyze``: estimates, bounds, comparisons, claims and the decision.
 
@@ -709,6 +728,9 @@ class SafetyReport(ResultModel):
     scope: dict[str, Any]
     presentation: ReportPresentation = Field(default_factory=ReportPresentation)
     integrity: IntegritySummary
+    # The manifest and its hash, the hierarchy, the independence profiles, the groups and, in
+    # design.prompts, one row per prompt of each group with the keys of design_columns. The
+    # hierarchy's levels are the plan's own column names, so the rows are not a fixed model.
     design: dict[str, Any]
     cohorts: list[dict[str, Any]]
     prompt_estimates: list[PromptEstimate]

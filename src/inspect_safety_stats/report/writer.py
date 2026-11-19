@@ -27,6 +27,7 @@ from inspect_safety_stats.schema.reports import (
     RiskIntervalResult,
     SafetyReport,
     VerdictRange,
+    design_columns,
     mapping_results,
 )
 
@@ -1744,16 +1745,11 @@ def _defaults_markdown(report: SafetyReport) -> list[str]:
 def _design_rows(report: SafetyReport) -> list[dict[str, Any]]:
     """The rows of design.resolved.csv, with their columns in the design's order.
 
-    report.json stores the rows with sorted keys, so the order comes from the hierarchy:
-    the group, the hierarchy levels, the task, question and prompt, then the weight.
+    report.json stores the rows with sorted keys, so the order comes from the hierarchy
+    (``design_columns``).
     """
 
-    hierarchy = [str(item) for item in report.design.get("hierarchy") or []]
-    columns = [
-        "group_id",
-        *dict.fromkeys([*hierarchy, "task_id", "question_id", "prompt_id"]),
-        "weight",
-    ]
+    columns = design_columns([str(item) for item in report.design.get("hierarchy") or []])
     return [
         {column: row[column] for column in columns if column in row}
         for row in report.design.get("prompts") or []
