@@ -15,7 +15,8 @@ mixture over λ fixed in advance keeps both properties, and Ville's inequality g
 
     P(∃t: L_t > m̄_t) ≤ α,  L_t = inf{m : Σ_j w_j exp(λ_j S_t − t ψ_{λ_j}(m)) < 1/α}.
 
-Each term falls in m, so the set is an interval [L_t, 1]. Derived in
+Each term falls in m, so the set is the interval (L_t, 1], or all of [0, 1] when the mixture
+is below 1/α already at m = 0 and L_t = 0. Derived in
 docs/statistical-methods.md, section 11.1.
 
 The bound is one-sided by construction: an upper bound on one adaptive attacker is no evidence
@@ -39,9 +40,12 @@ METHOD = "adaptive_mixture_lower_bound"
 MIXTURE_LAMBDAS = np.geomspace(0.05, 5.0, 20)
 MIXTURE_LOG_WEIGHTS = np.full(MIXTURE_LAMBDAS.size, -math.log(MIXTURE_LAMBDAS.size))
 
-# The bound is a root found to this absolute tolerance, and then lowered by it, so that
-# rounding in the root finder can only make the bound more conservative.
+# The bound is a root found to this absolute tolerance. brentq's root lies within
+# _TOLERANCE + _RELATIVE_TOLERANCE·root of the exact one, up to 1e-12 + 9e-16 here, and the
+# subtraction rounds by up to another 1.2e-16. Lowering the root by twice _TOLERANCE covers
+# both, so rounding can only make the bound more conservative.
 _TOLERANCE = 1e-12
+_RELATIVE_TOLERANCE = 4 * float(np.finfo(float).eps)
 
 
 def _validate(successes: int, runs: int, alpha: float) -> None:
@@ -86,5 +90,5 @@ def adaptive_lower_bound(successes: int, runs: int, *, alpha: float) -> float:
     if excess(0.0) < 0:
         return 0.0
     # At mean 1 the process is exp(−λ (t − S)) ≤ 1 < 1/α, so the root lies below 1.
-    root = brentq(excess, 0.0, 1.0, xtol=_TOLERANCE, rtol=4 * np.finfo(float).eps)
-    return max(0.0, float(root) - _TOLERANCE)
+    root = brentq(excess, 0.0, 1.0, xtol=_TOLERANCE, rtol=_RELATIVE_TOLERANCE)
+    return max(0.0, float(root) - 2 * _TOLERANCE)
