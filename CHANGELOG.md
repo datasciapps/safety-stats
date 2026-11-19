@@ -595,6 +595,19 @@ described in their pull requests.
   `JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON`. No claim moves: assumed corrections never
   decide one. See [Comparisons](docs/judge-misclassification.md#comparisons).
 
+- **Judge corrections no longer read rollouts a plan policy classified as judge verdicts
+  (changes `report.json`).** A target-side policy block counted safe under
+  `errors: end_to_end`, a sample error or missing score counted as a failure under
+  `count_as_failure`, and a content-filter stop or unscored truncated answer under
+  `content_filter_stops` or `token_limit` were mapped through the judge's `rho_1` and
+  `rho_0` like a judge verdict, which moved both corrected bounds the wrong way. A row, hierarchy
+  node or comparison arm holding such a rollout is now corrected, in `assumed` and `validated`
+  mode, with `rho_1` free to reach 1 at the upper bound and `rho_0` to fall to 0 at the
+  lower, which holds whatever the policy's share. The interval states it in its assumptions,
+  the new INFO diagnostic `JUDGE_CORRECTION_POLICY_CLASSIFIED` names the groups per cohort, and
+  the row has no asymptotic reference interval. Rows without such rollouts are unchanged. See
+  [Rollouts a policy classifies](docs/judge-misclassification.md#rollouts-a-policy-classifies).
+
 - **`report.include_decisions` hides decisions, and every reader defaults it to false (#58).**
   The option was read as true by `report.html` and by the Python report model when a report did
   not record it, and as false by the plan and the CLI. Every reader now reads it as false. The

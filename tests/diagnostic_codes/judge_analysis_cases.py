@@ -534,6 +534,63 @@ def _stress_box_withheld(triggered: Outcome, control: Outcome) -> None:
     assert claim(triggered).status == claim(control).status
 
 
+def policy_blocked(inputs: Inputs) -> None:
+    """p1's first rollout blocked by the provider before it delivered content.
+
+    Under the default ``errors: end_to_end`` the plan counts it safe: a plan policy, not the
+    judge, classified it.
+    """
+
+    inputs.rollouts[0].update(
+        score_harmful=None,
+        error="blocked by the provider",
+        error_stage="target_generation",
+        content_delivered=False,
+        provider_error_code="content_filter",
+    )
+
+
+# An assumed box: rho_1 in [0.8, 0.95], rho_0 in [0.01, 0.05].
+RHO_1 = (0.8, 0.95)
+RHO_0 = (0.01, 0.05)
+DECLARED = "judge_corrected_declared"
+
+
+def assumed(inputs: Inputs, _: list[Any] | None = None) -> None:
+    """Declare an assumed calibration with the one scenario ``declared``."""
+
+    inputs.plan["inputs"]["judge_calibration"] = {
+        "mode": "assumed",
+        "primary": "declared",
+        "scenarios": [
+            {
+                "id": "declared",
+                "rho_1": {"lower": RHO_1[0], "upper": RHO_1[1]},
+                "rho_0": {"lower": RHO_0[0], "upper": RHO_0[1]},
+            }
+        ],
+    }
+
+
+def _policy_free(triggered: Outcome, control: Outcome) -> None:
+    # Adjusted: the row holding the blocked rollout is corrected as if rho_1 could reach 1 and
+    # rho_0 fall to 0, so neither end credits the judge with an error; the control's row is
+    # corrected over the declared box.
+    widened, row = _interval(triggered, DECLARED), _row(triggered)
+    assert widened.lower == pytest.approx(row.lower * RHO_1[0], abs=1e-12)
+    assert widened.upper == pytest.approx(row.upper + (1 - row.upper) * RHO_0[1], abs=1e-12)
+    assert any("classified by a plan policy" in item for item in widened.assumptions)
+    plain, row = _interval(control, DECLARED), _row(control)
+    assert plain.lower == pytest.approx(
+        row.lower * RHO_1[0] + (1 - row.lower) * RHO_0[0], abs=1e-12
+    )
+    assert plain.upper == pytest.approx(
+        row.upper * RHO_1[1] + (1 - row.upper) * RHO_0[1], abs=1e-12
+    )
+    (found,) = triggered.with_code("JUDGE_CORRECTION_POLICY_CLASSIFIED")
+    assert found.details == {"groups": ["all"], "policy_safe": 1, "policy_failures": 0}
+
+
 PANEL = "judge_corrected_panel_derived"
 
 
@@ -674,6 +731,13 @@ CASES = [
     ),
 ]
 CASES += [
+    Case(
+        # The plan counts a rollout the provider blocked safe; the judge never saw it.
+        code="JUDGE_CORRECTION_POLICY_CLASSIFIED",
+        trigger=judged(assumed, policy_blocked),
+        control=judged(assumed),
+        effect=_policy_free,
+    ),
     Case(
         # The comparison's primary interval is a contrast bound without arm bounds.
         code="JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON",

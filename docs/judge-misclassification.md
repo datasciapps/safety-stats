@@ -446,6 +446,46 @@ labels described them. With 1,000 of 3,200 rollouts unclassified, that once gave
 upper bound of 0.064 where the unclassified rollouts alone allow 0.319
 ([issue #97](https://github.com/aduncan001/safety_stats/issues/97)).
 
+### Rollouts a policy classifies
+
+Some rollouts are classified by a plan policy rather than by the judge: a target-side policy
+block counted safe under `errors: end_to_end`, a sample error or a missing score counted as a
+failure under `count_as_failure`, and content-filter stops or unscored truncated answers under
+`content_filter_stops` or `token_limit`. The policy defines the estimand, so its classification
+is the truth, and \(\rho\) does not describe it. Mapping such a rollout through \(\rho\) moves
+both bounds the wrong way: one counted as a failure is credited with \(\rho_1<1\) of a failure
+at the upper bound, and one counted safe with \(\rho_0>0\) of a failure at the lower. The
+row's bounds do not carry the share of such rollouts in the population behind them, so it
+cannot be taken back out exactly.
+
+A corrected row that holds any such rollout, in either mode and on either arm of a comparison,
+is therefore corrected as if the judge made no error in the direction that would move the bound
+the wrong way: \(\rho_1\) may reach 1 at the upper bound and \(\rho_0\) fall to 0 at the lower,
+with no unclassified share taken out:
+
+\[
+R^*\in\bigl[L\,\underline{\rho}_1,\; U+(1-U)\,\overline{\rho}_0\bigr].
+\]
+
+This holds whatever the policy's and the unclassified shares. If \(J_1\), \(J_0\), \(P\) and
+\(V\) are the row's weights on judge-unsafe, judge-safe, policy failure and unclassified
+rollouts, true risk is \(J_1\rho_1+J_0\rho_0+P+Vu\). The base bounds cover
+\(L\le J_1+P\) and \(J_1+P+V\le U\), and \(J_0\le1-U\) then, so true risk lies between
+\(\underline{\rho}_1(J_1+P)\ge\underline{\rho}_1L\) and
+\(J_1+P+V+\overline{\rho}_0J_0\le U+(1-U)\overline{\rho}_0\). The step holds prompt by prompt,
+so it holds for the tail measures too. The correction states which rollouts it covers in the
+interval's assumptions, and an INFO diagnostic, `JUDGE_CORRECTION_POLICY_CLASSIFIED`, names the
+groups per cohort. A validated correction of such a row still certifies. Its asymptotic
+references, `judge_corrected_validated_delta` and the Lang--Reiczigel limits, would read the
+policy's rollouts as judge verdicts, so they are not reported for that row.
+
+In a seeded simulation of three prompts of 300 rollouts at a point box on the judge's true
+accuracy, a judge that over-flags (\(\rho_1=0.5\)) with up to 40% policy failures, and one that
+misses failures (\(\rho_0=0.3\)) with up to 40% policy-safe rollouts, the previous correction
+missed true risk in 95% to 100% of runs on the side tested, for all four measures, against a
+nominal 5%. The correction above missed in none
+(`tests/unit/test_judge_policy_correction.py`).
+
 ### Comparisons
 
 A comparison is corrected by correcting **each arm with its own cohort's calibration** and

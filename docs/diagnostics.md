@@ -103,6 +103,7 @@ Judge verdicts are taken as correct unless the plan validates or transports the 
   transported with a published validation set.
 - **Checked by:** [`JUDGE_CALIBRATION_TRANSPORTED`](#judge_calibration_transported),
   [`JUDGE_CALIBRATION_UNINFORMATIVE`](#judge_calibration_uninformative),
+  [`JUDGE_CORRECTION_POLICY_CLASSIFIED`](#judge_correction_policy_classified),
   [`JUDGE_CORRECTION_UNAVAILABLE`](#judge_correction_unavailable),
   [`JUDGE_FLIP_RATE`](#judge_flip_rate)
 
@@ -1265,6 +1266,20 @@ cannot be computed, or a result it qualifies.
   union of the claim family's and the judge calibration's error budgets, with no point estimate.
 - **Remedy:** None needed: the diagnostic records which claims were retargeted to true risk.
 
+#### `JUDGE_CORRECTION_POLICY_CLASSIFIED`
+
+- **Severity:** INFO
+- **Effect:** [adjusted](#effects)
+- **Assumption:** Every classified rollout of a judge-corrected row carries a judge verdict, which
+  the judge's error rates describe.
+- **Consequence:** The judge corrections of rows holding rollouts a plan policy classified credit
+  the judge with no false alarm at the upper bound and no missed failure at the lower, which widens
+  them, and those rows have no asymptotic reference intervals.
+- **Remedy:** None needed: the policy's classification is the truth the estimand defines. To narrow
+  the correction, rescore the rollouts or classify them by their score, with inputs.score.errors,
+  missing, content_filter_stops or token_limit.
+- **Checks:** [`judge_accuracy`](#assumption-judge_accuracy)
+
 #### `JUDGE_CORRECTION_UNAVAILABLE`
 
 - **Severity:** WARNING
@@ -1304,8 +1319,9 @@ cannot be computed, or a result it qualifies.
 
 - **Severity:** INFO
 - **Effect:** [withheld](#effects)
-- **Assumption:** The labels hold both truly unsafe and truly safe rollouts, and every prompt of the
-  row has a classified rollout, so the judge's sensitivity and specificity can be estimated.
+- **Assumption:** The labels hold both truly unsafe and truly safe rollouts, every prompt of the row
+  has a classified rollout and no rollout of the row was classified by a plan policy, so the judge's
+  sensitivity and specificity can be estimated and applied.
 - **Consequence:** The diagnostic Lang-Reiczigel limits are not reported for the row; the exact
   validated correction is unaffected.
 - **Remedy:** None needed for the certified correction; to obtain the limits, label a simple random

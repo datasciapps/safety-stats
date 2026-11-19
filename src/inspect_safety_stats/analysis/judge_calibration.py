@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
 from typing import Any
 
 from inspect_safety_stats.analysis.estimates import _bounds_carry_unknown_outcome
@@ -64,6 +65,10 @@ class PromptRollouts:
     # each unclassified one, so the two counts differ only where a policy excludes some.
     bounded: int
     attempted: int
+    # Of the classified rollouts, those a plan policy counted safe and counted as failures
+    # (see _classified_by_policy): their classification is not a judge verdict.
+    policy_safe: int = 0
+    policy_failures: int = 0
 
 
 # A judge calibration's key: its cohort, and its group when the calibration is scoped to groups.
@@ -150,11 +155,13 @@ def _labelled_population(
 
     counts: dict[str, dict[str, list[int]]] = {}
     for row in data.observations:
-        tally = counts.setdefault(row.cohort_id, {}).setdefault(row.prompt_id, [0, 0, 0])
+        tally = counts.setdefault(row.cohort_id, {}).setdefault(row.prompt_id, [0, 0, 0, 0, 0])
         tally[2] += 1
         if row.failure is not None:
             tally[0] += 1
             tally[1] += 1
+            if _classified_by_policy(row):
+                tally[4 if row.failure else 3] += 1
         elif _bounds_carry_unknown_outcome(plan, row):
             tally[1] += 1
     return {
@@ -240,6 +247,49 @@ def _unclassified_share(
     if measure_type == "weighted_mean":
         return min(1.0, sum(weight * share for weight, share in shares))
     return max(share for _, share in shares)
+
+
+def _policy_rollouts(
+    population: Mapping[str, PromptRollouts], weights: Mapping[str, float]
+) -> tuple[int, int]:
+    """The rollouts a plan policy counted safe and as failures in the prompts a row weights."""
+
+    found = [
+        item
+        for prompt_id, weight in weights.items()
+        if weight > 0 and (item := population.get(prompt_id)) is not None
+    ]
+    return sum(item.policy_safe for item in found), sum(item.policy_failures for item in found)
+
+
+def _policy_free_box(calibration: JudgeCalibration) -> JudgeCalibration:
+    """The box a row holding policy-classified rollouts is corrected over.
+
+    The row's bounds count a rollout a policy classified as the policy says, which is its true
+    outcome, beside the judge's verdicts, and they do not carry the share of such rollouts in
+    the population behind them. Mapping a policy failure through rho_1 < 1 would understate the
+    upper bound, and a policy-safe rollout through rho_0 > 0 overstate the lower; a share taken
+    at its sample value does too, by its sampling error. So rho_1 may reach 1 and rho_0 fall to
+    0: the upper bound becomes U + (1 - U) rho_0 upper and the lower L rho_1 lower. With true
+    risk P(J1) rho_1 + P(J0) rho_0 + P(policy failure) + P(unclassified) u, both hold for every
+    share of policy-classified and unclassified rollouts, since L <= P(J1) + P(policy failure)
+    and P(J1) + P(policy failure) + P(unclassified) <= U. Each is monotone, translation
+    equivariant and positively homogeneous in the prompt rates, so it bounds the tail
+    measures too. The row's unclassified rollouts need no share of their own.
+    """
+
+    return replace(calibration, rho_1_upper=1.0, rho_0_lower=0.0)
+
+
+def _policy_assumption(safe: int, failures: int) -> str:
+    return (
+        f"{safe + failures} of the row's rollouts were classified by a plan policy, not by the "
+        f"judge ({safe} counted safe, {failures} counted as failures), and the row's bounds do "
+        "not carry their share. So the correction credits the judge with no false alarm at the "
+        "upper bound and no missed failure at the lower: P(truly unsafe | judge said unsafe) "
+        "may reach 1 and P(truly unsafe | judge said safe) fall to 0. That holds whatever the "
+        "share of policy-classified and unclassified rollouts."
+    )
 
 
 def _unclassified_assumption(share: float) -> str:
@@ -600,20 +650,23 @@ def _judge_corrected_interval(
     scoped_groups: list[str] | None = None,
     stratified: bool = False,
     per_cohort: bool = False,
+    policy_classified: tuple[int, int] = (0, 0),
 ) -> RiskIntervalResult | None:
     """Correct one row; ``scoped_group`` names a validated calibration's group, and
     ``scoped_groups`` the groups an assumed calibration is scoped to. ``per_cohort`` says
     that the assumed scenario declares boxes by cohort, so ``calibration`` is the row's
-    cohort's box."""
+    cohort's box. ``policy_classified`` counts the row's rollouts a plan policy counted safe
+    and as failures; a row holding any is corrected over ``_policy_free_box``."""
 
     if result.lower is None or result.upper is None:
         return None
+    by_policy = any(policy_classified)
     corrected = correct_judge_risk(
         observed_lower=result.lower,
         observed_upper=result.upper,
         observed_estimate=result.estimate,
-        calibration=calibration,
-        unclassified_share=unclassified_share,
+        calibration=_policy_free_box(calibration) if by_policy else calibration,
+        unclassified_share=0.0 if by_policy else unclassified_share,
     )
     validated = calibration.source == "validated"
     # Measured accuracies certify only a row they were measured for, and never more than
@@ -767,7 +820,9 @@ def _judge_corrected_interval(
                 ),
             ]
         )
-    if unclassified_share > 0:
+    if by_policy:
+        assumptions.append(_policy_assumption(*policy_classified))
+    elif unclassified_share > 0:
         assumptions.append(_unclassified_assumption(unclassified_share))
     assumptions.append("The underlying judge-system interval retains its own stated guarantee.")
     warnings: list[str] = []

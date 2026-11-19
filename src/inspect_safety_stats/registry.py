@@ -1087,6 +1087,27 @@ _CODES: tuple[CodeEntry, ...] = (
         remedy="None needed: the diagnostic records which claims were retargeted to true risk.",
     ),
     CodeEntry(
+        code="JUDGE_CORRECTION_POLICY_CLASSIFIED",
+        severities=("INFO",),
+        source="analysis",
+        effect="adjusted",
+        assumption=(
+            "Every classified rollout of a judge-corrected row carries a judge verdict, which "
+            "the judge's error rates describe."
+        ),
+        consequence=(
+            "The judge corrections of rows holding rollouts a plan policy classified credit "
+            "the judge with no false alarm at the upper bound and no missed failure at the "
+            "lower, which widens them, and those rows have no asymptotic reference intervals."
+        ),
+        remedy=(
+            "None needed: the policy's classification is the truth the estimand defines. To "
+            "narrow the correction, rescore the rollouts or classify them by their score, "
+            "with inputs.score.errors, missing, content_filter_stops or token_limit."
+        ),
+        assumptions=("judge_accuracy",),
+    ),
+    CodeEntry(
         code="JUDGE_CORRECTION_UNAVAILABLE",
         severities=("WARNING",),
         source="analysis",
@@ -1220,9 +1241,9 @@ _CODES: tuple[CodeEntry, ...] = (
         source="analysis",
         effect="withheld",
         assumption=(
-            "The labels hold both truly unsafe and truly safe rollouts, and every prompt of the "
-            "row has a classified rollout, so the judge's sensitivity and specificity can be "
-            "estimated."
+            "The labels hold both truly unsafe and truly safe rollouts, every prompt of the row "
+            "has a classified rollout and no rollout of the row was classified by a plan "
+            "policy, so the judge's sensitivity and specificity can be estimated and applied."
         ),
         consequence=(
             "The diagnostic Lang-Reiczigel limits are not reported for the row; the exact "
