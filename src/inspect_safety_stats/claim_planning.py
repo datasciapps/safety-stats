@@ -30,6 +30,7 @@ from inspect_safety_stats.ingest.manifest import (
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.observations import Observation, observation_field
 from inspect_safety_stats.stats.independence import (
+    _BLOCK_OBSERVATION_FIELDS,
     BoundedBlocks,
     direct_bounded_blocks,
     validate_profile_fields,
@@ -47,7 +48,8 @@ if TYPE_CHECKING:
     from inspect_safety_stats.analysis.direct_mean import _EndpointCalibration
 
 # Fields a block may be formed by before any rollout exists: the manifest's, and the
-# observation fields that the manifest or the plan fix.
+# observation fields that the manifest or the plan fix. analyze reads every other observation
+# field off the rollouts, even where the manifest has a column of the same name.
 _PLANNABLE_OBSERVATION_FIELDS = frozenset({"prompt_id", "question_id", "task_id", "cohort_id"})
 
 Calibration = Literal["pointwise", "flat_bonferroni", "frontier_sidak"]
@@ -240,14 +242,21 @@ def _planned_observations(
 def _check_plannable_profiles(plan: AnalysisPlan, frame: pd.DataFrame, profiles: list[str]) -> None:
     for profile_id in profiles:
         for field in plan.design.independence_profiles[profile_id].block_by:
-            if field == "rollout" or field in frame.columns:
+            name = observation_field(field)
+            if field == "rollout" or name in _PLANNABLE_OBSERVATION_FIELDS:
                 continue
-            if observation_field(field) not in _PLANNABLE_OBSERVATION_FIELDS:
-                raise ValueError(
-                    f"independence profile {profile_id!r} blocks by {field!r}, which the logs "
-                    "supply and the design manifest does not; the planner resolves blocks "
-                    "from the manifest only"
+            if name not in _BLOCK_OBSERVATION_FIELDS and field in frame.columns:
+                continue
+            raise ValueError(
+                f"independence profile {profile_id!r} blocks by {field!r}, which "
+                + (
+                    "analyze reads from the logs, not from the design manifest column of that "
+                    "name"
+                    if field in frame.columns
+                    else "the logs supply and the design manifest does not"
                 )
+                + "; the planner resolves blocks from the manifest only"
+            )
 
 
 def _endpoint_alpha(

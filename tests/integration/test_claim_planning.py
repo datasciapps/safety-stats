@@ -446,6 +446,29 @@ def test_blocks_must_be_manifest_columns(tmp_path: Path) -> None:
         plan_claims(load_plan(plan_path), power=0.9)
 
 
+@pytest.mark.parametrize("field", ["run_id", "model", "eval_id", "repeat"])
+def test_a_manifest_column_does_not_stand_in_for_a_log_field(tmp_path: Path, field: str) -> None:
+    """analyze blocks by the rollouts' own field, so a manifest column of that name is unused.
+
+    Planning by the column would give every rollout the planner's one synthetic value instead:
+    a single block, whatever the column says.
+    """
+    plan_path = _write(
+        tmp_path,
+        primary="by_log_field",
+        plan=PLAN.replace(
+            "    question: {block_by",
+            f"    by_log_field: {{block_by: [{field}], comparison_coupling: joint}}\n"
+            "    question: {block_by",
+        ),
+    )
+    header, *rows = MANIFEST.strip().split("\n")
+    lines = [f"{header},{field}", *(f"{row},{index}" for index, row in enumerate(rows))]
+    (tmp_path / "design.csv").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=f"blocks by '{field}', which analyze reads from the"):
+        plan_claims(load_plan(plan_path), power=0.9)
+
+
 def test_cli_plans_every_claim_from_the_plan(tmp_path: Path) -> None:
     plan_path = _write(tmp_path)
     result = runner.invoke(app, ["plan", "fixed-design", "--plan", str(plan_path)])

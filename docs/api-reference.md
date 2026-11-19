@@ -609,8 +609,9 @@ claims planned on its group in that cohort. The levels with nodes that do not re
 summarised at the end.
 
 Independence profiles must block by `rollout`, by manifest columns, or by `prompt_id`,
-`question_id`, `task_id` or `cohort_id`. A profile that blocks by a field only the logs
-supply (a run or model, say) is refused. The command exits with status 1 when no claim can be
+`question_id`, `task_id` or `cohort_id`. A profile that blocks by a field `analyze` reads
+from the logs (a run or model, say) is refused, even when the manifest has a column of that
+name: `analyze` would not use the column. The command exits with status 1 when no claim can be
 planned, and refuses sampled designs. `--threshold`, `--alpha`, `--weights`, `--hierarchy`,
 `--weight-column`, `--independence-unit` and `--family-size` are refused with `--plan`,
 which supplies them.
