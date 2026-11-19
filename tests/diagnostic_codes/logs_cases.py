@@ -472,7 +472,8 @@ def _claim_still_evaluated(triggered: Outcome, control: Outcome) -> None:
 @dataclass(frozen=True)
 class StoppedRollouts:
     """Rollout files whose rollouts may carry a ``stop_reason``: ``content_filter`` for a
-    provider block that delivered no content, ``max_tokens`` for the generation token limit."""
+    provider block, ``max_tokens`` for the generation token limit. A block delivered no
+    content unless the rollout gives ``stop_delivered_in``, where content was delivered."""
 
     runs: Path
     rollouts: Path
@@ -484,12 +485,14 @@ class StoppedRollouts:
             reason = item.attributes.get("stop_reason")
             if reason is None:
                 return None
+            delivered_in = item.attributes.get("stop_delivered_in")
             return StopContext(
-                content_delivered=False,
+                content_delivered=delivered_in is not None,
                 block_type=None,
                 block_category=None,
                 block_error=False,
                 stop_reason=reason,
+                delivered_in=delivered_in,
             )
 
         return replace(read_rollout_files(self.runs, self.rollouts), stop_context=stop)
@@ -700,6 +703,22 @@ CASES = [
         # The run, matched by its key, records no model, its only configuration field.
         trigger=analysis(_changes(_match_by_run_key, _no_model)),
         control=analysis(_match_by_run_key),
+        effect=_same_estimates,
+    ),
+    Case(
+        code="CONTENT_FILTER_STOP_SCORED",
+        # A FAIL-scored output was stopped by a content filter after an earlier turn delivered
+        # content, under content_filter_stops: safe; the control's output was not stopped.
+        # Either way the score decides.
+        trigger=_stopped(
+            _changes(
+                _plan_score(content_filter_stops="safe"),
+                _first(
+                    "FAIL", stop_reason="content_filter", stop_delivered_in="earlier_generation"
+                ),
+            )
+        ),
+        control=_stopped(_changes(_plan_score(content_filter_stops="safe"), _first("FAIL"))),
         effect=_same_estimates,
     ),
     Case(

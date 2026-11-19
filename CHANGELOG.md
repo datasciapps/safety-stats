@@ -366,10 +366,14 @@ described in their pull requests.
 
 - **Content-filter stops as policy blocks (experimental).** `inputs.score.content_filter_stops`
   decides before the run how a rollout counts when a provider's content filter stopped its
-  output before any content, as Claude 5-series models report a safety-classifier decline:
-  `safe` for a harm estimand, `failure` (a refusal) for an over-refusal estimand, or `score`,
-  the default, which keeps the previous behaviour. Inspect logs only. See
-  [the plan reference](docs/plan-reference.md#inputs).
+  output before the target delivered any content in the sample, as Claude 5-series models
+  report a safety-classifier decline: `safe` for a harm estimand, `failure` (a refusal) for an
+  over-refusal estimand, or `score`, the default, which keeps the previous behaviour. Text,
+  readable reasoning or a tool call in the stopped output or in any earlier generation of the
+  sample, such as an earlier turn of a conversation, counts as delivered content: such a stop
+  is scored as usual and reported in a `CONTENT_FILTER_STOP_SCORED` diagnostic, so harm that an
+  earlier turn delivered is never counted safe because a later turn was blocked. Inspect logs
+  only. See [the plan reference](docs/plan-reference.md#inputs).
 
 - **Group scopes for judge calibration, declared accuracies and the judge panel.** A cohort
   that holds several benchmarks no longer has to share one judge calibration and one panel

@@ -76,7 +76,8 @@ An output a provider's content filter stopped without a sample error counts by i
   behaviour, though the provider's filter produced it.
 - **Remedy:** Classify the stops with score.content_filter_stops: safe or failure, under the
   end-to-end estimand.
-- **Checked by:** [`TARGET_POLICY_BLOCKED_REFUSAL`](#target_policy_blocked_refusal),
+- **Checked by:** [`CONTENT_FILTER_STOP_SCORED`](#content_filter_stop_scored),
+  [`TARGET_POLICY_BLOCKED_REFUSAL`](#target_policy_blocked_refusal),
   [`TARGET_POLICY_BLOCKED_SAFE`](#target_policy_blocked_safe)
 
 ### Assumption `fixed_design`
@@ -675,6 +676,19 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
   name recorded fields in cohorts.<id>.require_uniform.
 - **Checks:** [`run_stability`](#assumption-run_stability)
 
+#### `CONTENT_FILTER_STOP_SCORED`
+
+- **Severity:** INFO
+- **Effect:** [recorded](#effects)
+- **Assumption:** inputs.score.content_filter_stops decides the outcome of a provider content-filter
+  stop only when the target delivered no content in the sample before it: no text, readable
+  reasoning or tool call in the stopped output or in an earlier generation, such as an earlier turn.
+- **Consequence:** Nothing changes from the default: the rollout's score decides, as for any other
+  answer, and a missing score follows inputs.score.missing.
+- **Remedy:** None needed when content was delivered. When the transcript does not record the
+  stopped generation, keep each sample's model events in the log.
+- **Checks:** [`content_filter_stops`](#assumption-content_filter_stops)
+
 #### `INGEST_FAILED`
 
 - **Severity:** ERROR
@@ -945,8 +959,9 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
 
 - **Severity:** INFO
 - **Effect:** [adjusted](#effects)
-- **Assumption:** A provider content-filter stop that delivered no content is a refusal of the
-  end-to-end system, as inputs.score.content_filter_stops: failure declares.
+- **Assumption:** A provider content-filter stop before the target delivered any content in the
+  sample is a refusal of the end-to-end system, as inputs.score.content_filter_stops: failure
+  declares.
 - **Consequence:** The rollout counts as a failure, a refusal under an over-refusal estimand,
   whatever its score.
 - **Remedy:** Set inputs.score.content_filter_stops: score to let the score decide such rollouts.
@@ -956,8 +971,8 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
 
 - **Severity:** INFO
 - **Effect:** [adjusted](#effects)
-- **Assumption:** A target-side provider policy block that delivered no content is a safe outcome of
-  the end-to-end system.
+- **Assumption:** A target-side provider policy block before the target delivered any content in the
+  sample is a safe outcome of the end-to-end system.
 - **Consequence:** The rollout counts as safe: a policy-blocked sample error under
   inputs.score.errors: end_to_end, or a content-filter stop under inputs.score.content_filter_stops:
   safe, whatever its score.

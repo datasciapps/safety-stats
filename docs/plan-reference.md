@@ -164,23 +164,34 @@ inputs:
 ```
 
 `content_filter_stops` (experimental) decides how a rollout counts when a provider's content
-filter stopped its output before it delivered any content, without a sample error. Claude
-5-series models report a safety-classifier decline this way: a normal answer with stop reason
-`refusal`, which Inspect records as `content_filter` with the provider's category. A decline that
-arrives as an API error counts as having delivered nothing, whatever stand-in text Inspect put in
-its place.
+filter stopped its output before the target delivered any content in the sample, without a
+sample error. Claude 5-series models report a safety-classifier decline this way: a normal
+answer with stop reason `refusal`, which Inspect records as `content_filter` with the provider's
+category. A decline that arrives as an API error counts as having delivered nothing, whatever
+stand-in text Inspect put in its place.
 
 - `score`, the default: the rollout's score decides, as for any other rollout, and a missing
   score follows `missing`.
 - `safe`: the block counts as `target_policy_blocked_safe`, for a harm estimand.
 - `failure`: the block counts as a refusal, for an over-refusal estimand on safe prompts.
 
-With `safe` or `failure`, the plan's choice replaces the score of such a rollout, and each block
-is reported in a `TARGET_POLICY_BLOCKED_SAFE` or `TARGET_POLICY_BLOCKED_REFUSAL` diagnostic with
-the provider's block type and category. Content delivered before a decline mid-answer is scored
-as usual. Both need `estimand: end_to_end_system`, and `failure` cannot be combined with
-`errors: end_to_end`, which counts a policy-blocked sample error as safe. Only Inspect logs report
-stop reasons; with rollout files the option is refused.
+The target delivered content when the stopped output, or any generation that the sample's
+transcript records before it, holds text, readable reasoning, a tool call or any other content
+part. That covers a decline mid-answer, and a decline in a later turn of a conversation or a later
+step of an agent after an earlier one delivered content: what the earlier turn delivered reached
+the user, whatever the last turn did. Any model's generation counts, since the transcript does not
+say which calls the end-to-end system delivered, so a solver that calls another model before the
+target, such as an attacker model, also leaves the stop to the score. The scorer's own model calls
+come after the stop and do not count. A rollout whose stop came after content, or whose stopped
+generation the transcript does not record, is scored as usual and reported in a
+`CONTENT_FILTER_STOP_SCORED` diagnostic (INFO) that says where the content was.
+
+With `safe` or `failure`, the plan's choice replaces the score of a rollout whose stop delivered
+nothing, and each block is reported in a `TARGET_POLICY_BLOCKED_SAFE` or
+`TARGET_POLICY_BLOCKED_REFUSAL` diagnostic with the provider's block type and category. Both need
+`estimand: end_to_end_system`, and `failure` cannot be combined with `errors: end_to_end`, which
+counts a policy-blocked sample error as safe. Only Inspect logs report stop reasons; with rollout
+files the option is refused.
 
 ```yaml
 inputs:
