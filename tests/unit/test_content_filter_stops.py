@@ -175,6 +175,16 @@ def test_the_scorers_model_calls_after_the_decline_are_not_the_targets_content()
     assert stop is not None and stop.content_delivered is False
 
 
+def test_content_between_two_records_of_the_stopped_message_counts() -> None:
+    # A cached output can repeat a message id: the stopped generation is the last record of
+    # it, so the content delivered after the first record came before the stop.
+    stopped = _decline()
+    events = [_generation(stopped), _generation(_output("HARMFUL turn")), _generation(stopped)]
+    stop = _sample_stop(_sample(stopped, events))
+    assert stop is not None
+    assert (stop.content_delivered, stop.delivered_in) == (True, "earlier_generation")
+
+
 @pytest.mark.parametrize("events", [[], [_generation(_output("unrelated"))]])
 def test_a_decline_the_transcript_does_not_record_cannot_rule_content_out(
     events: list[Any],
