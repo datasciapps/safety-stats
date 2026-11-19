@@ -133,8 +133,9 @@ return `None` when the requested direction is unattainable at the supplied horiz
 `fixed_design_detectable_failure_rates` gives the weighted-design analogue under an
 independent-rollout Hoeffding guarantee, permitting heterogeneous prompt probabilities.
 `comparison_resolvable_differences` (experimental) returns the risk differences a two-arm
-design resolves at a margin under the same kind of guarantee, for the `weighted_hoeffding`
-comparison with `rollout`, `pair` or `prompt_cluster` blocks; see
+design resolves at a margin under the same kind of guarantee, for a `comparisons` entry with
+`method: weighted_hoeffding` and `rollout`, `pair` or `prompt_cluster` blocks. It does not hold
+for a `comparison_sets` entry or another method; see
 [Planning a comparison](model-comparisons.md#planning-a-comparison-experimental).
 
 Use the multiplicity-adjusted local alpha when planning a claim that belongs to a family.

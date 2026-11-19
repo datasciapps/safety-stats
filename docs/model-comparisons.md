@@ -367,10 +367,23 @@ Rollout counts come from the manifest's `expected_rollouts` column for both arms
 `--coverage-mode` follows the comparison's `coverage_mode`: `two_sided`, the default, splits
 alpha between the two bounds. `--family-size M` plans at the share `alpha / M`.
 
-The numbers hold for the `weighted_hoeffding` interval. The recommended
-`weighted_kl_chernoff` interval is usually narrower on sparse failures, so the planner tends to
-be pessimistic for it, but it gives no guarantee for that method. The planner assumes no
-unclassified outcomes and does not plan hierarchy-node contrasts. The derivation is in
+The numbers hold only for a `comparisons` entry with `method: weighted_hoeffding`, which bounds
+the difference directly. They do not hold for:
+
+- **A `comparison_sets` entry, whatever its method.** A comparison set bounds each arm at half
+  the alpha and subtracts the arms' endpoints, which is wider. In the example above, a true
+  difference of −0.059 then gives an upper bound at or below the margin in about 77% of runs
+  when the baseline fails on 30% of rollouts, and in about 76% at 50%, not the planned 90%.
+- **The other methods.** `weighted_kl_chernoff`, the recommended method, bounds each arm
+  separately as a comparison set does, and `weighted_empirical_bernstein` adapts to the
+  observed variance. Both are narrower than `weighted_hoeffding` when failures are sparse, and
+  either can be wider at moderate failure rates. In the same example, `weighted_kl_chernoff`
+  is wider once both arms fail on more than about 12% of rollouts, and at 50% the difference
+  −0.059 passes in about 76% of runs. The planner states nothing for these methods, in either
+  direction.
+
+The planner assumes no unclassified outcomes and does not plan hierarchy-node contrasts. The
+derivation is in
 [Statistical methods, section 7.7](statistical-methods.md#77-planning-a-comparison-at-a-margin-experimental).
 
 ## Report and visualization
