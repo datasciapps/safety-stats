@@ -18,7 +18,7 @@
 |---|---|---|
 | You have counts, per-item failure rates, paired pass/fail lists, or LLM-judge accuracy numbers from any evaluation script | `inspect_safety_stats.stats` (and submodules `planning`, `misclassification`) | None |
 | You have completed Inspect AI `.eval` logs | CLI (`inspect-safety-stats validate` then `analyze`) or Python `analyze(plan=..., logs=...)` | `.eval` log(s), `design.csv`, `plan.yaml` (`schema_version: "2.0"`) |
-| You have JSONL/CSV results from another evaluation harness and want the full hierarchy report, HTML dashboard, and audit sidecars | Write them as [rollout files](docs/rollout-files.md) and run the CLI with `--runs runs.jsonl --rollouts rollouts.jsonl` in place of `--logs`, or Python `analyze(plan=..., source=RolloutFiles(runs=..., rollouts=...))`; no Inspect AI install needed (recipe 3) | `runs.jsonl`, `rollouts.jsonl` (or `.csv`), `design.csv`, `plan.yaml` (`schema_version: "3.0"`) |
+| You have JSONL/CSV results from another evaluation harness and want the full hierarchy report, HTML dashboard, and audit sidecars | Write them as [rollout files](docs/rollout-files.md) (experimental) and run the CLI with `--runs runs.jsonl --rollouts rollouts.jsonl` in place of `--logs`, or Python `analyze(plan=..., source=RolloutFiles(runs=..., rollouts=...))`; no Inspect AI install needed (recipe 3) | `runs.jsonl`, `rollouts.jsonl` (or `.csv`), `design.csv`, `plan.yaml` (`schema_version: "3.0"`) |
 
 ---
 
@@ -86,7 +86,7 @@ Single-judge bias correction uses **predictive values conditioned on the judge v
 
 - `rho_1 = P(true failure | judge flagged failure)`
 - `rho_0 = P(true failure | judge cleared as pass)`
-- Strict informativeness requirement: `rho_1_lower > rho_0_upper`.
+- Informativeness requirement: `rho_1_lower > rho_0_upper`, checked unless `completed_strata` is non-empty.
 - Distribution dependence: `rho_1` and `rho_0` depend on the evaluated output distribution and prompt weights. Calibration estimated on a pooled cohort does not generally certify arbitrary subgroups or nonlinear tail measures, and validated bounds must account for both rollout-interval and calibration error budgets.
 
 Functions:
@@ -303,9 +303,10 @@ inspect-safety-stats analyze \
 
 ---
 
-## Executable recipe 3: analyzing results from another harness as rollout files
+## Executable recipe 3: analyzing results from another harness as rollout files (experimental)
 
-Results from any evaluation harness can be analyzed without Inspect AI: write them as two plain files, a runs file (one record per run) and a rollouts file (one record per rollout), and pass them in place of the logs. Neither the CLI nor the Python API needs the optional `inspect` extra for this. [Rollout files](docs/rollout-files.md) specifies both formats (JSON Lines or CSV), the required and optional fields, and how errors and provider blocks are read.
+Results from any evaluation harness can be analyzed without Inspect AI, through an experimental
+route: write them as two plain files, a runs file (one record per run) and a rollouts file (one record per rollout), and pass them in place of the logs. Neither the CLI nor the Python API needs the optional `inspect` extra for this. [Rollout files](docs/rollout-files.md) specifies both formats (JSON Lines or CSV), the required and optional fields, and how errors and provider blocks are read.
 
 On the command line, pass `--runs runs.jsonl --rollouts rollouts.jsonl` in place of `--logs`, as in `inspect-safety-stats analyze --plan plan.yaml --runs runs.jsonl --rollouts rollouts.jsonl --output report/`; `validate` takes the same options. In Python, pass `source=RolloutFiles(...)` to `validate()` and `analyze()`. Each rollout's `item_id` is matched to `prompt_id` in `design.csv`, and `repeat` numbers its rollouts. Write the plan in `schema_version: "3.0"`, whose default `rollout_key` identifies a rollout by `[run_key, item_id, repeat]`; cohorts match any field of the run. Record each run's actual start time in `started_at`, and use `intent: exploratory` whenever the plan was not frozen before running the evaluation:
 
@@ -449,20 +450,26 @@ authoritative option list.
 
 ### Exit-code contract
 
-Every command draws its exit status from `ExitCode` in `src/inspect_safety_stats/cli.py`
-([docs/api-reference.md](docs/api-reference.md#exit-codes)).
+Every status a command chooses comes from `ExitCode` in `src/inspect_safety_stats/cli.py`
+([docs/api-reference.md](docs/api-reference.md#exit-codes)). Only `analyze`, `hash-plan`, `init`,
+`visualize` and the `generative` commands guarantee `3` for input they cannot run on. A plan that
+cannot be loaded (malformed YAML or a schema failure) makes `validate` print a traceback and exit
+`1`; `plan fixed-design --plan` exits `1` for malformed YAML and `2` for a plan that fails
+validation. Check the exit status of those two commands only for zero versus nonzero.
 
 | Command | Exit code | Meaning |
 |---|---:|---|
 | Any CLI command | `0` | The command completed. |
 | Any CLI command | `2` | Invalid or missing CLI options/arguments (Typer usage error), before the command runs. |
-| Any CLI command | `3` | The command could not run, or its result supports no claim (for example an unreadable plan). |
+| `analyze`, `hash-plan`, `init`, `visualize`, `generative ...` | `3` | The command could not run, or its result supports no claim (for example an unreadable plan). |
 | `validate` | `0` | Integrity is `valid` or `degraded` (inspect printed warnings). |
 | `validate` | `3` | Integrity is `invalid`. |
+| `validate` | `1` | The plan cannot be loaded (malformed YAML or a schema failure); a traceback is printed. |
 | `analyze` (default) | `0` | Analysis completed and integrity is `valid` or `degraded`. |
 | `analyze` (default) | `3` | Integrity is `invalid` (`report.json` is still written; pass `--allow-invalid` to exit `0` instead), or an execution error prevented report creation. |
 | `analyze --decision-exit-codes` | `0` / `1` / `2` / `3` | `0` = `PASS`, `1` = `FAIL`, `2` = `INCONCLUSIVE`, `3` = `invalid` integrity or execution failure. With `--allow-invalid`, an `invalid` integrity exits `2`, because an invalid analysis is never `PASS`. |
-| `plan fixed-design --plan` | `1` | No claim of the plan could be planned (`ExitCode.NOTHING_PLANNED`). |
+| `plan fixed-design --plan` | `1` | No claim of the plan could be planned (`ExitCode.NOTHING_PLANNED`), or the plan file is malformed YAML. |
+| `plan fixed-design --plan` | `2` | The plan fails validation, or `analyze` would find it invalid on the design manifest. |
 | `hash-plan` | `3` | The plan cannot be read or validated, or the `--register` file already exists or cannot be written. |
 | `generative analyze` | `3` | The report carries an `ERROR` diagnostic (the report is still written). |
 
