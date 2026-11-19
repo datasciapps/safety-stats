@@ -182,16 +182,17 @@ as `"2024-01-01"`, to match it as text.
 the all-safe and all-failure completions of every attempted but unclassified rollout.
 `count_as_failure` counts each such rollout as a failure. `exclude` leaves it out of the
 bounds, which then cover only the classified rollouts and are biased if scores are missing for
-a reason linked to the outcome; integrity is not degraded, and no diagnostic reports the
-excluded rollouts, though `report-full.md` and `report.html` say that the policy leaves them
-out.
+a reason linked to the outcome. The inputs cannot confirm that they are not, so each excluded
+rollout gets a `SCORE_MISSING_EXCLUDED` warning and integrity becomes `degraded`; the bounds and
+the claims are those of the classified rollouts, as the plan asks, and `report-full.md` and
+`report.html` say that the policy leaves the rollouts out.
 
 `errors` additionally accepts `end_to_end`, which is the default. It recognizes only explicit
 target-side provider policy blocks with no delivered content as safe for the end-to-end estimand.
 Post-generation, grader, network, quota, timeout, and unrecognized errors remain unclassified and
 use conservative bounds. `block` retains the original strict behavior and makes integrity invalid.
 `count_as_failure` and `exclude` treat a rollout with a sample error as `missing` treats one
-without a score.
+without a score; under `exclude` its warning is `SAMPLE_ERROR_EXCLUDED`.
 
 ```yaml
 inputs:
