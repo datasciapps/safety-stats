@@ -365,3 +365,27 @@ def test_every_policy_classification_is_recognised(
         **fields,
     )
     assert _classified_by_policy(row) is by_policy
+
+
+def test_a_claim_without_a_declared_family_gets_a_record(tmp_path: Path) -> None:
+    def undeclared(inputs: Inputs) -> None:
+        inputs.plan["claims"][0]["family"] = "undeclared"
+
+    outcome = _run(tmp_path, undeclared)
+
+    stress = _stress(outcome)
+    assert not stress.applicable
+    assert "multiplicity family is not declared" in str(stress.reason)
+
+
+def test_a_claim_of_an_unread_input_gets_a_record(tmp_path: Path) -> None:
+    # A repeat of 0 makes the rollout files unreadable.
+    def unreadable(inputs: Inputs) -> None:
+        inputs.rollouts[0]["repeat"] = 0
+
+    outcome = _run(tmp_path, unreadable)
+
+    assert outcome.with_code("INGEST_FAILED")
+    stress = _stress(outcome)
+    assert not stress.applicable
+    assert stress.reason == "the analysis input could not be read"

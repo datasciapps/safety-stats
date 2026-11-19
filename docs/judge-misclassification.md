@@ -917,8 +917,9 @@ does not apply, the record has `applicable: false` and a `reason`. That is the c
 
 - comparison claims, because the judge's accuracy may differ between arms;
 - claims without complete bounds;
-- claims not decided on their bounds: non-certifying evidence, an exploratory analysis, or
-  invalid data integrity;
+- claims not decided on their bounds: non-certifying evidence, an exploratory analysis,
+  invalid data integrity, an undeclared multiplicity family, or an analysis input that could
+  not be read;
 - `noisy_valid_test` claims, and claims decided on a validated correction, which already
   account for judge error;
 - claims that a validated calibration leaves INCONCLUSIVE;

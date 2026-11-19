@@ -520,6 +520,15 @@ def _claims(
                         "it has no error budget."
                     ],
                     warnings=list(evidence.warnings) if evidence else [],
+                    judge_error_stress=(
+                        JudgeErrorStressResult(
+                            applicable=False,
+                            reason="the claim's multiplicity family is not declared, so the "
+                            "claim is not decided on its bounds",
+                        )
+                        if plan.report.judge_error_stress
+                        else None
+                    ),
                 )
             )
             continue
