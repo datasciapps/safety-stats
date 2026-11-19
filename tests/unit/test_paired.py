@@ -237,6 +237,28 @@ def test_partial_bounds_are_attained_by_some_completion() -> None:
     assert interval.upper == pytest.approx(max(i.upper for i in intervals), rel=1e-12, abs=1e-15)
 
 
+@pytest.mark.parametrize("block", [1, 4, 25])
+@pytest.mark.parametrize("seed", range(12))
+def test_partial_bounds_span_every_block_of_tables(
+    monkeypatch: pytest.MonkeyPatch, seed: int, block: int
+) -> None:
+    # The tables are evaluated a block at a time and the bounds carried across blocks. With
+    # small blocks every input here spans several, so a bound taken from one block alone, not
+    # the running minimum and maximum, differs from the brute force over every completion.
+    monkeypatch.setattr(paired, "_PARTIAL_NEWCOMBE_BLOCK", block)
+    candidate, baseline = _random_partial_pairs(seed)
+    intervals = [newcombe_paired_interval(c, b) for c, b in _completions(candidate, baseline)]
+    interval = newcombe_paired_interval_partial(candidate, baseline)
+    assert interval.lower == pytest.approx(min(i.lower for i in intervals), rel=1e-12, abs=1e-15)
+    assert interval.upper == pytest.approx(max(i.upper for i in intervals), rel=1e-12, abs=1e-15)
+    assert interval.estimate_lower == pytest.approx(
+        min(i.estimate for i in intervals), rel=1e-12, abs=1e-15
+    )
+    assert interval.estimate_upper == pytest.approx(
+        max(i.estimate for i in intervals), rel=1e-12, abs=1e-15
+    )
+
+
 @pytest.mark.parametrize("seed", range(20))
 def test_extreme_completions_bound_the_cluster_bootstrap_of_every_completion(seed: int) -> None:
     # fixed_cluster_bootstrap takes its lower bound from the favourable completion and its upper
