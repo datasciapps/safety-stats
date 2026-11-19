@@ -1329,6 +1329,10 @@ What the claim assumes and reports:
   An upper bound on one adaptive attacker is no evidence about other attackers or budgets,
   so a plan that gives an adaptive claim an `acceptable_upper` is refused.
 
+The report states these assumptions beside each bound, and lists them among the assumptions
+its results rest on as
+[`adaptive_attack_stream`](diagnostics.md#assumption-adaptive_attack_stream).
+
 An order that is missing, not an integer or repeated, or a behaviour attacked more than once,
 leaves the claim `INCONCLUSIVE` and says why. The report lists adaptive claims in their own
 section of `report-full.md` and `report.json` (`adaptive_claims`), and beside the cohort's claims

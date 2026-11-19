@@ -1039,10 +1039,15 @@ def _adaptive_claim_lines(report: SafetyReport, places: int, include_decisions: 
         "",
         (
             "Each bound is an anytime-valid lower bound on the attacker's running mean of "
-            "conditional success probabilities over its runs, in the declared attack order. It "
-            "needs no independence between runs, and describes this attacker at this budget "
-            "only: it is no evidence about other attackers or budgets, so these claims can only "
-            "FAIL."
+            "conditional success probabilities over its runs, in the declared attack order, at "
+            "its multiplicity family's whole alpha. It needs no independence between runs, and "
+            "describes this attacker at this budget only: it is no evidence about other "
+            "attackers or budgets, so these claims can only FAIL. A success is a run whose "
+            "score the plan's mapping classifies as a failure; a failure a plan policy filled "
+            "in without a score counts as none. The bound assumes that the attack order was "
+            "fixed before any outcome was seen, or drawn at random; that each behaviour was "
+            "attacked at most once, which the analysis checks; and that each run's score is "
+            "right: judge error is not corrected, even where the plan validates the judge."
         ),
         "",
     ]

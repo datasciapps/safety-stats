@@ -162,6 +162,52 @@ def test_many_confirmed_successes_fail_the_gate(
     assert SafetyReport.model_validate(written).adaptive_claims == report.adaptive_claims
 
 
+_ASSUMPTIONS = (
+    "the attack order was fixed before any outcome was seen, or drawn at random",
+    "each behaviour was attacked at most once, which the analysis checks",
+    "judge error is not corrected, even where the plan validates the judge",
+)
+
+
+def test_the_report_states_the_assumptions_of_the_adaptive_bound(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _logs(monkeypatch, _verdicts(20))
+    report = analyze(plan=_write(tmp_path, adaptive=[ADAPTIVE]), logs="ignored")
+
+    # Where the report states the method: each claim's reasons, which report.html shows on
+    # the claim's card, and the section of report-full.md.
+    (claim,) = report.adaptive_claims
+    for assumption in _ASSUMPTIONS:
+        assert any(assumption in reason for reason in claim.reasons), assumption
+    output = report.write(tmp_path / "report")
+    markdown = (output / "report-full.md").read_text(encoding="utf-8")
+    section = markdown.split("## Adaptive-attacker claims (experimental)", 1)[1].split("\n|", 1)[0]
+    for assumption in (*_ASSUMPTIONS, "its multiplicity family's whole alpha"):
+        assert assumption in section, assumption
+
+    # And among the assumptions the report rests on, with the plan field that sets the order.
+    (used,) = [item for item in report.assumptions_used if item.id == "adaptive_attack_stream"]
+    assert "fixed before any outcome was seen or drawn at random" in used.statement
+    assert [setting.model_dump() for setting in used.settings] == [
+        {"path": "adaptive_claims[0].order_field", "value": "attack_order", "default": False}
+    ]
+    limitations = markdown.split("## Limitations", 1)[1]
+    assert f"**adaptive_attack_stream.** {used.statement}" in limitations
+
+
+def test_a_plan_without_adaptive_claims_does_not_rest_on_their_assumption(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _logs(monkeypatch, _verdicts(20))
+    report = analyze(plan=_write(tmp_path), logs="ignored")
+    ids = [item.id for item in report.assumptions_used]
+    assert "adaptive_attack_stream" not in ids
+    # The plan's risk bounds still rest on independent rollouts, with or without adaptive
+    # claims.
+    assert "rollout_independence" in ids
+
+
 def test_few_successes_are_inconclusive_never_pass(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

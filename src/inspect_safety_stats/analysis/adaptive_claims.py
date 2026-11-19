@@ -20,6 +20,14 @@ SCOPE_NOTE = (
     "The bound describes this attacker at this budget, on these behaviours in this order. It "
     "is no evidence about other attackers or budgets, which is why the claim can only FAIL."
 )
+# What the bound rests on beyond the claim's own data (CONTRIBUTING 8.5); the registry's
+# adaptive_attack_stream assumption says the same in "Assumptions used".
+ASSUMPTIONS_NOTE = (
+    "The bound assumes that the attack order was fixed before any outcome was seen, or drawn "
+    "at random; that each behaviour was attacked at most once, which the analysis checks; and "
+    "that each run's score is right: judge error is not corrected, even where the plan "
+    "validates the judge."
+)
 
 
 class _Undecidable(Exception):
@@ -158,7 +166,7 @@ def _adaptive_claim(
             else f"is below {spec.unacceptable_lower:.12g}."
         )
     )
-    reasons = [verdict, *notes, SCOPE_NOTE]
+    reasons = [verdict, *notes, SCOPE_NOTE, ASSUMPTIONS_NOTE]
     if not integrity_valid:
         result.reasons = [
             "The bound was computed but is ineligible because data integrity is invalid.",
