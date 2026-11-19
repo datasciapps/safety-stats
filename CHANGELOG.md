@@ -259,7 +259,11 @@ described in their pull requests.
   assumptions behind that bound, and JSON pointers to each value's place in `report.json`,
   with the analysis's plan hash and input hashes once for the document. Every value is copied
   from `report.json`; a judge-corrected claim exports the corrected bound and the combined
-  alpha. `checksums.json` covers the file, and `inspect-safety-stats schema claims` prints its
+  alpha, and a claim decided by the noisy-but-valid test names the test and exports the
+  judge-reported interval it was applied to. A claim that a validated calibration leaves
+  `INCONCLUSIVE` for want of a certifying correction is flagged as such, because its bound is
+  the uncorrected judge-reported one, and every record carries the claim's reasons.
+  `checksums.json` covers the file, and `inspect-safety-stats schema claims` prints its
   schema. The option needs `report.include_decisions: true`. Plans without it keep their hash
   and every artifact's bytes. See
   [claims.json](docs/plan-reference.md#claimsjson-experimental).
