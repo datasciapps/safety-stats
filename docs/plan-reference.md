@@ -142,6 +142,37 @@ exact Clopper-Pearson bounds within each judge stratum, and the corrected interv
 is the union of its own family budget and the judge family budget. The two modes are mutually
 exclusive.
 
+`groups` scopes an `assumed` or `validated` calibration to declared groups, for a cohort that
+holds several benchmarks whose judge accuracies differ:
+
+```yaml
+inputs:
+  judge_calibration:
+    mode: validated
+    validation_manifest: judge-labels.csv
+    family: judge_error
+    groups: [harmbench]
+```
+
+Without `groups` there is one calibration per cohort, and it corrects every row of the
+cohort. With it:
+
+- only rows of the listed groups are corrected. Rows of other groups keep their judge-system
+  intervals, and a claim on such a row in a validated plan is INCONCLUSIVE, with a reason
+  saying that no labels calibrate it;
+- `assumed` mode applies its scenarios unchanged to the listed groups' rows;
+- `validated` mode estimates one calibration per cohort and listed group, from the labels and
+  judge-stratum sizes of that group's rollouts. The judge family budget is split equally over
+  those calibrations (`per_calibration_alpha` in the report, instead of `per_cohort_alpha`),
+  and the report records the label counts per cohort and group. A validated correction then
+  certifies a `weighted_mean` over a whole listed group that weights every classified rollout
+  equally. Labels on rollouts outside every listed group calibrate nothing and raise the
+  warning `JUDGE_VALIDATION_OUT_OF_SCOPE`.
+
+Each listed group must be declared under `groups`, and a scope can be neither empty nor list a
+group twice. A `transported` calibration takes no `groups`. Generative plans have no groups and
+reject the field.
+
 `mode: transported` (experimental) takes a judge's sensitivity from a published
 human-labelled validation set, and nothing else:
 
@@ -218,6 +249,42 @@ all declare them, the report adds a diagnostic `judge_corrected_panel_derived` i
 composite's box is derived by Fréchet bounds within blocks and products across blocks, and true
 risk is partially identified by inverting Rogan–Gladen over it (the whole unit interval when the
 box admits an uninformative panel). See [Judge misclassification](judge-misclassification.md).
+
+`accuracy.groups` restricts a judge's declared ranges to the rollouts of the listed groups:
+
+```yaml
+    - id: gpt_judge
+      score: {name: harmful_gpt, mapping: {failure_values: [FAIL], safe_values: [PASS]}}
+      accuracy:
+        sensitivity: {lower: 0.85, upper: 0.95}
+        specificity: {lower: 0.90, upper: 0.99}
+        groups: [harmbench]
+```
+
+A box built from several declarations holds only in the groups that every one of them covers,
+so the `judge_corrected_panel_derived` interval is added only to rows of those groups. The
+report records the groups as `groups` under `provenance.judge_panel.derived_correction`. When
+the declarations share no group, no correction is reported, and the warning
+`PANEL_CORRECTION_NO_COMMON_GROUP` says so. With `report.judge_error_stress`, a claim on a group
+that the primary outcome's declared box does not cover is stressed without the box: its tipping
+lines are reported, its stressed verdict is not.
+
+`inputs.panel_groups` breaks the judge panel down by group. A cohort that holds several
+benchmarks otherwise gets one agreement figure across all of them. For example, a benchmark
+whose two judge scores are copies of each other pulls Cohen's kappa up for the cohort.
+
+```yaml
+inputs:
+  panel_groups: [harmbench, xstest]
+```
+
+Every judge, composite and judge pair in `provenance.judge_panel` then carries `groups`, with
+the same counts and agreement figures for each listed group's rollouts, per cohort. `report.md`
+shows them under **Judge panel by group**. The cohort-wide figures are reported as before. The
+field requires `inputs.judges`, and its groups must be declared.
+
+All three scopes are optional. A plan that leaves them out keeps its hash and writes the same
+report bytes as before.
 
 #### Claims by judge (experimental)
 

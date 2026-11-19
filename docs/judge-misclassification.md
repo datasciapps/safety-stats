@@ -238,8 +238,10 @@ binary failures is already `weighted_kl_chernoff`, the recommended path is cover
 
 ### Error budget across cohorts
 
-The judge family alpha is divided equally among the **declared cohorts**. A single risk row
-consumes one share; a comparison consumes the two shares of the cohorts it spans. A union
+The judge family alpha is divided equally among the **declared cohorts**, or, when the
+calibration is [scoped to groups](#scoping-the-calibration-to-groups), among the cohorts
+times the listed groups. A single risk row consumes one share; a comparison consumes the two
+shares of the cohorts it spans. A union
 over every corrected row therefore stays inside the declared family budget, and each interval
 reports the share it actually spent in `family_alpha`.
 
@@ -283,6 +285,28 @@ although true risk was 0.15. Tail measures (`maximum`, `cvar`, `top_k_mean`) far
 \(\rho\) rises with prevalence, so the riskiest prompts sit above the pooled value.
 
 Weighting the labels by the design, which would certify more rows, is future work.
+
+### Scoping the calibration to groups
+
+A cohort often holds several benchmarks, and a judge's accuracy can differ between them. The
+labels of one benchmark then say little about another's rows, yet a cohort-wide calibration
+pools them. `judge_calibration.groups` estimates one calibration per cohort and listed group
+instead, from the labels and judge-stratum sizes of that group's rollouts. Each listed group
+is then calibrated the way a cohort is otherwise:
+
+- the conditions above apply with "the cohort" read as "the group". A `weighted_mean` over a
+  whole listed group, in a fixed design, that weights every classified rollout of the group
+  equally, is certified;
+- the judge family alpha is divided equally among all calibrations, cohorts times listed
+  groups, and the report records that share as `per_calibration_alpha`;
+- a comparison arm takes its cohort's calibration for the comparison's group;
+- the noisy-but-valid test uses the truth strata of the row's group.
+
+Rows of groups that are not listed are not corrected. A claim on such a row is INCONCLUSIVE,
+and its reason says that no labels calibrate it. Labels on rollouts outside every listed group
+calibrate nothing, and the warning `JUDGE_VALIDATION_OUT_OF_SCOPE` reports them. In `assumed`
+mode, `groups` limits the declared scenarios to the listed groups' rows. Groups may overlap;
+each listed group is calibrated from its own rollouts.
 
 ### When it refuses
 
@@ -523,6 +547,20 @@ the identification result of the partial-identification literature made concrete
 dependent judges cannot substitute for calibration. Because declared boxes are assumptions, this
 interval is `diagnostic` and can never move a claim; the certifying route for a panel remains a
 `validated` calibration of the composite's own verdict strata.
+
+A declaration can be scoped with `accuracy.groups` when a judge's ranges are known for some
+benchmarks only. The composite's box then holds only in the groups that every member's
+declaration covers, and only those groups' rows get the derived interval. If the members
+share no group, there is no derived interval, and the warning
+`PANEL_CORRECTION_NO_COMMON_GROUP` says so.
+
+### Agreement per group
+
+Agreement over a cohort that holds several benchmarks mixes them. A benchmark on which two
+judges' scores are copies of each other agrees perfectly and pulls the cohort's kappa up, even
+when the judges disagree on the benchmark that matters. `inputs.panel_groups` adds the same
+counts, agreement, kappa and McNemar figures for each listed group's rollouts, per cohort,
+beside the cohort-wide ones. They are diagnostics like the cohort-wide figures.
 
 ## Stressing a threshold verdict (experimental)
 
