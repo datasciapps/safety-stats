@@ -5,12 +5,15 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 from inspect_safety_stats import analyze
 from inspect_safety_stats.config.loader import canonical_plan_value, plan_defaults
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.manifest import check_zero_tolerance_field, load_manifest
+from inspect_safety_stats.report.writer import _defaults_markdown
+from inspect_safety_stats.schema.reports import PlanDefault
 
 ROOT = Path(__file__).resolve().parents[2]
 SIMPLEQA = ROOT / "examples" / "real_simpleqa"
@@ -184,5 +187,17 @@ def test_analyze_records_the_defaults_in_report_json_and_report_md(tmp_path: Pat
     assert '- `inputs.score.token_limit`: `"score"`' in section
     # Defaults that leave a feature off are counted, not listed.
     assert "outputs.judge_claims" not in section
-    off = sum(entry.value in (None, False, [], {}) for entry in report.plan_defaults)
-    assert f"{off} further defaults leave" in section
+    listed = sum(line.startswith("- `") for line in section.splitlines())
+    assert f"{len(report.plan_defaults) - listed} further defaults leave" in section
+
+
+def test_a_default_of_zero_is_listed_as_a_value_it_sets() -> None:
+    # 0 == False and 0.0 == False, so a membership test counted bootstrap_seed: 0 among the
+    # defaults that leave a feature off, and left it out of the list.
+    values: list[Any] = [0, 0.0, 1, "", None, False, [], {}, [0], {"a": 0}]
+    entries = [PlanDefault(path=f"f{index}", value=value) for index, value in enumerate(values)]
+    report = SimpleNamespace(plan_defaults=entries)
+    lines = _defaults_markdown(report)  # type: ignore[arg-type]
+    listed = [line.split("`")[1] for line in lines if line.startswith("- `")]
+    assert listed == ["f0", "f1", "f2", "f3", "f8", "f9"]
+    assert "4 further defaults leave" in lines[-1]
