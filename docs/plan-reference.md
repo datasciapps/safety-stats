@@ -1129,7 +1129,8 @@ cohort and group bounded. The bound is the weighted mean failure probability of 
 with the group's weights.
 
 `analyze` adds an `ANYTIME_UPPER_BOUND` diagnostic (`INFO`) for each cohort and group. Its
-`details` hold the run, its seed, `population` (the group's prompts), `draws` (prompts read),
+message starts with "experimental", and its `details` hold `experimental: true`, the run, its
+seed, `population` (the group's prompts), `draws` (prompts read),
 `complete_draws`, `rollouts_counted_as_failures`, the alpha, `estimate`, `upper`, and, for
 each weighted-mean claim on that cohort and group, whether `upper` is at or below its
 `acceptable_upper` (`certified`). As a claim can pass only in a confirmatory analysis whose

@@ -389,8 +389,8 @@ def anytime_bound_diagnostics(
                 code="ANYTIME_UPPER_BOUND",
                 severity="INFO",
                 message=(
-                    f"anytime-valid upper bound {bound.upper:.6g} on the weighted mean "
-                    f"failure probability at one-sided alpha {alpha:.6g}, after "
+                    f"experimental anytime-valid upper bound {bound.upper:.6g} on the "
+                    f"weighted mean failure probability at one-sided alpha {alpha:.6g}, after "
                     f"{bound.draws} of {bound.population} prompts in the recorded order"
                     + outcome
                     + ". It holds wherever the run stopped; claims keep their "
@@ -398,6 +398,7 @@ def anytime_bound_diagnostics(
                 ),
                 scope=item.scope,
                 details={
+                    "experimental": True,
                     "cohort": item.cohort,
                     "group": item.group_id,
                     **item.details,

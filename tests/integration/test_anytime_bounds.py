@@ -193,6 +193,8 @@ def test_a_stopped_shuffled_run_gets_the_bound_of_its_recorded_prefix(
     (diagnostic,) = _found(report, "ANYTIME_UPPER_BOUND")
     details = diagnostic.details
     assert diagnostic.severity == "INFO"
+    assert diagnostic.message.startswith("experimental anytime-valid upper bound ")
+    assert details["experimental"] is True
     assert details["sample_shuffle"] == SEED
     assert details["population"] == PROMPTS
     assert details["draws"] == details["complete_draws"] == STOP_AFTER
