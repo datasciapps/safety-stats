@@ -853,7 +853,9 @@ described in their pull requests.
 - **The generative commands' help says the pipeline is experimental (#24).** The help of
   `generative` and of each of its commands, and of `schema generative-plan`, ends with the
   caveat the README and the generative docs already carry: the generative pipeline is
-  experimental, and its public surface may change in any minor release.
+  experimental, and its public surface may change in any minor release. `schema --help`, which
+  lists `generative-plan` beside the other schemas, marks it "(experimental)" as it marks
+  `claims` and `decision-policy`.
 
 - **`generative analyze` exits `3`, not `2`, on `ERROR` diagnostics.** Exit `2` means
   INCONCLUSIVE under `analyze --decision-exit-codes`, so a generative report with errors could

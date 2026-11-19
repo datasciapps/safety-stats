@@ -1587,7 +1587,7 @@ def generative_budget_command(
 
 @schema_app.command("generative-plan", epilog=GENERATIVE_CAVEAT)
 def generative_plan_schema_command() -> None:
-    """Print the JSON schema for a generative evaluation plan."""
+    """Print the JSON schema for a generative evaluation plan (experimental)."""
 
     from inspect_safety_stats.generative.schema import GenerativePlan
 
