@@ -1,8 +1,9 @@
-"""CLUSTER_DESIGN_EFFECT on a clustered synthetic set: 80 single-rollout prompts in 10
-conversations of 8, with the conversation in a manifest column."""
+"""CLUSTER_DESIGN_EFFECT on a clustered synthetic set: 80 prompts in 10 conversations of 8,
+with the conversation in a manifest column, and one rollout per prompt or ten."""
 
 from __future__ import annotations
 
+from collections.abc import Collection, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -22,8 +23,33 @@ CO_FAILING = {(conversation, item) for conversation in range(3) for item in rang
 # The same 22 failures spread over the conversations, at most three in each.
 SPREAD = {(index % 10, index // 10) for index in range(22)}
 
+# Ten rollouts per prompt. Prompts differ widely in how many of their rollouts fail; the
+# conversations do not, beyond their prompts: the even ones hold prompts that fail 0, 0, 0, 1, 2,
+# 3, 5 and 10 times, 21 failures in all, the odd ones prompts that fail 0, 1, 2, 3, 5, 8, 8 and
+# 10 times, 37 in all. That gap between conversations is smaller than the spread of their own
+# prompts makes likely by chance.
+PROMPT_SPREAD = {
+    (conversation, item): (
+        (0, 0, 0, 1, 2, 3, 5, 10) if conversation % 2 == 0 else (0, 1, 2, 3, 5, 8, 8, 10)
+    )[item]
+    for conversation in range(10)
+    for item in range(8)
+}
 
-def _inputs(failures: set[tuple[int, int]], primary: str = "item") -> Inputs:
+
+def _inputs(
+    failures: Collection[tuple[int, int]] | Mapping[tuple[int, int], int],
+    primary: str = "item",
+    rollouts: int = 1,
+) -> Inputs:
+    """Each prompt's ``rollouts`` rollouts. ``failures`` gives the (conversation, item) pairs
+    whose rollouts all fail, or each prompt's number of failing rollouts."""
+
+    failing = (
+        failures
+        if isinstance(failures, Mapping)
+        else {key: rollouts for key in failures}
+    )
     inputs = base_inputs()
     inputs.manifest = []
     inputs.rollouts = []
@@ -35,13 +61,16 @@ def _inputs(failures: set[tuple[int, int]], primary: str = "item") -> Inputs:
                     "prompt_id": prompt,
                     "question_id": prompt,
                     "task_id": "t1",
-                    "expected_rollouts": 1,
+                    "expected_rollouts": rollouts,
                     "conversation": f"c{conversation}",
                 }
             )
-            outcome = "FAIL" if (conversation, item) in failures else "PASS"
-            inputs.rollouts.append(rollout(prompt, 1, outcome))
+            for repeat in range(1, rollouts + 1):
+                failed = repeat <= failing.get((conversation, item), 0)
+                inputs.rollouts.append(rollout(prompt, repeat, "FAIL" if failed else "PASS"))
     profiles = {"item": {"block_by": ["prompt_id"]}, "conversation": {"block_by": ["conversation"]}}
+    if primary == "rollout":
+        profiles["rollout"] = {"block_by": ["rollout"]}
     sensitivities = [name for name in profiles if name != primary]
     inputs.plan["design"] = {"independence_profiles": profiles}
     inputs.plan["multiplicity"]["families"].append(
@@ -74,6 +103,80 @@ def test_co_failing_conversations_warn_with_their_design_effect(tmp_path: Path) 
     assert found.details["primaries_splitting_blocks"] == ["item"]
     assert "about 13 effective rollouts" in found.message
     assert "'item'" in found.message
+    # With one rollout per prompt, the item primary's units are the rollouts.
+    (units,) = cohort["primaries"]
+    assert units == {
+        "profile": "item",
+        "units": 80,
+        "intracluster_correlation": cohort["intracluster_correlation"],
+        "design_effect": cohort["design_effect"],
+        "effective_units": cohort["effective_rollouts"],
+    }
+    assert "for the 80 units of primary 'item' in them" in found.message
+
+
+def test_co_failing_conversations_warn_on_the_units_of_repeated_rollouts(
+    tmp_path: Path,
+) -> None:
+    (found,) = _found(run_analysis(_inputs(CO_FAILING, rollouts=10), tmp_path).diagnostics)
+    assert found.severity == "WARNING"
+    assert found.details["primaries_splitting_blocks"] == ["item"]
+    (cohort,) = found.details["cohorts"]
+    assert (cohort["rollouts"], cohort["blocks"], cohort["largest_block"]) == (800, 10, 80)
+    # Every rollout of a failing prompt fails, so the prompts' failure rates are 0 or 1, as the
+    # single rollouts were: the same correlation, design effect and effective number, now of
+    # the item primary's 80 units, not of the 800 rollouts.
+    (units,) = cohort["primaries"]
+    assert units["units"] == 80
+    assert units["intracluster_correlation"] == pytest.approx(10 / 13, rel=1e-12, abs=0)
+    assert units["design_effect"] == pytest.approx(83 / 13, rel=1e-12, abs=0)
+    assert units["effective_units"] == pytest.approx(80 * 13 / 83, rel=1e-12, abs=0)
+    assert "about 13 effective units" in found.message
+
+
+def test_prompt_differences_alone_do_not_warn_an_item_primary(tmp_path: Path) -> None:
+    (found,) = _found(
+        run_analysis(_inputs(PROMPT_SPREAD, rollouts=10), tmp_path).diagnostics
+    )
+    assert found.severity == "INFO"
+    assert found.details["primaries_splitting_blocks"] == []
+    (cohort,) = found.details["cohorts"]
+    # On rollouts, the ten rollouts of one prompt are correlated because prompts differ, and
+    # the design effect passes 2. Sizes 80 x 10, rates 21/80 and 37/80 around 29/80:
+    # MSB = 8/9, MSW = 283/1264 and m0 = 80.
+    on_rollouts = (8 / 9 - 283 / 1264) / (8 / 9 + 79 * 283 / 1264)
+    assert cohort["intracluster_correlation"] == pytest.approx(on_rollouts, rel=1e-12, abs=0)
+    assert cohort["design_effect"] == pytest.approx(1 + 79 * on_rollouts, rel=1e-12, abs=0)
+    assert cohort["design_effect"] > 3.8
+    # The item primary already counts each prompt's rollouts as one block. On its 80 units,
+    # the prompts' failure rates: MSB = 4/45, MSW = 719/5600 and k0 = 8, a negative
+    # correlation, so no design effect.
+    (units,) = cohort["primaries"]
+    assert units["units"] == 80
+    assert units["intracluster_correlation"] == pytest.approx(
+        -1991 / 49777, rel=1e-12, abs=0
+    )
+    assert (units["design_effect"], units["effective_units"]) == (1.0, 80.0)
+    assert "about 80 effective units." in found.message
+
+
+def test_a_rollout_primary_gets_the_figures_on_rollouts(tmp_path: Path) -> None:
+    (found,) = _found(
+        run_analysis(_inputs(PROMPT_SPREAD, primary="rollout", rollouts=10), tmp_path).diagnostics
+    )
+    # A [rollout] primary's units are the rollouts: its figures are those on rollouts, to the
+    # bit, and it is warned about them as before.
+    (cohort,) = found.details["cohorts"]
+    (units,) = cohort["primaries"]
+    assert units == {
+        "profile": "rollout",
+        "units": 800,
+        "intracluster_correlation": cohort["intracluster_correlation"],
+        "design_effect": cohort["design_effect"],
+        "effective_units": cohort["effective_rollouts"],
+    }
+    assert found.severity == "WARNING"
+    assert found.details["primaries_splitting_blocks"] == ["rollout"]
 
 
 def test_spread_failures_are_only_recorded(tmp_path: Path) -> None:

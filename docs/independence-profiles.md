@@ -237,6 +237,26 @@ For every profile whose blocks hold rollouts of more than one prompt, the diagno
   the block an outcome sits in, averaged over the $N$ outcomes;
 - the effective number of rollouts, $N$ divided by the design effect.
 
+These figures count every rollout as a unit, as a `[rollout]` profile does. A primary profile
+that splits the blocks counts its own blocks instead: a `[prompt_id]` primary already treats the
+rollouts of one prompt as one block. So for each primary profile of a result the plan computes
+(enabled direct mean intervals, comparisons, comparison sets and anytime bounds) that puts
+rollouts of one block in different blocks of its own, the diagnostic gives the same figures on
+that primary's units, under `primaries` in each cohort's details:
+
+- the units: the scored rollouts of one of the primary's blocks within one of the profile's
+  blocks. Where the primary's blocks lie within the profile's, as a prompt lies within its
+  conversation, the units are the primary's blocks. A block of the primary that spans several of
+  the profile's blocks gives one unit in each;
+- the intra-cluster correlation of the units' failure rates within the blocks, from the same
+  estimator, with each unit counted once;
+- the design effect, with $m$ counted in units: the number of units in the block a unit sits in,
+  averaged over the $K$ units;
+- the effective number of units, $K$ divided by the design effect.
+
+For a `[rollout]` primary, and for any primary whose units each hold one rollout, the units are
+the rollouts and the figures are those on rollouts.
+
 To get it for a column, declare a profile that blocks by that column, for example as a
 sensitivity of the item-level primary:
 
@@ -250,11 +270,20 @@ outputs:
     independence: {primary: item, sensitivities: [conversation]}
 ```
 
-The diagnostic is a warning when, in some cohort, the design effect is at least 2 and a primary
-profile of the plan puts rollouts of one block in different blocks of its own. It is
-informational otherwise, for example when the grouping profile is itself the primary. Profiles
+The diagnostic is a warning when, in some cohort, the design effect on a primary's units is at
+least 2: their effective number is then at most half of them, though the primary counts each as
+independent. It is informational otherwise, for example when the grouping profile is itself the
+primary, or when no result the plan computes rests on a primary that splits the blocks. Profiles
 whose blocks never hold more than one prompt get no diagnostic. It changes no bound: it is a
 measure of how much the independence choice matters, to read beside the sensitivity bounds.
+
+The warning rests on the primary's units, not on the rollouts. Whenever prompts differ in failure
+rate, the rollouts of one prompt are correlated: a conversation that holds a hard prompt holds
+several failing rollouts. A prompt-level primary already accounts for that correlation, and with
+repeated rollouts it can dominate the figures on rollouts. In simulated runs of 10 conversations
+of 8 prompts with 10 rollouts each, where prompts differ widely and conversations add nothing,
+the design effect on rollouts reaches 2 in about 60% of runs, and on the units of a prompt-level
+primary in about 2.5%.
 
 The figures describe the data, and they have limits:
 
@@ -262,9 +291,10 @@ The figures describe the data, and they have limits:
   the prompts of different blocks. It can therefore overstate the dependence between rollouts.
   A near-zero correlation is still a sign that the grouping matters little.
 - The correlation is undefined when every rollout falls in one block, when no block holds two
-  rollouts, or when all rollouts have the same outcome. The diagnostic then says so, and gives no
-  design effect.
-- The estimate counts rollouts equally, whatever the plan's prompt weights.
+  rollouts, or when all rollouts have the same outcome, and on a primary's units also when they
+  all have the same failure rate. The diagnostic then says so, and gives no design effect.
+- The estimate on rollouts counts rollouts equally, and the estimate on a primary's units counts
+  units equally, whatever their number of rollouts and the plan's prompt weights.
 
 The HTML report has one global independence-profile selector. It displays only the selected
 profile's intervals in risk charts, hierarchy trees, and comparison summaries. JSON and CSV retain

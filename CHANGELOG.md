@@ -41,10 +41,14 @@ described in their pull requests.
   (changes `report.json`).** For each independence profile whose blocks hold rollouts of more
   than one prompt, such as `block_by: [conversation]`, a new `CLUSTER_DESIGN_EFFECT` diagnostic
   gives each cohort's empirical intra-cluster correlation of the scored outcomes within the
-  blocks, the design effect and the effective number of rollouts. It is a warning when the
-  design effect reaches 2 and the primary profile of a result the plan computes, such as one at
-  the item level, splits the profile's blocks; disabled direct mean intervals name no primary.
-  Otherwise it is informational. No bound changes. See
+  blocks, the design effect and the effective number of rollouts. For each primary profile of a
+  result the plan computes that splits the profile's blocks, such as one at the item level, it
+  gives the same figures on that primary's units, for example its prompts with their failure
+  rates, and the effective number of units; disabled direct mean intervals name no primary. It
+  is a warning when, in a cohort, the design effect on a primary's units reaches 2, so that
+  their effective number is at most half of them. Figures on rollouts would warn about a
+  prompt-level primary with repeated rollouts whenever prompts differ in failure rate, however
+  little the grouping adds. Otherwise it is informational. No bound changes. See
   [How much the grouping matters](docs/independence-profiles.md#how-much-the-grouping-matters-cluster_design_effect).
 
 - **Assumed judge scenarios can give each cohort its own box.** A scenario under

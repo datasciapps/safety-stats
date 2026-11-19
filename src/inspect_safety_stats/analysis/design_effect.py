@@ -7,6 +7,16 @@ profile and cohort, this module estimates the empirical intra-cluster correlatio
 rollouts' outcomes within the profile's blocks, the design effect it implies and the effective
 number of rollouts, so that a user sees how much the choice between the profiles matters.
 
+A primary profile that splits those blocks counts its own blocks as the independent units, not
+the rollouts: a prompt-level primary already treats a prompt's rollouts as one block. For each
+such primary the same figures are computed on its units, the scored rollouts of one of its
+blocks within one of the profile's blocks, with each unit's failure rate as its outcome. These
+figures decide whether the diagnostic warns. Figures on rollouts would not do: whenever prompts
+differ in failure rate, the rollouts of one prompt are correlated, and with repeated rollouts
+that correlation alone would make the warning fire about a prompt-level primary, however little
+the grouping adds. For a primary whose units are single rollouts, such as ``[rollout]``, the
+figures on its units are the figures on rollouts, computed by the same arithmetic.
+
 The figures describe the data and change no bound: the bounds still rest on the profiles the
 plan declares.
 """
@@ -24,8 +34,9 @@ from inspect_safety_stats.schema.reports import Diagnostic
 from inspect_safety_stats.schema.scopes import plan_scope
 from inspect_safety_stats.stats.independence import _serialized_key, block_index, block_key
 
-# A design effect of 2 halves the evidence an item-level profile counts on. At or above it, a
-# primary profile that splits the blocks makes CLUSTER_DESIGN_EFFECT a warning.
+# A design effect of 2 on a primary profile's units means they carry about half the evidence of
+# as many independent units, which the primary counts them as. At or above it, in some cohort,
+# that primary makes CLUSTER_DESIGN_EFFECT a warning.
 DESIGN_EFFECT_WARNING = 2.0
 
 
@@ -66,6 +77,67 @@ def intracluster_correlation(sizes: Sequence[int], failures: Sequence[int]) -> f
     return (between - within) / denominator
 
 
+def unit_intracluster_correlation(blocks: Sequence[Sequence[tuple[int, int]]]) -> float | None:
+    """The one-way ANOVA estimate of the intra-cluster correlation of units' failure rates.
+
+    Each block is a sequence of units, and each unit a pair ``(rollouts, failures)`` whose
+    outcome is its failure rate ``y_u = failures / rollouts``. Every unit counts once,
+    whatever its number of rollouts. With ``K`` units in ``G`` blocks of ``k_g`` units, block
+    means ``ybar_g`` and overall mean ``ybar``, the mean squares are
+    ``MSB = sum k_g (ybar_g - ybar)^2 / (G - 1)`` and
+    ``MSW = sum (y_u - ybar_g)^2 / (K - G)``, and the estimate is
+    ``(MSB - MSW) / (MSB + (k0 - 1) MSW)`` with ``k0 = (K - sum k_g^2 / K) / (G - 1)``. It
+    can be negative. None when it is undefined: fewer than two blocks, no block with two units,
+    or every unit with the same failure rate.
+
+    When every unit is one rollout, the outcomes are binary and the estimate is
+    :func:`intracluster_correlation` of the blocks' rollout and failure counts, which computes
+    it, so that a ``[rollout]`` primary's figures keep the bits of the figures on rollouts.
+    """
+
+    if any(not units for units in blocks) or any(
+        rollouts < 1 or failed < 0 or failed > rollouts
+        for units in blocks
+        for rollouts, failed in units
+    ):
+        raise ValueError(
+            "every block needs a unit, every unit a rollout, and at most one failure per rollout"
+        )
+    if all(rollouts == 1 for units in blocks for rollouts, _ in units):
+        return intracluster_correlation(
+            [len(units) for units in blocks],
+            [sum(failed for _, failed in units) for units in blocks],
+        )
+    counts = [len(units) for units in blocks]
+    total = sum(counts)
+    clusters = len(counts)
+    if clusters < 2 or total == clusters:
+        return None
+    # Equal rates, compared exactly as fractions: their float means could differ in the last
+    # bit and leave a ratio of rounding errors.
+    first_rollouts, first_failed = blocks[0][0]
+    if all(
+        failed * first_rollouts == first_failed * rollouts
+        for units in blocks
+        for rollouts, failed in units
+    ):
+        return None
+    rates = [[failed / rollouts for rollouts, failed in units] for units in blocks]
+    overall = math.fsum(rate for block in rates for rate in block) / total
+    means = [math.fsum(block) / len(block) for block in rates]
+    between = math.fsum(
+        count * (mean - overall) ** 2 for count, mean in zip(counts, means, strict=True)
+    ) / (clusters - 1)
+    within = math.fsum(
+        (rate - mean) ** 2 for block, mean in zip(rates, means, strict=True) for rate in block
+    ) / (total - clusters)
+    typical = (total - math.fsum(count * count for count in counts) / total) / (clusters - 1)
+    denominator = between + (typical - 1) * within
+    if denominator <= 0:
+        return None
+    return (between - within) / denominator
+
+
 def design_effect(sizes: Sequence[int], correlation: float) -> float:
     """``1 + (m - 1) * max(correlation, 0)``, with ``m = sum m_g^2 / N``.
 
@@ -77,6 +149,24 @@ def design_effect(sizes: Sequence[int], correlation: float) -> float:
     total = sum(sizes)
     typical = math.fsum(size * size for size in sizes) / total
     return 1 + (typical - 1) * max(correlation, 0.0)
+
+
+def unit_design_effect(
+    blocks: Sequence[Sequence[tuple[int, int]]],
+) -> tuple[float | None, float | None]:
+    """The intra-cluster correlation of units' failure rates within blocks, and the design
+    effect on the units.
+
+    ``blocks`` is as for :func:`unit_intracluster_correlation`. The design effect is
+    :func:`design_effect` with the blocks' sizes counted in units, so ``m`` is the number of
+    units in the block a unit sits in, averaged over units. Both are None when the
+    correlation is undefined.
+    """
+
+    correlation = unit_intracluster_correlation(blocks)
+    if correlation is None:
+        return None, None
+    return correlation, design_effect([len(units) for units in blocks], correlation)
 
 
 def _primary_profiles(plan: AnalysisPlan) -> list[str]:
@@ -97,18 +187,36 @@ def _primary_profiles(plan: AnalysisPlan) -> list[str]:
     return sorted(primaries)
 
 
+def _unit_figures(profile_id: str, blocks: list[list[tuple[int, int]]]) -> dict[str, Any]:
+    """The figures on one primary's units, given as (rollouts, failures) within each block."""
+
+    correlation, effect = unit_design_effect(blocks)
+    units = sum(len(block) for block in blocks)
+    return {
+        "profile": profile_id,
+        "units": units,
+        "intracluster_correlation": correlation,
+        "design_effect": effect,
+        "effective_units": None if effect is None else units / effect,
+    }
+
+
 def _cohort_figures(
     rows: list[Observation],
     profile: IndependenceProfileSpec,
     primaries: dict[str, IndependenceProfileSpec],
     manifest_values: Any,
-) -> tuple[dict[str, Any], bool, list[str]]:
-    """One cohort's figures, whether a block holds several prompts, and the primaries that
-    split a block."""
+) -> tuple[dict[str, Any], bool]:
+    """One cohort's figures, with those on the units of each primary that splits a block, and
+    whether a block holds several prompts."""
 
     blocks: dict[tuple[Any, ...], list[int]] = {}
     prompts: dict[tuple[Any, ...], set[str]] = {}
-    primary_blocks: dict[str, dict[tuple[Any, ...], set[str]]] = {name: {} for name in primaries}
+    # A primary's units within each block: the scored rollouts and failures of each of its
+    # blocks, by the block's serialized key.
+    primary_units: dict[str, dict[tuple[Any, ...], dict[str, list[int]]]] = {
+        name: {} for name in primaries
+    }
     for row in rows:
         key = block_key(row, profile, manifest_values, comparison=False)
         counts = blocks.setdefault(key, [0, 0])
@@ -117,7 +225,9 @@ def _cohort_figures(
         prompts.setdefault(key, set()).add(row.prompt_id)
         for name, spec in primaries.items():
             inner = _serialized_key(block_key(row, spec, manifest_values, comparison=False))
-            primary_blocks[name].setdefault(key, set()).add(inner)
+            unit = primary_units[name].setdefault(key, {}).setdefault(inner, [0, 0])
+            unit[0] += 1
+            unit[1] += row.failure is True
     ordered = sorted(blocks.items(), key=lambda item: _serialized_key(item[0]))
     sizes = [counts[0] for _, counts in ordered]
     failures = [counts[1] for _, counts in ordered]
@@ -125,6 +235,20 @@ def _cohort_figures(
     effect = None if correlation is None else design_effect(sizes, correlation)
     if correlation is None and len(sizes) > 1 and max(sizes) == 1:
         effect = 1.0
+    splitting: list[dict[str, Any]] = []
+    for name in sorted(primaries):
+        units = primary_units[name]
+        if not any(len(inner) > 1 for inner in units.values()):
+            continue
+        splitting.append(
+            _unit_figures(
+                name,
+                [
+                    [(unit[0], unit[1]) for _, unit in sorted(units[key].items())]
+                    for key, _ in ordered
+                ],
+            )
+        )
     figures = {
         "rollouts": len(rows),
         "blocks": len(sizes),
@@ -132,14 +256,21 @@ def _cohort_figures(
         "intracluster_correlation": correlation,
         "design_effect": effect,
         "effective_rollouts": None if effect is None else len(rows) / effect,
+        "primaries": splitting,
     }
     grouped = any(len(names) > 1 for names in prompts.values())
-    splitting = sorted(
-        name
-        for name, inner in primary_blocks.items()
-        if any(len(keys) > 1 for keys in inner.values())
+    return figures, grouped
+
+
+def _describe_units(figures: dict[str, Any]) -> str:
+    head = f"for the {figures['units']} units of primary {figures['profile']!r} in them"
+    if figures["intracluster_correlation"] is None:
+        return f"{head}, all with the same failure rate, so no correlation can be estimated"
+    return (
+        f"{head}, intra-cluster correlation {figures['intracluster_correlation']:.3f}, "
+        f"design effect {figures['design_effect']:.2f}, about "
+        f"{figures['effective_units']:.0f} effective units"
     )
-    return figures, grouped, splitting
 
 
 def _describe(cohort_id: str, figures: dict[str, Any]) -> str:
@@ -155,6 +286,7 @@ def _describe(cohort_id: str, figures: dict[str, Any]) -> str:
         f"{head}, intra-cluster correlation {figures['intracluster_correlation']:.3f}, "
         f"design effect {figures['design_effect']:.2f}, about "
         f"{figures['effective_rollouts']:.0f} effective rollouts"
+        + "".join(f", and {_describe_units(item)}" for item in figures["primaries"])
     )
 
 
@@ -167,10 +299,14 @@ def cluster_design_effects(
     rollouts (those with a failure or safe outcome) are grouped into the profile's blocks.
     A profile whose blocks never hold more than one prompt gets no diagnostic: its grouping is
     at the item level. For the others, one ``CLUSTER_DESIGN_EFFECT`` per profile gives each
-    cohort's intra-cluster correlation, design effect and effective rollout count. It is a
-    warning when, in some cohort, the design effect is at least ``DESIGN_EFFECT_WARNING`` and
-    a primary profile of the plan puts rollouts of one of the profile's blocks in different
-    blocks of its own, which it treats as independent; otherwise it is informational.
+    cohort's intra-cluster correlation, design effect and effective rollout count. For each
+    primary profile of a result the plan computes that puts rollouts of one of the profile's
+    blocks in different blocks of its own, which it treats as independent, it gives the same
+    figures on that primary's units: the scored rollouts of one of its blocks within one of
+    the profile's blocks, each with its failure rate as the outcome. The diagnostic is a
+    warning when, in some cohort, the design effect on a primary's units is at least
+    ``DESIGN_EFFECT_WARNING``, so that their effective number is at most half of them;
+    otherwise it is informational.
     """
 
     profiles = plan.design.independence_profiles
@@ -193,14 +329,17 @@ def cluster_design_effects(
         grouped = False
         warned: set[str] = set()
         for cohort_id in sorted(by_cohort):
-            figures, cohort_grouped, splitting = _cohort_figures(
+            figures, cohort_grouped = _cohort_figures(
                 by_cohort[cohort_id], profile, primaries, manifest_values
             )
             grouped = grouped or cohort_grouped
             cohorts.append({"cohort_id": cohort_id, **figures})
-            effect = figures["design_effect"]
-            if effect is not None and effect >= DESIGN_EFFECT_WARNING:
-                warned.update(splitting)
+            warned.update(
+                item["profile"]
+                for item in figures["primaries"]
+                if item["design_effect"] is not None
+                and item["design_effect"] >= DESIGN_EFFECT_WARNING
+            )
         if not grouped:
             continue
         message = (
@@ -212,10 +351,12 @@ def cluster_design_effects(
         if warned:
             message += (
                 f" The primary profile(s) {', '.join(repr(name) for name in sorted(warned))} "
-                "treat rollouts that share one of these blocks as independent, so the results "
-                "resting on them count more independent rollouts than the effective number "
-                f"above. Read the bounds under {profile_id!r}, declared as an independence "
-                "sensitivity or as the primary, beside theirs."
+                "treat their units in one of these blocks as independent, so where the design "
+                f"effect on their units is {DESIGN_EFFECT_WARNING:g} or more, the results "
+                f"resting on them count at least {DESIGN_EFFECT_WARNING:g} times as many "
+                "independent units as the effective number above. Read the bounds under "
+                f"{profile_id!r}, declared as an independence sensitivity or as the primary, "
+                "beside theirs."
             )
         diagnostics.append(
             Diagnostic(
