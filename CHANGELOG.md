@@ -560,6 +560,8 @@ described in their pull requests.
   role, the status, the interval id, the bounds, the independent block count and the effective
   sample size. `report.md` adds a "Verdicts by independence profile" table under the mandatory
   claims when a claim has a sensitivity profile, and the HTML claim card lists the verdicts.
+  Both label each row primary or sensitivity, under a note that a sensitivity verdict cannot
+  replace the primary one.
   The claim's status and the decision stay the primary profile's; a sensitivity verdict is
   shown, never selected. An exploratory claim's rows are all `INCONCLUSIVE`, like the claim,
   whatever its `descriptive_status`. Claims decided on a judge correction or the noisy-valid

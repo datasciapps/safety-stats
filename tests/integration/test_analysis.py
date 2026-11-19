@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any, Literal
 
@@ -24,6 +25,7 @@ from inspect_safety_stats.ingest.inspect_logs import (
 )
 from inspect_safety_stats.ingest.manifest import load_manifest
 from inspect_safety_stats.ingest.records import StopContext
+from inspect_safety_stats.report import visualization
 from inspect_safety_stats.schema.reports import (
     Diagnostic,
     GroupRiskResult,
@@ -32,6 +34,7 @@ from inspect_safety_stats.schema.reports import (
 )
 from tests.claims_export import round_trip_differences
 from tests.report_rendering import rendering_differences
+from tests.template_functions import function_source
 
 
 def _write_inputs(tmp_path: Path) -> Path:
@@ -4249,6 +4252,7 @@ def _profiled_report(
     *,
     intent: Literal["confirmatory", "exploratory"] = "confirmatory",
     reference_methods: tuple[str, ...] = (),
+    primary: str = "rollout",
 ) -> SafetyReport:
     plan = load_plan(_write_inputs(tmp_path))
     plan.analysis.intent = intent
@@ -4257,6 +4261,7 @@ def _profiled_report(
     spec.method = "weighted_kl_chernoff"
     spec.reference_methods = list(reference_methods)
     assert spec.independence is not None
+    spec.independence.primary = primary
     spec.independence.sensitivities = sensitivities
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
@@ -4301,8 +4306,88 @@ def test_claims_show_their_verdict_under_every_independence_profile(
         "| Mean fixed-design risk is acceptable | `prompt` | sensitivity | `INCONCLUSIVE` "
         in markdown
     )
-    html = (output / "report.html").read_text(encoding="utf-8")
-    assert "profile_verdicts" in html
+
+
+_PROFILE_VERDICT_DRIVER = """
+const fs = require("fs");
+const [functionsPath, reportPath] = process.argv.slice(2);
+const api = new Function(
+  fs.readFileSync(functionsPath, "utf8") + "\\nreturn {profileVerdictLines};"
+)();
+const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+process.stdout.write(JSON.stringify(report.claims.map(claim => api.profileVerdictLines(claim))));
+"""
+
+
+def _card_profile_verdicts(report: SafetyReport, tmp_path: Path) -> list[Any]:
+    """What the HTML claim card lists for each claim's profile verdicts, run under Node."""
+    template = visualization._TEMPLATE.read_text(encoding="utf-8")
+    functions = tmp_path / "functions.js"
+    functions.write_text(
+        "\n".join(function_source(template, name) for name in ("pct", "profileVerdictLines")),
+        encoding="utf-8",
+    )
+    payload = tmp_path / "report.json"
+    payload.write_text(json.dumps(report.model_dump(mode="json")), encoding="utf-8")
+    driver = tmp_path / "driver.js"
+    driver.write_text(_PROFILE_VERDICT_DRIVER, encoding="utf-8")
+    node = shutil.which("node")
+    assert node is not None
+    completed = subprocess.run(
+        [node, str(driver), str(functions), str(payload)],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+    return list(json.loads(completed.stdout))
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is not installed")
+@pytest.mark.parametrize(
+    ("primary", "sensitivity", "rows"),
+    [
+        (
+            "rollout",
+            "prompt",
+            [
+                "rollout (primary): PASS, 0.0%–8.8%",
+                "prompt (sensitivity): INCONCLUSIVE, 0.0%–84.2%",
+            ],
+        ),
+        # A sensitivity PASS beside an INCONCLUSIVE claim was listed as "rollout: PASS".
+        (
+            "prompt",
+            "rollout",
+            [
+                "prompt (primary): INCONCLUSIVE, 0.0%–84.2%",
+                "rollout (sensitivity): PASS, 0.0%–8.8%",
+            ],
+        ),
+    ],
+)
+def test_the_html_claim_card_labels_every_profile_verdict_by_its_role(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, primary: str, sensitivity: str, rows: list[str]
+) -> None:
+    report = _profiled_report(monkeypatch, tmp_path, [sensitivity], primary=primary)
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+
+    (card,) = _card_profile_verdicts(report, tmp_path)
+
+    assert card["rows"] == rows
+    # The note report-full.md prints above its table: a sensitivity verdict is not a decision.
+    assert card["note"].endswith("and cannot replace it.")
+    assert f"\n{card['note']}\n" in markdown
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is not installed")
+def test_the_html_claim_card_lists_no_verdicts_without_a_sensitivity_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = _profiled_report(monkeypatch, tmp_path, [])
+
+    assert len(report.claims[0].profile_verdicts) == 1
+    assert _card_profile_verdicts(report, tmp_path) == [None]
 
 
 def test_an_exploratory_claims_primary_profile_verdict_is_its_final_status(

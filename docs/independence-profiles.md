@@ -83,11 +83,14 @@ they are never selected in its place. A `PASS` under `rollout` that is `INCONCLU
 
 `report-full.md` adds a "Verdicts by independence profile" table under the mandatory claims when
 any of them has a sensitivity profile, and the HTML claim card lists each profile's verdict
-and bounds. Claims decided on a judge-corrected interval or the noisy-valid test have no
-per-profile counterpart and no rows; when their evidence has sensitivity profiles, a reason
-says so. A claim whose evidence has no primary interval, for example because the primary
-profile's calibration failed, is `INCONCLUSIVE` and has no rows either, and its reason says the
-primary interval is missing.
+and bounds. Both label each row `primary` or `sensitivity`, under a note that the claim's status
+is the primary profile's verdict and that a sensitivity verdict cannot replace it.
+
+Claims decided on a judge-corrected interval or the noisy-valid test have no per-profile
+counterpart and no rows; when their evidence has sensitivity profiles, a reason says so. A claim
+whose evidence has no primary interval, for example because the primary profile's calibration
+failed, is `INCONCLUSIVE` and has no rows either, and its reason says the primary interval is
+missing.
 
 Comparisons use the same selector:
 
