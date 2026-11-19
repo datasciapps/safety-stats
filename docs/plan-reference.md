@@ -757,29 +757,115 @@ credential-theft wording weighs 1/6 and the authentication-bypass prompt weighs 
 `equal_prompt` would instead give each row 1/4, so the base prompt with more wordings would
 count three times as much.
 
-**Independence.** Wordings of one base prompt can fail together, so a profile that blocks by
-base prompt is a natural sensitivity:
+**Independence.** Wordings of one base prompt can be related in two ways, and only one of them
+breaks the `rollout` profile:
+
+- **Similar failure rates.** Wordings of one base prompt are often hard or easy together. In a
+  fixed design each wording's risk is a fixed quantity of the estimand, so similar risks do not
+  make rollouts dependent, and the `rollout` profile stays valid.
+- **Coupled outcomes.** Rollouts of different wordings are dependent when they share randomness
+  or state: a sampling seed shared by the same epoch of each wording, a sandbox or tool state,
+  or a batch that fails as a whole. The `rollout` and `prompt` profiles then count dependent
+  rollouts as independent ones, and their bounds can miss the risk more often than alpha
+  allows. In a simulation of 4 base prompts with 10 wordings each, 20 epochs and
+  risk 0.12, in which the wordings of a base prompt shared each epoch's outcome, the `rollout`
+  upper bound at one-sided level 0.025 fell below the risk in about 7% (Hoeffding), 14%
+  (empirical Bernstein) and 24% (KL/Chernoff) of runs, so a claim could pass on a risk above
+  its `acceptable_upper`.
+
+Whether outcomes are coupled is a fact about how the evaluation ran; the bounds do not reveal
+it. `CLUSTER_DESIGN_EFFECT` can hint at it, but under a fixed design its correlation also counts
+differences in rate between base prompts (see
+[its limits](independence-profiles.md#how-much-the-grouping-matters-cluster_design_effect)).
+
+A claim's status, and the report's decision, are the primary profile's verdict alone (see
+[Verdicts by profile](independence-profiles.md#verdicts-by-profile)). A sensitivity profile
+shows how far that verdict depends on rollout independence, but never changes it. When the
+wordings' outcomes can be coupled, the primary profile must therefore put all the rollouts that
+can share the coupling in one block:
+
+- `[question_id, repeat]` when the coupling stays within one epoch. The same epoch of every
+  wording of a base prompt forms one block, and the epochs stay independent of each other. In
+  the simulation above its upper bounds never fell below the risk under Hoeffding or empirical
+  Bernstein, and did so in about 0.25% of runs under KL/Chernoff.
+- `[question_id]` when the coupling can reach across epochs, for example through a sandbox or
+  tool state that persists between them. Every rollout of every wording of a base prompt forms
+  one block, so the block count is the number of base prompts.
+- A coarser key when the coupling reaches beyond one base prompt, such as `[repeat]` for a seed
+  shared by the same epoch of every prompt.
+
+The primary profile sets the blocks of the direct-mean intervals only. The prompt bounds treat
+the epochs of each wording as independent draws whatever the primary, and so does every interval
+built from them: the propagated envelope of every risk measure, which is the only interval of
+`maximum`, `cvar`, `top_k_mean`, `entropic`, the threshold measures and a `worst_of_k` without
+`direct_interval`. Coupling across the epochs of one wording therefore breaks the prompt bounds
+and these measures under any profile, and claims should then rest on the direct `weighted_mean`
+interval. This includes coupling confined to one wording's epochs, such as a response cache
+keyed on the exact input. For the direct mean that needs only `[prompt_id]` as the primary, which
+already puts each wording's epochs in one block, but the prompt bounds stay invalid. Coupling
+within one epoch across wordings, such as the shared seed above, leaves the prompt bounds and
+the measures built from them valid: each prompt bound needs independence only within its prompt,
+and the Bonferroni allocation across prompts holds under any dependence between them. A
+`worst_of_k` measure with `direct_interval: true` needs a primary that blocks by rollout, so
+making another profile primary makes such a plan invalid (`PLAN_WORST_OF_K_INTERVAL_UNSUPPORTED`).
 
 ```yaml
 design:
   independence_profiles:
     rollout: {block_by: [rollout], comparison_coupling: independent}
     prompt: {block_by: [prompt_id], comparison_coupling: joint}
+    question_repeat: {block_by: [question_id, repeat], comparison_coupling: joint}
     question: {block_by: [question_id], comparison_coupling: joint}
 outputs:
   direct_mean_intervals:
     independence:
-      primary: rollout
-      sensitivities: [prompt, question]
+      primary: rollout  # question_repeat, question or coarser when wordings can be coupled
+      sensitivities: [prompt, question_repeat, question]
 ```
 
-The `question` profile puts every rollout of every wording of one base prompt in one block, so
-its block count is the number of base prompts. Its effective sample size,
+With independent rollouts, `rollout` stays the primary and the other profiles are
+sensitivities. The `question` profile's effective sample size,
 $\left(\sum_g A_g^2\right)^{-1}$ over the base-prompt weights $A_g$ (see
 [Statistical construction](independence-profiles.md#statistical-construction)), is no larger
-than the `prompt` profile's. With few base prompts its intervals can reach the whole range
-$[0, 1]$. Set `hierarchy_nodes: true` under `direct_mean_intervals` to report an interval for
-each base prompt as well as each task.
+than the `prompt` profile's. With the same number of epochs for every wording,
+`question_repeat`'s is that many times larger than `question`'s. With few base prompts the
+`question` intervals can reach the whole range $[0, 1]$.
+
+A block key is the raw value of each field, not a path in the hierarchy. If two tasks both have
+a base prompt with `question_id: q1`, `[question_id]` puts the two in one block. Keep base-prompt
+identifiers unique across tasks, or block by `[task_id, question_id]` and
+`[task_id, question_id, repeat]`.
+
+**Risk measures.** Measures that use the group weights, such as `weighted_mean`, `cvar` and
+`worst_of_k`, count each base prompt once under `nested_equal`, whatever its number of wordings.
+Two measures count wordings instead:
+
+- `maximum` ignores weights: it is the largest risk of any wording, not of any base prompt.
+  Its bounds come from the prompt bounds, and `alpha_allocation: equal_bonferroni` divides the
+  family alpha equally over every wording of every cohort. Each added wording therefore widens
+  every prompt bound, and with them the maximum's upper bound. With `nested_equal` as
+  `design.weights`, `alpha_allocation: weighted_bonferroni` instead gives each base prompt a
+  fixed share of the alpha, which its wordings split, so an added wording widens only the bounds
+  of its own base prompt's wordings.
+- `top_k_mean` needs equal prompt weights. On a group where `nested_equal` gives the wordings
+  unequal weights it is refused with `RISK_MEASURE_INVALID`, which makes integrity invalid.
+  Where it is accepted, under `equal_prompt` or under `nested_equal` on a group whose tasks all
+  have the same number of base prompts and whose base prompts all have the same number of
+  wordings, it averages the `k` riskiest wordings, so a base prompt with three wordings can fill
+  three of the `k` places.
+
+**Hierarchy nodes.** Set `hierarchy_nodes: true` under `direct_mean_intervals` to report an
+interval for each base prompt as well as each task. The nodes have two costs:
+
+- Under the `question` profile a base-prompt node is a single block, so its interval rests on
+  one independent value and is close to $[0, 1]$ whatever the data. Under `question_repeat` it
+  has one block per epoch.
+- Under the default `hierarchy_calibration: flat_bonferroni`, every node is one more target of
+  the direct-mean family, whose alpha is divided over all of them. Each node therefore widens
+  every interval of the family, including the group intervals that claims are decided on. In
+  the template below, each group interval's one-sided alpha is 0.0025 with the nodes and 0.0125
+  without them. `frontier_sidak` spends less where sibling nodes have disjoint blocks (see
+  [Direct fixed-design mean intervals](#direct-fixed-design-mean-intervals)).
 
 [`examples/fixed_design`](../examples/fixed_design/README.md#prompt-variants-of-one-base-prompt)
 has a complete template: `variant-design.csv`, `variant-plan.yaml` and the Inspect task
