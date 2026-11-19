@@ -67,6 +67,14 @@ of where the finding sits: `plan/claims/<claim>` for a place in the plan,
 come in collection/id pairs, and each id has `%` written as `%25` and `/` as `%2F`, so a path
 splits back into its ids. `inspect_safety_stats.schema.scopes` builds and reads them.
 
+In a report, each diagnostic also has `item`: a JSON pointer into `report.json` to the record
+its scope names, such as `/claims/0` for `plan/claims/<claim>`, `/prompt_estimates/12` for
+`cohorts/<cohort>/prompts/<prompt>` or `/group_risks/3` for
+`cohorts/<cohort>/groups/<group>/measures/<measure>`. It is null when the report holds no
+record of the item, as for a plan setting or a run. `inspect_safety_stats.schema.pointers`
+lists every scope that has one. The report computes `item` from the scope, also when a saved
+`report.json` is read back, so it always points into the report that holds the diagnostic.
+
 ### `load_plan`
 
 ```python
@@ -85,9 +93,19 @@ output = report.write("reports/run-001")
 ```
 
 Writes deterministic JSON, Markdown, a self-contained interactive HTML visualization,
-resolved-plan YAML, resolved-design CSV, optional normalized observations, and a checksum
-manifest. A non-empty destination is rejected unless
+resolved-plan YAML, resolved-design CSV, optional normalized observations, an index, and a
+checksum manifest. A non-empty destination is rejected unless
 `overwrite=True`.
+
+`report.json` has a `summary` object: the integrity status, the headline estimates, the errors
+and warnings by code, and the decisions when `report.include_decisions` is true, each with a
+JSON pointer to its full record (`inspect_safety_stats.schema.summary`). `SafetyReport.summary`
+returns it. It is derived from the other fields, so reading a saved `report.json` back drops it
+and computes it again.
+
+`index.json` lists every file the report wrote and copies the summary; `index.md` holds the
+same content as Markdown (`inspect_safety_stats.report.index`). The
+[agent guide](agent-guide.md) says how to read both.
 
 ### Exact threshold planning
 

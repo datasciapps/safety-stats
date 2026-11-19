@@ -2507,6 +2507,7 @@
         "code": "PLAN_SELF_DECLARED",
         "details": {},
         "effect": "recorded",
+        "item": null,
         "message": "confirmatory timing is self-declared; no external plan registration was supplied",
         "scope": null,
         "severity": "WARNING",
@@ -2525,6 +2526,7 @@
           "zero_failure_prompt_upper": 0.996875
         },
         "effect": "recorded",
+        "item": null,
         "message": "cvar_75, entropic_5, worst are built from per-prompt bounds; with about 1 rollouts per prompt a prompt with no failures is still bounded only at 0.997, above the precision target 0.05. About 113 rollouts per prompt would be needed.",
         "scope": "plan/outputs/risk_measures",
         "severity": "WARNING",
@@ -3021,5 +3023,74 @@
     "estimand": "end_to_end_system",
     "randomness": "stochastic rollouts within fixed prompts",
     "what_results_establish": "https://github.com/aduncan001/safety_stats/blob/main/docs/what-results-establish.md"
+  },
+  "summary": {
+    "assumptions": [
+      "fixed_design",
+      "run_stability",
+      "rollout_independence",
+      "scorer_validity",
+      "judge_accuracy",
+      "missing_scores",
+      "sample_errors",
+      "token_limit",
+      "content_filter_stops",
+      "complete_design",
+      "plan_fixed_in_advance"
+    ],
+    "decisions_shown": false,
+    "error_count": 0,
+    "headline": [
+      {
+        "baseline": null,
+        "cohort": "candidate",
+        "eligibility": "certifying",
+        "estimand": null,
+        "estimate": 0.5,
+        "group": "all-eight",
+        "item": "/group_risks/2",
+        "kind": "group_risk",
+        "lower": 0.0920692927984616,
+        "measure": "mean",
+        "upper": 0.9079307072015383
+      }
+    ],
+    "info_count": 0,
+    "integrity": "valid",
+    "warning_count": 2,
+    "warnings": [
+      {
+        "assumption": "The confirmatory plan's freeze time is backed by an external registration, not only by the time its author wrote in analysis.plan_frozen_at.",
+        "code": "PLAN_SELF_DECLARED",
+        "consequence": "Nothing is computed differently and integrity is unchanged; the report records that the plan's timing rests on its author's word.",
+        "count": 1,
+        "effect": "recorded",
+        "occurrences": [
+          {
+            "diagnostic": "/integrity/diagnostics/0",
+            "item": null,
+            "scope": null
+          }
+        ],
+        "severity": "WARNING",
+        "source": "registration"
+      },
+      {
+        "assumption": "Each prompt has enough rollouts that its simultaneous bound can be tighter than report.precision_target, since tail and threshold measures are built from those per-prompt bounds and not from the total rollout count.",
+        "code": "TAIL_MEASURES_UNINFORMATIVE",
+        "consequence": "The tail and threshold measures are reported as computed, but at the median rollout count even a prompt with no failures is bounded above the precision target, so their intervals can only be wide.",
+        "count": 1,
+        "effect": "recorded",
+        "occurrences": [
+          {
+            "diagnostic": "/integrity/diagnostics/1",
+            "item": null,
+            "scope": "plan/outputs/risk_measures"
+          }
+        ],
+        "severity": "WARNING",
+        "source": "analysis"
+      }
+    ]
   }
 }

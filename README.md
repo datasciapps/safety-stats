@@ -237,7 +237,8 @@ strategically underperforming on the evaluation. The statistics here cannot dete
 
 The package distinguishes simultaneous uncertainty guarantees from diagnostic outputs. Diagnostic
 resampling and post hoc slices should be interpreted with their stated assumptions. Optional threshold decisions can be enabled with
-`report.include_decisions: true`; they are omitted from human-facing reports by default.
+`report.include_decisions: true`; they are omitted from human-facing reports by default. The
+option hides them: `report.json` holds the decision and every claim's status either way.
 
 [What results establish](docs/what-results-establish.md) brings these limits together on one
 page, and every report links to it.
@@ -257,6 +258,7 @@ page, and every report links to it.
 - [What results establish](docs/what-results-establish.md): what a report shows, what it does not, and where it states each condition
 - [Interpreting results](docs/interpretation.md)
 - [Diagnostic codes and assumptions](docs/diagnostics.md): what each code in a report means and what to change
+- [Reading a report as an agent](docs/agent-guide.md): `index.json`, the summary in `report.json`, and the pointers that lead from each to the full record
 - [Judge misclassification](docs/judge-misclassification.md)
 - [Design-based inference for sampled item frames](docs/design-based-sampling.md)
 - [Version 1 engineering design](docs/archive/v1-design.md) (archived; superseded by the shipped package)

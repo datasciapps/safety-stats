@@ -11,7 +11,8 @@ examining the evaluation. The most important choices are the cohort, fixed desig
 weights, risk measure, and confidence level.
 
 Threshold decisions are an optional presentation layer enabled with
-`report.include_decisions: true`. When enabled:
+`report.include_decisions: true`. The option hides decisions rather than withholding them:
+`report.json` holds the overall decision and every claim's status either way. When enabled:
 
 `PASS` means the predeclared upper bound is at or below the acceptable threshold and all required integrity gates passed.
 

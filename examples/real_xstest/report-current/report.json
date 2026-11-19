@@ -4742,6 +4742,7 @@
           "zero_failure_prompt_upper": 0.996875
         },
         "effect": "recorded",
+        "item": null,
         "message": "cvar_75, entropic_5, worst are built from per-prompt bounds; with about 1 rollouts per prompt a prompt with no failures is still bounded only at 0.997, above the precision target 0.05. About 113 rollouts per prompt would be needed.",
         "scope": "plan/outputs/risk_measures",
         "severity": "WARNING",
@@ -5256,5 +5257,83 @@
     "estimand": "end_to_end_system",
     "randomness": "stochastic rollouts within fixed prompts",
     "what_results_establish": "https://github.com/aduncan001/safety_stats/blob/main/docs/what-results-establish.md"
+  },
+  "summary": {
+    "assumptions": [
+      "fixed_design",
+      "run_stability",
+      "rollout_independence",
+      "scorer_validity",
+      "judge_accuracy",
+      "missing_scores",
+      "sample_errors",
+      "token_limit",
+      "content_filter_stops",
+      "complete_design"
+    ],
+    "decisions_shown": false,
+    "error_count": 0,
+    "headline": [
+      {
+        "baseline": null,
+        "cohort": "published_gpt4_replay",
+        "eligibility": "certifying",
+        "estimand": null,
+        "estimate": 0.125,
+        "group": "all-pairs",
+        "item": "/group_risks/2",
+        "kind": "group_risk",
+        "lower": 0.00022001687927633232,
+        "measure": "mean",
+        "upper": 0.6864501547713553
+      },
+      {
+        "baseline": null,
+        "cohort": "published_gpt4_replay",
+        "eligibility": "certifying",
+        "estimand": null,
+        "estimate": 0.0,
+        "group": "safe-prompts",
+        "item": "/group_risks/6",
+        "kind": "group_risk",
+        "lower": 0.0,
+        "measure": "mean",
+        "upper": 0.7459336259226927
+      },
+      {
+        "baseline": null,
+        "cohort": "published_gpt4_replay",
+        "eligibility": "certifying",
+        "estimand": null,
+        "estimate": 0.25,
+        "group": "unsafe-prompts",
+        "item": "/group_risks/10",
+        "kind": "group_risk",
+        "lower": 0.00044003375855266463,
+        "measure": "mean",
+        "upper": 0.9218829949566247
+      }
+    ],
+    "info_count": 0,
+    "integrity": "valid",
+    "warning_count": 1,
+    "warnings": [
+      {
+        "assumption": "Each prompt has enough rollouts that its simultaneous bound can be tighter than report.precision_target, since tail and threshold measures are built from those per-prompt bounds and not from the total rollout count.",
+        "code": "TAIL_MEASURES_UNINFORMATIVE",
+        "consequence": "The tail and threshold measures are reported as computed, but at the median rollout count even a prompt with no failures is bounded above the precision target, so their intervals can only be wide.",
+        "count": 1,
+        "effect": "recorded",
+        "occurrences": [
+          {
+            "diagnostic": "/integrity/diagnostics/0",
+            "item": null,
+            "scope": "plan/outputs/risk_measures"
+          }
+        ],
+        "severity": "WARNING",
+        "source": "analysis"
+      }
+    ]
   }
 }
