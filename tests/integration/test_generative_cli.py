@@ -762,3 +762,29 @@ def test_an_ill_formed_family_is_refused_at_load(
     plan = write_plan(tmp_path, inference={"slice_family": family})
     with pytest.raises(ValueError, match=message):
         load_generative_plan(plan)
+
+
+_GENERATIVE_CAVEAT = (
+    "The generative pipeline is experimental: its public surface, "
+    "`inspect_safety_stats.generative.__all__`, may change in any minor release."
+)
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ["generative"],
+        ["generative", "compile"],
+        ["generative", "materialize"],
+        ["generative", "analyze"],
+        ["generative", "budget"],
+        ["schema", "generative-plan"],
+    ],
+)
+def test_generative_help_carries_the_experimental_caveat(command: list[str]) -> None:
+    # The CLI is an entry point to the generative surface like the docs, so its help carries
+    # the same caveat word for word (#24).
+    result = runner.invoke(app, [*command, "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert _GENERATIVE_CAVEAT in plain(result.output)

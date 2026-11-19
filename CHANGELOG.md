@@ -398,6 +398,11 @@ described in their pull requests.
 
 ### Changed
 
+- **The generative commands' help says the pipeline is experimental (#24).** The help of
+  `generative` and of each of its commands, and of `schema generative-plan`, ends with the
+  caveat the README and the generative docs already carry: the generative pipeline is
+  experimental, and its public surface may change in any minor release.
+
 - **`generative analyze` exits `3`, not `2`, on `ERROR` diagnostics.** Exit `2` means
   INCONCLUSIVE under `analyze --decision-exit-codes`, so a generative report with errors could
   read as an inconclusive decision. Every command now takes its exit status from one table,
