@@ -112,13 +112,13 @@ class ClaimRecord(ResultModel):
     # The plan declares a validated judge calibration, but the claim's evidence has no
     # certifying correction: the claim is INCONCLUSIVE, and its bound is the uncorrected
     # judge-reported one, on which it was not decided.
-    judge_correction_unavailable: bool = False
+    judge_correction_unavailable: bool
     estimand: ClaimEstimand
     bound: ClaimBound
     evidence: ClaimEvidence
     sources: ClaimSources
     # Why the claim has its status, as report.json gives them.
-    reasons: list[str] = Field(default_factory=list)
+    reasons: list[str]
 
 
 class ClaimsAnalysis(ResultModel):
