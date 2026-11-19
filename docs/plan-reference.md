@@ -432,7 +432,9 @@ is unchanged. `report.html` does not show the sensitivities yet.
 ### Judge panels
 
 `inputs.judges` declares additional binary judges scored on every rollout, each with its own
-Inspect score column and outcome mapping. `block` names the judge's dependence block: judges
+Inspect score column and outcome mapping. A judge's verdict is its score as mapped:
+`content_filter_stops` and `mapping_sensitivities` apply to `inputs.score` only, and a judge's
+score that sets them is refused. `block` names the judge's dependence block: judges
 sharing a block are one opinion, not independent votes (two judges built on related models
 belong in one block). It defaults to the judge's own id, so a panel is independent only where the
 plan says so. `kind: monitor` marks a chain-of-thought or trajectory monitor.

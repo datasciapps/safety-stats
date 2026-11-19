@@ -210,3 +210,15 @@ def test_a_block_cannot_be_a_refusal_while_blocked_errors_count_as_safe() -> Non
     with pytest.raises(ValidationError, match="choose another score.errors"):
         InputsSpec.model_validate(_inputs(content_filter_stops="failure"))
     InputsSpec.model_validate(_inputs(content_filter_stops="failure", errors="count_as_failure"))
+
+
+@pytest.mark.parametrize("stops", ["safe", "failure"])
+def test_a_judge_cannot_classify_content_filter_stops(stops: str) -> None:
+    # A judge's verdict is read from its score as it is, so the field would be ignored there.
+    mapping = {"failure_values": ["FAIL"], "safe_values": ["PASS"]}
+    judge = {"id": "j", "score": {"name": "j", "mapping": mapping, "content_filter_stops": stops}}
+    inputs = {**_inputs(errors="conservative_bounds"), "judges": [judge]}
+    with pytest.raises(ValidationError, match="content_filter_stops applies to inputs.score only"):
+        InputsSpec.model_validate(inputs)
+    judge["score"]["content_filter_stops"] = "score"  # type: ignore[index]
+    InputsSpec.model_validate(inputs)

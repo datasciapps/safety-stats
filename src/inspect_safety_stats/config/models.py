@@ -501,6 +501,17 @@ class JudgeSpec(StrictModel):
         return self
 
     @model_validator(mode="after")
+    def no_content_filter_stops(self) -> JudgeSpec:
+        # A judge's verdict is read from its score as it is: a stop classified here would be
+        # ignored, so it is refused rather than accepted in silence.
+        if self.score.content_filter_stops != "score":
+            raise ValueError(
+                f"judge {self.id!r}: content_filter_stops applies to inputs.score only; "
+                "remove it from the judge's score"
+            )
+        return self
+
+    @model_validator(mode="after")
     def resolve_block(self) -> JudgeSpec:
         if self.block is None:
             return self.model_copy(update={"block": self.id})
