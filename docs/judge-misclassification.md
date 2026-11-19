@@ -291,8 +291,9 @@ Each *endpoint* of the corrected interval uses the base interval's endpoint plus
 calibration endpoints, so a one-sided claim spends the base endpoint's alpha plus half the
 calibration budget; the interval records this as its directional coverage. Beside the exact box
 of a weighted-mean row, the report shows a `judge_corrected_validated_delta` reference. Tail
-measures have none, since the reference propagates the weighted mean's variance. It is a
-delta-method (Wald) interval that
+measures have none, since the reference propagates the weighted mean's variance, and nor does a
+row holding rollouts a plan policy classified ([Rollouts a policy
+classifies](#rollouts-a-policy-classifies)). It is a delta-method (Wald) interval that
 propagates the calibration variance through \(R^*=R\rho_1+(1-R)\rho_0\) with Agresti--Coull
 stabilised stratum proportions and the rollout-independence binomial variance of the judge-reported
 mean. It is asymptotic, carries no finite-sample guarantee, is labelled `diagnostic`, and never
@@ -311,10 +312,12 @@ With `sampling: simple_random` the labels also estimate the judge's sensitivity 
 specificity \(Sp\) by true class, and every `weighted_mean` row the calibration corrects gains a
 third interval, `judge_corrected_validated_lang_reiczigel`. That is each group's row in each
 cohort, from the cohort's labels, or with `groups` each listed group's row, from that group's
-labels. Tail measures and hierarchy nodes get none. The interval holds the confidence limits of
-Lang and Reiczigel (2014) for prevalence adjusted for estimated sensitivity and specificity.
-With \(z\) the normal quantile at \(1-\alpha/2\), the judge-reported rate \(q\) over \(n\)
-rollouts and the two truth-class counts are adjusted in the manner of Agresti and Coull,
+labels. Tail measures, hierarchy nodes and rows holding rollouts a plan policy classified
+([Rollouts a policy classifies](#rollouts-a-policy-classifies)) get none. The interval holds the
+confidence limits of Lang and Reiczigel (2014) for prevalence adjusted for estimated sensitivity
+and specificity. With \(z\) the normal quantile at \(1-\alpha/2\), the judge-reported rate
+\(q\) over \(n\) rollouts and the two truth-class counts are adjusted in the manner of Agresti
+and Coull,
 
 \[
 q'=\frac{nq+z^2/2}{n+z^2},\qquad Se'=\frac{x_{Se}+1}{n_{Se}+2},\qquad
