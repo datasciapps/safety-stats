@@ -208,10 +208,12 @@ described in their pull requests.
   text for each arm value, or none where the text is empty, and a kernel that writes a
   system turn itself stops the run on every path, an empty text's included.
   `rewrite.conversation_turns` makes the number of user turns an arm, and every
-  conversation is checked to have its arm value's count. Each key enters the kernel
-  fingerprint only when set, so existing plans materialize the same bytes and keep their
-  kernel hashes. The fake kernel takes `fake:output=conversation`. The live example adds a
-  reference auditor kernel and `plan-auditor.yaml`. See
+  conversation is checked to have its arm value's count; one without it is an invalid
+  attempt, which uses up one of `rewrite.validation.maximum_attempts` and, under
+  `on_invalid: fail`, exhausts the unit. Each key enters the kernel fingerprint only when
+  set, so existing plans materialize the same bytes and keep their kernel hashes. The fake
+  kernel takes `fake:output=conversation`. The live example adds a reference auditor kernel
+  and `plan-auditor.yaml`. See
   [Conversations and system prompts](docs/generative-evaluation.md#conversations-and-system-prompts-experimental).
 
 - **Lang-Reiczigel limits in validated judge mode (changes report bytes).** With

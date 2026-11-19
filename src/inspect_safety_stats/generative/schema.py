@@ -302,7 +302,9 @@ class RewriteSpec(StrictModel):
     output: Literal["prompt", "conversation"] = "prompt"
     system_prompts: SystemPromptSpec | None = None
     # Experimental. An arm whose values are user-turn counts: each conversation on a path
-    # must have exactly that many user turns, or the attempt is rejected as invalid.
+    # must have exactly that many user turns, or the attempt is rejected as invalid: like
+    # any invalid attempt, it uses up one of validation.maximum_attempts and follows
+    # validation.on_invalid.
     conversation_turns: str | None = None
 
     @model_validator(mode="after")

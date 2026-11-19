@@ -403,6 +403,24 @@ def test_a_conversation_with_another_turn_count_is_rejected(tmp_path: Path) -> N
     assert all(record.rewrite_attempts == 5 for record in result.rewrites)
 
 
+def test_a_wrong_turn_count_follows_on_invalid_and_the_attempt_limit(tmp_path: Path) -> None:
+    # Like any invalid attempt: on_invalid: fail exhausts the unit at the first one, and
+    # under retry each one uses up one of maximum_attempts.
+    for on_invalid, maximum, expected in (("fail", 5, 1), ("retry", 2, 2)):
+        validation = {"validator_id": "semantic-equivalence-v1", "on_invalid": on_invalid,
+                      "maximum_attempts": maximum}
+        directory = tmp_path / on_invalid
+        directory.mkdir()
+        plan, selections, fingerprint, texts = prepare(
+            turns_plan(directory, validation=validation)
+        )
+        result = execute_rewrites(plan, selections, ConversationKernel(), fingerprint, texts)
+        assert not result.accepted
+        assert len(result.exhausted) == len(selections)
+        assert {record.rewrite_attempts for record in result.rewrites} == {expected}
+        assert {record.validation_status for record in result.rewrites} == {"invalid"}
+
+
 def test_the_turns_arm_needs_conversations_and_counts(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="requires rewrite.output: conversation"):
         load_generative_plan(turns_plan(tmp_path, output="prompt"))
