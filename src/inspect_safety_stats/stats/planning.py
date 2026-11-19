@@ -515,8 +515,8 @@ def comparison_resolvable_differences(
 
     The guarantee does not extend to a ``comparison_sets`` entry, whatever its method, nor
     to ``weighted_kl_chernoff``: both bound each arm at half the alpha and subtract the
-    endpoints, which under ``weighted_hoeffding`` is wider (about 1.5 times for unpaired
-    arms at equal counts and a one-sided alpha of 0.025).
+    endpoints, which under ``weighted_hoeffding`` is usually wider (about 1.5 times for
+    unpaired arms at equal counts and a one-sided alpha of 0.025).
     Nor does it extend to ``weighted_empirical_bernstein``. The KL/Chernoff and
     empirical-Bernstein differences are narrower on sparse failures and can be wider at
     moderate failure rates.
