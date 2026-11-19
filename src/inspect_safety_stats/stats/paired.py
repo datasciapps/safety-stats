@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 
 import numpy as np
@@ -157,6 +158,8 @@ def exact_mcnemar(candidate: list[bool], baseline: list[bool]) -> McNemarResult:
 # The unknown outcomes are bounded by their completions, never imputed.
 
 _PARTIAL_NEWCOMBE_GRID_LIMIT = 50_000_000
+# newcombe_paired_interval_partial evaluates its bound on this many tables at a time.
+_PARTIAL_NEWCOMBE_BLOCK = 1 << 18
 
 
 @dataclass(frozen=True)
@@ -352,62 +355,145 @@ def _newcombe_bounds_from_counts(
     return estimate, lower, upper
 
 
-def _reachable_cell_counts(
-    candidate: list[bool | None], baseline: list[bool | None]
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Every (n11, n10, n01, n00) some completion of the unscored outcomes produces.
+# The cells of a 2x2 table of paired outcomes, (candidate, baseline) with True for failure, in
+# the order (n11, n10, n01, n00), and every nonempty proper subset of them.
+_CELLS = ((True, True), (True, False), (False, True), (False, False))
+_CELL_SUBSETS = tuple(
+    tuple(index for index in range(4) if mask >> index & 1) for mask in range(1, 15)
+)
+
+
+@dataclass(frozen=True)
+class _CompletionTables:
+    """The tables (n11, n10, n01, n00) that the completions of the unscored outcomes produce.
 
     Each unscored pair moves between two cells (one arm unknown) or among all four (both
     unknown), so the reachable set is a Minkowski sum of M-convex sets. Such a sum is M-convex,
     hence the integer points of a base polytope whose subset-sum bounds are the sums of the
-    parts' bounds. The function enumerates those integer points.
+    parts' bounds. ``bounds`` maps each subset of ``_CELL_SUBSETS`` to them; every table has
+    ``pairs`` pairs, ``unscored`` of which have an unscored arm.
+
+    Given n10 and n01, n00 is ``pairs - n11 - n10 - n01``, so a bound on a subset that holds
+    one of n11 and n00 but not the other bounds n11, and every other bound holds or fails for
+    the row as a whole. The tables are therefore rows of consecutive n11 values, one row for
+    each (n10, n01) that some completion reaches.
     """
 
-    cells = [(True, True), (True, False), (False, True), (False, False)]
+    pairs: int
+    unscored: int
+    bounds: dict[tuple[int, ...], tuple[int, int]]
+
+
+def _completion_tables(
+    candidate: list[bool | None], baseline: list[bool | None]
+) -> _CompletionTables:
     fixed = [0, 0, 0, 0]
-    options: list[list[int]] = []
+    # Unscored pairs by the cells they can fall in: there are five such sets at most.
+    options: dict[tuple[int, ...], int] = {}
     for cand, base in zip(candidate, baseline, strict=True):
-        allowed = [
+        allowed = tuple(
             index
-            for index, (cell_cand, cell_base) in enumerate(cells)
+            for index, (cell_cand, cell_base) in enumerate(_CELLS)
             if (cand is None or cand == cell_cand) and (base is None or base == cell_base)
-        ]
+        )
         if len(allowed) == 1:
             fixed[allowed[0]] += 1
         else:
-            options.append(allowed)
-    subsets = [
-        [index for index in range(4) if mask >> index & 1] for mask in range(1, 15)
-    ]
-    low = []
-    high = []
-    for subset in subsets:
+            options[allowed] = options.get(allowed, 0) + 1
+    bounds = {}
+    for subset in _CELL_SUBSETS:
         inside = sum(fixed[index] for index in subset)
-        always = sum(all(index in subset for index in allowed) for allowed in options)
-        sometimes = sum(any(index in subset for index in allowed) for allowed in options)
-        low.append(inside + always)
-        high.append(inside + sometimes)
-    total = len(candidate)
-    bound = {tuple(subset): (lo, hi) for subset, lo, hi in zip(subsets, low, high, strict=True)}
-    ranges = [range(bound[(index,)][0], bound[(index,)][1] + 1) for index in range(3)]
-    grid = len(ranges[0]) * len(ranges[1]) * len(ranges[2])
-    if grid > _PARTIAL_NEWCOMBE_GRID_LIMIT:
-        raise ValueError(
-            f"newcombe_paired cannot bound {len(options)} unscored pairs: their completions "
-            f"span {grid} cell-count candidates, more than {_PARTIAL_NEWCOMBE_GRID_LIMIT}"
+        always = sum(
+            count
+            for allowed, count in options.items()
+            if all(index in subset for index in allowed)
         )
-    n11, n10, n01 = np.meshgrid(
-        np.asarray(ranges[0]), np.asarray(ranges[1]), np.asarray(ranges[2]), indexing="ij"
+        sometimes = sum(
+            count
+            for allowed, count in options.items()
+            if any(index in subset for index in allowed)
+        )
+        bounds[subset] = (inside + always, inside + sometimes)
+    return _CompletionTables(
+        pairs=len(candidate), unscored=sum(options.values()), bounds=bounds
     )
-    n11, n10, n01 = n11.ravel(), n10.ravel(), n01.ravel()
-    n00 = total - n11 - n10 - n01
-    counts = (n11, n10, n01, n00)
-    keep = np.ones(n11.shape, dtype=bool)
-    for subset in subsets:
-        lo, hi = bound[tuple(subset)]
-        subset_sum = sum(counts[index] for index in subset)
-        keep &= (subset_sum >= lo) & (subset_sum <= hi)
-    return n11[keep], n10[keep], n01[keep], n00[keep]
+
+
+def _table_rows(
+    tables: _CompletionTables, n10_values: np.ndarray
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """n10, n01 and the lowest and highest n11 of each row whose n10 is in ``n10_values``."""
+
+    low01, high01 = tables.bounds[(2,)]
+    n10, n01 = (
+        values.ravel()
+        for values in np.meshgrid(
+            n10_values, np.arange(low01, high01 + 1, dtype=np.int64), indexing="ij"
+        )
+    )
+    low11, high11 = tables.bounds[(0,)]
+    low = np.full(n10.shape, low11, dtype=np.int64)
+    high = np.full(n10.shape, high11, dtype=np.int64)
+    keep = np.ones(n10.shape, dtype=bool)
+    n11_and_n00 = tables.pairs - n10 - n01
+    for subset, (lo, hi) in tables.bounds.items():
+        rest = (n10 if 1 in subset else 0) + (n01 if 2 in subset else 0)
+        if 0 in subset and 3 not in subset:
+            # The subset sum is n11 + rest.
+            low = np.maximum(low, lo - rest)
+            high = np.minimum(high, hi - rest)
+        elif 3 in subset and 0 not in subset:
+            # The subset sum is n00 + rest, that is n11_and_n00 - n11 + rest.
+            low = np.maximum(low, n11_and_n00 + rest - hi)
+            high = np.minimum(high, n11_and_n00 + rest - lo)
+        else:
+            value = rest + (n11_and_n00 if 0 in subset else 0)
+            keep &= (value >= lo) & (value <= hi)
+    keep &= low <= high
+    return n10[keep], n01[keep], low[keep], high[keep]
+
+
+def _table_row_blocks(
+    tables: _CompletionTables,
+) -> Iterator[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+    """The rows of ``tables`` as ``_table_rows`` gives them, a few n10 values at a time."""
+
+    low10, high10 = tables.bounds[(1,)]
+    low01, high01 = tables.bounds[(2,)]
+    step = max(1, _PARTIAL_NEWCOMBE_BLOCK // (high01 - low01 + 1))
+    for start in range(low10, high10 + 1, step):
+        yield _table_rows(
+            tables, np.arange(start, min(start + step, high10 + 1), dtype=np.int64)
+        )
+
+
+def _table_blocks(
+    tables: _CompletionTables,
+) -> Iterator[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+    """Every table (n11, n10, n01, n00) once, about ``_PARTIAL_NEWCOMBE_BLOCK`` at a time.
+
+    A block holds whole rows, so a row longer than the block size makes a block of its own.
+    """
+
+    for n10, n01, low, high in _table_row_blocks(tables):
+        sizes = high - low + 1
+        ends = np.cumsum(sizes)
+        first = 0
+        while first < len(sizes):
+            done = int(ends[first - 1]) if first else 0
+            last = max(
+                first + 1,
+                int(np.searchsorted(ends, done + _PARTIAL_NEWCOMBE_BLOCK, side="right")),
+            )
+            size = sizes[first:last]
+            starts = np.cumsum(size) - size
+            n11 = np.repeat(low[first:last] - starts, size) + np.arange(
+                int(size.sum()), dtype=np.int64
+            )
+            block10 = np.repeat(n10[first:last], size)
+            block01 = np.repeat(n01[first:last], size)
+            yield n11, block10, block01, tables.pairs - n11 - block10 - block01
+            first = last
 
 
 def newcombe_paired_interval_partial(
@@ -421,22 +507,42 @@ def newcombe_paired_interval_partial(
 
     The bound is not monotone in the cell counts, so the extreme completions do not suffice:
     the lower bound is the minimum, and the upper bound the maximum, over every cell-count
-    vector a completion can produce.
+    vector a completion can produce. They are evaluated a block at a time, so memory does not
+    grow with their number.
     """
 
     _check_partial_pairs(candidate, baseline)
     if not 0 < alpha_lower < 1 or not 0 < alpha_upper < 1:
         raise ValueError("alpha levels must be in (0, 1)")
-    n11, n10, n01, n00 = _reachable_cell_counts(candidate, baseline)
-    estimate, lower, upper = _newcombe_bounds_from_counts(
-        n11, n10, n01, n00, alpha_lower=alpha_lower, alpha_upper=alpha_upper
-    )
+    tables = _completion_tables(candidate, baseline)
+    grid = 1
+    for index in range(3):
+        low, high = tables.bounds[(index,)]
+        grid *= high - low + 1
+    if grid > _PARTIAL_NEWCOMBE_GRID_LIMIT:
+        raise ValueError(
+            f"newcombe_paired cannot bound {tables.unscored} unscored pairs: their completions "
+            f"span {grid} cell-count candidates, more than {_PARTIAL_NEWCOMBE_GRID_LIMIT}"
+        )
+    # np.minimum and np.maximum carry a NaN through, as np.min and np.max over all tables do.
+    estimate_lower = lower = np.float64(np.inf)
+    estimate_upper = upper = np.float64(-np.inf)
+    count = 0
+    for n11, n10, n01, n00 in _table_blocks(tables):
+        estimate, block_lower, block_upper = _newcombe_bounds_from_counts(
+            n11, n10, n01, n00, alpha_lower=alpha_lower, alpha_upper=alpha_upper
+        )
+        estimate_lower = np.minimum(estimate_lower, np.min(estimate))
+        estimate_upper = np.maximum(estimate_upper, np.max(estimate))
+        lower = np.minimum(lower, np.min(block_lower))
+        upper = np.maximum(upper, np.max(block_upper))
+        count += len(n11)
     return PartialPairedDifferenceInterval(
-        estimate_lower=float(np.min(estimate)),
-        estimate_upper=float(np.max(estimate)),
-        lower=float(np.min(lower)),
-        upper=float(np.max(upper)),
+        estimate_lower=float(estimate_lower),
+        estimate_upper=float(estimate_upper),
+        lower=float(lower),
+        upper=float(upper),
         alpha_lower=alpha_lower,
         alpha_upper=alpha_upper,
-        completion_count=len(n11),
+        completion_count=count,
     )

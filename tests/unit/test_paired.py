@@ -9,12 +9,9 @@ from inspect_safety_stats.stats import (
     exact_mcnemar_partial,
     newcombe_paired_interval,
     newcombe_paired_interval_partial,
+    paired,
 )
-from inspect_safety_stats.stats.paired import (
-    _newcombe_bounds_from_counts,
-    _reachable_cell_counts,
-    partial_pairing,
-)
+from inspect_safety_stats.stats.paired import _newcombe_bounds_from_counts, partial_pairing
 
 
 def test_exact_mcnemar_counts_and_direction() -> None:
@@ -151,9 +148,35 @@ def test_reachable_cell_counts_are_exactly_the_completions(seed: int) -> None:
                 result.candidate_safe_baseline_safe,
             )
         )
-    n11, n10, n01, n00 = _reachable_cell_counts(candidate, baseline)
-    reachable = set(zip(n11.tolist(), n10.tolist(), n01.tolist(), n00.tolist(), strict=True))
-    assert reachable == expected
+    tables = paired._completion_tables(candidate, baseline)
+    reachable = [
+        table
+        for block in paired._table_blocks(tables)
+        for table in zip(*(cells.tolist() for cells in block), strict=True)
+    ]
+    assert len(reachable) == len(set(reachable))
+    assert set(reachable) == expected
+
+
+def test_partial_newcombe_evaluates_its_tables_a_block_at_a_time(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # 150 pairs unscored in both arms reach 585,276 tables. Evaluating them at once, after
+    # filtering a dense grid of 151**3 candidates, took memory that grew with the cube of the
+    # unscored pairs: gigabytes near the limit.
+    evaluate = paired._newcombe_bounds_from_counts
+    sizes: list[int] = []
+
+    def recording(*cells: np.ndarray, **alphas: float) -> tuple[np.ndarray, ...]:
+        sizes.append(len(cells[0]))
+        return evaluate(*cells, **alphas)
+
+    monkeypatch.setattr(paired, "_newcombe_bounds_from_counts", recording)
+    candidate: list[bool | None] = [True, False] * 20 + [None] * 150
+    baseline: list[bool | None] = [False, True] * 20 + [None] * 150
+    interval = newcombe_paired_interval_partial(candidate, baseline)
+    assert sum(sizes) == interval.completion_count == 585_276
+    assert max(sizes) <= 1 << 18
 
 
 @pytest.mark.parametrize("seed", range(60))
