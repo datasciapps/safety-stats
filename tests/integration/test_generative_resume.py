@@ -494,3 +494,22 @@ def test_a_resume_that_fails_writing_the_selection_ledger_leaves_it_whole(
     assert list(artifacts.glob("*.partial")) == []
     run = run_with(ScriptedKernel(), plan, artifacts, resume=True)
     assert run is not None and run.resumed == 8 and run.accepted == 20
+
+
+def test_a_ledger_that_kept_error_rows_names_resume_as_the_repair(tmp_path: Path) -> None:
+    plan = write_plan(tmp_path, total=60)
+    artifacts = tmp_path / "run"
+    run_with(ScriptedKernel(error_every=5), plan, artifacts)
+    lines = (artifacts / "rewrites.csv").read_bytes().splitlines(keepends=True)
+    errors = [line for line in lines if b",error," in line]
+    run_with(ScriptedKernel(), plan, artifacts, resume=True)
+    lines = (artifacts / "rewrites.csv").read_bytes().splitlines(keepends=True)
+    (artifacts / "rewrites.csv").write_bytes(b"".join([lines[0], *errors, *lines[1:]]))
+    with pytest.raises(ValueError, match="repeats a sampling_unit_id.*materialize --resume"):
+        read_rewrites(artifacts / "rewrites.csv")
+
+    # A repeat a resume does not repair, two finished rows for one unit, gets no such advice.
+    (artifacts / "rewrites.csv").write_bytes(b"".join([lines[0], lines[1], *lines[1:]]))
+    with pytest.raises(ValueError, match="repeats a sampling_unit_id") as refused:
+        read_rewrites(artifacts / "rewrites.csv")
+    assert "--resume" not in str(refused.value)

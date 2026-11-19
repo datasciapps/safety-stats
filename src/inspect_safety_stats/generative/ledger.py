@@ -303,9 +303,25 @@ def read_rewrites(path: str | Path) -> list[RewriteRecord]:
     """
 
     records = read_rewrite_rows(path)
-    identifiers = [record.sampling_unit_id for record in records]
-    if len(set(identifiers)) != len(identifiers):
-        raise ValueError(f"rewrite ledger {path} repeats a sampling_unit_id")
+    rows: dict[str, list[RewriteRecord]] = {}
+    for record in records:
+        rows.setdefault(record.sampling_unit_id, []).append(record)
+    repeated = [unit for unit, kept in rows.items() if len(kept) > 1]
+    if repeated:
+        message = f"rewrite ledger {path} repeats a sampling_unit_id ({repeated[0]!r})"
+        # A resume drops error rows before it checks for repeats, so it repairs a ledger
+        # whose every repeat is an error row beside at most one other.
+        if all(
+            sum(record.validation_status != "error" for record in rows[unit]) <= 1
+            for unit in repeated
+        ):
+            message += (
+                "; each repeat is an errored attempt kept beside its unit's rerun, as a "
+                "resume by an earlier version left them, and running generative "
+                "materialize --resume again, with the same plan and output directory, "
+                "drops them"
+            )
+        raise ValueError(message)
     return records
 
 
