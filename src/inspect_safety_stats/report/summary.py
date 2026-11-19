@@ -2,9 +2,9 @@
 
 The full report (every interval construction, sensitivity, prompt-level bound and
 multiplicity family) is ``report-full.md``, with ``report.html`` and the CSVs. This page
-answers the questions a reader brings: how often does each model fail, does one fail more
-than another, where, which of those numbers are too imprecise to act on, what the analysis
-warned about, and which assumptions the results rest on.
+answers the questions a reader brings: what was decided and why, how often does each model
+fail, does one fail more than another, where, which of those numbers are too imprecise to act
+on, what the analysis warned about, and which assumptions the results rest on.
 
 No bound reads tighter than the analysis gives: each upper bound is rounded up and each lower
 bound down at the decimals shown (``report.rounding``). Rates and differences show a tenth of a
@@ -26,6 +26,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable, Iterable
 from statistics import median
+from typing import Any
 
 from inspect_safety_stats.config.models import DEFAULT_PRECISION_TARGET
 from inspect_safety_stats.registry import CODES
@@ -54,6 +55,7 @@ _MEASURE_PLACES = 3
 # report-full.md's precision, which the claims share, for a report that does not record it.
 _DEFAULT_DECIMAL_PLACES = 6
 _MAX_WARNING_SCOPES = 3
+_MAX_POLICY_PROMPTS = 5
 _JUDGE_PREFIX = "judge_corrected_"
 _MEASURE_PREFIX = "finite_design_"
 
@@ -592,8 +594,107 @@ def _claim_places(report: SafetyReport) -> int:
         value
         for claim in report.claims
         for value in (claim.acceptable_upper, claim.unacceptable_lower)
-    ]
+    ] + [claim.unacceptable_lower for claim in report.adaptive_claims]
     return max([places, *(decimals(value) for value in thresholds)])
+
+
+def _zero_tolerance_events(report: SafetyReport) -> list[dict[str, Any]]:
+    return [
+        event for event in report.policy_events if event.get("type") == "zero_tolerance_failure"
+    ]
+
+
+def _titles(titles: list[str]) -> str:
+    shown = ", ".join(f"*{_escape(title)}*" for title in titles[:_MAX_WARNING_SCOPES])
+    if len(titles) > _MAX_WARNING_SCOPES:
+        shown += f" and {len(titles) - _MAX_WARNING_SCOPES} more"
+    return shown
+
+
+def decision_reason(report: SafetyReport) -> str:
+    """Why the overall decision is what it is, as a clause after "because".
+
+    The reason is found by the rules ``decision.engine.roll_up`` applies, in its order: a
+    zero-tolerance failure fails the analysis; invalid integrity or an exploratory intent
+    leaves it inconclusive, as does having no mandatory claim; then a mandatory claim that
+    fails, or one that is inconclusive, decides it. A decision policy that leaves an overall
+    PASS uncertified makes it INCONCLUSIVE (``analysis.policy``). Should the rules found here
+    give another decision than the report's, the clause says so and points to
+    ``report-full.md`` rather than give a reason that does not hold.
+    """
+
+    statuses = [(claim.title, claim.status) for claim in report.claims if claim.mandatory]
+    statuses += [(claim.title, claim.status) for claim in report.adaptive_claims if claim.mandatory]
+    events = _zero_tolerance_events(report)
+    if events:
+        derived = "FAIL"
+        reason = (
+            f"{_count(len(events), 'rollout')} failed on a zero-tolerance prompt, which fails "
+            "the analysis whatever the claims' statuses"
+        )
+    elif report.integrity.status == "invalid":
+        derived, reason = "INCONCLUSIVE", "data integrity is invalid, so no claim is certified"
+    elif report.analysis.get("intent") != "confirmatory":
+        derived = "INCONCLUSIVE"
+        reason = "the analysis is exploratory, so no claim is certified"
+    elif not statuses:
+        derived, reason = "INCONCLUSIVE", "no claim is mandatory"
+    elif any(status == "FAIL" for _, status in statuses):
+        derived = "FAIL"
+        failed = [title for title, status in statuses if status == "FAIL"]
+        reason = f"mandatory {_plural(len(failed), 'claim')} {_titles(failed)} failed"
+    elif any(status == "INCONCLUSIVE" for _, status in statuses):
+        derived = "INCONCLUSIVE"
+        open_ = [title for title, status in statuses if status == "INCONCLUSIVE"]
+        reason = (
+            f"mandatory {_plural(len(open_), 'claim')} {_titles(open_)} "
+            + ("is" if len(open_) == 1 else "are")
+            + " inconclusive"
+        )
+    else:
+        derived, reason = "PASS", "every mandatory claim passed"
+    if derived == report.decision:
+        return reason
+    uncertified = any(
+        item.code == "DECISION_POLICY_OVERALL_UNCERTIFIED"
+        for item in report.integrity.diagnostics
+    )
+    if derived == "PASS" and report.decision == "INCONCLUSIVE" and uncertified:
+        return (
+            "every mandatory claim passed, but a decision policy moved a mandatory claim's "
+            "threshold and their bounds rest on more than one coverage event, so the overall "
+            "PASS is not certified (`DECISION_POLICY_OVERALL_UNCERTIFIED`)"
+        )
+    return "of a rule the claims below do not show; see `report-full.md`"
+
+
+def _plural(number: int, noun: str) -> str:
+    return noun if number == 1 else f"{noun}s"
+
+
+def _zero_tolerance_line(report: SafetyReport) -> str:
+    """The prompts a zero-tolerance failure was found on, with the cohorts that failed them."""
+
+    cohorts: dict[str, list[str]] = {}
+    for event in _zero_tolerance_events(report):
+        prompt = str(event.get("prompt_id"))
+        cohort = str(event.get("cohort_id"))
+        if cohort not in cohorts.setdefault(prompt, []):
+            cohorts[prompt].append(cohort)
+    if not cohorts:
+        return ""
+    prompts = list(cohorts)
+    shown = ", ".join(
+        f"`{_escape(prompt)}` ({', '.join(_escape(cohort) for cohort in cohorts[prompt])})"
+        for prompt in prompts[:_MAX_POLICY_PROMPTS]
+    )
+    if len(prompts) > _MAX_POLICY_PROMPTS:
+        shown += f" and {len(prompts) - _MAX_POLICY_PROMPTS} more"
+    return (
+        f"**Zero-tolerance failures** on {_count(len(prompts), 'prompt')}, with the models that "
+        f"failed them: {shown}. Each failing rollout is under Policy events in "
+        "`report-full.md`."
+    )
 
 
 def _claims_section(report: SafetyReport) -> list[str]:
@@ -603,14 +704,18 @@ def _claims_section(report: SafetyReport) -> list[str]:
     lines = [
         "## Claims",
         "",
-        f"Overall decision: **{report.decision}**",
+        f"Overall decision: **{report.decision}**, because {decision_reason(report)}.",
         "",
-        "| Claim | Status | Lower | Upper | Acceptable below | Unacceptable above |",
-        "|---|---|---:|---:|---:|---:|",
+        (
+            "| Claim | Mandatory | Status | Lower | Upper | Acceptable below | "
+            "Unacceptable above |"
+        ),
+        "|---|---|---|---:|---:|---:|---:|",
     ]
     for claim in report.claims:
         cells = [
             _escape(claim.title),
+            "yes" if claim.mandatory else "no",
             _claim_status(claim),
             bound_text(claim.lower, places, upper=False),
             bound_text(claim.upper, places, upper=True),
@@ -618,11 +723,43 @@ def _claims_section(report: SafetyReport) -> list[str]:
             threshold_text(claim.unacceptable_lower, places),
         ]
         lines.append("| " + " | ".join(cells) + " |")
-    if not report.claims:
-        lines.append("| _No claims declared_ | — | — | — | — | — |")
+    for adaptive in report.adaptive_claims:
+        cells = [
+            f"{_escape(adaptive.title)} (adaptive attacker, FAIL only)",
+            "yes" if adaptive.mandatory else "no",
+            _claim_status(adaptive),
+            bound_text(adaptive.lower, places, upper=False),
+            "—",
+            "—",
+            threshold_text(adaptive.unacceptable_lower, places),
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
+    if not report.claims and not report.adaptive_claims:
+        lines.append("| _No claims declared_ | — | — | — | — | — | — |")
+    notes = []
+    if any(claim.descriptive_status is not None for claim in report.claims) or any(
+        claim.descriptive_status is not None for claim in report.adaptive_claims
+    ):
+        notes.append(
+            "A descriptive status is what a confirmatory analysis of the same bounds would give "
+            "at the plan's thresholds. It is shown for reading the bounds and certifies nothing."
+        )
+    if report.adaptive_claims:
+        notes.append(
+            "An adaptive-attacker claim (experimental) bounds from below how often this "
+            "attacker succeeds at this budget, with no independence between its runs. It is no "
+            "evidence about other attackers, so it can fail but never pass, and a mandatory one "
+            "keeps the decision from PASS. Its runs, successes and reasons are under "
+            "Adaptive-attacker claims in `report-full.md`."
+        )
+    events = _zero_tolerance_line(report)
+    if events:
+        notes.append(events)
     policy = decision_policy_note(report)
     if policy:
-        lines.extend(["", policy])
+        notes.append(policy)
+    for note in notes:
+        lines.extend(["", note])
     return lines
 
 

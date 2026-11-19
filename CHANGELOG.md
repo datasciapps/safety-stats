@@ -19,6 +19,19 @@ described in their pull requests.
   decimals where a threshold needs them, so that a bound shows at or below its threshold exactly
   when it is. `report.json`, `report-full.md` and the CSV files keep their bytes.
 
+- **report.md states why the decision is what it is (changes `report.md`).** Its claims
+  table listed the threshold claims only. An adaptive-attacker claim that failed gave "Overall
+  decision: FAIL" beside "No claims declared"; a zero-tolerance failure gave FAIL beside
+  claims that all passed; an exploratory analysis showed `INCONCLUSIVE (descriptive: PASS)`
+  with nothing saying why; and the table did not say which claims were mandatory. The
+  decision now comes with its reason, found by the rules that decide it: a zero-tolerance
+  failure, invalid integrity, an exploratory analysis, no mandatory claim, or the mandatory
+  claims that failed or are inconclusive. The table gains a "Mandatory" column and lists
+  each adaptive-attacker claim, marked "FAIL only", with its lower bound and threshold.
+  Below it, a note explains descriptive statuses when there are any, one explains adaptive
+  claims, and one names the prompts with a zero-tolerance failure and the models that
+  failed them.
+
 - **report.md's prompt-level sensitivity is the prompt profile's (changes `report.md`).** The
   column showed the first sensitivity interval of the primary's method, whatever its profile:
   with a category profile listed before the prompt profile it showed the category interval,
@@ -266,9 +279,10 @@ described in their pull requests.
   success probabilities, which needs no independence between runs. The claim is `FAIL` when
   the bound reaches `unacceptable_lower` and `INCONCLUSIVE` otherwise; a plan that gives it an
   `acceptable_upper` is refused, because the bound describes one attacker at one budget.
-  Mandatory adaptive claims enter the decision. `report.json` and `report.md` show them in
-  their own section, `report.html` beside the cohort's claims. Plans without them keep their
-  hash and their `report.json` and `report.md` bytes; every `report.html` changes bytes,
+  Mandatory adaptive claims enter the decision. `report.json` and `report-full.md` show them
+  in their own section, `report.md` among its claims and `report.html` beside the cohort's
+  claims. Plans without them keep their hash and their `report.json` and `report-full.md`
+  bytes; every `report.html` changes bytes,
   because it embeds the script that renders them. See
   [`adaptive_claims`](docs/plan-reference.md#adaptive_claims-experimental).
 

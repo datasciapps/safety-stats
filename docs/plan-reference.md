@@ -1326,8 +1326,8 @@ What the claim assumes and reports:
 
 An order that is missing, not an integer or repeated, or a behaviour attacked more than once,
 leaves the claim `INCONCLUSIVE` and says why. The report lists adaptive claims in their own
-section of `report-full.md` and `report.json` (`adaptive_claims`), and beside the cohort's claims
-in `report.html`. Identifiers are unique across `claims` and `adaptive_claims`.
+section of `report-full.md` and `report.json` (`adaptive_claims`), among the claims of
+`report.md`, marked "FAIL only", and beside the cohort's claims in `report.html`. Identifiers are unique across `claims` and `adaptive_claims`.
 `report.claims_export` cannot be combined with adaptive claims yet: `claims.json` has no form
 for a claim that can only fail. Plans without `adaptive_claims` keep their hash.
 
