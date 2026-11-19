@@ -12,6 +12,7 @@ and hashes; the prompt text lives in a separate restricted materialization artif
 from __future__ import annotations
 
 import csv
+import errno
 import hashlib
 import os
 from collections.abc import Hashable, Iterable, Mapping, Sequence
@@ -134,6 +135,11 @@ class IncrementalCsvWriter:
         The rows go to a sibling file first, which then takes the ledger's place in one
         step, so an interruption leaves the old ledger or the new one, never a truncated
         one. Call it while the writer is closed: Windows cannot replace an open file.
+
+        The sibling's rows reach the disk before the rename does. Otherwise a power loss
+        soon after could leave the ledger's name on an empty file, on file systems that may
+        commit a rename before the data of the file renamed. On POSIX the directory is then
+        synced as well, so that the rename itself survives one.
         """
 
         partial = self._path.with_name(self._path.name + ".partial")
@@ -142,7 +148,10 @@ class IncrementalCsvWriter:
             writer.writeheader()
             for row in rows:
                 writer.writerow({key: row.get(key) for key in self._columns})
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(partial, self._path)
+        _sync_directory(self._path.parent)
 
     def __exit__(
         self,
@@ -153,6 +162,25 @@ class IncrementalCsvWriter:
         if self._handle is not None:
             self._handle.close()
             self._handle = None
+
+
+def _sync_directory(directory: Path) -> None:
+    """Commit a rename in ``directory`` to disk, where the platform can.
+
+    Windows opens no directory as a file, and a file system that cannot sync a directory
+    says so with EINVAL or ENOTSUP; the rename then stands as the file system keeps it.
+    """
+
+    if os.name == "nt":
+        return
+    descriptor = os.open(directory, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    except OSError as exc:
+        if exc.errno not in {errno.EINVAL, errno.ENOTSUP, errno.EOPNOTSUPP}:
+            raise
+    finally:
+        os.close(descriptor)
 
 
 def rewrite_ledger_writer(path: str | Path) -> IncrementalCsvWriter:

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import copy
+import errno
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -222,3 +225,61 @@ def test_replacing_a_ledger_writes_what_appending_would(tmp_path: Path, writer) 
     assert appended.read_bytes().count(b"\n") == 4 + (writer is prompt_store_writer)
     assert b"\r\n" not in appended.read_bytes().replace(b"two\r\nlines", b"")
     assert sorted(item.name for item in tmp_path.iterdir()) == ["appended.csv", "replaced.csv"]
+
+
+def test_a_replaced_ledger_reaches_the_disk_before_its_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Renamed before its rows were on disk, a ledger could be left empty by a power loss."""
+
+    import inspect_safety_stats.generative.ledger as ledger_module
+
+    rows = [rewrite(f"u-{index}").model_dump(mode="json") for index in range(3)]
+    expected = tmp_path / "expected.csv"
+    with rewrite_ledger_writer(expected) as ledger:
+        for row in rows:
+            ledger.append(row)
+    path, partial = tmp_path / "rewrites.csv", tmp_path / "rewrites.csv.partial"
+    path.write_bytes(b"stale rows\n")
+    events: list[tuple[str, bool, bool]] = []
+    fsync, replace = os.fsync, os.replace
+
+    def syncing(descriptor: int) -> None:
+        complete = partial.exists() and partial.read_bytes() == expected.read_bytes()
+        events.append(("fsync", complete, stat.S_ISDIR(os.fstat(descriptor).st_mode)))
+        fsync(descriptor)
+
+    def replacing(source: Path, target: Path) -> None:
+        events.append(("replace", Path(source) == partial, Path(target) == path))
+        replace(source, target)
+
+    monkeypatch.setattr(ledger_module.os, "fsync", syncing)
+    monkeypatch.setattr(ledger_module.os, "replace", replacing)
+    rewrite_ledger_writer(path).replace(rows)
+    assert events[:2] == [("fsync", True, False), ("replace", True, True)]
+    assert events[2:] == ([] if os.name == "nt" else [("fsync", False, True)])
+    assert path.read_bytes() == expected.read_bytes()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Windows syncs no directory")
+@pytest.mark.parametrize(("code", "raises"), [(errno.EINVAL, False), (errno.EIO, True)])
+def test_a_directory_that_cannot_be_synced_fails_only_for_a_real_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int, raises: bool
+) -> None:
+    import inspect_safety_stats.generative.ledger as ledger_module
+
+    fsync = os.fsync
+
+    def syncing(descriptor: int) -> None:
+        if stat.S_ISDIR(os.fstat(descriptor).st_mode):
+            raise OSError(code, os.strerror(code))
+        fsync(descriptor)
+
+    monkeypatch.setattr(ledger_module.os, "fsync", syncing)
+    path = tmp_path / "rewrites.csv"
+    if raises:
+        with pytest.raises(OSError):
+            rewrite_ledger_writer(path).replace([])
+    else:
+        rewrite_ledger_writer(path).replace([])
+    assert path.read_bytes().count(b"\n") == 1, "the rename happened either way"
