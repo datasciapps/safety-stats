@@ -36,8 +36,9 @@ inspect-safety-stats analyze --plan examples/demo/plan.yaml \
 python examples/demo/show_results.py reports/demo
 ```
 
-The name after `mockllm/` selects the simulated configuration. Start from an empty `logs/demo`,
-since logs left there by an earlier run would be analyzed too. `analyze` refuses to write into a
+The name after `mockllm/` selects the simulated configuration. Start from an empty `logs/demo`:
+`validate` reports logs left there by an earlier run as `ROLLOUT_EXCESS`, and the data integrity
+becomes invalid. `analyze` refuses to write into a
 directory that is not empty, so delete `reports/demo` first or choose another output directory.
 
 ## Where the plan comes from

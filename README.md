@@ -174,8 +174,9 @@ An analysis takes three inputs:
     --model mockllm/baseline,mockllm/candidate --log-dir logs/demo
   ```
 
-  Start from an empty `logs/demo`: logs left there by an earlier run would be analyzed as extra
-  rollouts.
+  Start from an empty `logs/demo`. Logs left there by an earlier run add rollouts the design
+  does not expect: `validate` reports them as `ROLLOUT_EXCESS`, and the data integrity becomes
+  invalid.
 - **A design manifest.** [design.csv](examples/demo/design.csv) has one row per prompt: its
   `prompt_id`, `question_id`, `task_id`, `risk_domain` and `expected_rollouts` (20).
 - **An analysis plan.** [plan.yaml](examples/demo/plan.yaml) says which score values count as
@@ -190,7 +191,8 @@ inspect-safety-stats init --logs logs/demo --failure-values FAIL \
   --group-by risk_domain --baseline mockllm/baseline
 ```
 
-`init` writes `safety-plan.yaml` (renamed to `plan.yaml` in the example) and `design.csv`. The
+`init` writes `safety-plan.yaml` (renamed to `plan.yaml` in the example) and `design.csv` into
+the current directory, or into the directory `--output` names. The
 header of the plan lists each choice `init` made and the assumption behind it. The plan breaks
 the rates down by risk domain and compares the candidate with the baseline as a risk difference
 and a risk ratio. One edit was made after `init`: two tail measures, `cvar_90` (the mean of the
@@ -323,7 +325,8 @@ warning records a fact and changes no result. Then come, in this order:
 
 `index.json` is the file for agents and tools to open first; `index.md` holds the same in
 Markdown. Its headline table gives each failure rate and overall comparison with a pointer into
-`report.json`, and for comparisons the matching row of `comparisons.csv`:
+`report.json`, and for comparisons the matching row of `comparisons.csv`. Shown here without its
+Baseline, Group, Measure and Eligibility columns:
 
 | Kind | Model | Estimand | Estimate | Lower | Upper | Pointer | CSV row |
 |---|---|---|---:|---:|---:|---|---|

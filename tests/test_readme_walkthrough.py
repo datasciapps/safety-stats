@@ -319,6 +319,12 @@ def test_the_warning_codes_are_the_ones_the_walkthrough_reads(walkthrough: Walkt
 # that line says.
 _QUOTED = [
     (
+        "The baseline fails on 20.4% of its rollouts, with an interval from 13.0% to 29.5%",
+        "| baseline | all | 20.4% |",
+        "| 20.4% | [13.0%, 29.5%] †",
+    ),
+    ("the candidate on 0.8%, from 0.0% to 4.2%", "| candidate | all | 0.8% |", "[0.0%, 4.2%]"),
+    (
         "sensitivity beside them (1.1% to 65.3% for the baseline)",
         "| baseline | all | 20.4% |",
         "[1.1%, 65.3%]",
