@@ -85,7 +85,9 @@ they are never selected in its place. A `PASS` under `rollout` that is `INCONCLU
 any of them has a sensitivity profile, and the HTML claim card lists each profile's verdict
 and bounds. Claims decided on a judge-corrected interval or the noisy-valid test have no
 per-profile counterpart and no rows; when their evidence has sensitivity profiles, a reason
-says so.
+says so. A claim whose evidence has no primary interval, for example because the primary
+profile's calibration failed, is `INCONCLUSIVE` and has no rows either, and its reason says the
+primary interval is missing.
 
 Comparisons use the same selector:
 

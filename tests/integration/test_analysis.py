@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 
 from inspect_safety_stats import analyze, load_plan, render_visualization, write_visualization
+from inspect_safety_stats.analysis import comparisons as comparisons_stage
 from inspect_safety_stats.analysis.claims import verdicts_by_profile
 from inspect_safety_stats.analysis.core import scorer_configurations
 from inspect_safety_stats.analysis.estimates import alpha_by_prompt, prompt_blocked
@@ -4456,6 +4457,63 @@ def test_comparison_claims_show_their_verdict_under_every_independence_profile(
         sensitivity.lower,
         sensitivity.upper,
     )
+
+
+def test_a_claim_without_a_primary_interval_says_why_it_has_no_profile_verdicts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Missing the primary interval is not the same as deciding on another interval.
+
+    When a comparison's primary-profile calibration is unavailable, only its sensitivity
+    intervals are computed. The claim was decided directly, INCONCLUSIVE for want of a bound,
+    yet its reason said it was "not decided directly on the profile intervals".
+    """
+    plan_path = _two_arm_plan(tmp_path, as_set=False)
+    text = plan_path.read_text(encoding="utf-8")
+    comparison_profiles = (
+        "    family: model_comparisons\n    independence:\n      primary: rollout\n"
+    )
+    assert text.count(comparison_profiles) == 1
+    text = text.replace(
+        comparison_profiles, comparison_profiles + "      sensitivities: [prompt]\n"
+    ).replace(
+        "policy:\n",
+        "  - id: not_worse\n"
+        "    title: Candidate is not worse than baseline\n"
+        "    comparison: candidate_vs_baseline\n"
+        "    family: gate\n"
+        "    acceptable_upper: 0.35\n"
+        "    unacceptable_lower: 0.60\n"
+        "policy:\n",
+        1,
+    )
+    plan_path.write_text(text, encoding="utf-8")
+    _patch_frames(monkeypatch, _two_cohort_frames())
+    calibrations = comparisons_stage._comparison_calibrations
+
+    def without_the_primary_profile(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in calibrations(*args, **kwargs).items()
+            if not key.startswith("rollout@@")
+        }
+
+    monkeypatch.setattr(comparisons_stage, "_comparison_calibrations", without_the_primary_profile)
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    comparison = next(item for item in report.comparisons if item.level is None)
+    assert comparison.primary_interval_id is None
+    assert {item.independence_profile for item in comparison.intervals} == {"prompt"}
+    claim = next(item for item in report.claims if item.claim_id == "not_worse")
+    assert claim.status == "INCONCLUSIVE"
+    assert claim.profile_verdicts == []
+    assert claim.reasons == [
+        "No complete certifying bound is available.",
+        "Verdicts under the sensitivity independence profiles are not reported, because the "
+        "evidence has no primary interval, so the claim has no verdict under the primary "
+        "profile for them to qualify.",
+    ]
 
 
 def _validated_judge_report(

@@ -642,8 +642,17 @@ def _claims(
                 )
         if not profile_verdicts and _has_sensitivity_profiles(evidence):
             reasons.append(
-                "Verdicts under the sensitivity independence profiles are not reported, "
-                "because this claim is not decided directly on the profile intervals."
+                "Verdicts under the sensitivity independence profiles are not reported, because "
+                + (
+                    # Decided directly, and INCONCLUSIVE for want of a bound: a missing primary
+                    # interval is not a decision on another interval.
+                    "the evidence has no primary interval, so the claim has no verdict under the "
+                    "primary profile for them to qualify."
+                    if decided_on_evidence
+                    and evidence is not None
+                    and evidence.primary_interval_id is None
+                    else "this claim is not decided directly on the profile intervals."
+                )
             )
         results.append(
             ClaimResult(
