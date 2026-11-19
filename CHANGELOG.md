@@ -379,8 +379,10 @@ described in their pull requests.
     listed group from that group's labels, and splits the judge family budget over those
     calibrations (`per_calibration_alpha`). Such a calibration certifies a `weighted_mean`
     over a whole listed group, a row that an unscoped calibration reports only as a
-    sensitivity analysis, and the report records `experimental: true` beside it. A claim on
-    a row outside the scope is INCONCLUSIVE in a validated plan, and labels outside it raise
+    sensitivity analysis, and the report records `experimental: true` beside it. Labels drawn
+    within the cohort's judge strata remain a valid sample for each group, but a small group
+    gets few of them, and its calibration is often refused. A claim on a row outside the
+    scope is INCONCLUSIVE in a validated plan, and labels outside it raise
     `JUDGE_VALIDATION_OUT_OF_SCOPE`. A `transported` calibration takes no `groups`.
   - `inputs.judges[].accuracy.groups` limits a judge's declared ranges to the listed groups.
     The panel-derived correction, and the judge-error stress box, then apply only where every

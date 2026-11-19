@@ -311,7 +311,9 @@ cohort. With it:
   and group. A validated correction then certifies a `weighted_mean` over a whole listed group
   that weights every classified rollout equally, a row that an unscoped calibration reports
   only as a sensitivity analysis. Labels on rollouts outside every listed group calibrate
-  nothing and raise the warning `JUDGE_VALIDATION_OUT_OF_SCOPE`.
+  nothing and raise the warning `JUDGE_VALIDATION_OUT_OF_SCOPE`. A group gets only the labels
+  that land on its rollouts, so a small group's calibration is often refused: see
+  [Scoping the calibration to groups](judge-misclassification.md#scoping-the-calibration-to-groups).
 
 Each listed group must be declared under `groups`, and a scope can be neither empty nor list a
 group twice. A `transported` calibration takes no `groups`. Generative plans have no groups and
