@@ -355,6 +355,7 @@ def analyze(
             judge_inputs,
             plan_diagnostics,
             report_valid=_integrity_status(diagnostics) != "invalid",
+            policy_claims=_policy_set_claims(application),
         )
         _add_judge_configurations(
             judge_panel, resolved, data, judge_inputs.source, diagnostics

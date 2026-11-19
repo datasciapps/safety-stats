@@ -869,7 +869,26 @@ def test_an_exploratory_reason_names_the_thresholds_it_reads(tmp_path: Path) -> 
     cast(dict[str, object], plan["analysis"])["intent"] = "exploratory"
     for claim in cast(list[dict[str, object]], plan["claims"]):
         claim["acceptable_upper"] = 0.5
+    # A judge whose run decides every claim again, beside the primary's.
+    cast(dict[str, object], plan["inputs"])["judges"] = [
+        {
+            "id": "judge_a",
+            "score": {
+                "name": "harmful_a",
+                "mapping": {"failure_values": ["FAIL"], "safe_values": ["PASS"]},
+            },
+        }
+    ]
+    cast(dict[str, object], plan["outputs"])["judge_claims"] = True
     plan_path = _gate_inputs(tmp_path, plan, groups)
+    rollouts = tmp_path / "rollouts.jsonl"
+    rollouts.write_text(
+        "".join(
+            json.dumps({**row, "score_harmful_a": row["score_harmful"]}) + "\n"
+            for row in map(json.loads, rollouts.read_text(encoding="utf-8").splitlines())
+        ),
+        encoding="utf-8",
+    )
     policy = tmp_path / "policy.json"
     policy.write_text(
         json.dumps(
@@ -893,3 +912,9 @@ def test_an_exploratory_reason_names_the_thresholds_it_reads(tmp_path: Path) -> 
     assert "at the decision policy's thresholds would give PASS" in reasons["g1_mean"]
     assert "at the plan's thresholds would give PASS" in reasons["g2_mean"]
     assert "plan's thresholds" not in reasons["g1_mean"]
+    # The judge's run reads the same thresholds, and its rows say whose they are too.
+    (judge,) = report.provenance["judge_panel"]["judges"]
+    rows = {row["claim_id"]: " ".join(row["reasons"]) for row in judge["claims"]}
+    assert "at the decision policy's thresholds would give PASS" in rows["g1_mean"]
+    assert "plan's thresholds" not in rows["g1_mean"]
+    assert "at the plan's thresholds would give PASS" in rows["g2_mean"]
