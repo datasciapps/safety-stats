@@ -215,16 +215,23 @@ def tail_measure_precision(
     index = {(item.cohort_id, item.prompt_id): item for item in estimates}
     for cohort in sorted(plan.cohorts):
         for group in sorted(data.groups, key=lambda item: item.id):
-            # A prompt whose bound is withheld, or does not certify, enters no measure's
-            # interval, so its rollouts say nothing about how wide that interval can be.
-            bounded = [
+            # A measure built from the prompt bounds gets an interval only when every prompt of
+            # the group has a certifying bound (complete_bounds in risks.py). One withheld or
+            # non-certifying bound leaves the measure without an interval, so there is no width
+            # to warn about.
+            results = [index.get((cohort, prompt)) for prompt in group.prompt_ids]
+            complete = [
                 item
-                for item in (index.get((cohort, prompt)) for prompt in group.prompt_ids)
+                for item in results
                 if item is not None
                 and item.eligibility == "certifying"
+                and item.lower is not None
                 and item.upper is not None
-                and item.alpha_upper is not None
-                and item.n_valid > 0
+            ]
+            if not results or len(complete) < len(results):
+                continue
+            bounded = [
+                item for item in complete if item.alpha_upper is not None and item.n_valid > 0
             ]
             if not bounded:
                 continue

@@ -407,7 +407,7 @@ def test_each_group_is_judged_on_its_own_prompts_at_their_lower_median(tmp_path:
 
 def test_prompts_whose_bounds_are_withheld_do_not_count(tmp_path: Path) -> None:
     # The manifest expects five rollouts of p1 and p2, and each has ten: an error withholds
-    # their bounds, and p3's three hundred rollouts leave the maximum narrow.
+    # their bounds, so the maximum has no interval, and p3's rollouts decide nothing.
     plan, source = _rollout_files(
         tmp_path,
         "{id: worst, type: maximum}",
@@ -419,6 +419,26 @@ def test_prompts_whose_bounds_are_withheld_do_not_count(tmp_path: Path) -> None:
 
     withheld = {item.prompt_id for item in report.prompt_estimates if item.upper is None}
     assert withheld == {"p1", "p2"}
+    assert _warnings(report) == []
+
+
+def test_no_warning_when_a_withheld_bound_leaves_the_measure_without_an_interval(
+    tmp_path: Path,
+) -> None:
+    # p3 and p4 certify at ten rollouts, which alone would warn; p1 and p2 are withheld.
+    plan, source = _rollout_files(
+        tmp_path,
+        "{id: worst, type: maximum}",
+        {"candidate": {"p1": ROLLOUTS, "p2": ROLLOUTS, "p3": ROLLOUTS, "p4": ROLLOUTS}},
+        columns={"expected_rollouts": {"p1": 5, "p2": 5, "p3": ROLLOUTS, "p4": ROLLOUTS}},
+        design="",
+    )
+    report = analyze(plan=plan, source=source)
+
+    withheld = {item.prompt_id for item in report.prompt_estimates if item.upper is None}
+    assert withheld == {"p1", "p2"}
+    (risk,) = [item for item in report.group_risks if item.measure_id == "worst"]
+    assert (risk.lower, risk.upper) == (None, None)
     assert _warnings(report) == []
 
 

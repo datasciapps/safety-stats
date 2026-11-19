@@ -353,7 +353,7 @@ R_{\mathrm{exc}}(p;w,\tau)
 
 The report should also show the certified-safe weight \(\sum_jw_j\mathbf 1\{U_j\le\tau_j\}\) and unresolved weight. These classifications are conditional on the joint prompt-level coverage event.
 
-Because \(R(U;w)\) is built from per-prompt upper bounds, its width is set by the rollouts on each prompt, not by the total. A prompt with \(n\) rollouts and no failure has the one-sided Clopper-Pearson upper bound \(u_n=1-\alpha^{1/n}\), at its upper-bound level \(\alpha\). For each cohort and group, `analyze` takes \(n\) as the lower median of the classified rollouts of the prompts whose upper bounds certify (a withheld bound enters no interval), and \(\alpha\) as the smallest of their upper-bound levels. For each measure built only from the prompt bounds it computes the distance from estimate to upper bound that the measure would have if no prompt failed,
+Because \(R(U;w)\) is built from per-prompt upper bounds, its width is set by the rollouts on each prompt, not by the total. A prompt with \(n\) rollouts and no failure has the one-sided Clopper-Pearson upper bound \(u_n=1-\alpha^{1/n}\), at its upper-bound level \(\alpha\). For each cohort and group whose prompts all have certifying bounds (otherwise the measures have no interval to be wide), `analyze` takes \(n\) as the lower median of the classified rollouts of its prompts, and \(\alpha\) as the smallest of their upper-bound levels. For each measure built only from the prompt bounds it computes the distance from estimate to upper bound that the measure would have if no prompt failed,
 
 \[
 d(n)=R(u_n\mathbf 1;w)-R(\mathbf 0;w).
