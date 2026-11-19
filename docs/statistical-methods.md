@@ -1998,7 +1998,7 @@ which risk differences \(\Delta=R_C-R_B\) a fixed two-arm design can resolve at 
   probability at least \(1-\beta\) (a regression of at least \(\delta\) is shown).
 
 The guarantee is that of the `weighted_hoeffding` difference of section 7.0, as `analyze`
-computes it, with no unclassified outcomes. That interval bounds
+computes it for a `comparisons` entry, with no unclassified outcomes. That interval bounds
 \(Q=(1+\Delta)/2\) by a weighted mean of independent blocks \(b\) with values in \([0,1]\) and
 masses \(m_b\). With \(c^2=\sum_bm_b^2\), Hoeffding's inequality [32] gives
 
@@ -2045,11 +2045,33 @@ under `per_direction`. \(M\) is the number of targets among which the family div
 alpha, as under `flat_bonferroni`. Hierarchy-node contrasts and `frontier_sidak` calibration
 are not planned.
 
-**Scope.** The guarantee is not one for the `weighted_kl_chernoff` or
-`weighted_empirical_bernstein` differences. Those are usually narrower on sparse failures, but
-not for every design, so a design planned here may resolve more than stated under those
-methods, and has no stated guarantee under them. Unclassified outcomes widen the analysis
-bounds and are not planned for.
+**Scope.** The guarantee holds only for a `comparisons` entry with
+`method: weighted_hoeffding`. A `comparison_sets` entry, whatever its method, and
+`weighted_kl_chernoff` in a `comparisons` entry bound each arm's weighted mean at
+\(\alpha_U/2\) and report \(U_\Delta=U_C-L_B\) (section 7.0). With per-arm masses \(c_C^2\),
+\(c_B^2\) and \(s_X(\gamma)=\sqrt{\tfrac12c_X^2\log(1/\gamma)}\), the confidence term of that
+rectangle under `weighted_hoeffding` is \(s_C(\alpha_U/2)+s_B(\alpha_U/2)\) rather than
+\(2s(\alpha_U)\). For unpaired arms at equal counts, \(c_C^2=c_B^2=2c^2\), so it is
+\(\sqrt{2\log(2/\alpha_U)/\log(1/\alpha_U)}\approx1.54\) times as large at
+\(\alpha_U=0.025\), and \(g_U\) no longer suffices. In the example of
+[Planning a comparison](model-comparisons.md#planning-a-comparison-experimental) (100 equally
+weighted prompts, 10 unpaired rollouts per arm, \(\delta=0.05\), \(\alpha_U=0.025\),
+\(1-\beta=0.9\)), `research/comparison_planning_scope.py` simulates 10,000 runs at the
+planned \(\Delta=\delta-g_U\approx-0.059\). \(U_\Delta\le\delta\) holds in 0.773 of them for
+the `weighted_hoeffding` rectangle at a baseline rate of 0.3, and in 0.755 at 0.5 (standard
+error at most 0.005); for the `weighted_empirical_bernstein` rectangle, in 0.582 at either
+rate. The `weighted_kl_chernoff` and `weighted_empirical_bernstein` differences are often
+narrower than the Hoeffding difference on sparse failures when prompt weights are even; with
+uneven weights, or at moderate rates, either can be wider. In the same example,
+KL/Chernoff's upper half-width equals Hoeffding's 0.061 when both arms observe a failure rate
+of 0.12 and is 0.093 at 0.5, and at a baseline rate of 0.5 the planned difference gives
+\(U_\Delta\le\delta\) in 0.756 of the runs. With `nested_equal` weights over tasks of 2 and
+98 prompts, 10 rollouts each, and one failure per arm on each of the first ten prompts (both
+of the small task's among them), the upper half-widths are 0.217 for Hoeffding, 0.243 for
+KL/Chernoff, which then uses its Poisson kernel, and 0.276 for empirical Bernstein; over tasks
+of 5, 10, 20, 25 and 40 prompts with 20 such failures, 0.078 for Hoeffding and 0.081 for
+KL/Chernoff. The planner states no guarantee for these methods, in either direction.
+Unclassified outcomes widen the analysis bounds and are not planned for.
 
 ### 7.8 Arm contrasts on a generative design (experimental)
 
