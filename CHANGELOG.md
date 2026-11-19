@@ -7,6 +7,13 @@ described in their pull requests.
 
 ### Added
 
+- **Open-weight example and limitations log.** [`examples/open_weights/`](examples/open_weights/README.md) runs an open-weight model on
+  HarmBench and XSTest with thinking off and on, many rollouts per prompt, judges them, and
+  analyzes the run; it also orders rollouts for human labelling and turns the labels into
+  judge validation manifests. [The limitations log](docs/limitations.md) records what this
+  and other real evaluations showed the package cannot yet do, and what `main` does about each
+  entry. The package itself is unchanged.
+
 - **Anytime-valid bounds for runs stopped early (experimental, #126).**
   `outputs.anytime_bounds` reports, for each cohort and group, a one-sided upper bound on the
   weighted mean failure probability that holds at every point of the run's sample order at
