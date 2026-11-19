@@ -9,7 +9,7 @@
 | `PLAN_SELF_DECLARED` (warning) | — | The confirmatory plan's freeze time is backed by an external registration, not only by the time its author wrote in analysis.plan_frozen_at. | **recorded**. Nothing is computed differently and integrity is unchanged; the report records that the plan's timing rests on its author's word. |
 | `TAIL_MEASURES_UNINFORMATIVE` (warning) | `plan/outputs/risk_measures` | Each prompt has enough rollouts that its simultaneous bound can be tighter than report.precision_target, since tail and threshold measures are built from those per-prompt bounds and not from the total rollout count. | **recorded**. The tail and threshold measures are reported as computed, but at the median rollout count even a prompt with no failures is bounded above the precision target, so their intervals can only be wide. |
 
-Each code's message for this analysis is under Data integrity in `report-full.md`; `docs/diagnostics.md` gives the remedy for each.
+Each code's message for this analysis is under Data integrity in `report-full.md`; [the diagnostics reference](https://github.com/aduncan001/safety_stats/blob/main/docs/diagnostics.md) gives the remedy for each.
 
 ## Failure risk
 
@@ -17,7 +17,7 @@ Each code's message for this analysis is under Data integrity in `report-full.md
 |---|---|---:|---|---|
 | candidate | all-eight | 50.0% | [9.2%, 90.8%] † | — |
 
-Intervals bound the rollout uncertainty on these fixed prompts with 95.0% simultaneous coverage. The prompt-level sensitivity allows arbitrary dependence among the rollouts of one prompt.
+Intervals bound the rollout uncertainty on these fixed prompts with 95.0% simultaneous coverage. No profile with `block_by: [prompt_id]` is a sensitivity of these intervals, so none allows dependence among the rollouts of one prompt.
 
 ## By task_id
 
@@ -30,18 +30,18 @@ Intervals bound the rollout uncertainty on these fixed prompts with 95.0% simult
 | Model | Group | Measure | Value | Interval |
 |---|---|---|---:|---|
 | candidate | all-eight | cvar_75 | 1.000 | [0.003, 1.000] † |
-| candidate | all-eight | entropic_5 | 0.863 | [0.002, 0.998] † |
+| candidate | all-eight | entropic_5 | 0.863 | [0.001, 0.999] † |
 | candidate | all-eight | worst | 1.000 | [0.003, 1.000] † |
 
 These are built from simultaneous per-prompt bounds, so their precision is set by the rollouts on each prompt rather than the total.
 
 ## Precision
 
-† marks an interval with an endpoint more than ±5.0% from its estimate (`report.precision_target`). The budgets below assume the observed rate holds; they are planning figures, not guarantees.
+† marks an interval with an endpoint more than ±5.0% from its estimate (`report.precision_target`). The budgets below assume the observed rate holds, unless they say otherwise; they are planning figures, not guarantees.
 
 - candidate · all-eight: 50.0% [9.2%, 90.8%]: needs about 78.2× the current rollouts, about 79 per prompt
 - 1 of 1 task_id intervals exceed ±5.0%; the widest (candidate · simpleqa: 50.0% [9.2%, 90.8%]) needs about 78.2× the current rollouts, about 79 per prompt
-- 3 tail or threshold intervals exceed ±0.05; per-prompt bounds that tight need about 113 rollouts on every prompt (currently 1)
+- 3 tail or threshold intervals exceed ±0.05; per-prompt bounds that tight need about 113 rollouts on every prompt, the count for a prompt with no failures and the fewest any prompt needs (currently 1 per prompt, median)
 
 ## Assumptions used
 
