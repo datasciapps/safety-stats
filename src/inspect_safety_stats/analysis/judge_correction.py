@@ -577,4 +577,7 @@ def _add_judge_corrections(
         summary["experimental"] = True
         if spec.validation_strata is not None:
             summary["validation_strata"] = report_path(spec.validation_strata, plan)
+    if spec.groups is not None:
+        # A scope to groups is experimental too, and only a scoped plan records it.
+        summary["experimental"] = True
     return summary

@@ -304,13 +304,16 @@ cohort. With it:
   intervals, and a claim on such a row in a validated plan is INCONCLUSIVE, with a reason
   saying that no labels calibrate it;
 - `assumed` mode applies its scenarios unchanged to the listed groups' rows;
-- `validated` mode estimates one calibration per cohort and listed group, from the labels and
-  judge-stratum sizes of that group's rollouts. The judge family budget is split equally over
-  those calibrations (`per_calibration_alpha` in the report, instead of `per_cohort_alpha`),
-  and the report records the label counts per cohort and group. A validated correction then
-  certifies a `weighted_mean` over a whole listed group that weights every classified rollout
-  equally. Labels on rollouts outside every listed group calibrate nothing and raise the
-  warning `JUDGE_VALIDATION_OUT_OF_SCOPE`.
+- `validated` mode (experimental with `groups`) estimates one calibration per cohort and
+  listed group, from the labels and judge-stratum sizes of that group's rollouts. The judge
+  family budget is split equally over those calibrations (`per_calibration_alpha` in the
+  report, instead of `per_cohort_alpha`), and the report records the label counts per cohort
+  and group. A validated correction then certifies a `weighted_mean` over a whole listed group
+  that weights every classified rollout equally, a row that an unscoped calibration reports
+  only as a sensitivity analysis. Labels on rollouts outside every listed group calibrate
+  nothing and raise the warning `JUDGE_VALIDATION_OUT_OF_SCOPE`. A group gets only the labels
+  that land on its rollouts, so a small group's calibration is often refused: see
+  [Scoping the calibration to groups](judge-misclassification.md#scoping-the-calibration-to-groups).
 
 Each listed group must be declared under `groups`, and a scope can be neither empty nor list a
 group twice. A `transported` calibration takes no `groups`. Generative plans have no groups and
@@ -491,6 +494,11 @@ Every judge, composite and judge pair in `provenance.judge_panel` then carries `
 the same counts and agreement figures for each listed group's rollouts, per cohort. `report-full.md`
 shows them under **Judge panel by group**. The cohort-wide figures are reported as before. The
 field requires `inputs.judges`, and its groups must be declared.
+
+In all three scopes, a group the plan does not declare is a `PLAN_UNKNOWN_REFERENCE` error:
+integrity is invalid, and `analyze` still writes the report. The undeclared group gets no
+calibration and no panel breakdown, but in `validated` mode it still takes its share of the
+judge family budget.
 
 All three scopes are optional. A plan that leaves them out keeps its hash and writes the same
 report bytes as before.

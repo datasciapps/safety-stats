@@ -101,7 +101,8 @@ def _scope_population(
     rollouts = population.get(cohort_id, {})
     if group_id is None:
         return rollouts
-    prompts = set(next(group for group in data.groups if group.id == group_id).prompt_ids)
+    # An undeclared group, which plan validation reports, has no prompts.
+    prompts = next((set(group.prompt_ids) for group in data.groups if group.id == group_id), set())
     return {prompt_id: item for prompt_id, item in rollouts.items() if prompt_id in prompts}
 
 
@@ -417,15 +418,19 @@ def _validated_judge_calibrations(
 
     _, unmatched = judge_stratum_counts(data.observations, labels)
     scopes = _judge_scopes(plan)
+    group_prompts = {group.id: set(group.prompt_ids) for group in data.groups}
+    # A group the plan does not declare is reported as PLAN_UNKNOWN_REFERENCE. It has no
+    # rollouts and gets no calibration, but still takes its share of the budget below.
+    calibrated = [scope for scope in scopes if scope[1] is None or scope[1] in group_prompts]
     counts: dict[_JudgeScope, JudgeStrata] = {}
     fine: dict[_JudgeScope, FineStrata] = {}
     truth_strata: dict[_JudgeScope, Any] = {}
     in_scope: set[str] = set()
-    for scope in scopes:
+    for scope in calibrated:
         cohort_id, group_id = scope
         observations = data.observations
         if group_id is not None:
-            prompts = set(next(item for item in data.groups if item.id == group_id).prompt_ids)
+            prompts = group_prompts[group_id]
             observations = [row for row in observations if row.prompt_id in prompts]
             in_scope.update(row.observation_id for row in observations)
         if declared is not None:
@@ -481,7 +486,7 @@ def _validated_judge_calibrations(
     per_calibration_alpha = cohort_alpha_share(family.alpha, len(scopes))
     calibrations: dict[_JudgeScope, JudgeCalibration] = {}
     summaries: dict[_JudgeScope, dict[str, Any]] = {}
-    for scope in scopes:
+    for scope in calibrated:
         cohort_id, group_id = scope
         where = (
             cohort_scope(cohort_id)
@@ -516,7 +521,12 @@ def _validated_judge_calibrations(
                 Diagnostic(
                     code="JUDGE_CALIBRATION_UNINFORMATIVE",
                     severity="WARNING",
-                    message=str(outcome.refusal),
+                    # A scoped refusal must not read as the cohort's own calibration's.
+                    message=(
+                        str(outcome.refusal)
+                        if group_id is None
+                        else f"group {group_id!r} of cohort {cohort_id!r}: {outcome.refusal}"
+                    ),
                     scope=where,
                 )
             )

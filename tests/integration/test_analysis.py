@@ -3017,6 +3017,42 @@ def test_panel_groups_break_the_panel_down_by_group(
     assert "| judge_a / judge_b | first | candidate | 20 | 5 | 0.7500 |" in markdown
 
 
+def test_an_undeclared_panel_group_is_reported_not_crashed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """analyze raised KeyError('typo') here, so no report was written for an invalid plan."""
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8").replace(
+        "design:\n", _JUDGE_PLAN_BLOCK + "  panel_groups: [first, typo]\ndesign:\n", 1
+    )
+    plan_text = plan_text.replace(
+        "groups:\n  - id: cyber\n",
+        "groups:\n  - id: first\n    filter: {question_id: q1}\n  - id: cyber\n",
+        1,
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    _patch_frames(monkeypatch, _judge_frames())
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert report.integrity.status == "invalid"
+    unknown = [
+        (item.scope, item.message)
+        for item in report.integrity.diagnostics
+        if item.code == "PLAN_UNKNOWN_REFERENCE"
+    ]
+    assert unknown == [
+        ("plan/inputs/panel_groups", "inputs.panel_groups references unknown groups: typo")
+    ]
+    # The declared group is still broken down; the undeclared one has no rollouts to count.
+    panel = report.provenance["judge_panel"]
+    assert panel["groups"] == ["first"]
+    for entry in (*panel["judges"], *panel["composites"], *panel["agreement"]):
+        assert sorted(entry["groups"]) == ["first"]
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    assert "| judge_a | first | candidate | 20 | 10 | 0 |" in markdown
+
+
 def test_a_panel_without_panel_groups_has_no_group_breakdown(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

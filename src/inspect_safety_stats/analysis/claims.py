@@ -348,17 +348,17 @@ def _claim_judge_error_stress(
     share = _unclassified_share(
         population.get(evidence.cohort_id, {}), group_weights[evidence.group_id], measure_type
     )
-    if accuracy is not None and accuracy[2] is not None and evidence.group_id not in accuracy[2]:
+    if accuracy is not None and not accuracy.holds_on(evidence.group_id):
         accuracy = None
+    box, source = (accuracy.box, accuracy.source) if accuracy is not None else (None, None)
     stress = stress_verdict(
         judge_reported_lower=evidence.lower,
         judge_reported_upper=evidence.upper,
         acceptable_upper=claim.acceptable_upper,
         unacceptable_lower=claim.unacceptable_lower,
-        box=accuracy[0] if accuracy is not None else None,
+        box=box,
         unclassified_share=share,
     )
-    box, source = (accuracy[0], accuracy[1]) if accuracy is not None else (None, None)
     stressed = stress.stressed
     return JudgeErrorStressResult(
         applicable=True,
