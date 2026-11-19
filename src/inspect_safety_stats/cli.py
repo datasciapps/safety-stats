@@ -923,14 +923,20 @@ def pilot_command(
 
     import pandas as pd
 
-    from inspect_safety_stats.ingest.manifest import load_manifest
+    from inspect_safety_stats.ingest.manifest import REQUIRED_COLUMNS, load_manifest
     from inspect_safety_stats.ingest.pilot import draw_pilot
 
     if output.resolve() == manifest.resolve():
         raise typer.BadParameter("--output must not overwrite the design manifest")
     columns = [column.strip() for column in strata.split(",") if column.strip()]
     try:
-        load_manifest(manifest)
+        # Check the manifest as analyze reads it, requiring only the identifier columns the
+        # draw uses: analyze gives a plan that never names question_id or task_id each
+        # prompt's own. draw_pilot checks strata columns outside REQUIRED_COLUMNS.
+        load_manifest(
+            manifest,
+            required=("prompt_id", *(column for column in columns if column in REQUIRED_COLUMNS)),
+        )
         # Read every value as written, so the pilot frame repeats the manifest's own text
         # rather than pandas' reading of it (an integer column with a gap would turn into
         # floats, for example).

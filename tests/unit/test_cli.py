@@ -549,6 +549,45 @@ def test_pilot_cli_and_python_draw_the_same_prompts(tmp_path: Path) -> None:
     assert len(by_command) == 6
 
 
+@pytest.mark.parametrize(
+    ("strata", "accepted"), [("category", True), ("", True), ("task_id", False)]
+)
+def test_pilot_cli_requires_only_the_columns_it_draws_on(
+    tmp_path: Path, strata: str, accepted: bool
+) -> None:
+    """analyze accepts a manifest without question_id and task_id, so the pilot does too."""
+    manifest = tmp_path / "design.csv"
+    manifest.write_text(
+        "prompt_id,category\n" + "".join(f"p{index},c{index % 2}\n" for index in range(8)),
+        encoding="utf-8",
+    )
+    output = tmp_path / "frame.csv"
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--strata",
+            strata,
+            "--per-stratum",
+            "2",
+            "--seed",
+            "3",
+            "--output",
+            str(output),
+        ],
+    )
+    if accepted:
+        assert result.exit_code == 0, result.output
+        assert output.exists()
+    else:
+        assert result.exit_code != 0
+        assert "missing required columns: task_id" in plain(result.output)
+        assert not output.exists()
+
+
 def test_pilot_cli_rejects_a_stratum_smaller_than_the_draw(tmp_path: Path) -> None:
     manifest = _pilot_manifest(tmp_path)
     output = tmp_path / "frame.csv"
