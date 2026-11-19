@@ -117,7 +117,7 @@ STRATIFIED = (
     "  judge_calibration:\n"
     "    mode: validated\n"
     "    validation_manifest: labels.csv\n"
-    "    sampling: stratified_without_replacement\n"
+    "    sampling: stratified_within_judge_stratum\n"
     "    validation_strata: strata.csv\n"
     "    family: judge_error\n"
 )
@@ -291,7 +291,7 @@ def test_stratified_labels_certify_a_correction_weighted_by_fine_stratum(
     assert "JUDGE_FINE_STRATUM_UNLABELLED_COMPLETED" not in codes
 
     summary = report.provenance["judge_calibration"]
-    assert summary["sampling"] == "stratified_without_replacement"
+    assert summary["sampling"] == "stratified_within_judge_stratum"
     assert summary["experimental"] is True
     assert summary["validation_strata"] == "strata.csv"
     cohort = summary["cohorts"]["candidate"]
@@ -382,7 +382,7 @@ def test_the_plan_requires_both_fields_and_hashes_as_before_without_them() -> No
             mode="validated",
             validation_manifest=Path("labels.csv"),
             family="judge_error",
-            sampling="stratified_without_replacement",
+            sampling="stratified_within_judge_stratum",
         )
     with pytest.raises(ValidationError, match="go together"):
         JudgeCalibrationSpec(
@@ -394,7 +394,7 @@ def test_the_plan_requires_both_fields_and_hashes_as_before_without_them() -> No
     with pytest.raises(ValidationError, match="requires mode: validated"):
         JudgeCalibrationSpec(
             mode="assumed",
-            sampling="stratified_without_replacement",
+            sampling="stratified_within_judge_stratum",
             validation_strata=Path("strata.csv"),
         )
     plain = JudgeCalibrationSpec(
@@ -417,7 +417,7 @@ def test_the_generative_pipeline_rejects_the_stratified_design() -> None:
             {
                 "mode": "validated",
                 "validation_manifest": "labels.csv",
-                "sampling": "stratified_without_replacement",
+                "sampling": "stratified_within_judge_stratum",
             }
         )
 

@@ -351,7 +351,7 @@ Labels drawn within judge strata (`simple_random_within_judge_stratum`) estimate
 \(\rho_0\), not \(Se\) and \(Sp\), and get no such interval. In that parameterisation the identity
 \(R^*=R\rho_1+(1-R)\rho_0\) is affine, so the Lang--Reiczigel bias term vanishes. What remains
 is an Agresti--Coull-adjusted Wald interval, which is what the delta reference already is.
-Stratified labels (`stratified_without_replacement`, below) get no such interval either. Where
+Stratified labels (`stratified_within_judge_stratum`, below) get no such interval either. Where
 the limits cannot be computed, for example when no labelled rollout is truly unsafe, the analysis
 emits `JUDGE_LANG_REICZIGEL_UNAVAILABLE` with the reason.
 
@@ -362,14 +362,14 @@ For example, it may label every rollout on which a second judge disagrees, and o
 the rest. Read as one simple random sample, such labels are biased: the oversampled
 disagreements count as often as they were labelled, not as often as they occur.
 
-`sampling: stratified_without_replacement` reads the labels as the design drew them:
+`sampling: stratified_within_judge_stratum` reads the labels as the design drew them:
 
 ```yaml
 inputs:
   judge_calibration:
     mode: validated
     validation_manifest: judge-labels.csv
-    sampling: stratified_without_replacement
+    sampling: stratified_within_judge_stratum
     validation_strata: judge-strata.csv
     family: judge_error
 ```
@@ -528,7 +528,7 @@ reports the share it actually spent in `family_alpha`.
 - The labelled rows are a **simple random sample within their judge stratum**. This is a
   property of the collection protocol, not of the data, and nothing in the package can check
   it. It is recorded in the interval's assumption list. Under
-  `sampling: stratified_without_replacement`, the requirement is instead that each fine
+  `sampling: stratified_within_judge_stratum`, the requirement is instead that each fine
   stratum's labelled rows are a simple random sample without replacement of it, of a size
   fixed independently of the labels, and that each judge stratum's rollouts are independent,
   each truly unsafe with the stratum's conditional probability.

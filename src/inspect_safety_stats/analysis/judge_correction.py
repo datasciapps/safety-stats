@@ -446,7 +446,7 @@ def _add_judge_corrections(
         plan, data, diagnostics
     )
     scope_count = len(_judge_scopes(plan))
-    stratified = spec.sampling == "stratified_without_replacement"
+    stratified = spec.sampling == "stratified_within_judge_stratum"
     for result in targets:
         scope = _judge_scope(plan, result.cohort_id, result.group_id)
         measured = by_scope.get(scope) if scope is not None else None

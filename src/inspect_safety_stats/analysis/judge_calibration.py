@@ -371,7 +371,7 @@ def _validated_judge_calibrations(
     )
 
     declared: dict[str, str] | None = None
-    if spec.sampling == "stratified_without_replacement":
+    if spec.sampling == "stratified_within_judge_stratum":
         if spec.validation_strata is None:
             raise ValueError("stratified judge-calibration sampling requires validation_strata")
         try:

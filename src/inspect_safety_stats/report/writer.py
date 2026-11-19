@@ -1038,7 +1038,7 @@ def _markdown(report: SafetyReport) -> str:
         stratified = (
             validated
             and calibration is not None
-            and calibration.sampling == "stratified_without_replacement"
+            and calibration.sampling == "stratified_within_judge_stratum"
         )
         preamble = (
             (

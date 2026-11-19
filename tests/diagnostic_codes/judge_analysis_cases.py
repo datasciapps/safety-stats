@@ -300,7 +300,7 @@ def stratified(
         validated(
             inputs,
             labels(observations),
-            sampling="stratified_without_replacement",
+            sampling="stratified_within_judge_stratum",
             validation_strata="strata.csv",
         )
         inputs.files["strata.csv"] = _strata(observations, drop, extra, few)
