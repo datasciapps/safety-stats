@@ -248,6 +248,35 @@ def direct_bounded_blocks(
     )
 
 
+def prompt_outcome_counts(
+    observations: list[Observation],
+    manifest: pd.DataFrame,
+    *,
+    cohort_id: str,
+    prompt_ids: tuple[str, ...] | list[str],
+    index: BlockIndex | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Failures, unclassified outcomes and attempted rollouts of each prompt, in order.
+
+    Every row of the prompt in the cohort is an attempted rollout, as in
+    :func:`direct_bounded_blocks`.
+    """
+
+    index = _current_index(index, observations, manifest)
+    failures = np.zeros(len(prompt_ids), dtype=np.int64)
+    unclassified = np.zeros(len(prompt_ids), dtype=np.int64)
+    attempted = np.zeros(len(prompt_ids), dtype=np.int64)
+    for position, prompt_id in enumerate(prompt_ids):
+        for row_position in index.positions.get((cohort_id, prompt_id), ()):
+            row = index.observations[row_position]
+            attempted[position] += 1
+            if row.failure is True:
+                failures[position] += 1
+            elif row.failure is None:
+                unclassified[position] += 1
+    return failures, unclassified, attempted
+
+
 def comparison_contrast_blocks(
     observations: list[Observation],
     manifest: pd.DataFrame,

@@ -501,6 +501,71 @@ reporting replaces each directional alpha by its prespecified multiplicity alloc
 inversion. Method choice must be prespecified rather than selected from the narrowest realized
 interval.
 
+##### Worst-of-k interval (experimental)
+
+The `worst_of_k` measure targets the weighted chance that at least one of \(k\) fresh attempts
+at a prompt fails,
+
+\[
+\theta=\sum_jw_j\theta_j,\qquad \theta_j=1-(1-p_j)^k .
+\]
+
+Its point estimate gives each prompt the share of its \(k\)-rollout subsets that contain a
+failure. With \(x_j\) failures in \(n_j\ge k\) rollouts,
+
+\[
+\widehat\theta_j=1-\binom{n_j-x_j}{k}\Big/\binom{n_j}{k},
+\qquad
+\mathbb E\,\widehat\theta_j=\theta_j ,
+\]
+
+because \(\widehat\theta_j\) is the U-statistic of order \(k\) with kernel
+\(h(Y_1,\ldots,Y_k)=\max_rY_r\). No unbiased estimator of \(\theta_j\) exists for \(k>n_j\):
+the expectation of any function of \(n_j\) Bernoulli draws is a polynomial in \(p_j\) of degree
+at most \(n_j\), and \(\theta_j\) has degree \(k\).
+
+The \(n_j\) rollouts are not \(n_j\) independent observations of \(\theta_j\), so entering each
+rollout as its own block would be anti-conservative. Hoeffding [32, section 5] writes a
+U-statistic of order \(k\) as an average, over permutations of the \(n_j\) draws, of
+
+\[
+W_j=\frac1{m_j}\sum_{b=1}^{m_j}h(\text{block }b),\qquad m_j=\lfloor n_j/k\rfloor ,
+\]
+
+the mean of the kernel over \(m_j\) disjoint blocks of \(k\) draws. Each \(W_j\) is a mean of
+\(m_j\) independent \([0,1]\) terms with mean \(\theta_j\), and convexity of the exponential gives
+
+\[
+\mathbb E\exp(\lambda\widehat\theta_j)\le\mathbb E\exp(\lambda W_j)
+\quad\text{for every }\lambda .
+\]
+
+The KL/Chernoff bounds above use the sample only through such a moment-generating-function
+bound. Prompt \(j\) therefore enters them as \(m_j\) blocks, each with observation
+\(\widehat\theta_j\) and atomic weight \(w_j/m_j\), and the inversion is otherwise unchanged:
+the Bernoulli-KL kernel when all atomic weights are equal, the weighted Poisson-Chernoff
+kernel otherwise. The reported `independent_block_count` is \(\sum_jm_j\). At \(k=1\) the blocks
+are the rollouts and the interval equals the rollout-level weighted KL/Chernoff interval.
+
+Unclassified rollouts are completed as safe for the lower endpoint and as failures for the
+upper endpoint. \(\widehat\theta_j\) does not decrease when a safe outcome becomes a failure,
+so the completion is conservative.
+
+Scope:
+
+- The interval is opt-in per measure (`direct_interval: true`) and is computed for group rows
+  only. It is calibrated in the direct-mean multiplicity family, next to the weighted means.
+- It requires independent rollouts within each prompt and across prompts, so the primary
+  independence profile must block by rollout. Sensitivity profiles get no worst-of-k interval,
+  and the row says so.
+- It bounds the fixed prompt set only. Sampled designs, `frontier_sidak` calibration and
+  disabled direct-mean intervals are refused when the plan is validated.
+- If a prompt has fewer than \(k\) attempted rollouts, the row keeps the propagated
+  prompt-envelope interval and warns that the design cannot bound \(k\) attempts.
+
+The test suite checks coverage by exact enumeration over the binomial on small designs. Rollout
+blocks fall below nominal coverage there, and \(\lfloor n/k\rfloor\) blocks do not.
+
 ##### Simultaneous hierarchy-constrained confidence region
 
 Independent node intervals ignore the fact that every displayed hierarchy mean is a linear

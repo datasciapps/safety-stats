@@ -204,6 +204,19 @@ equal weight and a rigorous maximum-increment weighted Poisson-Chernoff inversio
 `chernoff_kernel` result field records which construction was used. It is especially useful for
 sparse failures and does not require equal prompt failure probabilities.
 
+```python
+worst_of_k_kl_chernoff_bounds(
+    failures, unclassified, trials, weights, *, k, alpha_lower, alpha_upper,
+)
+```
+
+Experimental. Bounds the weighted chance that at least one of `k` independent attempts fails.
+Each prompt's unbiased U-statistic enters `weighted_bounded_kl_chernoff_mean_bounds` as
+`trials // k` independent blocks, so rollouts must be independent. Every prompt needs at least
+`k` attempted rollouts. At `k=1` the result equals the rollout-level
+`weighted_kl_chernoff_mean_bounds`. See
+[Worst-of-k interval](statistical-methods.md#worst-of-k-interval-experimental).
+
 When hierarchy-region projection is enabled, each reported direct interval also records
 `raw_lower`, `raw_upper`, `projection_method`, and `projection_constraint_count`. The displayed
 endpoints are projections of the common fixed-design linear confidence region; the raw fields are

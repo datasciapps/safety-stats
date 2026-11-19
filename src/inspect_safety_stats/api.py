@@ -104,6 +104,7 @@ from inspect_safety_stats.stats.direct_mean import (
     weighted_bounded_empirical_bernstein_mean_bounds,
     weighted_bounded_hoeffding_mean_bounds,
     weighted_bounded_kl_chernoff_mean_bounds,
+    worst_of_k_kl_chernoff_bounds,
 )
 from inspect_safety_stats.stats.hierarchy_region import (
     LinearIntervalConstraint,
@@ -118,6 +119,7 @@ from inspect_safety_stats.stats.independence import (
     block_index,
     comparison_contrast_blocks,
     direct_bounded_blocks,
+    prompt_outcome_counts,
     validate_profile_fields,
 )
 from inspect_safety_stats.stats.judge_calibration import (
@@ -1014,6 +1016,13 @@ def _direct_mean_context(
             _hierarchy_region_target_id(node.group_id, node.level, node.path)
             for node in hierarchy_nodes
         ],
+        # Plan validation keeps these out of frontier_sidak calibration.
+        *[
+            _worst_of_k_target_id(group_id, measure.id)
+            for group_id in sorted(selected)
+            for measure in plan.outputs.risk_measures
+            if measure.direct_interval
+        ],
     ]
     calibrations: dict[str, _EndpointCalibration] = {}
     if not spec.simultaneous:
@@ -1255,6 +1264,151 @@ def _direct_interval_result(
         missingness_method="all_safe_all_failure_completion",
         assumptions=assumptions,
         eligibility="certifying",
+    )
+
+
+def _worst_of_k_target_id(group_id: str, measure_id: str) -> str:
+    """The direct-mean family target of a worst_of_k measure's direct interval on a group."""
+    return f"{_hierarchy_region_target_id(group_id, None, {})}::measure={measure_id}"
+
+
+def _worst_of_k_direct_interval(
+    *,
+    plan: AnalysisPlan,
+    data: NormalizedData,
+    measure: RiskMeasureSpec,
+    cohort_id: str,
+    group_id: str,
+    prompt_ids: list[str],
+    weights: list[float],
+    prompt_results: list[PromptEstimate],
+    direct: _DirectMeanContext,
+    diagnostics: list[Diagnostic],
+) -> tuple[RiskIntervalResult | None, list[str]]:
+    """Experimental direct interval of a worst_of_k row, and the row's warnings about it.
+
+    Each prompt's unbiased share enters the KL-Chernoff bound as floor(n / k) blocks, which
+    needs independent rollouts; plan validation refuses any other primary profile.
+    """
+
+    spec = plan.outputs.direct_mean_intervals
+    independence = _independence(spec)
+    k = int(_parameter(measure, "k", measure.k))
+    target_id = _worst_of_k_target_id(group_id, measure.id)
+    calibration = direct.calibrations.get(
+        _calibration_key(cohort_id, target_id, independence.primary)
+    )
+    if calibration is None:
+        return None, ["The direct-mean multiplicity family is unavailable."]
+    if any(
+        item.n_total <= 0 or _prompt_blocked(diagnostics, cohort_id, item.prompt_id)
+        for item in prompt_results
+    ):
+        return None, ["A complete valid attempted-rollout ledger is required."]
+    weighted = [
+        (prompt_id, weight)
+        for prompt_id, weight in zip(prompt_ids, weights, strict=True)
+        if weight > 0
+    ]
+    failures, unclassified, attempted = prompt_outcome_counts(
+        data.observations,
+        data.manifest,
+        cohort_id=cohort_id,
+        prompt_ids=[prompt_id for prompt_id, _ in weighted],
+        index=_block_index(data),
+    )
+    warnings: list[str] = []
+    if independence.sensitivities:
+        warnings.append(
+            f"The direct interval of {k} attempts assumes independent rollouts; the sensitivity "
+            f"profiles {', '.join(independence.sensitivities)} have no such interval."
+        )
+    if int(np.min(attempted)) < k:
+        warnings.append(
+            f"The design cannot bound {k} attempts: a prompt has only "
+            f"{int(np.min(attempted))} attempted rollouts, and no estimate is unbiased for "
+            "more attempts than rollouts."
+        )
+        return None, warnings
+    try:
+        bounds = worst_of_k_kl_chernoff_bounds(
+            failures,
+            unclassified,
+            attempted,
+            [weight for _, weight in weighted],
+            k=k,
+            alpha_lower=calibration.endpoint_alpha,
+            alpha_upper=calibration.endpoint_alpha,
+        )
+    except ValueError as exc:
+        diagnostics.append(
+            Diagnostic(
+                code="DIRECT_MEAN_INTERVAL_INVALID",
+                severity="ERROR",
+                message=str(exc),
+                scope=f"{cohort_id}:{group_id}:{measure.id}",
+            )
+        )
+        return None, [*warnings, str(exc)]
+    directional_family_alpha = (
+        direct.family_alpha / 2
+        if direct.family_alpha is not None and spec.coverage_mode == "two_sided"
+        else direct.family_alpha
+    )
+    assumptions = [
+        "The rollouts of each fixed prompt are independent draws with a common failure "
+        f"probability p, so 1 - (1 - p)^{k} is the chance that one of {k} fresh attempts fails.",
+        "Prompts are mutually independent.",
+        "Prompt weights and rollout counts are fixed independently of observed outcomes.",
+        f"Each prompt's share of its {k}-rollout subsets that hold a failure is unbiased for "
+        f"1 - (1 - p)^{k}; as a U-statistic it enters the Chernoff bound as floor(n / {k}) "
+        "independent [0, 1] blocks (Hoeffding, 1963, section 5).",
+        "Every unclassified attempted outcome has a latent binary safety label.",
+    ]
+    if bounds.chernoff_kernel == "bernoulli_kl_equal_atomic_weights":
+        assumptions.append(
+            "Equal block weights permit inversion of the Bernoulli-KL Chernoff exponent; "
+            "identical failure probabilities are not required."
+        )
+    elif bounds.chernoff_kernel == "weighted_poisson_chernoff_max_increment":
+        assumptions.append(
+            "Unequal block weights use the weighted Poisson-Chernoff exponent determined by "
+            "the largest block weight."
+        )
+    scope_prefix = "simultaneous" if spec.simultaneous else "pointwise"
+    return (
+        RiskIntervalResult(
+            interval_id="direct_worst_of_k_kl_chernoff",
+            lower=bounds.lower,
+            upper=bounds.upper,
+            method="worst_of_k_u_statistic_kl_chernoff",
+            role="primary",
+            coverage_scope=f"{scope_prefix}_{independence.primary}_fixed_design_mean_family",
+            coverage_mode=spec.coverage_mode,
+            family=direct.family_id,
+            family_alpha=direct.family_alpha,
+            directional_family_alpha=directional_family_alpha,
+            alpha_lower=calibration.endpoint_alpha,
+            alpha_upper=calibration.endpoint_alpha,
+            simultaneous_coverage=direct.interval_coverage,
+            lower_one_sided_coverage=direct.one_sided_coverage,
+            upper_one_sided_coverage=direct.one_sided_coverage,
+            completion_estimate_lower=bounds.completion_estimate_lower,
+            completion_estimate_upper=bounds.completion_estimate_upper,
+            half_width_lower=bounds.half_width_lower,
+            half_width_upper=bounds.half_width_upper,
+            effective_sample_size=bounds.effective_sample_size,
+            concentration_variance=bounds.concentration_variance,
+            maximum_increment=bounds.maximum_increment,
+            chernoff_kernel=bounds.chernoff_kernel,
+            calibration_method=calibration.method,
+            independence_profile=independence.primary,
+            independent_block_count=int(np.sum(attempted // k)),
+            missingness_method="all_safe_all_failure_completion",
+            assumptions=assumptions,
+            eligibility="diagnostic" if measure.diagnostic_only else "certifying",
+        ),
+        warnings,
     )
 
 
@@ -1658,6 +1812,23 @@ def _group_risks(
                                     scope=f"{cohort_id}:{group.id}:{measure.id}",
                                 )
                             )
+
+                if measure.direct_interval and group.id in direct.groups:
+                    worst_interval, worst_warnings = _worst_of_k_direct_interval(
+                        plan=plan,
+                        data=data,
+                        measure=measure,
+                        cohort_id=cohort_id,
+                        group_id=group.id,
+                        prompt_ids=prompt_ids,
+                        weights=weights,
+                        prompt_results=prompt_results,
+                        direct=direct,
+                        diagnostics=diagnostics,
+                    )
+                    direct_warnings.extend(worst_warnings)
+                    if worst_interval is not None:
+                        computed_direct_intervals.append(worst_interval)
 
                 direct_primary = next(
                     (item for item in computed_direct_intervals if item.role == "primary"),
