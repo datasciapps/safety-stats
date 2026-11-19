@@ -37,7 +37,9 @@ def assumptions_used(plan: AnalysisPlan) -> list[dict[str, Any]]:
 
     Each entry gives the assumption's ``id``, ``statement`` and ``if_wrong`` from the registry,
     and ``settings``: the value of each plan field that sets it, found by the entry's
-    ``plan_field`` pattern, and whether that value is a default the plan left out.
+    ``plan_field`` pattern, and whether that value is a default the plan left out. The
+    statement and if-wrong text are the ones for the value the plan took, when the entry has
+    its own for it.
     """
 
     defaulted = {entry["path"] for entry in plan_defaults(plan)}
@@ -53,11 +55,18 @@ def assumptions_used(plan: AnalysisPlan) -> list[dict[str, Any]]:
             if entry.plan_field is not None
             else []
         )
+        # A field that matched one path is stated for its value; a pattern that matched
+        # several paths, or none, keeps the entry's own statement.
+        statement, if_wrong = (
+            entry.stated_for(settings[0]["value"])
+            if len(settings) == 1
+            else (entry.statement, entry.if_wrong)
+        )
         used.append(
             {
                 "id": entry.id,
-                "statement": entry.statement,
-                "if_wrong": entry.if_wrong,
+                "statement": statement,
+                "if_wrong": if_wrong,
                 "settings": settings,
             }
         )

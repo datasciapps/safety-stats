@@ -1,10 +1,14 @@
 """Random pilot selection within strata of a design manifest.
 
 A pilot is run to estimate what the full study will cost and roughly what its rates will be.
-Its means estimate those quantities without bias only if the pilot prompts are a random sample.
-Taking the first prompts of each category is not one: identifiers are often assigned in an
-order that tracks length, difficulty or source, so the first few can differ systematically
-from the rest.
+It can do so only if the pilot prompts are a random sample. Taking the first prompts of each
+category is not one: identifiers are often assigned in an order that tracks length,
+difficulty or source, so the first few can differ systematically from the rest.
+
+Equal draws from strata of unequal size give unequal inclusion probabilities, so the pilot's
+plain mean over-represents small strata. Weighting each drawn prompt by
+1 / `pilot_inclusion_probability`, as the sampled-design analysis does, makes it unbiased
+for the manifest's mean.
 
 `draw_pilot` draws a fixed number of prompts from each stratum by simple random sampling
 without replacement. Each prompt's rank is a hash of the seed and its `prompt_id`, so the draw:
@@ -12,16 +16,31 @@ without replacement. Each prompt's rank is a hash of the seed and its `prompt_id
 - uses only the frame and the seed, never an outcome;
 - does not depend on the order of the manifest's rows or on the platform;
 - is nested: the pilot drawn with `per_stratum=k` contains the one drawn with any smaller `k`
-  and the same seed, so a pilot can be extended without discarding the prompts already run.
+  and the same seed, so a pilot can be enlarged for planning without discarding the prompts
+  already run.
 
-The returned frame is the whole manifest with three added columns. It doubles as the frame of
-a `design.type: sampled` plan with `sampling: fixed_size`, `stratum_column: pilot_stratum`
-and `inclusion_probability_column: pilot_inclusion_probability`.
+The rank is a hash rather than a value from `numpy.random.default_rng(seed)`, which the
+contributing guide asks for: a generator gives values in the order it meets the rows, so its
+draw would depend on that order, and numpy does not promise the same values from its methods
+across versions. Ranks from a generator would nest too. The derivation is in
+docs/statistical-methods.md, section 5.8.
+
+The returned frame is the whole manifest with five added columns, among them the seed and
+the per-stratum count, so the frame alone records how to repeat the draw. It doubles as
+the frame of a `design.type: sampled` plan with `sampling: fixed_size`,
+`stratum_column: pilot_stratum`, `inclusion_probability_column:
+pilot_inclusion_probability` and `selection_column: pilot_selected`.
+
+Analyse a pilot as exploratory. A pilot enlarged after its outcomes were seen is not a
+fixed-size confirmatory design: stopping at the first size whose bound passes raises the
+false-pass rate above alpha. A confirmatory analysis uses fresh rollouts under a plan frozen
+before they ran, of the whole manifest or of a new draw with a new seed.
 """
 
 from __future__ import annotations
 
 import hashlib
+import io
 from collections.abc import Sequence
 
 import pandas as pd
@@ -29,13 +48,57 @@ import pandas as pd
 STRATUM_COLUMN = "pilot_stratum"
 PROBABILITY_COLUMN = "pilot_inclusion_probability"
 SELECTED_COLUMN = "pilot_selected"
-ADDED_COLUMNS = (STRATUM_COLUMN, PROBABILITY_COLUMN, SELECTED_COLUMN)
+SEED_COLUMN = "pilot_seed"
+PER_STRATUM_COLUMN = "pilot_per_stratum"
+ADDED_COLUMNS = (
+    STRATUM_COLUMN,
+    PROBABILITY_COLUMN,
+    SELECTED_COLUMN,
+    SEED_COLUMN,
+    PER_STRATUM_COLUMN,
+)
 
 _SEPARATOR = "/"
 
 
 def _rank_key(seed: int, prompt_id: str) -> bytes:
     return hashlib.sha256(f"{seed}|{prompt_id}".encode()).digest()
+
+
+def _check_strata_read_back(labels: pd.Series) -> None:
+    """Refuse strata that analyze would not read back from the pilot frame as drawn.
+
+    The draw treats stratum labels as text, but analyze reads the written frame with pandas'
+    type inference (`load_manifest`) and then takes `str()` of each `pilot_stratum` value.
+    Labels such as `1` and `01`, or `true` and `True`, would become one stratum, and the
+    analysis would check and weight the draw against strata it did not use. A label that
+    pandas reads as missing, such as `N/A` or `None`, has no stratum that analyze reads the
+    same way under every supported pandas version.
+    """
+
+    text = labels.rename(STRATUM_COLUMN).to_csv(index=False, lineterminator="\n")
+    read = pd.read_csv(io.StringIO(text))[STRATUM_COLUMN]
+    missing = sorted(set(labels.to_numpy()[read.isna().to_numpy()]))
+    if missing:
+        raise ValueError(
+            "analyze reads the pilot frame with pandas' type inference, which reads these "
+            f"strata labels as missing values: {missing[:10]!r}. Recode those strata values, "
+            "for example as 'none'"
+        )
+    pairs = pd.DataFrame({"drawn": labels.to_numpy(), "read": read.astype(str).to_numpy()})
+    groups = pairs.drop_duplicates().groupby("read")["drawn"].agg(sorted)
+    merged = [
+        f"{', '.join(repr(label) for label in drawn)} (read as {read_as!r})"
+        for read_as, drawn in groups.items()
+        if len(drawn) > 1
+    ]
+    if merged:
+        raise ValueError(
+            "analyze reads the pilot frame with pandas' type inference, which would merge "
+            "strata whose labels read as the same number or boolean: "
+            f"{'; '.join(merged[:10])}. Recode the strata values so that they differ as "
+            "text, for example with a letter prefix"
+        )
 
 
 def draw_pilot(
@@ -50,10 +113,18 @@ def draw_pilot(
     Strata are the distinct combinations of the `strata` columns; with no columns the whole
     manifest is one stratum. Returns a copy of the manifest, rows in their original order, with
     `pilot_stratum` (the stratum's values joined by "/"), `pilot_inclusion_probability`
-    (draws over stratum size) and `pilot_selected`.
+    (draws over stratum size), `pilot_selected`, and `pilot_seed` and `pilot_per_stratum`
+    (the arguments, repeated on every row so that the frame records the draw).
 
-    Raises ValueError when a stratum holds fewer than `per_stratum` prompts, when a strata
-    column is absent or has missing values, or when the manifest already has an added column.
+    The draw hashes each `prompt_id` as written, so `prompt_id` must hold text: read the
+    manifest with `pd.read_csv(path, dtype=str, keep_default_na=False)`, as `plan pilot`
+    does. Read with pandas' defaults, an identifier such as `0001` would become the number 1
+    and draw different prompts from the command's.
+
+    Raises ValueError when a `prompt_id` is not text or is blank, when a stratum holds fewer
+    than `per_stratum` prompts, when a strata column is absent or has missing values, when
+    two strata labels would read back from the written frame as one (`1` and `01`, say), or
+    when the manifest already has an added column.
     """
 
     if isinstance(per_stratum, bool) or per_stratum < 1:
@@ -64,7 +135,16 @@ def draw_pilot(
         raise ValueError("design manifest has no prompt_id column")
     if manifest.empty:
         raise ValueError("design manifest has no prompts")
-    prompt_ids = manifest["prompt_id"].astype(str)
+    prompt_ids = manifest["prompt_id"]
+    not_text = [value for value in prompt_ids if not isinstance(value, str)]
+    if not_text:
+        raise ValueError(
+            f"design manifest has prompt_id values that are not text: {not_text[:10]!r}; "
+            "read it with pd.read_csv(path, dtype=str, keep_default_na=False), so that each "
+            "identifier is hashed as written"
+        )
+    if (prompt_ids.str.strip() == "").any():
+        raise ValueError("design manifest has missing prompt_id values")
     if prompt_ids.duplicated().any():
         duplicates = sorted(prompt_ids[prompt_ids.duplicated()].unique())
         raise ValueError(f"design manifest has duplicate prompt_id values: {duplicates[:10]}")
@@ -97,6 +177,7 @@ def draw_pilot(
             raise ValueError(
                 f"strata values contain {_SEPARATOR!r}, so two strata would share a label"
             )
+    _check_strata_read_back(labels)
 
     selected = pd.Series(False, index=manifest.index)
     probability = pd.Series(0.0, index=manifest.index)
@@ -120,4 +201,6 @@ def draw_pilot(
     result[STRATUM_COLUMN] = labels
     result[PROBABILITY_COLUMN] = probability
     result[SELECTED_COLUMN] = selected
+    result[SEED_COLUMN] = seed
+    result[PER_STRATUM_COLUMN] = per_stratum
     return result

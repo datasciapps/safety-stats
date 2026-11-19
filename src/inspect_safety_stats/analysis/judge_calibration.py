@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
 from typing import Any
 
+from inspect_safety_stats.analysis.direct_mean import _HierarchyNode
 from inspect_safety_stats.analysis.estimates import _bounds_carry_unknown_outcome
 from inspect_safety_stats.analysis.unclassified_share import (
     UnclassifiedShare,
@@ -17,6 +19,7 @@ from inspect_safety_stats.config.models import (
     JudgeCalibrationSpec,
     PublishedValidationSetSpec,
 )
+from inspect_safety_stats.ingest.outcomes import classified_by_policy
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.ingest.validation import (
     check_labelled_prefix,
@@ -68,6 +71,10 @@ class PromptRollouts:
     # each unclassified one, so the two counts differ only where a policy excludes some.
     bounded: int
     attempted: int
+    # Of the classified rollouts, those a plan policy counted safe and counted as failures
+    # (see classified_by_policy): their classification is not a judge verdict.
+    policy_safe: int = 0
+    policy_failures: int = 0
 
 
 # A judge calibration's key: its cohort, and its group when the calibration is scoped to groups.
@@ -137,11 +144,13 @@ def _labelled_population(
 
     counts: dict[str, dict[str, list[int]]] = {}
     for row in data.observations:
-        tally = counts.setdefault(row.cohort_id, {}).setdefault(row.prompt_id, [0, 0, 0])
+        tally = counts.setdefault(row.cohort_id, {}).setdefault(row.prompt_id, [0, 0, 0, 0, 0])
         tally[2] += 1
         if row.failure is not None:
             tally[0] += 1
             tally[1] += 1
+            if classified_by_policy(row):
+                tally[4 if row.failure else 3] += 1
         elif _bounds_carry_unknown_outcome(plan, row):
             tally[1] += 1
     return {
@@ -200,6 +209,119 @@ def pooled_calibration_gap(
                 f"{heaviest / lightest:.3g} times the weight of others"
             )
     return None
+
+
+def _policy_rollouts(
+    population: Mapping[str, PromptRollouts], weights: Mapping[str, float]
+) -> tuple[int, int]:
+    """The rollouts a plan policy counted safe and as failures in the prompts of a row.
+
+    Every prompt the row's weights list counts, a prompt of weight zero too: the maximum and
+    the top-k mean ignore weights, so such a prompt can set the row's bounds.
+    """
+
+    found = [item for prompt_id in weights if (item := population.get(prompt_id)) is not None]
+    return sum(item.policy_safe for item in found), sum(item.policy_failures for item in found)
+
+
+def _row_weights(
+    data: NormalizedData, hierarchy_nodes: list[_HierarchyNode]
+) -> Callable[[GroupRiskResult | HierarchyRiskResult], dict[str, float]]:
+    """The prompt weights behind a group-risk or hierarchy row."""
+
+    group_weights = {group.id: group.weights for group in data.groups}
+    node_weights = {
+        (node.group_id, node.level, tuple(node.path.items())): dict(
+            zip(node.prompt_ids, node.weights, strict=True)
+        )
+        for node in hierarchy_nodes
+    }
+
+    def weights(result: GroupRiskResult | HierarchyRiskResult) -> dict[str, float]:
+        if isinstance(result, GroupRiskResult):
+            return group_weights[result.group_id]
+        return node_weights[(result.group_id, result.level, tuple(result.path.items()))]
+
+    return weights
+
+
+def _policy_free_box(calibration: JudgeCalibration) -> JudgeCalibration:
+    """The box a row holding policy-classified rollouts is corrected over.
+
+    The row's bounds count a rollout a policy classified as the policy says, which is its true
+    outcome, beside the judge's verdicts, and they do not carry the share of such rollouts in
+    the population behind them. Mapping a policy failure through rho_1 < 1 would understate the
+    upper bound, and a policy-safe rollout through rho_0 > 0 overstate the lower; a share taken
+    at its sample value does too, by its sampling error. So rho_1 may reach 1 and rho_0 fall to
+    0: the upper bound becomes U + (1 - U) rho_0 upper and the lower L rho_1 lower. With true
+    risk P(J1) rho_1 + P(J0) rho_0 + P(policy failure) + P(unclassified) u, both hold for every
+    share of policy-classified and unclassified rollouts, since L <= P(J1) + P(policy failure)
+    and P(J1) + P(policy failure) + P(unclassified) <= U. Each is monotone, translation
+    equivariant and positively homogeneous in the prompt rates, so it bounds the tail
+    measures too. Over this box a share of unclassified rollouts that the bounds complete
+    drops out of both ends, so it needs no bound of its own. Under ``exclude`` the bounds
+    cover only the classified rollouts' rate, and the bound on the population share still
+    moves it (see ``correct_judge_risk``).
+    """
+
+    return replace(calibration, rho_1_upper=1.0, rho_0_lower=0.0)
+
+
+def _policy_assumption(safe: int, failures: int, excluded: bool = False) -> str:
+    """What a row holding policy-classified rollouts assumes; ``excluded`` when its bounds
+    leave its unclassified rollouts out, so that their share is still bounded."""
+
+    return (
+        f"{safe + failures} of the row's rollouts were classified by a plan policy, not by the "
+        f"judge ({safe} counted safe, {failures} counted as failures), and the row's bounds do "
+        "not carry their share. So the correction credits the judge with no false alarm at the "
+        "upper bound and no missed failure at the lower: P(truly unsafe | judge said unsafe) "
+        "may reach 1 and P(truly unsafe | judge said safe) fall to 0. "
+        + (
+            "That holds whatever the share of policy-classified rollouts. The plan's missing "
+            "or error policy leaves the unclassified rollouts out of the row's bounds, so the "
+            "bound on their share still moves the corrected interval."
+            if excluded
+            else "That holds whatever the share of policy-classified and unclassified rollouts."
+        )
+    )
+
+
+def _policy_cohorts(
+    plan: AnalysisPlan, population: Mapping[str, Mapping[str, PromptRollouts]]
+) -> frozenset[str]:
+    """The cohorts whose rows without policy-classified rollouts state what that assumes.
+
+    A correction is widened only for a row whose sample holds a rollout a plan policy
+    classified. A row whose sample holds none is corrected over the box as given, which
+    assumes that the population its rollouts are drawn from holds none either. The row says
+    so where that may fail: in every cohort when the plan sets a policy that classifies
+    rollouts (a missing score or a sample error counted as a failure, or token-limit or
+    content-filter stops classified), and in a cohort whose sample holds such a rollout in
+    some row. Plans at the defaults whose samples hold none state it in the documentation only.
+    """
+
+    score = plan.inputs.score
+    chosen = (
+        score.missing == "count_as_failure"
+        or score.errors == "count_as_failure"
+        or score.token_limit in {"safe", "failure"}
+        or score.content_filter_stops in {"safe", "failure"}
+    )
+    return frozenset(
+        cohort_id
+        for cohort_id, prompts in population.items()
+        if chosen or any(item.policy_safe or item.policy_failures for item in prompts.values())
+    )
+
+
+def _policy_absent_assumption() -> str:
+    return (
+        "None of the row's rollouts was classified by a plan policy, so the correction uses "
+        "the box as given. That assumes the population the rollouts are drawn from holds none "
+        "either: there, a policy failure read as a judge verdict would lower the upper bound, "
+        "and a policy-safe rollout raise the lower."
+    )
 
 
 def _stratified_assumptions(cohort: str = "the cohort") -> list[str]:
@@ -342,6 +464,11 @@ def _validated_judge_calibrations(
         else "clopper_pearson"
     )
 
+    # A rollout a plan policy classified is in neither judge stratum: the policy, not the
+    # judge, set its failure column, and the corrections do not read it as a verdict. The
+    # strata, their sizes and their labels are the judge's verdicts only.
+    judged = [row for row in data.observations if not classified_by_policy(row)]
+    by_policy = {row.observation_id for row in data.observations if classified_by_policy(row)}
     declared: dict[str, str] | None = None
     if spec.sampling == "stratified_within_judge_stratum":
         if spec.validation_strata is None:
@@ -358,7 +485,9 @@ def _validated_judge_calibrations(
                 )
             )
             return {}, {}, None, {}, None
-        design = fine_stratum_counts(data.observations, labels, declared)
+    labels, declared = _without_policy_classified(labels, declared, by_policy, diagnostics)
+    if declared is not None:
+        design = fine_stratum_counts(judged, labels, declared)
         # The strata file is the design: a classified row it does not place, or a key that
         # names no classified row, means the sizes it implies are not the design's.
         for code, keys, what in (
@@ -387,7 +516,7 @@ def _validated_judge_calibrations(
         if design.unstratified or design.unknown_strata:
             return {}, {}, None, {}, None
 
-    _, unmatched = judge_stratum_counts(data.observations, labels)
+    _, unmatched = judge_stratum_counts(judged, labels)
     scopes = _judge_scopes(plan)
     group_prompts = {group.id: set(group.prompt_ids) for group in data.groups}
     # A group the plan does not declare is reported as PLAN_UNKNOWN_REFERENCE. It has no
@@ -399,7 +528,7 @@ def _validated_judge_calibrations(
     in_scope: set[str] = set()
     for scope in calibrated:
         cohort_id, group_id = scope
-        observations = data.observations
+        observations = judged
         if group_id is not None:
             prompts = group_prompts[group_id]
             observations = [row for row in observations if row.prompt_id in prompts]
@@ -532,6 +661,49 @@ def _validated_judge_calibrations(
     return calibrations, summaries, family.alpha, truth_strata, protocol
 
 
+def _without_policy_classified(
+    labels: dict[str, bool],
+    declared: dict[str, str] | None,
+    by_policy: set[str],
+    diagnostics: list[Diagnostic],
+) -> tuple[dict[str, bool], dict[str, str] | None]:
+    """The labels and declared strata without the rollouts a plan policy classified.
+
+    Such a rollout is in neither judge stratum, so a label on it calibrates nothing, and a
+    declared stratum of it is not part of the design's fine strata. Left out, the remaining
+    labels of a judge stratum are still a simple random sample of its judge verdicts: a simple
+    random sample of a set, cut to a subset fixed before the draw, is one of the subset, of a
+    size that does not depend on the subset's labels.
+    """
+
+    labelled = sorted(by_policy & set(labels))
+    stratified = sorted(by_policy & set(declared or {}))
+    if labelled or stratified:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_VALIDATION_POLICY_CLASSIFIED",
+                severity="WARNING",
+                message=(
+                    f"{len(labelled)} validation labels and {len(stratified)} validation strata "
+                    "rows name rollouts a plan policy classified, not the judge; such rollouts "
+                    "are in neither judge stratum, so they are left out of the calibration"
+                ),
+                scope=plan_scope("inputs", "judge_calibration"),
+                details={
+                    "labels": len(labelled),
+                    "strata_rows": len(stratified),
+                    "observation_ids": sorted({*labelled, *stratified})[:20],
+                },
+            )
+        )
+    return (
+        {key: value for key, value in labels.items() if key not in by_policy},
+        None
+        if declared is None
+        else {key: value for key, value in declared.items() if key not in by_policy},
+    )
+
+
 def _labelling_protocol(
     plan: AnalysisPlan,
     spec: JudgeCalibrationSpec,
@@ -593,21 +765,31 @@ def _judge_corrected_interval(
     scoped_groups: list[str] | None = None,
     stratified: bool = False,
     per_cohort: bool = False,
+    policy_classified: tuple[int, int] = (0, 0),
+    policy_possible: bool = False,
 ) -> RiskIntervalResult | None:
     """Correct one row; ``scoped_group`` names a validated calibration's group, and
     ``scoped_groups`` the groups an assumed calibration is scoped to. ``per_cohort`` says
     that the assumed scenario declares boxes by cohort, so ``calibration`` is the row's
     cohort's box. ``unclassified`` bounds the row's share of unclassified rollouts; without
     it the row is taken to have none. A measured calibration adds the bound's alpha to its
-    own."""
+    own. ``policy_classified`` counts the row's rollouts a plan policy counted safe and as
+    failures; a row holding any is corrected over ``_policy_free_box``. A row holding none
+    states what that assumes when ``policy_possible`` (see ``_policy_cohorts``)."""
 
     if result.lower is None or result.upper is None:
         return None
+    by_policy = any(policy_classified)
+    if by_policy and unclassified is not None and unclassified.in_bounds:
+        # Over the policy-free box a share the bounds complete drops out of both ends, so the
+        # row needs no bound on it and spends no alpha on one. A share the bounds exclude
+        # still moves the corrected rate, so it keeps its bound.
+        unclassified = None
     corrected = correct_judge_risk(
         observed_lower=result.lower,
         observed_upper=result.upper,
         observed_estimate=result.estimate,
-        calibration=calibration,
+        calibration=_policy_free_box(calibration) if by_policy else calibration,
         unclassified_share=unclassified.upper if unclassified is not None else 0.0,
         unclassified_in_bounds=unclassified.in_bounds if unclassified is not None else True,
         unclassified_share_per_prompt=unclassified is not None and unclassified.per_prompt,
@@ -673,9 +855,14 @@ def _judge_corrected_interval(
                     f"The fine strata weight back to every classified rollout of {population} "
                     "equally, and so does this row, so they measure the judge's accuracy for "
                     "its estimand.",
-                    "Coverage is the union bound over the underlying interval, every "
-                    "calibration count bound, the four Clopper-Pearson bounds and the bound "
-                    "on the unclassified share.",
+                    (
+                        "Coverage is the union bound over the underlying interval, every "
+                        "calibration count bound, the four Clopper-Pearson bounds and the "
+                        "bound on the unclassified share."
+                        if unclassified is not None
+                        else "Coverage is the union bound over the underlying interval, every "
+                        "calibration count bound and the four Clopper-Pearson bounds."
+                    ),
                 ]
             )
     elif validated:
@@ -736,17 +923,22 @@ def _judge_corrected_interval(
             )
         if certified:
             labels = (
-                "The labels weight every classified rollout of the cohort equally"
+                "The labels weight every rollout the judge classified in the cohort equally"
                 if scoped_group is None
-                else f"The labels weight every classified rollout of group {scoped_group!r} "
-                "in the cohort equally"
+                else "The labels weight every rollout the judge classified in group "
+                f"{scoped_group!r} of the cohort equally"
             )
             assumptions.extend(
                 [
                     f"{labels}, and so "
                     "does this row, so they measure the judge's accuracy for its estimand.",
-                    "Coverage is the union bound over the underlying interval, the four "
-                    "calibration endpoints and the bound on the unclassified share.",
+                    (
+                        "Coverage is the union bound over the underlying interval, the four "
+                        "calibration endpoints and the bound on the unclassified share."
+                        if unclassified is not None
+                        else "Coverage is the union bound over the underlying interval and the "
+                        "four calibration endpoints."
+                    ),
                 ]
             )
     else:
@@ -769,6 +961,12 @@ def _judge_corrected_interval(
                 ),
             ]
         )
+    if by_policy:
+        assumptions.append(
+            _policy_assumption(*policy_classified, excluded=unclassified is not None)
+        )
+    elif policy_possible:
+        assumptions.append(_policy_absent_assumption())
     if unclassified is not None and unclassified.upper > 0:
         assumptions.append(unclassified_assumption(unclassified))
     assumptions.append("The underlying judge-system interval retains its own stated guarantee.")

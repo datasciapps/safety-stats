@@ -9,7 +9,7 @@ than enacting it ("direct_request:", "Rollenspiel:") means the arm was echoed, n
 and the hierarchy is then claiming structure the prompts do not carry. And near-duplicates
 within a seed slip past deduplication, which by default compares exact hashes
 (rewrite.deduplication.near_duplicate: normalized_text catches only differences of case,
-punctuation and spacing).
+punctuation, symbols, spacing and invisible characters).
 
 Run:
     python examples/generative_live/review_prompts.py run/live

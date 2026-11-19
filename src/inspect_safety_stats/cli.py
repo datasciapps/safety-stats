@@ -909,7 +909,7 @@ def pilot_command(
         int, typer.Option("--per-stratum", min=1, help="Prompts to draw from each stratum.")
     ],
     seed: Annotated[
-        int, typer.Option("--seed", help="Selection seed; record it with the pilot.")
+        int, typer.Option("--seed", help="Selection seed; the frame records it as pilot_seed.")
     ],
     output: Annotated[
         Path,
@@ -926,22 +926,32 @@ def pilot_command(
 ) -> None:
     """Draw a random pilot within strata of a design manifest (experimental).
 
-    Writes the whole manifest with pilot_stratum, pilot_inclusion_probability and
-    pilot_selected added. Run the pilot on the rows where pilot_selected is true. The
-    same file is the frame of a sampled design (sampling: fixed_size, stratum_column:
-    pilot_stratum, inclusion_probability_column: pilot_inclusion_probability).
+    Writes the whole manifest with pilot_stratum, pilot_inclusion_probability,
+    pilot_selected, pilot_seed and pilot_per_stratum added. Run the pilot on the rows where
+    pilot_selected is true. The same file is the frame of a sampled design (sampling:
+    fixed_size, stratum_column: pilot_stratum, inclusion_probability_column:
+    pilot_inclusion_probability, selection_column: pilot_selected). Analyse a pilot as
+    exploratory: a pilot enlarged after its outcomes were seen certifies nothing.
     """
 
     import pandas as pd
 
-    from inspect_safety_stats.ingest.manifest import load_manifest
+    from inspect_safety_stats.ingest.manifest import REQUIRED_COLUMNS, load_manifest
     from inspect_safety_stats.ingest.pilot import draw_pilot
 
-    if output.resolve() == manifest.resolve():
+    # samefile also catches a path that differs only in case on a case-insensitive
+    # filesystem (macOS, Windows) and a hard link, which resolve() leaves distinct.
+    if output.resolve() == manifest.resolve() or (output.exists() and output.samefile(manifest)):
         raise typer.BadParameter("--output must not overwrite the design manifest")
     columns = [column.strip() for column in strata.split(",") if column.strip()]
     try:
-        load_manifest(manifest)
+        # Check the manifest as analyze reads it, requiring only the identifier columns the
+        # draw uses: analyze gives a plan that never names question_id or task_id each
+        # prompt's own. draw_pilot checks strata columns outside REQUIRED_COLUMNS.
+        load_manifest(
+            manifest,
+            required=("prompt_id", *(column for column in columns if column in REQUIRED_COLUMNS)),
+        )
         # Read every value as written, so the pilot frame repeats the manifest's own text
         # rather than pandas' reading of it (an integer column with a gap would turn into
         # floats, for example).

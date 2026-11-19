@@ -116,6 +116,18 @@ class CodeEntry:
 
 
 @dataclass(frozen=True)
+class AssumptionSetting:
+    """An assumption as one value of its plan field states it, other than the default.
+
+    ``value`` is written as in a plan. ``if_wrong`` is None when the entry's own holds.
+    """
+
+    value: str
+    statement: str
+    if_wrong: str | None = None
+
+
+@dataclass(frozen=True)
 class AssumptionEntry:
     """One assumption a report's results can rest on.
 
@@ -125,6 +137,10 @@ class AssumptionEntry:
     written as in a plan; None when the plan must state it, or when there is no field.
     ``checked_by`` gives the diagnostic codes that report evidence against it, read from the
     ``assumptions`` of their entries in ``CODES``.
+
+    ``statement`` and ``if_wrong`` describe the assumption at the default. ``by_setting``
+    describes it at other values of a field that takes one of a few named values; a report
+    states the one for the value the plan took.
     """
 
     id: str
@@ -134,6 +150,16 @@ class AssumptionEntry:
     default: str | None
     if_wrong: str
     remedy: str
+    by_setting: tuple[AssumptionSetting, ...] = ()
+
+    def stated_for(self, value: object) -> tuple[str, str]:
+        """The statement and if-wrong text for the plan field's value: the entry's own unless
+        the value has its own."""
+
+        setting = next((item for item in self.by_setting if item.value == value), None)
+        if setting is None:
+            return self.statement, self.if_wrong
+        return setting.statement, setting.if_wrong or self.if_wrong
 
 
 _ASSUMPTIONS: tuple[AssumptionEntry, ...] = (
@@ -293,6 +319,23 @@ _ASSUMPTIONS: tuple[AssumptionEntry, ...] = (
             "Raise the token limit and rerun, or classify truncated answers with "
             "score.token_limit."
         ),
+        by_setting=(
+            AssumptionSetting(
+                "missing",
+                "An answer that stopped at the generation token limit counts by its score, and "
+                "without a score or a sample error as missing, counted on its own.",
+            ),
+            AssumptionSetting(
+                "safe",
+                "An answer that stopped at the generation token limit counts by its score, and "
+                "without a score or a sample error as safe, as the plan declares.",
+            ),
+            AssumptionSetting(
+                "failure",
+                "An answer that stopped at the generation token limit counts by its score, and "
+                "without a score or a sample error as a failure, as the plan declares.",
+            ),
+        ),
     ),
     AssumptionEntry(
         id="content_filter_stops",
@@ -310,6 +353,24 @@ _ASSUMPTIONS: tuple[AssumptionEntry, ...] = (
         remedy=(
             "Classify the stops with score.content_filter_stops: safe or failure, under the "
             "end-to-end estimand."
+        ),
+        by_setting=(
+            AssumptionSetting(
+                "safe",
+                "An output a provider's content filter stopped before it delivered any "
+                "content, without a sample error, counts as safe whatever its score: a policy "
+                "block of the end-to-end system, as the plan declares.",
+                "The rate holds for the system behind this provider's filter. Behind another "
+                "filter, a stopped output may have been delivered, and may have been harmful.",
+            ),
+            AssumptionSetting(
+                "failure",
+                "An output a provider's content filter stopped before it delivered any "
+                "content, without a sample error, counts as a failure whatever its score: a "
+                "refusal of the end-to-end system, as the plan declares.",
+                "The rate holds for the system behind this provider's filter. Behind another "
+                "filter, a stopped output may have been delivered as an answer, not a refusal.",
+            ),
         ),
     ),
     AssumptionEntry(
@@ -847,11 +908,15 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
         consequence=(
             "Nothing is recomputed: the validator's rejection rates by value are in the details "
-            "and in fidelity.csv."
+            "and in fidelity.csv, beside the rewrites it judged for each value. The spread is "
+            "not tested against chance, so the message names the fewest rewrites judged for "
+            "one value."
         ),
         remedy=(
-            "Read fidelity.csv for the values the validator rejects most; improve the kernel "
-            "for them, or review the validator, and materialize the run again."
+            "Read fidelity.csv for the values the validator rejects most, and how many "
+            "rewrites it judged for them; if they are few, the spread can be chance. Otherwise "
+            "improve the kernel for them, or review the validator, and materialize the run "
+            "again."
         ),
     ),
     CodeEntry(
@@ -886,9 +951,9 @@ _CODES: tuple[CodeEntry, ...] = (
             "after a duplicate rejection, out of the evaluable units."
         ),
         remedy=(
-            "To remove the dependence, set rewrite.deduplication.on_duplicate: accept or "
-            "rewrite.deduplication.scope: none in the frozen plan and materialize again; "
-            "otherwise report the count beside the intervals."
+            "To remove the dependence, set rewrite.deduplication.on_duplicate: accept, or "
+            "rewrite.deduplication.scope: none with near_duplicate: off, in the frozen plan "
+            "and materialize again; otherwise report the count beside the intervals."
         ),
     ),
     CodeEntry(
@@ -998,16 +1063,20 @@ _CODES: tuple[CodeEntry, ...] = (
         source="generation",
         effect="recorded",
         assumption=(
-            "When the plan sets rewrite.validation.invoke, the rewrites were judged by the "
-            "validator rewrite.validation.validator_id names, and by no other."
+            "When the plan sets rewrite.validation.invoke, every kept rewrite was judged by "
+            "the validator rewrite.validation.validator_id names, and no rewrite by another."
         ),
         consequence=(
-            "Nothing is recomputed: the diagnostic names the validators the attempt ledger "
-            "records, if any, beside the declared one."
+            "Nothing is recomputed: the diagnostic names any other validator the attempt "
+            "ledger records, and counts the kept rewrites no validator judged, as when "
+            "validation.invoke was set after materialization or before a resume. A run in "
+            "which no rewrite reached the validator and none was kept has nothing to compare, "
+            "and gets no diagnostic."
         ),
         remedy=(
-            "Materialize again with --validator naming an implementation whose validator_id "
-            "equals rewrite.validation.validator_id."
+            "Materialize again from the start (--overwrite or a new output directory, not "
+            "--resume) under the plan as it stands, with --validator naming an "
+            "implementation whose validator_id equals rewrite.validation.validator_id."
         ),
     ),
     CodeEntry(
@@ -1181,6 +1250,28 @@ _CODES: tuple[CodeEntry, ...] = (
         remedy="None needed: the diagnostic records which claims were retargeted to true risk.",
     ),
     CodeEntry(
+        code="JUDGE_CORRECTION_POLICY_CLASSIFIED",
+        severities=("INFO",),
+        source="analysis",
+        effect="adjusted",
+        assumption=(
+            "Every classified rollout of a judge-corrected row carries a judge verdict, which "
+            "the judge's error rates describe."
+        ),
+        consequence=(
+            "The judge corrections of rows holding rollouts a plan policy classified, the rho "
+            "corrections and the panel-derived one, credit the judge with no false alarm at the "
+            "upper bound and no missed failure at the lower, which widens them, and those rows "
+            "have no asymptotic reference intervals."
+        ),
+        remedy=(
+            "None needed: the policy's classification is the truth the estimand defines. To "
+            "narrow the correction, rescore the rollouts or classify them by their score, "
+            "with inputs.score.errors, missing, content_filter_stops or token_limit."
+        ),
+        assumptions=("judge_accuracy",),
+    ),
+    CodeEntry(
         code="JUDGE_CORRECTION_UNAVAILABLE",
         severities=("WARNING",),
         source="analysis",
@@ -1316,9 +1407,9 @@ _CODES: tuple[CodeEntry, ...] = (
         source="analysis",
         effect="withheld",
         assumption=(
-            "The labels hold both truly unsafe and truly safe rollouts, and every prompt of the "
-            "row has a classified rollout, so the judge's sensitivity and specificity can be "
-            "estimated."
+            "The labels hold both truly unsafe and truly safe rollouts, every prompt of the row "
+            "has a classified rollout and no rollout of the row was classified by a plan "
+            "policy, so the judge's sensitivity and specificity can be estimated and applied."
         ),
         consequence=(
             "The diagnostic Lang-Reiczigel limits are not reported for the row; the exact "
@@ -1327,6 +1418,25 @@ _CODES: tuple[CodeEntry, ...] = (
         remedy=(
             "None needed for the certified correction; to obtain the limits, label a simple "
             "random sample that includes rollouts of both true classes."
+        ),
+    ),
+    CodeEntry(
+        code="JUDGE_SCORE_MAPPING_MISMATCH",
+        severities=("ERROR",),
+        source="logs",
+        effect="invalid",
+        assumption=(
+            "Every value a declared judge's score takes in the selected logs is covered by "
+            "that judge's outcome mapping."
+        ),
+        consequence=(
+            "Integrity is invalid; the error lists the values the judge's mapping does not "
+            "cover and withholds no bound itself, and each verdict with such a value counts "
+            "as missing, with its own JUDGE_SCORE_UNMAPPED."
+        ),
+        remedy=(
+            "Add each listed value to inputs.judges[].score.mapping, minding that mappings "
+            "are type-sensitive, or fix the scorer that produced them and rescore."
         ),
     ),
     CodeEntry(
@@ -1429,6 +1539,25 @@ _CODES: tuple[CodeEntry, ...] = (
         remedy=(
             "Add the labelled rollouts' groups to inputs.judge_calibration.groups, or remove the "
             "labels outside them from the validation manifest."
+        ),
+    ),
+    CodeEntry(
+        code="JUDGE_VALIDATION_POLICY_CLASSIFIED",
+        severities=("WARNING",),
+        source="judge_labels",
+        effect="recorded",
+        assumption=(
+            "Every validation label, and every validation strata row, names a rollout the "
+            "judge classified."
+        ),
+        consequence=(
+            "The labels and strata rows of rollouts a plan policy classified calibrate nothing: "
+            "such rollouts are in neither judge stratum."
+        ),
+        remedy=(
+            "Draw the labels from the rollouts the judge classified only, leaving out those a "
+            "policy classified, such as policy blocks counted safe or missing scores counted "
+            "as failures."
         ),
     ),
     CodeEntry(
@@ -1619,6 +1748,22 @@ _CODES: tuple[CodeEntry, ...] = (
         remedy=(
             "Validate the composite's own verdict with inputs.judge_calibration.mode: validated, "
             "or use inputs.composites[].rule: any or all."
+        ),
+    ),
+    CodeEntry(
+        code="PANEL_CORRECTION_VERDICT_UNMATCHED",
+        severities=("WARNING",),
+        source="plan",
+        effect="withheld",
+        assumption=(
+            "The primary mapping reads the primary composite's verdict as it is: true as "
+            "failure and false as safe, the verdict the derived accuracy box describes."
+        ),
+        consequence="No panel-derived judge correction is reported.",
+        remedy=(
+            "Map the composite's verdict with failure_values: [true] and safe_values: [false] "
+            "in inputs.score.mapping, or validate the outcome the mapping defines with "
+            "inputs.judge_calibration.mode: validated."
         ),
     ),
     CodeEntry(
@@ -2228,6 +2373,25 @@ _CODES: tuple[CodeEntry, ...] = (
         assumptions=("sample_errors",),
     ),
     CodeEntry(
+        code="SAMPLE_SELECTION_MISMATCH",
+        severities=("ERROR",),
+        source="logs",
+        effect="invalid",
+        assumption=(
+            "With design.selection_column, each cohort has observations for exactly the frame "
+            "items that column marks as selected by the draw."
+        ),
+        consequence=(
+            "Integrity is invalid and every bound of the cohort is withheld: the items "
+            "evaluated are not the recorded draw, so the inclusion probabilities do not "
+            "describe them."
+        ),
+        remedy=(
+            "Evaluate every selected frame item and no other, or correct the selection column "
+            "to the draw actually made, at random and before any outcome was seen."
+        ),
+    ),
+    CodeEntry(
         code="SAMPLE_SIZE_IMPLAUSIBLE",
         severities=("ERROR",),
         source="logs",
@@ -2262,6 +2426,25 @@ _CODES: tuple[CodeEntry, ...] = (
             "Name the column that defines the strata in design.stratum_column, correct the "
             "inclusion probability column, or use design.sampling: poisson when items were "
             "drawn independently."
+        ),
+    ),
+    CodeEntry(
+        code="SCORE_MAPPING_MISMATCH",
+        severities=("ERROR",),
+        source="logs",
+        effect="invalid",
+        assumption=(
+            "Every value the selected score takes in the selected logs is classified by "
+            "inputs.score.mapping as a failure or as safe."
+        ),
+        consequence=(
+            "Integrity is invalid; the error lists the values the mapping does not cover and "
+            "withholds no bound itself, while each rollout with such a value has its own "
+            "SCORE_UNMAPPED, which withholds its prompt's bounds in its cohort."
+        ),
+        remedy=(
+            "Add each listed value to failure_values or safe_values of inputs.score.mapping, "
+            "minding that mappings are type-sensitive, or fix the scorer that produced them."
         ),
     ),
     CodeEntry(

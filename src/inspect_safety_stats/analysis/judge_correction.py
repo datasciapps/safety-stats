@@ -17,6 +17,9 @@ from inspect_safety_stats.analysis.judge_calibration import (
     _JudgeScope,
     _labelled_population,
     _per_cohort_scenarios,
+    _policy_cohorts,
+    _policy_rollouts,
+    _row_weights,
     _scope_population,
     _transported_judge_interval,
     _uncertified_correction_warning,
@@ -198,11 +201,17 @@ def _lang_reiczigel_interval(
     gap: str | None = None,
     unclassified_share: float = 0.0,
     scoped_group: str | None = None,
+    policy_classified: tuple[int, int] = (0, 0),
 ) -> RiskIntervalResult | str:
     """Lang-Reiczigel limits beside the exact validated correction, or why there are none."""
 
     if result.estimate is None or result.lower is None or result.upper is None:
         return "the row has no judge-reported estimate"
+    if any(policy_classified):
+        return (
+            f"{sum(policy_classified)} of the row's rollouts were classified by a plan policy, "
+            "not by the judge, and the limits would read them as judge verdicts"
+        )
     unsafe = truth.get("truly_unsafe")
     safe = truth.get("truly_safe")
     if not unsafe or not safe:
@@ -282,6 +291,38 @@ def _lang_reiczigel_interval(
     )
 
 
+def _policy_classified_diagnostics(
+    population: dict[str, dict[str, PromptRollouts]],
+    policy_rows: dict[str, set[str]],
+    diagnostics: list[Diagnostic],
+) -> None:
+    """Say, per cohort, that corrected rows hold rollouts a plan policy classified."""
+
+    for cohort_id in sorted(policy_rows):
+        prompts = population.get(cohort_id, {}).values()
+        safe = sum(item.policy_safe for item in prompts)
+        failures = sum(item.policy_failures for item in prompts)
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_CORRECTION_POLICY_CLASSIFIED",
+                severity="INFO",
+                message=(
+                    f"{safe + failures} rollouts of cohort {cohort_id!r} were classified by a "
+                    f"plan policy, not by the judge ({safe} counted safe, {failures} counted as "
+                    "failures); the judge corrections of the rows that hold them credit the "
+                    "judge with no false alarm at the upper bound and no missed failure at the "
+                    "lower, and those rows have no asymptotic reference"
+                ),
+                scope=cohort_scope(cohort_id),
+                details={
+                    "groups": sorted(policy_rows[cohort_id]),
+                    "policy_safe": safe,
+                    "policy_failures": failures,
+                },
+            )
+        )
+
+
 @dataclass(frozen=True)
 class JudgeCorrection:
     """The rows with their judge-corrected intervals, and the calibration they used."""
@@ -347,22 +388,18 @@ def _add_judge_corrections(
         *hierarchy_risks,
     ]
     population = _labelled_population(plan, data)
-    group_weights = {group.id: group.weights for group in data.groups}
     measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
-    node_weights = {
-        (node.group_id, node.level, tuple(node.path.items())): dict(
-            zip(node.prompt_ids, node.weights, strict=True)
-        )
-        for node in hierarchy_nodes
-    }
+    row_weights = _row_weights(data, hierarchy_nodes)
 
     def weighting(result: GroupRiskResult | HierarchyRiskResult) -> tuple[dict[str, float], str]:
         """The prompt weights behind a row, and its measure type."""
-        if isinstance(result, GroupRiskResult):
-            return group_weights[result.group_id], measure_types[result.measure_id]
         # Hierarchy nodes are weighted means over their own prompts.
-        key = (result.group_id, result.level, tuple(result.path.items()))
-        return node_weights[key], "weighted_mean"
+        measure_type = (
+            measure_types[result.measure_id]
+            if isinstance(result, GroupRiskResult)
+            else "weighted_mean"
+        )
+        return row_weights(result), measure_type
 
     def unclassified(
         result: GroupRiskResult | HierarchyRiskResult,
@@ -451,12 +488,20 @@ def _add_judge_corrections(
             "sensitivity_lower": sensitivity_lower,
         }
 
+    # Per cohort, the groups of corrected rows that hold rollouts a plan policy classified.
+    policy_rows: dict[str, set[str]] = {}
+    policy_cohorts = _policy_cohorts(plan, population)
     if spec.mode == "assumed":
         per_cohort = _per_cohort_scenarios(plan)
         for result in targets:
             if _judge_scope(plan, result.cohort_id, result.group_id) is None:
                 continue
-            share = unclassified(result, population.get(result.cohort_id, {}), None)
+            weights, _ = weighting(result)
+            cohort_population = population.get(result.cohort_id, {})
+            share = unclassified(result, cohort_population, None)
+            by_policy = _policy_rollouts(cohort_population, weights)
+            if any(by_policy):
+                policy_rows.setdefault(result.cohort_id, set()).add(result.group_id)
             for calibration in _assumed_judge_calibrations(plan, result.cohort_id):
                 interval = _judge_corrected_interval(
                     result=result,
@@ -467,6 +512,8 @@ def _add_judge_corrections(
                     unclassified=share,
                     scoped_groups=spec.groups,
                     per_cohort=calibration.scenario_id in per_cohort,
+                    policy_classified=by_policy,
+                    policy_possible=result.cohort_id in policy_cohorts,
                 )
                 if interval is not None:
                     result.intervals.append(interval)
@@ -483,7 +530,9 @@ def _add_judge_corrections(
             diagnostics,
             primary_scenario=spec.primary,
             per_cohort=per_cohort,
+            policy_rows=policy_rows,
         )
+        _policy_classified_diagnostics(population, policy_rows, diagnostics)
         return {
             "mode": "assumed",
             "scenarios": sorted(
@@ -517,6 +566,9 @@ def _add_judge_corrections(
             scope_population,
             measured.alpha if measured.alpha is not None else judge_alpha,
         )
+        by_policy = _policy_rollouts(scope_population, weights)
+        if any(by_policy):
+            policy_rows.setdefault(result.cohort_id, set()).add(result.group_id)
         interval = _judge_corrected_interval(
             result=result,
             calibration=measured,
@@ -527,28 +579,35 @@ def _add_judge_corrections(
             unclassified=share,
             scoped_group=scope[1],
             stratified=stratified,
+            policy_classified=by_policy,
+            policy_possible=result.cohort_id in policy_cohorts,
         )
         if interval is not None:
             result.intervals.append(interval)
         # The reference propagates the weighted mean's variance, so only a weighted-mean
         # row has one: on a tail row it would describe a different estimand. Its stratum
         # proportions assume simple random samples within the judge strata, so a stratified
-        # design has none.
+        # design has none. It would read policy-classified rollouts as judge verdicts, so a
+        # row holding one has none either; JUDGE_CORRECTION_POLICY_CLASSIFIED says so.
         if (
             isinstance(result, GroupRiskResult)
             and measure_type == "weighted_mean"
             and judge_alpha is not None
             and not stratified
         ):
-            reference = _delta_reference_interval(
-                result=result,
-                data=data,
-                strata=summaries.get(scope, {}),
-                alpha=judge_alpha / scope_count,
-                family_id=spec.family,
-                gap=gap,
-                unclassified_share=share.observed,
-                scoped_group=scope[1],
+            reference = (
+                None
+                if any(by_policy)
+                else _delta_reference_interval(
+                    result=result,
+                    data=data,
+                    strata=summaries.get(scope, {}),
+                    alpha=judge_alpha / scope_count,
+                    family_id=spec.family,
+                    gap=gap,
+                    unclassified_share=share.observed,
+                    scoped_group=scope[1],
+                )
             )
             if reference is not None:
                 result.intervals.append(reference)
@@ -564,6 +623,7 @@ def _add_judge_corrections(
                     gap=gap,
                     unclassified_share=share.observed,
                     scoped_group=scope[1],
+                    policy_classified=by_policy,
                 )
                 if isinstance(limits, str):
                     diagnostics.append(
@@ -589,7 +649,9 @@ def _add_judge_corrections(
         spec.family,
         diagnostics,
         stratified=stratified,
+        policy_rows=policy_rows,
     )
+    _policy_classified_diagnostics(population, policy_rows, diagnostics)
     per_calibration_alpha = judge_alpha / scope_count if judge_alpha is not None else None
     summary: dict[str, Any]
     if spec.groups is None:

@@ -10,6 +10,11 @@ from inspect_safety_stats.analysis.judge_calibration import (
     PromptRollouts,
     _judge_scope,
     _JudgeScope,
+    _policy_absent_assumption,
+    _policy_assumption,
+    _policy_cohorts,
+    _policy_free_box,
+    _policy_rollouts,
     _scope_population,
     _stratified_assumptions,
     _uncertified_base_warning,
@@ -43,8 +48,16 @@ def _judge_corrected_comparison_interval(
     scoped_groups: list[str] | None = None,
     per_cohort: bool = False,
     stratified: bool = False,
+    candidate_policy: tuple[int, int] = (0, 0),
+    baseline_policy: tuple[int, int] = (0, 0),
+    policy_possible: tuple[bool, bool] = (False, False),
 ) -> RiskIntervalResult | None:
     """Correct a comparison by correcting each arm, then recombining.
+
+    ``candidate_policy`` and ``baseline_policy`` count each arm's rollouts a plan policy
+    counted safe and as failures; an arm holding any is corrected over ``_policy_free_box``.
+    An arm holding none states what that assumes when its entry of ``policy_possible``, for
+    the candidate and the baseline, is true (see ``_policy_cohorts``).
 
     A validated calibration gives each arm its own cohort's measured box; ``stratified``
     says it was measured from labels of the experimental stratified design. An assumed
@@ -75,11 +88,21 @@ def _judge_corrected_comparison_interval(
     )
     if any(value is None for value in arms):
         return None
+    # Over the policy-free box an arm's share that its bounds complete drops out of both
+    # ends, so that arm needs no bound on it and spends no alpha on one.
+    if any(candidate_policy) and candidate_share is not None and candidate_share.in_bounds:
+        candidate_share = None
+    if any(baseline_policy) and baseline_share is not None and baseline_share.in_bounds:
+        baseline_share = None
     candidate = correct_judge_risk(
         observed_lower=cast(float, primary.candidate_lower),
         observed_upper=cast(float, primary.candidate_upper),
         observed_estimate=result.candidate_estimate,
-        calibration=candidate_calibration,
+        calibration=(
+            _policy_free_box(candidate_calibration)
+            if any(candidate_policy)
+            else candidate_calibration
+        ),
         unclassified_share=candidate_share.upper if candidate_share is not None else 0.0,
         unclassified_in_bounds=candidate_share.in_bounds if candidate_share is not None else True,
         unclassified_share_per_prompt=candidate_share is not None and candidate_share.per_prompt,
@@ -88,10 +111,20 @@ def _judge_corrected_comparison_interval(
         observed_lower=cast(float, primary.baseline_lower),
         observed_upper=cast(float, primary.baseline_upper),
         observed_estimate=result.baseline_estimate,
-        calibration=baseline_calibration,
+        calibration=(
+            _policy_free_box(baseline_calibration)
+            if any(baseline_policy)
+            else baseline_calibration
+        ),
         unclassified_share=baseline_share.upper if baseline_share is not None else 0.0,
         unclassified_in_bounds=baseline_share.in_bounds if baseline_share is not None else True,
         unclassified_share_per_prompt=baseline_share is not None and baseline_share.per_prompt,
+    )
+    arm_notes = _arm_notes(
+        (
+            ("candidate", candidate_share, candidate_policy, policy_possible[0]),
+            ("baseline", baseline_share, baseline_policy, policy_possible[1]),
+        )
     )
     lower, upper = _multi_arm_effect_interval(
         result.estimand,
@@ -105,8 +138,7 @@ def _judge_corrected_comparison_interval(
             calibrations=(candidate_calibration, baseline_calibration),
             bounds=(lower, upper),
             arms=(candidate.lower, candidate.upper, baseline.lower, baseline.upper),
-            candidate_share=candidate_share,
-            baseline_share=baseline_share,
+            arm_notes=arm_notes,
             primary_scenario=primary_scenario,
             scoped_groups=scoped_groups,
             per_cohort=per_cohort,
@@ -192,20 +224,61 @@ def _judge_corrected_comparison_interval(
                     )
                     + ", and so does "
                     "the comparison, so they measure the judge's accuracy for both arms.",
-                    "Coverage is the union bound over that region, both arm calibrations and "
-                    "both arms' bounds on their unclassified share.",
+                    _comparison_coverage(candidate_share, baseline_share),
                 ]
                 if certified
                 else []
             ),
-            *(
-                f"{arm.capitalize()} arm: {unclassified_assumption(share)}"
-                for arm, share in (("candidate", candidate_share), ("baseline", baseline_share))
-                if share is not None and share.upper > 0
-            ),
+            *arm_notes,
         ],
         eligibility="certifying" if certified else "diagnostic",
         warnings=warnings,
+    )
+
+
+def _arm_notes(
+    arms: tuple[tuple[str, UnclassifiedShare | None, tuple[int, int], bool], ...],
+) -> list[str]:
+    """What each arm's correction assumed of the rollouts the judge did not classify.
+
+    An arm's share is None where it needs no bound: an arm without one is taken to have no
+    unclassified rollouts, and over the policy-free box a share the bounds complete drops out.
+    """
+
+    notes = []
+    for arm, share, policy, possible in arms:
+        if any(policy):
+            notes.append(
+                f"{arm.capitalize()} arm: "
+                + _policy_assumption(*policy, excluded=share is not None)
+            )
+        elif possible:
+            notes.append(f"{arm.capitalize()} arm: {_policy_absent_assumption()}")
+        if share is not None and share.upper > 0:
+            notes.append(f"{arm.capitalize()} arm: {unclassified_assumption(share)}")
+    return notes
+
+
+def _comparison_coverage(
+    candidate_share: UnclassifiedShare | None, baseline_share: UnclassifiedShare | None
+) -> str:
+    """The union a certified corrected comparison's coverage rests on."""
+
+    bounded = [
+        arm
+        for arm, share in (("candidate", candidate_share), ("baseline", baseline_share))
+        if share is not None
+    ]
+    if not bounded:
+        return "Coverage is the union bound over that region and both arm calibrations."
+    if len(bounded) == 2:
+        return (
+            "Coverage is the union bound over that region, both arm calibrations and both "
+            "arms' bounds on their unclassified share."
+        )
+    return (
+        "Coverage is the union bound over that region, both arm calibrations and the "
+        f"{bounded[0]} arm's bound on its unclassified share."
     )
 
 
@@ -216,8 +289,7 @@ def _assumed_comparison_interval(
     calibrations: tuple[JudgeCalibration, JudgeCalibration],
     bounds: tuple[float | None, float | None],
     arms: tuple[float, float, float, float],
-    candidate_share: UnclassifiedShare | None,
-    baseline_share: UnclassifiedShare | None,
+    arm_notes: list[str],
     primary_scenario: str | None,
     scoped_groups: list[str] | None,
     per_cohort: bool,
@@ -297,11 +369,7 @@ def _assumed_comparison_interval(
             "The effect is recombined from the two corrected arm intervals, so it makes "
             "no independence assumption between arms beyond the one the underlying "
             "two-arm region already makes.",
-            *(
-                f"{arm.capitalize()} arm: {unclassified_assumption(share)}"
-                for arm, share in (("candidate", candidate_share), ("baseline", baseline_share))
-                if share is not None and share.upper > 0
-            ),
+            *arm_notes,
             "The underlying judge-system interval retains its own stated guarantee.",
         ],
         eligibility="diagnostic",
@@ -320,8 +388,12 @@ def _apply_judge_correction_to_comparisons(
     primary_scenario: str | None = None,
     per_cohort: set[str] | frozenset[str] = frozenset(),
     stratified: bool = False,
+    policy_rows: dict[str, set[str]] | None = None,
 ) -> None:
     """Append judge corrections to comparisons that expose both arm bounds.
+
+    An arm whose row holds rollouts a plan policy classified adds its group to its cohort's
+    entry of ``policy_rows``, for ``JUDGE_CORRECTION_POLICY_CLASSIFIED``.
 
     ``by_scope`` gives each calibration scope its calibrations: one measured box in validated
     mode, every declared scenario in assumed mode, with the box it declares for the scope's
@@ -351,6 +423,7 @@ def _apply_judge_correction_to_comparisons(
     spec = plan.inputs.judge_calibration
     scoped_groups = spec.groups if spec is not None else None
     skipped: list[str] = []
+    policy_cohorts = _policy_cohorts(plan, population)
     for result in comparisons:
         candidate_scope = _judge_scope(plan, result.candidate_cohort, result.group_id)
         baseline_scope = _judge_scope(plan, result.baseline_cohort, result.group_id)
@@ -385,6 +458,19 @@ def _apply_judge_correction_to_comparisons(
             if gap is not None:
                 gaps.append(f"{arm} cohort {scope[0]!r}: {gap}")
         primary = next((item for item in result.intervals if item.role == "primary"), None)
+        candidate_policy = _policy_rollouts(
+            _scope_population(population, data, candidate_scope), weights
+        )
+        baseline_policy = _policy_rollouts(
+            _scope_population(population, data, baseline_scope), weights
+        )
+        if policy_rows is not None:
+            for scope, policy in (
+                (candidate_scope, candidate_policy),
+                (baseline_scope, baseline_policy),
+            ):
+                if any(policy):
+                    policy_rows.setdefault(scope[0], set()).add(result.group_id)
         corrected = False
         for candidate, baseline in pairs:
             candidate_share, baseline_share = (
@@ -416,6 +502,12 @@ def _apply_judge_correction_to_comparisons(
                 scoped_groups=scoped_groups,
                 per_cohort=candidate.scenario_id in per_cohort,
                 stratified=stratified,
+                candidate_policy=candidate_policy,
+                baseline_policy=baseline_policy,
+                policy_possible=(
+                    result.candidate_cohort in policy_cohorts,
+                    result.baseline_cohort in policy_cohorts,
+                ),
             )
             if interval is not None:
                 result.intervals.append(interval)

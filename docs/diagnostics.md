@@ -74,6 +74,16 @@ An output a provider's content filter stopped without a sample error counts by i
 - **Plan field:** `inputs.score.content_filter_stops`, default `score`
 - **If it is wrong:** A stop that the scorer reads as a refusal or a failure counts as the model's
   behaviour, though the provider's filter produced it.
+- **With `safe`:** An output a provider's content filter stopped before it delivered any content,
+  without a sample error, counts as safe whatever its score: a policy block of the end-to-end
+  system, as the plan declares. If it is wrong: The rate holds for the system behind this provider's
+  filter. Behind another filter, a stopped output may have been delivered, and may have been
+  harmful.
+- **With `failure`:** An output a provider's content filter stopped before it delivered any content,
+  without a sample error, counts as a failure whatever its score: a refusal of the end-to-end
+  system, as the plan declares. If it is wrong: The rate holds for the system behind this provider's
+  filter. Behind another filter, a stopped output may have been delivered as an answer, not a
+  refusal.
 - **Remedy:** Classify the stops with score.content_filter_stops: safe or failure, under the
   end-to-end estimand.
 - **Checked by:** [`CONTENT_FILTER_STOP_SCORED`](#content_filter_stop_scored),
@@ -104,6 +114,7 @@ Judge verdicts are taken as correct unless the plan validates or transports the 
   transported with a published validation set.
 - **Checked by:** [`JUDGE_CALIBRATION_TRANSPORTED`](#judge_calibration_transported),
   [`JUDGE_CALIBRATION_UNINFORMATIVE`](#judge_calibration_uninformative),
+  [`JUDGE_CORRECTION_POLICY_CLASSIFIED`](#judge_correction_policy_classified),
   [`JUDGE_CORRECTION_UNAVAILABLE`](#judge_correction_unavailable),
   [`JUDGE_FLIP_RATE`](#judge_flip_rate)
 
@@ -203,6 +214,12 @@ missing.
 - **Plan field:** `inputs.score.token_limit`, default `score`
 - **If it is wrong:** A truncated answer may have turned harmful or safe had it continued; its score
   describes the truncation.
+- **With `missing`:** An answer that stopped at the generation token limit counts by its score, and
+  without a score or a sample error as missing, counted on its own.
+- **With `safe`:** An answer that stopped at the generation token limit counts by its score, and
+  without a score or a sample error as safe, as the plan declares.
+- **With `failure`:** An answer that stopped at the generation token limit counts by its score, and
+  without a score or a sample error as a failure, as the plan declares.
 - **Remedy:** Raise the token limit and rerun, or classify truncated answers with score.token_limit.
 - **Checked by:** [`TOKEN_LIMIT_REACHED`](#token_limit_reached)
 
@@ -340,6 +357,17 @@ The analysis plan: its fields, references and their combinations.
 - **Consequence:** No panel-derived judge correction is reported for the majority composite.
 - **Remedy:** Validate the composite's own verdict with inputs.judge_calibration.mode: validated, or
   use inputs.composites[].rule: any or all.
+
+#### `PANEL_CORRECTION_VERDICT_UNMATCHED`
+
+- **Severity:** WARNING
+- **Effect:** [withheld](#effects)
+- **Assumption:** The primary mapping reads the primary composite's verdict as it is: true as
+  failure and false as safe, the verdict the derived accuracy box describes.
+- **Consequence:** No panel-derived judge correction is reported.
+- **Remedy:** Map the composite's verdict with failure_values: [true] and safe_values: [false] in
+  inputs.score.mapping, or validate the outcome the mapping defines with
+  inputs.judge_calibration.mode: validated.
 
 #### `PLAN_ANYTIME_BOUNDS_INVALID`
 
@@ -772,6 +800,18 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
 - **Remedy:** Record the run's scorers and model_roles as Inspect logs record them, or leave the
   field out of the rollout files' runs.
 
+#### `JUDGE_SCORE_MAPPING_MISMATCH`
+
+- **Severity:** ERROR
+- **Effect:** [invalid](#effects)
+- **Assumption:** Every value a declared judge's score takes in the selected logs is covered by that
+  judge's outcome mapping.
+- **Consequence:** Integrity is invalid; the error lists the values the judge's mapping does not
+  cover and withholds no bound itself, and each verdict with such a value counts as missing, with
+  its own JUDGE_SCORE_UNMAPPED.
+- **Remedy:** Add each listed value to inputs.judges[].score.mapping, minding that mappings are
+  type-sensitive, or fix the scorer that produced them and rescore.
+
 #### `JUDGE_SCORE_MISSING`
 
 - **Severity:** ERROR
@@ -958,6 +998,17 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
   when that matches where the errors come from.
 - **Checks:** [`sample_errors`](#assumption-sample_errors)
 
+#### `SAMPLE_SELECTION_MISMATCH`
+
+- **Severity:** ERROR
+- **Effect:** [invalid](#effects)
+- **Assumption:** With design.selection_column, each cohort has observations for exactly the frame
+  items that column marks as selected by the draw.
+- **Consequence:** Integrity is invalid and every bound of the cohort is withheld: the items
+  evaluated are not the recorded draw, so the inclusion probabilities do not describe them.
+- **Remedy:** Evaluate every selected frame item and no other, or correct the selection column to
+  the draw actually made, at random and before any outcome was seen.
+
 #### `SAMPLE_SIZE_IMPLAUSIBLE`
 
 - **Severity:** ERROR
@@ -968,6 +1019,18 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
   probabilities that misdescribe the draw bias the estimate.
 - **Remedy:** Correct the inclusion probability column to the probabilities the draw used, or supply
   the logs of every drawn frame item.
+
+#### `SCORE_MAPPING_MISMATCH`
+
+- **Severity:** ERROR
+- **Effect:** [invalid](#effects)
+- **Assumption:** Every value the selected score takes in the selected logs is classified by
+  inputs.score.mapping as a failure or as safe.
+- **Consequence:** Integrity is invalid; the error lists the values the mapping does not cover and
+  withholds no bound itself, while each rollout with such a value has its own SCORE_UNMAPPED, which
+  withholds its prompt's bounds in its cohort.
+- **Remedy:** Add each listed value to failure_values or safe_values of inputs.score.mapping,
+  minding that mappings are type-sensitive, or fix the scorer that produced them.
 
 #### `SCORE_MISSING`
 
@@ -1199,6 +1262,17 @@ The judge validation inputs: the human labels, their strata and the labelling pr
 - **Remedy:** Add the labelled rollouts' groups to inputs.judge_calibration.groups, or remove the
   labels outside them from the validation manifest.
 
+#### `JUDGE_VALIDATION_POLICY_CLASSIFIED`
+
+- **Severity:** WARNING
+- **Effect:** [recorded](#effects)
+- **Assumption:** Every validation label, and every validation strata row, names a rollout the judge
+  classified.
+- **Consequence:** The labels and strata rows of rollouts a plan policy classified calibrate
+  nothing: such rollouts are in neither judge stratum.
+- **Remedy:** Draw the labels from the rollouts the judge classified only, leaving out those a
+  policy classified, such as policy blocks counted safe or missing scores counted as failures.
+
 #### `JUDGE_VALIDATION_STRATA_INCOMPLETE`
 
 - **Severity:** ERROR
@@ -1343,6 +1417,21 @@ cannot be computed, or a result it qualifies.
   union of the claim family's and the judge calibration's error budgets, with no point estimate.
 - **Remedy:** None needed: the diagnostic records which claims were retargeted to true risk.
 
+#### `JUDGE_CORRECTION_POLICY_CLASSIFIED`
+
+- **Severity:** INFO
+- **Effect:** [adjusted](#effects)
+- **Assumption:** Every classified rollout of a judge-corrected row carries a judge verdict, which
+  the judge's error rates describe.
+- **Consequence:** The judge corrections of rows holding rollouts a plan policy classified, the rho
+  corrections and the panel-derived one, credit the judge with no false alarm at the upper bound and
+  no missed failure at the lower, which widens them, and those rows have no asymptotic reference
+  intervals.
+- **Remedy:** None needed: the policy's classification is the truth the estimand defines. To narrow
+  the correction, rescore the rollouts or classify them by their score, with inputs.score.errors,
+  missing, content_filter_stops or token_limit.
+- **Checks:** [`judge_accuracy`](#assumption-judge_accuracy)
+
 #### `JUDGE_CORRECTION_UNAVAILABLE`
 
 - **Severity:** WARNING
@@ -1383,8 +1472,9 @@ cannot be computed, or a result it qualifies.
 
 - **Severity:** INFO
 - **Effect:** [withheld](#effects)
-- **Assumption:** The labels hold both truly unsafe and truly safe rollouts, and every prompt of the
-  row has a classified rollout, so the judge's sensitivity and specificity can be estimated.
+- **Assumption:** The labels hold both truly unsafe and truly safe rollouts, every prompt of the row
+  has a classified rollout and no rollout of the row was classified by a plan policy, so the judge's
+  sensitivity and specificity can be estimated and applied.
 - **Consequence:** The diagnostic Lang-Reiczigel limits are not reported for the row; the exact
   validated correction is unaffected.
 - **Remedy:** None needed for the certified correction; to obtain the limits, label a simple random
@@ -1471,9 +1561,11 @@ evaluated them.
 - **Assumption:** The validator rejects rewrites at similar rates across the values of each level,
   so arm fidelity is alike across that level.
 - **Consequence:** Nothing is recomputed: the validator's rejection rates by value are in the
-  details and in fidelity.csv.
-- **Remedy:** Read fidelity.csv for the values the validator rejects most; improve the kernel for
-  them, or review the validator, and materialize the run again.
+  details and in fidelity.csv, beside the rewrites it judged for each value. The spread is not
+  tested against chance, so the message names the fewest rewrites judged for one value.
+- **Remedy:** Read fidelity.csv for the values the validator rejects most, and how many rewrites it
+  judged for them; if they are few, the spread can be chance. Otherwise improve the kernel for them,
+  or review the validator, and materialize the run again.
 
 #### `GENERATIVE_LOG_INCOMPLETE`
 
@@ -1494,9 +1586,9 @@ evaluated them.
   accepted for earlier units.
 - **Consequence:** Nothing is recomputed: the diagnostic gives how many units kept a rewrite only
   after a duplicate rejection, out of the evaluable units.
-- **Remedy:** To remove the dependence, set rewrite.deduplication.on_duplicate: accept or
-  rewrite.deduplication.scope: none in the frozen plan and materialize again; otherwise report the
-  count beside the intervals.
+- **Remedy:** To remove the dependence, set rewrite.deduplication.on_duplicate: accept, or
+  rewrite.deduplication.scope: none with near_duplicate: off, in the frozen plan and materialize
+  again; otherwise report the count beside the intervals.
 
 #### `GENERATIVE_ROLLOUT_OVERRUN`
 
@@ -1565,9 +1657,12 @@ evaluated them.
 
 - **Severity:** WARNING
 - **Effect:** [recorded](#effects)
-- **Assumption:** When the plan sets rewrite.validation.invoke, the rewrites were judged by the
-  validator rewrite.validation.validator_id names, and by no other.
-- **Consequence:** Nothing is recomputed: the diagnostic names the validators the attempt ledger
-  records, if any, beside the declared one.
-- **Remedy:** Materialize again with --validator naming an implementation whose validator_id equals
+- **Assumption:** When the plan sets rewrite.validation.invoke, every kept rewrite was judged by the
+  validator rewrite.validation.validator_id names, and no rewrite by another.
+- **Consequence:** Nothing is recomputed: the diagnostic names any other validator the attempt
+  ledger records, and counts the kept rewrites no validator judged, as when validation.invoke was
+  set after materialization or before a resume. A run in which no rewrite reached the validator and
+  none was kept has nothing to compare, and gets no diagnostic.
+- **Remedy:** Materialize again from the start (--overwrite or a new output directory, not --resume)
+  under the plan as it stands, with --validator naming an implementation whose validator_id equals
   rewrite.validation.validator_id.

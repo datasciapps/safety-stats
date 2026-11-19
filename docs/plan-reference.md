@@ -148,7 +148,10 @@ mapping:
     value: 0.5
 ```
 
-Mappings are type-sensitive: `true`, `1`, `1.0`, and `"1"` are distinct.
+Mappings are type-sensitive: `true`, `1`, `1.0`, and `"1"` are distinct. A score value that the
+mapping does not cover is an error for its rollout, `SCORE_UNMAPPED`, which withholds the bounds
+of that rollout's prompt. One `SCORE_MAPPING_MISMATCH` error lists every such value, with its
+type and how many rollouts have it.
 
 `missing` accepts `conservative_bounds`, `block`, `count_as_failure`, or `exclude`.
 `conservative_bounds` is the default: integrity becomes `degraded`, and exact bounds cover both
@@ -236,6 +239,17 @@ With any value but `score`, each such rollout is reported in a `TOKEN_LIMIT_REAC
 that stopped at the token limit but was scored keeps its score. Only Inspect logs report stop
 reasons; with rollout files the option is refused.
 
+Only the stop reason `max_tokens` is detected. Two other ends that look alike are not, and such
+a rollout counts by its score, and without a score follows `missing`, whatever `token_limit`
+says:
+
+- Inspect's stop reason `model_length`: the conversation outgrew the model's context window,
+  which a long prompt or long tool output can cause as well as the model's own answer.
+- A sample that hit one of Inspect's own sample limits, such as its token limit
+  (`--token-limit`, recorded as a sample limit of type `token`). That limit counts the tokens of
+  the whole sample, across turns and tool calls, and is a harness setting rather than a property
+  of one answer.
+
 ```yaml
 inputs:
   score:
@@ -303,13 +317,16 @@ come from the `observations.csv` of a prior run. `sampling` is
 estimates sensitivity and the false-positive rate by true class, which a claim with
 `method: noisy_valid_test` requires (the validator emits `PLAN_INVALID_CLAIM` otherwise). With
 those estimates, every group's `weighted_mean` row that the calibration corrects also carries
-diagnostic Lang-Reiczigel limits beside the exact box; tail measures and hierarchy nodes do not.
+diagnostic Lang-Reiczigel limits beside the exact box; tail measures, hierarchy nodes and rows
+that hold rollouts a plan policy classified do not.
 Threshold claims whose evidence carries a validated correction are decided from the corrected
 bounds; an `assumed` correction never affects a claim. One calibration is estimated per cohort
 by exact Clopper-Pearson bounds within each judge stratum. The corrected interval's coverage is
 the union of three budgets: its own family's, the judge family's, and that of the bound on its
 [unclassified share](judge-misclassification.md#unclassified-rollouts). The last is a quarter
-of the calibration's share of the judge family budget, and is spent on top of it. A plan
+of the calibration's share of the judge family budget, and is spent on top of it; a row that
+needs no share bound, such as one holding rollouts a plan policy classified under a policy
+whose bounds complete the unclassified ones, spends none. A plan
 declares one mode: `assumed`, `validated` or `transported` (below).
 
 `groups` scopes an `assumed` or `validated` calibration to declared groups, for a cohort that
@@ -431,24 +448,33 @@ report shows every reading side by side:
   interval of every group risk, comparison and claim (with the claim's status), and
   `presentation.primary_outcome_mapping` records the primary mapping beside them;
 - `outcome-mapping-sensitivity.csv` holds one row per result and mapping, `primary` first,
-  with each result's readings adjacent, and is listed in `checksums.json`;
+  with each result's readings adjacent, and is listed in `checksums.json`. Its last column,
+  `descriptive`, is `True` on every row of an alternative, whose claim status certifies
+  nothing;
 - `report-full.md` has an "Outcome mapping sensitivity (experimental)" section. Claims and
-  decisions appear in it only when `report.include_decisions` is true.
+  decisions appear in it only when `report.include_decisions` is true, and an alternative's
+  are marked "(descriptive)".
 
 Only the primary mapping enters claims and the decision. Each alternative's intervals carry
 the coverage the plan declares for that mapping alone; the readings are not simultaneous
 across mappings, so the side-by-side view is a sensitivity analysis, not a set of tests to
 pick from. A mapping that leaves some observed value unmapped makes its own integrity
-`invalid` (`SCORE_UNMAPPED` in its diagnostic counts) without affecting the primary
-analysis. Each alternative carries what the plan itself, its decision policy and its
-registration receipt were checked for, so a receipt for another plan
+`invalid` (`SCORE_UNMAPPED` and `SCORE_MAPPING_MISMATCH` in its diagnostic counts) without
+affecting the primary analysis. Each alternative carries what the plan itself, its decision
+policy and its registration receipt were checked for, so a receipt for another plan
 (`PLAN_RECEIPT_MISMATCH`) or a decision policy that fails its checks makes every alternative
-`invalid`, as it does the primary analysis.
+`invalid`, as it does the primary analysis. The diagnostics that describe the outcomes, such as
+`TAIL_MEASURE_SINGLE_ROLLOUT`, `TAIL_MEASURES_UNINFORMATIVE` and `CLUSTER_DESIGN_EFFECT`, are
+counted for each alternative from its own reading. The anytime-valid bounds
+(`outputs.anytime_bounds`) and the judge flip rate (`inputs.judge_flip`) are computed for the
+primary mapping only.
 
 Identifiers must be unique and cannot be `primary`, which names the primary mapping in the
-outputs; an alternative may not repeat the primary mapping. Only `inputs.score` takes
-sensitivities, not a judge's score. A plan without the field keeps its hash, and its report
-is unchanged. `report.html` does not show the sensitivities yet.
+outputs; an alternative may not repeat the primary mapping. One that classifies every value as
+the primary mapping does is a repeat, whatever the order of its values and however often it
+lists one; values of another type are not, since mappings are type-sensitive. Only
+`inputs.score` takes sensitivities, not a judge's score. A plan without the field keeps its
+hash, and its report is unchanged. `report.html` does not show the sensitivities yet.
 
 ### Judge panels
 
@@ -489,14 +515,18 @@ when a missing vote could still change it or when `majority` ties. The report ga
 panel** section with per-judge counts, each composite's Kish **effective votes** over the declared
 blocks, and pairwise agreement with Cohen's kappa. Agreement is a diagnostic, not evidence: judges
 that share a blind spot agree and are both wrong. Missing judge columns and unmappable judge
-values are errors (`JUDGE_SCORE_MISSING`, `JUDGE_SCORE_UNMAPPED`).
+values are errors (`JUDGE_SCORE_MISSING`, `JUDGE_SCORE_UNMAPPED`), and one
+`JUDGE_SCORE_MAPPING_MISMATCH` per judge lists the values its mapping does not cover.
 
 A judge may declare prevalence-free accuracy ranges, `accuracy: {sensitivity: {lower, upper},
 specificity: {lower, upper}}`. When the primary outcome is an `any` or `all` composite whose judges
 all declare them, the report adds a diagnostic `judge_corrected_panel_derived` interval: the
 composite's box is derived by Fréchet bounds within blocks and products across blocks, and true
 risk is partially identified by inverting Rogan–Gladen over it (the whole unit interval when the
-box admits an uninformative panel). See [Judge misclassification](judge-misclassification.md).
+box admits an uninformative panel). The box describes the composite's verdict, so the primary
+mapping must read it as it is, `failure_values: [true]` and `safe_values: [false]`; otherwise no
+interval is added, and the warning `PANEL_CORRECTION_VERDICT_UNMATCHED` says so. See
+[Judge misclassification](judge-misclassification.md).
 
 `accuracy.groups` restricts a judge's declared ranges to the rollouts of the listed groups:
 
@@ -712,6 +742,7 @@ for what the rate shows.
 | `inclusion_probability_column` | Required with `type: sampled`; names a manifest column holding each frame item's inclusion probability in (0, 1] |
 | `sampling` | `poisson` (independent inclusion, default) or `fixed_size` (exact draws per stratum, without replacement) |
 | `stratum_column` | Optional with `sampling: fixed_size`; names the manifest column defining sampling strata |
+| `selection_column` | Experimental, optional with `type: sampled`; names a manifest column marking the frame items the draw selected (`true`/`false`). `analyze` and `validate` then check that each cohort observed exactly those items (`SAMPLE_SELECTION_MISMATCH`); without it only the number of items is checked. A plan without it keeps its hash and report bytes. See [Checking which items were evaluated](design-based-sampling.md#checking-which-items-were-evaluated-experimental) |
 | `hierarchy` | Creator-declared hierarchy ending in `prompt_id` |
 | `rollout_key` | Fields uniquely identifying one terminal rollout; see [Schema versions](#schema-versions) for the names and default. A field the rollout does not record is read from its run. A run's fields hold its configuration, so a `ROLLOUT_DUPLICATE` message names such a field, as `<model_base_url of the run>`, instead of showing its value |
 | `require_complete_manifest` | Require every fixed prompt in every cohort |
@@ -1396,12 +1427,12 @@ the report holds no such result or interval.
 computed in, not the claim's error budget, which is `bound.alpha`. For a judge correction it is
 the share of the judge family's alpha that the correction spends, plus a quarter of that share
 for the bound on the row's
-[unclassified share](judge-misclassification.md#unclassified-rollouts), which is spent on top
-of the judge family's alpha. The calibration divides that alpha equally over its scopes, one
+[unclassified share](judge-misclassification.md#unclassified-rollouts) when the correction
+needs one, which is spent on top of the judge family's alpha. The calibration divides that alpha equally over its scopes, one
 per declared cohort, or per cohort and group when it is scoped to groups, so with several
 scopes a correction's `family_alpha` is a share, not the whole budget. A comparison's
-correction spends the shares of the two scopes it spans, and a quarter of each for its two
-arms' share bounds. A judge-corrected claim's `bound.alpha` is the claim family's alpha plus
+correction spends the shares of the two scopes it spans, and a quarter of each for the share
+bound of each arm that needs one. A judge-corrected claim's `bound.alpha` is the claim family's alpha plus
 its `family_alpha`.
 
 A claim can be `INCONCLUSIVE` without a decision on its bound, and its record still carries the
