@@ -363,3 +363,15 @@ def test_kept_rewrites_no_validator_judged_are_a_validator_mismatch(
         "the plan declares validator 'fake-validator', but the attempt ledger records 40 "
         "kept rewrite(s) that no validator judged"
     )
+
+
+def test_no_validator_mismatch_when_the_plan_only_detects_near_duplicates(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Every kept rewrite is unjudged here, as the plan says, so there is nothing to warn of."""
+
+    plan = plan_path(tmp_path, invoke=False, deduplication={"near_duplicate": "normalized_text"})
+    report = run(monkeypatch, plan, tmp_path / "run")
+    assert report.fidelity is not None and report.tree.root.draws == 120
+    assert all(row.validator_judged == 0 for row in report.fidelity)
+    assert "GENERATIVE_VALIDATOR_MISMATCH" not in codes(report)
