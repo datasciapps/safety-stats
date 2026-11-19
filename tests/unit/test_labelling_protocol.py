@@ -10,10 +10,14 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from inspect_safety_stats.analysis.judge_calibration import _partial_queue_diagnostic
+from inspect_safety_stats.analysis.judge_calibration import (
+    _fine_queue_shares,
+    _partial_queue_diagnostic,
+    _queue_shares,
+)
 from inspect_safety_stats.config.models import JudgeCalibrationSpec
 from inspect_safety_stats.ingest.validation import check_labelled_prefix
-from inspect_safety_stats.stats.judge_calibration import JudgeStrata
+from inspect_safety_stats.stats.judge_calibration import FineStrata, JudgeStrata
 from inspect_safety_stats.stats.misclassification import JudgeStratumCounts
 
 
@@ -202,7 +206,98 @@ def _strata(unsafe: tuple[int, int], safe: tuple[int, int]) -> JudgeStrata:
 def test_only_labelled_strata_the_queue_lists_in_part_are_flagged(
     labelled: JudgeStrata, queued: JudgeStrata, flagged: list[str]
 ) -> None:
-    found = _partial_queue_diagnostic(labelled, queued, None, ("c", None), "cohorts/c")
+    found = _partial_queue_diagnostic(
+        _queue_shares(labelled, queued), None, ("c", None), "cohorts/c"
+    )
     details = {} if found is None else found.details
     names = [item["judge_stratum"] for item in details.get("judge_strata", [])]
     assert names == flagged
+
+
+def _fine(**strata: tuple[int, int]) -> FineStrata:
+    """Fine strata as (counted, size), each named by its judge stratum's initial and a digit."""
+
+    fine: FineStrata = {}
+    for name, (counted, size) in strata.items():
+        judge = "judge_unsafe" if name.startswith("u") else "judge_safe"
+        fine.setdefault(judge, {})[name] = JudgeStratumCounts(
+            labelled=counted, truly_unsafe=0, stratum_size=size
+        )
+    return fine
+
+
+@pytest.mark.parametrize(
+    ("labelled", "queued", "flagged"),
+    [
+        # The judge-safe stratum is listed in part, but only in its unlabelled fine stratum,
+        # which is completed with certainty.
+        (
+            _fine(u0=(3, 10), s0=(5, 20), s1=(0, 10)),
+            _fine(u0=(10, 10), s0=(20, 20), s1=(4, 10)),
+            [],
+        ),
+        (
+            _fine(u0=(3, 10), s0=(5, 20), s1=(1, 10)),
+            _fine(u0=(10, 10), s0=(20, 20), s1=(4, 10)),
+            [("judge_safe", "s1")],
+        ),
+        (
+            _fine(u0=(3, 10), u1=(2, 5), s0=(5, 20)),
+            _fine(u0=(9, 10), u1=(5, 5), s0=(19, 20)),
+            [("judge_unsafe", "u0"), ("judge_safe", "s0")],
+        ),
+    ],
+)
+def test_in_a_stratified_design_labelled_fine_strata_listed_in_part_are_flagged(
+    labelled: FineStrata, queued: FineStrata, flagged: list[tuple[str, str]]
+) -> None:
+    found = _partial_queue_diagnostic(
+        _fine_queue_shares(labelled, queued), None, ("c", None), "cohorts/c"
+    )
+    details = {} if found is None else found.details
+    assert "judge_strata" not in details
+    names = [(item["judge_stratum"], item["stratum"]) for item in details.get("fine_strata", [])]
+    assert names == flagged
+
+
+def test_the_fine_strata_warning_names_one_stratum_or_counts_several() -> None:
+    labelled = _fine(u0=(3, 10), u1=(2, 5), s0=(5, 20))
+    one = _partial_queue_diagnostic(
+        _fine_queue_shares(labelled, _fine(u0=(10, 10), u1=(5, 5), s0=(19, 20))),
+        "calibration",
+        ("c", "g"),
+        "cohorts/c/groups/g",
+    )
+    several = _partial_queue_diagnostic(
+        _fine_queue_shares(labelled, _fine(u0=(9, 10), u1=(4, 5), s0=(19, 20))),
+        None,
+        ("c", None),
+        "cohorts/c",
+    )
+
+    assert one is not None and several is not None
+    caveat = (
+        "; the labels are a random sample of such a stratum only if the queue's rows of it "
+        "were drawn from all of its rollouts at random before labelling, which the analysis "
+        "cannot check"
+    )
+    assert one.message == (
+        "the labelling queue tier 'calibration' lists 19 of the 20 classified rollouts of "
+        "declared stratum 's0' in the judge-safe stratum of group 'g' in cohort 'c'" + caveat
+    )
+    assert one.details == {
+        "fine_strata": [
+            {
+                "judge_stratum": "judge_safe",
+                "stratum": "s0",
+                "queue_rows": 19,
+                "labelled": 5,
+                "stratum_size": 20,
+            }
+        ]
+    }
+    assert several.message == (
+        "the labelling queue lists part of 3 labelled declared strata of cohort 'c', such as "
+        "9 of the 10 classified rollouts of declared stratum 'u0' in the judge-unsafe stratum"
+        + caveat
+    )

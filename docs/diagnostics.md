@@ -1206,13 +1206,14 @@ The judge validation inputs: the human labels, their strata and the labelling pr
 
 - **Severity:** WARNING
 - **Effect:** [recorded](#effects)
-- **Assumption:** The declared labelling queue lists every classified rollout of each judge stratum
-  it labels, so that only its random order decides which rollouts are labelled.
+- **Assumption:** The declared labelling queue lists every classified rollout of each stratum it
+  labels, so that only its random order decides which rollouts are labelled. The strata are the
+  calibration's judge strata, or its declared fine strata in a stratified design.
 - **Consequence:** The validated correction is reported as computed; that the queue's rows of the
   named strata are a random sample of them is declared, not checked.
 - **Remedy:** Write the queue as a seeded random permutation of every classified rollout of each
-  judge stratum and label it from the front; a queue drawn at random from part of a stratum stays
-  valid, and the warning records that its draw is declared.
+  stratum and label it from the front; a queue drawn at random from part of a stratum stays valid,
+  and the warning records that its draw is declared.
 
 #### `JUDGE_STRATUM_UNLABELLED_COMPLETED`
 

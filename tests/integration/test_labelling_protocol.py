@@ -220,9 +220,15 @@ def _run(
     take: int = 40,
     edit: str = "none",
     queue_file: str = "queue.csv",
+    given: pd.DataFrame | None = None,
 ) -> tuple[SafetyReport, pd.DataFrame]:
+    """Analyse with the first ``take`` calibration rows of the queue labelled.
+
+    The queue is ``given``, or else :func:`_queue`'s, changed as ``edit`` says.
+    """
+
     ids = _observation_ids(tmp_path)
-    queue = _queue(ids, complete=edit == "complete")
+    queue = _queue(ids, complete=edit == "complete") if given is None else given
     if edit in ("absent", "absent_labelled"):
         # A rollout the run does not have, first in the tier and labelled, or right after
         # the labelled rows.
@@ -373,6 +379,103 @@ def test_a_stratified_design_states_the_queue_within_its_fine_strata(tmp_path: P
     )
     assert QUEUE_ASSUMPTION not in corrected.assumptions
     assert _partial(report) == []
+
+
+STRATIFIED = "    sampling: stratified_within_judge_stratum\n    validation_strata: strata.csv\n"
+SMALL = 10
+
+
+def _fine_stratum(epoch: int) -> str:
+    """The judge-unsafe rollouts split by parity; the last ``SMALL`` judge-safe ones, all truly
+    safe, apart from the others, so that leaving them unlabelled keeps the box informative."""
+
+    if epoch <= JUDGE_UNSAFE:
+        return f"u{epoch % 2}"
+    return "s1" if epoch > ROLLOUTS - SMALL else "s0"
+
+
+def _stratified_queue(directory: Path, listed: dict[str, int]) -> pd.DataFrame:
+    """Write the strata file, and return a queue of ``listed[h]`` rollouts of each fine stratum
+    ``h``, drawn at random from it, all in one random order."""
+
+    ids = _observation_ids(directory / "ids")
+    rows = ["observation_id,stratum"] + [
+        f"{key},{_fine_stratum(epoch)}" for epoch, key in sorted(ids.items())
+    ]
+    directory.joinpath("strata.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+    rng = np.random.default_rng(7)
+    chosen: list[int] = []
+    for stratum, count in sorted(listed.items()):
+        members = [epoch for epoch in sorted(ids) if _fine_stratum(epoch) == stratum]
+        chosen += [int(epoch) for epoch in rng.permutation(members)[:count]]
+    order = [ids[int(epoch)] for epoch in rng.permutation(chosen)]
+    return pd.DataFrame({"observation_id": order, "tier": "calibration"})
+
+
+@pytest.mark.usefixtures("logs")
+def test_a_stratified_design_ignores_the_queue_rows_of_an_unlabelled_fine_stratum(
+    tmp_path: Path,
+) -> None:
+    # The queue lists every rollout of three fine strata and none of the fourth, s1, so it
+    # lists 310 of the 320 judge-safe rollouts. s1 has no labels and is completed with
+    # certainty, so it rests on no sample: the labels are a random sample of every fine
+    # stratum that has any, and the judge stratum is not the design's sampling unit.
+    queue = _stratified_queue(tmp_path, {"u0": 40, "u1": 40, "s0": 310})
+    report, _ = _run(
+        tmp_path, STRATIFIED + _protocol("label_independent"), take=120, given=queue
+    )
+
+    assert _violations(report) == []
+    (unlabelled,) = [
+        item
+        for item in report.integrity.diagnostics
+        if item.code == "JUDGE_FINE_STRATUM_UNLABELLED_COMPLETED"
+    ]
+    assert unlabelled.details["fine_strata"] == [
+        {"judge_stratum": "judge_safe", "stratum": "s1", "stratum_size": SMALL}
+    ]
+    assert _partial(report) == []
+    corrected = _corrected(report)
+    assert corrected is not None and corrected.eligibility == "certifying"
+
+
+@pytest.mark.usefixtures("logs")
+def test_a_stratified_design_warns_of_a_labelled_fine_stratum_the_queue_lists_in_part(
+    tmp_path: Path,
+) -> None:
+    # Every rollout of u0, u1 and s1 is listed, and half of s0's.
+    queue = _stratified_queue(tmp_path, {"u0": 40, "u1": 40, "s0": 155, "s1": SMALL})
+    report, _ = _run(
+        tmp_path, STRATIFIED + _protocol("label_independent"), take=120, given=queue
+    )
+
+    ids = _observation_ids(tmp_path / "ids")
+    stratum_of = {key: _fine_stratum(epoch) for epoch, key in ids.items()}
+    labelled = sum(stratum_of[key] == "s0" for key in queue["observation_id"][:120])
+    (found,) = _partial(report)
+    assert found.message == (
+        "the labelling queue tier 'calibration' lists 155 of the 310 classified rollouts of "
+        "declared stratum 's0' in the judge-safe stratum of cohort 'candidate'; the labels are "
+        "a random sample of such a stratum only if the queue's rows of it were drawn from all "
+        "of its rollouts at random before labelling, which the analysis cannot check"
+    )
+    assert found.details == {
+        "fine_strata": [
+            {
+                "judge_stratum": "judge_safe",
+                "stratum": "s0",
+                "queue_rows": 155,
+                "labelled": labelled,
+                "stratum_size": ROLLOUTS - JUDGE_UNSAFE - SMALL,
+            }
+        ]
+    }
+    assert labelled > 0
+    corrected = _corrected(report)
+    assert corrected is not None and corrected.eligibility == "certifying"
+    assert QUEUE_ASSUMPTION.replace("each judge stratum", "each declared fine stratum") in (
+        corrected.assumptions
+    )
 
 
 @pytest.mark.usefixtures("logs")

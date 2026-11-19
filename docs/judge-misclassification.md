@@ -239,8 +239,11 @@ written from hand-picked rollouts would pass every check above. When the queue (
 lists only part of a judge stratum that has labels, the report carries the warning
 `JUDGE_LABELLING_QUEUE_PARTIAL`, which names the stratum and how many of its rollouts the
 queue lists; the correction is reported as computed, and how the queue's rows were drawn is
-declared, not checked. A queue that permutes every classified rollout of each stratum avoids
-the warning. `stopping` says why labelling stopped where it did:
+declared, not checked. In a [stratified design](#stratified-labels-experimental) the labels are
+a sample of each declared fine stratum, so the warning counts the queue per fine stratum that
+has labels; a fine stratum without labels is completed with certainty, so its queue rows do
+not matter. A queue that permutes every classified rollout of each stratum avoids the warning.
+`stopping` says why labelling stopped where it did:
 
 | `stopping` | Meaning | What the analysis does |
 |---|---|---|

@@ -1318,8 +1318,10 @@ _CODES: tuple[CodeEntry, ...] = (
         source="judge_labels",
         effect="recorded",
         assumption=(
-            "The declared labelling queue lists every classified rollout of each judge stratum "
-            "it labels, so that only its random order decides which rollouts are labelled."
+            "The declared labelling queue lists every classified rollout of each stratum it "
+            "labels, so that only its random order decides which rollouts are labelled. The "
+            "strata are the calibration's judge strata, or its declared fine strata in a "
+            "stratified design."
         ),
         consequence=(
             "The validated correction is reported as computed; that the queue's rows of the "
@@ -1327,7 +1329,7 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
         remedy=(
             "Write the queue as a seeded random permutation of every classified rollout of each "
-            "judge stratum and label it from the front; a queue drawn at random from part of a "
+            "stratum and label it from the front; a queue drawn at random from part of a "
             "stratum stays valid, and the warning records that its draw is declared."
         ),
     ),

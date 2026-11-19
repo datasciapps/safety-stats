@@ -441,7 +441,7 @@ def _validated_judge_calibrations(
     # rollouts and gets no calibration, but still takes its share of the budget below.
     calibrated = [scope for scope in scopes if scope[1] is None or scope[1] in group_prompts]
     counts: dict[_JudgeScope, JudgeStrata] = {}
-    queue_counts: dict[_JudgeScope, JudgeStrata] = {}
+    queue_shares: dict[_JudgeScope, list[_QueueShare]] = {}
     fine: dict[_JudgeScope, FineStrata] = {}
     truth_strata: dict[_JudgeScope, Any] = {}
     in_scope: set[str] = set()
@@ -461,9 +461,18 @@ def _validated_judge_calibrations(
         elif cohort_id in (scoped := judge_stratum_counts(observations, labels)[0]):
             counts[scope] = scoped[cohort_id]
         if queued is not None:
-            listed = judge_stratum_counts(observations, queued)[0].get(cohort_id)
-            if listed is not None:
-                queue_counts[scope] = listed
+            # The queue's rows count as labels do, within the calibration's own rollouts: per
+            # declared fine stratum in a stratified design, else per judge stratum.
+            if declared is not None:
+                listed_fine = fine_stratum_counts(observations, queued, declared).by_cohort
+                if cohort_id in listed_fine:
+                    queue_shares[scope] = _fine_queue_shares(
+                        fine.get(scope, {}), listed_fine[cohort_id]
+                    )
+            else:
+                listed = judge_stratum_counts(observations, queued)[0].get(cohort_id)
+                if listed is not None:
+                    queue_shares[scope] = _queue_shares(counts.get(scope, NO_STRATA), listed)
         if spec.sampling == "simple_random":
             # A simple random sample of the design also estimates sensitivity and the
             # false-positive rate by true class, which the noisy-but-valid test needs.
@@ -558,9 +567,9 @@ def _validated_judge_calibrations(
         completed = completion_diagnostic(outcome.calibration, where)
         if completed is not None:
             diagnostics.append(completed)
-        if spec.protocol is not None and scope in queue_counts:
+        if spec.protocol is not None and scope in queue_shares:
             partial_queue = _partial_queue_diagnostic(
-                outcome.strata, queue_counts[scope], spec.protocol.tier, scope, where
+                queue_shares[scope], spec.protocol.tier, scope, where
             )
             if partial_queue is not None:
                 diagnostics.append(partial_queue)
@@ -683,27 +692,75 @@ def _labelling_protocol(
     return _CheckedProtocol(record=record, queue=prefix.observation_ids)
 
 
+@dataclass(frozen=True)
+class _QueueShare:
+    """How much of one stratum of a calibration the labelling queue lists, and labels.
+
+    The stratum is a judge stratum, or with ``stratum`` the declared fine stratum of that name
+    within it.
+    """
+
+    judge_stratum: str
+    stratum: str | None
+    queue_rows: int
+    labelled: int
+    stratum_size: int
+
+
+def _queue_shares(labelled: JudgeStrata, queued: JudgeStrata) -> list[_QueueShare]:
+    """Each judge stratum's share of the queue; ``queued`` counts the queue's rows as labels."""
+
+    return [
+        _QueueShare(
+            judge_stratum=name,
+            stratum=None,
+            queue_rows=getattr(queued, name).labelled,
+            labelled=getattr(labelled, name).labelled,
+            stratum_size=getattr(queued, name).stratum_size,
+        )
+        for name in JUDGE_STRATA
+    ]
+
+
+def _fine_queue_shares(labelled: FineStrata, queued: FineStrata) -> list[_QueueShare]:
+    """Each declared fine stratum's share of the queue, in judge stratum and then name order.
+
+    ``queued`` counts the queue's rows as labels over the same rollouts as ``labelled``, so
+    both hold the same fine strata.
+    """
+
+    return [
+        _QueueShare(
+            judge_stratum=name,
+            stratum=stratum,
+            queue_rows=counts.labelled,
+            labelled=labelled[name][stratum].labelled,
+            stratum_size=counts.stratum_size,
+        )
+        for name in JUDGE_STRATA
+        for stratum, counts in sorted(queued.get(name, {}).items())
+    ]
+
+
 def _partial_queue_diagnostic(
-    labelled: JudgeStrata,
-    queued: JudgeStrata,
+    shares: list[_QueueShare],
     tier: str | None,
     scope: _JudgeScope,
     where: str,
 ) -> Diagnostic | None:
-    """The warning for labelled judge strata the queue lists only part of, if there are any.
+    """The warning for labelled strata the queue lists only part of, if there are any.
 
-    ``queued`` counts the queue's rows as labels, so its ``labelled`` is how many of the
-    stratum's classified rollouts the queue lists. A queue that lists them all leaves only its
-    order to chance; one that lists part of a stratum is a random sample of it, simple or
-    stratified as the design declares, only if it was drawn as one, which the queue cannot
-    show. A stratum without labels is completed with certainty, so it rests on no sample.
+    The strata are the calibration's judge strata, or its declared fine strata in a stratified
+    design, whose labels are a sample of each fine stratum. A queue that lists every
+    classified rollout of a stratum leaves only its order to chance; one that lists part of a
+    stratum is a random sample of it only if it was drawn as one, which the queue cannot show.
+    A stratum without labels is completed with certainty, so it rests on no sample.
     """
 
     partial = [
-        (name, getattr(queued, name), getattr(labelled, name).labelled)
-        for name in JUDGE_STRATA
-        if getattr(labelled, name).labelled > 0
-        and getattr(queued, name).labelled < getattr(queued, name).stratum_size
+        share
+        for share in shares
+        if share.labelled > 0 and share.queue_rows < share.stratum_size
     ]
     if not partial:
         return None
@@ -714,32 +771,46 @@ def _partial_queue_diagnostic(
         else f"group {group_id!r} in cohort {cohort_id!r}"
     )
     queue = "labelling queue" if tier is None else f"labelling queue tier {tier!r}"
-    listed = " and ".join(
-        f"{counts.labelled} of the {counts.stratum_size}"
-        + (" classified rollouts" if index == 0 else "")
-        + f" of the {name.replace('_', '-')} stratum"
-        for index, (name, counts, _) in enumerate(partial)
-    )
+    fine = partial[0].stratum is not None
+    if not fine:
+        listed = " and ".join(
+            f"{share.queue_rows} of the {share.stratum_size}"
+            + (" classified rollouts" if index == 0 else "")
+            + f" of the {share.judge_stratum.replace('_', '-')} stratum"
+            for index, share in enumerate(partial)
+        ) + f" of {population}"
+    else:
+        first = partial[0]
+        example = (
+            f"{first.queue_rows} of the {first.stratum_size} classified rollouts of declared "
+            f"stratum {first.stratum!r} in the {first.judge_stratum.replace('_', '-')} stratum"
+        )
+        listed = (
+            f"{example} of {population}"
+            if len(partial) == 1
+            else f"part of {len(partial)} labelled declared strata of {population}, such as "
+            f"{example}"
+        )
+    rows: list[dict[str, Any]] = [
+        {
+            "judge_stratum": share.judge_stratum,
+            **({"stratum": share.stratum} if fine else {}),
+            "queue_rows": share.queue_rows,
+            "labelled": share.labelled,
+            "stratum_size": share.stratum_size,
+        }
+        for share in partial
+    ]
     return Diagnostic(
         code="JUDGE_LABELLING_QUEUE_PARTIAL",
         severity="WARNING",
         message=(
-            f"the {queue} lists {listed} of {population}; the labels are a random sample of "
-            "such a stratum only if the queue's rows of it were drawn from all of its "
-            "rollouts at random before labelling, which the analysis cannot check"
+            f"the {queue} lists {listed}; the labels are a random sample of such a stratum "
+            "only if the queue's rows of it were drawn from all of its rollouts at random "
+            "before labelling, which the analysis cannot check"
         ),
         scope=where,
-        details={
-            "judge_strata": [
-                {
-                    "judge_stratum": name,
-                    "queue_rows": counts.labelled,
-                    "labelled": count,
-                    "stratum_size": counts.stratum_size,
-                }
-                for name, counts, count in partial
-            ]
-        },
+        details={"fine_strata" if fine else "judge_strata": rows},
     )
 
 

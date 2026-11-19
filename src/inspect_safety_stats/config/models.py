@@ -412,11 +412,12 @@ class LabellingProtocolSpec(StrictModel):
 
     The analysis checks that the queue lists only classified rollouts of the analysed run and
     that the validation manifest labels exactly its first rows, and warns when the queue lists
-    only part of a labelled judge stratum, whose draw it cannot check. ``stopping`` declares
-    why labelling stopped there: ``fixed_size`` at ``size`` rows, which the analysis checks;
-    ``label_independent`` at a point chosen without looking at the labels, such as when time
-    ran out; ``data_dependent`` possibly because of the labels, which only anytime-valid
-    bounds allow, so the calibration then uses confidence sequences.
+    only part of a labelled judge stratum (of a labelled declared fine stratum in a stratified
+    design), whose draw it cannot check. ``stopping`` declares why labelling stopped there:
+    ``fixed_size`` at ``size`` rows, which the analysis checks; ``label_independent`` at a
+    point chosen without looking at the labels, such as when time ran out; ``data_dependent``
+    possibly because of the labels, which only anytime-valid bounds allow, so the calibration
+    then uses confidence sequences.
     """
 
     queue: Path

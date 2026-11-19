@@ -317,9 +317,9 @@ described in their pull requests.
   checks that the queue lists only classified rollouts of the analysed run, that the labels
   are exactly its first rows, and the declared size under `stopping: fixed_size`; a violation
   is the error `JUDGE_LABELLING_PROTOCOL_VIOLATED`. A queue that lists only part of a
-  labelled judge stratum gives the warning `JUDGE_LABELLING_QUEUE_PARTIAL`: that its rows
-  are a random sample of the stratum is declared, not checked, and the report's corrected
-  rows say so.
+  labelled judge stratum, or in a stratified design of a labelled declared fine stratum, gives
+  the warning `JUDGE_LABELLING_QUEUE_PARTIAL`: that its rows are a random sample of the
+  stratum is declared, not checked, and the report's corrected rows say so.
   `stopping: data_dependent` bounds each judge stratum's accuracy with an anytime-valid
   binomial confidence sequence, so labelling may stop once the result is clear. The sequence
   bounds the probability that a rollout of the stratum is truly unsafe, which the run's
