@@ -265,6 +265,15 @@ described in their pull requests.
   every platform, like the other text artifacts. A resume writes them afresh before it runs
   anything, which converts the files a development version left with CRLF.
 
+- **A generative report whose plan no longer describes its rewrites says so.** Each row of
+  `rewrites.csv` records the kernel fingerprint of the rewrite procedure that produced it, and the
+  report gives the plan's as `kernel_sha256`, but nothing compared the two. A plan whose rewrite
+  section or prompt template changed after materialization, or before a resume, was analysed as
+  if its procedure had produced every rewrite. `generative analyze` now warns with
+  `GENERATIVE_KERNEL_MISMATCH`, which counts the units recorded under another fingerprint and
+  gives the fingerprints in its details. Nothing is recomputed, and a run materialized and
+  analysed under one plan is unchanged.
+
 - **`analyze` reports a direct-mean hierarchy it cannot calibrate instead of crashing.** With
   `outputs.direct_mean_intervals` set to `hierarchy_nodes: true` and `hierarchy_calibration:
   frontier_sidak`, a hierarchy node of zero weight is left out of the nodes, so its level no

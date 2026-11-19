@@ -13,6 +13,7 @@ import contextlib
 import importlib
 import importlib.util
 import sys
+from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -499,6 +500,35 @@ def materialize_run(
     )
 
 
+def _other_kernels(
+    rewrites: list[RewriteRecord], kernel: KernelFingerprint
+) -> Diagnostic | None:
+    """Warn of rewrites the ledger records under another rewrite procedure than the plan's.
+
+    The report names the plan's kernel fingerprint as the procedure behind its prompts. A
+    plan whose rewrite section or prompt template changed after materialization, or before
+    a resume, no longer describes the rewrites recorded before the change.
+    """
+
+    recorded = Counter(record.rewrite_kernel_sha256 for record in rewrites)
+    other = {digest: count for digest, count in sorted(recorded.items()) if digest != kernel.sha256}
+    if not other:
+        return None
+    return Diagnostic(
+        code="GENERATIVE_KERNEL_MISMATCH",
+        severity="WARNING",
+        message=(
+            f"the rewrite ledger records {sum(other.values())} of {len(rewrites)} unit(s) "
+            "under another rewrite procedure than the plan declares, so the plan's rewrite "
+            "section or prompt template changed after they were materialized; the report's "
+            "kernel_sha256 does not describe them, and the details give the fingerprints the "
+            "ledger records"
+        ),
+        scope=plan_scope("rewrite"),
+        details={"plan": kernel.sha256, **{f"ledger:{key}": value for key, value in other.items()}},
+    )
+
+
 def _prompt_row(entry: AcceptedRewrite) -> dict[str, str]:
     return {
         "sampling_unit_id": entry.sampling_unit_id,
@@ -673,6 +703,10 @@ def analyze_run(
         )
     # A family declared after materialization is refused here, before the logs are read.
     check_declared_slice_family(plan, taxonomy, design, selections)
+    kernel = resolve_kernel_fingerprint(plan, base_path=base)
+    other_kernels = _other_kernels(rewrites, kernel)
+    if other_kernels is not None:
+        diagnostics.append(other_kernels)
 
     samples, log_diagnostics = read_evaluated_samples(plan, logs, parallel=parallel)
     diagnostics.extend(log_diagnostics)
@@ -818,7 +852,7 @@ def analyze_run(
             "intent": plan.evaluation.intent,
             "plan_sha256": plan_sha256(plan_path),
             "taxonomy_fingerprint": taxonomy.fingerprint,
-            "kernel_sha256": resolve_kernel_fingerprint(plan, base_path=base).sha256,
+            "kernel_sha256": kernel.sha256,
             "primary_cohort": primary,
             **judge_meta,
         },
