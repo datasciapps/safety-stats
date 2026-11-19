@@ -795,8 +795,12 @@ term of \(Q_{c^{(k)}}\) lies in \([0,a_i^2r_i^{(k)}]\) with
 sum \(C_4^{(k)}=\sum_i a_i^4(r_i^{(k)})^2\). For centers 0 or 1, \(r=1\) and \(C_4^{(k)}=C_4\); about
 \(1/2\), \(r=1/4\) and the padding is a quarter as large. An unknown outcome contributes its larger
 completion, \(r_i^{(k)}\) on the rollout unit; on the prompt-cluster unit the squared deviation is
-convex in the completed rate, so its maximum lies at one of the two extreme completions. The
-default, \(K=2\) with \(c\equiv0\) and \(c\equiv1\), is exactly \(Q_+\) and \(Q_-\) above.
+convex in the completed rate, so its maximum lies at one of the two extreme completions. On the
+rollout unit, the default, \(K=2\) with \(c\equiv0\) and \(c\equiv1\), is exactly \(Q_+\) and
+\(Q_-\) above. On the prompt-cluster unit each contribution is a prompt's failure rate
+\(\hat p_j\), completed as above, with coefficient \(w_j\), so the default is
+\(\sum_jw_j^2\hat p_j^2\) and \(\sum_jw_j^2(1-\hat p_j)^2\), padded with \(\sum_jw_j^4\) in
+place of \(C_4\).
 
 Validity: let \(V_0=\min\{C_2/4,\min_k\mathbb E Q_{c^{(k)}}\}\), which is deterministic and at least
 \(V\). On the event that all \(K\) Hoeffding bounds hold (probability at least \(1-\alpha_d/2\)),

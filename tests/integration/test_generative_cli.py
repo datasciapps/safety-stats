@@ -811,21 +811,56 @@ _GENERATIVE_CAVEAT = (
 )
 
 
+def _generative_commands() -> list[tuple[tuple[str, ...], str]]:
+    """Every command and group of the generative surface, with its help, read from the CLI.
+
+    A command belongs to it when a word of its path starts with "generative", wherever it
+    sits: a list written by hand would miss the next generative command added elsewhere.
+    """
+    import typer.main
+
+    def walk(command: Any, path: tuple[str, ...]) -> list[tuple[tuple[str, ...], str]]:
+        # Typer's groups need not subclass the click package's Group, so look for children.
+        found = (
+            [(path, command.help or "")]
+            if any(word.startswith("generative") for word in path)
+            else []
+        )
+        children = getattr(command, "commands", None)
+        if isinstance(children, dict):
+            found += [
+                item
+                for name, child in sorted(children.items())
+                for item in walk(child, (*path, name))
+            ]
+        return found
+
+    commands = walk(typer.main.get_command(app), ())
+    # Guards the walk itself: one that stopped at the root would pass without looking.
+    paths = [path for path, _ in commands]
+    assert ("generative",) in paths and ("schema", "generative-plan") in paths
+    assert sum(path[0] == "generative" for path in paths) > 1
+    return commands
+
+
 @pytest.mark.parametrize(
-    "command",
-    [
-        ["generative"],
-        ["generative", "compile"],
-        ["generative", "materialize"],
-        ["generative", "analyze"],
-        ["generative", "budget"],
-        ["schema", "generative-plan"],
-    ],
+    ("command", "help_text"),
+    [pytest.param(path, text, id=" ".join(path)) for path, text in _generative_commands()],
 )
-def test_generative_help_carries_the_experimental_caveat(command: list[str]) -> None:
+def test_generative_help_carries_the_experimental_caveat(
+    command: tuple[str, ...], help_text: str
+) -> None:
     # The CLI is an entry point to the generative surface like the docs, so its help carries
     # the same caveat word for word (#24).
     result = runner.invoke(app, [*command, "--help"])
 
     assert result.exit_code == 0, result.output
     assert _GENERATIVE_CAVEAT in plain(result.output)
+    # The help of the group that lists the command says so too: the generative group's own
+    # help carries the caveat, and any other group lists only the first paragraph of the
+    # command's help, as `schema --help` lists generative-plan, so that paragraph must.
+    listing = plain(runner.invoke(app, [*command[:-1], "--help"]).output)
+    if _GENERATIVE_CAVEAT not in listing:
+        summary = " ".join(help_text.split("\n\n")[0].split())
+        assert "(experimental)" in summary
+        assert f"{command[-1]} {summary}" in listing

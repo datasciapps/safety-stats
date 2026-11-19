@@ -702,8 +702,9 @@ Exit codes of `analyze`:
 `validate` exits `3` when its integrity is `invalid` and `0` otherwise. A plan that cannot be
 loaded at all (malformed YAML, or a schema failure) is not mapped: `validate` prints a traceback
 and exits `1`. `plan fixed-design --plan` exits `2`, as a usage error, for a plan that fails
-validation, and `1` for malformed YAML. Check the exit status of these two commands only for
-zero versus nonzero.
+validation or that `analyze` would find invalid on the design manifest, such as a
+`frontier_sidak` direct-mean hierarchy with a node of zero weight, and `1` for malformed YAML.
+Check the exit status of these two commands only for zero versus nonzero.
 
 `hash-plan` exits `3` for a plan it cannot read or validate, and prints `Plan invalid:` with
 each failing field on one line.
