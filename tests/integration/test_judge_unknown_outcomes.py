@@ -13,11 +13,19 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
 from inspect_safety_stats import analyze, load_plan
 from inspect_safety_stats.schema.reports import RiskIntervalResult, SafetyReport
+from inspect_safety_stats.stats.direct_mean import bounded_kl_chernoff_upper_bound
+from inspect_safety_stats.stats.misclassification import (
+    JudgeCalibration,
+    JudgeStratumCounts,
+    correct_judge_risk,
+    estimate_judge_calibration,
+)
 
 ROLLOUTS = 3200
 WORST_CASE = (20 + 1000) / ROLLOUTS
@@ -44,7 +52,7 @@ inputs:
   score:
     name: harmful
     mapping: {failure_values: ["FAIL"], safe_values: ["PASS"]}
-    missing: conservative_bounds
+    missing: @MISSING@
     errors: block
 @JUDGE@
 design:
@@ -144,7 +152,13 @@ def _frames(cohorts: tuple[str, ...]) -> tuple[pd.DataFrame, pd.DataFrame]:
     return pd.DataFrame(evals), pd.DataFrame(samples)
 
 
-def _write_plan(directory: Path, *, cohorts: tuple[str, ...], calibrated: bool) -> Path:
+def _write_plan(
+    directory: Path,
+    *,
+    cohorts: tuple[str, ...],
+    calibrated: bool,
+    missing: str = "conservative_bounds",
+) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "design.csv").write_text(
         "prompt_id,question_id,task_id,suite,expected_rollouts,zero_tolerance\n"
@@ -165,6 +179,7 @@ def _write_plan(directory: Path, *, cohorts: tuple[str, ...], calibrated: bool) 
     )
     text = (
         PLAN.replace("@JUDGE@\n", judge)
+        .replace("@MISSING@", missing)
         .replace("@COHORTS@\n", cohort_lines)
         .replace("@COMPARISONS@\n", COMPARISON + "\n" if len(cohorts) > 1 else "")
         .strip()
@@ -175,7 +190,10 @@ def _write_plan(directory: Path, *, cohorts: tuple[str, ...], calibrated: bool) 
 
 
 def _analyze(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, cohorts: tuple[str, ...]
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cohorts: tuple[str, ...],
+    missing: str = "conservative_bounds",
 ) -> SafetyReport:
     """Label every classified rollout with its truth, then analyse with the labels."""
 
@@ -187,7 +205,9 @@ def _analyze(
         "inspect_safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
-    unlabelled = _write_plan(tmp_path / "unlabelled", cohorts=cohorts, calibrated=False)
+    unlabelled = _write_plan(
+        tmp_path / "unlabelled", cohorts=cohorts, calibrated=False, missing=missing
+    )
     baseline = analyze(plan=load_plan(unlabelled), logs="ignored")
     rows = ["observation_id,human_label"]
     for observation in baseline._observations:
@@ -196,7 +216,7 @@ def _analyze(
         truth = _truly_unsafe(int(observation.rollout_id.rsplit("-", 1)[1]))
         rows.append(f"{observation.observation_id},{'unsafe' if truth else 'safe'}")
     (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
-    plan = _write_plan(tmp_path, cohorts=cohorts, calibrated=True)
+    plan = _write_plan(tmp_path, cohorts=cohorts, calibrated=True, missing=missing)
     return analyze(plan=load_plan(plan), logs="ignored")
 
 
@@ -236,3 +256,94 @@ def test_each_comparison_arm_keeps_its_own_unclassified_worst_case(
     # The baseline has no unclassified rollouts, so its arm is the plain correction: it
     # stays near its truly unsafe share, 20 / 3200.
     assert corrected.baseline_upper is not None and corrected.baseline_upper < 0.05
+
+
+def _labelled_calibration() -> JudgeCalibration:
+    """The calibration every label gives: a census of both judge strata, at alpha 0.05."""
+
+    return estimate_judge_calibration(
+        scenario_id="validated",
+        unsafe_stratum=JudgeStratumCounts(200, 20, 200),
+        safe_stratum=JudgeStratumCounts(2000, 0, 2000),
+        alpha=0.05,
+    )
+
+
+def test_a_corrected_bound_takes_the_population_share_not_the_run_share(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The run's 1,000 unclassified rollouts in 3,200 only estimate the population's share.
+
+    The row's primary interval assumes independent rollouts, so the share takes the
+    KL/Chernoff bound over rollouts, at a quarter of the calibration's alpha, and that alpha
+    joins the corrected interval's budget.
+    """
+
+    report = _analyze(tmp_path, monkeypatch, ("candidate",))
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    primary = next(item for item in mean.intervals if item.role == "primary")
+    assert primary.independence_profile == "rollout"
+    assert mean.lower is not None and mean.upper is not None
+    corrected = _corrected(mean.intervals)
+    share, _ = bounded_kl_chernoff_upper_bound(
+        1000 / ROLLOUTS, np.full(ROLLOUTS, 1 / ROLLOUTS), alpha=0.05 / 4
+    )
+    expected = correct_judge_risk(
+        observed_lower=mean.lower,
+        observed_upper=mean.upper,
+        observed_estimate=None,
+        calibration=_labelled_calibration(),
+        unclassified_share=share,
+    )
+    assert corrected.lower == pytest.approx(expected.lower, rel=1e-9, abs=1e-15)
+    assert corrected.upper == pytest.approx(expected.upper, rel=1e-9, abs=0)
+    # The run's own share gives a smaller upper bound, which the population need not obey.
+    plugged = correct_judge_risk(
+        observed_lower=mean.lower,
+        observed_upper=mean.upper,
+        observed_estimate=None,
+        calibration=_labelled_calibration(),
+        unclassified_share=1000 / ROLLOUTS,
+    )
+    assert corrected.upper is not None and corrected.upper > plugged.upper
+    assert primary.family_alpha is not None
+    assert corrected.family_alpha == pytest.approx(0.05 + 0.05 / 4, rel=1e-12, abs=0)
+    assert corrected.simultaneous_coverage == pytest.approx(
+        1 - (primary.family_alpha + 0.05 + 0.05 / 4), rel=1e-12, abs=0
+    )
+    assert any(
+        "at most" in text and "in the population" in text for text in corrected.assumptions
+    )
+
+
+def test_an_excluding_policy_corrects_the_classified_rate_and_mixes_in_the_share(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under ``missing: exclude`` the bounds cover the rate among classified rollouts only.
+
+    The correction maps that rate through rho and then mixes in the unclassified share at
+    its worst case. It still holds the true risk the fixture allows: 20 / 3200 if every
+    unclassified rollout is safe, 1020 / 3200 if every one is unsafe.
+    """
+
+    report = _analyze(tmp_path, monkeypatch, ("candidate",), missing="exclude")
+
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    assert mean.lower is not None and mean.upper is not None
+    corrected = _corrected(mean.intervals)
+    share, _ = bounded_kl_chernoff_upper_bound(
+        1000 / ROLLOUTS, np.full(ROLLOUTS, 1 / ROLLOUTS), alpha=0.05 / 4
+    )
+    # The plain correction of the classified rate, with the share mixed in at its worst case.
+    plain = correct_judge_risk(
+        observed_lower=mean.lower,
+        observed_upper=mean.upper,
+        observed_estimate=None,
+        calibration=_labelled_calibration(),
+    )
+    assert corrected.lower == pytest.approx((1 - share) * plain.lower, rel=1e-9, abs=1e-15)
+    assert corrected.upper == pytest.approx((1 - share) * plain.upper + share, rel=1e-9, abs=0)
+    assert corrected.lower is not None and corrected.lower <= 20 / ROLLOUTS
+    assert corrected.upper is not None and corrected.upper >= WORST_CASE
+    assert any("excludes some of them" in text for text in corrected.assumptions)

@@ -133,12 +133,13 @@ def _uninformative(triggered: Outcome, control: Outcome) -> None:
 
 def _corrected_claims(triggered: Outcome, control: Outcome) -> None:
     # Adjusted: the claim is decided on the corrected bounds, at the union of the claim's and
-    # the calibration's budgets, with no point estimate.
+    # the calibration's budgets and the share bound's quarter of the latter, with no point
+    # estimate.
     decided, plain = claim(triggered), claim(control)
     assert decided.method == "validated_judge_misclassification_correction"
     assert plain.method != decided.method
     assert decided.estimate is None and plain.estimate is not None
-    assert decided.alpha == pytest.approx(0.1, abs=1e-12)
+    assert decided.alpha == pytest.approx(0.1 + 0.05 / 4, abs=1e-12)
     assert plain.alpha == pytest.approx(0.05, abs=1e-12)
     corrected = _interval(triggered, CORRECTED)
     assert (decided.lower, decided.upper) == (corrected.lower, corrected.upper)

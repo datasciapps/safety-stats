@@ -92,7 +92,7 @@ Single-judge bias correction uses **predictive values conditioned on the judge v
 Functions:
 
 - `JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source="assumed", alpha=None, completed_strata=(), bound="clopper_pearson")` (in `inspect_safety_stats.stats`): `completed_strata` names the strata (`judge_unsafe`, `judge_safe`) that no label measured and the box completes as `[0, 1]`; `bound` is `"clopper_pearson"` or `"confidence_sequence"`.
-- `correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration, unclassified_share=0.0) -> CorrectedRisk` (in `inspect_safety_stats.stats`): Propagates `[observed_lower, observed_upper]` onto true risk `R* = R * rho_1 + (1 - R) * rho_0` over the calibration box. Valid for positively homogeneous, translation-equivariant measures (mean, max, CVaR, top-k), not entropic or threshold measures.
+- `correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration, unclassified_share=0.0, unclassified_in_bounds=True) -> CorrectedRisk` (in `inspect_safety_stats.stats`): Propagates `[observed_lower, observed_upper]` onto true risk `R* = R * rho_1 + (1 - R) * rho_0` over the calibration box. Valid for positively homogeneous, translation-equivariant measures (mean, max, CVaR, top-k), not entropic or threshold measures. Rollouts with no judge verdict keep their worst case: pass an upper confidence bound on their population share as `unclassified_share` (not the run's own share, and its alpha adds to the interval's), and `unclassified_in_bounds=False` when the observed bounds cover only the classified rollouts' rate, as under the `exclude` policy.
 - `JudgeStratumCounts(labelled, truly_unsafe, stratum_size)` and `estimate_judge_calibration(*, scenario_id, unsafe_stratum, safe_stratum, alpha, bound="clopper_pearson") -> JudgeCalibration` (import from `inspect_safety_stats.stats.misclassification`): Builds a validated `JudgeCalibration` box (Clopper-Pearson, or with `bound="confidence_sequence"` anytime-valid bounds for labelling that may stop on results) from human audit labels sampled within the judge-flagged (`unsafe_stratum`) and judge-cleared (`safe_stratum`) strata, where `truly_unsafe` counts true failures.
 - Multi-judge panels (in `inspect_safety_stats.stats`): `compose_verdicts(verdicts, rule)` (`"any"`, `"all"`, `"majority"`), `effective_votes(blocks)`, `pairwise_agreement(first, second)`, `JudgeAccuracyBox(sensitivity_lower, sensitivity_upper, specificity_lower, specificity_upper)` (prevalence-free sensitivity/specificity), and `composite_accuracy_box(judges, blocks, rule)`.
 
@@ -104,6 +104,7 @@ Functions:
 from inspect_safety_stats.stats import (
     JudgeCalibration,
     binomial_bounds,
+    binomial_upper_bound,
     correct_judge_risk,
     newcombe_paired_interval,
     weighted_cvar,
@@ -134,6 +135,14 @@ mean_ci = weighted_kl_chernoff_mean_bounds(
 cvar_80 = weighted_cvar([0.0, 0.05, 0.15], [0.5, 0.3, 0.2], beta=0.8)
 
 # 4. Judge misclassification correction: assumed box vs. human-audited validation strata
+# Unclassified rollouts keep their worst case. Pass an upper confidence bound on their share
+# in the population, not the run's own 0.3 * (1 / 20): here one-sided Clopper-Pearson on each
+# prompt, Bonferroni over the three, at alpha 0.00625. That alpha adds to the corrected
+# interval's.
+unclassified_upper = sum(
+    weight * binomial_upper_bound(missing, 20, alpha=0.00625 / 3)
+    for weight, missing in zip([0.5, 0.3, 0.2], [0, 1, 0], strict=True)
+)
 cal_assumed = JudgeCalibration(
     scenario_id="assumed_judge",
     rho_1_lower=0.85,
@@ -146,7 +155,7 @@ true_risk_assumed = correct_judge_risk(
     observed_upper=mean_ci.upper,
     observed_estimate=mean_ci.completion_estimate_lower,
     calibration=cal_assumed,
-    unclassified_share=0.3 * (1 / 20),  # weighted unclassified share: sum(w_i * u_i / n_i)
+    unclassified_share=unclassified_upper,
 )
 
 cal_validated = estimate_judge_calibration(
@@ -160,7 +169,7 @@ true_risk_validated = correct_judge_risk(
     observed_upper=mean_ci.upper,
     observed_estimate=mean_ci.completion_estimate_lower,
     calibration=cal_validated,
-    unclassified_share=0.3 * (1 / 20),
+    unclassified_share=unclassified_upper,
 )
 
 # 5. Paired candidate-minus-baseline comparison (Python bool lists; True = failure)

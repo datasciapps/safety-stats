@@ -568,6 +568,36 @@ described in their pull requests.
 
 ### Changed
 
+- **Judge corrections bound the population share of unclassified rollouts (changes
+  results).** A judge correction keeps rollouts with no judge verdict at their worst case and
+  maps only the classified mass through rho. It took the run's own share of such rollouts as
+  the population's, so a corrected upper bound could fall below true risk whenever the run saw
+  fewer than the population holds, a run that saw none included. In a seeded simulation of a
+  certified generative root with 30% of units unscored, the bound missed true risk in 23% of
+  runs against a reported alpha of 0.10. Every judge correction now takes a one-sided upper
+  confidence bound on the population share, under the row's own independence assumption:
+  fixed-design rows and comparison arms in `assumed`, `validated` and `transported` mode, and
+  generative estimates. Its effects:
+  - A `validated` correction bounds the share at a quarter of the calibration's alpha and adds
+    that to its budget. `family_alpha`, the coverages and a claim's `alpha` grow by it: a claim
+    at family alpha 0.05 decided on a correction with judge alpha 0.05 now reports 0.1125.
+  - Corrected bounds widen where few rollouts bound the share. With none unclassified the
+    bound is about `log(1/alpha) / n` over `n` independent rollouts, and about
+    `log(P/alpha) / n` for each of `P` prompts of `n` rollouts when the row assumes nothing
+    between prompts. The lower end can fall by that times `rho_0` and the upper end rise by
+    that times `1 - rho_1`, so a box whose `rho_1` reaches 1 and `rho_0` reaches 0 is
+    unchanged.
+  - Under `missing: exclude` or `errors: exclude` the judge-system bounds cover only the
+    classified rollouts' rate. The correction now corrects that rate and mixes the share in at
+    its worst case. It used to subtract the share from an upper bound that never held it, and
+    a `transported` correction left the excluded rollouts out entirely: a maximum over two
+    prompts, half of one prompt's scores missing, got an upper bound of 0.4625 where true risk
+    could be 0.5.
+  - Generative corrected rows in `report.json` gain `unclassified_upper` and
+    `unclassified_alpha`.
+
+  See [Unclassified rollouts](docs/judge-misclassification.md#unclassified-rollouts).
+
 - **A claim on cvar, maximum or entropic risk over one rollout per prompt degrades integrity
   (changes `report.json`).** At one rollout per prompt every per-prompt rate is 0 or 1, and
   [the statistical methods](docs/statistical-methods.md#249-statistical-uncertainty) call these

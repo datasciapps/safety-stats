@@ -13,9 +13,13 @@ from inspect_safety_stats.analysis.judge_calibration import (
     _scope_population,
     _uncertified_base_warning,
     _uncertified_correction_warning,
-    _unclassified_assumption,
-    _unclassified_share,
     pooled_calibration_gap,
+)
+from inspect_safety_stats.analysis.unclassified_share import (
+    UnclassifiedShare,
+    share_alpha,
+    unclassified_assumption,
+    unclassified_share_bound,
 )
 from inspect_safety_stats.config.models import AnalysisPlan
 from inspect_safety_stats.ingest.records import NormalizedData
@@ -31,8 +35,8 @@ def _judge_corrected_comparison_interval(
     baseline_calibration: JudgeCalibration,
     family_id: str | None,
     gap: str | None = None,
-    candidate_share: float = 0.0,
-    baseline_share: float = 0.0,
+    candidate_share: UnclassifiedShare | None = None,
+    baseline_share: UnclassifiedShare | None = None,
     scoped_group: str | None = None,
     primary_scenario: str | None = None,
     scoped_groups: list[str] | None = None,
@@ -51,6 +55,10 @@ def _judge_corrected_comparison_interval(
     requires an interval that exposes both arm bounds -- the two-arm rectangle used by
     weighted KL/Chernoff and by every comparison set. A direct contrast interval, which
     bounds only the difference, is skipped.
+
+    ``candidate_share`` and ``baseline_share`` bound each arm's share of unclassified
+    rollouts; without one, that arm is taken to have none. A measured calibration adds each
+    bound's alpha to its own.
     """
 
     primary = next((item for item in result.intervals if item.role == "primary"), None)
@@ -69,14 +77,16 @@ def _judge_corrected_comparison_interval(
         observed_upper=cast(float, primary.candidate_upper),
         observed_estimate=result.candidate_estimate,
         calibration=candidate_calibration,
-        unclassified_share=candidate_share,
+        unclassified_share=candidate_share.upper if candidate_share is not None else 0.0,
+        unclassified_in_bounds=candidate_share.in_bounds if candidate_share is not None else True,
     )
     baseline = correct_judge_risk(
         observed_lower=cast(float, primary.baseline_lower),
         observed_upper=cast(float, primary.baseline_upper),
         observed_estimate=result.baseline_estimate,
         calibration=baseline_calibration,
-        unclassified_share=baseline_share,
+        unclassified_share=baseline_share.upper if baseline_share is not None else 0.0,
+        unclassified_in_bounds=baseline_share.in_bounds if baseline_share is not None else True,
     )
     lower, upper = _multi_arm_effect_interval(
         result.estimand,
@@ -98,7 +108,7 @@ def _judge_corrected_comparison_interval(
         )
     spent = sum(
         item.alpha or 0.0 for item in (candidate_calibration, baseline_calibration)
-    )
+    ) + sum(share.alpha for share in (candidate_share, baseline_share) if share is not None)
     base_alpha = primary.family_alpha
     certified = gap is None and result.eligibility == "certifying"
     warnings: list[str] = []
@@ -165,15 +175,16 @@ def _judge_corrected_comparison_interval(
                     )
                     + ", and so does "
                     "the comparison, so they measure the judge's accuracy for both arms.",
-                    "Coverage is the union bound over that region and both arm calibrations.",
+                    "Coverage is the union bound over that region, both arm calibrations and "
+                    "both arms' bounds on their unclassified share.",
                 ]
                 if certified
                 else []
             ),
             *(
-                f"{arm.capitalize()} arm: {_unclassified_assumption(share)}"
+                f"{arm.capitalize()} arm: {unclassified_assumption(share)}"
                 for arm, share in (("candidate", candidate_share), ("baseline", baseline_share))
-                if share > 0
+                if share is not None and share.upper > 0
             ),
         ],
         eligibility="certifying" if certified else "diagnostic",
@@ -188,8 +199,8 @@ def _assumed_comparison_interval(
     calibrations: tuple[JudgeCalibration, JudgeCalibration],
     bounds: tuple[float | None, float | None],
     arms: tuple[float, float, float, float],
-    candidate_share: float,
-    baseline_share: float,
+    candidate_share: UnclassifiedShare | None,
+    baseline_share: UnclassifiedShare | None,
     primary_scenario: str | None,
     scoped_groups: list[str] | None,
     per_cohort: bool,
@@ -270,9 +281,9 @@ def _assumed_comparison_interval(
             "no independence assumption between arms beyond the one the underlying "
             "two-arm region already makes.",
             *(
-                f"{arm.capitalize()} arm: {_unclassified_assumption(share)}"
+                f"{arm.capitalize()} arm: {unclassified_assumption(share)}"
                 for arm, share in (("candidate", candidate_share), ("baseline", baseline_share))
-                if share > 0
+                if share is not None and share.upper > 0
             ),
             "The underlying judge-system interval retains its own stated guarantee.",
         ],
@@ -354,14 +365,25 @@ def _apply_judge_correction_to_comparisons(
             )
             if gap is not None:
                 gaps.append(f"{arm} cohort {scope[0]!r}: {gap}")
-        candidate_share = _unclassified_share(
-            _scope_population(population, data, candidate_scope), weights, measure_type
-        )
-        baseline_share = _unclassified_share(
-            _scope_population(population, data, baseline_scope), weights, measure_type
-        )
+        primary = next((item for item in result.intervals if item.role == "primary"), None)
         corrected = False
         for candidate, baseline in pairs:
+            candidate_share, baseline_share = (
+                unclassified_share_bound(
+                    plan,
+                    data,
+                    _scope_population(population, data, scope),
+                    cohort_id=cohort_id,
+                    weights=weights,
+                    measure_type=measure_type,
+                    independence_profile=primary.independence_profile if primary else None,
+                    alpha=share_alpha(calibration.alpha, primary),
+                )
+                for scope, cohort_id, calibration in (
+                    (candidate_scope, result.candidate_cohort, candidate),
+                    (baseline_scope, result.baseline_cohort, baseline),
+                )
+            )
             interval = _judge_corrected_comparison_interval(
                 result=result,
                 candidate_calibration=candidate,
