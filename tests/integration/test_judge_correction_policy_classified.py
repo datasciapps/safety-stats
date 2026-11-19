@@ -59,6 +59,22 @@ def _classify_first_by_policy(policy: str) -> Callable[[Inputs], None]:
     return data
 
 
+ABSENT = "None of the row's rollouts was classified by a plan policy"
+
+
+def _counts_policy_rollouts(interval: Any) -> bool:
+    """Whether the interval states the policy-classified rollouts of its row."""
+
+    return any("rollouts were classified by a plan policy" in item for item in interval.assumptions)
+
+
+def _assumes_none(interval: Any) -> None:
+    """The interval was corrected over the box as given, and says what that assumes."""
+
+    assert not _counts_policy_rollouts(interval)
+    assert any(item.startswith(ABSENT) for item in interval.assumptions)
+
+
 def _row(outcome: Outcome, group: str = "all", measure: str = "mean") -> Any:
     (found,) = [
         item
@@ -102,7 +118,7 @@ def test_an_assumed_correction_credits_no_judge_error_on_a_row_a_policy_classifi
     assert plain.upper == pytest.approx(
         row.upper * RHO_1[1] + (1 - row.upper) * RHO_0[1], abs=1e-12
     )
-    assert not any("plan policy" in item for item in plain.assumptions)
+    _assumes_none(plain)
     (found,) = outcome.with_code("JUDGE_CORRECTION_POLICY_CLASSIFIED")
     assert found.details == {"groups": ["all"], "policy_safe": safe, "policy_failures": failures}
 
@@ -152,7 +168,7 @@ def test_a_validated_correction_of_such_a_row_still_certifies_and_has_no_referen
     other = _row(outcome, "b")
     assert _interval(other, "judge_corrected_validated_delta") is not None
     plain = _interval(other, corrected.interval_id)
-    assert not any("plan policy" in item for item in plain.assumptions)
+    _assumes_none(plain)
 
 
 def test_each_arm_of_a_comparison_is_corrected_by_its_own_rollouts(tmp_path: Any) -> None:
@@ -182,9 +198,28 @@ def test_each_arm_of_a_comparison_is_corrected_by_its_own_rollouts(tmp_path: Any
         item.startswith("Candidate arm: 1 of the row's rollouts were classified by a plan policy")
         for item in corrected.assumptions
     )
+    # The baseline's cohort holds no such rollout, and the plan sets no policy that classifies
+    # rollouts, so its arm states nothing of them.
     assert not any(item.startswith("Baseline arm:") for item in corrected.assumptions)
     (found,) = outcome.with_code("JUDGE_CORRECTION_POLICY_CLASSIFIED")
     assert found.details["groups"] == ["all"]
+
+
+def test_an_arm_without_such_rollouts_states_what_its_correction_assumes(tmp_path: Any) -> None:
+    def data(inputs: Inputs) -> None:
+        comparison("weighted_kl_chernoff")(inputs)
+        policy_blocked(inputs)
+        # A policy the plan sets: every cohort's rows may hold rollouts it classifies.
+        inputs.plan["inputs"]["score"]["missing"] = "count_as_failure"
+
+    outcome = judged(assumed, data)(tmp_path)
+
+    (result,) = [item for item in outcome.report.comparisons if item.level is None]
+    corrected = next(item for item in result.intervals if item.interval_id == DECLARED)
+    notes = [item for item in corrected.assumptions if item.startswith(("Candidate", "Baseline"))]
+    assert notes[0].startswith("Candidate arm: 1 of the row's rollouts were classified")
+    assert notes[1].startswith(f"Baseline arm: {ABSENT}")
+    assert len(notes) == 2
 
 
 # --- The judge strata leave such rollouts out -----------------------------------------------
@@ -324,7 +359,7 @@ def test_the_panel_derived_correction_credits_no_panel_error_on_a_row_a_policy_c
     box = JudgeAccuracyBox(*_derived_bounds(plain))
     expected = identified_risk_set(row.lower, row.upper, box)
     assert (plain.lower, plain.upper) == pytest.approx((expected.lower, expected.upper), abs=0)
-    assert not any("plan policy" in item for item in plain.assumptions)
+    _assumes_none(plain)
     (found,) = outcome.with_code("JUDGE_CORRECTION_POLICY_CLASSIFIED")
     assert found.details == {"groups": ["all"], "policy_safe": 1, "policy_failures": 0}
 
@@ -362,3 +397,30 @@ def test_a_prompt_of_weight_zero_that_a_policy_classified_still_widens_the_corre
         item.startswith("15 of the row's rollouts were classified by a plan policy")
         for item in widened.assumptions
     )
+
+
+# --- A row whose sample holds none ---------------------------------------------------------
+
+
+def _missing_as_failure(inputs: Inputs) -> None:
+    _domains(inputs)
+    inputs.plan["inputs"]["score"]["missing"] = "count_as_failure"
+
+
+@pytest.mark.parametrize(
+    ("data", "stated"), [(_domains, False), (_missing_as_failure, True)], ids=["default", "chosen"]
+)
+def test_a_row_whose_sample_holds_no_such_rollout_states_what_its_correction_assumes(
+    tmp_path: Any, data: Callable[[Inputs], None], stated: bool
+) -> None:
+    # No rollout is classified by a policy in either run. The correction uses the box as given,
+    # which assumes the population holds none either. A plan that sets a policy classifying
+    # rollouts says so on every row; at the defaults, a cohort whose sample holds none does not.
+    outcome = judged(assumed, data)(tmp_path)
+
+    for group in ("all", "b"):
+        interval = _interval(_row(outcome, group), DECLARED)
+        assert any(item.startswith(ABSENT) for item in interval.assumptions) is stated
+        assert not _counts_policy_rollouts(interval)
+    assert not outcome.with_code("JUDGE_CORRECTION_POLICY_CLASSIFIED")
+

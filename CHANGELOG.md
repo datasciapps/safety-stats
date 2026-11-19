@@ -727,7 +727,10 @@ described in their pull requests.
   mode, with `rho_1` free to reach 1 at the upper bound and `rho_0` to fall to 0 at the
   lower, which holds whatever the policy's share. The interval states it in its assumptions,
   the new INFO diagnostic `JUDGE_CORRECTION_POLICY_CLASSIFIED` names the groups per cohort, and
-  the row has no asymptotic reference interval. Rows without such rollouts are unchanged. See
+  the row has no asymptotic reference interval. A row counts as holding such a rollout when any
+  of its prompts does, a prompt of weight zero included. A row whose sample holds none keeps the
+  box as given, which assumes its population holds none either. Its interval states this where
+  the plan sets a policy that classifies rollouts, or the cohort's sample holds one. See
   [Rollouts a policy classifies](docs/judge-misclassification.md#rollouts-a-policy-classifies).
 
 - **The judge strata of a validated calibration hold the judge's verdicts only (changes

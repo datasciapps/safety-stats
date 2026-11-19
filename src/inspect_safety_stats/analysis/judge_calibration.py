@@ -297,6 +297,43 @@ def _policy_assumption(safe: int, failures: int) -> str:
     )
 
 
+def _policy_cohorts(
+    plan: AnalysisPlan, population: Mapping[str, Mapping[str, PromptRollouts]]
+) -> frozenset[str]:
+    """The cohorts whose rows without policy-classified rollouts state what that assumes.
+
+    A correction is widened only for a row whose sample holds a rollout a plan policy
+    classified. A row whose sample holds none is corrected over the box as given, which
+    assumes that the population its rollouts are drawn from holds none either. The row says
+    so where that may fail: in every cohort when the plan sets a policy that classifies
+    rollouts (a missing score or a sample error counted as a failure, or token-limit or
+    content-filter stops classified), and in a cohort whose sample holds such a rollout in
+    some row. Plans at the defaults whose samples hold none state it in the documentation only.
+    """
+
+    score = plan.inputs.score
+    chosen = (
+        score.missing == "count_as_failure"
+        or score.errors == "count_as_failure"
+        or score.token_limit in {"safe", "failure"}
+        or score.content_filter_stops in {"safe", "failure"}
+    )
+    return frozenset(
+        cohort_id
+        for cohort_id, prompts in population.items()
+        if chosen or any(item.policy_safe or item.policy_failures for item in prompts.values())
+    )
+
+
+def _policy_absent_assumption() -> str:
+    return (
+        "None of the row's rollouts was classified by a plan policy, so the correction uses "
+        "the box as given. That assumes the population the rollouts are drawn from holds none "
+        "either: there, a policy failure read as a judge verdict would lower the upper bound, "
+        "and a policy-safe rollout raise the lower."
+    )
+
+
 def _unclassified_assumption(share: float) -> str:
     return (
         f"{share:.6g} of the row's weight rests on unclassified rollouts. They keep their "
@@ -747,12 +784,14 @@ def _judge_corrected_interval(
     stratified: bool = False,
     per_cohort: bool = False,
     policy_classified: tuple[int, int] = (0, 0),
+    policy_possible: bool = False,
 ) -> RiskIntervalResult | None:
     """Correct one row; ``scoped_group`` names a validated calibration's group, and
     ``scoped_groups`` the groups an assumed calibration is scoped to. ``per_cohort`` says
     that the assumed scenario declares boxes by cohort, so ``calibration`` is the row's
     cohort's box. ``policy_classified`` counts the row's rollouts a plan policy counted safe
-    and as failures; a row holding any is corrected over ``_policy_free_box``."""
+    and as failures; a row holding any is corrected over ``_policy_free_box``. A row holding
+    none states what that assumes when ``policy_possible`` (see ``_policy_cohorts``)."""
 
     if result.lower is None or result.upper is None:
         return None
@@ -917,8 +956,11 @@ def _judge_corrected_interval(
         )
     if by_policy:
         assumptions.append(_policy_assumption(*policy_classified))
-    elif unclassified_share > 0:
-        assumptions.append(_unclassified_assumption(unclassified_share))
+    else:
+        if policy_possible:
+            assumptions.append(_policy_absent_assumption())
+        if unclassified_share > 0:
+            assumptions.append(_unclassified_assumption(unclassified_share))
     assumptions.append("The underlying judge-system interval retains its own stated guarantee.")
     warnings: list[str] = []
     if validated and gap is not None:

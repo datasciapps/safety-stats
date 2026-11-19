@@ -526,6 +526,19 @@ groups per cohort. A validated correction of such a row still certifies. Its asy
 references, `judge_corrected_validated_delta` and the Lang--Reiczigel limits, would read the
 policy's rollouts as judge verdicts, so they are not reported for that row.
 
+**A row whose sample holds none.** The widening is triggered by the sample. A row whose sample
+holds no rollout a plan policy classified is corrected over the box as given, which assumes that
+the population its rollouts are drawn from holds none either. When the policy classifies rare
+rollouts, such as an occasional missing score counted as a failure, a run can miss them, and the
+correction then reads the population's policy failures through \(\rho_1<1\) at the upper bound,
+so the upper bound can miss more often than its nominal rate. The corrected interval states this
+assumption when the plan sets a policy that classifies rollouts (`missing` or `errors` set to
+`count_as_failure`, or `token_limit` or `content_filter_stops` set to `safe` or `failure`), and
+in any cohort whose sample holds such a rollout in some row. A plan at the defaults whose sample
+holds none, where only an unseen policy block could be missed, does not repeat it on every row.
+The correction does not yet bound the policy's share in the population, which would correct such
+a row without this assumption.
+
 In a seeded simulation of three prompts of 300 rollouts at a point box on the judge's true
 accuracy, a judge that over-flags (\(\rho_1=0.5\)) with up to 40% policy failures, and one that
 misses failures (\(\rho_0=0.3\)) with up to 40% policy-safe rollouts, the previous correction

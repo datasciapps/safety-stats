@@ -17,6 +17,7 @@ from inspect_safety_stats.analysis.judge_calibration import (
     _JudgeScope,
     _labelled_population,
     _per_cohort_scenarios,
+    _policy_cohorts,
     _policy_rollouts,
     _row_weights,
     _scope_population,
@@ -455,6 +456,7 @@ def _add_judge_corrections(
 
     # Per cohort, the groups of corrected rows that hold rollouts a plan policy classified.
     policy_rows: dict[str, set[str]] = {}
+    policy_cohorts = _policy_cohorts(plan, population)
     if spec.mode == "assumed":
         per_cohort = _per_cohort_scenarios(plan)
         for result in targets:
@@ -477,6 +479,7 @@ def _add_judge_corrections(
                     scoped_groups=spec.groups,
                     per_cohort=calibration.scenario_id in per_cohort,
                     policy_classified=by_policy,
+                    policy_possible=result.cohort_id in policy_cohorts,
                 )
                 if interval is not None:
                     result.intervals.append(interval)
@@ -539,6 +542,7 @@ def _add_judge_corrections(
             scoped_group=scope[1],
             stratified=stratified,
             policy_classified=by_policy,
+            policy_possible=result.cohort_id in policy_cohorts,
         )
         if interval is not None:
             result.intervals.append(interval)

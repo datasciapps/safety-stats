@@ -10,7 +10,9 @@ from inspect_safety_stats.analysis.judge_calibration import (
     PromptRollouts,
     _judge_scope,
     _JudgeScope,
+    _policy_absent_assumption,
     _policy_assumption,
+    _policy_cohorts,
     _policy_free_box,
     _policy_rollouts,
     _scope_population,
@@ -44,11 +46,14 @@ def _judge_corrected_comparison_interval(
     stratified: bool = False,
     candidate_policy: tuple[int, int] = (0, 0),
     baseline_policy: tuple[int, int] = (0, 0),
+    policy_possible: tuple[bool, bool] = (False, False),
 ) -> RiskIntervalResult | None:
     """Correct a comparison by correcting each arm, then recombining.
 
     ``candidate_policy`` and ``baseline_policy`` count each arm's rollouts a plan policy
     counted safe and as failures; an arm holding any is corrected over ``_policy_free_box``.
+    An arm holding none states what that assumes when its entry of ``policy_possible``, for
+    the candidate and the baseline, is true (see ``_policy_cohorts``).
 
     A validated calibration gives each arm its own cohort's measured box; ``stratified``
     says it was measured from labels of the experimental stratified design. An assumed
@@ -99,8 +104,8 @@ def _judge_corrected_comparison_interval(
     )
     arm_notes = _arm_notes(
         (
-            ("candidate", candidate_share, candidate_policy),
-            ("baseline", baseline_share, baseline_policy),
+            ("candidate", candidate_share, candidate_policy, policy_possible[0]),
+            ("baseline", baseline_share, baseline_policy, policy_possible[1]),
         )
     )
     lower, upper = _multi_arm_effect_interval(
@@ -213,14 +218,17 @@ def _judge_corrected_comparison_interval(
     )
 
 
-def _arm_notes(arms: tuple[tuple[str, float, tuple[int, int]], ...]) -> list[str]:
+def _arm_notes(arms: tuple[tuple[str, float, tuple[int, int], bool], ...]) -> list[str]:
     """What each arm's correction assumed of the rollouts the judge did not classify."""
 
     notes = []
-    for arm, share, policy in arms:
+    for arm, share, policy, possible in arms:
         if any(policy):
             notes.append(f"{arm.capitalize()} arm: {_policy_assumption(*policy)}")
-        elif share > 0:
+            continue
+        if possible:
+            notes.append(f"{arm.capitalize()} arm: {_policy_absent_assumption()}")
+        if share > 0:
             notes.append(f"{arm.capitalize()} arm: {_unclassified_assumption(share)}")
     return notes
 
@@ -366,6 +374,7 @@ def _apply_judge_correction_to_comparisons(
     spec = plan.inputs.judge_calibration
     scoped_groups = spec.groups if spec is not None else None
     skipped: list[str] = []
+    policy_cohorts = _policy_cohorts(plan, population)
     for result in comparisons:
         candidate_scope = _judge_scope(plan, result.candidate_cohort, result.group_id)
         baseline_scope = _judge_scope(plan, result.baseline_cohort, result.group_id)
@@ -435,6 +444,10 @@ def _apply_judge_correction_to_comparisons(
                 stratified=stratified,
                 candidate_policy=candidate_policy,
                 baseline_policy=baseline_policy,
+                policy_possible=(
+                    result.candidate_cohort in policy_cohorts,
+                    result.baseline_cohort in policy_cohorts,
+                ),
             )
             if interval is not None:
                 result.intervals.append(interval)

@@ -10,6 +10,7 @@ from inspect_safety_stats.analysis.direct_mean import _HierarchyNode
 from inspect_safety_stats.analysis.judge_calibration import (
     JUDGE_CORRECTABLE_MEASURES,
     _labelled_population,
+    _policy_cohorts,
     _policy_rollouts,
     _row_weights,
 )
@@ -404,6 +405,15 @@ def _panel_policy_assumption(safe: int, failures: int) -> str:
     )
 
 
+def _panel_policy_absent_assumption() -> str:
+    return (
+        "None of the row's rollouts was classified by a plan policy, so the inversion uses the "
+        "derived box as given. That assumes the population the rollouts are drawn from holds "
+        "none either: there, a policy-safe rollout read as a panel verdict would lower the "
+        "upper bound, and a policy failure raise the lower."
+    )
+
+
 def _add_panel_derived_correction(
     plan: AnalysisPlan,
     data: NormalizedData,
@@ -508,6 +518,7 @@ def _add_panel_derived_correction(
     row_weights = _row_weights(data, hierarchy_nodes)
     # Per cohort, the groups of corrected rows that hold rollouts a plan policy classified.
     policy_rows: dict[str, set[str]] = {}
+    policy_cohorts = _policy_cohorts(plan, population)
     for result in targets:
         if result.lower is None or result.upper is None:
             continue
@@ -515,9 +526,13 @@ def _add_panel_derived_correction(
             continue
         by_policy = _policy_rollouts(population.get(result.cohort_id, {}), row_weights(result))
         row_box = box
+        policy_note: list[str] = []
         if any(by_policy):
             row_box = _policy_free_accuracy_box(box)
             policy_rows.setdefault(result.cohort_id, set()).add(result.group_id)
+            policy_note = [_panel_policy_assumption(*by_policy)]
+        elif result.cohort_id in policy_cohorts:
+            policy_note = [_panel_policy_absent_assumption()]
         identified = identified_risk_set(result.lower, result.upper, row_box)
         estimate_range = (
             identified_risk_set(result.estimate, result.estimate, row_box)
@@ -558,7 +573,7 @@ def _add_panel_derived_correction(
                     f"{where}; they carry no coverage guarantee.",
                     "True risk is the Rogan-Gladen inversion over the box; extrema sit at the box "
                     "vertices because the inversion is separately monotone in each argument.",
-                    *([_panel_policy_assumption(*by_policy)] if any(by_policy) else []),
+                    *policy_note,
                 ],
                 eligibility="diagnostic",
                 warnings=(
