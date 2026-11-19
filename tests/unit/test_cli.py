@@ -11,6 +11,7 @@ from typer.testing import CliRunner
 
 from inspect_safety_stats import cli as cli_module
 from inspect_safety_stats.cli import app
+from inspect_safety_stats.report.summary import rate_interval_text, rate_text
 from tests.cli_output import plain
 
 runner = CliRunner()
@@ -61,6 +62,35 @@ def test_analyze_prints_the_headline_rates_and_the_summary_path(tmp_path: Path) 
     assert rates
     assert all(" / " in line and "%" in line for line in rates)
     assert f"Summary: {tmp_path / 'report' / 'report.md'}" in lines
+
+
+def test_analyze_prints_the_true_risk_beside_a_judge_corrected_rate(tmp_path: Path) -> None:
+    plan = _simpleqa_plan(tmp_path)
+    text = plan.read_text(encoding="utf-8")
+    judge = (
+        "  judge_calibration:\n"
+        "    mode: assumed\n"
+        "    primary: declared\n"
+        "    scenarios:\n"
+        "      - {id: declared, rho_1: {lower: 0.9, upper: 1.0}, rho_0: {lower: 0.0, upper: 0.1}}\n"
+        "design:\n"
+    )
+    plan.write_text(text.replace("design:\n", judge, 1), encoding="utf-8")
+    code, stdout = _analyze(plan, tmp_path / "report")
+    assert code == 0, stdout
+
+    summary = json.loads((tmp_path / "report" / "report.json").read_text("utf-8"))["summary"]
+    (headline,) = [item for item in summary["headline"] if item["kind"] == "group_risk"]
+    corrected = headline["judge_corrected"]
+    assert (corrected["calibration"], corrected["eligibility"]) == ("assumed", "diagnostic")
+    lines = stdout.splitlines()
+    start = lines.index("Failure rate (weighted mean):")
+    assert lines[start + 1] == (
+        f"  candidate / all-eight: {rate_text(headline['estimate'])} "
+        f"{rate_interval_text(headline['lower'], headline['upper'])}; true risk "
+        f"{rate_interval_text(corrected['lower'], corrected['upper'])} "
+        "(judge-corrected, assumed calibration, diagnostic)"
+    )
 
 
 def _invoke_analyze(plan: Path, output: Path) -> Any:

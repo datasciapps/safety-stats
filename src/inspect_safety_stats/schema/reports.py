@@ -9,6 +9,7 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    GetJsonSchemaHandler,
     PrivateAttr,
     SerializerFunctionWrapHandler,
     ValidationInfo,
@@ -16,7 +17,8 @@ from pydantic import (
     model_serializer,
     model_validator,
 )
-from pydantic.json_schema import SkipJsonSchema
+from pydantic.json_schema import JsonSchemaValue, SkipJsonSchema
+from pydantic_core import CoreSchema
 
 from inspect_safety_stats.registry import CODES, Effect, SourceKind
 from inspect_safety_stats.schema.pointers import ItemPointers
@@ -808,6 +810,29 @@ class SafetyReport(ResultModel):
         if isinstance(data, dict) and "summary" in data:
             data = {key: value for key, value in data.items() if key != "summary"}
         return data
+
+    @classmethod
+    def __get_pydantic_json_schema__(
+        cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        # The schema describes report.json (`inspect-safety-stats schema report`), which holds
+        # summary. A computed field is in the serialization schema only, and that schema is
+        # empty because of the wrap serializer above, so summary is added to the validation
+        # schema here: optional, as a report written before it lacks it, and read-only, as
+        # reading a report back drops it.
+        schema = handler(core_schema)
+        target = handler.resolve_ref_schema(schema)
+        properties = target.get("properties")
+        if isinstance(properties, dict) and "summary" not in properties:
+            properties["summary"] = {
+                **handler(ReportSummary.__pydantic_core_schema__),
+                "readOnly": True,
+                "description": (
+                    "What to read first, with pointers to the rest; derived from the other "
+                    "fields and recomputed when a report is read back."
+                ),
+            }
+        return schema
 
     @model_serializer(mode="wrap")
     def leave_out_absent_optional_sections(

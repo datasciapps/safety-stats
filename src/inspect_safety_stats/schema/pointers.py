@@ -12,6 +12,8 @@ scope                                       item
 ``plan/adaptive_claims/<id>``               ``/adaptive_claims/<i>``
 ``plan/comparisons/<id>``,                  ``/comparisons/<i>``, the comparison's
 ``comparisons/<id>`` and below it           overall result (no hierarchy level)
+``comparisons/<id>/levels/<level>/``        ``/comparisons/<i>``, the result of that
+``nodes/<node>`` and below it               hierarchy node
 ``comparison_sets/<id>`` and below it       ``/comparison_sets/<i>``
 ``plan/multiplicity/families/<id>``,        ``/multiplicity/<i>``
 ``families/<id>``
@@ -27,14 +29,17 @@ scope                                       item
 Every other scope, and a scope whose item the report does not hold, has no item: plan settings
 such as ``plan/outputs/risk_measures``, and data the report keeps no record of (runs, logs,
 evaluations, strata). The pointer names one record exactly; it never falls back to an
-enclosing one.
+enclosing one. A comparison's scope below its id that names no hierarchy node, such as
+``comparisons/<id>/methods/<m>/units/<unit>``, concerns its overall result, so it points there.
+A hierarchy node's points at the node's result, or nowhere when the report holds none: never
+at the overall result.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from inspect_safety_stats.schema.scopes import scope_segments
+from inspect_safety_stats.schema.scopes import node_id, scope_segments
 
 if TYPE_CHECKING:
     from inspect_safety_stats.schema.reports import SafetyReport
@@ -69,6 +74,35 @@ class ItemPointers:
                 (item.comparison_id, i)
                 for i, item in enumerate(report.comparisons)
                 if item.level is None
+            ]
+        )
+        hierarchy = report.design.get("hierarchy")
+        rank = {
+            str(level): index
+            for index, level in enumerate(hierarchy if isinstance(hierarchy, list) else [])
+        }
+        self._comparison_nodes = _first(
+            [
+                (
+                    (
+                        item.comparison_id,
+                        item.level,
+                        # A node's id lists its levels root first, as the hierarchy does;
+                        # report.json sorts the keys of its path, so the hierarchy restores
+                        # the order when a report is read back.
+                        node_id(
+                            {
+                                key: item.path[key]
+                                for key in sorted(
+                                    item.path, key=lambda key: rank.get(key, len(rank))
+                                )
+                            }
+                        ),
+                    ),
+                    i,
+                )
+                for i, item in enumerate(report.comparisons)
+                if item.level is not None
             ]
         )
         self._sets = _first(
@@ -120,7 +154,7 @@ class ItemPointers:
         if root == "plan":
             return self._plan_pointer(rest)
         if root == "comparisons" and rest:
-            return _at("/comparisons", self._comparisons.get(rest[0]))
+            return self._comparison_pointer(rest)
         if root == "comparison_sets" and rest:
             return _at("/comparison_sets", self._sets.get(rest[0]))
         if root == "families" and len(rest) == 1:
@@ -141,6 +175,15 @@ class ItemPointers:
         if len(rest) == 3 and rest[:2] == ["multiplicity", "families"]:
             return _at("/multiplicity", self._families.get(rest[2]))
         return None
+
+    def _comparison_pointer(self, rest: list[str]) -> str | None:
+        if len(rest) > 1 and rest[1] == "levels":
+            # A hierarchy node's result, and only that: the overall result is another record.
+            if len(rest) >= 5 and rest[3] == "nodes":
+                key = (rest[0], rest[2], rest[4])
+                return _at("/comparisons", self._comparison_nodes.get(key))
+            return None
+        return _at("/comparisons", self._comparisons.get(rest[0]))
 
     def _cohort_pointer(self, rest: list[str]) -> str | None:
         if len(rest) == 1:

@@ -41,7 +41,12 @@ from inspect_safety_stats.schema.reports import (
     RiskIntervalResult,
     SafetyReport,
 )
-from inspect_safety_stats.schema.summary import is_headline_risk
+from inspect_safety_stats.schema.summary import (
+    JUDGE_PREFIX,
+    is_headline_risk,
+    judge_calibration_of,
+    judge_interval,
+)
 from inspect_safety_stats.stats.planning import (
     rollout_scale_for_half_width,
     rollouts_for_half_width,
@@ -62,7 +67,6 @@ _MAX_WARNING_SCOPES = 3
 _MAX_POLICY_PROMPTS = 5
 # The effects of the info codes the summary names (registry.Effect).
 _NOTED_EFFECTS = ("adjusted", "withheld")
-_JUDGE_PREFIX = "judge_corrected_"
 _MEASURE_PREFIX = "finite_design_"
 
 
@@ -165,31 +169,18 @@ def _sensitivity(
             and item.varied_assumption != "judge_error"
             and item.independence_profile in profiles
             and item.method == method
-            and not item.interval_id.startswith(_JUDGE_PREFIX)
+            and not item.interval_id.startswith(JUDGE_PREFIX)
         ),
         None,
     )
 
 
-def _judge_interval(
-    intervals: Iterable[RiskIntervalResult], primary_scenario: str | None
-) -> RiskIntervalResult | None:
-    corrected = [item for item in intervals if item.interval_id.startswith(_JUDGE_PREFIX)]
-    validated = next(
-        (item for item in corrected if item.interval_id == f"{_JUDGE_PREFIX}validated"), None
-    )
-    if validated is not None:
-        return validated
-    if primary_scenario:
-        return next(
-            (
-                item
-                for item in corrected
-                if item.interval_id == f"{_JUDGE_PREFIX}{primary_scenario}"
-            ),
-            None,
-        )
-    return None
+def _judge_mark(interval: RiskIntervalResult) -> str:
+    """What qualifies a true-risk interval: declared accuracy, or a sensitivity of measured."""
+
+    if judge_calibration_of(interval) == "assumed":
+        return " (assumed)"
+    return "" if interval.eligibility == "certifying" else " (sensitivity)"
 
 
 def _measure_type(risk: GroupRiskResult) -> str | None:
@@ -266,7 +257,7 @@ def _root_section(
     if not risks:
         return []
     with_judge = any(
-        _judge_interval(risk.intervals, primary_scenario) is not None for risk in risks
+        judge_interval(risk.intervals, primary_scenario) is not None for risk in risks
     )
     header = "| Model | Group | Failure rate | Interval | Prompt-level sensitivity |"
     rule = "|---|---|---:|---|---|"
@@ -290,12 +281,11 @@ def _root_section(
             ),
         ]
         if with_judge:
-            judged = _judge_interval(risk.intervals, primary_scenario)
+            judged = judge_interval(risk.intervals, primary_scenario)
             cells.append(
                 "—"
                 if judged is None
-                else rate_interval_text(judged.lower, judged.upper)
-                + ("" if judged.eligibility == "certifying" else " (assumed)")
+                else rate_interval_text(judged.lower, judged.upper) + _judge_mark(judged)
             )
         lines.append("| " + " | ".join(cells) + " |")
         if flagged:
@@ -336,7 +326,8 @@ def _root_section(
     if with_judge:
         note += (
             " The judge-corrected column bounds the true failure risk; it is marked "
-            "assumed when it rests on declared rather than measured judge accuracy."
+            "assumed when it rests on declared rather than measured judge accuracy, and "
+            "sensitivity when the measured accuracy does not certify its row."
         )
     lines.extend(["", note])
     return lines

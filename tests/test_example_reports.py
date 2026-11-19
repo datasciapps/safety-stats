@@ -26,6 +26,7 @@ import re
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 from typer.testing import CliRunner
 
 from inspect_safety_stats import __version__
@@ -129,6 +130,29 @@ def test_committed_example_report_was_written_by_this_version(name: str) -> None
     assert payload["package_version"] == __version__, (
         f"{report} was written by {payload['package_version']}; regenerate it with {__version__}"
     )
+
+
+@pytest.mark.parametrize("name", sorted(EXAMPLE_REPORTS))
+def test_committed_example_report_follows_the_report_schema(name: str) -> None:
+    """`inspect-safety-stats schema report` is the contract for report.json (CONTRIBUTING 4.3).
+
+    The schema left out `summary`, which every report.json holds, and allows no field it does
+    not list, so no report the package wrote validated against it.
+    """
+
+    result = CliRunner().invoke(app, ["schema", "report"])
+    assert result.exit_code == 0, result.output
+    schema = json.loads(result.stdout)
+    Draft202012Validator.check_schema(schema)
+    report, _, _ = EXAMPLE_REPORTS[name]
+    payload = json.loads((ROOT / report / "report.json").read_text(encoding="utf-8"))
+
+    assert "summary" in payload
+    errors = [
+        f"{error.json_path}: {error.message}"
+        for error in Draft202012Validator(schema).iter_errors(payload)
+    ]
+    assert errors == []
 
 
 @pytest.mark.parametrize("name", sorted(EXAMPLE_REPORTS))

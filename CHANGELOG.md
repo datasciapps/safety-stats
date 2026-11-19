@@ -27,6 +27,47 @@ described in their pull requests.
   that drew every frame item, the one case that ran before, is refused too: analyse it as a
   fixed design, or use `flat_bonferroni`.
 
+- **A diagnostic about a comparison's hierarchy node points at that node's row (changes
+  `item` in `report.json` and `index.json` for such diagnostics).** Every scope below
+  `comparisons/<id>` pointed at the comparison's overall row, so a `COMPARISON_INTERVAL_INVALID`
+  for one node of the hierarchy sent a reader to the overall result, which may certify. A scope
+  `comparisons/<id>/levels/<level>/nodes/<node>`, and any scope below it, now points at the
+  node's row, or is null when the report holds none; other scopes below the comparison, such
+  as a projection region's units, still point at the overall row.
+
+- **`inspect-safety-stats schema report` accepts the report.json files the package writes.**
+  The schema left out `summary`, which every `report.json` now holds, while allowing no field
+  it does not list, so every report failed validation against it with "'summary' was
+  unexpected". It now lists `summary` with its fields, as optional and read-only: a report
+  written before it validates, and reading a report back recomputes it.
+  `SafetyReport.model_json_schema()` gives the same schema.
+
+- **The summary's headline gives the true risk where a judge correction applies (changes
+  `report.json`, `index.json`, `index.md` and `analyze`'s output for such plans).** A
+  headline's bounds are those of the rate the judge reports, and the headline gave nothing
+  else: with a judge that misses 40% of one prompt's failures, `index.json` gave the candidate's
+  rate an upper bound of 2.9%, marked `certifying`, below a true risk of 3.0%, while the claim
+  was decided on the validated correction, 1.6% to 4.7%, which `report.md` showed. Each headline
+  rate and overall comparison with a judge correction now holds `judge_corrected`: its bounds,
+  its eligibility, whether the calibration was `validated` or `assumed`, its simultaneous
+  coverage and a pointer to the interval. `index.md` adds true risk columns to its headline
+  table, and `analyze` prints the true risk after each such rate. All of them, and `report.md`,
+  pick the interval by one rule (`inspect_safety_stats.schema.summary.judge_interval`): the
+  validated correction or, under an assumed calibration, its primary scenario's, so a
+  non-primary scenario that happens to be named `validated` is no longer shown in `report.md`
+  as the true risk. Reports without a judge correction keep their bytes. The
+  [agent guide](docs/agent-guide.md#judge-reported-and-true-risk) says which bound describes
+  the true risk.
+
+- **report.md marks a validated correction that does not certify its row as a sensitivity,
+  not as assumed (changes `report.md` for such plans).** Its true risk column marked every
+  correction that does not certify "(assumed)", and its note said that means the correction
+  rests on declared rather than measured judge accuracy. A validated calibration measures the
+  judge on the rollouts its labels were drawn from, so its correction of a row that weights
+  them differently, such as one group of the cohort, is a sensitivity: such rows are now marked
+  "(sensitivity)", and the note says so, as the summary's `judge_corrected.calibration` says
+  `validated`.
+
 - **A rollout that an `exclude` score policy leaves out of the bounds is reported, and integrity
   is degraded (changes report bytes).** Under `inputs.score.missing: exclude` or
   `inputs.score.errors: exclude` an unscored or errored rollout was dropped with no diagnostic,

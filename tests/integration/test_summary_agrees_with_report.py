@@ -170,7 +170,7 @@ def _decimal(text: str) -> Decimal:
 
 
 def _shown_interval(text: str) -> tuple[Decimal, Decimal] | None:
-    text = text.removesuffix(" †").removesuffix(" (assumed)")
+    text = text.removesuffix(" †").removesuffix(" (assumed)").removesuffix(" (sensitivity)")
     if text == "unavailable":
         return None
     left, right = text.strip("[]").split(", ")
@@ -420,7 +420,13 @@ def test_each_failure_rate_has_its_estimate_and_bounds(
         assert ("True risk (judge-corrected)" in row) == (judged is not None)
         if judged is not None:
             cell = row["True risk (judge-corrected)"]
-            assert cell.endswith(" (assumed)") == (judged.eligibility != "certifying")
+            mark = (
+                " (assumed)"
+                if judged.method.startswith("assumed_")
+                else "" if judged.eligibility == "certifying" else " (sensitivity)"
+            )
+            # The interval, then exactly its mark.
+            assert cell.endswith(f"]{mark}")
             _assert_outward(
                 _shown_interval(cell), judged.lower, judged.upper, "0.1", scale=2
             )
