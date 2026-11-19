@@ -576,19 +576,38 @@ decides it. That is the group's primary direct-mean interval, under the method t
 `weighted_empirical_bernstein` or `weighted_hoeffding`). The planner inverts that interval:
 
 - The PASS side is planned at the claim's `acceptable_upper`. The maximum certifiable failure
-  rate is the largest weighted failure rate at which the interval's upper bound reaches that
-  threshold with at least `--power`.
+  rate is a guaranteed rate: at every weighted failure rate up to it, the interval's upper
+  bound falls to that threshold with at least `--power`.
 - The FAIL side is planned at the claim's `unacceptable_lower`. The minimum detectable failure
-  rate is the smallest rate at which the interval's lower bound reaches that threshold with at
-  least `--power`.
+  rate is a guaranteed rate too: at every weighted failure rate from it up, the interval's
+  lower bound reaches that threshold with at least `--power`.
 
-These guarantees hold whatever the individual prompts' rates are. The empirical-Bernstein
-interval is planned at the largest variance its estimate allows. The chance of missing is
-bounded by the sharpest of Hoeffding's inequality and the KL-Chernoff interval's Chernoff
-kernel. The output also gives the certification floor: the upper bound when every rollout is
-safe. An `acceptable_upper` below the floor can never PASS. Beside each rate, the output shows
-the weighted Hoeffding rate of `fixed_design_detectable_failure_rates` as a reference, and
-the rates under any `reference_methods`.
+Each is a guarantee, not the rate at which the power falls to `--power`. The power at the
+planned rate is often well above `--power`, and a less extreme rate may still have it. The
+margin is largest for empirical Bernstein on sparse failures. The guarantees hold whatever the
+individual prompts' rates are, provided that:
+
+- the blocks of the plan's primary independence profile are independent;
+- every rollout the manifest declares (or `--rollouts` sets) is attempted; and
+- every rollout is classified. An unclassified outcome widens the interval, and the planner
+  does not model that.
+
+The empirical-Bernstein interval is planned at the largest variance its estimate allows. The
+chance of missing is bounded by the sharpest of Hoeffding's inequality and the KL-Chernoff
+interval's Chernoff kernel, applied to the failures and to the safe outcomes. The derivation is
+in [Statistical methods, section 5.7](statistical-methods.md#57-detectable-failure-rates-under-the-analysis-interval).
+Beside each rate, the output shows the weighted Hoeffding rate of
+`fixed_design_detectable_failure_rates` as a reference, and the rates under any
+`reference_methods`.
+
+The output also gives the certification floor: the upper bound `analyze` reports when every
+rollout is safe. The planner runs `analyze`'s own interval and hierarchy-region stages on
+those rollouts, so under the default `hierarchy_region: linear_program` the floor is the
+projected bound, and the output gives the raw floor before the projection beside it when the
+projection lowers it. A claim whose `acceptable_upper` is below the floor does not PASS even
+when every rollout is safe. The rates are planned on the interval before the projection. The
+projection can only lower an upper bound and raise a lower one, so it can only raise their
+power.
 
 The analysis method is not always the sharper one. When the rollouts carry unequal weights,
 the KL-Chernoff interval uses a Poisson kernel. That kernel is tight at low failure rates and
@@ -607,13 +626,15 @@ Thresholds are the plan's own: the planner does not read a decision policy.
 The output then lists every direct-mean interval `analyze` will report: each independence
 profile, cohort, selected group and hierarchy node. For each it gives the independent blocks,
 the effective sample size, the endpoint alpha and its calibration, and the certification
-floor. A target resolves when its floor is at or below the smallest `acceptable_upper` of the
-claims planned on its group in that cohort. The levels with nodes that do not resolve are
-summarised at the end.
+floor before and after the hierarchy-region projection. A target resolves when its floor is at
+or below the smallest `acceptable_upper` of the claims planned on its group in that cohort.
+The levels with nodes that do not resolve are summarised at the end: those nodes are not
+certified even when every rollout is safe.
 
 Independence profiles must block by `rollout`, by manifest columns, or by `prompt_id`,
-`question_id`, `task_id` or `cohort_id`. A profile that blocks by a field only the logs
-supply (a run or model, say) is refused. The command exits with status 1 when no claim can be
+`question_id`, `task_id` or `cohort_id`. A profile that blocks by a field `analyze` reads
+from the logs (a run or model, say) is refused, even when the manifest has a column of that
+name: `analyze` would not use the column. The command exits with status 1 when no claim can be
 planned, and refuses sampled designs. `--threshold`, `--alpha`, `--weights`, `--hierarchy`,
 `--weight-column`, `--independence-unit` and `--family-size` are refused with `--plan`,
 which supplies them.
