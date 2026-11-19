@@ -177,6 +177,65 @@ def test_planned_claims_use_the_alpha_and_design_analyze_uses(
     assert planned["all_mean"].alpha.endpoint_alpha == pytest.approx(0.05 / 10, rel=1e-12, abs=0)
 
 
+def test_planned_alphas_are_shared_across_cohorts_as_analyze_shares_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """With two cohorts, every cohort's targets take a share of the direct-mean family."""
+    two_cohorts = PLAN.replace(
+        "    match: {model: model/candidate}\n",
+        "    match: {model: model/candidate}\n  baseline:\n    match: {model: model/baseline}\n",
+    ).replace(
+        "claims:\n",
+        "claims:\n"
+        "  - {id: baseline_mean, title: Baseline, cohort: baseline, group: all, measure: mean,\n"
+        "     family: gate, acceptable_upper: 0.3, unacceptable_lower: 0.6}\n",
+    )
+    assert two_cohorts.count("baseline") == 4
+    plan_path = _write(tmp_path, plan=two_cohorts)
+    evals, samples = _frames()
+    log = "/not/a/local/baseline.eval"
+    evals = pd.concat(
+        [evals, evals.assign(eval_id="eval-2", run_id="run-2", log=log, model="model/baseline")],
+        ignore_index=True,
+    )
+    samples = pd.concat(
+        [samples, samples.assign(eval_id="eval-2", log=log, sample_id="b-" + samples["sample_id"])],
+        ignore_index=True,
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: samples,
+    )
+    report = analyze(plan=plan_path, logs="ignored")
+    design = plan_design(load_plan(plan_path), power=0.9)
+    planned = {item.claim_id: item for item in design.claims if isinstance(item, PlannedClaim)}
+    assert set(planned) == {"all_mean", "cyber_mean", "baseline_mean"}
+    for item in planned.values():
+        risk = next(
+            result
+            for result in report.group_risks
+            if result.cohort_id == item.cohort
+            and result.group_id == item.group
+            and result.measure_id == "mean"
+        )
+        direct = next(interval for interval in risk.intervals if interval.role == "primary")
+        assert item.alpha.endpoint_alpha == pytest.approx(direct.alpha_lower, rel=1e-12, abs=0)
+        assert item.alpha.cohort_count == 2
+    # Ten targets in each of two cohorts share the family's 0.05 per direction.
+    assert planned["baseline_mean"].alpha.endpoint_alpha == pytest.approx(
+        0.05 / 20, rel=1e-12, abs=0
+    )
+    assert {item.cohort for item in design.intervals} == {"baseline", "candidate"}
+    result = runner.invoke(app, ["plan", "fixed-design", "--plan", str(plan_path)])
+    output = plain(result.output)
+    assert result.exit_code == 0, output
+    assert "Claim baseline_mean: cohort baseline, group all, measure mean" in output
+    assert "Bonferroni share of 0.05 across 10 targets and 2 cohorts" in output
+
+
 def test_direct_worst_of_k_intervals_count_in_the_direct_mean_family(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -432,6 +491,68 @@ def test_claims_decided_otherwise_are_reported_with_the_reason(tmp_path: Path) -
     assert "'worst' is maximum" in unplanned["all_worst"]
 
 
+def test_claims_of_an_exploratory_plan_are_not_planned(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """analyze reports every claim of an exploratory analysis INCONCLUSIVE, so none is planned."""
+    assert PLAN.count("intent: confirmatory") == 1
+    plan_path = _write(tmp_path, plan=PLAN.replace("intent: confirmatory", "intent: exploratory"))
+    _patch_logs(monkeypatch, all_safe=True)
+    report = analyze(plan=plan_path, logs="ignored")
+    statuses = {claim.claim_id: claim.status for claim in report.claims}
+    assert set(statuses.values()) == {"INCONCLUSIVE"}
+    # A confirmatory analysis of these rollouts would pass all_mean: the claim is planned
+    # there, and only the intent keeps analyze from deciding it.
+    assert {claim.claim_id: claim.descriptive_status for claim in report.claims}["all_mean"] == (
+        "PASS"
+    )
+    claims = plan_claims(load_plan(plan_path), power=0.9)
+    assert {item.claim_id for item in claims} == set(statuses)
+    for item in claims:
+        assert isinstance(item, UnplannedClaim)
+        assert item.reason.startswith("analysis.intent is exploratory")
+    result = runner.invoke(app, ["plan", "fixed-design", "--plan", str(plan_path)])
+    output = plain(result.output)
+    assert result.exit_code == 1, output
+    assert "Claim all_mean: not planned: analysis.intent is exploratory" in output
+    assert "No claim of this plan could be planned." in output
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "code"),
+    [
+        (
+            "{id: direct_means, purpose: simultaneous_intervals, method: bonferroni",
+            "{id: direct_means, purpose: simultaneous_intervals, method: weighted_bonferroni",
+            "PLAN_INVALID_MULTIPLICITY",
+        ),
+        (
+            "{id: mean, type: weighted_mean}",
+            "{id: mean, type: weighted_mean, diagnostic_only: true}",
+            "PLAN_DIAGNOSTIC_GATE",
+        ),
+    ],
+    ids=["weighted_bonferroni_direct_family", "diagnostic_only_measure"],
+)
+def test_a_plan_analyze_finds_invalid_is_refused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, old: str, new: str, code: str
+) -> None:
+    """analyze decides no claim of a plan with errors, so the planner plans none either."""
+    assert PLAN.count(old) == 1
+    plan_path = _write(tmp_path, plan=PLAN.replace(old, new))
+    _patch_logs(monkeypatch)
+    report = analyze(plan=plan_path, logs="ignored")
+    assert code in {item.code for item in report.integrity.diagnostics}
+    assert {claim.status for claim in report.claims} == {"INCONCLUSIVE"}
+    with pytest.raises(ValueError, match=f"report every claim INCONCLUSIVE.*{code}"):
+        plan_claims(load_plan(plan_path), power=0.9)
+    result = runner.invoke(app, ["plan", "fixed-design", "--plan", str(plan_path)])
+    output = plain(result.output)
+    assert result.exit_code == 2, output
+    assert code in output
+    assert "PASS at acceptable_upper" not in output
+
+
 def test_blocks_must_be_manifest_columns(tmp_path: Path) -> None:
     plan_path = _write(
         tmp_path,
@@ -464,18 +585,23 @@ def test_cli_plans_every_claim_from_the_plan(tmp_path: Path) -> None:
 
 
 def test_cli_refuses_options_the_plan_supplies(tmp_path: Path) -> None:
+    """Each of the seven, even at its default value: a given option is never ignored."""
     plan_path = _write(tmp_path)
     for option, value in (
         ("--threshold", "0.5"),
         ("--alpha", "0.05"),
+        ("--weights", "equal_prompt"),
         ("--hierarchy", "task_id,prompt_id"),
+        ("--weight-column", "weight"),
+        ("--independence-unit", "rollout"),
         ("--family-size", "1"),
     ):
         result = runner.invoke(
             app, ["plan", "fixed-design", "--plan", str(plan_path), option, value]
         )
-        assert result.exit_code != 0
-        assert f"{option} cannot be combined with --plan" in plain(result.output)
+        output = plain(result.output)
+        assert result.exit_code == 2, output
+        assert f"{option} cannot be combined with --plan" in output
 
 
 def test_cli_without_a_plan_still_needs_manifest_and_threshold(tmp_path: Path) -> None:
@@ -485,6 +611,40 @@ def test_cli_without_a_plan_still_needs_manifest_and_threshold(tmp_path: Path) -
     )
     assert result.exit_code != 0
     assert "give --manifest and --threshold, or --plan" in plain(result.output)
+
+
+def test_cli_refuses_a_design_manifest_it_cannot_read(tmp_path: Path) -> None:
+    """A missing manifest is a usage error naming the plan field, not exit 1 with a traceback."""
+    plan_path = _write(tmp_path)
+    (tmp_path / "design.csv").unlink()
+    result = runner.invoke(app, ["plan", "fixed-design", "--plan", str(plan_path)])
+    output = plain(result.output)
+    # Exit 1 would read as "no claim could be planned".
+    assert result.exit_code == 2, output
+    assert isinstance(result.exception, SystemExit)
+    assert "cannot read the design manifest" in output
+    assert "which inputs.design_manifest names" in output
+
+
+def test_cli_names_the_design_manifest_it_reads(tmp_path: Path) -> None:
+    """--manifest replaces the plan's manifest, and the output says which one was read."""
+    plan_path = _write(tmp_path)
+    result = runner.invoke(app, ["plan", "fixed-design", "--plan", str(plan_path)])
+    output = plain(result.output)
+    assert result.exit_code == 0, output
+    assert f"Design manifest: {tmp_path.resolve() / 'design.csv'} (inputs.design_manifest)" in (
+        output
+    )
+    other = tmp_path / "other.csv"
+    other.write_text(MANIFEST, encoding="utf-8")
+    result = runner.invoke(
+        app, ["plan", "fixed-design", "--plan", str(plan_path), "--manifest", str(other)]
+    )
+    output = plain(result.output)
+    assert result.exit_code == 0, output
+    assert (
+        f"Design manifest: {other} (--manifest, in place of the plan's inputs.design_manifest)"
+    ) in output
 
 
 def test_cli_fails_when_no_claim_can_be_planned(tmp_path: Path) -> None:
