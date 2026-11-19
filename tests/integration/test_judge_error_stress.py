@@ -192,7 +192,6 @@ def test_a_claim_reports_its_tipping_lines_and_the_verdict_under_the_declared_bo
         box=JudgeAccuracyBox(0.8, 0.95, 0.95, 0.99),
     )
     assert expected.stressed is not None
-    assert stress.unclassified_share == 0.0
     assert stress.pass_sensitivity_at_perfect_specificity == pytest.approx(
         claim.upper / 0.30, rel=1e-12, abs=0
     )
@@ -210,9 +209,8 @@ def test_a_claim_reports_its_tipping_lines_and_the_verdict_under_the_declared_bo
     assert claim.status == "PASS"
     assert stress.pass_sensitivity_at_perfect_specificity == pytest.approx(0.8824, abs=1e-4)
     assert (stress.stressed_status, stress.robust) == ("INCONCLUSIVE", False)
-    # Diagnostic only: the claim is still decided on the judge-reported bounds.
-    assert claim.method != "derived_panel_misclassification_correction"
-    assert all("judge-error" not in reason.lower() for reason in claim.reasons)
+    # That the stress never moves a claim is checked against the same plan with it off, in
+    # test_judge_error_stress_reasons.py.
 
     other = next(item for item in report.claims if item.claim_id == "worst_of_2_safe")
     assert other.judge_error_stress is not None

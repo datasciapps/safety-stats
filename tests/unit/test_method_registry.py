@@ -12,7 +12,7 @@ from inspect_safety_stats.config.models import (
     ComparisonSpec,
     DirectMeanIntervalsSpec,
 )
-from inspect_safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES
+from inspect_safety_stats.stats.direct_mean import COMPARISON_ENGINES, DIRECT_MEAN_ENGINES
 
 
 def test_the_dispatch_table_covers_exactly_the_registered_methods() -> None:
@@ -58,3 +58,9 @@ def test_plan_specs_accept_exactly_their_registered_methods(
     if field == "reference_methods":
         (annotation,) = get_args(annotation)
     assert get_args(annotation) == methods
+
+
+def test_the_comparison_engines_are_the_comparison_methods_of_the_dispatch_table() -> None:
+    assert tuple(COMPARISON_ENGINES) == COMPARISON_METHODS
+    for method in COMPARISON_METHODS:
+        assert COMPARISON_ENGINES[method] is DIRECT_MEAN_ENGINES[method]

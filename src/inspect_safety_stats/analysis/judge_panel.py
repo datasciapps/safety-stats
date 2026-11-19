@@ -8,7 +8,13 @@ from typing import Any
 
 from inspect_safety_stats.analysis.judge_calibration import JUDGE_CORRECTABLE_MEASURES
 from inspect_safety_stats.analysis.results import RiskRows
-from inspect_safety_stats.config.models import AnalysisPlan, JudgeAccuracySpec, JudgeSpec
+from inspect_safety_stats.config.models import (
+    AnalysisPlan,
+    JudgeAccuracySpec,
+    JudgeSpec,
+    OutcomeMappingSpec,
+)
+from inspect_safety_stats.ingest.outcomes import _tag, map_outcome
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.reports import (
     Diagnostic,
@@ -165,8 +171,11 @@ def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, 
     }
     if plan.inputs.panel_groups is not None:
         prompts_by_group = {group.id: set(group.prompt_ids) for group in data.groups}
-        panel["groups"] = list(plan.inputs.panel_groups)
-        for group_id in plan.inputs.panel_groups:
+        # A group the plan does not declare is reported as PLAN_UNKNOWN_REFERENCE and has no
+        # rollouts to break down, so the breakdown lists the declared groups only.
+        listed = [item for item in plan.inputs.panel_groups if item in prompts_by_group]
+        panel["groups"] = listed
+        for group_id in listed:
             by_judge, by_composite, by_pair = section(prompts_by_group[group_id])
             for entry in judges:
                 entry.setdefault("groups", {})[group_id] = by_judge[entry["id"]]
@@ -214,16 +223,64 @@ def _declared_scope(plan: AnalysisPlan, accuracies: list[JudgeAccuracySpec]) -> 
     ]
 
 
-# A declared accuracy box, the verdict it is declared for, and the groups it holds on (None: all).
-_DeclaredBox = tuple[JudgeAccuracyBox, str, list[str] | None]
+@dataclass(frozen=True)
+class _DeclaredBox:
+    """A declared accuracy box, the verdict it is declared for, and the groups it holds on."""
+
+    box: JudgeAccuracyBox
+    # The verdict, as ``judge:<id>`` or ``composite:<id>``.
+    source: str
+    # None when the box holds on every rollout.
+    groups: tuple[str, ...] | None
+
+    def holds_on(self, group_id: str) -> bool:
+        return self.groups is None or group_id in self.groups
 
 
-def _primary_accuracy_box(plan: AnalysisPlan) -> _DeclaredBox | None:
+def _same_classification(first: OutcomeMappingSpec, second: OutcomeMappingSpec) -> bool:
+    """Whether two mappings classify every score value alike, as ``map_outcome`` reads them."""
+
+    if first.failure_if is not None or second.failure_if is not None:
+        return first.failure_if == second.failure_if
+    return all(
+        {_tag(value) for value in getattr(first, field) or []}
+        == {_tag(value) for value in getattr(second, field) or []}
+        for field in ("failure_values", "safe_values")
+    )
+
+
+def _reads_verdict_as_is(mapping: OutcomeMappingSpec) -> bool:
+    """Whether a mapping counts a composite's true verdict as failure and false as safe."""
+
+    try:
+        return map_outcome(True, mapping) is True and map_outcome(False, mapping) is False
+    except ValueError:
+        return False
+
+
+def _primary_accuracy_box(
+    plan: AnalysisPlan, diagnostics: list[Diagnostic]
+) -> _DeclaredBox | None:
     """The declared accuracy box of the verdict that is the primary outcome, if it has one.
 
-    That is a declared judge whose score is the primary score, or an ``any`` or ``all``
-    composite whose judges all declare accuracy ranges. A ``majority`` composite has none.
+    That is the one declared judge with declared accuracy that reads the primary score with
+    the primary mapping, or an ``any`` or ``all`` composite whose judges all declare accuracy
+    ranges and whose verdict the primary mapping reads as it is. A ``majority`` composite has
+    none. A declared box that may describe another verdict is not applied: a judge that reads
+    the primary score under another mapping, several judges that read it alike, or a primary
+    mapping that does not read a composite's verdict as it is. ``JUDGE_STRESS_BOX_UNMATCHED``
+    then says so.
     """
+
+    def unmatched(message: str) -> None:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_STRESS_BOX_UNMATCHED",
+                severity="WARNING",
+                message=message + ", so the judge-error stress applies no declared box",
+                scope=plan_scope("inputs", "score"),
+            )
+        )
 
     name = plan.inputs.score.name
     composite = next((item for item in plan.inputs.composites if item.id == name), None)
@@ -233,18 +290,51 @@ def _primary_accuracy_box(plan: AnalysisPlan) -> _DeclaredBox | None:
         accuracies = [member.accuracy for member in members if member.accuracy is not None]
         if composite.rule == "majority" or len(accuracies) != len(members):
             return None
-        return (
-            _composite_box(members, accuracies, composite.rule),
-            f"composite:{composite.id}",
-            _declared_scope(plan, accuracies),
+        if not _reads_verdict_as_is(plan.inputs.score.mapping):
+            unmatched(
+                f"the primary mapping does not count composite {composite.id!r}'s true verdict "
+                "as failure and its false verdict as safe"
+            )
+            return None
+        groups = _declared_scope(plan, accuracies)
+        return _DeclaredBox(
+            box=_composite_box(members, accuracies, composite.rule),
+            source=f"composite:{composite.id}",
+            groups=None if groups is None else tuple(groups),
         )
-    judge = next((item for item in plan.inputs.judges if item.score.name == name), None)
-    if judge is None or judge.accuracy is None:
+    declared = [
+        (judge, judge.accuracy)
+        for judge in plan.inputs.judges
+        if judge.score.name == name and judge.accuracy is not None
+    ]
+    alike = [
+        (judge, accuracy)
+        for judge, accuracy in declared
+        if _same_classification(judge.score.mapping, plan.inputs.score.mapping)
+    ]
+    if len(alike) > 1:
+        unmatched(
+            "judges "
+            + ", ".join(repr(judge.id) for judge, _ in alike)
+            + f" all read the primary score {name!r} with the primary mapping and declare "
+            "accuracy, and their boxes need not agree"
+        )
         return None
-    return (
-        _declared_box(judge.accuracy),
-        f"judge:{judge.id}",
-        _declared_scope(plan, [judge.accuracy]),
+    if not alike:
+        if declared:
+            unmatched(
+                "judge(s) "
+                + ", ".join(repr(judge.id) for judge, _ in declared)
+                + f" declare accuracy for score {name!r} under a mapping other than the "
+                "primary one"
+            )
+        return None
+    ((judge, accuracy),) = alike
+    groups = _declared_scope(plan, [accuracy])
+    return _DeclaredBox(
+        box=_declared_box(accuracy),
+        source=f"judge:{judge.id}",
+        groups=None if groups is None else tuple(groups),
     )
 
 

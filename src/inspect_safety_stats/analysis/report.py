@@ -23,11 +23,13 @@ from inspect_safety_stats.schema.reports import (
     Diagnostic,
     JudgeCalibrationPresentation,
     JudgeCohortBoxRecord,
+    JudgeErrorStressResult,
     JudgeScenarioRecord,
     RateRangeRecord,
     ReportPresentation,
     SafetyReport,
     VerdictRange,
+    design_levels,
 )
 from inspect_safety_stats.version import __version__
 
@@ -57,14 +59,19 @@ def _policy_events(plan: AnalysisPlan, data: NormalizedData) -> list[dict[str, A
 
 
 def _resolved_design(data: NormalizedData, hierarchy: list[str]) -> list[dict[str, Any]]:
+    """The rows of ``design.prompts``, with the keys of ``design_columns``.
+
+    The report stores them with sorted keys; ``design.resolved.csv`` orders them.
+    """
+
     manifest = data.manifest.set_index("prompt_id")
-    hierarchy_columns = list(dict.fromkeys([*hierarchy, "task_id", "question_id", "prompt_id"]))
+    levels = design_levels(hierarchy)
     rows: list[dict[str, Any]] = []
     for group in sorted(data.groups, key=lambda item: item.id):
         for prompt_id in group.prompt_ids:
             item = manifest.loc[prompt_id]
             row: dict[str, Any] = {"group_id": group.id}
-            for column in hierarchy_columns:
+            for column in levels:
                 row[column] = prompt_id if column == "prompt_id" else item[column]
             row["weight"] = group.weights[prompt_id]
             rows.append(row)
@@ -251,6 +258,13 @@ def _unread_input_report(
                 else f"risk:{claim.cohort}:{claim.group}:{claim.measure}"
             ],
             reasons=["The analysis input could not be read; see the INGEST_FAILED diagnostic."],
+            judge_error_stress=(
+                JudgeErrorStressResult(
+                    applicable=False, reason="the analysis input could not be read"
+                )
+                if plan.report.judge_error_stress
+                else None
+            ),
         )
         for claim in sorted(plan.claims, key=lambda item: item.id)
     ]

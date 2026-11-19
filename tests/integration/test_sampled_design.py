@@ -6,7 +6,10 @@ estimand remains the frame-wide weighted mean rather than the realized sample me
 
 from __future__ import annotations
 
+import json
 import random
+import shutil
+import subprocess
 from pathlib import Path
 
 import pandas as pd
@@ -14,6 +17,8 @@ import pytest
 
 from inspect_safety_stats import analyze
 from inspect_safety_stats.ingest.pilot import draw_pilot
+from inspect_safety_stats.report import visualization
+from tests.template_functions import function_source
 
 FRAME_SIZE = 200
 INCLUSION = 0.3
@@ -197,6 +202,100 @@ def test_the_report_scope_names_the_frame_rather_than_a_fixed_set(
     assert report.scope["what_results_establish"].endswith("docs/what-results-establish.md")
 
 
+def test_the_report_text_speaks_of_the_frame_rather_than_a_fixed_set(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The scope statement said the frame while the report around it still said fixed prompts."""
+    plan_path, evals, samples = _write_frame(tmp_path)
+    _patch(monkeypatch, evals, samples)
+
+    output = analyze(plan=plan_path, logs="ignored").write(tmp_path / "report")
+
+    summary = (output / "report.md").read_text(encoding="utf-8")
+    assert f"\n{FRAME_SIZE} frame items · " in summary
+    assert (
+        "Intervals bound the risk over the declared item frame with 95.0% simultaneous "
+        "coverage, allowing for both the draw of items from the frame and the rollouts of the "
+        "drawn items. Each drawn item enters as one observation, so the rollouts of one item "
+        "may depend on each other arbitrarily." in summary
+    )
+    assert "prompt-level sensitivity allows" not in summary
+    full = (output / "report-full.md").read_text(encoding="utf-8")
+    assert "\n## Sampled-design risk measures\n" in full
+    assert "Node estimates use the declared design weights over the frame, normalized" in full
+    assert "fixed prompts" not in summary
+    assert "Fixed-design risk measures" not in full
+    assert "fixed-design weights" not in full
+
+
+_DESIGN_TEXT_DRIVER = """
+const fs = require("fs");
+const [functionsPath, reportPath] = process.argv.slice(2);
+const api = new Function(fs.readFileSync(functionsPath, "utf8") + "\\nreturn {designText};")();
+const report = JSON.parse(fs.readFileSync(reportPath, "utf8"));
+process.stdout.write(JSON.stringify(api.designText(report)));
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="Node.js is not installed")
+@pytest.mark.parametrize("design", ["sampled", "fixed"])
+def test_the_html_report_names_the_design_its_values_are_about(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, design: str
+) -> None:
+    plan_path, evals, samples = _write_frame(tmp_path)
+    if design == "fixed":
+        # The same inputs analysed as a fixed design (it reports the undrawn items missing).
+        text = plan_path.read_text(encoding="utf-8").replace("  type: sampled\n", "  type: fixed\n")
+        plan_path.write_text(
+            text.replace("  inclusion_probability_column: inclusion_probability\n", ""),
+            encoding="utf-8",
+        )
+    _patch(monkeypatch, evals, samples)
+    report = analyze(plan=plan_path, logs="ignored")
+    template = visualization._TEMPLATE.read_text(encoding="utf-8")
+    (tmp_path / "functions.js").write_text(
+        function_source(template, "designText"), encoding="utf-8"
+    )
+    (tmp_path / "report.json").write_text(
+        json.dumps(report.model_dump(mode="json")), encoding="utf-8"
+    )
+    (tmp_path / "driver.js").write_text(_DESIGN_TEXT_DRIVER, encoding="utf-8")
+    node = shutil.which("node")
+    assert node is not None
+
+    completed = subprocess.run(
+        [
+            node,
+            str(tmp_path / "driver.js"),
+            str(tmp_path / "functions.js"),
+            str(tmp_path / "report.json"),
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        check=True,
+    )
+
+    text = json.loads(completed.stdout)
+    if design == "sampled":
+        assert text == {
+            "riskHeading": "Sampled-design risk measures",
+            "prompts": "Frame items",
+            "footer": "Values are design-based estimates for the declared item frame; "
+            "hierarchy filters do not create claims beyond the frame.",
+        }
+    else:
+        # A fixed design keeps its wording.
+        assert text == {
+            "riskHeading": "Fixed-design risk measures",
+            "prompts": "Fixed prompts",
+            "footer": "Values are fixed-design summaries; hierarchy filters do not create "
+            "population-level claims.",
+        }
+        # The static heading, shown before the script runs, is the fixed design's.
+        assert '<h2 id="risk-heading">Fixed-design risk measures</h2>' in template
+
+
 def test_unsampled_hierarchy_nodes_warn_rather_than_invalidate(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -251,6 +350,55 @@ def test_a_truncated_run_is_caught_rather_than_silently_biasing(
     assert "SAMPLE_SIZE_IMPLAUSIBLE" in codes
     assert codes["SAMPLE_SIZE_IMPLAUSIBLE"].severity == "ERROR"
     assert report.integrity.status == "invalid"
+
+
+def test_a_transported_judge_calibration_bounds_the_frame_mean(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Transported mode runs on a sampled design, and bounds the frame mean.
+
+    The frame mean is a weighted mean of every frame prompt's risk, so dividing its upper
+    bound by the published sensitivity bounds its true risk when transport holds on every
+    frame prompt.
+    """
+    from scipy.stats import beta
+
+    plan_path, evals, samples = _write_frame(tmp_path)
+    text = plan_path.read_text(encoding="utf-8")
+    plan_path.write_text(
+        text.replace(
+            "inputs:\n",
+            "inputs:\n"
+            "  judge_calibration:\n"
+            "    mode: transported\n"
+            "    published_set:\n"
+            "      name: Published judge validation set\n"
+            "      source: https://example.org/judge-validation\n"
+            "      judge: judge-model-v1\n"
+            "      rubric: harmful-behaviour rubric v2\n"
+            "      human_unsafe: 120\n"
+            "      judge_flagged_unsafe: 100\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    _patch(monkeypatch, evals, samples)
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert report.integrity.status == "valid"
+    mean = next(row for row in report.group_risks if row.measure_id == "mean")
+    primary = next(item for item in mean.intervals if item.role == "primary")
+    assert primary.interval_id == "horvitz_thompson_weighted_kl_chernoff"
+    (interval,) = [
+        item for item in mean.intervals if item.interval_id == "judge_corrected_transported"
+    ]
+    sensitivity_lower = float(beta.ppf(0.05, 100, 120 - 100 + 1))
+    assert mean.upper is not None
+    assert (interval.lower, interval.eligibility) == (0.0, "diagnostic")
+    assert interval.upper == pytest.approx(
+        min(1.0, mean.upper / sensitivity_lower), rel=1e-12, abs=0
+    )
 
 
 def test_fixed_designs_are_unaffected(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -364,3 +512,73 @@ def test_a_drawn_pilot_frame_is_analysed_as_a_fixed_size_design(
     primary = next(item for item in mean.intervals if item.role == "primary")
     assert primary.interval_id.startswith("stratified_without_replacement_")
     assert primary.independent_block_count == 24
+
+
+@pytest.mark.parametrize("fixed_size", [False, True], ids=["poisson", "fixed_size"])
+@pytest.mark.parametrize(
+    ("methods", "betting_role"),
+    [
+        ("method: weighted_betting\n    reference_methods: [weighted_hoeffding]", "primary"),
+        (
+            "method: weighted_kl_chernoff\n"
+            "    reference_methods: [weighted_hoeffding, weighted_betting]",
+            "reference",
+        ),
+    ],
+    ids=["betting_primary", "betting_reference"],
+)
+def test_sampled_betting_rows_state_their_own_construction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fixed_size: bool,
+    methods: str,
+    betting_role: str,
+) -> None:
+    """A sampled design's betting row is labelled experimental and argues its own validity.
+
+    It used to carry only the design assumptions of the other engines, with no kernel and no
+    experimental label, and a fixed-size row justified the without-replacement reduction by
+    a moment generating function that betting does not bound.
+    """
+    plan_path, evals, samples = _write_frame(tmp_path, fixed_size=fixed_size)
+    plan_path.write_text(
+        plan_path.read_text(encoding="utf-8").replace(
+            "method: weighted_kl_chernoff\n    reference_methods: [weighted_hoeffding]", methods
+        ),
+        encoding="utf-8",
+    )
+    _patch(monkeypatch, evals, samples)
+
+    report = analyze(plan=plan_path, logs="ignored")
+
+    assert report.integrity.status == "valid", report.integrity.diagnostics
+    rows = [
+        *(row for row in report.group_risks if row.measure_id == "mean"),
+        *(row for row in report.hierarchy_risks if row.lower is not None),
+    ]
+    assert len(rows) > 1
+    estimator = "stratified_without_replacement" if fixed_size else "horvitz_thompson"
+    mgf_reduction = "under which a convex function of a without-replacement sum"
+    for row in rows:
+        betting = next(item for item in row.intervals if item.method == "weighted_betting")
+        assert betting.interval_id == f"{estimator}_weighted_betting"
+        assert betting.role == betting_role
+        assert betting.chernoff_kernel == "common_bet_mixture_jensen_exponent"
+        assert betting.assumptions[-1].startswith("Experimental: a common betting fraction")
+        assert sum("xperimental" in text for text in betting.assumptions) == 1
+        if fixed_size:
+            assert any(
+                "Hoeffding's reduction on the capital of each fixed betting fraction" in text
+                for text in betting.assumptions
+            )
+        assert not any(mgf_reduction in text for text in betting.assumptions)
+        # The other engines' rows keep their own text, with no kernel and no label.
+        for other in row.intervals:
+            if other.method == "weighted_betting" or other.independence_profile != "frame_item":
+                continue
+            assert other.chernoff_kernel is None
+            assert not any("xperimental" in text for text in other.assumptions)
+            assert any(mgf_reduction in text for text in other.assumptions) == fixed_size
+
+    full = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    assert "Experimental: a common betting fraction" in full

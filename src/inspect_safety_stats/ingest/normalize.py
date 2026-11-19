@@ -9,7 +9,9 @@ missing-score policies, duplicates, completeness and sampled-design checks.
 
 from __future__ import annotations
 
+import functools
 import math
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from typing import Any, Literal
 
@@ -22,6 +24,7 @@ from inspect_safety_stats.config.models import ATTRIBUTE_PREFIX, AnalysisPlan
 from inspect_safety_stats.config.registration import RegistrationReceipt
 from inspect_safety_stats.ingest.manifest import (
     ResolvedGroup,
+    check_zero_tolerance_field,
     load_inclusion_probabilities,
     load_manifest,
     plan_manifest_columns,
@@ -104,8 +107,11 @@ def _run_field(plan: AnalysisPlan, run: RunRecord, name: str) -> Any:
 
 def _rollout_field(
     plan: AnalysisPlan, rollout: RolloutRecord, run: RunRecord, name: str
-) -> Any:
-    """The value of a ``rollout_key`` field: the rollout's, else its run's, else None."""
+) -> tuple[Any, bool]:
+    """The value of a ``rollout_key`` field: the rollout's, else its run's, else None.
+
+    The flag says whether the value is the run's.
+    """
     if plan.schema_version == "3.0" and not name.startswith(ATTRIBUTE_PREFIX):
         neutral = {
             "run_key": rollout.run_key,
@@ -113,16 +119,30 @@ def _rollout_field(
             "repeat": rollout.repeat,
             "rollout_id": rollout.sample_id,
         }
-        return _native(neutral[name])
+        return _native(neutral[name]), False
     if plan.schema_version == "3.0":
         name = name.removeprefix(ATTRIBUTE_PREFIX)
     elif name == "id":
-        return rollout.item_id
+        return rollout.item_id, False
     if name in rollout.attributes:
-        return _native(rollout.attributes[name])
+        return _native(rollout.attributes[name]), False
     if name in run.attributes:
-        return _native(run.attributes[name])
-    return None
+        return _native(run.attributes[name]), True
+    return None, False
+
+
+@dataclass(frozen=True)
+class _RunValue:
+    """A run's value in a rollout key, shown by the name of its field.
+
+    A run's fields hold its configuration: the generate config, whose ``extra_headers`` can
+    carry credentials, the base URL, the model arguments. No diagnostic shows their values.
+    """
+
+    field: str
+
+    def __repr__(self) -> str:
+        return f"<{self.field} of the run>"
 
 
 def _match_cohorts(run: RunRecord, plan: AnalysisPlan) -> list[str]:
@@ -451,15 +471,20 @@ def normalize(
         sample_id, identity = rollout.sample_id, rollout.identity
         run = run_records[run_key]
         cohort_id = run_cohorts[run_key]
-        rollout_key = tuple(
-            _rollout_field(plan, rollout, run, field) for field in plan.design.rollout_key
-        )
+        key_fields = [
+            (field, *_rollout_field(plan, rollout, run, field))
+            for field in plan.design.rollout_key
+        ]
+        rollout_key = tuple(value for _, value, _ in key_fields)
         if rollout_key in rollout_keys:
+            shown = tuple(
+                _RunValue(field) if of_run else value for field, value, of_run in key_fields
+            )
             diagnostics.append(
                 Diagnostic(
                     code="ROLLOUT_DUPLICATE",
                     severity="ERROR",
-                    message=f"duplicate rollout key {rollout_key!r}",
+                    message=f"duplicate rollout key {shown!r}",
                     scope=scope_path("runs", run_key, "prompts", prompt_id),
                     details={"prompt_id": prompt_id},
                 )
@@ -959,22 +984,39 @@ def _receipt_timing(receipt: RegistrationReceipt, observed: list[Any]) -> list[D
     ]
 
 
-def read_inputs(
-    plan: AnalysisPlan, source: EvaluationSource
-) -> tuple[pd.DataFrame, list[ResolvedGroup], SourceData]:
+@dataclass(frozen=True)
+class RawInputs:
+    """The plan's design manifest and groups and the source's runs and rollouts, as read and
+    before :func:`normalize` applies the plan to them."""
+
+    manifest: pd.DataFrame
+    groups: list[ResolvedGroup]
+    source: SourceData
+
+
+def read_inputs(plan: AnalysisPlan, source: EvaluationSource) -> RawInputs:
     """Load the plan's design manifest and groups, and read the source, without normalizing.
 
-    Split from ``ingest`` so a caller can normalize what was read more than once.
+    Split from ``ingest`` so a caller can normalize what was read more than once. Each
+    normalization hashes the logs it selects; the source returned remembers each log's hash,
+    so a log is hashed once however often what was read is normalized.
     """
 
     # ORDER MATTERS: the manifest is loaded before the source is read, so a broken manifest
     # is reported before any log is opened, as it always was.
     manifest = load_manifest(plan.inputs.design_manifest, plan_manifest_columns(plan))
+    check_zero_tolerance_field(plan, manifest)
     groups = resolve_groups(plan, manifest)
-    return manifest, groups, source.read()
+    read = source.read()
+    return RawInputs(
+        manifest=manifest,
+        groups=groups,
+        source=replace(read, source_sha256=functools.cache(read.source_sha256)),
+    )
 
 
 def ingest(plan: AnalysisPlan, source: EvaluationSource) -> NormalizedData:
     """Load the plan's design manifest, read the source and normalize it."""
 
-    return normalize(plan, *read_inputs(plan, source))
+    raw = read_inputs(plan, source)
+    return normalize(plan, raw.manifest, raw.groups, raw.source)

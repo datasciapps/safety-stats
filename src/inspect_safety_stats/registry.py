@@ -1069,8 +1069,10 @@ _CODES: tuple[CodeEntry, ...] = (
             "declared fine stratum, of a size fixed independently of the labels."
         ),
         consequence=(
-            "The validated calibration uses exact hypergeometric bounds over the declared fine "
-            "strata, and the asymptotic delta-method reference interval is not reported."
+            "The validated calibration bounds each judge stratum's truly unsafe count with "
+            "exact hypergeometric bounds over the declared fine strata, and its conditional "
+            "accuracy at those counts with Clopper-Pearson bounds; the asymptotic delta-method "
+            "reference interval is not reported."
         ),
         remedy=(
             "None needed when the labels were drawn by the declared strata; otherwise set "
@@ -1116,6 +1118,25 @@ _CODES: tuple[CodeEntry, ...] = (
             "or use a more accurate judge, and rerun the analysis."
         ),
         assumptions=("judge_accuracy",),
+    ),
+    CodeEntry(
+        code="JUDGE_CONFIGURATION_UNREADABLE",
+        severities=("WARNING",),
+        source="logs",
+        effect="recorded",
+        assumption=(
+            "With outputs.judge_claims, every run records its scorers and model roles, when it "
+            "records them at all, as JSON: a list of scorers and a mapping from each role to a "
+            "configuration with a model id."
+        ),
+        consequence=(
+            "Nothing is computed differently and integrity is unchanged; the judges' recorded "
+            "configurations leave out the field of that run."
+        ),
+        remedy=(
+            "Record the run's scorers and model_roles as Inspect logs record them, or leave "
+            "the field out of the rollout files' runs."
+        ),
     ),
     CodeEntry(
         code="JUDGE_CORRECTED_CLAIMS",
@@ -1168,8 +1189,8 @@ _CODES: tuple[CodeEntry, ...] = (
         remedy=(
             "On the fixed-design path, use a comparison whose primary interval exposes both arm "
             "bounds (comparisons[].method: weighted_kl_chernoff, or a comparison_sets entry) and "
-            "resolve any calibration refusal for either cohort; generative comparisons have no "
-            "correction."
+            "resolve any calibration refusal for either cohort. Generative comparisons, and "
+            "comparisons under inputs.judge_calibration.mode: transported, have no correction."
         ),
     ),
     CodeEntry(
@@ -1327,6 +1348,25 @@ _CODES: tuple[CodeEntry, ...] = (
             "Label rollouts from the named judge stratum in inputs.judge_calibration."
             "validation_manifest (judge_calibration.validation_manifest in a generative plan) "
             "and rerun the analysis."
+        ),
+    ),
+    CodeEntry(
+        code="JUDGE_STRESS_BOX_UNMATCHED",
+        severities=("WARNING",),
+        source="plan",
+        effect="withheld",
+        assumption=(
+            "The declared accuracy box the judge-error stress uses describes the primary "
+            "verdict: one judge with declared accuracy reads the primary score with the primary "
+            "mapping, or the primary mapping reads a composite's verdict as it is."
+        ),
+        consequence=(
+            "The judge-error stress reports its tipping lines but no verdict over a declared box."
+        ),
+        remedy=(
+            "Declare accuracy on exactly one judge whose inputs.judges[].score has the primary "
+            "score's name and mapping, or map the primary composite's true verdict to failure "
+            "and its false verdict to safe."
         ),
     ),
     CodeEntry(
@@ -1816,6 +1856,24 @@ _CODES: tuple[CodeEntry, ...] = (
         remedy="Set outputs.direct_mean_intervals.enabled: true, with its family.",
     ),
     CodeEntry(
+        code="PLAN_SAMPLED_SENSITIVITY_PROFILES",
+        severities=("WARNING",),
+        source="plan",
+        effect="withheld",
+        assumption=(
+            "A sampled design's frame intervals take the frame item as the independent block, "
+            "whatever independence profiles the plan declares."
+        ),
+        consequence=(
+            "No interval and no claim verdict is reported under the declared sensitivity "
+            "profiles; the frame intervals and the claims' statuses are unaffected."
+        ),
+        remedy=(
+            "Remove outputs.direct_mean_intervals.independence.sensitivities under design.type: "
+            "sampled, or analyse the prompts as a fixed design to see verdicts under them."
+        ),
+    ),
+    CodeEntry(
         code="PLAN_SELF_DECLARED",
         severities=("WARNING",),
         source="registration",
@@ -1882,7 +1940,11 @@ _CODES: tuple[CodeEntry, ...] = (
             "intervals enabled without frontier_sidak calibration and a primary independence "
             "profile that blocks by rollout."
         ),
-        consequence="The integrity status is invalid, so no claim can pass.",
+        consequence=(
+            "The integrity status is invalid, so no claim can pass. The measure's group rows "
+            "get no direct interval: they keep the propagated prompt envelope as primary and "
+            "warn why."
+        ),
         remedy=(
             "Set design.type: fixed, outputs.direct_mean_intervals.enabled: true with "
             "hierarchy_calibration: flat_bonferroni and a primary profile blocking by rollout; "

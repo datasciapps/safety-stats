@@ -389,18 +389,29 @@ def _system_prompt(plan: GenerativePlan, path_values: Mapping[str, str]) -> str 
 
 
 def _attach_system_prompt(
-    outcome: RewriteOutcome, system_prompt: str | None, unit_id: str
+    plan: GenerativePlan, outcome: RewriteOutcome, system_prompt: str | None, unit_id: str
 ) -> tuple[ChatTurn, ...]:
-    """The accepted conversation: the kernel's turns behind the arm's system prompt."""
+    """The accepted conversation: the kernel's turns behind the arm's system prompt.
+
+    With ``rewrite.system_prompts`` declared, a system turn the kernel wrote stops the run
+    on every path, one whose value's text is empty included: that value declares no system
+    prompt, and a turn of the kernel's choosing would be counted under it.
+    """
 
     turns = outcome.messages or (ChatTurn("user", str(outcome.prompt)),)
-    if system_prompt is None:
+    if plan.rewrite.system_prompts is None:
         return turns
+    # ORDER MATTERS: this check comes before the return for an empty text below, or a
+    # system turn the kernel wrote on that value's paths would be accepted.
     if turns[0].role == "system":
         raise ValueError(
             f"the kernel wrote a system turn for unit {unit_id}, but the plan's "
-            "rewrite.system_prompts attaches the system prompt itself"
+            "rewrite.system_prompts attaches the system prompt itself, and none where "
+            "the arm value's text is empty; the kernel must write user and assistant "
+            "turns only"
         )
+    if system_prompt is None:
+        return turns
     return (ChatTurn("system", system_prompt), *turns)
 
 
@@ -586,7 +597,7 @@ def execute_rewrites(
                     continue
             turns: tuple[ChatTurn, ...] | None = None
             if plan.rewrite.stores_conversations():
-                turns = _attach_system_prompt(outcome, system_prompt, unit_id)
+                turns = _attach_system_prompt(plan, outcome, system_prompt, unit_id)
                 candidate = encode_conversation(turns)
             else:
                 candidate = outcome.text

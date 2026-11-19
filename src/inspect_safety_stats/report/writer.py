@@ -27,6 +27,7 @@ from inspect_safety_stats.schema.reports import (
     RiskIntervalResult,
     SafetyReport,
     VerdictRange,
+    design_columns,
     mapping_results,
 )
 
@@ -43,6 +44,27 @@ def _number(value: float | None, places: int) -> str:
     if value is None:
         return "—"
     return f"{value:.{places}f}"
+
+
+def _published_set_lines(report: SafetyReport, places: int) -> list[str]:
+    """The published validation set behind a transported sensitivity, as report lines."""
+
+    summary = report.provenance.get("judge_calibration") or {}
+    published = summary.get("published_set") or {}
+    if not published:
+        return []
+    return [
+        "",
+        "Published validation set behind the transported sensitivity:",
+        "",
+        f"- Set: {_escape(published.get('name'))} ({_escape(published.get('source'))})",
+        f"- Judge: {_escape(published.get('judge'))}; rubric: "
+        f"{_escape(published.get('rubric'))}",
+        f"- Judge flagged {published.get('judge_flagged_unsafe')} of "
+        f"{published.get('human_unsafe')} human-unsafe items; sensitivity at least "
+        f"{_number(summary.get('sensitivity_lower'), places)} (one-sided Clopper-Pearson, "
+        f"alpha {_number(published.get('sensitivity_alpha'), places)})",
+    ]
 
 
 def _verdict_range(verdict_range: VerdictRange | None, places: int) -> str:
@@ -79,7 +101,9 @@ def _verdict_range(verdict_range: VerdictRange | None, places: int) -> str:
         exact = Decimal(repr(value))
         shown = exact.quantize(step, rounding=rounding)
         symbol = symbols[0] if strict and shown == exact else symbols[1]
-        parts.append(f"{verdict} at {name} {symbol} {shown}")
+        # Fixed-point like the other columns: str() of a Decimal turns scientific below 1E-6,
+        # which a zero lower bound reaches at seven or more places.
+        parts.append(f"{verdict} at {name} {symbol} {shown:f}")
     return "; ".join(parts) if parts else "INCONCLUSIVE at every threshold"
 
 
@@ -183,10 +207,11 @@ def _judge_error_stress_lines(
             "Se and specificity Sp applied unchanged to every rollout, the verdict holds for "
             "**true** risk only on one side of a line in (Se, Sp). The columns give where that "
             "line meets the edges of perfect specificity and perfect sensitivity; a value above "
-            "1 or below 0 means the condition holds along the whole edge or nowhere on it. "
-            "Unclassified rollouts keep their conservative completion. Where the primary "
-            "outcome's judge declares accuracy ranges, the verdict on true risk over that box "
-            "is shown too. Declared ranges are assumptions: nothing here moves a claim.",
+            "1, or a dash, means the condition holds along the whole edge or nowhere on it. The "
+            "bounds are inverted whole: an unclassified rollout counts as judge-unsafe at the "
+            "upper bound and judge-safe at the lower, which is conservative on both sides. Where "
+            "the primary outcome's judge declares accuracy ranges, the verdict on true risk over "
+            "that box is shown too. Declared ranges are assumptions: nothing here moves a claim.",
             "",
             (
                 "| Claim | Status | Judge-reported bounds | PASS: Se at least (Sp = 1) | "
@@ -252,9 +277,13 @@ def _judge_error_stress_lines(
 
 
 def _claim_status(claim: Any) -> str:
-    if claim.descriptive_status is None:
-        return f"`{claim.status}`"
-    return f"`{claim.status}` (descriptive: `{claim.descriptive_status}`)"
+    return _status_text(claim.status, claim.descriptive_status)
+
+
+def _status_text(status: str, descriptive_status: str | None) -> str:
+    if descriptive_status is None:
+        return f"`{status}`"
+    return f"`{status}` (descriptive: `{descriptive_status}`)"
 
 
 _MAPPING_KIND_ORDER = {"group_risk": 0, "comparison": 1, "claim": 2}
@@ -455,15 +484,28 @@ def _judge_claim_lines(
         "",
         "Each judge's rows are the claims this plan gives with that judge's verdicts as its "
         "primary outcome, over the same rollouts, without the panel or the judge calibration. "
-        "They compare judge configurations. The report's decision rests on the primary outcome "
-        "alone, and these rows are not adjusted for their number.",
+        "Their bounds are on that judge's reported risk. Under a validated judge calibration, "
+        "which makes the plan's thresholds ones on true risk, every row is `INCONCLUSIVE`. "
+        "A judge's run handles missing and errored verdicts by that judge's own "
+        "`score.missing` and `score.errors`, not the primary outcome's, and counts "
+        "content-filter stops and unscored answers cut at the token limit as the primary "
+        "outcome does, unless the judge's score sets its own `content_filter_stops` or "
+        "`token_limit`. "
+        "When the report's integrity is invalid, every judge's run is `invalid` and every row "
+        "`INCONCLUSIVE`, whatever the judge's own diagnostics below. "
+        "The rows compare judge configurations. The report's decision rests on the primary "
+        "outcome alone, and these rows are not adjusted for their number.",
         "",
         f"| Judge | Integrity | Claim | {status_header}Estimate | Lower | Upper | Method |",
         f"|---|---|---|{status_rule}---:|---:|---:|---|",
     ]
     for judge in judges:
         for claim in judge["claims"]:
-            status = f"`{claim['status']}` | " if include_decisions else ""
+            status = (
+                f"{_status_text(claim['status'], claim['descriptive_status'])} | "
+                if include_decisions
+                else ""
+            )
             lines.append(
                 f"| {_escape(judge['id'])} | `{judge['integrity']}` | "
                 f"{_escape(claim['claim_id'])} | {status}"
@@ -473,8 +515,24 @@ def _judge_claim_lines(
     lines.extend(
         [
             "",
+            "Each judge's run's diagnostics, by code, with how often each occurred:",
+            "",
+            "| Judge | Integrity | Diagnostics |",
+            "|---|---|---|",
+        ]
+    )
+    for judge in judges:
+        counts = judge["diagnostic_counts"]
+        listed = "; ".join(f"`{_escape(code)}` ({count})" for code, count in counts.items())
+        lines.append(
+            f"| {_escape(judge['id'])} | `{judge['integrity']}` | {listed or 'none'} |"
+        )
+    lines.extend(
+        [
+            "",
             "The scorer configuration and model roles each cohort's runs record, by judge: the "
-            "options of the scorer named like the judge's score.",
+            "SHA-256 fingerprint of the scorer named like the judge's score, and each model "
+            "role's model id. Neither shows the scorer's options or metadata.",
             "",
             "| Judge | Cohort | Scorer | Model roles |",
             "|---|---|---|---|",
@@ -492,11 +550,95 @@ def _judge_claim_lines(
 _NULL_EFFECT = {"risk_difference": 0.0, "relative_risk_reduction": 0.0, "risk_ratio": 1.0}
 
 
-def _excludes_null(comparison: ComparisonResult) -> bool:
+def _shown(value: float, places: int) -> Decimal:
+    """``value`` as ``_number`` prints it."""
+    return Decimal(f"{value:.{places}f}")
+
+
+def _shown_above(value: float | None, bound: float, places: int) -> bool:
+    """Whether ``value`` prints above ``bound``.
+
+    Rounding never reverses an order, so a value that prints above the bound is above it. A
+    value within rounding of the bound prints equal to it, and does not count as above: the
+    page never says "above" beside two equal numbers.
+    """
+    return value is not None and _shown(value, places) > _shown(bound, places)
+
+
+def _shown_below(value: float | None, bound: float, places: int) -> bool:
+    return value is not None and _shown(value, places) < _shown(bound, places)
+
+
+def _excludes_null(comparison: ComparisonResult, places: int) -> bool:
     null = _NULL_EFFECT.get(comparison.estimand)
-    if null is None or comparison.lower is None or comparison.upper is None:
+    if null is None:
         return False
-    return comparison.lower > null or comparison.upper < null
+    return _shown_above(comparison.lower, null, places) or _shown_below(
+        comparison.upper, null, places
+    )
+
+
+_Node = HierarchyRiskResult | ComparisonResult
+
+
+def _rows(count: int, noun: str = "node row") -> str:
+    return f"{count} {noun}{'' if count == 1 else 's'}"
+
+
+def _has(count: int) -> str:
+    return "has" if count == 1 else "have"
+
+
+def _joined(parts: list[str]) -> str:
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def _pointwise_lines(rows: list[_Node]) -> list[str]:
+    """A note when rows were listed on pointwise intervals.
+
+    A pointwise interval covers its own node at the stated level, not every node at once, so
+    among many nodes some exclude zero difference or clear a limit by chance.
+    """
+
+    pointwise = sum(1 for row in rows if (row.coverage_scope or "").startswith("pointwise"))
+    if not pointwise:
+        return []
+    if pointwise == len(rows):
+        subject = (
+            "The row listed on its interval rests"
+            if pointwise == 1
+            else f"All {pointwise} rows listed on their intervals rest"
+        )
+    else:
+        subject = f"{pointwise} of the {len(rows)} rows listed on their intervals " + (
+            "rests" if pointwise == 1 else "rest"
+        )
+    return [
+        "",
+        (
+            f"{subject} on {'a pointwise interval' if pointwise == 1 else 'pointwise intervals'} "
+            "(the plan sets `simultaneous: false`). A pointwise interval covers its own node, "
+            "not every node at once, so among many nodes some are listed by chance."
+        ),
+    ]
+
+
+def _about_true_risk(report: SafetyReport, claim: ClaimResult) -> bool:
+    """Whether a claim's limits are about true failure risk rather than judge-reported risk.
+
+    A validated judge calibration makes every claim one about true risk: it is decided on a
+    certifying judge correction or by the noisy-but-valid test, or left INCONCLUSIVE. Node
+    rows stay judge-reported risks, so comparing them with such a claim's limit is not like
+    with like.
+    """
+
+    calibration = report.presentation.judge_calibration
+    if calibration is not None and calibration.mode == "validated":
+        return True
+    return any(
+        ref.startswith("interval:judge_corrected_") or ref == "test:noisy_valid_certification"
+        for ref in claim.evidence_refs
+    )
 
 
 def _path_text(report: SafetyReport, path: dict[str, str]) -> str:
@@ -519,12 +661,14 @@ def _node_label(report: SafetyReport, level: str | None, path: dict[str, str]) -
 def _localisation_lines(
     report: SafetyReport, places: int, include_decisions: bool
 ) -> list[str]:
-    """The hierarchy nodes where an effect or a limit exceedance sits, for the first page.
+    """The hierarchy nodes where an effect or a limit exceedance sits, right after the claims.
 
     Headline rows average over the hierarchy, so an effect concentrated in one node can look
     small there. This lists the nodes a reader would otherwise find only by reading every
     hierarchy row. The section appears only when there is something to look for: hierarchy
     comparison rows, or (with decisions shown) a claim whose evidence has hierarchy rows.
+    Nodes are selected on their values as printed. A node that its values cannot place is
+    counted, never left out without a word.
     """
     node_comparisons = [item for item in report.comparisons if item.level is not None]
     claim_nodes = _claim_nodes(report) if include_decisions else []
@@ -532,9 +676,9 @@ def _localisation_lines(
         return []
     looked_for = []
     if node_comparisons:
-        looked_for.append("whose comparison interval excludes no difference")
+        looked_for.append("whose comparison interval excludes zero difference (a ratio of 1)")
     if claim_nodes:
-        looked_for.append("whose estimate is above a claim's acceptable limit")
+        looked_for.append("whose interval or estimate is above a claim's acceptable limit")
     lines = [
         "",
         "## Where effects sit",
@@ -543,8 +687,8 @@ def _localisation_lines(
             "Headline rows average over the hierarchy, so an effect concentrated in one node "
             "can look small there. This section lists the hierarchy nodes "
             + ", and the nodes ".join(looked_for)
-            + ". Their intervals are those of the hierarchy rows below; they are not "
-            "separate claims."
+            + ", comparing values as printed. Their intervals are those of the hierarchy rows "
+            "below; they are not separate claims."
         ),
     ]
     if node_comparisons:
@@ -559,64 +703,113 @@ def _localisation_lines(
 def _effect_lines(
     report: SafetyReport, node_comparisons: list[ComparisonResult], places: int
 ) -> list[str]:
-    effects = [item for item in node_comparisons if _excludes_null(item)]
-    if not effects:
-        return ["No hierarchy node's comparison interval excludes no difference."]
-    overall = {item.comparison_id: item for item in report.comparisons if item.level is None}
-    lines = [
-        (
-            "| Comparison | Node | Design weight | Prompts | Candidate risk | "
-            "Baseline risk | Effect | Confidence interval | Overall effect |"
-        ),
-        "|---|---|---:|---:|---:|---:|---:|---|---:|",
-    ]
-    for item in effects:
-        headline = overall.get(item.comparison_id)
-        lines.append(
-            "| "
-            + " | ".join(
-                [
-                    _escape(item.comparison_id),
-                    _node_label(report, item.level, item.path),
-                    _number(item.resolved_weight, places),
-                    str(item.prompt_count),
-                    _number(item.candidate_estimate, places),
-                    _number(item.baseline_estimate, places),
-                    _number(item.estimate, places),
-                    f"{_number(item.lower, places)}–{_number(item.upper, places)}",
-                    _number(headline.estimate if headline else None, places),
-                ]
-            )
-            + " |"
+    effects = [item for item in node_comparisons if _excludes_null(item, places)]
+    lines: list[str] = []
+    if effects:
+        overall = {
+            item.comparison_id: item for item in report.comparisons if item.level is None
+        }
+        lines.extend(
+            [
+                (
+                    "| Comparison | Node | Design weight | Prompts | Candidate risk | "
+                    "Baseline risk | Effect | Confidence interval | Overall effect |"
+                ),
+                "|---|---|---:|---:|---:|---:|---:|---|---:|",
+            ]
         )
+        for item in effects:
+            headline = overall.get(item.comparison_id)
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        _escape(item.comparison_id),
+                        _node_label(report, item.level, item.path),
+                        _number(item.resolved_weight, places),
+                        str(item.prompt_count),
+                        _number(item.candidate_estimate, places),
+                        _number(item.baseline_estimate, places),
+                        _number(item.estimate, places),
+                        f"{_number(item.lower, places)}–{_number(item.upper, places)}",
+                        _number(headline.estimate if headline else None, places),
+                    ]
+                )
+                + " |"
+            )
+    else:
+        lines.append(
+            "No hierarchy node's comparison interval excludes zero difference (a ratio of 1)."
+        )
+    missing = sum(1 for item in node_comparisons if item.lower is None and item.upper is None)
+    if missing:
+        lines.extend(
+            [
+                "",
+                (
+                    f"{_rows(missing, 'comparison node row')} {_has(missing)} no interval, so "
+                    f"the report cannot say whether {'its' if missing == 1 else 'their'} effect "
+                    "differs from zero (a ratio of 1)."
+                ),
+            ]
+        )
+    lines.extend(_pointwise_lines(list(effects)))
     return lines
 
 
 def _exceedance_lines(
     report: SafetyReport,
-    claim_nodes: list[tuple[ClaimResult, str, list[HierarchyRiskResult | ComparisonResult]]],
+    claim_nodes: list[tuple[ClaimResult, str, list[_Node]]],
     places: int,
 ) -> list[str]:
-    rows = [
-        (claim, evidence, node)
-        for claim, evidence, nodes in claim_nodes
-        for node in nodes
-        if node.estimate is not None and node.estimate > claim.acceptable_upper
-    ]
-    if not rows:
-        return ["No hierarchy node's estimate is above a claim's acceptable limit."]
-    lines = [
-        (
-            "| Claim | Evidence | Node | Design weight | Prompts | Estimate | "
-            "Confidence interval | Acceptable limit | Claim estimate | Position |"
-        ),
-        "|---|---|---|---:|---:|---:|---|---:|---:|---|",
-    ]
-    for claim, evidence, node in rows:
-        above = node.lower is not None and node.lower > claim.acceptable_upper
+    """The nodes above each claim's acceptable limit, decided on the interval first.
+
+    A node whose whole interval is above the limit is listed whether or not it has an
+    estimate: a risk node has none when one of its prompts has no classified rollout, and its
+    missingness-robust interval still places it. A node that neither its interval nor its
+    estimate places is counted below the table.
+    """
+
+    rows: list[tuple[ClaimResult, str, _Node, str]] = []
+    unplaced: list[tuple[ClaimResult, int, int]] = []
+    for claim, evidence, nodes in claim_nodes:
+        limit = claim.acceptable_upper
+        open_interval = no_interval = 0
+        for node in nodes:
+            if _shown_above(node.lower, limit, places):
+                rows.append((claim, evidence, node, "interval"))
+            elif _shown_above(node.estimate, limit, places):
+                rows.append((claim, evidence, node, "estimate"))
+            elif node.estimate is None:
+                if node.lower is None and node.upper is None:
+                    no_interval += 1
+                # Exact, not as printed: an upper end that prints as the limit but lies above
+                # it does not show the node at or below the limit, and an unplaced node is
+                # never printed, so it must be counted.
+                elif node.upper is None or node.upper > limit:
+                    open_interval += 1
+        if open_interval or no_interval:
+            unplaced.append((claim, open_interval, no_interval))
+    lines: list[str] = []
+    if rows:
+        lines.extend(
+            [
+                (
+                    "| Claim | Evidence | Node | Design weight | Prompts | Estimate | "
+                    "Confidence interval | Acceptable limit | Claim estimate | Position |"
+                ),
+                "|---|---|---|---:|---:|---:|---|---:|---:|---|",
+            ]
+        )
+    else:
+        lines.append(
+            "No hierarchy node's interval or estimate is above a claim's acceptable limit."
+        )
+    for claim, evidence, node, basis in rows:
         weight = (
             node.design_weight if isinstance(node, HierarchyRiskResult) else node.resolved_weight
         )
+        qualifier = "judge-reported " if _about_true_risk(report, claim) else ""
         lines.append(
             "| "
             + " | ".join(
@@ -630,35 +823,132 @@ def _exceedance_lines(
                     f"{_number(node.lower, places)}–{_number(node.upper, places)}",
                     _number(claim.acceptable_upper, places),
                     _number(claim.estimate, places),
-                    "interval above the limit" if above else "estimate above the limit",
+                    f"{qualifier}{basis} above the limit",
                 ]
             )
             + " |"
         )
-    lines.extend(
-        [
-            "",
-            "Node rows are judge-reported risks; any judge correction applies only to the claim.",
-        ]
-    )
+    for claim, open_interval, no_interval in unplaced:
+        parts = []
+        if open_interval:
+            parts.append(
+                f"{_rows(open_interval)} with no estimate and an interval that reaches above "
+                "the limit"
+            )
+        if no_interval:
+            parts.append(f"{_rows(no_interval)} with neither an estimate nor an interval")
+        lines.extend(
+            [
+                "",
+                (
+                    f"Not placed for “{_escape(claim.title)}”: "
+                    + "; ".join(parts)
+                    + (
+                        ". Whether this node is above the limit is unknown."
+                        if open_interval + no_interval == 1
+                        else ". Whether these nodes are above the limit is unknown."
+                    )
+                ),
+            ]
+        )
+    lines.extend(_pointwise_lines([node for _, _, node, basis in rows if basis == "interval"]))
+    lines.extend(_true_risk_lines(report, claim_nodes, listed=bool(rows)))
     return lines
+
+
+def _true_risk_lines(
+    report: SafetyReport,
+    claim_nodes: list[tuple[ClaimResult, str, list[_Node]]],
+    *,
+    listed: bool,
+) -> list[str]:
+    """What is compared for claims on true failure risk; nothing for other claims."""
+
+    reached = [
+        (claim, nodes) for claim, _, nodes in claim_nodes if _about_true_risk(report, claim)
+    ]
+    if not reached:
+        return []
+    single = len(reached) == 1
+    titles = _joined([f"“{_escape(claim.title)}”" for claim, _ in reached])
+    # A node reached by two claims on the same evidence is counted once.
+    nodes = list({id(node): node for _, items in reached for node in items}.values())
+    certified = diagnostic = absent = 0
+    files: set[str] = set()
+    for node in nodes:
+        corrected = next(
+            (item for item in node.intervals if item.interval_id.startswith("judge_corrected_")),
+            None,
+        )
+        if corrected is None:
+            absent += 1
+            continue
+        files.add(
+            "hierarchy-risks.csv" if isinstance(node, HierarchyRiskResult) else "comparisons.csv"
+        )
+        if corrected.eligibility == "certifying":
+            certified += 1
+        else:
+            diagnostic += 1
+    text = (
+        f"{'Claim' if single else 'Claims'} {titles} {'is' if single else 'are'} about true "
+        "failure risk, under the validated judge calibration, but node rows are "
+        "judge-reported risks, which can be above or below true risk"
+        + (
+            f", so the Position of {'its' if single else 'their'} rows says “judge-reported”."
+            if listed
+            else "."
+        )
+    )
+    reach = f"{_rows(len(nodes))} {'this claim reaches' if single else 'these claims reach'}"
+    where = " and ".join(f"`{name}`" for name in sorted(files))
+    one = len(nodes) == 1
+    if not (certified or diagnostic):
+        text += f" None of the {reach} has a judge-corrected interval."
+    elif not (certified or absent):
+        text += (
+            f" The judge-corrected interval{'' if one else 's'} of the {reach}, in {where}, "
+            f"{'is' if one else 'are'} diagnostic: {'it certifies' if one else 'they certify'} "
+            "nothing."
+        )
+    elif not (diagnostic or absent):
+        text += (
+            f" The judge-corrected interval{'' if one else 's'} of the {reach}, in {where}, "
+            f"{'is' if one else 'are'} certified."
+        )
+    else:
+        parts = []
+        if certified:
+            parts.append(f"{certified} {_has(certified)} a certified judge-corrected interval")
+        if diagnostic:
+            parts.append(
+                f"{diagnostic} {_has(diagnostic)} a diagnostic "
+                + ("one" if certified else "judge-corrected interval")
+                + ", which certifies nothing"
+            )
+        if absent:
+            parts.append(f"{absent} {_has(absent)} none")
+        text += (
+            f" Of the {reach}: " + "; ".join(parts) + f". The corrected intervals are in {where}."
+        )
+    return ["", text]
 
 
 def _claim_nodes(
     report: SafetyReport,
-) -> list[tuple[ClaimResult, str, list[HierarchyRiskResult | ComparisonResult]]]:
+) -> list[tuple[ClaimResult, str, list[_Node]]]:
     """Each claim whose evidence has hierarchy rows, with a label for it and those rows.
 
     An aggregate claim reaches hierarchy rows only through a weighted-mean measure, the one
     estimand the hierarchy rows report.
     """
     specs = {item.claim_id: item for item in report.presentation.claim_evidence or []}
-    result: list[tuple[ClaimResult, str, list[HierarchyRiskResult | ComparisonResult]]] = []
+    result: list[tuple[ClaimResult, str, list[_Node]]] = []
     for claim in report.claims:
         spec = specs.get(claim.claim_id)
         if spec is None:
             continue
-        nodes: list[HierarchyRiskResult | ComparisonResult]
+        nodes: list[_Node]
         if spec.comparison:
             evidence = f"comparison {spec.comparison}"
             nodes = [
@@ -877,7 +1167,10 @@ def _markdown(report: SafetyReport) -> str:
     lines.extend(
         [
             "",
-            "## Fixed-design risk measures",
+            # A sampled design's measures are about its frame, not a fixed set (scope.design).
+            "## Sampled-design risk measures"
+            if report.scope.get("design") == "sampled"
+            else "## Fixed-design risk measures",
             "",
             (
                 "Ranges are finite-sample confidence bounds, not standard errors or bootstrap "
@@ -1043,8 +1336,11 @@ def _markdown(report: SafetyReport) -> str:
         stratified = (
             validated
             and calibration is not None
-            and calibration.sampling == "stratified_without_replacement"
+            and calibration.sampling == "stratified_within_judge_stratum"
         )
+        scoped = calibration.groups if calibration else None
+        # A validated calibration scoped to groups measures each listed group, not its cohort.
+        unit = "group" if scoped and validated else "cohort"
         preamble = (
             (
                 "Experimental. Only the judge's sensitivity is taken from a published "
@@ -1057,11 +1353,13 @@ def _markdown(report: SafetyReport) -> str:
             )
             if transported
             else (
-                "Experimental. These accuracies sum exact hypergeometric bounds over the "
-                "declared fine strata of each judge stratum, each weighted by its size, from "
-                "human labels drawn without replacement within each fine stratum. The fine "
-                "strata weight every classified rollout of a cohort equally, so they certify "
-                "only a weighted mean that does the same, over the whole cohort in a fixed "
+                "Experimental. These accuracies bound each judge stratum's truly unsafe count "
+                "by summing exact hypergeometric bounds over its declared fine strata, each "
+                "weighted by its size, from human labels drawn without replacement within "
+                "each fine stratum. They then bound the conditional accuracy at those counts "
+                "with exact Clopper-Pearson bounds, since a run's rollouts only sample it. The "
+                f"fine strata weight every classified rollout of a {unit} equally, so they certify "
+                f"only a weighted mean that does the same, over the whole {unit} in a fixed "
                 "design. Those rows are coverage-guaranteed at the union of the underlying "
                 "interval's budget and the calibration budget; every other corrected row is a "
                 "sensitivity analysis, marked diagnostic below. Validity rests on each fine "
@@ -1070,10 +1368,11 @@ def _markdown(report: SafetyReport) -> str:
             )
             if stratified
             else (
-                "These accuracies are exact Clopper-Pearson bounds from human labels drawn "
+                ("Experimental. " if scoped else "")
+                + "These accuracies are exact Clopper-Pearson bounds from human labels drawn "
                 "within each judge stratum. The labels weight every classified rollout of a "
-                "cohort equally, so they certify only a weighted mean that does the same, over "
-                "the whole cohort in a fixed design. Those rows are coverage-guaranteed at the "
+                f"{unit} equally, so they certify only a weighted mean that does the same, over "
+                f"the whole {unit} in a fixed design. Those rows are coverage-guaranteed at the "
                 "union of the underlying interval's budget and the calibration budget; every "
                 "other corrected row is a sensitivity analysis, marked diagnostic below. "
                 "Validity rests on the labelled rows being a simple random sample within "
@@ -1087,7 +1386,6 @@ def _markdown(report: SafetyReport) -> str:
                 "assumes the judge never errs."
             )
         )
-        scoped = calibration.groups if calibration else None
         if scoped:
             preamble += (
                 " The calibration is scoped to the groups "
@@ -1231,7 +1529,8 @@ def _markdown(report: SafetyReport) -> str:
                     [
                         "",
                         "Declared fine strata, with exact bounds on each one's truly unsafe "
-                        "count (a census is exact; an unlabelled stratum spans all its rows):",
+                        "count (a census knows its count; an unlabelled stratum spans all its "
+                        "rows). The accuracies are Clopper-Pearson bounds at the summed counts:",
                         "",
                         "| Cohort | "
                         + ("Group | " if scoped else "")
@@ -1257,25 +1556,7 @@ def _markdown(report: SafetyReport) -> str:
                         + " |"
                     )
         elif transported:
-            summary = report.provenance.get("judge_calibration") or {}
-            published = summary.get("published_set") or {}
-            if published:
-                lines.extend(
-                    [
-                        "",
-                        "Published validation set behind the transported sensitivity:",
-                        "",
-                        f"- Set: {_escape(published.get('name'))} "
-                        f"({_escape(published.get('source'))})",
-                        f"- Judge: {_escape(published.get('judge'))}; rubric: "
-                        f"{_escape(published.get('rubric'))}",
-                        f"- Judge flagged {published.get('judge_flagged_unsafe')} of "
-                        f"{published.get('human_unsafe')} human-unsafe items; sensitivity "
-                        f"at least {_number(summary.get('sensitivity_lower'), places)} "
-                        "(one-sided Clopper-Pearson, alpha "
-                        f"{published.get('sensitivity_alpha')})",
-                    ]
-                )
+            lines.extend(_published_set_lines(report, places))
         else:
             scenarios = calibration.scenarios if calibration else []
             if scenarios:
@@ -1297,6 +1578,29 @@ def _markdown(report: SafetyReport) -> str:
                             f"P(truly unsafe | judge said safe) in "
                             f"[{box.rho_0.lower}, {box.rho_0.upper}]"
                         )
+    elif (
+        report.presentation.judge_calibration is not None
+        and report.presentation.judge_calibration.mode == "transported"
+    ):
+        # No group-risk row carries a transported interval, yet the plan declared one: say
+        # so, and name the published set, rather than leave only the diagnostic.
+        lines.extend(
+            [
+                "",
+                "## Judge misclassification sensitivity",
+                "",
+                "Experimental. The plan transports a judge sensitivity from a published "
+                "validation set, but no group-risk row in this report carries a corrected "
+                "interval: the correction applies only to rows of `weighted_mean`, `maximum`, "
+                "`cvar` and `top_k_mean` measures that have a judge-system upper bound."
+                + (
+                    " The corrected hierarchy nodes are in `report.json`."
+                    if report.hierarchy_risks
+                    else ""
+                ),
+                *_published_set_lines(report, places),
+            ]
+        )
     if report.hierarchy_risks:
         lines.extend(
             [
@@ -1304,8 +1608,14 @@ def _markdown(report: SafetyReport) -> str:
                 "## Hierarchy marginal risks",
                 "",
                 (
-                    "Node estimates use the declared fixed-design weights normalized within each "
-                    "node. When enabled, displayed endpoints are projections of one common "
+                    (
+                        "Node estimates use the declared design weights over the frame, "
+                        "normalized within each node."
+                        if report.scope.get("design") == "sampled"
+                        else "Node estimates use the declared fixed-design weights normalized "
+                        "within each node."
+                    )
+                    + " When enabled, displayed endpoints are projections of one common "
                     "hierarchy-constrained confidence region. Coverage guarantees apply "
                     "construction-by-construction."
                 ),
@@ -1749,16 +2059,11 @@ def _defaults_markdown(report: SafetyReport) -> list[str]:
 def _design_rows(report: SafetyReport) -> list[dict[str, Any]]:
     """The rows of design.resolved.csv, with their columns in the design's order.
 
-    report.json stores the rows with sorted keys, so the order comes from the hierarchy:
-    the group, the hierarchy levels, the task, question and prompt, then the weight.
+    report.json stores the rows with sorted keys, so the order comes from the hierarchy
+    (``design_columns``).
     """
 
-    hierarchy = [str(item) for item in report.design.get("hierarchy") or []]
-    columns = [
-        "group_id",
-        *dict.fromkeys([*hierarchy, "task_id", "question_id", "prompt_id"]),
-        "weight",
-    ]
+    columns = design_columns([str(item) for item in report.design.get("hierarchy") or []])
     return [
         {column: row[column] for column in columns if column in row}
         for row in report.design.get("prompts") or []

@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any, cast
 
 from inspect_safety_stats.analysis.judge_calibration import (
     JUDGE_CORRECTABLE_MEASURES,
-    PromptRollouts,
     _judge_scope,
     _judge_scope_excludes,
     _JudgeScope,
@@ -15,7 +15,6 @@ from inspect_safety_stats.analysis.judge_calibration import (
     _out_of_scope_reason,
     _scope_population,
     _scope_rollouts,
-    _unclassified_share,
     pooled_calibration_gap,
 )
 from inspect_safety_stats.analysis.judge_panel import _DeclaredBox, _primary_accuracy_box
@@ -25,7 +24,9 @@ from inspect_safety_stats.decision.engine import (
     decide_claim,
     noisy_valid_verdict_range,
 )
+from inspect_safety_stats.ingest.outcomes import is_missing
 from inspect_safety_stats.ingest.records import NormalizedData
+from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import (
     ClaimProfileVerdict,
     ClaimResult,
@@ -70,6 +71,21 @@ def _certifying_judge_correction(
     )
 
 
+@dataclass(frozen=True)
+class _NoisyValidOutcome:
+    """A noisy-but-valid claim's decision, with the bounds and budget it was decided on."""
+
+    status: Decision
+    reasons: list[str]
+    lower: float | None
+    upper: float | None
+    method: str
+    alpha: float
+    # None when the test could not run at the plan's thresholds, which leaves the thresholds
+    # at which it would decide unknown.
+    verdict_range: VerdictRange | None
+
+
 def _noisy_valid_claim(
     *,
     claim: ClaimSpec,
@@ -79,45 +95,42 @@ def _noisy_valid_claim(
     judge_summary: dict[str, Any] | None,
     gap: str | None,
     scope: _JudgeScope | None = None,
-) -> tuple[Decision, list[str], float | None, float | None, str, float, VerdictRange | None]:
+) -> _NoisyValidOutcome:
     """Decide an aggregate claim with the finite-sample noisy-but-valid test.
 
     ``scope`` is the calibration the claim's row is corrected with; None when the
     calibration is scoped to groups that leave the row out.
-
-    The verdict range is None when the test could not run at the plan's thresholds, which
-    leaves the thresholds at which it would decide unknown.
     """
 
     method = "noisy_valid_certification_test"
     if not isinstance(evidence, GroupRiskResult) or not eligible:
-        return (
-            "INCONCLUSIVE",
-            [
+        return _NoisyValidOutcome(
+            status="INCONCLUSIVE",
+            reasons=[
                 "No complete certifying judge-reported bound is available for the "
                 "noisy-but-valid test."
             ],
-            None,
-            None,
-            method,
-            family_alpha,
-            VerdictRange(),
+            lower=None,
+            upper=None,
+            method=method,
+            alpha=family_alpha,
+            verdict_range=VerdictRange(),
         )
     if scope is None:
-        return (
-            "INCONCLUSIVE",
-            [_out_of_scope_reason(evidence.group_id)],
-            None,
-            None,
-            method,
-            family_alpha,
-            VerdictRange(),
+        return _NoisyValidOutcome(
+            status="INCONCLUSIVE",
+            reasons=[_out_of_scope_reason(evidence.group_id)],
+            lower=None,
+            upper=None,
+            method=method,
+            alpha=family_alpha,
+            verdict_range=VerdictRange(),
         )
     if gap is not None:
         # The truth strata pool the cohort's labels exactly as the judge strata do.
-        return (
-            "INCONCLUSIVE",
-            [
+        return _NoisyValidOutcome(
+            status="INCONCLUSIVE",
+            reasons=[
                 f"The noisy-but-valid test cannot certify this row: {gap}. Its labels are a "
                 f"simple random sample of {_scope_rollouts(scope[1], 'classified rollouts')}, "
                 "so they measure "
@@ -126,11 +139,11 @@ def _noisy_valid_claim(
                 + ("cohort" if scope[1] is None else "group")
                 + " in a fixed design."
             ],
-            None,
-            None,
-            method,
-            family_alpha,
-            VerdictRange(),
+            lower=None,
+            upper=None,
+            method=method,
+            alpha=family_alpha,
+            verdict_range=VerdictRange(),
         )
     summary = judge_summary or {}
     strata = (summary.get("truth_strata") or {}).get(evidence.cohort_id) or {}
@@ -153,17 +166,17 @@ def _noisy_valid_claim(
         or evidence.lower is None
         or evidence.upper is None
     ):
-        return (
-            "INCONCLUSIVE",
-            [
+        return _NoisyValidOutcome(
+            status="INCONCLUSIVE",
+            reasons=[
                 "The noisy-but-valid test requires a validated judge calibration from a simple "
                 "random sample of labelled rollouts with both true classes represented."
             ],
-            None,
-            None,
-            method,
-            family_alpha,
-            VerdictRange(),
+            lower=None,
+            upper=None,
+            method=method,
+            alpha=family_alpha,
+            verdict_range=VerdictRange(),
         )
     try:
         # A projected upper endpoint misses whenever the joint event fails, so its error is the
@@ -184,7 +197,15 @@ def _noisy_valid_claim(
             unacceptable_lower=claim.unacceptable_lower,
         )
     except ValueError as exc:
-        return "INCONCLUSIVE", [str(exc)], None, None, method, family_alpha, None
+        return _NoisyValidOutcome(
+            status="INCONCLUSIVE",
+            reasons=[str(exc)],
+            lower=None,
+            upper=None,
+            method=method,
+            alpha=family_alpha,
+            verdict_range=None,
+        )
     reasons = [
         "Noisy-but-valid certification on true failure risk: judge-reported interval "
         f"[{result.judge_reported_lower:.12g}, {result.judge_reported_upper:.12g}]; PASS "
@@ -210,14 +231,14 @@ def _noisy_valid_claim(
             "The calibration does not establish an informative judge (sensitivity plus "
             "specificity may not exceed one), so nothing identifies true risk."
         )
-    return (
-        result.decision,
-        reasons,
-        result.true_risk_lower,
-        result.true_risk_upper,
-        method,
-        family_alpha + float(judge_alpha),
-        noisy_valid_verdict_range(result),
+    return _NoisyValidOutcome(
+        status=result.decision,
+        reasons=reasons,
+        lower=result.true_risk_lower,
+        upper=result.true_risk_upper,
+        method=method,
+        alpha=family_alpha + float(judge_alpha),
+        verdict_range=noisy_valid_verdict_range(result),
     )
 
 
@@ -232,8 +253,10 @@ def verdicts_by_profile(
 ) -> list[ClaimProfileVerdict]:
     """Return the claim's verdict under its primary and each sensitivity profile.
 
-    The primary row repeats the claim's decision. Each sensitivity row decides the same
-    thresholds on that profile's interval computed with the primary interval's method.
+    The primary row repeats ``status``, which must be the claim's final status: an exploratory
+    claim's is INCONCLUSIVE, never its descriptive one. Each sensitivity row decides the same
+    thresholds on that profile's interval computed with the primary interval's method, and
+    certifies only when ``confirmatory_and_valid``.
     Evidence whose primary interval assumes no independence profile, such as the propagated
     prompt envelope, has no rows.
     """
@@ -307,6 +330,46 @@ def _has_sensitivity_profiles(evidence: ComparisonResult | GroupRiskResult | Non
     )
 
 
+def _classified_by_policy(row: Observation) -> bool:
+    """Whether a plan policy, not the primary score's mapping, classified the rollout.
+
+    That is a policy block counted safe, a sample error counted as a failure, a content-filter
+    stop or an unscored truncated answer the plan classifies, or a missing score counted as a
+    failure. Each leaves its mark on the observation: a sample error, a content-filter stop's
+    undelivered content, the token-limit flag, or a missing score.
+    """
+
+    return row.failure is not None and (
+        row.outcome_status == "target_policy_blocked_safe"
+        or row.error is not None
+        or row.content_delivered is False
+        or bool(row.token_limit_unscored)
+        or is_missing(row.score_raw)
+    )
+
+
+def _policy_classified(data: NormalizedData) -> dict[tuple[str, str], tuple[int, int]]:
+    """Per cohort and prompt, the rollouts a plan policy counted safe and as failures."""
+
+    counts: dict[tuple[str, str], list[int]] = {}
+    for row in data.observations:
+        if _classified_by_policy(row):
+            tally = counts.setdefault((row.cohort_id, row.prompt_id), [0, 0])
+            tally[1 if row.failure else 0] += 1
+    return {key: (safe, failures) for key, (safe, failures) in counts.items()}
+
+
+def _row_policy_classified(
+    counts: Mapping[tuple[str, str], tuple[int, int]],
+    cohort_id: str,
+    prompt_ids: tuple[str, ...] | None,
+) -> tuple[int, int]:
+    """The policy-classified rollouts of a cohort's row over ``prompt_ids``."""
+
+    found = [counts.get((cohort_id, prompt_id), (0, 0)) for prompt_id in prompt_ids or ()]
+    return sum(safe for safe, _ in found), sum(failures for _, failures in found)
+
+
 def _claim_judge_error_stress(
     *,
     claim: ClaimSpec,
@@ -314,14 +377,14 @@ def _claim_judge_error_stress(
     status: Decision,
     why_not: str | None,
     measure_types: Mapping[str, str],
-    population: dict[str, dict[str, PromptRollouts]],
-    group_weights: dict[str, dict[str, float]],
     accuracy: _DeclaredBox | None,
+    policy_classified: tuple[int, int],
 ) -> JudgeErrorStressResult:
     """Where a claim decided on judge-reported bounds tips, and whether a declared box holds it.
 
     Diagnostic only: the result is reported beside the claim and never changes its status. A
     box declared for groups that leave the claim's group out is not applied to it.
+    ``policy_classified`` counts the row's rollouts a plan policy counted safe and as failures.
     """
 
     def skipped(reason: str) -> JudgeErrorStressResult:
@@ -345,26 +408,38 @@ def _claim_judge_error_stress(
             f"a {measure_type} measure does not carry the judge's per-prompt error model over "
             "to the row"
         )
-    share = _unclassified_share(
-        population.get(evidence.cohort_id, {}), group_weights[evidence.group_id], measure_type
-    )
-    if accuracy is not None and accuracy[2] is not None and evidence.group_id not in accuracy[2]:
+    # The inversion reads every classified rollout as a judge verdict. A rollout a policy
+    # counted safe is truly safe, yet it takes FPR / (Se - FPR) off the true-risk upper bound;
+    # one counted as a failure is truly one, yet it adds (1 - FPR) / (Se - FPR), more than 1
+    # whenever Se < 1, to the lower bound. Neither can be taken back out of a row's bounds
+    # without the share of such rollouts in the population behind them, which the bounds do
+    # not carry.
+    safe, failures = policy_classified
+    if safe or failures:
+        return skipped(
+            f"{safe + failures} of the row's rollouts were classified by a plan policy, not by "
+            f"the judge ({safe} counted safe, {failures} counted as failures), and the "
+            "inversion would read them as judge verdicts, which can understate the true-risk "
+            "upper bound or overstate its lower bound"
+        )
+    # The bounds are inverted whole, with their unclassified rollouts completed as they are:
+    # that is conservative on both sides for every measure here, and a share taken out of
+    # them is not (see stats.judge_stress).
+    if accuracy is not None and not accuracy.holds_on(evidence.group_id):
         accuracy = None
+    box, source = (accuracy.box, accuracy.source) if accuracy is not None else (None, None)
     stress = stress_verdict(
         judge_reported_lower=evidence.lower,
         judge_reported_upper=evidence.upper,
         acceptable_upper=claim.acceptable_upper,
         unacceptable_lower=claim.unacceptable_lower,
-        box=accuracy[0] if accuracy is not None else None,
-        unclassified_share=share,
+        box=box,
     )
-    box, source = (accuracy[0], accuracy[1]) if accuracy is not None else (None, None)
     stressed = stress.stressed
     return JudgeErrorStressResult(
         applicable=True,
         judge_reported_lower=evidence.lower,
         judge_reported_upper=evidence.upper,
-        unclassified_share=share,
         pass_sensitivity_at_perfect_specificity=(
             stress.pass_line.sensitivity_at_perfect_specificity
         ),
@@ -464,10 +539,11 @@ def _claims(
     )
     group_weights = {group.id: group.weights for group in data.groups}
     measure_types = {measure.id: measure.type for measure in plan.outputs.risk_measures}
-    stress_population = (
-        population or _labelled_population(plan, data) if plan.report.judge_error_stress else {}
+    stress_box = (
+        _primary_accuracy_box(plan, diagnostics) if plan.report.judge_error_stress else None
     )
-    stress_box = _primary_accuracy_box(plan) if plan.report.judge_error_stress else None
+    policy_classified = _policy_classified(data) if plan.report.judge_error_stress else {}
+    group_prompts = {group.id: group.prompt_ids for group in data.groups}
     results: list[ClaimResult] = []
     corrected_claims: list[str] = []
     uncorrected_claims: list[str] = []
@@ -520,14 +596,23 @@ def _claims(
                         "it has no error budget."
                     ],
                     warnings=list(evidence.warnings) if evidence else [],
+                    judge_error_stress=(
+                        JudgeErrorStressResult(
+                            applicable=False,
+                            reason="the claim's multiplicity family is not declared, so the "
+                            "claim is not decided on its bounds",
+                        )
+                        if plan.report.judge_error_stress
+                        else None
+                    ),
                 )
             )
             continue
         alpha = family.alpha
         correction_note: str | None = None
-        # Filled only where the claim is decided directly on the evidence intervals: a
+        # Set only where the claim is decided directly on the evidence intervals: a
         # judge-corrected or noisy-valid decision has no per-profile counterpart.
-        profile_verdicts: list[ClaimProfileVerdict] = []
+        decided_on_evidence = False
 
         # A validated correction retargets the claim from judge-reported risk onto true
         # risk. The threshold in the plan is about the model, not about the judge.
@@ -572,7 +657,7 @@ def _claims(
                 if isinstance(evidence, GroupRiskResult) and scope is not None
                 else None
             )
-            status, reasons, lower, upper, method, alpha, verdict_range = _noisy_valid_claim(
+            outcome = _noisy_valid_claim(
                 claim=claim,
                 evidence=evidence,
                 eligible=eligible,
@@ -581,6 +666,9 @@ def _claims(
                 gap=gap,
                 scope=scope,
             )
+            status, reasons, method = outcome.status, outcome.reasons, outcome.method
+            lower, upper, alpha = outcome.lower, outcome.upper, outcome.alpha
+            verdict_range = outcome.verdict_range
             estimate = None
             correction_note = None
             evidence_refs.append("test:noisy_valid_certification")
@@ -614,16 +702,9 @@ def _claims(
                 unacceptable_lower=claim.unacceptable_lower,
                 eligible=eligible,
             )
-            profile_verdicts = verdicts_by_profile(
-                claim,
-                evidence,
-                status=status,
-                lower=lower,
-                upper=upper,
-                confirmatory_and_valid=bool(
-                    integrity_valid and plan.analysis.intent == "confirmatory"
-                ),
-            )
+            # A validated correction decides the claim on true risk; the profile intervals
+            # are judge-reported, so they have no verdict on the claim's thresholds.
+            decided_on_evidence = correction is None
             verdict_range = claim_verdict_range(lower=lower, upper=upper, eligible=eligible)
         if not integrity_valid and lower is not None and upper is not None:
             reasons = [
@@ -649,6 +730,23 @@ def _claims(
             else:
                 reasons.append("Exploratory analyses cannot produce a safety pass.")
             status = "INCONCLUSIVE"
+        # ORDER MATTERS: after the exploratory demotion above, so that the primary row repeats
+        # the claim's final status. Built before it, an exploratory claim's primary row showed
+        # the descriptive PASS or FAIL beside an INCONCLUSIVE claim.
+        profile_verdicts: list[ClaimProfileVerdict] = (
+            verdicts_by_profile(
+                claim,
+                evidence,
+                status=status,
+                lower=lower,
+                upper=upper,
+                confirmatory_and_valid=bool(
+                    integrity_valid and plan.analysis.intent == "confirmatory"
+                ),
+            )
+            if decided_on_evidence
+            else []
+        )
         # ORDER MATTERS: after the exploratory demotion above, so `status` is the final one.
         stress = None
         if plan.report.judge_error_stress:
@@ -673,9 +771,12 @@ def _claims(
                     else None
                 ),
                 measure_types=measure_types,
-                population=stress_population,
-                group_weights=group_weights,
                 accuracy=stress_box,
+                policy_classified=(
+                    _row_policy_classified(
+                        policy_classified, str(claim.cohort), group_prompts.get(str(claim.group))
+                    )
+                ),
             )
         if correction_note is not None:
             reasons.insert(0, correction_note)
@@ -686,8 +787,17 @@ def _claims(
                 )
         if not profile_verdicts and _has_sensitivity_profiles(evidence):
             reasons.append(
-                "Verdicts under the sensitivity independence profiles are not reported, "
-                "because this claim is not decided directly on the profile intervals."
+                "Verdicts under the sensitivity independence profiles are not reported, because "
+                + (
+                    # Decided directly, and INCONCLUSIVE for want of a bound: a missing primary
+                    # interval is not a decision on another interval.
+                    "the evidence has no primary interval, so the claim has no verdict under the "
+                    "primary profile for them to qualify."
+                    if decided_on_evidence
+                    and evidence is not None
+                    and evidence.primary_interval_id is None
+                    else "this claim is not decided directly on the profile intervals."
+                )
             )
         results.append(
             ClaimResult(

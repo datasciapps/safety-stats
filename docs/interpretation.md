@@ -48,8 +48,26 @@ Each claim also records `verdict_range`: the thresholds at which the same bounds
 excluded. Every other pair of thresholds gives `INCONCLUSIVE`. A `null` boundary means that no
 threshold the plan allows gives that verdict. For an interval claim the boundaries are the upper
 and lower bounds. For the noisy-but-valid test they are the thresholds at which its critical
-values meet the judge-reported bounds. The report's claims table states the same range, with
-each boundary rounded so that the statement still holds.
+values meet the judge-reported bounds. That test takes thresholds in [0, 1] only, and its range
+speaks only of those: with a negative `acceptable_upper` the test does not run, and the claim is
+`INCONCLUSIVE`.
+
+`verdict_range` is `null` when the claim's test cannot run at the plan's thresholds, as the
+noisy-but-valid test cannot at a negative `acceptable_upper`, and in reports written before
+verdict ranges were reported. The range is then unknown. That differs from a range whose
+boundaries are both `null`, which means `INCONCLUSIVE` at every threshold.
+
+The report's claims table states the same range, with each boundary rounded so that the
+statement still holds. It shows an unknown range as `—`, and one whose boundaries are both
+`null` as `INCONCLUSIVE at every threshold`. Rounding outward can print a boundary that no
+allowed threshold reaches, such as `≥ 1.0000` for an upper bound just below 1. `report.json`
+holds the exact boundary.
+
+A risk measure is never negative, so on a claim about one (rather than a comparison) a `FAIL`
+boundary at or below 0 is reached only with a negative `acceptable_upper`, and there it holds
+whatever the data. A lower bound of 0, as with no observed failures, gives such a boundary. In
+the table, so does any lower bound that rounds down to 0, for example
+`FAIL at unacceptable ≤ 0.0000`. That part of the range says nothing about the evidence.
 
 In an exploratory analysis the claim is `INCONCLUSIVE` at every threshold. Its range, like its
 descriptive status, is what a confirmatory analysis of the same bounds would give, and it
@@ -154,21 +172,36 @@ of unseen tasks or questions.
 
 A headline row averages over the hierarchy, so an effect concentrated in one node can look
 small there: a few points of difference overall can be a large difference in one category and
-none in the others. When a report has hierarchy rows, `report-full.md` lists, right after the
-claims:
+none in the others. `report-full.md` has a section "Where effects sit", right after the claims,
+when a comparison has hierarchy rows, or when decisions are shown
+(`report.include_decisions: true`) and a claim's evidence has hierarchy rows. Hierarchy risk
+rows alone give no section while decisions are hidden, which is the default. The section lists:
 
-- every hierarchy node of a comparison whose interval excludes no difference (0 for a risk
+- every hierarchy node of a comparison whose interval excludes zero difference (0 for a risk
   difference or a relative risk reduction, 1 for a risk ratio), beside the comparison's overall
   effect;
-- every hierarchy node whose estimate is above the acceptable limit of a claim on the same
-  evidence, with whether the whole interval or only the estimate is above. An aggregate claim
-  reaches the node rows only through a `weighted_mean` measure, the estimand they report; a
-  comparison claim reaches its comparison's node rows. The list is hidden with the decisions.
+- every hierarchy node whose interval or estimate is above the acceptable limit of a claim on
+  the same evidence, with whether the whole interval or only the estimate is above. The claims
+  are all the claims, mandatory or not, as in `report.md`. An aggregate claim reaches the node
+  rows only through a `weighted_mean` measure, the estimand they report; a comparison claim
+  reaches its comparison's node rows.
+
+A node is placed on its interval first. A risk node has no estimate when one of its prompts has
+no classified rollout, but under `missing: conservative_bounds` or `exclude` it can still have
+an interval, and a node whose whole interval is above the limit is listed with no estimate. A
+node that neither its interval nor its estimate places, such as one whose prompts are blocked,
+is counted under the table, and so is a comparison node with no interval; neither is left out
+without a word. Values are compared as printed, at the report's decimal places, so that a listed
+row never prints a bound equal to the limit or to the null (0, or 1 for a ratio).
 
 These rows are pointers into the hierarchy tables, with the same intervals and coverage; they
-are not further claims. A claim decided on a judge-corrected interval is compared with
-judge-reported node rows. A claim that passes on the average while nodes sit above its limit
-passes as declared: the list makes that visible, it does not change the decision.
+are not further claims. When those intervals are pointwise (`simultaneous: false`), each covers
+its own node only, so among many nodes some are listed by chance, and the section says so.
+Under a validated judge calibration every claim is about true failure risk, while node rows
+are judge-reported risks: those rows say "judge-reported" in their Position, and a note says
+whether the nodes' judge-corrected intervals, in `hierarchy-risks.csv` or `comparisons.csv`,
+are certified. A claim that passes on the average while nodes sit above its limit passes as
+declared: the list makes that visible, it does not change the decision.
 
 The HTML report presents these results as a collapsible tree. Choose one **Independence profile**
 for the whole report. Every interval glyph uses the same 0–100% risk axis. The strong blue band is
@@ -291,9 +324,10 @@ into a population sample.
 Every report lists what its results rest on, built from the analysis rather than from a fixed
 text:
 
-- **The interval methods.** Under "Fixed-design risk measures", `report-full.md` names each method
-  and independence profile its risk intervals used, what the profile blocks by, and the
-  assumptions recorded on those intervals (`intervals[].assumptions` in `report.json`).
+- **The interval methods.** Under "Fixed-design risk measures" ("Sampled-design risk measures"
+  under a sampled design), `report-full.md` names each method and independence profile its risk
+  intervals used, what the profile blocks by, and the assumptions recorded on those intervals
+  (`intervals[].assumptions` in `report.json`).
 - **The assumptions.** "Limitations" lists each assumption from the package's registry that
   applies to the analysis, with the plan fields that set it, the value each had, whether the
   plan wrote it or left it to its default, and what follows if the assumption is wrong

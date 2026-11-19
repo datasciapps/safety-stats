@@ -1,3 +1,4 @@
+import json
 import math
 import shutil
 import subprocess
@@ -576,3 +577,23 @@ def test_pilot_cli_requires_a_seed(tmp_path: Path) -> None:
     )
     assert result.exit_code != 0
     assert "--seed" in plain(result.output)
+
+
+@pytest.mark.parametrize(
+    ("acceptable_upper", "unacceptable_lower", "decision", "expected"),
+    [("0.99", "0.995", "PASS", 0), ("0.01", "0.05", "FAIL", 1)],
+)
+def test_decision_exit_codes_map_pass_to_zero_and_fail_to_one(
+    tmp_path: Path, acceptable_upper: str, unacceptable_lower: str, decision: str, expected: int
+) -> None:
+    plan = _simpleqa_plan(tmp_path)
+    text = plan.read_text(encoding="utf-8")
+    for old, new in (("0.25", acceptable_upper), ("0.60", unacceptable_lower)):
+        assert f"{old}\n" in text
+        text = text.replace(f"{old}\n", f"{new}\n")
+    plan.write_text(text, encoding="utf-8")
+    code, _ = _analyze(plan, tmp_path / "report", "--decision-exit-codes")
+    # Decisions are hidden from the terminal by default, so read the report's.
+    report = json.loads((tmp_path / "report" / "report.json").read_text(encoding="utf-8"))
+    assert report["decision"] == decision
+    assert code == expected

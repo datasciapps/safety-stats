@@ -9,7 +9,7 @@ receipt belongs to the plan and predates the earliest evaluation. It cannot chec
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Literal
 
@@ -35,16 +35,30 @@ class RegistrationReceipt(StrictModel):
         return value
 
 
+def _rounded_up_to_the_second(moment: datetime) -> datetime:
+    """``moment`` if it is a whole second, or else the next whole second."""
+
+    whole = moment.replace(microsecond=0)
+    return whole if whole == moment else whole + timedelta(seconds=1)
+
+
 def write_receipt(
     path: Path, plan_sha256: str, *, package_version: str, now: datetime | None = None
 ) -> RegistrationReceipt:
-    """Write a receipt for ``plan_sha256`` to ``path``, which must not exist yet."""
+    """Write a receipt for ``plan_sha256`` to ``path``, which must not exist yet.
+
+    The receipt records ``now`` (by default the current time) in UTC, rounded up to the
+    whole second.
+    """
 
     registered_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     receipt = RegistrationReceipt(
         receipt_version=RECEIPT_VERSION,
         plan_sha256=plan_sha256,
-        registered_at=registered_at.replace(microsecond=0),
+        # Rounded up, never down: a receipt must not record a time before the registration.
+        # Inspect records a run's start truncated to the second, so a truncated receipt
+        # written within a second after the start would read as no later than it.
+        registered_at=_rounded_up_to_the_second(registered_at),
         package_version=package_version,
     )
     text = json.dumps(receipt.model_dump(mode="json"), indent=2, sort_keys=True) + "\n"

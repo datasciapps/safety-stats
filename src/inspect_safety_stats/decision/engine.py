@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from inspect_safety_stats.config.models import THRESHOLD_MAX, THRESHOLD_MIN
 from inspect_safety_stats.schema.reports import (
     AdaptiveClaimResult,
     ClaimResult,
@@ -7,11 +8,6 @@ from inspect_safety_stats.schema.reports import (
     VerdictRange,
 )
 from inspect_safety_stats.stats.misclassification import NoisyValidCertification
-
-# The thresholds a plan allows a claim (ClaimSpec): acceptable_upper < unacceptable_lower,
-# both in [-1, 1].
-THRESHOLD_MIN = -1.0
-THRESHOLD_MAX = 1.0
 
 
 def claim_verdict_range(
@@ -42,12 +38,18 @@ def noisy_valid_verdict_range(result: NoisyValidCertification) -> VerdictRange:
     ``c_pass = a * Se_L + (1 - a) * FPR_L``, which rises in ``a`` for an informative judge, so
     it passes for every ``acceptable_upper`` strictly above
     ``(judge_upper - FPR_L) / (Se_L - FPR_L)``. FAIL mirrors this with the upper calibration
-    endpoints. The test takes thresholds in [0, 1] only. None of this depends on the
-    thresholds except the critical values, so an unidentified judge gives no range.
+    endpoints. None of this depends on the thresholds except the critical values, so an
+    unidentified judge gives no range.
+
+    The test takes thresholds in [0, 1] only, and the range speaks only of those. Its FAIL
+    boundary reads as a half-line, but below it the test still needs ``acceptable_upper >= 0``.
     """
 
     if not result.identified:
         return VerdictRange()
+    # For an identified judge both boundaries lie in [0, 1] algebraically, but identification
+    # reads the false-positive rate through specificity, 1 - FPR, so rounding can leave a
+    # boundary a few ulps outside. It is then clipped to the end of [0, 1], inclusive.
     pass_value: float | None = None
     pass_strict = False
     pass_slope = result.sensitivity_lower - result.false_positive_lower

@@ -210,7 +210,8 @@ edited between the two phases is rejected rather than silently changing the esti
 ledger records what was evaluated, and the plan has to still reproduce it.
 
 The report directory carries `report.html`, `report.json`, `nodes.csv`, `taxonomy.csv`,
-`comparisons.csv` and `diagnostics.csv`. `report.html` is a self-contained page -- it
+`comparisons.csv`, `diagnostics.csv`, `acceptance.csv` and `checksums.json`, which holds the
+SHA-256 of each of the others. `report.html` is a self-contained page -- it
 embeds its own data and fetches nothing -- showing the root bound, the design, comparisons,
 slices, a collapsible hierarchy with unsampled nodes marked, and provenance. Both it and
 `report.json` name the taxonomy and kernel fingerprints they were produced under, so two
