@@ -772,6 +772,8 @@ four ways, for the reasons above:
 
 With the same lower end on sensitivity, the upper end is what #123's correction gives for any
 declared specificity range that reaches one, because Rogan--Gladen's maximum lies at \(Sp=1\).
+The derivation is in
+[Statistical methods, section 15.3.1](statistical-methods.md#1531-transported-sensitivity-experimental).
 
 ## On the generative path
 
