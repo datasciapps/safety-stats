@@ -313,8 +313,16 @@ logit scale is added, it does in about 90% and 99% of runs.
 The figures describe the data, and they have limits:
 
 - Under a fixed design, the correlation also includes fixed differences in failure rates between
-  the prompts of different blocks. It can therefore overstate the dependence between rollouts.
-  A near-zero correlation is still a sign that the grouping matters little.
+  prompts. Differences between the prompts of different blocks raise it, and differences between
+  the prompts within one block lower it, so it can overstate or understate the dependence
+  between rollouts.
+- Read the design effect, not the correlation. In large blocks a small correlation can still
+  shrink the evidence a lot: with 3 failures in 800 rollouts, all in one of ten conversations of
+  80, the correlation is about 0.025 and the design effect 3, so the 800 rollouts carry about as
+  much evidence as 267 independent ones.
+- The figures count every rollout, or every unit, equally, whatever the prompt weights, while the
+  intervals bound a weighted mean. Under unequal weights the design effect of the weighted mean
+  can be larger or smaller than the one reported.
 - With few blocks the correlation rests on few block means, and the diagnostic can warn though
   the blocks add nothing. In simulated runs with no conversation effect and single-rollout
   prompts, it warned in about 17% of runs with 2 conversations of 40 prompts, 14% with 3 of 30,
