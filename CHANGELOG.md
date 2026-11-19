@@ -17,7 +17,9 @@ described in their pull requests.
   `index.md`. The claims in `report.md` show `report.decimal_places` (6 by default), as
   `report-full.md` does, instead of four decimals, and each threshold exactly, with more
   decimals where a threshold needs them, so that a bound shows at or below its threshold exactly
-  when it is. `report.json`, `report-full.md` and the CSV files keep their bytes.
+  when it is. The simultaneous coverage under the failure rates is rounded down, so that
+  99.996% reads 99.9% rather than 100.0%. `report.json`, `report-full.md` and the CSV files keep
+  their bytes.
 
 - **report.md states why the decision is what it is (changes `report.md`).** Its claims
   table listed the threshold claims only. An adaptive-attacker claim that failed gave "Overall

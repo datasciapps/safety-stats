@@ -220,3 +220,19 @@ def test_the_tail_budget_says_it_is_for_a_prompt_with_no_failures(
         "prompt, median)"
     )
     assert "assume the observed rate holds, unless they say otherwise" in summary
+
+
+def test_the_coverage_figure_is_rounded_down(confirmatory: tuple[SafetyReport, str]) -> None:
+    from inspect_safety_stats.report.summary import summary_markdown
+
+    report, summary = confirmatory
+    assert "with 95.0% simultaneous coverage" in summary
+    risks = [
+        risk.model_copy(update={"simultaneous_coverage": 0.99996})
+        if risk.simultaneous_coverage
+        else risk
+        for risk in report.group_risks
+    ]
+    page = summary_markdown(report.model_copy(update={"group_risks": risks}))
+    # To the nearest tenth this would read 100.0%.
+    assert "with 99.9% simultaneous coverage" in page

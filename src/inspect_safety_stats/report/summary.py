@@ -309,7 +309,13 @@ def _root_section(
     coverage = next(
         (risk.simultaneous_coverage for risk in risks if risk.simultaneous_coverage), None
     )
-    coverage_text = f" with {rate_text(coverage)} simultaneous coverage" if coverage else ""
+    # Rounded down, like a lower bound, so that the page never claims more coverage.
+    coverage_text = (
+        f" with {bound_text(coverage, _RATE_PLACES, upper=False, percent=True)}% simultaneous "
+        "coverage"
+        if coverage
+        else ""
+    )
     if report.scope.get("design") == "sampled":
         # A sampled design's intervals are about the frame its items were drawn from, and it
         # has no sensitivity profiles: each drawn item is one observation, its failure rate.
