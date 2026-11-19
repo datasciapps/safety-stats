@@ -510,8 +510,11 @@ outputs:
 Each judge in `provenance.judge_panel.judges` of `report.json` gains:
 
 - `integrity`: the integrity status of that judge's run.
-- `claims`: one row per claim, with `claim_id`, `status`, `estimate`, `lower`, `upper` and
-  `method`.
+- `claims`: one row per claim, with `claim_id`, `status`, `estimate`, `lower`, `upper`,
+  `method` and `reasons`. The bounds are on that judge's reported risk, since its run has no
+  calibration. When the plan declares a validated `judge_calibration`, the plan's thresholds are
+  about true risk, and the primary outcome's claims are not decided on judge-reported bounds.
+  The rows are not either: every `status` is `INCONCLUSIVE`, and `reasons` says why.
 - `configuration`: per cohort, the distinct configurations of the scorer named like the judge's
   score (`scorer`) and the model roles (`model_roles`) that the cohort's runs record. Inspect
   logs record them under `eval.scorers` and `eval.model_roles`. Neither is copied as recorded:

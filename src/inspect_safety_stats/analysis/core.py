@@ -145,13 +145,48 @@ def _judge_plan(plan: AnalysisPlan, judge: JudgeSpec) -> AnalysisPlan:
     return plan.model_copy(update={"inputs": inputs, "outputs": outputs})
 
 
+_UNCALIBRATED_JUDGE_REASON = (
+    "The plan declares a validated judge calibration, so its thresholds are about true risk. "
+    "The calibration's labels validate the primary outcome, not this judge, so this judge's "
+    "bounds are on its reported risk only and the claim is not decided on them."
+)
+
+
+def _judge_claim_row(claim: ClaimResult, *, validated_calibration: bool) -> dict[str, Any]:
+    """One claim of a judge's run, as its row in the judge panel.
+
+    A judge's run has no calibration, so its bounds are on judge-reported risk. Under a
+    validated calibration the plan's thresholds are about true risk, where the primary refuses
+    to decide on judge-reported bounds; so does the row, which stays INCONCLUSIVE.
+    """
+
+    status, reasons = claim.status, list(claim.reasons)
+    if validated_calibration:
+        status, reasons = "INCONCLUSIVE", [_UNCALIBRATED_JUDGE_REASON]
+    return {
+        "claim_id": claim.claim_id,
+        "status": status,
+        "estimate": claim.estimate,
+        "lower": claim.lower,
+        "upper": claim.upper,
+        "method": claim.method,
+        "reasons": reasons,
+    }
+
+
 def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeInputs) -> None:
     """Decide every claim again on each declared judge's verdicts, beside the primary's.
 
     Each judge's run is the analysis the plan would give with that judge as its primary
-    outcome, over the same rollouts, so comparing judge configurations is one analysis.
+    outcome, over the same rollouts, so comparing judge configurations is one analysis. Its
+    bounds are on that judge's reported risk; under a validated calibration its rows decide
+    nothing (``_judge_claim_row``).
     """
 
+    validated_calibration = (
+        plan.inputs.judge_calibration is not None
+        and plan.inputs.judge_calibration.mode == "validated"
+    )
     by_id = {judge.id: judge for judge in plan.inputs.judges}
     for entry in panel["judges"]:
         judge_plan = _judge_plan(plan, by_id[entry["id"]])
@@ -168,14 +203,7 @@ def _add_judge_claims(panel: dict[str, Any], plan: AnalysisPlan, inputs: _JudgeI
         core = _analysis_core(judge_plan, data, diagnostics)
         entry["integrity"] = core.integrity_status
         entry["claims"] = [
-            {
-                "claim_id": claim.claim_id,
-                "status": claim.status,
-                "estimate": claim.estimate,
-                "lower": claim.lower,
-                "upper": claim.upper,
-                "method": claim.method,
-            }
+            _judge_claim_row(claim, validated_calibration=validated_calibration)
             for claim in sorted(core.claims, key=lambda item: item.claim_id)
         ]
 

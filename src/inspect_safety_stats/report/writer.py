@@ -455,8 +455,10 @@ def _judge_claim_lines(
         "",
         "Each judge's rows are the claims this plan gives with that judge's verdicts as its "
         "primary outcome, over the same rollouts, without the panel or the judge calibration. "
-        "They compare judge configurations. The report's decision rests on the primary outcome "
-        "alone, and these rows are not adjusted for their number.",
+        "Their bounds are on that judge's reported risk. Under a validated judge calibration, "
+        "which makes the plan's thresholds ones on true risk, every row is `INCONCLUSIVE`. "
+        "The rows compare judge configurations. The report's decision rests on the primary "
+        "outcome alone, and these rows are not adjusted for their number.",
         "",
         f"| Judge | Integrity | Claim | {status_header}Estimate | Lower | Upper | Method |",
         f"|---|---|---|{status_rule}---:|---:|---:|---|",

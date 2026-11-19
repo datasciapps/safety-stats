@@ -3092,6 +3092,7 @@ def test_judge_claims_decide_each_claim_on_each_judge_as_its_own_plan_would(
             "lower": expected.lower,
             "upper": expected.upper,
             "method": expected.method,
+            "reasons": expected.reasons,
         }
     # Judge a flags half of p1's rollouts and none of p2's.
     assert judges["judge_a"]["claims"][0]["estimate"] == pytest.approx(0.25, abs=0)
@@ -3288,6 +3289,99 @@ def test_judge_claims_have_a_report_section(
     ).read_text(encoding="utf-8")
     assert "## Judge panel" in plain_text
     assert "Claims by judge" not in plain_text
+
+
+_ONE_JUDGE_BLOCK = (
+    "  judges:\n"
+    "    - id: judge_a\n"
+    "      score: {name: harmful_a, "
+    "mapping: {failure_values: [FAIL], safe_values: [PASS]}}\n"
+    "      block: openai\n"
+)
+
+
+def _validated_judge_claims_plan(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    claims: str = "",
+    sampling: str = "simple_random",
+) -> Path:
+    """A plan whose primary outcome and judge_a give the same verdicts, with judge_claims and a
+    validated calibration that labels every classified rollout unsafe.
+
+    p1's rollouts fail half the time and p2's never. Thresholds 0.90/0.95 put the
+    judge-reported mean far below the acceptable level, but the labels give the judge's
+    specificity no support, so no correction certifies and the primary claim stays
+    INCONCLUSIVE. ``claims`` is appended to the plan's claims.
+    """
+
+    eval_frame, sample_frame = _frames()
+    sample_frame = sample_frame.copy()
+    failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
+    sample_frame.loc[failing, "score_harmful"] = "FAIL"
+    sample_frame["score_harmful_a"] = sample_frame["score_harmful"]
+    _patch_frames(monkeypatch, (eval_frame, sample_frame))
+    baseline_dir = tmp_path / "baseline"
+    baseline_dir.mkdir()
+    baseline = analyze(plan=load_plan(_write_inputs(baseline_dir)), logs="ignored")
+    rows = ["observation_id,human_label"]
+    rows.extend(
+        f"{item.observation_id},unsafe"
+        for item in baseline._observations
+        if item.failure is not None
+    )
+    (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "design:\n",
+        _ONE_JUDGE_BLOCK
+        + "  judge_calibration:\n    mode: validated\n    validation_manifest: labels.csv\n"
+        f"    family: judge_error\n    sampling: {sampling}\n"
+        "design:\n",
+        1,
+    )
+    plan_text = plan_text.replace(
+        "    - {id: displayed,",
+        "    - {id: judge_error, purpose: simultaneous_intervals, "
+        "method: bonferroni, alpha: 0.05}\n"
+        "    - {id: displayed,",
+        1,
+    )
+    plan_text = plan_text.replace(
+        "    acceptable_upper: 0.30\n    unacceptable_lower: 0.60\n",
+        "    acceptable_upper: 0.90\n    unacceptable_lower: 0.95\n",
+        1,
+    )
+    plan_text = plan_text.replace("policy:\n", claims + "policy:\n", 1)
+    plan_text = plan_text.replace("outputs:\n", "outputs:\n  judge_claims: true\n", 1)
+    plan_path.write_text(plan_text, encoding="utf-8")
+    return plan_path
+
+
+def test_judge_claims_do_not_decide_on_judge_reported_risk_under_a_validated_calibration(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    report = analyze(plan=_validated_judge_claims_plan(tmp_path, monkeypatch), logs="ignored")
+
+    (primary,) = report.claims
+    assert primary.status == "INCONCLUSIVE"
+    assert any("not decided on judge-reported risk" in reason for reason in primary.reasons)
+    (judge,) = report.provenance["judge_panel"]["judges"]
+    (row,) = judge["claims"]
+    # The judge's verdicts are the primary's, so its bounds are the primary's judge-reported
+    # bounds, which clear the 0.90 threshold; the plan's calibration makes the threshold one
+    # on true risk, which the judge's run cannot bound.
+    assert (row["lower"], row["upper"]) == (primary.lower, primary.upper)
+    assert row["upper"] is not None and row["upper"] < 0.90
+    assert row["status"] == "INCONCLUSIVE"
+    assert any("validated judge calibration" in reason for reason in row["reasons"])
+
+    text = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    section = text[text.index("### Claims by judge (experimental)") :]
+    assert "on that judge's reported risk" in section
 
 
 def test_inspect_runs_carry_the_scorers_their_log_records() -> None:
