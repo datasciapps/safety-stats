@@ -25,8 +25,9 @@ from inspect_safety_stats.analysis.report import (
 )
 from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.decision_policy import DecisionPolicy
-from inspect_safety_stats.config.loader import report_path, report_plan
+from inspect_safety_stats.config.loader import canonical_plan_hash, report_path, report_plan
 from inspect_safety_stats.config.models import AnalysisPlan
+from inspect_safety_stats.config.registration import RegistrationReceipt, load_receipt
 from inspect_safety_stats.decision.engine import roll_up
 from inspect_safety_stats.ingest.normalize import normalize, read_inputs
 from inspect_safety_stats.ingest.records import EvaluationSource, NormalizedData
@@ -92,12 +93,41 @@ def _report_message(message: str, plan: AnalysisPlan, inputs: tuple[object, ...]
     return re.sub(pattern, lambda match: forms[match.group(0)], message)
 
 
+def _matched_receipt(
+    frozen: AnalysisPlan, receipt: RegistrationReceipt | None, diagnostics: list[Diagnostic]
+) -> RegistrationReceipt | None:
+    """The receipt when it records the frozen plan's hash; otherwise an error and None.
+
+    The hash is the frozen plan's, not the one a decision policy makes effective: a policy
+    leaves the plan as registered.
+    """
+
+    if receipt is None:
+        return None
+    digest = canonical_plan_hash(frozen)
+    if receipt.plan_sha256 == digest:
+        return receipt
+    diagnostics.append(
+        Diagnostic(
+            code="PLAN_RECEIPT_MISMATCH",
+            severity="ERROR",
+            message=(
+                "the registration receipt records another plan: its hash is "
+                f"{receipt.plan_sha256}, this plan's is {digest}"
+            ),
+        )
+    )
+    # A receipt for another plan says nothing about this one's timing.
+    return None
+
+
 def _read_input(
     plan: AnalysisPlan,
     logs: LogInput,
     parallel: bool | int,
     source: EvaluationSource | None,
     diagnostics: list[Diagnostic],
+    receipt: RegistrationReceipt | None = None,
 ) -> tuple[NormalizedData, _JudgeInputs | None] | None:
     """Read and normalize the analysis input, or record why it cannot be read.
 
@@ -105,7 +135,8 @@ def _read_input(
     same ``INGEST_FAILED`` error, its paths relative to the plan's directory. None when the
     input cannot be read. Passing both ``logs`` and ``source`` is a mistake in the call, not in
     the input, and raises ``ValueError``. Beside the normalized data comes what the per-judge
-    runs need, when the plan asks for them with ``outputs.judge_claims``.
+    runs need, when the plan asks for them with ``outputs.judge_claims``. ``receipt`` is a
+    registration receipt already matched to the plan, for the timing check.
     """
 
     if source is not None and logs is not None:
@@ -115,11 +146,11 @@ def _read_input(
         # ORDER MATTERS: the per-judge runs take copies made before the primary run
         # normalizes the manifest and groups, so nothing that run does can reach them.
         judge_inputs = (
-            _JudgeInputs(manifest.copy(), copy.deepcopy(groups), source_data)
+            _JudgeInputs(manifest.copy(), copy.deepcopy(groups), source_data, receipt)
             if plan.outputs.judge_claims
             else None
         )
-        data = normalize(plan, manifest, groups, source_data)
+        data = normalize(plan, manifest, groups, source_data, receipt)
         validate_profile_fields(plan.design.independence_profiles, data.manifest)
     except Exception as exc:
         calibration = plan.inputs.judge_calibration
@@ -143,6 +174,7 @@ def validate(
     parallel: bool | int = False,
     source: EvaluationSource | None = None,
     decision_policy: DecisionPolicy | str | Path | None = None,
+    registration_receipt: str | Path | None = None,
 ) -> IntegritySummary:
     """Check a plan and its evaluation data without computing any bound or decision.
 
@@ -151,14 +183,21 @@ def validate(
     ``parallel`` passed to Inspect's log reader. Passing both ``logs`` and ``source`` is an
     error. As in ``analyze``, a failure to read the data does not raise: it is reported as an
     ``INGEST_FAILED`` diagnostic. ``decision_policy`` is checked against the plan as
-    ``analyze`` checks it. Returns the integrity status (``valid``, ``degraded`` or
+    ``analyze`` checks it, and so is ``registration_receipt``; a malformed receipt is reported
+    as ``INGEST_FAILED``. Returns the integrity status (``valid``, ``degraded`` or
     ``invalid``) and the sorted diagnostics.
     """
 
     resolved = _coerce_plan(plan)
     diagnostics = validate_plan_references(resolved)
     _apply_decision_policy(resolved, decision_policy, diagnostics)
-    _read_input(resolved, logs, parallel, source, diagnostics)
+    try:
+        receipt = None if registration_receipt is None else load_receipt(registration_receipt)
+    except ValueError as exc:
+        diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=str(exc)))
+        return _sorted_integrity(diagnostics)
+    receipt = _matched_receipt(resolved, receipt, diagnostics)
+    _read_input(resolved, logs, parallel, source, diagnostics, receipt)
     return _sorted_integrity(diagnostics)
 
 
@@ -169,6 +208,7 @@ def analyze(
     parallel: bool | int = False,
     source: EvaluationSource | None = None,
     decision_policy: DecisionPolicy | str | Path | None = None,
+    registration_receipt: str | Path | None = None,
 ) -> SafetyReport:
     """Run the analysis a plan declares on its evaluation data and return the safety report.
 
@@ -186,14 +226,20 @@ def analyze(
     read with ``load_decision_policy``. Its thresholds replace the plan's for the claims it
     sets, and the report records every version of it, while the plan and its hash stay as
     frozen (docs/decision-policy.md).
+
+    ``registration_receipt`` (experimental) is the path of a receipt written by
+    ``hash-plan --register``. It is checked against the frozen plan's hash and the earliest
+    evaluation start; a malformed receipt raises ``ValueError``.
     """
 
     frozen = _coerce_plan(plan)
+    receipt = None if registration_receipt is None else load_receipt(registration_receipt)
     diagnostics = validate_plan_references(frozen)
     application = _apply_decision_policy(frozen, decision_policy, diagnostics)
+    receipt = _matched_receipt(frozen, receipt, diagnostics)
     # Every stage decides with the policy's thresholds; the report records the frozen plan.
     resolved = frozen if application is None else application.effective
-    read = _read_input(resolved, logs, parallel, source, diagnostics)
+    read = _read_input(resolved, logs, parallel, source, diagnostics, receipt)
     if read is None:
         return _unread_input_report(
             resolved, diagnostics, frozen, _decision_policy_record(application, None, diagnostics)

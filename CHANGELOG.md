@@ -7,6 +7,15 @@ described in their pull requests.
 
 ### Added
 
+- **Plan registration receipts (experimental).** `hash-plan --register RECEIPT.json` writes the
+  plan's hash with the current UTC time, for the author to anchor externally, for example in a
+  signed commit. `analyze` and `validate` check it with `--registration-receipt` (Python:
+  `registration_receipt=`): a receipt for another plan is `PLAN_RECEIPT_MISMATCH`, one later
+  than the earliest evaluation start is `PLAN_RECEIPT_POSTHOC`, both errors; a receipt that
+  passes reports `PLAN_REGISTERED` in place of the `PLAN_SELF_DECLARED` warning. Nothing changes
+  without the new options. See
+  [Registration receipts](docs/plan-reference.md#registration-receipts-experimental).
+
 - **Betting interval for direct means (experimental).** `weighted_betting` is a fourth direct
   interval method for `outputs.direct_mean_intervals` (`method` or `reference_methods`) and for
   hierarchy nodes. It inverts a fixed mixture of common betting fractions, needs no estimated
