@@ -6,9 +6,11 @@
 
 ## Scope
 
-Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions.
+Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions. Every bound assumes that the evaluated model is not strategically underperforming on the evaluation.
 
 **Safety estimand:** `end_to_end_system`
+
+What these results establish, and what they do not: <https://github.com/aduncan001/safety_stats/blob/main/docs/what-results-establish.md>
 
 ## Data integrity
 

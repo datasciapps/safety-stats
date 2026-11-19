@@ -219,7 +219,7 @@ as system-level safe outcomes.
 
 Every report of a fixed design states:
 
-> Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions.
+> Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions. Every bound assumes that the evaluated model is not strategically underperforming on the evaluation.
 
 A [sampled design](docs/design-based-sampling.md) states instead that results apply to the
 declared item frame, from which the evaluated items were drawn with the recorded inclusion
@@ -233,6 +233,9 @@ The package distinguishes simultaneous uncertainty guarantees from diagnostic ou
 resampling and post hoc slices should be interpreted with their stated assumptions. Optional threshold decisions can be enabled with
 `report.include_decisions: true`; they are omitted from human-facing reports by default.
 
+[What results establish](docs/what-results-establish.md) brings these limits together on one
+page, and every report links to it.
+
 ## Documentation
 
 - [Getting started](docs/getting-started.md)
@@ -245,6 +248,7 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 - [Analysis plan reference](docs/plan-reference.md)
 - [Python and command-line API reference](docs/api-reference.md)
 - [Rollout files](docs/rollout-files.md): analysing results from other evaluation systems (experimental)
+- [What results establish](docs/what-results-establish.md): what a report shows, what it does not, and where it states each condition
 - [Interpreting results](docs/interpretation.md)
 - [Diagnostic codes and assumptions](docs/diagnostics.md): what each code in a report means and what to change
 - [Judge misclassification](docs/judge-misclassification.md)

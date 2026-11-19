@@ -1,5 +1,8 @@
 # Interpreting results
 
+[What results establish](what-results-establish.md) is the one-page summary of what a result
+shows and what it does not. This page gives the details.
+
 ## Start with the risk estimates
 
 The default report presents estimates and uncertainty intervals without turning them into a
