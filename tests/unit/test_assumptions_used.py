@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 import yaml
@@ -114,3 +114,37 @@ def test_the_report_states_the_methods_it_used_and_the_assumptions_it_rests_on(
         assert f"**{assumption.id}.** {assumption.statement}" in limitations
     assert "`inputs.score.token_limit`: `\"score\"` (default)" in limitations
     assert "Outputs marked diagnostic cannot independently produce a safety pass." in limitations
+
+
+def _scored(plan: AnalysisPlan, **changes: Any) -> AnalysisPlan:
+    return _with(plan, "inputs", score=plan.inputs.score.model_copy(update=changes))
+
+
+_CLASSIFYING = [
+    (field, value)
+    for field in ("token_limit", "content_filter_stops")
+    for value in get_args(type(_plan().inputs.score).model_fields[field].annotation)
+    if value != "score"
+]
+
+
+@pytest.mark.parametrize(("field", "value"), _CLASSIFYING)
+def test_a_report_states_the_assumption_for_the_value_the_plan_took(
+    field: str, value: str
+) -> None:
+    entry = ASSUMPTIONS[field]
+    at_default = {item["id"]: item for item in assumptions_used(_plan())}[field]
+    assert (at_default["statement"], at_default["if_wrong"]) == (entry.statement, entry.if_wrong)
+
+    used = {item["id"]: item for item in assumptions_used(_scored(_plan(), **{field: value}))}
+    (setting,) = [item for item in entry.by_setting if item.value == value]
+    assert used[field]["statement"] == setting.statement != entry.statement
+    assert used[field]["if_wrong"] == (setting.if_wrong or entry.if_wrong)
+    assert [item["value"] for item in used[field]["settings"]] == [value]
+
+
+def test_every_statement_by_setting_names_a_value_other_than_the_default() -> None:
+    for entry in ASSUMPTIONS.values():
+        values = [item.value for item in entry.by_setting]
+        assert len(values) == len(set(values)), entry.id
+        assert entry.default is None or yaml.safe_load(entry.default) not in values, entry.id

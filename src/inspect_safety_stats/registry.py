@@ -116,6 +116,18 @@ class CodeEntry:
 
 
 @dataclass(frozen=True)
+class AssumptionSetting:
+    """An assumption as one value of its plan field states it, other than the default.
+
+    ``value`` is written as in a plan. ``if_wrong`` is None when the entry's own holds.
+    """
+
+    value: str
+    statement: str
+    if_wrong: str | None = None
+
+
+@dataclass(frozen=True)
 class AssumptionEntry:
     """One assumption a report's results can rest on.
 
@@ -125,6 +137,10 @@ class AssumptionEntry:
     written as in a plan; None when the plan must state it, or when there is no field.
     ``checked_by`` gives the diagnostic codes that report evidence against it, read from the
     ``assumptions`` of their entries in ``CODES``.
+
+    ``statement`` and ``if_wrong`` describe the assumption at the default. ``by_setting``
+    describes it at other values of a field that takes one of a few named values; a report
+    states the one for the value the plan took.
     """
 
     id: str
@@ -134,6 +150,16 @@ class AssumptionEntry:
     default: str | None
     if_wrong: str
     remedy: str
+    by_setting: tuple[AssumptionSetting, ...] = ()
+
+    def stated_for(self, value: object) -> tuple[str, str]:
+        """The statement and if-wrong text for the plan field's value: the entry's own unless
+        the value has its own."""
+
+        setting = next((item for item in self.by_setting if item.value == value), None)
+        if setting is None:
+            return self.statement, self.if_wrong
+        return setting.statement, setting.if_wrong or self.if_wrong
 
 
 _ASSUMPTIONS: tuple[AssumptionEntry, ...] = (
@@ -293,6 +319,23 @@ _ASSUMPTIONS: tuple[AssumptionEntry, ...] = (
             "Raise the token limit and rerun, or classify truncated answers with "
             "score.token_limit."
         ),
+        by_setting=(
+            AssumptionSetting(
+                "missing",
+                "An answer that stopped at the generation token limit counts by its score, and "
+                "without a score or a sample error as missing, counted on its own.",
+            ),
+            AssumptionSetting(
+                "safe",
+                "An answer that stopped at the generation token limit counts by its score, and "
+                "without a score or a sample error as safe, as the plan declares.",
+            ),
+            AssumptionSetting(
+                "failure",
+                "An answer that stopped at the generation token limit counts by its score, and "
+                "without a score or a sample error as a failure, as the plan declares.",
+            ),
+        ),
     ),
     AssumptionEntry(
         id="content_filter_stops",
@@ -310,6 +353,24 @@ _ASSUMPTIONS: tuple[AssumptionEntry, ...] = (
         remedy=(
             "Classify the stops with score.content_filter_stops: safe or failure, under the "
             "end-to-end estimand."
+        ),
+        by_setting=(
+            AssumptionSetting(
+                "safe",
+                "An output a provider's content filter stopped before it delivered any "
+                "content, without a sample error, counts as safe whatever its score: a policy "
+                "block of the end-to-end system, as the plan declares.",
+                "The rate holds for the system behind this provider's filter. Behind another "
+                "filter, a stopped output may have been delivered, and may have been harmful.",
+            ),
+            AssumptionSetting(
+                "failure",
+                "An output a provider's content filter stopped before it delivered any "
+                "content, without a sample error, counts as a failure whatever its score: a "
+                "refusal of the end-to-end system, as the plan declares.",
+                "The rate holds for the system behind this provider's filter. Behind another "
+                "filter, a stopped output may have been delivered as an answer, not a refusal.",
+            ),
         ),
     ),
     AssumptionEntry(
@@ -1181,6 +1242,28 @@ _CODES: tuple[CodeEntry, ...] = (
         remedy="None needed: the diagnostic records which claims were retargeted to true risk.",
     ),
     CodeEntry(
+        code="JUDGE_CORRECTION_POLICY_CLASSIFIED",
+        severities=("INFO",),
+        source="analysis",
+        effect="adjusted",
+        assumption=(
+            "Every classified rollout of a judge-corrected row carries a judge verdict, which "
+            "the judge's error rates describe."
+        ),
+        consequence=(
+            "The judge corrections of rows holding rollouts a plan policy classified, the rho "
+            "corrections and the panel-derived one, credit the judge with no false alarm at the "
+            "upper bound and no missed failure at the lower, which widens them, and those rows "
+            "have no asymptotic reference intervals."
+        ),
+        remedy=(
+            "None needed: the policy's classification is the truth the estimand defines. To "
+            "narrow the correction, rescore the rollouts or classify them by their score, "
+            "with inputs.score.errors, missing, content_filter_stops or token_limit."
+        ),
+        assumptions=("judge_accuracy",),
+    ),
+    CodeEntry(
         code="JUDGE_CORRECTION_UNAVAILABLE",
         severities=("WARNING",),
         source="analysis",
@@ -1316,9 +1399,9 @@ _CODES: tuple[CodeEntry, ...] = (
         source="analysis",
         effect="withheld",
         assumption=(
-            "The labels hold both truly unsafe and truly safe rollouts, and every prompt of the "
-            "row has a classified rollout, so the judge's sensitivity and specificity can be "
-            "estimated."
+            "The labels hold both truly unsafe and truly safe rollouts, every prompt of the row "
+            "has a classified rollout and no rollout of the row was classified by a plan "
+            "policy, so the judge's sensitivity and specificity can be estimated and applied."
         ),
         consequence=(
             "The diagnostic Lang-Reiczigel limits are not reported for the row; the exact "
@@ -1448,6 +1531,25 @@ _CODES: tuple[CodeEntry, ...] = (
         remedy=(
             "Add the labelled rollouts' groups to inputs.judge_calibration.groups, or remove the "
             "labels outside them from the validation manifest."
+        ),
+    ),
+    CodeEntry(
+        code="JUDGE_VALIDATION_POLICY_CLASSIFIED",
+        severities=("WARNING",),
+        source="judge_labels",
+        effect="recorded",
+        assumption=(
+            "Every validation label, and every validation strata row, names a rollout the "
+            "judge classified."
+        ),
+        consequence=(
+            "The labels and strata rows of rollouts a plan policy classified calibrate nothing: "
+            "such rollouts are in neither judge stratum."
+        ),
+        remedy=(
+            "Draw the labels from the rollouts the judge classified only, leaving out those a "
+            "policy classified, such as policy blocks counted safe or missing scores counted "
+            "as failures."
         ),
     ),
     CodeEntry(
@@ -1638,6 +1740,22 @@ _CODES: tuple[CodeEntry, ...] = (
         remedy=(
             "Validate the composite's own verdict with inputs.judge_calibration.mode: validated, "
             "or use inputs.composites[].rule: any or all."
+        ),
+    ),
+    CodeEntry(
+        code="PANEL_CORRECTION_VERDICT_UNMATCHED",
+        severities=("WARNING",),
+        source="plan",
+        effect="withheld",
+        assumption=(
+            "The primary mapping reads the primary composite's verdict as it is: true as "
+            "failure and false as safe, the verdict the derived accuracy box describes."
+        ),
+        consequence="No panel-derived judge correction is reported.",
+        remedy=(
+            "Map the composite's verdict with failure_values: [true] and safe_values: [false] "
+            "in inputs.score.mapping, or validate the outcome the mapping defines with "
+            "inputs.judge_calibration.mode: validated."
         ),
     ),
     CodeEntry(

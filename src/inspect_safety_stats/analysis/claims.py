@@ -13,6 +13,7 @@ from inspect_safety_stats.analysis.judge_calibration import (
     _JudgeScope,
     _labelled_population,
     _out_of_scope_reason,
+    _policy_rollouts,
     _scope_population,
     _scope_rollouts,
     pooled_calibration_gap,
@@ -94,11 +95,13 @@ def _noisy_valid_claim(
     judge_summary: dict[str, Any] | None,
     gap: str | None,
     scope: _JudgeScope | None = None,
+    policy_classified: tuple[int, int] = (0, 0),
 ) -> _NoisyValidOutcome:
     """Decide an aggregate claim with the finite-sample noisy-but-valid test.
 
     ``scope`` is the calibration the claim's row is corrected with; None when the
-    calibration is scoped to groups that leave the row out.
+    calibration is scoped to groups that leave the row out. ``policy_classified`` counts the
+    row's rollouts a plan policy counted safe and as failures.
     """
 
     method = "noisy_valid_certification_test"
@@ -137,6 +140,25 @@ def _noisy_valid_claim(
                 "that weights those rollouts equally, over the whole "
                 + ("cohort" if scope[1] is None else "group")
                 + " in a fixed design."
+            ],
+            lower=None,
+            upper=None,
+            method=method,
+            alpha=family_alpha,
+            verdict_range=VerdictRange(),
+        )
+    if any(policy_classified):
+        # The test inverts the judge-reported bounds over the judge's sensitivity and
+        # false-positive rate, reading every classified rollout as a judge verdict. A rollout a
+        # policy counted safe then lowers the true-risk upper bound, and one counted as a
+        # failure raises the lower, and the bounds do not carry their share to take it back.
+        return _NoisyValidOutcome(
+            status="INCONCLUSIVE",
+            reasons=[
+                f"{sum(policy_classified)} of the row's rollouts were classified by a plan "
+                "policy, not by the judge, and the noisy-but-valid test would read them as "
+                "judge verdicts, so it cannot certify this row. The judge-corrected interval "
+                "covers such rollouts."
             ],
             lower=None,
             upper=None,
@@ -646,6 +668,14 @@ def _claims(
                 judge_summary=judge_summary,
                 gap=gap,
                 scope=scope,
+                policy_classified=(
+                    _policy_rollouts(
+                        _scope_population(population, data, scope),
+                        group_weights[evidence.group_id],
+                    )
+                    if isinstance(evidence, GroupRiskResult) and scope is not None
+                    else (0, 0)
+                ),
             )
             status, reasons, method = outcome.status, outcome.reasons, outcome.method
             lower, upper, alpha = outcome.lower, outcome.upper, outcome.alpha

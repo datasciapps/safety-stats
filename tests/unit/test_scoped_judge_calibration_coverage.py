@@ -64,6 +64,7 @@ def _data(rows: list[tuple[str, str, bool, bool]]) -> NormalizedData:
             task_id="task",
             cohort_id="candidate",
             score_name="harmful",
+            score_raw="FAIL" if verdict else "PASS",
             failure=verdict,
             outcome_status="classified_failure" if verdict else "classified_safe",
             model="model",
