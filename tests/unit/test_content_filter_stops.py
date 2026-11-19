@@ -224,7 +224,7 @@ def test_a_block_cannot_be_a_refusal_while_blocked_errors_count_as_safe() -> Non
 
 @pytest.mark.parametrize("stops", ["safe", "failure"])
 def test_a_judge_cannot_classify_content_filter_stops(stops: str) -> None:
-    # A judge's verdict is read from its score as it is, so the field would be ignored there.
+    # Every judge's run takes the field from inputs.score, so a judge's own value is refused.
     mapping = {"failure_values": ["FAIL"], "safe_values": ["PASS"]}
     judge = {"id": "j", "score": {"name": "j", "mapping": mapping, "content_filter_stops": stops}}
     inputs = {**_inputs(errors="conservative_bounds"), "judges": [judge]}

@@ -238,7 +238,9 @@ def judge_run_score(primary: ScoreSpec, judge: ScoreSpec) -> ScoreSpec:
     ``content_filter_stops`` and ``token_limit`` say how rollouts count that the target's
     provider stopped, which is the same for every judge of the same rollouts. Left at
     ``score`` the judge's score says nothing about them, so its run counts them as the plan's
-    primary analysis does, and differs from it in the judge's verdicts alone.
+    primary analysis does, and differs from it in the judge's verdicts alone. A judge's score
+    cannot set ``content_filter_stops`` (``JudgeSpec`` refuses it), so every judge's run takes
+    the primary's; a ``token_limit`` the judge sets is kept.
     """
 
     update: dict[str, Any] = {}
@@ -549,12 +551,13 @@ class JudgeSpec(StrictModel):
 
     @model_validator(mode="after")
     def no_content_filter_stops(self) -> JudgeSpec:
-        # A judge's verdict is read from its score as it is: a stop classified here would be
-        # ignored, so it is refused rather than accepted in silence.
+        # A content-filter stop is the target's, the same whichever judge reads the rollout,
+        # so every judge's run takes inputs.score's content_filter_stops (judge_run_score). A
+        # judge's own value would count the same stops differently, so it is refused.
         if self.score.content_filter_stops != "score":
             raise ValueError(
-                f"judge {self.id!r}: content_filter_stops applies to inputs.score only; "
-                "remove it from the judge's score"
+                f"judge {self.id!r}: content_filter_stops applies to inputs.score only, and "
+                "every judge's run takes it from there; remove it from the judge's score"
             )
         return self
 
@@ -1344,26 +1347,22 @@ class AnalysisPlan(StrictModel):
 
     @model_validator(mode="after")
     def judge_runs_count_content_filter_stops_consistently(self) -> AnalysisPlan:
-        # Each judge's run reads the judge's score with the stop reasons it inherits
-        # (judge_run_score), which must fit as the primary score must. Without judge_claims
-        # no run reads them.
+        # Each judge's run reads the judge's score with the primary's content_filter_stops,
+        # which a judge cannot set (judge_run_score), so the value must fit each judge's own
+        # errors as it fits the primary's. The estimand is the plan's, which the primary's
+        # value already fits. Without judge_claims no run reads a judge's stop reasons.
         if not self.outputs.judge_claims:
             return self
         for judge in self.inputs.judges:
             score = judge_run_score(self.inputs.score, judge.score)
             problem = _content_filter_stops_problem(score, self.inputs.estimand)
-            if problem is None:
-                continue
-            inherited = (
-                " The judge leaves its content_filter_stops at score, so its run takes "
-                f"{score.content_filter_stops} from inputs.score."
-                if judge.score.content_filter_stops == "score"
-                else ""
-            )
-            raise ValueError(
-                f"outputs.judge_claims runs judge {judge.id!r} on its own score, where "
-                f"{problem}.{inherited}"
-            )
+            if problem is not None:
+                raise ValueError(
+                    f"outputs.judge_claims runs judge {judge.id!r} on its own score, where "
+                    f"{problem}. Every judge's run takes content_filter_stops from "
+                    f"inputs.score, so the judge's run takes {score.content_filter_stops} "
+                    "from inputs.score."
+                )
         return self
 
     def source_path(self) -> Path | None:

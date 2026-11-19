@@ -3554,9 +3554,9 @@ def _without_stop_reasons(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-@pytest.mark.parametrize(
-    "option", ["token_limit: safe", "content_filter_stops: safe", "token_limit: missing"]
-)
+# A judge's own content_filter_stops is refused when the plan loads, and an inherited one is
+# the primary's, which the source cannot serve for the primary either.
+@pytest.mark.parametrize("option", ["token_limit: safe", "token_limit: missing"])
 def test_a_judges_option_the_source_cannot_serve_invalidates_only_that_judges_run(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, option: str
 ) -> None:
@@ -4157,18 +4157,14 @@ def test_judge_claims_reject_a_judge_whose_inherited_content_filter_stops_misfit
     load_plan(plan_path)
 
 
-def test_judge_claims_reject_a_judges_own_content_filter_stops_that_misfit_the_estimand(
-    tmp_path: Path,
-) -> None:
+def test_judge_claims_refuse_a_judges_own_content_filter_stops(tmp_path: Path) -> None:
+    # Every judge's run takes content_filter_stops from inputs.score, so a judge's own value,
+    # which a judge's run would otherwise read, is refused when the plan loads.
     plan_path = _judge_claims_plan(tmp_path)
     _with_judge_score_options(plan_path, "", harmful_b="content_filter_stops: safe")
-    plan_path.write_text(
-        plan_path.read_text(encoding="utf-8").replace(
-            "inputs:\n", "inputs:\n  estimand: underlying_model\n", 1
-        ),
-        encoding="utf-8",
-    )
-    with pytest.raises(ValueError, match=r"judge 'judge_b'.*needs estimand end_to_end_system"):
+    with pytest.raises(
+        ValueError, match=r"judge 'judge_b': content_filter_stops applies to inputs\.score only"
+    ):
         load_plan(plan_path)
 
 
