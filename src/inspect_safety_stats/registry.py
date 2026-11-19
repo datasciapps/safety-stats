@@ -908,11 +908,15 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
         consequence=(
             "Nothing is recomputed: the validator's rejection rates by value are in the details "
-            "and in fidelity.csv."
+            "and in fidelity.csv, beside the rewrites it judged for each value. The spread is "
+            "not tested against chance, so the message names the fewest rewrites judged for "
+            "one value."
         ),
         remedy=(
-            "Read fidelity.csv for the values the validator rejects most; improve the kernel "
-            "for them, or review the validator, and materialize the run again."
+            "Read fidelity.csv for the values the validator rejects most, and how many "
+            "rewrites it judged for them; if they are few, the spread can be chance. Otherwise "
+            "improve the kernel for them, or review the validator, and materialize the run "
+            "again."
         ),
     ),
     CodeEntry(
@@ -947,9 +951,9 @@ _CODES: tuple[CodeEntry, ...] = (
             "after a duplicate rejection, out of the evaluable units."
         ),
         remedy=(
-            "To remove the dependence, set rewrite.deduplication.on_duplicate: accept or "
-            "rewrite.deduplication.scope: none in the frozen plan and materialize again; "
-            "otherwise report the count beside the intervals."
+            "To remove the dependence, set rewrite.deduplication.on_duplicate: accept, or "
+            "rewrite.deduplication.scope: none with near_duplicate: off, in the frozen plan "
+            "and materialize again; otherwise report the count beside the intervals."
         ),
     ),
     CodeEntry(
@@ -1059,16 +1063,20 @@ _CODES: tuple[CodeEntry, ...] = (
         source="generation",
         effect="recorded",
         assumption=(
-            "When the plan sets rewrite.validation.invoke, the rewrites were judged by the "
-            "validator rewrite.validation.validator_id names, and by no other."
+            "When the plan sets rewrite.validation.invoke, every kept rewrite was judged by "
+            "the validator rewrite.validation.validator_id names, and no rewrite by another."
         ),
         consequence=(
-            "Nothing is recomputed: the diagnostic names the validators the attempt ledger "
-            "records, if any, beside the declared one."
+            "Nothing is recomputed: the diagnostic names any other validator the attempt "
+            "ledger records, and counts the kept rewrites no validator judged, as when "
+            "validation.invoke was set after materialization or before a resume. A run in "
+            "which no rewrite reached the validator and none was kept has nothing to compare, "
+            "and gets no diagnostic."
         ),
         remedy=(
-            "Materialize again with --validator naming an implementation whose validator_id "
-            "equals rewrite.validation.validator_id."
+            "Materialize again from the start (--overwrite or a new output directory, not "
+            "--resume) under the plan as it stands, with --validator naming an "
+            "implementation whose validator_id equals rewrite.validation.validator_id."
         ),
     ),
     CodeEntry(

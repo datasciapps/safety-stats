@@ -73,10 +73,10 @@ from inspect_safety_stats.generative.ledger import (
     SelectionRecord,
     attempt_ledger_writer,
     read_attempts,
+    read_rewrite_rows,
     read_rewrites,
     read_selections,
     rewrite_ledger_writer,
-    write_attempts,
     write_selections,
 )
 from inspect_safety_stats.generative.report import GenerativeReport, plan_sha256
@@ -299,6 +299,10 @@ def _prior_work(
     accepted distribution the estimand is defined against, so re-running it would grant it
     more attempts than the plan allows. A unit recorded as ``error`` is not final: an
     operational failure says nothing about the kernel, so it is left out and runs again.
+
+    Error rows are left out before the ledger is checked for a unit recorded twice. A resume
+    by an earlier version kept a unit's error row beside the row of its rerun, and such a
+    directory then resumes like any other.
     """
 
     ledger = directory / REWRITE_LEDGER
@@ -318,9 +322,11 @@ def _prior_work(
     prompts = read_prompt_store(store, conversations=conversations) if store.exists() else {}
     completed: dict[str, RewriteRecord] = {}
     accepted: dict[str, AcceptedRewrite] = {}
-    for record in read_rewrites(ledger):
+    for record in read_rewrite_rows(ledger):
         if record.validation_status == "error":
             continue
+        if record.sampling_unit_id in completed:
+            raise ValueError(f"rewrite ledger {ledger} repeats a sampling_unit_id")
         completed[record.sampling_unit_id] = record
         if record.is_evaluable():
             entry = prompts.get(record.sampling_unit_id)
@@ -372,6 +378,7 @@ def materialize_run(
     if overwrite:
         for name in (SELECTION_LEDGER, REWRITE_LEDGER, PROMPT_STORE, ATTEMPT_LEDGER):
             (directory / name).unlink(missing_ok=True)
+            (directory / f"{name}.partial").unlink(missing_ok=True)
 
     taxonomy = compile_taxonomy(plan, base_path=base)
     check_conversation_arms(plan, taxonomy)
@@ -424,15 +431,23 @@ def materialize_run(
     )
     resumed = len(completed)
     attempts_path = directory / ATTEMPT_LEDGER
+    # ORDER MATTERS: the ledgers are replaced after _prior_work has read them and before the
+    # writers below open them. A writer opened first would keep appending to the file the
+    # replace unlinks, so on POSIX every row of the resumed run would be lost with it; on
+    # Windows the replace would fail, because an open file cannot be replaced.
+    if resume:
+        _keep_finished_rewrites(directory / REWRITE_LEDGER, completed)
+        _keep_accepted_prompts(directory / PROMPT_STORE, accepted_before)
     if plan.rewrite.records_attempts:
         _keep_finished_attempts(attempts_path, completed)
     # Selections are known before any kernel call, so they are persisted first: an
     # interrupted run then still records what it set out to evaluate.
     write_selections(selections, directory / SELECTION_LEDGER)
 
-    # Both artifacts are appended to, never rewritten. Resuming therefore cannot destroy
-    # the work it is building on, even if the resumed run is itself interrupted. Rows land
-    # in completion order rather than selection order; nothing downstream reads order.
+    # From here the artifacts are only appended to, and pruning replaced each in one step,
+    # keeping every finished unit. Resuming therefore cannot destroy the work it is
+    # building on, even if the resumed run is itself interrupted. Rows land in completion
+    # order rather than selection order; nothing downstream reads order.
     ledger = rewrite_ledger_writer(directory / REWRITE_LEDGER)
     prompts_out = prompt_store_writer(directory / PROMPT_STORE)
     attempts_out = attempt_ledger_writer(attempts_path)
@@ -447,12 +462,7 @@ def materialize_run(
         def persist(record: RewriteRecord, entry: AcceptedRewrite | None) -> None:
             ledger.append(record.model_dump(mode="json"))
             if entry is not None:
-                prompts_out.append({
-                    "sampling_unit_id": entry.sampling_unit_id,
-                    "prompt_id": entry.prompt_id,
-                    "prompt": entry.prompt,
-                    "prompt_sha256": entry.prompt_sha256,
-                })
+                prompts_out.append(_prompt_row(entry))
 
         result = execute_rewrites(
             plan,
@@ -487,6 +497,43 @@ def materialize_run(
     )
 
 
+def _prompt_row(entry: AcceptedRewrite) -> dict[str, str]:
+    return {
+        "sampling_unit_id": entry.sampling_unit_id,
+        "prompt_id": entry.prompt_id,
+        "prompt": entry.prompt,
+        "prompt_sha256": entry.prompt_sha256,
+    }
+
+
+def _keep_finished_rewrites(path: Path, completed: dict[str, RewriteRecord]) -> None:
+    """Leave in the rewrite ledger only the rows of units that will not run again.
+
+    A unit recorded as ``error`` runs again, and its new row is appended. Left in place, its
+    old row would record the unit twice, which the analysis refuses. The ledger is written
+    afresh even when no row is dropped, so one that a development version wrote with CRLF
+    line endings continues with the LF rows the resumed run appends, never a mix.
+    """
+
+    if not path.exists():
+        return
+    rewrite_ledger_writer(path).replace(
+        record.model_dump(mode="json") for record in completed.values()
+    )
+
+
+def _keep_accepted_prompts(path: Path, accepted: dict[str, AcceptedRewrite]) -> None:
+    """Leave in the prompt store only the prompts of the accepted units it was read for.
+
+    Those are the prompts the resumed run builds on, and their text is written back as it
+    was read. Written afresh like the rewrite ledger, for the same reason.
+    """
+
+    if not path.exists():
+        return
+    prompt_store_writer(path).replace(_prompt_row(entry) for entry in accepted.values())
+
+
 def _keep_finished_attempts(path: Path, completed: dict[str, RewriteRecord]) -> None:
     """Leave in the attempt ledger only the attempts of units that will not run again.
 
@@ -494,6 +541,9 @@ def _keep_finished_attempts(path: Path, completed: dict[str, RewriteRecord]) -> 
     ledger, so an interrupted run can leave attempts of a unit that is not finished. That
     unit runs again from its first attempt, and its stale rows would collide with the new
     ones. A unit that errored runs again for the same reason.
+
+    The kept rows are written by the ledger's own writer, so the rows the resumed run
+    appends end their lines as they do.
     """
 
     if not completed:
@@ -505,7 +555,7 @@ def _keep_finished_attempts(path: Path, completed: dict[str, RewriteRecord]) -> 
             f"{ATTEMPT_LEDGER}; it was materialized under different rewrite settings"
         )
     kept = [record for record in read_attempts(path) if record.sampling_unit_id in completed]
-    write_attempts(kept, path)
+    attempt_ledger_writer(path).replace(record.model_dump(mode="json") for record in kept)
 
 
 
@@ -812,10 +862,12 @@ def _fidelity(
 ) -> list[FidelityRow] | None:
     """Fidelity by arm from the attempt ledger, when the plan records one.
 
-    Appends three diagnostics: a validator that judged the rewrites under another identifier
-    than the plan's, a level whose values it rejects at materially different rates, and
-    units whose kept rewrite followed a duplicate rejection, whose prompts therefore
-    depend on the rewrites kept for earlier units.
+    Appends three diagnostics: a validator that judged rewrites under another identifier
+    than the plan's, or a kept rewrite that no validator judged; a level whose values it
+    rejects at rates more than five percentage points apart, however few rewrites it
+    judged; and units whose kept rewrite followed a duplicate rejection, whose prompts
+    therefore depend on the rewrites kept for earlier units. A run in which no rewrite
+    reached the validator and none was kept gives the first nothing to compare.
     """
 
     if not plan.rewrite.records_attempts:
@@ -832,14 +884,22 @@ def _fidelity(
 
     declared = plan.rewrite.validation.validator_id
     used = sorted({item.validator_id for item in attempts if item.validator_id is not None})
-    if plan.rewrite.validation.invoke and used != [declared]:
+    # A kept rewrite without a validator was materialized under a plan that did not invoke
+    # one, as when validation.invoke was set after materialization or before a resume.
+    unjudged = sum(1 for item in attempts if item.accepted and item.validator_id is None)
+    findings: list[str] = []
+    if any(item != declared for item in used):
+        findings.append(f"records {', '.join(repr(item) for item in used)}")
+    if unjudged:
+        findings.append(f"records {unjudged} kept rewrite(s) that no validator judged")
+    if plan.rewrite.validation.invoke and findings:
         diagnostics.append(
             Diagnostic(
                 code="GENERATIVE_VALIDATOR_MISMATCH",
                 severity="WARNING",
                 message=(
                     f"the plan declares validator {declared!r}, but the attempt ledger "
-                    f"records {', '.join(repr(item) for item in used) or 'none'}"
+                    + ", and ".join(findings)
                 ),
                 scope=plan_scope("rewrite", "validation"),
             )
@@ -847,13 +907,18 @@ def _fidelity(
 
     for level in uneven_fidelity(rows):
         spread = [row for row in rows if row.level == level]
+        fewest = min(
+            row.validator_judged for row in spread if row.validator_rejection_rate is not None
+        )
         diagnostics.append(
             Diagnostic(
                 code="GENERATIVE_FIDELITY_UNEVEN",
                 severity="WARNING",
                 message=(
-                    f"the validator rejects rewrites for values of {level!r} at materially "
-                    "different rates, so arm fidelity differs across that level"
+                    f"the validator's rejection rates for the values of {level!r} are more "
+                    "than five percentage points apart, so arm fidelity may differ across "
+                    f"that level; the fewest rewrites it judged for one value is {fewest}, "
+                    "and among few judged rewrites a spread this wide can arise by chance"
                 ),
                 scope=plan_scope("taxonomy", "hierarchy", level),
                 details={

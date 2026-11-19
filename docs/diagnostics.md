@@ -1561,9 +1561,11 @@ evaluated them.
 - **Assumption:** The validator rejects rewrites at similar rates across the values of each level,
   so arm fidelity is alike across that level.
 - **Consequence:** Nothing is recomputed: the validator's rejection rates by value are in the
-  details and in fidelity.csv.
-- **Remedy:** Read fidelity.csv for the values the validator rejects most; improve the kernel for
-  them, or review the validator, and materialize the run again.
+  details and in fidelity.csv, beside the rewrites it judged for each value. The spread is not
+  tested against chance, so the message names the fewest rewrites judged for one value.
+- **Remedy:** Read fidelity.csv for the values the validator rejects most, and how many rewrites it
+  judged for them; if they are few, the spread can be chance. Otherwise improve the kernel for them,
+  or review the validator, and materialize the run again.
 
 #### `GENERATIVE_LOG_INCOMPLETE`
 
@@ -1584,9 +1586,9 @@ evaluated them.
   accepted for earlier units.
 - **Consequence:** Nothing is recomputed: the diagnostic gives how many units kept a rewrite only
   after a duplicate rejection, out of the evaluable units.
-- **Remedy:** To remove the dependence, set rewrite.deduplication.on_duplicate: accept or
-  rewrite.deduplication.scope: none in the frozen plan and materialize again; otherwise report the
-  count beside the intervals.
+- **Remedy:** To remove the dependence, set rewrite.deduplication.on_duplicate: accept, or
+  rewrite.deduplication.scope: none with near_duplicate: off, in the frozen plan and materialize
+  again; otherwise report the count beside the intervals.
 
 #### `GENERATIVE_ROLLOUT_OVERRUN`
 
@@ -1655,9 +1657,12 @@ evaluated them.
 
 - **Severity:** WARNING
 - **Effect:** [recorded](#effects)
-- **Assumption:** When the plan sets rewrite.validation.invoke, the rewrites were judged by the
-  validator rewrite.validation.validator_id names, and by no other.
-- **Consequence:** Nothing is recomputed: the diagnostic names the validators the attempt ledger
-  records, if any, beside the declared one.
-- **Remedy:** Materialize again with --validator naming an implementation whose validator_id equals
+- **Assumption:** When the plan sets rewrite.validation.invoke, every kept rewrite was judged by the
+  validator rewrite.validation.validator_id names, and no rewrite by another.
+- **Consequence:** Nothing is recomputed: the diagnostic names any other validator the attempt
+  ledger records, and counts the kept rewrites no validator judged, as when validation.invoke was
+  set after materialization or before a resume. A run in which no rewrite reached the validator and
+  none was kept has nothing to compare, and gets no diagnostic.
+- **Remedy:** Materialize again from the start (--overwrite or a new output directory, not --resume)
+  under the plan as it stands, with --validator naming an implementation whose validator_id equals
   rewrite.validation.validator_id.
