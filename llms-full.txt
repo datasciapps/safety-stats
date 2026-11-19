@@ -52,7 +52,7 @@ Import from `inspect_safety_stats.stats`:
 Import from `inspect_safety_stats.stats`:
 
 - `weighted_kl_chernoff_mean_bounds(failures, unclassified, trials, weights, *, alpha_lower, alpha_upper, independence_unit="rollout") -> DirectMeanBounds`: Sharpest under sparse or zero failures; uses exact Bernoulli-KL inversion for equal atomic weights and weighted Poisson-Chernoff otherwise.
-- `weighted_empirical_bernstein_mean_bounds(failures, unclassified, trials, weights, *, alpha_lower, alpha_upper, independence_unit="rollout") -> DirectMeanBounds`: Variance-adaptive concentration bound for heterogeneous prompt rates.
+- `weighted_empirical_bernstein_mean_bounds(failures, unclassified, trials, weights, *, alpha_lower, alpha_upper, independence_unit="rollout", variance_centers=None) -> DirectMeanBounds`: Variance-adaptive concentration bound for heterogeneous prompt rates. `variance_centers` gives one or more centerings fixed by the design, one center in `[0, 1]` per prompt; the default uses centers `0` and `1`.
 - `weighted_hoeffding_mean_bounds(failures, unclassified, trials, weights, *, alpha_lower, alpha_upper, independence_unit="rollout") -> DirectMeanBounds`: Distribution-free worst-case-variance reference bound.
 
 Invariants: `failures`, `unclassified`, `trials` are aligned 1D integer arrays with `failures + unclassified <= trials` and `trials > 0`; `weights` is a nonnegative 1D float array summing to `1.0`; `independence_unit` is `"rollout"` or `"prompt_cluster"`.
@@ -91,9 +91,9 @@ Single-judge bias correction uses **predictive values conditioned on the judge v
 
 Functions:
 
-- `JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source="assumed", alpha=None)` (in `inspect_safety_stats.stats`)
-- `correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration, unclassified_share=0.0) -> CorrectedRisk` (in `inspect_safety_stats.stats`): Propagates `[observed_lower, observed_upper]` onto true risk `R* = R * rho_1 + (1 - R) * rho_0` over the calibration box. Valid for positively homogeneous, translation-equivariant measures (mean, max, CVaR, top-k), not entropic or threshold measures.
-- `JudgeStratumCounts(labelled, truly_unsafe, stratum_size)` and `estimate_judge_calibration(*, scenario_id, unsafe_stratum, safe_stratum, alpha) -> JudgeCalibration` (import from `inspect_safety_stats.stats.misclassification`): Builds a validated Clopper-Pearson `JudgeCalibration` box from human audit labels sampled within the judge-flagged (`unsafe_stratum`) and judge-cleared (`safe_stratum`) strata, where `truly_unsafe` counts true failures.
+- `JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source="assumed", alpha=None, completed_strata=(), bound="clopper_pearson")` (in `inspect_safety_stats.stats`): `completed_strata` names the strata (`judge_unsafe`, `judge_safe`) that no label measured and the box completes as `[0, 1]`; `bound` is `"clopper_pearson"` or `"confidence_sequence"`.
+- `correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration, unclassified_share=0.0, tail=False) -> CorrectedRisk` (in `inspect_safety_stats.stats`): Propagates `[observed_lower, observed_upper]` onto true risk `R* = R * rho_1 + (1 - R) * rho_0` over the calibration box. Valid for positively homogeneous, translation-equivariant measures (mean, max, CVaR, top-k), not entropic or threshold measures. Pass `tail=True` for a maximum, CVaR or top-k mean: when the box lets `rho_1` fall below `rho_0`, the upper end then also takes the judge-unsafe mass as 0.
+- `JudgeStratumCounts(labelled, truly_unsafe, stratum_size)` and `estimate_judge_calibration(*, scenario_id, unsafe_stratum, safe_stratum, alpha, bound="clopper_pearson") -> JudgeCalibration` (import from `inspect_safety_stats.stats.misclassification`): Builds a validated `JudgeCalibration` box (Clopper-Pearson, or with `bound="confidence_sequence"` anytime-valid bounds for labelling that may stop on results) from human audit labels sampled within the judge-flagged (`unsafe_stratum`) and judge-cleared (`safe_stratum`) strata, where `truly_unsafe` counts true failures.
 - Multi-judge panels (in `inspect_safety_stats.stats`): `compose_verdicts(verdicts, rule)` (`"any"`, `"all"`, `"majority"`), `effective_votes(blocks)`, `pairwise_agreement(first, second)`, `JudgeAccuracyBox(sensitivity_lower, sensitivity_upper, specificity_lower, specificity_upper)` (prevalence-free sensitivity/specificity), and `composite_accuracy_box(judges, blocks, rule)`.
 
 ---
@@ -478,14 +478,21 @@ Every command draws its exit status from `ExitCode` in `src/inspect_safety_stats
 
 ### Report directory contents (`SafetyReport.write(output)`)
 
-Output directories are write-once unless `overwrite=True` / `--overwrite`:
+Output directories are write-once unless `overwrite=True` / `--overwrite`.
 
-- `report.json`: Canonical machine-readable `SafetyReport` (`schema_version: "2.0"`). Inspect `integrity`, `group_risks`, `hierarchy_risks`, `comparisons`, `comparison_sets`, `prompt_estimates`, `claims`, and `decision`.
-- `report.md`: Human-readable Markdown summary (metrics-first unless `report.include_decisions: true`).
+**Agents: open `index.json` first**, as [docs/agent-guide.md](docs/agent-guide.md) ("Reading a report as an agent") describes. Read `summary.integrity` (`valid`, `degraded` or `invalid`) before any number, then `summary.warnings`: one entry per error or warning code, with its effect, the assumption it checks, and JSON pointers into `report.json` for each occurrence.
+
+- `index.json` and `index.md`: The index of the directory, in JSON and Markdown: every file with what it holds (`artifacts`), the analysis id and `plan_sha256` (`analysis`), the `summary` of `report.json` (integrity, diagnostic counts, headline estimates, warnings by code, assumptions used), and `guide`, the address of `docs/agent-guide.md`.
+- `report.json`: Canonical machine-readable `SafetyReport` (`schema_version: "3.0"`), the source of every other file. Inspect `summary`, `integrity`, `group_risks`, `hierarchy_risks`, `comparisons`, `comparison_sets`, `prompt_estimates`, `claims`, and `decision`.
+- `report.md`: One-page Markdown summary for people.
+- `report-full.md`: The full Markdown report: every interval, sensitivity and diagnostic message.
 - `report.html`: Self-contained interactive HTML explorer (no server or network access required).
 - `plan.resolved.yaml` and `design.resolved.csv`: Resolved configuration and prompt weights.
-- `hierarchy-risks.csv`, `comparisons.csv`, `comparison-sets.csv`, `observations.csv`: Flat tabular exports.
-- `checksums.json`: SHA-256 manifest over written artifacts.
+- `hierarchy-risks.csv`, `comparisons.csv`, `comparison-sets.csv`, `observations.csv`: Flat tabular exports (`observations.csv` is left out when `report.include_observations: false`). `index.json` names the `report.json` list whose items a CSV's rows are.
+- `outcome-mapping-sensitivity.csv` and `claims.json`: Written only when the plan asks for outcome-mapping sensitivities or a claims export.
+- `checksums.json`: SHA-256 manifest over every other file, the index included.
+
+With `report.include_decisions: false` (the default), the summary, the index and the Markdown and HTML renderings leave out the overall decision and the claims' statuses; `report.json` still holds them at `/decision` and `/claims`. Do not report a hidden decision as the analysis's verdict.
 
 ---
 
@@ -494,6 +501,7 @@ Output directories are write-once unless `overwrite=True` / `--overwrite`:
 - Root index: [llms.txt](llms.txt)
 - Installable Agent Skill: [skills/inspect-safety-stats/SKILL.md](skills/inspect-safety-stats/SKILL.md)
 - Getting started tutorial: [docs/getting-started.md](docs/getting-started.md)
+- Reading a report directory as an agent: [docs/agent-guide.md](docs/agent-guide.md)
 - Complete YAML plan reference: [docs/plan-reference.md](docs/plan-reference.md)
 - Judge misclassification guide: [docs/judge-misclassification.md](docs/judge-misclassification.md)
 - Multi-model comparison guide: [docs/model-comparisons.md](docs/model-comparisons.md)
