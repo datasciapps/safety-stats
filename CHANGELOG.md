@@ -736,10 +736,12 @@ described in their pull requests.
 - **Errors about a plan that does not fit the logs say what the logs hold (changes
   diagnostics).** These errors named only what the plan asked for, so a user had to open the
   logs to see what the plan should say:
-  - `COHORT_EMPTY` for a cohort now names the values the cohort matches on and the values the
-    selected evaluations have, with how many have each, for example
+  - `COHORT_EMPTY` for a cohort now names the values the cohort matches on and, for each of
+    those fields, what the selected evaluations have and how many have it, for example
     `it requires model = 'openai/gpt-4o', and the selected evaluations have model
-    'mockllm/model' in 1 evaluation`. When the evaluations it matches also match another
+    'mockllm/model' in 1 evaluation`. Only the model is shown: any other field, such as a task
+    argument, is run configuration, so the message says only how many evaluations have the
+    required value, another value or none. When the evaluations it matches also match another
     cohort, and so were put in neither, it says so instead.
   - `SCORE_MISSING` and `JUDGE_SCORE_MISSING` for an absent score now list the scores the logs
     have.

@@ -214,6 +214,22 @@ def _score_absent(column: str, path: str, names: set[str]) -> str:
     return f"{message}; {path} must name a score they have: {listed}"
 
 
+def _match_value_shown(plan: AnalysisPlan, run: RunRecord, field: str, expected: Any) -> str:
+    """How a COHORT_EMPTY message shows a run's value of a field its cohort matches on.
+
+    Only the model is shown. Any other run field can hold the run's configuration, such as a
+    task argument, a base URL or the generate config's headers, and no diagnostic shows those
+    values (see ``_RunValue``), so the message says only whether the run has the value the
+    cohort requires.
+    """
+    value = _run_field(plan, run, field)
+    if value is _ABSENT:
+        return "(absent)"
+    if field == "model":
+        return repr(_native(value))
+    return "the required value" if _equal(value, expected) else "another value"
+
+
 def _cohort_empty_message(
     plan: AnalysisPlan, cohort_id: str, match: dict[str, Any], runs: list[RunRecord]
 ) -> str:
@@ -232,14 +248,10 @@ def _cohort_empty_message(
     observed = "; ".join(
         f"{field} "
         + _listing(
-            Counter(
-                "(absent)" if (value := _run_field(plan, run, field)) is _ABSENT
-                else repr(_native(value))
-                for run in runs
-            ),
+            Counter(_match_value_shown(plan, run, field, expected) for run in runs),
             "evaluation",
         )
-        for field in match
+        for field, expected in match.items()
     )
     return f"{message}: it requires {required}, and the selected evaluations have {observed}"
 
