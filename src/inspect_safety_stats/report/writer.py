@@ -1040,6 +1040,9 @@ def _markdown(report: SafetyReport) -> str:
             and calibration is not None
             and calibration.sampling == "stratified_without_replacement"
         )
+        scoped = calibration.groups if calibration else None
+        # A validated calibration scoped to groups measures each listed group, not its cohort.
+        unit = "group" if scoped and validated else "cohort"
         preamble = (
             (
                 "Experimental. Only the judge's sensitivity is taken from a published "
@@ -1055,8 +1058,8 @@ def _markdown(report: SafetyReport) -> str:
                 "Experimental. These accuracies sum exact hypergeometric bounds over the "
                 "declared fine strata of each judge stratum, each weighted by its size, from "
                 "human labels drawn without replacement within each fine stratum. The fine "
-                "strata weight every classified rollout of a cohort equally, so they certify "
-                "only a weighted mean that does the same, over the whole cohort in a fixed "
+                f"strata weight every classified rollout of a {unit} equally, so they certify "
+                f"only a weighted mean that does the same, over the whole {unit} in a fixed "
                 "design. Those rows are coverage-guaranteed at the union of the underlying "
                 "interval's budget and the calibration budget; every other corrected row is a "
                 "sensitivity analysis, marked diagnostic below. Validity rests on each fine "
@@ -1065,10 +1068,11 @@ def _markdown(report: SafetyReport) -> str:
             )
             if stratified
             else (
-                "These accuracies are exact Clopper-Pearson bounds from human labels drawn "
+                ("Experimental. " if scoped else "")
+                + "These accuracies are exact Clopper-Pearson bounds from human labels drawn "
                 "within each judge stratum. The labels weight every classified rollout of a "
-                "cohort equally, so they certify only a weighted mean that does the same, over "
-                "the whole cohort in a fixed design. Those rows are coverage-guaranteed at the "
+                f"{unit} equally, so they certify only a weighted mean that does the same, over "
+                f"the whole {unit} in a fixed design. Those rows are coverage-guaranteed at the "
                 "union of the underlying interval's budget and the calibration budget; every "
                 "other corrected row is a sensitivity analysis, marked diagnostic below. "
                 "Validity rests on the labelled rows being a simple random sample within "
@@ -1082,7 +1086,6 @@ def _markdown(report: SafetyReport) -> str:
                 "assumes the judge never errs."
             )
         )
-        scoped = calibration.groups if calibration else None
         if scoped:
             preamble += (
                 " The calibration is scoped to the groups "

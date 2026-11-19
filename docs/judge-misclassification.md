@@ -480,10 +480,11 @@ binary failures is already `weighted_kl_chernoff`, the recommended path is cover
 
 The judge family alpha is divided equally among the **declared cohorts**, or, when the
 calibration is [scoped to groups](#scoping-the-calibration-to-groups), among the cohorts
-times the listed groups. A single risk row consumes one share; a comparison consumes the two
-shares of the cohorts it spans. A union
-over every corrected row therefore stays inside the declared family budget, and each interval
-reports the share it actually spent in `family_alpha`.
+times the listed groups. A single risk row consumes one share; a comparison consumes two,
+those of its two arms' calibrations: each cohort's, or with `groups` each cohort's calibration
+for the comparison's group. A union over every corrected row therefore stays inside the
+declared family budget, and each interval reports the share it actually spent in
+`family_alpha`.
 
 ### What it assumes
 
@@ -588,7 +589,8 @@ cohort and label more.
 
 The module produces no correction, and says why, when:
 
-- a cohort has an empty judge stratum (`JUDGE_VALIDATION_STRATUM_EMPTY`);
+- a cohort, or with `groups` a listed group of a cohort, has an empty judge stratum
+  (`JUDGE_VALIDATION_STRATUM_EMPTY`);
 - the labels do not establish a strictly informative judge -- the \(\rho_1\) lower bound
   fails to exceed the \(\rho_0\) upper bound, meaning more labels or a better judge are
   needed -- or neither judge stratum has a label (`JUDGE_CALIBRATION_UNINFORMATIVE`); or

@@ -448,6 +448,14 @@ def test_a_group_scoped_calibration_measures_its_group_and_certifies_its_mean(
     assert outside.message.startswith("1800 validation rows")
 
     markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    # The preamble says what the scoped labels certify: a mean over the group, not the cohort.
+    assert (
+        "Experimental. These accuracies are exact Clopper-Pearson bounds from human labels "
+        "drawn within each judge stratum. The labels weight every classified rollout of a "
+        "group equally, so they certify only a weighted mean that does the same, over the "
+        "whole group in a fixed design."
+    ) in markdown
+    assert "over the whole cohort" not in markdown
     assert "The calibration is scoped to the groups `hard`" in markdown
     assert "| candidate | hard | 39 / 39 | 36 | 161 / 161 | 24 |" in markdown
 
