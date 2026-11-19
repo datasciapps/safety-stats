@@ -27,6 +27,7 @@ from inspect_safety_stats.ingest.manifest import (
     check_zero_tolerance_field,
     load_inclusion_probabilities,
     load_manifest,
+    load_selection,
     plan_manifest_columns,
     resolve_groups,
 )
@@ -913,6 +914,9 @@ def normalize(
             if plan.design.stratum_column
             else ["_all"] * len(prompt_ids)
         )
+        if plan.design.selection_column:
+            drawn = load_selection(manifest, plan.design.selection_column)
+            diagnostics.extend(_selection_mismatches(plan, prompt_ids, drawn, observed_counts))
         if plan.design.sampling == "fixed_size":
             # A fixed-size design must realize exactly its planned draws. Inferring the
             # plan from pi requires pi to be constant inside a stratum and to imply an
@@ -1039,6 +1043,59 @@ def normalize(
         first_started_at=first_started_at,
         start_unrecorded=start_unrecorded,
     )
+
+
+def _selection_mismatches(
+    plan: AnalysisPlan,
+    prompt_ids: list[str],
+    selected: np.ndarray,
+    observed_counts: dict[tuple[str, str], int],
+) -> list[Diagnostic]:
+    """An error for each cohort whose observed frame items are not the recorded selection.
+
+    The per-stratum counts a fixed-size design checks cannot tell a random draw from, say,
+    the first prompts of each stratum by identifier. The selection column records which
+    items the draw chose, so the items actually evaluated can be checked against it.
+    """
+
+    column = str(plan.design.selection_column)
+    diagnostics: list[Diagnostic] = []
+    for cohort_id in plan.cohorts:
+        observed = [observed_counts.get((cohort_id, prompt_id), 0) > 0 for prompt_id in prompt_ids]
+        unselected = sorted(
+            prompt_id
+            for prompt_id, chosen, seen in zip(prompt_ids, selected, observed, strict=True)
+            if seen and not chosen
+        )
+        unobserved = sorted(
+            prompt_id
+            for prompt_id, chosen, seen in zip(prompt_ids, selected, observed, strict=True)
+            if chosen and not seen
+        )
+        if not unselected and not unobserved:
+            continue
+        diagnostics.append(
+            Diagnostic(
+                code="SAMPLE_SELECTION_MISMATCH",
+                severity="ERROR",
+                message=(
+                    f"cohort {cohort_id!r} has observations for {len(unselected)} frame items "
+                    f"that {column!r} does not select and none for {len(unobserved)} that it "
+                    "selects; the declared inclusion probabilities describe the recorded draw, "
+                    "not the items evaluated"
+                ),
+                scope=cohort_scope(cohort_id),
+                details={
+                    "cohort_id": cohort_id,
+                    "selection_column": column,
+                    "observed_not_selected": len(unselected),
+                    "selected_not_observed": len(unobserved),
+                    "observed_not_selected_prompt_ids": unselected[:20],
+                    "selected_not_observed_prompt_ids": unobserved[:20],
+                },
+            )
+        )
+    return diagnostics
 
 
 def _receipt_timing(receipt: RegistrationReceipt, observed: list[Any]) -> list[Diagnostic]:

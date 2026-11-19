@@ -451,6 +451,17 @@ def _draw_p2_too(inputs: Inputs) -> None:
     inputs.rollouts += [rollout("p2", repeat) for repeat in range(1, 5)]
 
 
+def _selection(*marked: bool) -> Change:
+    """design.selection_column names the manifest column ``drawn``, marking p1 and p2 so."""
+
+    def change(inputs: Inputs) -> None:
+        inputs.plan["design"]["selection_column"] = "drawn"
+        for row, value in zip(inputs.manifest, marked, strict=True):
+            row["drawn"] = value
+
+    return change
+
+
 def _sampled_two_cohorts(*, empty: bool) -> Change:
     """A Poisson sample in cohorts candidate and baseline; with ``empty`` candidate's run r1
     has no rollouts."""
@@ -883,6 +894,13 @@ CASES = [
         trigger=analysis(_first(None, error="boom")),
         control=analysis(),
         effect=_unclassified_p1,
+    ),
+    Case(
+        code="SAMPLE_SELECTION_MISMATCH",
+        # The selection column records a draw of p2, but p1 was evaluated in its place.
+        trigger=analysis(_changes(_sampled((0.5, 0.5)), _selection(False, True))),
+        control=analysis(_changes(_sampled((0.5, 0.5)), _selection(True, False))),
+        effect=_cohort_risk_withheld,
     ),
     Case(
         code="SAMPLE_SIZE_IMPLAUSIBLE",

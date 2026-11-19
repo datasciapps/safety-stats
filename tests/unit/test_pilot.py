@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import re
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
+from inspect_safety_stats.ingest.manifest import load_manifest
 from inspect_safety_stats.ingest.pilot import draw_pilot
 
 
@@ -53,6 +57,39 @@ def test_strata_combine_several_columns() -> None:
     frame = draw_pilot(manifest, per_stratum=2, strata=["task_id", "category"], seed=3)
     assert set(frame["pilot_stratum"]) == {"t1/a", "t2/a", "t1/b", "t2/b"}
     assert frame.groupby("pilot_stratum")["pilot_selected"].sum().tolist() == [2, 2, 2, 2]
+
+
+def test_the_draw_is_pinned() -> None:
+    """The prompts a seed draws never change: a recorded seed must reproduce its pilot.
+
+    The identifiers include non-ASCII ones, whose rank depends on how they are encoded before
+    hashing. Changing the hash, its input or the encoding changes these lists.
+    """
+    manifest = pd.DataFrame(
+        [
+            {"prompt_id": prompt_id, "category": category}
+            for category, prompt_ids in {
+                "harm": [f"h-{index:03d}" for index in range(1, 9)],
+                "privé": ["prompt-é", "prompt-ü", "提示-1", "提示-2", "p-🙂", "p-plain"],
+            }.items()
+            for prompt_id in prompt_ids
+        ]
+    )
+    drawn = {
+        per_stratum: draw_pilot(
+            manifest, per_stratum=per_stratum, strata=["category"], seed=20261119
+        )
+        for per_stratum in (1, 2, 3)
+    }
+    selected = {
+        per_stratum: frame.loc[frame["pilot_selected"], "prompt_id"].tolist()
+        for per_stratum, frame in drawn.items()
+    }
+    assert selected == {
+        1: ["h-005", "prompt-ü"],
+        2: ["h-002", "h-005", "prompt-ü", "提示-2"],
+        3: ["h-001", "h-002", "h-005", "prompt-ü", "提示-1", "提示-2"],
+    }
 
 
 def test_the_draw_ignores_row_order() -> None:
@@ -128,6 +165,49 @@ def test_strata_labels_that_would_merge_are_rejected() -> None:
 
 
 @pytest.mark.parametrize(
+    ("first", "second", "read_as"),
+    [
+        ("1", "01", "1"),
+        ("1", "1.0", "1.0"),
+        ("true", "True", "True"),
+    ],
+)
+def test_strata_that_analyze_would_merge_are_rejected(
+    first: str, second: str, read_as: str
+) -> None:
+    """The draw reads strata as text; analyze reads the frame with pandas' inference."""
+    manifest = _manifest({"a": 4, "b": 4})
+    manifest["category"] = [first] * 4 + [second] * 4
+    expected = f"{sorted([first, second])[0]!r}, {sorted([first, second])[1]!r} "
+    with pytest.raises(ValueError, match=re.escape(f"{expected}(read as {read_as!r})")):
+        draw_pilot(manifest, per_stratum=1, strata=["category"], seed=1)
+
+
+@pytest.mark.parametrize("label", ["N/A", "None", "NA", "null", "nan"])
+def test_strata_that_analyze_would_read_as_missing_are_rejected(label: str) -> None:
+    """Under pandas 2 they form one "nan" stratum, and under pandas 3 analyze cannot sort them."""
+    manifest = _manifest({"a": 4, "b": 4})
+    manifest["category"] = ["kept"] * 4 + [label] * 4
+    with pytest.raises(ValueError, match=re.escape(f"as missing values: [{label!r}]")):
+        draw_pilot(manifest, per_stratum=1, strata=["category"], seed=1)
+
+
+def test_strata_read_back_as_drawn_are_accepted(tmp_path: Path) -> None:
+    """Labels that pandas reads as numbers keep their strata when no two read alike."""
+    manifest = _manifest({"a": 4, "b": 4, "c": 4})
+    manifest["category"] = ["7"] * 4 + ["07x"] * 4 + ["x"] * 4
+    frame = draw_pilot(manifest, per_stratum=1, strata=["category"], seed=1)
+    frame.to_csv(tmp_path / "pilot.csv", index=False, lineterminator="\n")
+    analysed = load_manifest(tmp_path / "pilot.csv", required=("prompt_id",))
+    pairs = set(zip(frame["pilot_stratum"], analysed["pilot_stratum"].astype(str), strict=True))
+    assert pairs == {("7", "7"), ("07x", "07x"), ("x", "x")}
+    numbers = _manifest({"a": 4, "b": 4})
+    numbers["category"] = ["1"] * 4 + ["2"] * 4
+    frame = draw_pilot(numbers, per_stratum=1, strata=["category"], seed=1)
+    assert set(frame["pilot_stratum"]) == {"1", "2"}
+
+
+@pytest.mark.parametrize(
     ("arguments", "message"),
     [
         ({"per_stratum": 0}, "positive integer"),
@@ -148,6 +228,52 @@ def test_a_pilot_frame_cannot_be_drawn_from_again() -> None:
     frame = draw_pilot(_manifest({"a": 3}), per_stratum=1, strata=["category"], seed=1)
     with pytest.raises(ValueError, match="pilot_selected"):
         draw_pilot(frame, per_stratum=1, strata=["category"], seed=1)
+    for column in ("pilot_seed", "pilot_per_stratum"):
+        with pytest.raises(ValueError, match=column):
+            draw_pilot(
+                _manifest({"a": 3}).assign(**{column: 1}),
+                per_stratum=1,
+                strata=["category"],
+                seed=1,
+            )
+
+
+def test_the_frame_records_the_arguments_that_repeat_the_draw() -> None:
+    """The seed is part of the frame that becomes the design manifest (CONTRIBUTING 5.3)."""
+    manifest = _manifest({"a": 12, "b": 9})
+    frame = draw_pilot(manifest, per_stratum=3, strata=["category"], seed=20261119)
+    assert frame["pilot_seed"].unique().tolist() == [20261119]
+    assert frame["pilot_per_stratum"].unique().tolist() == [3]
+    again = draw_pilot(
+        manifest,
+        per_stratum=int(frame["pilot_per_stratum"].iloc[0]),
+        strata=["category"],
+        seed=int(frame["pilot_seed"].iloc[0]),
+    )
+    assert _drawn(again) == _drawn(frame)
+
+
+def test_prompt_ids_must_be_text_as_written(tmp_path: Path) -> None:
+    """Read with pandas' defaults, 0001 becomes 1 and would draw other prompts than the CLI."""
+    path = tmp_path / "design.csv"
+    path.write_text(
+        "prompt_id,category\n" + "".join(f"{index:04d},a\n" for index in range(1, 9)),
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match=r"not text: \[1, 2, 3"):
+        draw_pilot(pd.read_csv(path), per_stratum=2, strata=["category"], seed=1)
+    as_written = pd.read_csv(path, dtype=str, keep_default_na=False)
+    frame = draw_pilot(as_written, per_stratum=2, strata=["category"], seed=1)
+    assert _drawn(frame) <= {f"{index:04d}" for index in range(1, 9)}
+
+
+@pytest.mark.parametrize("missing", [None, float("nan"), "", " "])
+def test_missing_prompt_ids_are_rejected(missing: object) -> None:
+    manifest = _manifest({"a": 4})
+    manifest["prompt_id"] = manifest["prompt_id"].astype(object)
+    manifest.loc[2, "prompt_id"] = missing
+    with pytest.raises(ValueError, match="not text|missing prompt_id"):
+        draw_pilot(manifest, per_stratum=1, strata=["category"], seed=1)
 
 
 def test_duplicate_prompts_are_rejected() -> None:
