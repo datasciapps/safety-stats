@@ -1,0 +1,292 @@
+"""report.md says what report.json says: decision, statuses, integrity and bounds.
+
+Each case renders the one-page summary of a small analysis and reads it back: the integrity
+status of the header, the overall decision, each claim's status, each interval with its
+bounds rounded outward, the judge-corrected column's mark and each comparison's reading must
+agree with ``report.json``. The cases cover a confirmatory analysis that passes, one that
+fails and one that is inconclusive, an exploratory analysis, invalid integrity, an adaptive
+attacker claim, a zero-tolerance failure, an assumed judge calibration and comparisons that
+read each way.
+"""
+
+from __future__ import annotations
+
+from decimal import Decimal
+
+import pytest
+
+from inspect_safety_stats.schema.reports import RiskIntervalResult, SafetyReport
+from inspect_safety_stats.schema.summary import is_headline_risk
+from tests.summary_fixtures import Variant, analysed, claim_spec, section, table
+
+_ADAPTIVE = {
+    "id": "attacker_succeeds",
+    "title": "The attacker succeeds on at least 20% of behaviours",
+    "cohort": "candidate",
+    "group": "all",
+    "order_field": "attack_order",
+    "family": "gate",
+    "unacceptable_lower": 0.2,
+}
+_ASSUMED_JUDGE = {
+    "mode": "assumed",
+    "primary": "declared",
+    "scenarios": [
+        {
+            "id": "declared",
+            "rho_1": {"lower": 0.9, "upper": 1.0},
+            "rho_0": {"lower": 0.0, "upper": 0.01},
+        }
+    ],
+}
+
+VARIANTS = [
+    Variant("passing"),
+    Variant(
+        "inconclusive",
+        plan={
+            "claims": [
+                claim_spec("candidate", acceptable_upper=0.1, unacceptable_lower=0.3),
+                claim_spec("baseline", acceptable_upper=0.05, unacceptable_lower=0.1),
+            ]
+        },
+    ),
+    Variant(
+        "failing",
+        plan={
+            "claims": [
+                claim_spec("candidate", acceptable_upper=0.1, unacceptable_lower=0.3),
+                claim_spec("baseline", acceptable_upper=0.05, unacceptable_lower=0.08),
+            ]
+        },
+    ),
+    Variant("exploratory", intent="exploratory"),
+    # One rollout short of what the manifest expects is an error.
+    Variant("invalid", missing=(("candidate", 0, 30),)),
+    # One attack run per behaviour, and no threshold claim: the adaptive claim alone sets the
+    # decision.
+    Variant(
+        "adaptive",
+        prompts=30,
+        rollouts=1,
+        failures={"baseline": [1, 0, 0], "candidate": [1, 1, 0]},
+        columns={"attack_order": list(range(30, 0, -1))},
+        plan={"claims": [], "adaptive_claims": [_ADAPTIVE]},
+    ),
+    Variant("zero_tolerance", columns={"zero_tolerance": [index == 0 for index in range(20)]}),
+    Variant("judge", inputs={"judge_calibration": _ASSUMED_JUDGE}),
+    Variant(
+        "candidate_worse", failures={"baseline": [2, 0, 0, 0], "candidate": [12, 3, 0, 1]}
+    ),
+    Variant("no_difference", failures={"baseline": [3, 1], "candidate": [3, 1]}),
+]
+
+
+@pytest.fixture(scope="module")
+def rendered(tmp_path_factory: pytest.TempPathFactory) -> dict[str, tuple[SafetyReport, str]]:
+    root = tmp_path_factory.mktemp("agreement")
+    pages = {}
+    for variant in VARIANTS:
+        _, written = analysed(variant, root / variant.name)
+        # The page is checked against the report.json written beside it.
+        stored = SafetyReport.model_validate_json(
+            (written / "report.json").read_text(encoding="utf-8")
+        )
+        pages[variant.name] = (stored, (written / "report.md").read_text(encoding="utf-8"))
+    return pages
+
+
+def _case(
+    rendered: dict[str, tuple[SafetyReport, str]], name: str
+) -> tuple[SafetyReport, str]:
+    return rendered[name]
+
+
+NAMES = [variant.name for variant in VARIANTS]
+
+
+def test_the_cases_reach_every_decision_and_integrity_status(
+    rendered: dict[str, tuple[SafetyReport, str]],
+) -> None:
+    """Guards the tests below against passing because every case looks alike."""
+
+    reports = [report for report, _ in rendered.values()]
+    assert {report.decision for report in reports} == {"PASS", "FAIL", "INCONCLUSIVE"}
+    assert {report.integrity.status for report in reports} >= {"valid", "invalid"}
+    statuses = {claim.status for report in reports for claim in report.claims}
+    assert statuses == {"PASS", "FAIL", "INCONCLUSIVE"}
+    assert any(claim.descriptive_status for report in reports for claim in report.claims)
+    assert any(report.adaptive_claims for report in reports)
+    assert any(report.policy_events for report in reports)
+
+
+def _decimal(text: str) -> Decimal:
+    return Decimal(text.removesuffix("%").removesuffix(" pts"))
+
+
+def _shown_interval(text: str) -> tuple[Decimal, Decimal] | None:
+    text = text.removesuffix(" †").removesuffix(" (assumed)")
+    if text == "unavailable":
+        return None
+    left, right = text.strip("[]").split(", ")
+    return _decimal(left), _decimal(right)
+
+
+def _assert_outward(
+    shown: tuple[Decimal, Decimal] | None,
+    lower: float | None,
+    upper: float | None,
+    step: str,
+    *,
+    scale: int = 0,
+) -> None:
+    """``shown`` holds [lower, upper], each end within one step; or both are missing."""
+
+    if lower is None or upper is None:
+        assert shown is None
+        return
+    assert shown is not None
+    low = Decimal(repr(lower)).scaleb(scale)
+    high = Decimal(repr(upper)).scaleb(scale)
+    assert shown[0] <= low < shown[0] + Decimal(step), (shown, lower)
+    assert shown[1] - Decimal(step) < high <= shown[1], (shown, upper)
+
+
+def _status(status: str, descriptive: str | None) -> str:
+    return f"`{status}`" + ("" if descriptive is None else f" (descriptive: `{descriptive}`)")
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_the_header_states_the_integrity_status(
+    rendered: dict[str, tuple[SafetyReport, str]], name: str
+) -> None:
+    report, page = _case(rendered, name)
+    header = page.splitlines()[2]
+    assert f"data integrity **{report.integrity.status}**" in header
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_the_decision_is_the_reports(
+    rendered: dict[str, tuple[SafetyReport, str]], name: str
+) -> None:
+    report, page = _case(rendered, name)
+    claims = section(page, "Claims")
+    assert f"Overall decision: **{report.decision}**" in claims
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_each_claim_has_its_status_bounds_and_thresholds(
+    rendered: dict[str, tuple[SafetyReport, str]], name: str
+) -> None:
+    report, page = _case(rendered, name)
+    rows = {row["Claim"]: row for row in table(section(page, "Claims"))}
+    places = report.presentation.decimal_places
+    assert places is not None
+    for claim in report.claims:
+        row = rows.pop(claim.title)
+        assert row["Status"] == _status(claim.status, claim.descriptive_status)
+        shown = (
+            None
+            if row["Lower"] == "—"
+            else (Decimal(row["Lower"]), Decimal(row["Upper"]))
+        )
+        _assert_outward(shown, claim.lower, claim.upper, f"1e-{places}")
+        assert Decimal(row["Acceptable below"]) == Decimal(repr(claim.acceptable_upper))
+        assert Decimal(row["Unacceptable above"]) == Decimal(repr(claim.unacceptable_lower))
+    if not report.claims:
+        rows.pop("_No claims declared_")
+    assert not rows
+
+
+def _judged(risk_intervals: list[RiskIntervalResult]) -> RiskIntervalResult | None:
+    return next(
+        (item for item in risk_intervals if item.interval_id.startswith("judge_corrected_")),
+        None,
+    )
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_each_failure_rate_has_its_estimate_and_bounds(
+    rendered: dict[str, tuple[SafetyReport, str]], name: str
+) -> None:
+    report, page = _case(rendered, name)
+    rows = table(section(page, "Failure risk"))
+    risks = [risk for risk in report.group_risks if is_headline_risk(risk)]
+    assert [(row["Model"], row["Group"]) for row in rows] == [
+        (risk.cohort_id, risk.group_id) for risk in risks
+    ]
+    for row, risk in zip(rows, risks, strict=True):
+        assert row["Failure rate"] == f"{100 * risk.estimate:.1f}%"
+        _assert_outward(
+            _shown_interval(row["Interval"]), risk.lower, risk.upper, "0.1", scale=2
+        )
+        judged = _judged(risk.intervals)
+        assert ("True risk (judge-corrected)" in row) == (judged is not None)
+        if judged is not None:
+            cell = row["True risk (judge-corrected)"]
+            assert cell.endswith(" (assumed)") == (judged.eligibility != "certifying")
+            _assert_outward(
+                _shown_interval(cell), judged.lower, judged.upper, "0.1", scale=2
+            )
+
+
+def test_an_assumed_judge_correction_is_marked_assumed(
+    rendered: dict[str, tuple[SafetyReport, str]],
+) -> None:
+    report, page = _case(rendered, "judge")
+    rows = table(section(page, "Failure risk"))
+    assert rows
+    assert all(row["True risk (judge-corrected)"].endswith(" (assumed)") for row in rows)
+
+
+@pytest.mark.parametrize("name", NAMES)
+def test_each_comparison_has_its_bounds_and_reading(
+    rendered: dict[str, tuple[SafetyReport, str]], name: str
+) -> None:
+    report, page = _case(rendered, name)
+    (row,) = table(section(page, "Comparisons"))
+    by_estimand = {item.estimand: item for item in report.comparisons if item.level is None}
+    difference = by_estimand["risk_difference"]
+    ratio = by_estimand["risk_ratio"]
+    _assert_outward(
+        _shown_interval(row["Interval"]), difference.lower, difference.upper, "0.1", scale=2
+    )
+    # A ratio without an upper bound has no finite one, which reads ∞; one without a lower
+    # bound reads —.
+    left, right = row["Interval 2"].strip("[]").split(", ")
+    if ratio.lower is None:
+        assert left == "—"
+    else:
+        assert Decimal(left) <= Decimal(repr(ratio.lower)) < Decimal(left) + Decimal("0.01")
+    if ratio.upper is None:
+        assert right == "∞"
+    else:
+        assert Decimal(right) - Decimal("0.01") < Decimal(repr(ratio.upper)) <= Decimal(right)
+    reading = row["Reading"].removesuffix(" †")
+    if difference.lower is None or difference.upper is None:
+        assert reading == "—"
+    elif difference.upper < 0:
+        assert reading == "candidate fails less"
+    elif difference.lower > 0:
+        assert reading == "candidate fails more"
+    else:
+        assert reading == "no difference resolved"
+
+
+def test_the_comparisons_read_each_way(rendered: dict[str, tuple[SafetyReport, str]]) -> None:
+    readings = {
+        name: table(section(page, "Comparisons"))[0]["Reading"].removesuffix(" †")
+        for name, (_, page) in rendered.items()
+    }
+    assert readings["passing"] == "candidate fails less"
+    assert readings["candidate_worse"] == "candidate fails more"
+    assert readings["no_difference"] == "no difference resolved"
+
+
+def test_the_written_page_is_the_one_report_json_renders(
+    rendered: dict[str, tuple[SafetyReport, str]],
+) -> None:
+    from inspect_safety_stats.report.summary import summary_markdown
+
+    for report, page in rendered.values():
+        assert summary_markdown(report) == page

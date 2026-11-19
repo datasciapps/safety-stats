@@ -16,26 +16,15 @@ from typer.testing import CliRunner
 from inspect_safety_stats.cli import app
 from inspect_safety_stats.schema.reports import SafetyReport
 from tests.cli_output import plain
-from tests.summary_fixtures import Variant, analysed, section, table, write_variant
+from tests.summary_fixtures import Variant, analysed, claim_spec, section, table, write_variant
 
 # The review's case: 20 prompts of 500 rollouts without a failure. The upper bound on each
 # rate, about 0.00044, lies below the claim's 0.0005 and rounds to 0.0% at one decimal.
-_CLAIM = {
-    "id": "candidate_acceptable",
-    "title": "Candidate risk is acceptable",
-    "cohort": "candidate",
-    "group": "all",
-    "measure": "mean",
-    "family": "gate",
-    "acceptable_upper": 0.0005,
-    "unacceptable_lower": 0.01,
-    "mandatory": True,
-}
 NO_FAILURES = Variant(
     "no_failures",
     rollouts=500,
     failures={"baseline": [0], "candidate": [0]},
-    plan={"claims": [_CLAIM]},
+    plan={"claims": [claim_spec("candidate", acceptable_upper=0.0005, unacceptable_lower=0.01)]},
     hierarchy_nodes=False,
 )
 
