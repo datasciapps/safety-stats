@@ -79,7 +79,9 @@ def _verdict_range(verdict_range: VerdictRange | None, places: int) -> str:
         exact = Decimal(repr(value))
         shown = exact.quantize(step, rounding=rounding)
         symbol = symbols[0] if strict and shown == exact else symbols[1]
-        parts.append(f"{verdict} at {name} {symbol} {shown}")
+        # Fixed-point like the other columns: str() of a Decimal turns scientific below 1E-6,
+        # which a zero lower bound reaches at seven or more places.
+        parts.append(f"{verdict} at {name} {symbol} {shown:f}")
     return "; ".join(parts) if parts else "INCONCLUSIVE at every threshold"
 
 

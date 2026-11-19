@@ -16,7 +16,7 @@ from inspect_safety_stats.decision.engine import (
     decide_claim,
     noisy_valid_verdict_range,
 )
-from inspect_safety_stats.report.writer import _verdict_range
+from inspect_safety_stats.report.writer import _number, _verdict_range
 from inspect_safety_stats.schema.reports import Decision, VerdictRange
 from inspect_safety_stats.stats.misclassification import (
     TruthStratumCounts,
@@ -208,3 +208,15 @@ def test_the_markdown_range_rounds_each_boundary_so_that_it_holds(
     verdict_range: VerdictRange | None, shown: str
 ) -> None:
     assert _verdict_range(verdict_range, 3) == shown
+
+
+@pytest.mark.parametrize("places", [7, 10, 15])
+def test_the_markdown_range_is_fixed_point_at_every_precision(places: int) -> None:
+    # A zero-failure claim has a lower bound of 0, which str() of a Decimal wrote as 0E-7.
+    shown = _verdict_range(
+        VerdictRange(pass_acceptable_upper=3e-17, fail_unacceptable_lower=0.0), places
+    )
+    assert shown == (
+        f"PASS at acceptable ≥ {_number(10.0**-places, places)}; "
+        f"FAIL at unacceptable ≤ {_number(0.0, places)}"
+    )
