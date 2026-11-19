@@ -11,20 +11,24 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import pytest
+from scipy.stats import binom
 
 from inspect_safety_stats.stats import JudgeCalibration, correct_judge_risk
 from inspect_safety_stats.stats.binomial import binomial_upper_bound
 from inspect_safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
-from tests.diagnostic_codes.harness import Inputs, Outcome, claim
+from tests.diagnostic_codes.harness import Inputs, Outcome, claim, rollout, run_analysis
 from tests.diagnostic_codes.judge_analysis_cases import (
     DECLARED,
     RHO_0,
     RHO_1,
     ROLLOUTS,
+    _judged_rollouts,
     assumed,
+    base_inputs,
     census,
     comparison,
     declared_correction,
@@ -488,8 +492,9 @@ def test_a_row_whose_sample_holds_no_such_rollout_states_what_its_correction_ass
     tmp_path: Any, data: Callable[[Inputs], None], stated: bool
 ) -> None:
     # No rollout is classified by a policy in either run. The correction uses the box as given,
-    # which assumes the population holds none either. A plan that sets a policy classifying
-    # rollouts says so on every row; at the defaults, a cohort whose sample holds none does not.
+    # and the bound on the unclassified share covers such rollouts the population may hold. A
+    # plan that sets a policy classifying rollouts says so on every row; at the defaults, a
+    # cohort whose sample holds none does not.
     outcome = judged(assumed, data)(tmp_path)
 
     for group in ("all", "b"):
@@ -515,3 +520,57 @@ def test_the_panel_adds_its_groups_to_the_cohorts_the_rho_correction_named(
     (found,) = outcome.with_code("JUDGE_CORRECTION_POLICY_CLASSIFIED")
     assert found.details["groups"] == ["a", "all"]
     assert (found.details["policy_safe"], found.details["policy_failures"]) == (1, 0)
+
+
+# A judge that flags nothing, and harness errors the plan counts as failures, at rate 0.10.
+ERROR_RATE = 0.10
+COVERED = "The population the rollouts are drawn from may still hold such rollouts"
+
+
+def _with_errors(directory: Path, errors: int) -> Outcome:
+    """p2's 20 rollouts judged safe, ``errors`` of them errored and counted as failures, under
+    an assumed box rho_1 in [0.4, 0.5] and rho_0 in [0, 0.01]; p1 is all safe."""
+
+    inputs = base_inputs()
+    _judged_rollouts(inputs)
+    _domains(inputs)
+    inputs.plan["inputs"]["score"]["errors"] = "count_as_failure"
+    assumed(inputs)
+    (scenario,) = inputs.plan["inputs"]["judge_calibration"]["scenarios"]
+    scenario.update(rho_1={"lower": 0.4, "upper": 0.5}, rho_0={"lower": 0.0, "upper": 0.01})
+    inputs.rollouts = [item for item in inputs.rollouts if item["item_id"] == "p1"] + [
+        rollout("p2", repeat, None, error="RuntimeError: harness failed")
+        if repeat <= errors
+        else rollout("p2", repeat)
+        for repeat in range(1, ROLLOUTS + 1)
+    ]
+    return run_analysis(inputs, directory)
+
+
+def test_the_share_bound_covers_policy_failures_a_run_did_not_see(tmp_path: Any) -> None:
+    """The exact probability that group b's corrected upper bound misses true risk.
+
+    p2's true risk is the error rate: the judge's safe verdicts are right (rho_0 = 0, inside
+    the box), and the errors are failures. The corrected bound depends on the run only through
+    its number of errors, so the miss probability is the binomial weight of the counts whose
+    bound falls below true risk. A run with no error is corrected over the box as given, where
+    0.5 U + 0.01 (1 - U) = 0.099 alone would miss in the 0.9 ** 20 = 12% of runs that see no
+    error. The bound on the unclassified share, from a count that is then also the count of
+    errors, keeps the corrected bound above true risk.
+    """
+
+    missed = 0.0
+    alpha = None
+    for errors in range(ROLLOUTS + 1):
+        outcome = _with_errors(tmp_path / str(errors), errors)
+        row = _row(outcome, "b")
+        primary = next(item for item in row.intervals if item.role == "primary")
+        alpha = primary.directional_family_alpha
+        corrected = _interval(row, DECLARED)
+        if errors == 0:
+            assert any(item.startswith(ABSENT) for item in corrected.assumptions)
+            assert any(COVERED in item for item in corrected.assumptions)
+        if corrected.upper < ERROR_RATE:
+            missed += binom.pmf(errors, ROLLOUTS, ERROR_RATE)
+    assert alpha is not None
+    assert missed <= alpha
