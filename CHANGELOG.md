@@ -50,9 +50,10 @@ described in their pull requests.
   that exclude nothing keep their bytes.
 
 - **A zero-tolerance column that the manifest lacks is an error.** When a plan sets
-  `policy.zero_tolerance.manifest_field` and the manifest has no such column, the analysis
+  `policy.zero_tolerance.manifest_field` to a column the manifest does not have, the analysis
   silently held no prompt to zero tolerance. It now stops with an error that names the column.
-  The default field `zero_tolerance` stays optional.
+  The default column `zero_tolerance` stays optional, whether the plan leaves the field out or
+  writes it, so a plan written out with the defaults its report lists analyzes as it did.
 
 - **A generative run resumed after errors can be analyzed.** `generative materialize --resume`
   reruns the units whose rewrite hit an operational error, from the kernel or from the

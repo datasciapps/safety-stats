@@ -8,7 +8,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from inspect_safety_stats.config.models import AnalysisPlan, GroupSpec, WeightSpec
+from inspect_safety_stats.config.models import (
+    AnalysisPlan,
+    GroupSpec,
+    WeightSpec,
+    ZeroToleranceSpec,
+)
 from inspect_safety_stats.schema.observations import observation_field
 
 REQUIRED_COLUMNS = ("prompt_id", "question_id", "task_id")
@@ -102,13 +107,15 @@ def plan_manifest_columns(plan: AnalysisPlan) -> tuple[str, ...]:
 def check_zero_tolerance_field(plan: AnalysisPlan, manifest: pd.DataFrame) -> None:
     """Refuse a manifest that lacks the zero-tolerance column the plan names.
 
-    The default field is optional: a manifest without it flags no prompt. A plan that sets
-    ``policy.zero_tolerance.manifest_field`` itself asks for the gate, and a manifest that
-    lacks the column would silently switch the gate off.
+    The default field, ``zero_tolerance``, is optional: a manifest without it flags no prompt.
+    A plan that names another column asks for the gate, and a manifest that lacks that column
+    would silently switch the gate off. The check reads the field's value, not whether the plan
+    wrote it, so a plan that writes out the default behaves as one that leaves it out.
     """
 
     spec = plan.policy.zero_tolerance
-    if spec.enabled and "manifest_field" in spec.model_fields_set:
+    default = ZeroToleranceSpec.model_fields["manifest_field"].default
+    if spec.enabled and spec.manifest_field != default:
         if spec.manifest_field not in manifest.columns:
             raise ValueError(
                 f"design manifest has no column {spec.manifest_field!r}, which the plan names "

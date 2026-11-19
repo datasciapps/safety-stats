@@ -10,6 +10,7 @@ from typing import Any
 from inspect_safety_stats import analyze
 from inspect_safety_stats.config.loader import canonical_plan_value, plan_defaults
 from inspect_safety_stats.config.models import AnalysisPlan
+from inspect_safety_stats.ingest.manifest import check_zero_tolerance_field, load_manifest
 
 ROOT = Path(__file__).resolve().parents[2]
 SIMPLEQA = ROOT / "examples" / "real_simpleqa"
@@ -116,6 +117,22 @@ def test_what_the_plan_wrote_and_its_defaults_make_the_plan_that_ran() -> None:
     assert written_out == plan
     # Written out in full, the plan has no defaults left.
     assert plan_defaults(written_out) == []
+
+
+def test_the_plan_written_out_in_full_reads_the_manifest_as_the_plan_that_ran(
+    tmp_path: Path,
+) -> None:
+    # The defaults include policy.zero_tolerance.manifest_field; written out, it must not make
+    # a manifest without that column an error, as it did not for the plan that left it out.
+    path = tmp_path / "design.csv"
+    path.write_text("prompt_id,question_id,task_id\np1,q1,t1\n", encoding="utf-8")
+    manifest = load_manifest(path)
+    plan = AnalysisPlan.model_validate(PLAN)
+    rebuilt = canonical_plan_value(plan)
+    for entry in plan_defaults(plan):
+        _set(rebuilt, entry["path"], entry["value"])
+    for each in (plan, AnalysisPlan.model_validate(rebuilt)):
+        check_zero_tolerance_field(each, manifest)
 
 
 def test_experimental_defaults_are_listed_although_the_resolved_plan_leaves_them_out() -> None:
