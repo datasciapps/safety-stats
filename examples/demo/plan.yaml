@@ -3,6 +3,10 @@
 # Exploratory by construction: a confirmatory plan must be frozen before the
 # evaluation runs (set analysis.intent and analysis.plan_frozen_at).
 #
+# Zero tolerance is off (policy.zero_tolerance.enabled: false): design.csv has no
+# zero_tolerance column, so the gate would hold no prompt. To hold prompts to zero
+# tolerance, add a zero_tolerance column, true for those prompts, and set enabled: true.
+#
 # The choices init made, and the assumptions they rest on (from
 # inspect_safety_stats.registry):
 #
@@ -227,3 +231,7 @@ comparison_sets:
     - prompt
   hierarchy_nodes: true
   hierarchy_calibration: frontier_sidak
+policy:
+  zero_tolerance:
+    enabled: false
+    manifest_field: zero_tolerance
