@@ -921,10 +921,10 @@ def _judge_corrected_interval(
             )
         if certified:
             labels = (
-                "The labels weight every classified rollout of the cohort equally"
+                "The labels weight every rollout the judge classified in the cohort equally"
                 if scoped_group is None
-                else f"The labels weight every classified rollout of group {scoped_group!r} "
-                "in the cohort equally"
+                else "The labels weight every rollout the judge classified in group "
+                f"{scoped_group!r} of the cohort equally"
             )
             assumptions.extend(
                 [

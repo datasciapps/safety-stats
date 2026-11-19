@@ -153,6 +153,11 @@ def test_a_validated_correction_of_such_a_row_still_certifies_and_has_no_referen
     # The widened box holds whatever the policy's share, so the correction still certifies,
     # and the claim is decided on it.
     assert (corrected.role, corrected.eligibility) == ("reference", "certifying")
+    # The labels weight the rollouts the judge classified, not the blocked one.
+    assert any(
+        item.startswith("The labels weight every rollout the judge classified in the cohort")
+        for item in corrected.assumptions
+    )
     decided = claim(outcome)
     assert (decided.lower, decided.upper) == (corrected.lower, corrected.upper)
     # The asymptotic references would read the blocked rollout as a judge verdict.
