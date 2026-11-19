@@ -7,10 +7,12 @@ prompts always fail, so theta is 0.1.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import numpy as np
+import pandas as pd
 import pytest
 from inspect_ai import Task
 from inspect_ai import eval as inspect_eval
@@ -20,9 +22,11 @@ from inspect_ai.scorer import Score, Target, scorer
 from inspect_ai.solver import TaskState, generate
 from inspect_ai.util._early_stopping import EarlyStop
 
-from inspect_safety_stats import analyze, load_plan
+from inspect_safety_stats import AnalysisPlan, analyze, load_plan
+from inspect_safety_stats.ingest.records import SampleOrder
 from inspect_safety_stats.schema.reports import Diagnostic, SafetyReport
 from inspect_safety_stats.stats.sequential import anytime_upper_bound
+from inspect_safety_stats.validate.plan import validate_plan_references
 
 PROMPTS = 40
 STOP_AFTER = 25
@@ -253,3 +257,239 @@ def test_plans_without_the_section_keep_their_dump(tmp_path: Path) -> None:
     plan = tmp_path / "plan.yaml"
     plan.write_text(PLAN.replace("@ANYTIME@\n", ""), encoding="utf-8")
     assert "anytime_bounds" not in load_plan(plan).model_dump(mode="json")["outputs"]
+
+
+# --- judge calibration: the Inspect readers replaced by fixed frames -------------------------
+
+JUDGE_EPOCHS = 100
+JUDGE_PROMPTS = [f"j{i}" for i in range(20)]
+
+JUDGE_PLAN = """
+schema_version: "2.0"
+analysis: {id: judged, title: Judged, intent: confirmatory, plan_frozen_at: 2025-01-01T00:00:00Z}
+inputs:
+  design_manifest: design.csv
+  score:
+    name: harmful
+    mapping: {failure_values: ["FAIL"], safe_values: ["PASS"]}
+    missing: block
+    errors: block
+@JUDGE@
+design:
+  type: fixed
+  hierarchy: [task_id, question_id, prompt_id]
+  rollout_key: [eval_id, id, epoch]
+  require_complete_manifest: true
+  require_expected_rollouts: true
+  independence_profiles:
+    rollout: {block_by: [rollout], comparison_coupling: independent}
+cohorts:
+  candidate: {match: {model: model/candidate}}
+groups:
+  - {id: all, filter: {suite: s}}
+  - {id: also, filter: {suite: s}}
+outputs:
+  prompt_bounds: {enabled: false}
+  risk_measures:
+    - {id: mean, type: weighted_mean}
+  anytime_bounds:
+    independence_profile: rollout
+    family: gate
+    rollouts_per_item: 100
+@GROUPS@
+multiplicity:
+  families:
+    - {id: judge_error, purpose: simultaneous_intervals, method: bonferroni, alpha: 0.05}
+    - {id: gate, purpose: all_mandatory, method: intersection_union, alpha: 0.05}
+claims:
+  - {id: mean_all, title: All, cohort: candidate, group: all, measure: mean, family: gate,
+     acceptable_upper: 0.06, unacceptable_lower: 0.09}
+report: {include_observations: true, decimal_places: 6}
+"""
+
+VALIDATED = (
+    "  judge_calibration:\n"
+    "    mode: validated\n"
+    "    validation_manifest: labels.csv\n"
+    "    family: judge_error\n"
+)
+ASSUMED = (
+    "  judge_calibration:\n"
+    "    mode: assumed\n"
+    "    primary: s1\n"
+    "    scenarios:\n"
+    "      - {id: s1, rho_1: {lower: 0.9, upper: 1.0}, rho_0: {lower: 0.0, upper: 0.08}}\n"
+)
+TRANSPORTED = (
+    "  judge_calibration:\n"
+    "    mode: transported\n"
+    "    published_set:\n"
+    "      name: Published judge validation set\n"
+    "      source: https://example.org/judge-validation\n"
+    "      judge: judge-model-v1\n"
+    "      rubric: harmful-behaviour rubric v2\n"
+    "      human_unsafe: 120\n"
+    "      judge_flagged_unsafe: 100\n"
+)
+
+
+def _judge_plan(directory: Path, judge: str = "", groups: str = "") -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "design.csv").write_text(
+        "prompt_id,question_id,task_id,suite,expected_rollouts\n"
+        + "".join(f"{prompt},q{prompt},t,s,{JUDGE_EPOCHS}\n" for prompt in JUDGE_PROMPTS),
+        encoding="utf-8",
+    )
+    plan = directory / "plan.yaml"
+    text = JUDGE_PLAN.replace("@JUDGE@\n", judge).replace("@GROUPS@\n", groups)
+    plan.write_text(text.strip() + "\n", encoding="utf-8")
+    return plan
+
+
+def _judge_frames(judge_unsafe: Callable[[int], bool]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """One run of every prompt for ``JUDGE_EPOCHS`` epochs, judged unsafe on the given epochs."""
+
+    log = "/not/a/local/log.eval"
+    evals = pd.DataFrame(
+        [
+            {
+                "eval_id": "eval-candidate",
+                "run_id": "run-1",
+                "log": log,
+                "created": "2026-01-01T00:00:00Z",
+                "status": "success",
+                "task_name": "t",
+                "task_version": "1",
+                "model": "model/candidate",
+                "model_generate_config": {},
+                "solver": "generate",
+                "solver_args": {},
+                "sandbox_type": None,
+                "sandbox_config": None,
+                "dataset_name": "fixed",
+                "epochs": JUDGE_EPOCHS,
+            }
+        ]
+    )
+    samples = pd.DataFrame(
+        [
+            {
+                "sample_id": f"{prompt}-{epoch}",
+                "eval_id": "eval-candidate",
+                "log": log,
+                "id": prompt,
+                "epoch": epoch,
+                "score_harmful": "FAIL" if judge_unsafe(epoch) else "PASS",
+                "error": None,
+                "retries": 0,
+            }
+            for prompt in JUDGE_PROMPTS
+            for epoch in range(1, JUDGE_EPOCHS + 1)
+        ]
+    )
+    return evals, samples
+
+
+def _read_frames(
+    monkeypatch: pytest.MonkeyPatch, frames: tuple[pd.DataFrame, pd.DataFrame], order: list[str]
+) -> None:
+    """Make ``analyze`` read ``frames`` as its Inspect logs, run in ``order`` with seed 7."""
+
+    evals, samples = frames
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: samples,
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.read_inspect_sample_orders",
+        lambda sources, logs=None: {
+            key: SampleOrder(
+                run_key=key, source=source, shuffle=7, shuffled=True, sample_ids=tuple(order)
+            )
+            for key, source in sources.items()
+        },
+    )
+
+
+def _plan_refusals(plan: AnalysisPlan) -> list[Diagnostic]:
+    return [
+        item
+        for item in validate_plan_references(plan)
+        if item.code == "PLAN_ANYTIME_BOUNDS_INVALID"
+    ]
+
+
+def test_a_bound_on_the_judges_risk_never_certifies_a_claim_on_true_risk(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every prompt is truly unsafe on 10 of its 100 epochs, so true risk is 0.10, and the
+    judge flags 3 of them, so judge-reported risk is 0.03. Human labels on every rollout
+    validate the judge, so the claim (acceptable_upper 0.06) is about true risk.
+
+    The bound on the judge's risk lies near 0.04, at or below 0.06, and used to be reported as
+    certifying the claim. The plan is now refused before any bound is computed.
+    """
+
+    _read_frames(
+        monkeypatch,
+        _judge_frames(lambda epoch: epoch <= 3),
+        [str(item) for item in np.random.default_rng(7).permutation(JUDGE_PROMPTS)],
+    )
+    uncalibrated = analyze(plan=load_plan(_judge_plan(tmp_path / "plain")), logs="ignored")
+    (bound,) = [
+        item
+        for item in _found(uncalibrated, "ANYTIME_UPPER_BOUND")
+        if item.details["group"] == "all"
+    ]
+    assert bound.details["upper"] <= 0.06
+    labels = tmp_path / "judged" / "labels.csv"
+    labels.parent.mkdir()
+    labels.write_text(
+        "observation_id,human_label\n"
+        + "".join(
+            f"{row.observation_id},{'unsafe' if row.repeat <= 10 else 'safe'}\n"
+            for row in uncalibrated._observations
+        ),
+        encoding="utf-8",
+    )
+
+    report = analyze(
+        plan=load_plan(_judge_plan(tmp_path / "judged", VALIDATED)), logs="ignored"
+    )
+
+    assert not _found(report, "ANYTIME_UPPER_BOUND")
+    (refusal,) = _found(report, "PLAN_ANYTIME_BOUNDS_INVALID")
+    assert "validated judge calibration covers the bounded groups ['all', 'also']" in (
+        refusal.message
+    )
+    assert report.integrity.status == "invalid"
+    (claim,) = report.claims
+    assert claim.status != "PASS"
+
+
+@pytest.mark.parametrize(
+    ("judge", "groups", "remedy"),
+    [
+        (VALIDATED, "", "remove outputs.anytime_bounds"),
+        (ASSUMED, "", "remove outputs.anytime_bounds"),
+        (TRANSPORTED, "", "remove outputs.anytime_bounds"),
+        (VALIDATED + "    groups: [also]\n", "", "bound only groups it leaves out (['all'])"),
+        (ASSUMED + "    groups: [all]\n", "    groups: [all]\n", "bound only groups"),
+    ],
+    ids=["validated", "assumed", "transported", "validated-on-other-groups", "assumed-on-it"],
+)
+def test_every_judge_calibration_that_covers_a_bounded_group_is_refused(
+    tmp_path: Path, judge: str, groups: str, remedy: str
+) -> None:
+    (refusal,) = _plan_refusals(load_plan(_judge_plan(tmp_path, judge, groups)))
+    assert remedy in refusal.message
+
+
+def test_a_judge_calibration_scoped_to_other_groups_leaves_the_bound(tmp_path: Path) -> None:
+    plan = load_plan(
+        _judge_plan(tmp_path, ASSUMED + "    groups: [also]\n", "    groups: [all]\n")
+    )
+    assert not _plan_refusals(plan)

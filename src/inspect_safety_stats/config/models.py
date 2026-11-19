@@ -896,7 +896,8 @@ class AnytimeBoundsSpec(StrictModel):
     ``design.independence_profiles``: ``[rollout]`` treats an item's rollouts as independent,
     and any profile that blocks by ``prompt_id`` treats only items as independent. The bounds
     split the ``family``'s alpha equally. They are reported as diagnostics beside the claims,
-    and never change a claim's status.
+    and never change a claim's status. They bound the judge-reported failure probability, so
+    no judge calibration may cover a bounded group.
     """
 
     order: Literal["inspect_sample_shuffle"] = "inspect_sample_shuffle"

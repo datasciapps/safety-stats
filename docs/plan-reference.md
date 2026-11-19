@@ -1138,6 +1138,14 @@ plan without the section keeps its hash and outputs. See
 [Runs that optstop stopped](sequential-design.md#runs-that-optstop-stopped-126) for the
 construction and what it costs.
 
+The bound is on the judge-reported failure probability. A plan whose
+`inputs.judge_calibration`, in any mode, covers a bounded group is refused with
+`PLAN_ANYTIME_BOUNDS_INVALID`: a validated calibration decides that group's claims on the
+corrected risk, and an assumed or transported one declares that the judge misclassifies, so a
+bound at or below a claim's `acceptable_upper` would certify the judge's risk in place of the
+model's. With a calibration scoped by `groups`, list in `outputs.anytime_bounds.groups` only
+groups it leaves out.
+
 ## `comparison_sets`
 
 Use a comparison set for two or more cohorts:

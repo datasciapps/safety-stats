@@ -346,12 +346,14 @@ The analysis plan: its fields, references and their combinations.
 - **Severity:** ERROR
 - **Effect:** [invalid](#effects)
 - **Assumption:** The anytime-valid bounds are requested on a fixed design, with a declared family,
-  declared groups and a declared independence profile that blocks by rollout or by prompt_id.
+  declared groups and a declared independence profile that blocks by rollout or by prompt_id, and on
+  groups no judge calibration covers: the bounds are on the judge-reported failure probability.
 - **Consequence:** The integrity status is invalid, so no claim can pass, and no anytime-valid bound
   is computed.
 - **Remedy:** Fix outputs.anytime_bounds as the message says: name a family of
   multiplicity.families, groups of groups and a profile of design.independence_profiles that blocks
-  by rollout or prompt_id, under design.type: fixed; or remove outputs.anytime_bounds.
+  by rollout or prompt_id, under design.type: fixed, and bound only groups that
+  inputs.judge_calibration.groups leaves out; or remove outputs.anytime_bounds.
 
 #### `PLAN_DIAGNOSTIC_GATE`
 

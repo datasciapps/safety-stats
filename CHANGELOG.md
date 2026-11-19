@@ -232,7 +232,9 @@ described in their pull requests.
   `sample_shuffle` with an integer seed; a run without a recorded order is refused with an
   `ANYTIME_ORDER_UNRECORDED` error. `analyze` adds an `ANYTIME_UPPER_BOUND` diagnostic with
   the bound and, for each weighted-mean claim, whether it lies at or below the claim's
-  `acceptable_upper`. Claims and the decision keep their fixed-horizon status. Plans without
+  `acceptable_upper`. Claims and the decision keep their fixed-horizon status. The bound is on
+  the judge-reported failure probability, so a plan whose judge calibration, in any mode, covers
+  a bounded group is refused with `PLAN_ANYTIME_BOUNDS_INVALID`. Plans without
   the section keep their hash and outputs. `research/optstop_coverage.py` simulates optstop's
   stopping rule: the bound misses at most alpha, while Clopper-Pearson at the stop misses up to
   0.208 at a nominal 0.05. See
