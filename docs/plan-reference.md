@@ -850,11 +850,12 @@ one primary profile and optional prespecified sensitivity profiles. See
 [Configuring hierarchy and independence](independence-profiles.md).
 
 `single_valued_bound: true` (experimental, default `false`) adds a single number per direct
-interval for system models such as fault trees: M, the smallest value of U_δ + δ over levels
-δ, where U_δ is the interval's own one-sided upper bound at level δ for that node alone. It
-needs no alpha and has P(M < R) ≤ R: its miss probability is the unknown risk R itself. It is not
-simultaneous, does not enter claims, and is usually above a 95% bound. Each interval in
-`report.json` then carries `single_valued_bound`, `single_valued_bound_delta` and
+weighted-mean interval for system models such as fault trees: M, the smallest value of U_δ + δ
+over levels δ, where U_δ is the interval's own one-sided upper bound at level δ for that node
+alone. It needs no alpha and has P(M < R) ≤ R: its miss probability is the unknown risk R itself.
+It is not simultaneous, does not enter claims, and is usually above a 95% bound. A direct
+`worst_of_k` interval gets no such number. Each direct weighted-mean interval in `report.json`
+then carries `single_valued_bound`, `single_valued_bound_delta` and
 `single_valued_bound_guarantee`, and `report-full.md` lists them under "Single-valued bounds
 (experimental)". The option is refused with `PLAN_SINGLE_VALUED_BOUND_UNSUPPORTED` under a
 sampled design and with judge calibration. See

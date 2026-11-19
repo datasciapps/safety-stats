@@ -737,6 +737,10 @@ def worst_of_k_kl_chernoff_bounds(
     ``floor(n_i / k)`` blocks at its share, each of weight ``w_i / floor(n_i / k)``. At
     ``k = 1`` this is the rollout-level :func:`weighted_kl_chernoff_mean_bounds`.
 
+    The rollouts of prompt ``i`` must be independent and identically distributed, each failing
+    with probability ``p_i``, and the prompts independent of one another; prompts may differ in
+    ``p_i``.
+
     Unclassified rollouts count as safe for the lower endpoint and as failures for the upper
     one; the share only grows with failures, so the completion is conservative. ``trials`` are
     the attempted rollouts, and every prompt needs at least ``k`` of them: for ``k > n`` no

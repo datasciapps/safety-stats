@@ -654,7 +654,7 @@ def _worst_of_k_direct_interval(
     if bounds.chernoff_kernel == "bernoulli_kl_equal_atomic_weights":
         assumptions.append(
             "Equal block weights permit inversion of the Bernoulli-KL Chernoff exponent; "
-            "identical failure probabilities are not required."
+            "identical failure probabilities across prompts are not required."
         )
     elif bounds.chernoff_kernel == "weighted_poisson_chernoff_max_increment":
         assumptions.append(

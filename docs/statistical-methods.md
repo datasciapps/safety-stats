@@ -555,9 +555,10 @@ Scope:
 
 - The interval is opt-in per measure (`direct_interval: true`) and is computed for group rows
   only. It is calibrated in the direct-mean multiplicity family, next to the weighted means.
-- It requires independent rollouts within each prompt and across prompts, so the primary
-  independence profile must block by rollout. Sensitivity profiles get no worst-of-k interval,
-  and the row says so.
+- It requires the rollouts of each prompt to be independent and identically distributed, with
+  one failure probability per prompt, and the prompts to be independent of one another, so the
+  primary independence profile must block by rollout. Prompts may differ in failure probability.
+  Sensitivity profiles get no worst-of-k interval, and the row says so.
 - It bounds the fixed prompt set only. Sampled designs, `frontier_sidak` calibration and
   disabled direct-mean intervals are refused when the plan is validated. A refused plan's rows
   get no worst-of-k interval from `analyze`: they keep the propagated prompt envelope and say why.
@@ -565,7 +566,10 @@ Scope:
   prompt-envelope interval and warns that the design cannot bound \(k\) attempts.
 
 The test suite checks coverage by exact enumeration over the binomial on small designs. Rollout
-blocks fall below nominal coverage there, and \(\lfloor n/k\rfloor\) blocks do not.
+blocks fall below nominal coverage there, and \(\lfloor n/k\rfloor\) blocks do not. Two designs
+with many blocks check the estimand: on them, the same blocks carrying each prompt's failure
+rate in place of \(\widehat\theta_j\) cover \(\theta\) from above only 44% and 67% of the time,
+at a nominal 90%.
 
 ##### Simultaneous hierarchy-constrained confidence region
 
@@ -896,7 +900,8 @@ statements; the user must not choose a method post hoc and retain the same guara
 
 System-level safety analyses, such as fault trees and Markov models, take one number per
 component rather than an interval at a chosen \(\alpha\). The option
-`outputs.direct_mean_intervals.single_valued_bound` reports, beside each direct interval,
+`outputs.direct_mean_intervals.single_valued_bound` reports, beside each direct interval of a
+weighted mean (a direct worst-of-k interval gets none),
 
 \[
 M=\inf_{\delta\in(0,1)}\bigl[U_\delta+\delta\bigr],

@@ -3889,6 +3889,11 @@ def test_an_opted_in_worst_of_k_row_has_a_direct_interval_in_the_mean_family(
     assert row.lower <= row.estimate <= row.upper
     assert direct.independent_block_count == 20
     assert direct.eligibility == "certifying"
+    # Each prompt's rollouts share one failure probability; different prompts need not.
+    assert direct.assumptions[-1] == (
+        "Equal block weights permit inversion of the Bernoulli-KL Chernoff exponent; "
+        "identical failure probabilities across prompts are not required."
+    )
 
     # The mean's direct interval now shares the family with worst_of_2.
     def mean_alpha(result: SafetyReport) -> float | None:
