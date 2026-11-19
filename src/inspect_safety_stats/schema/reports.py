@@ -473,8 +473,10 @@ class DecisionPolicyVersionRecord(ResultModel):
     set_at: str
     reason: str | None = None
     thresholds: dict[str, PolicyThresholdsRecord]
-    # Whether the version was set after the earliest start time of the selected evaluations;
-    # None when no evaluation reports a start time.
+    # Whether the version was set after the earliest start time of the selected evaluations,
+    # as its set_at states; None when that cannot be told: no evaluation reports a start
+    # time, or the version is set at or before the earliest reported one while some
+    # evaluation reports none.
     set_after_first_evaluation: bool | None = None
 
 
@@ -629,7 +631,11 @@ class ReportPresentation(ResultModel):
 
 
 class MappingSensitivityResult(ResultModel):
-    """One displayed result as an alternative outcome mapping reads it."""
+    """One displayed result as an alternative outcome mapping reads it.
+
+    Descriptive: its interval and its claim status never enter a claim's status or the
+    decision. ``outcome-mapping-sensitivity.csv`` marks such rows with ``descriptive``.
+    """
 
     kind: Literal["group_risk", "comparison", "claim"]
     result_id: str
@@ -803,6 +809,7 @@ class SafetyReport(ResultModel):
         from inspect_safety_stats.report.writer import write_report
 
         return write_report(self, output, overwrite=overwrite)
+
 
 def mapping_results(report: SafetyReport) -> list[MappingSensitivityResult]:
     """The displayed results that outcome mapping sensitivities put side by side."""

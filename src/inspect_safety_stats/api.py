@@ -21,7 +21,13 @@ from inspect_safety_stats.analysis.inputs import (
 )
 from inspect_safety_stats.analysis.judge_flip import judge_flip_diagnostic
 from inspect_safety_stats.analysis.judge_panel import _judge_panel_summary
-from inspect_safety_stats.analysis.policy import _apply_decision_policy, _decision_policy_record
+from inspect_safety_stats.analysis.policy import (
+    _apply_decision_policy,
+    _decision_policy_record,
+    _policy_roll_up,
+    _policy_set_claims,
+    _PolicyApplication,
+)
 from inspect_safety_stats.analysis.report import (
     _design_frame,
     _policy_events,
@@ -154,11 +160,17 @@ def _outcome_mapping_sensitivity(
     inputs: _JudgeInputs,
     spec: OutcomeMappingSensitivitySpec,
     plan_diagnostics: Sequence[Diagnostic],
+    application: _PolicyApplication | None = None,
 ) -> OutcomeMappingSensitivity:
     """The analysis repeated under one alternative outcome mapping, on the same rollouts.
 
     It carries the primary run's ``plan_diagnostics`` (``_derived_run_diagnostics``), so a
     registration receipt for another plan or a failed decision policy makes it invalid too.
+    ``application`` is the decision policy the primary analysis applied, if any: ``plan``
+    already carries its thresholds, and its overall decision is held to the same roll-up.
+    It describes its own outcomes as the primary run describes the primary's: single-rollout
+    tail claims, the design effects of grouped profiles and the precision of tail measures.
+    The anytime-valid bounds and the judge flip rate are the primary mapping's only.
     """
 
     alternative = _mapping_plan(plan, spec)
@@ -175,13 +187,17 @@ def _outcome_mapping_sensitivity(
         raise ValueError(f"outcome mapping sensitivity {spec.id!r}: {exc}") from exc
     diagnostics.extend(data.diagnostics)
     diagnostics.extend(single_rollout_tail_claims(alternative, data))
-    core = _analysis_core(alternative, data, diagnostics)
+    cluster_design_effects(alternative, data, diagnostics)
+    core = _analysis_core(alternative, data, diagnostics, _policy_set_claims(application))
+    tail_measure_precision(alternative, core.estimates, diagnostics)
     decision = roll_up(
         core.mandatory_statuses(),
         integrity_valid=core.integrity_status != "invalid",
         zero_tolerance_failure=bool(_policy_events(alternative, data)),
         confirmatory=alternative.analysis.intent == "confirmatory",
     )
+    # ORDER MATTERS: before the integrity is summarised, which counts its diagnostic.
+    decision = _policy_roll_up(application, core.coverage_events, decision, diagnostics)
     integrity = _sorted_integrity(diagnostics)
     counts: dict[str, int] = {}
     for item in integrity.diagnostics:
@@ -270,7 +286,8 @@ def analyze(
     ``decision_policy`` (experimental) is a ``DecisionPolicy`` or the path of a policy file,
     read with ``load_decision_policy``. Its thresholds replace the plan's for the claims it
     sets, and the report records every version of it, while the plan and its hash stay as
-    frozen (docs/decision-policy.md).
+    frozen. When it moves any mandatory claim's acceptable_upper and the mandatory claims rest
+    on separate coverage events, an overall PASS becomes INCONCLUSIVE (docs/decision-policy.md).
 
     ``registration_receipt`` (experimental) is the path of a receipt written by
     ``hash-plan --register``. It is checked against the frozen plan's hash and the earliest
@@ -299,7 +316,10 @@ def analyze(
     # the policy's, so the runs that carry the plan's diagnostics carry it too.
     policy_diagnostics: list[Diagnostic] = []
     policy_record = _decision_policy_record(
-        application, data.first_started_at, policy_diagnostics
+        application,
+        data.first_started_at,
+        policy_diagnostics,
+        start_unrecorded=data.start_unrecorded,
     )
     diagnostics.extend(policy_diagnostics)
     plan_diagnostics.extend(policy_diagnostics)
@@ -308,7 +328,7 @@ def analyze(
     # ORDER MATTERS as well: a run without a recorded order must be an error before integrity
     # is read.
     anytime_bound_diagnostics(resolved, data, diagnostics, _order_reader(logs, source))
-    core = _analysis_core(resolved, data, diagnostics)
+    core = _analysis_core(resolved, data, diagnostics, _policy_set_claims(application))
     estimates = core.estimates
     tail_measure_precision(resolved, estimates, diagnostics)
     risks = core.risks
@@ -325,6 +345,8 @@ def analyze(
         zero_tolerance_failure=bool(events),
         confirmatory=resolved.analysis.intent == "confirmatory",
     )
+    # ORDER MATTERS: before the integrity is summarised, so that its diagnostic is reported.
+    decision = _policy_roll_up(application, core.coverage_events, decision, diagnostics)
     judge_panel = _judge_panel_summary(resolved, data)
     if judge_panel is not None and core.panel_correction is not None:
         judge_panel["derived_correction"] = core.panel_correction
@@ -338,6 +360,7 @@ def analyze(
             judge_inputs,
             plan_diagnostics,
             report_valid=_integrity_status(diagnostics) != "invalid",
+            policy_claims=_policy_set_claims(application),
         )
         _add_judge_configurations(
             judge_panel, resolved, data, judge_inputs.source, diagnostics
@@ -399,7 +422,9 @@ def analyze(
     )
     if judge_inputs is not None:
         report.outcome_mapping_sensitivities = [
-            _outcome_mapping_sensitivity(resolved, judge_inputs, spec, plan_diagnostics)
+            _outcome_mapping_sensitivity(
+                resolved, judge_inputs, spec, plan_diagnostics, application
+            )
             for spec in resolved.inputs.score.mapping_sensitivities
         ]
     report._observations = data.observations

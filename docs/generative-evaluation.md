@@ -162,7 +162,9 @@ inspect-safety-stats generative compile --plan plan.yaml
 ```
 
 Compiles the taxonomy and reports what it contains -- node counts, terminal paths, what the
-constraints pruned, the fingerprint -- without generating anything.
+constraints pruned, the fingerprint -- without generating anything. A declared
+[slice family](#arm-contrasts-and-a-simultaneous-slice-family-experimental) is checked against
+the paths `materialize` will select.
 
 ```bash
 inspect-safety-stats generative materialize \
@@ -422,12 +424,17 @@ within the slice, so the two can differ.
 Declaring the family in the plan is what makes it simultaneous: a member added after seeing the
 results would change the family the error budget was spent on. For the same reason a member
 that cannot be estimated -- an unknown value, an arm without draws, a contrast whose values
-share no seed -- stops the analysis rather than being dropped. Levels must be arm levels:
-slices of fixed levels are nodes of the tree.
+share no seed -- is refused rather than dropped. Whether a member can be estimated depends only
+on the compiled taxonomy and the selected paths, so `generative compile` and
+`generative materialize` refuse it before anything is generated, and `generative analyze`
+refuses a family declared after materialization before it reads the logs. Raise
+`sampling.total_rewrites` when an arm receives no draws. Levels must be arm levels: slices of
+fixed levels are nodes of the tree.
 
 This is experimental. The family covers the primary cohort only; a contrast between cohorts is
-`--compare`. It stays on the judge-reported scale, and with `judge_calibration` declared,
-`JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY` says so. The derivation is in
+`--compare`. It stays on the judge-reported scale: `generative analyze` prints it under a
+heading that says so, and with `judge_calibration` declared,
+`JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY` says so in the report. The derivation is in
 [statistical methods](statistical-methods.md#78-arm-contrasts-on-a-generative-design-experimental).
 
 ## Sensitivity to the declared design
@@ -545,6 +552,8 @@ Three diagnostics read it:
 - a missing attempt ledger, or one that disagrees with the rewrite ledger, when the plan
   records attempts;
 - a log whose samples match no accepted rewrite, or the same sample twice;
+- a slice family member whose value no compiled path carries or no selected path reaches, or
+  whose two values share no seed, before anything is generated;
 - a plan edited between materialization and analysis.
 
 ## Reading the report

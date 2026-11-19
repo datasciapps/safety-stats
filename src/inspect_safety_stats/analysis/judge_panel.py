@@ -13,8 +13,9 @@ from inspect_safety_stats.config.models import (
     JudgeAccuracySpec,
     JudgeSpec,
     OutcomeMappingSpec,
+    _same_classification,
 )
-from inspect_safety_stats.ingest.outcomes import _tag, map_outcome
+from inspect_safety_stats.ingest.outcomes import map_outcome
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.reports import (
     Diagnostic,
@@ -235,18 +236,6 @@ class _DeclaredBox:
 
     def holds_on(self, group_id: str) -> bool:
         return self.groups is None or group_id in self.groups
-
-
-def _same_classification(first: OutcomeMappingSpec, second: OutcomeMappingSpec) -> bool:
-    """Whether two mappings classify every score value alike, as ``map_outcome`` reads them."""
-
-    if first.failure_if is not None or second.failure_if is not None:
-        return first.failure_if == second.failure_if
-    return all(
-        {_tag(value) for value in getattr(first, field) or []}
-        == {_tag(value) for value in getattr(second, field) or []}
-        for field in ("failure_values", "safe_values")
-    )
 
 
 def _reads_verdict_as_is(mapping: OutcomeMappingSpec) -> bool:

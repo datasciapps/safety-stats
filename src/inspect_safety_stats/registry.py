@@ -622,12 +622,16 @@ _CODES: tuple[CodeEntry, ...] = (
         source="registration",
         effect="recorded",
         assumption=(
-            "A decision policy's thresholds do not enter the bounds, so a version set after the "
-            "first evaluation started leaves the verdicts at them certifying."
+            "A decision policy's thresholds were set before the evidence. They do not enter "
+            "the bounds, so each claim's verdict keeps its error bound at a later threshold, "
+            "but such a threshold may describe the bounds rather than a requirement fixed in "
+            "advance."
         ),
         consequence=(
             "The policy's thresholds stay in force and the claims keep their status; the "
-            "versions set after the first evaluation started are listed in the diagnostic."
+            "versions set after the first evaluation started are listed in the diagnostic. "
+            "Whether the overall decision still certifies is DECISION_POLICY_OVERALL_UNCERTIFIED's "
+            "concern."
         ),
         remedy=(
             "No change is needed; to avoid the note, set the policy's versions before the runs "
@@ -669,6 +673,49 @@ _CODES: tuple[CodeEntry, ...] = (
             "Apply the policy to the plan it was written for, or set its inference_plan_sha256 "
             "to the hash `inspect-safety-stats hash-plan --inference` prints for this plan."
         ),
+    ),
+    CodeEntry(
+        code="DECISION_POLICY_OVERALL_UNCERTIFIED",
+        severities=("WARNING",),
+        source="plan",
+        effect="adjusted",
+        assumption=(
+            "An overall PASS has the error bound of one claim only when every mandatory "
+            "claim's acceptable_upper was fixed before the data, or when one simultaneous "
+            "coverage event covers every mandatory claim's bound."
+        ),
+        consequence=(
+            "The overall decision is INCONCLUSIVE where every mandatory claim passes, since a "
+            "wrong PASS is bounded only by the sum of the separate events' error budgets; a "
+            "FAIL stays FAIL, and every claim keeps its status."
+        ),
+        remedy=(
+            "Set these thresholds in the plan before the runs, or decide every mandatory claim "
+            "on one simultaneous family, such as the default simultaneous prompt bounds or "
+            "simultaneous direct-mean intervals."
+        ),
+        assumptions=("plan_fixed_in_advance",),
+    ),
+    CodeEntry(
+        code="DECISION_POLICY_SELF_DECLARED",
+        severities=("WARNING",),
+        source="plan",
+        effect="recorded",
+        assumption=(
+            "A decision policy version's set_at, which only its author states, is when its "
+            "thresholds were decided."
+        ),
+        consequence=(
+            "The report records the versions listed in the diagnostic as set before the first "
+            "evaluation, as they state; no result changes, and the overall decision does not "
+            "rely on the stated time."
+        ),
+        remedy=(
+            "Keep the policy file where others can check when each version was written, such "
+            "as a version-controlled repository or a registry, and say where in each "
+            "version's reason."
+        ),
+        assumptions=("plan_fixed_in_advance",),
     ),
     CodeEntry(
         code="DECISION_POLICY_UNKNOWN_CLAIM",
@@ -1288,6 +1335,25 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
     ),
     CodeEntry(
+        code="JUDGE_SCORE_MAPPING_MISMATCH",
+        severities=("ERROR",),
+        source="logs",
+        effect="invalid",
+        assumption=(
+            "Every value a declared judge's score takes in the selected logs is covered by "
+            "that judge's outcome mapping."
+        ),
+        consequence=(
+            "Integrity is invalid; the error lists the values the judge's mapping does not "
+            "cover and withholds no bound itself, and each verdict with such a value counts "
+            "as missing, with its own JUDGE_SCORE_UNMAPPED."
+        ),
+        remedy=(
+            "Add each listed value to inputs.judges[].score.mapping, minding that mappings "
+            "are type-sensitive, or fix the scorer that produced them and rescore."
+        ),
+    ),
+    CodeEntry(
         code="JUDGE_SCORE_MISSING",
         severities=("ERROR",),
         source="logs",
@@ -1515,6 +1581,26 @@ _CODES: tuple[CodeEntry, ...] = (
             "Rerun the missing rollouts so both arms hold the same keys, or correct "
             "comparisons[].pair_key, and give comparisons[].cluster_key when "
             "comparisons[].diagnostic_methods lists fixed_cluster_bootstrap."
+        ),
+    ),
+    CodeEntry(
+        code="PAIR_NEWCOMBE_UNAVAILABLE",
+        severities=("WARNING",),
+        source="analysis",
+        effect="withheld",
+        assumption=(
+            "The completions of a comparison's unscored pair outcomes produce at most 50,000,000 "
+            "distinct 2x2 tables, the most newcombe_paired evaluates; 668 pairs unscored in both "
+            "arms produce more."
+        ),
+        consequence=(
+            "The comparison's newcombe_paired diagnostic is not reported; its other paired "
+            "diagnostics, its interval and the integrity status are unaffected."
+        ),
+        remedy=(
+            "Rescore or rerun the unscored rollouts, or leave newcombe_paired out of "
+            "comparisons[].diagnostic_methods: exact_mcnemar and fixed_cluster_bootstrap bound "
+            "the completions of any number of unscored pairs."
         ),
     ),
     CodeEntry(
@@ -2166,6 +2252,25 @@ _CODES: tuple[CodeEntry, ...] = (
         assumptions=("sample_errors",),
     ),
     CodeEntry(
+        code="SAMPLE_SELECTION_MISMATCH",
+        severities=("ERROR",),
+        source="logs",
+        effect="invalid",
+        assumption=(
+            "With design.selection_column, each cohort has observations for exactly the frame "
+            "items that column marks as selected by the draw."
+        ),
+        consequence=(
+            "Integrity is invalid and every bound of the cohort is withheld: the items "
+            "evaluated are not the recorded draw, so the inclusion probabilities do not "
+            "describe them."
+        ),
+        remedy=(
+            "Evaluate every selected frame item and no other, or correct the selection column "
+            "to the draw actually made, at random and before any outcome was seen."
+        ),
+    ),
+    CodeEntry(
         code="SAMPLE_SIZE_IMPLAUSIBLE",
         severities=("ERROR",),
         source="logs",
@@ -2200,6 +2305,25 @@ _CODES: tuple[CodeEntry, ...] = (
             "Name the column that defines the strata in design.stratum_column, correct the "
             "inclusion probability column, or use design.sampling: poisson when items were "
             "drawn independently."
+        ),
+    ),
+    CodeEntry(
+        code="SCORE_MAPPING_MISMATCH",
+        severities=("ERROR",),
+        source="logs",
+        effect="invalid",
+        assumption=(
+            "Every value the selected score takes in the selected logs is classified by "
+            "inputs.score.mapping as a failure or as safe."
+        ),
+        consequence=(
+            "Integrity is invalid; the error lists the values the mapping does not cover and "
+            "withholds no bound itself, while each rollout with such a value has its own "
+            "SCORE_UNMAPPED, which withholds its prompt's bounds in its cohort."
+        ),
+        remedy=(
+            "Add each listed value to failure_values or safe_values of inputs.score.mapping, "
+            "minding that mappings are type-sensitive, or fix the scorer that produced them."
         ),
     ),
     CodeEntry(

@@ -132,8 +132,9 @@ outcomes.
   coverage no longer holds.
 - **Remedy:** Freeze the plan before the runs, state analysis.plan_frozen_at, register its hash and
   pass the receipt with --registration-receipt; otherwise set analysis.intent: exploratory.
-- **Checked by:** [`PLAN_POSTHOC`](#plan_posthoc),
-  [`PLAN_RECEIPT_MISMATCH`](#plan_receipt_mismatch),
+- **Checked by:** [`DECISION_POLICY_OVERALL_UNCERTIFIED`](#decision_policy_overall_uncertified),
+  [`DECISION_POLICY_SELF_DECLARED`](#decision_policy_self_declared),
+  [`PLAN_POSTHOC`](#plan_posthoc), [`PLAN_RECEIPT_MISMATCH`](#plan_receipt_mismatch),
   [`PLAN_RECEIPT_POSTHOC`](#plan_receipt_posthoc), [`PLAN_SELF_DECLARED`](#plan_self_declared),
   [`START_TIME_UNOBSERVED`](#start_time_unobserved)
 
@@ -258,6 +259,34 @@ The analysis plan: its fields, references and their combinations.
   the plan's thresholds, and none can pass.
 - **Remedy:** Apply the policy to the plan it was written for, or set its inference_plan_sha256 to
   the hash `inspect-safety-stats hash-plan --inference` prints for this plan.
+
+#### `DECISION_POLICY_OVERALL_UNCERTIFIED`
+
+- **Severity:** WARNING
+- **Effect:** [adjusted](#effects)
+- **Assumption:** An overall PASS has the error bound of one claim only when every mandatory claim's
+  acceptable_upper was fixed before the data, or when one simultaneous coverage event covers every
+  mandatory claim's bound.
+- **Consequence:** The overall decision is INCONCLUSIVE where every mandatory claim passes, since a
+  wrong PASS is bounded only by the sum of the separate events' error budgets; a FAIL stays FAIL,
+  and every claim keeps its status.
+- **Remedy:** Set these thresholds in the plan before the runs, or decide every mandatory claim on
+  one simultaneous family, such as the default simultaneous prompt bounds or simultaneous
+  direct-mean intervals.
+- **Checks:** [`plan_fixed_in_advance`](#assumption-plan_fixed_in_advance)
+
+#### `DECISION_POLICY_SELF_DECLARED`
+
+- **Severity:** WARNING
+- **Effect:** [recorded](#effects)
+- **Assumption:** A decision policy version's set_at, which only its author states, is when its
+  thresholds were decided.
+- **Consequence:** The report records the versions listed in the diagnostic as set before the first
+  evaluation, as they state; no result changes, and the overall decision does not rely on the stated
+  time.
+- **Remedy:** Keep the policy file where others can check when each version was written, such as a
+  version-controlled repository or a registry, and say where in each version's reason.
+- **Checks:** [`plan_fixed_in_advance`](#assumption-plan_fixed_in_advance)
 
 #### `DECISION_POLICY_UNKNOWN_CLAIM`
 
@@ -506,10 +535,12 @@ runs.
 
 - **Severity:** INFO
 - **Effect:** [recorded](#effects)
-- **Assumption:** A decision policy's thresholds do not enter the bounds, so a version set after the
-  first evaluation started leaves the verdicts at them certifying.
+- **Assumption:** A decision policy's thresholds were set before the evidence. They do not enter the
+  bounds, so each claim's verdict keeps its error bound at a later threshold, but such a threshold
+  may describe the bounds rather than a requirement fixed in advance.
 - **Consequence:** The policy's thresholds stay in force and the claims keep their status; the
-  versions set after the first evaluation started are listed in the diagnostic.
+  versions set after the first evaluation started are listed in the diagnostic. Whether the overall
+  decision still certifies is DECISION_POLICY_OVERALL_UNCERTIFIED's concern.
 - **Remedy:** No change is needed; to avoid the note, set the policy's versions before the runs
   start.
 
@@ -745,6 +776,18 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
 - **Remedy:** Record the run's scorers and model_roles as Inspect logs record them, or leave the
   field out of the rollout files' runs.
 
+#### `JUDGE_SCORE_MAPPING_MISMATCH`
+
+- **Severity:** ERROR
+- **Effect:** [invalid](#effects)
+- **Assumption:** Every value a declared judge's score takes in the selected logs is covered by that
+  judge's outcome mapping.
+- **Consequence:** Integrity is invalid; the error lists the values the judge's mapping does not
+  cover and withholds no bound itself, and each verdict with such a value counts as missing, with
+  its own JUDGE_SCORE_UNMAPPED.
+- **Remedy:** Add each listed value to inputs.judges[].score.mapping, minding that mappings are
+  type-sensitive, or fix the scorer that produced them and rescore.
+
 #### `JUDGE_SCORE_MISSING`
 
 - **Severity:** ERROR
@@ -931,6 +974,17 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
   when that matches where the errors come from.
 - **Checks:** [`sample_errors`](#assumption-sample_errors)
 
+#### `SAMPLE_SELECTION_MISMATCH`
+
+- **Severity:** ERROR
+- **Effect:** [invalid](#effects)
+- **Assumption:** With design.selection_column, each cohort has observations for exactly the frame
+  items that column marks as selected by the draw.
+- **Consequence:** Integrity is invalid and every bound of the cohort is withheld: the items
+  evaluated are not the recorded draw, so the inclusion probabilities do not describe them.
+- **Remedy:** Evaluate every selected frame item and no other, or correct the selection column to
+  the draw actually made, at random and before any outcome was seen.
+
 #### `SAMPLE_SIZE_IMPLAUSIBLE`
 
 - **Severity:** ERROR
@@ -941,6 +995,18 @@ The evaluation logs or rollout files: runs, samples, scores, errors and their co
   probabilities that misdescribe the draw bias the estimate.
 - **Remedy:** Correct the inclusion probability column to the probabilities the draw used, or supply
   the logs of every drawn frame item.
+
+#### `SCORE_MAPPING_MISMATCH`
+
+- **Severity:** ERROR
+- **Effect:** [invalid](#effects)
+- **Assumption:** Every value the selected score takes in the selected logs is classified by
+  inputs.score.mapping as a failure or as safe.
+- **Consequence:** Integrity is invalid; the error lists the values the mapping does not cover and
+  withholds no bound itself, while each rollout with such a value has its own SCORE_UNMAPPED, which
+  withholds its prompt's bounds in its cohort.
+- **Remedy:** Add each listed value to failure_values or safe_values of inputs.score.mapping,
+  minding that mappings are type-sensitive, or fix the scorer that produced them.
 
 #### `SCORE_MISSING`
 
@@ -1373,6 +1439,19 @@ cannot be computed, or a result it qualifies.
   common arm region, and its rows keep the intervals they had.
 - **Remedy:** Nothing in the inputs needs to change: the unprojected intervals keep their coverage.
   Set comparison_sets[].hierarchy_region: none to skip the projection.
+
+#### `PAIR_NEWCOMBE_UNAVAILABLE`
+
+- **Severity:** WARNING
+- **Effect:** [withheld](#effects)
+- **Assumption:** The completions of a comparison's unscored pair outcomes produce at most
+  50,000,000 distinct 2x2 tables, the most newcombe_paired evaluates; 668 pairs unscored in both
+  arms produce more.
+- **Consequence:** The comparison's newcombe_paired diagnostic is not reported; its other paired
+  diagnostics, its interval and the integrity status are unaffected.
+- **Remedy:** Rescore or rerun the unscored rollouts, or leave newcombe_paired out of
+  comparisons[].diagnostic_methods: exact_mcnemar and fixed_cluster_bootstrap bound the completions
+  of any number of unscored pairs.
 
 #### `TAIL_MEASURES_UNINFORMATIVE`
 

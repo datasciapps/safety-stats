@@ -909,7 +909,7 @@ def pilot_command(
         int, typer.Option("--per-stratum", min=1, help="Prompts to draw from each stratum.")
     ],
     seed: Annotated[
-        int, typer.Option("--seed", help="Selection seed; record it with the pilot.")
+        int, typer.Option("--seed", help="Selection seed; the frame records it as pilot_seed.")
     ],
     output: Annotated[
         Path,
@@ -926,22 +926,32 @@ def pilot_command(
 ) -> None:
     """Draw a random pilot within strata of a design manifest (experimental).
 
-    Writes the whole manifest with pilot_stratum, pilot_inclusion_probability and
-    pilot_selected added. Run the pilot on the rows where pilot_selected is true. The
-    same file is the frame of a sampled design (sampling: fixed_size, stratum_column:
-    pilot_stratum, inclusion_probability_column: pilot_inclusion_probability).
+    Writes the whole manifest with pilot_stratum, pilot_inclusion_probability,
+    pilot_selected, pilot_seed and pilot_per_stratum added. Run the pilot on the rows where
+    pilot_selected is true. The same file is the frame of a sampled design (sampling:
+    fixed_size, stratum_column: pilot_stratum, inclusion_probability_column:
+    pilot_inclusion_probability, selection_column: pilot_selected). Analyse a pilot as
+    exploratory: a pilot enlarged after its outcomes were seen certifies nothing.
     """
 
     import pandas as pd
 
-    from inspect_safety_stats.ingest.manifest import load_manifest
+    from inspect_safety_stats.ingest.manifest import REQUIRED_COLUMNS, load_manifest
     from inspect_safety_stats.ingest.pilot import draw_pilot
 
-    if output.resolve() == manifest.resolve():
+    # samefile also catches a path that differs only in case on a case-insensitive
+    # filesystem (macOS, Windows) and a hard link, which resolve() leaves distinct.
+    if output.resolve() == manifest.resolve() or (output.exists() and output.samefile(manifest)):
         raise typer.BadParameter("--output must not overwrite the design manifest")
     columns = [column.strip() for column in strata.split(",") if column.strip()]
     try:
-        load_manifest(manifest)
+        # Check the manifest as analyze reads it, requiring only the identifier columns the
+        # draw uses: analyze gives a plan that never names question_id or task_id each
+        # prompt's own. draw_pilot checks strata columns outside REQUIRED_COLUMNS.
+        load_manifest(
+            manifest,
+            required=("prompt_id", *(column for column in columns if column in REQUIRED_COLUMNS)),
+        )
         # Read every value as written, so the pilot frame repeats the manifest's own text
         # rather than pandas' reading of it (an integer column with a gap would turn into
         # floats, for example).
@@ -1001,10 +1011,18 @@ def comparison_planning_command(
     The difference is candidate minus baseline risk over the manifest's weighted design.
     Reports the largest true difference whose upper bound falls at or below --margin, and
     the smallest whose lower bound reaches it, each with --power, under the Hoeffding
-    guarantee of the weighted_hoeffding comparison. Rollout counts per arm come from the
-    manifest's expected_rollouts column unless --candidate-rollouts or --baseline-rollouts
-    override them. --independence-unit pair plans for a profile block_by [prompt_id, repeat]
-    with joint coupling; prompt_cluster for block_by [prompt_id] with joint coupling.
+    guarantee of a comparisons entry with method weighted_hoeffding. That is not the setup
+    init writes, nor the one the guide recommends for two or more configurations: both use a
+    comparison_sets entry with method weighted_kl_chernoff. To rely on the numbers, declare
+    the contrast as a comparisons entry with method weighted_hoeffding. The numbers do not
+    hold for a comparison_sets entry or another method: a comparison set bounds each arm
+    separately, which is usually wider, and weighted_kl_chernoff and
+    weighted_empirical_bernstein, often narrower on sparse failures when prompt weights are
+    even, can be wider with uneven weights or at moderate failure rates. Rollout counts per
+    arm come from the manifest's expected_rollouts column unless --candidate-rollouts or
+    --baseline-rollouts override them. --independence-unit pair plans for a profile that
+    blocks by prompt_id and repeat with joint coupling; prompt_cluster for one that blocks
+    by prompt_id with joint coupling.
     """
 
     from inspect_safety_stats.stats.planning import comparison_resolvable_differences
@@ -1055,6 +1073,10 @@ def comparison_planning_command(
     typer.echo(f"Effective sample size: {plan.effective_sample_size:.8g}")
     typer.echo(f"Margin: {margin:.8g}")
     typer.echo(f"Target power: {power:.8g}")
+    typer.echo(
+        "Interval method: weighted_hoeffding in a comparisons entry only; not comparison_sets "
+        "(as init writes) or other methods, where power can fall far below the target"
+    )
     typer.echo(
         "Largest difference with upper bound at or below the margin: "
         + (
@@ -1220,9 +1242,13 @@ def hash_plan_command(
 def generative_compile_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
 ) -> None:
-    """Compile a generative plan and report what the canonical taxonomy contains."""
+    """Compile a generative plan and report what the canonical taxonomy contains.
 
-    from inspect_safety_stats.generative.sampling import plan_design
+    A declared slice family is checked against the paths materialize will select, so a
+    member the analysis could not estimate is refused before anything is generated.
+    """
+
+    from inspect_safety_stats.generative.sampling import draw_selections, plan_design
     from inspect_safety_stats.generative.schema import load_generative_plan
     from inspect_safety_stats.generative.taxonomy import compile_taxonomy
 
@@ -1230,6 +1256,15 @@ def generative_compile_command(
         parsed = load_generative_plan(plan)
         taxonomy = compile_taxonomy(parsed, base_path=plan.parent)
         design = plan_design(taxonomy, parsed)
+        if parsed.inference.slice_family is not None:
+            # The runner imports Inspect and pandas, which a plan without a family never needs.
+            from inspect_safety_stats.generative.runner import check_declared_slice_family
+
+            # The selected paths do not depend on the stage: these are the ones materialize
+            # selects under --stage pilot or main.
+            check_declared_slice_family(
+                parsed, taxonomy, design, draw_selections(taxonomy, design)
+            )
     except Exception as exc:
         typer.echo(f"Compilation failed: {exc}", err=True)
         raise typer.Exit(code=ExitCode.ERROR) from exc
@@ -1383,7 +1418,8 @@ def generative_analyze_command(
             f"upper {comparison.upper:+.5f} ({comparison.method})"
         )
     if report.slice_family is not None:
-        typer.echo("Slice family (experimental, simultaneous):")
+        # The family is never judge-corrected, even where the plan declares a calibration.
+        typer.echo("Slice family (experimental, simultaneous, judge-reported scale):")
         for member in report.slice_family.slices:
             typer.echo(f"  {member.member_id}: upper {member.arm.upper:.5f}")
         for contrast in report.slice_family.contrasts:
