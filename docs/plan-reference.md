@@ -306,9 +306,11 @@ those estimates, every group's `weighted_mean` row that the calibration corrects
 diagnostic Lang-Reiczigel limits beside the exact box; tail measures and hierarchy nodes do not.
 Threshold claims whose evidence carries a validated correction are decided from the corrected
 bounds; an `assumed` correction never affects a claim. One calibration is estimated per cohort
-by exact Clopper-Pearson bounds within each judge stratum, and the corrected interval's coverage
-is the union of its own family budget and the judge family budget. A plan declares one mode:
-`assumed`, `validated` or `transported` (below).
+by exact Clopper-Pearson bounds within each judge stratum. The corrected interval's coverage is
+the union of three budgets: its own family's, the judge family's, and that of the bound on its
+[unclassified share](judge-misclassification.md#unclassified-rollouts). The last is a quarter
+of the calibration's share of the judge family budget, and is spent on top of it. A plan
+declares one mode: `assumed`, `validated` or `transported` (below).
 
 `groups` scopes an `assumed` or `validated` calibration to declared groups, for a cohort that
 holds several benchmarks whose judge accuracies differ:
