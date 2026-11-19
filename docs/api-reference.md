@@ -559,8 +559,11 @@ and lists the values left over. With two, the one `--failure-values` does not na
 `init` says so. `design.csv` has no `zero_tolerance` column, so the plan turns the
 zero-tolerance gate off, and its header says how to turn it on. `init` uses only the
 evaluations that finished successfully and names the logs it ignored; its suggested `analyze`
-command then lists the logs it used, since `analyze` would report the others incomplete. The
-plan's header lists each choice `init` made and the assumption it rests on, from
+command then lists the logs it used, since `analyze` would report the others incomplete.
+`--alpha` (default 0.05) is spent once in each multiplicity family the plan writes: the prompt
+bounds, the risk intervals and, with several models, the comparisons. The plan's header and the
+command's output say so, and with what probability all the intervals hold together. The plan's
+header lists each choice `init` made and the assumption it rests on, from
 `inspect_safety_stats.registry`: rollout independence first, then the rest. Each note says what
 goes wrong if the assumption does not hold and how to change it. The command prints the same
 list. A plan written after the logs exist cannot be confirmatory, so `--intent confirmatory` is

@@ -168,7 +168,18 @@ def init_command(
         str | None,
         typer.Option("--baseline", help="Model (or cohort id) to compare the others against."),
     ] = None,
-    alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
+    alpha: Annotated[
+        float,
+        typer.Option(
+            "--alpha",
+            min=0.0,
+            max=1.0,
+            help=(
+                "The error rate each multiplicity family of the plan spends on its own: the "
+                "prompt bounds, the risk intervals and, with several models, the comparisons."
+            ),
+        ),
+    ] = 0.05,
     nested_weights: Annotated[
         bool,
         typer.Option(

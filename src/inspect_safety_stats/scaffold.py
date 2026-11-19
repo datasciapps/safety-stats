@@ -284,7 +284,23 @@ def _assumption_notes(
     return notes
 
 
-def _header(stamp: datetime, assumptions: Sequence[AssumptionNote]) -> str:
+def _alpha_text(alpha: float, families: Sequence[str]) -> str:
+    """How the plan spends alpha: once in each multiplicity family, not once in all."""
+
+    joint = max(0.0, 1 - len(families) * alpha)
+    return (
+        f"each multiplicity family ({', '.join(families)}) spends alpha {alpha:g} on its own: "
+        f"the intervals of one family hold together with probability at least {1 - alpha:g}, "
+        "and all "
+        f"of the plan's intervals hold together with probability at least {joint:g}. To make "
+        "them all hold together with a stated probability, split alpha between the families "
+        "(multiplicity.families)"
+    )
+
+
+def _header(
+    stamp: datetime, assumptions: Sequence[AssumptionNote], alpha_text: str
+) -> str:
     """The comment that opens the plan: how it was made, and the assumptions it rests on."""
 
     lines = [
@@ -298,6 +314,13 @@ def _header(stamp: datetime, assumptions: Sequence[AssumptionNote]) -> str:
             f"{_ZERO_TOLERANCE_FIELD} column, so the gate would hold no prompt. To hold prompts "
             f"to zero tolerance, add a {_ZERO_TOLERANCE_FIELD} column, true for those prompts, "
             "and set enabled: true.",
+            width=88,
+            break_long_words=False,
+            break_on_hyphens=False,
+        ),
+        "",
+        *textwrap.wrap(
+            alpha_text[0].upper() + alpha_text[1:] + ".",
             width=88,
             break_long_words=False,
             break_on_hyphens=False,
@@ -645,6 +668,8 @@ def scaffold_plan(
         "zero_tolerance": {"enabled": False, "manifest_field": _ZERO_TOLERANCE_FIELD}
     }
     AnalysisPlan.model_validate(plan)
+    alpha_text = _alpha_text(alpha, [str(family["id"]) for family in families])
+    notes.append(alpha_text)
     assumptions = _assumption_notes(
         score=score,
         mapping=mapping,
@@ -665,7 +690,7 @@ def scaffold_plan(
         )
     manifest.to_csv(manifest_path, index=False, lineterminator="\n")
     plan_path.write_text(
-        _header(stamp, assumptions)
+        _header(stamp, assumptions, alpha_text)
         + "\n"
         + yaml.dump(plan, Dumper=_PlainDumper, sort_keys=False, allow_unicode=True),
         encoding="utf-8",

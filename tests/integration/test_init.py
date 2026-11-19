@@ -173,6 +173,45 @@ def test_init_writes_integer_groups_as_written_whatever_an_ignored_log_lacks(
     assert [row.split(",")[3] for row in rows[1:]] == ["1", "2", "1", "2", "1"]
 
 
+def _header_text(plan_path: Path) -> str:
+    lines = plan_path.read_text(encoding="utf-8").splitlines()
+    return " ".join(line.removeprefix("#").strip() for line in lines if line.startswith("#"))
+
+
+def test_init_says_each_family_spends_alpha_on_its_own(
+    mock_logs: Path, three_valued_logs: Path, tmp_path: Path
+) -> None:
+    # --alpha had no help, and nothing said that alpha is spent once in each family, so that
+    # the plan's intervals hold together only with probability 1 - (families x alpha).
+    two_models = scaffold_plan(mock_logs, tmp_path / "two", failure_values=["FAIL"])
+    one_model = scaffold_plan(
+        three_valued_logs, tmp_path / "one", failure_values=["I", "P"], safe_values=["C"],
+        alpha=0.1,
+    )
+    for result, families, alpha, joint in (
+        (two_models, "prompt_bounds, risk, comparisons", "0.05", "0.85"),
+        (one_model, "prompt_bounds, risk", "0.1", "0.8"),
+    ):
+        plan = yaml.safe_load(result.plan_path.read_text(encoding="utf-8"))
+        ids = [family["id"] for family in plan["multiplicity"]["families"]]
+        assert ", ".join(ids) == families
+        stated = (
+            f"each multiplicity family ({families}) spends alpha {alpha} on its own: the "
+            f"intervals of one family hold together with probability at least "
+            f"{1 - float(alpha):g}, and all of the plan's intervals hold together with "
+            f"probability at least {joint}."
+        )
+        assert any(note.startswith(stated) for note in result.notes)
+        assert stated[0].upper() + stated[1:] in _header_text(result.plan_path)
+    # rich places the option's range and default among the words of its help.
+    help_text = plain(CliRunner().invoke(app, ["init", "--help"]).output)
+    words = " ".join(re.sub(r"\[[^]]*\]", " ", help_text).split())
+    assert (
+        "The error rate each multiplicity family of the plan spends on its own: the prompt "
+        "bounds, the risk intervals and, with several models, the comparisons." in words
+    )
+
+
 def test_init_plan_analyzes_end_to_end(mock_logs: Path, tmp_path: Path) -> None:
     result = scaffold_plan(
         mock_logs,

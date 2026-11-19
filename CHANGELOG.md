@@ -270,11 +270,12 @@ described in their pull requests.
   and its header says how to turn it on; left at its default, the gate could hold no prompt.
   `init` names the logs of evaluations that did not finish successfully, which it ignores, and
   its suggested `analyze` command then lists only the logs it used. `--group-by` refuses a
-  metadata field that some samples lack or leave empty, naming them. The plan's header, and the
-  command's output, list each choice `init` made with the assumption it rests on from
-  `inspect_safety_stats.registry`, rollout independence first, what goes wrong if it does not
-  hold, and the remedy. The plan is exploratory; `--intent confirmatory` is refused, because
-  the plan is written after the logs exist. See
+  metadata field that some samples lack or leave empty, naming them. `--alpha` is spent once
+  in each multiplicity family, which the plan's header and the output state. The plan's
+  header, and the command's output, list each choice `init` made with the assumption it rests
+  on from `inspect_safety_stats.registry`, rollout independence first, what goes wrong if it
+  does not hold, and the remedy. The plan is exploratory; `--intent confirmatory` is refused,
+  because the plan is written after the logs exist. See
   [Command-line interface](docs/api-reference.md#command-line-interface).
 
 - **A warning when tail measures cannot be informative.** Tail and threshold measures
