@@ -1502,9 +1502,12 @@ evaluated them.
 
 - **Severity:** WARNING
 - **Effect:** [recorded](#effects)
-- **Assumption:** When the plan sets rewrite.validation.invoke, the rewrites were judged by the
-  validator rewrite.validation.validator_id names, and by no other.
-- **Consequence:** Nothing is recomputed: the diagnostic names the validators the attempt ledger
-  records, if any, beside the declared one.
-- **Remedy:** Materialize again with --validator naming an implementation whose validator_id equals
+- **Assumption:** When the plan sets rewrite.validation.invoke, every kept rewrite was judged by the
+  validator rewrite.validation.validator_id names, and no rewrite by another.
+- **Consequence:** Nothing is recomputed: the diagnostic names any other validator the attempt
+  ledger records, and counts the kept rewrites no validator judged, as when validation.invoke was
+  set after materialization or before a resume. A run in which no rewrite reached the validator and
+  none was kept has nothing to compare, and gets no diagnostic.
+- **Remedy:** Materialize again from the start (--overwrite or a new output directory, not --resume)
+  under the plan as it stands, with --validator naming an implementation whose validator_id equals
   rewrite.validation.validator_id.

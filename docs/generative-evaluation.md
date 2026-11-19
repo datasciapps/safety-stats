@@ -534,7 +534,9 @@ Three diagnostics read it:
   sample size is required and the spread is not tested against chance, so the message gives
   the fewest rewrites judged for one value: among few, a spread that wide can be noise.
 - `GENERATIVE_VALIDATOR_MISMATCH` (warning): the attempt ledger records another validator
-  than the one the plan declares.
+  than the one the plan declares, or kept rewrites that no validator judged, as when
+  `validation.invoke` was set after materialization or before a resume. A run in which no
+  rewrite reached the validator and none was kept gets no such warning.
 - `GENERATIVE_RETRY_DEPENDENCE` (info): some units kept a rewrite only after a duplicate
   rejection. Deduplication compares against rewrites accepted for earlier units, so those
   units' prompts depend on the order of selection. This weakens the independence across

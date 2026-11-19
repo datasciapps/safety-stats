@@ -784,11 +784,12 @@ def _fidelity(
 ) -> list[FidelityRow] | None:
     """Fidelity by arm from the attempt ledger, when the plan records one.
 
-    Appends three diagnostics: a validator that judged the rewrites under another identifier
-    than the plan's, a level whose values it rejects at rates more than five percentage
-    points apart, however few rewrites it judged, and
-    units whose kept rewrite followed a duplicate rejection, whose prompts therefore
-    depend on the rewrites kept for earlier units.
+    Appends three diagnostics: a validator that judged rewrites under another identifier
+    than the plan's, or a kept rewrite that no validator judged; a level whose values it
+    rejects at rates more than five percentage points apart, however few rewrites it
+    judged; and units whose kept rewrite followed a duplicate rejection, whose prompts
+    therefore depend on the rewrites kept for earlier units. A run in which no rewrite
+    reached the validator and none was kept gives the first nothing to compare.
     """
 
     if not plan.rewrite.records_attempts:
@@ -805,14 +806,22 @@ def _fidelity(
 
     declared = plan.rewrite.validation.validator_id
     used = sorted({item.validator_id for item in attempts if item.validator_id is not None})
-    if plan.rewrite.validation.invoke and used != [declared]:
+    # A kept rewrite without a validator was materialized under a plan that did not invoke
+    # one, as when validation.invoke was set after materialization or before a resume.
+    unjudged = sum(1 for item in attempts if item.accepted and item.validator_id is None)
+    findings: list[str] = []
+    if any(item != declared for item in used):
+        findings.append(f"records {', '.join(repr(item) for item in used)}")
+    if unjudged:
+        findings.append(f"records {unjudged} kept rewrite(s) that no validator judged")
+    if plan.rewrite.validation.invoke and findings:
         diagnostics.append(
             Diagnostic(
                 code="GENERATIVE_VALIDATOR_MISMATCH",
                 severity="WARNING",
                 message=(
                     f"the plan declares validator {declared!r}, but the attempt ledger "
-                    f"records {', '.join(repr(item) for item in used) or 'none'}"
+                    + ", and ".join(findings)
                 ),
                 scope=plan_scope("rewrite", "validation"),
             )
