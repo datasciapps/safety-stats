@@ -47,7 +47,17 @@ def test_a_candidate_tag_builds_a_candidate_version_for_testpypi(
 
 @pytest.mark.parametrize(
     "tag",
-    ["v0.15.0", "v0.16.1", "v0.16.0rc", "v0.16.0-rc1", "0.16.0", "v0.16", "v0.16.0.post1"],
+    [
+        "v0.15.0",
+        "v0.16.1",
+        "v0.16.0rc",
+        "v0.16.0rc0",
+        "v0.16.0rc01",
+        "v0.16.0-rc1",
+        "0.16.0",
+        "v0.16",
+        "v0.16.0.post1",
+    ],
 )
 def test_other_tags_release_nothing(release_version: ModuleType, tag: str) -> None:
     with pytest.raises(release_version.ReleaseTagError):
@@ -80,6 +90,18 @@ def test_apply_writes_a_candidate_version_into_both_files_only(
     assert b'target-version = "py311"' in pyproject
     assert b"\r" not in pyproject
     assert release_version.package_version(root) == "0.16.0rc1"
+
+
+def test_without_apply_nothing_is_written(
+    release_version: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = _tree(tmp_path, "0.16.0", "0.16.0")
+    files = [root / "pyproject.toml", root / "src" / "inspect_safety_stats" / "version.py"]
+    before = [path.read_bytes() for path in files]
+    assert release_version.main(["v0.16.0rc1", "--root", str(root)]) == 0
+    assert capsys.readouterr().out == "version=0.16.0rc1\nindex=testpypi\n"
+    after = [path.read_bytes() for path in files]
+    assert after == before
 
 
 def test_a_mismatched_tag_exits_1_and_changes_nothing(
@@ -119,3 +141,28 @@ def test_the_release_workflow_publishes_each_index_from_its_own_environment() ->
     assert "secrets." not in (ROOT / ".github" / "workflows" / "release.yml").read_text(
         encoding="utf-8"
     )
+
+
+def test_the_release_workflow_checks_before_it_publishes() -> None:
+    workflow = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    )
+    # YAML 1.1 reads the key `on` as the boolean True.
+    trigger = workflow.get("on", workflow.get(True))
+    assert trigger == {"push": {"tags": ["v*"]}}
+    jobs = workflow["jobs"]
+    build = " ".join(step.get("run", "") for step in jobs["build"]["steps"])
+    assert "merge-base --is-ancestor" in build
+    assert "scripts/release_version.py" in build and "--apply" in build
+    assert "twine check --strict" in build
+    assert "scripts/check_wheel.sh" in build
+    uploads = {}
+    for name in ("pypi", "testpypi"):
+        assert jobs[name]["needs"] == "build"
+        (step,) = [
+            step
+            for step in jobs[name]["steps"]
+            if step.get("uses", "").startswith("pypa/gh-action-pypi-publish@")
+        ]
+        uploads[name] = step.get("with", {}).get("repository-url")
+    assert uploads == {"pypi": None, "testpypi": "https://test.pypi.org/legacy/"}

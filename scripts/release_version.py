@@ -4,7 +4,8 @@
 
 - ``v<version>``, such as ``v0.16.0``, releases the package version to PyPI. It must equal the
   version in ``pyproject.toml`` and ``src/inspect_safety_stats/version.py``.
-- ``v<version>rc<N>``, such as ``v0.16.0rc1``, is a release candidate of that version. It is
+- ``v<version>rc<N>``, such as ``v0.16.0rc1``, is a release candidate of that version, ``N``
+  counting from 1 without leading zeros (a build normalizes ``rc01`` to ``rc1``). It is
   built as ``<version>rc<N>`` and goes to TestPyPI only, so a candidate can be installed and
   checked from an index before the release, on the same commit and without a commit that
   changes the version.
@@ -30,7 +31,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = Path("pyproject.toml")
 VERSION_MODULE = Path("src") / "inspect_safety_stats" / "version.py"
 
-_TAG = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)(?P<candidate>rc[0-9]+)?")
+_TAG = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)(?P<candidate>rc[1-9][0-9]*)?")
 _FINAL = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 _PYPROJECT_VERSION = re.compile(r'^version = "(?P<version>[^"]*)"$', re.MULTILINE)
 _MODULE_VERSION = re.compile(r'^__version__ = "(?P<version>[^"]*)"$', re.MULTILINE)
