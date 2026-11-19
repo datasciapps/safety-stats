@@ -378,6 +378,17 @@ def test_nodes_that_cannot_be_placed_are_counted() -> None:
     ) in section
 
 
+def test_an_upper_end_that_prints_as_the_limit_but_exceeds_it_is_counted() -> None:
+    # 0.0504 prints as 0.050 at three places, as the limit does, yet lies above it, so the
+    # node is not shown to be at or below the limit.
+    report = _limit_report([_node("misinformation", None, 0.01, 0.0504)])
+    section = _section(_markdown(report))
+    assert (
+        "Not placed for “Harmful compliance below 5%”: 1 node row with no estimate and an "
+        "interval that reaches above the limit. Whether this node is above the limit is unknown."
+    ) in section
+
+
 def test_a_node_at_the_limit_is_not_above_it() -> None:
     report = _limit_report([_node("misinformation", 0.05, 0.05, 0.3)])
     section = _section(_markdown(report))

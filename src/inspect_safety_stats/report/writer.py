@@ -725,7 +725,10 @@ def _exceedance_lines(
             elif node.estimate is None:
                 if node.lower is None and node.upper is None:
                     no_interval += 1
-                elif node.upper is None or _shown_above(node.upper, limit, places):
+                # Exact, not as printed: an upper end that prints as the limit but lies above
+                # it does not show the node at or below the limit, and an unplaced node is
+                # never printed, so it must be counted.
+                elif node.upper is None or node.upper > limit:
                     open_interval += 1
         if open_interval or no_interval:
             unplaced.append((claim, open_interval, no_interval))
@@ -782,7 +785,11 @@ def _exceedance_lines(
                 (
                     f"Not placed for “{_escape(claim.title)}”: "
                     + "; ".join(parts)
-                    + ". Whether these nodes are above the limit is unknown."
+                    + (
+                        ". Whether this node is above the limit is unknown."
+                        if open_interval + no_interval == 1
+                        else ". Whether these nodes are above the limit is unknown."
+                    )
                 ),
             ]
         )
