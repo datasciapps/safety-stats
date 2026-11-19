@@ -308,7 +308,9 @@ described in their pull requests.
   rollouts would warn about a prompt-level primary with repeated rollouts whenever prompts
   differ in failure rate, however little the grouping adds. Otherwise it is informational. No
   bound changes. With few blocks the figures are noisy and can warn with no grouping effect.
-  See
+  Under a fixed design the correlation also counts fixed differences between prompts, which can
+  raise or lower it, and the figures weigh rollouts equally whatever the prompt weights; the
+  design effect, not the correlation, says how much the grouping matters. See
   [How much the grouping matters](docs/independence-profiles.md#how-much-the-grouping-matters-cluster_design_effect).
 
 - **Assumed judge scenarios can give each cohort its own box.** A scenario under

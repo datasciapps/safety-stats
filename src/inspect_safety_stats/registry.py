@@ -578,9 +578,11 @@ _CODES: tuple[CodeEntry, ...] = (
             "Nothing is computed differently: the diagnostic records how much the rollouts' "
             "grouping shrinks their evidence, so a reader can judge results that rest on a "
             "finer profile. Under a fixed design the correlation also includes fixed "
-            "differences in failure rates between the blocks' prompts, so it can overstate the "
-            "dependence between rollouts. On rollouts it also includes the correlation of one "
-            "prompt's rollouts, which a prompt-level primary's units do not."
+            "differences in failure rates between prompts: those between blocks raise it and "
+            "those within a block lower it, so it can overstate or understate the dependence "
+            "between rollouts. On rollouts it also includes the correlation of one prompt's "
+            "rollouts, which a prompt-level primary's units do not. It counts rollouts or units "
+            "equally, whatever the prompt weights of the weighted mean the intervals bound."
         ),
         remedy=(
             "Add the grouping profile as an independence sensitivity of the results, or make "
