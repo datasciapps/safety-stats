@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -54,15 +56,43 @@ def risk_of(node_id: str) -> float:
     return risk
 
 
-def outcomes(selections: list[Any], rng: np.random.Generator) -> list[UnitOutcome]:
+def only_roleplay_fails(node_id: str) -> float:
+    """Only roleplay paths fail, most under bio, where the confounded weights thin them."""
+
+    if "wrapper=roleplay" not in node_id:
+        return 0.0
+    return 0.5 if "problem_class=bio" in node_id else 0.1
+
+
+def outcomes(
+    selections: list[Any],
+    rng: np.random.Generator,
+    path_risk: Callable[[str], float] = risk_of,
+) -> list[UnitOutcome]:
     draws = rng.random(len(selections))
     return [
-        UnitOutcome(record.sampling_unit_id, 1, int(draw < risk_of(record.node_id)), 0)
+        UnitOutcome(record.sampling_unit_id, 1, int(draw < path_risk(record.node_id)), 0)
         for record, draw in zip(selections, draws, strict=True)
     ]
 
 
-def seed_risk(taxonomy: CompiledTaxonomy, level: str, value: str) -> dict[str, tuple[float, float]]:
+def redrawn(taxonomy: CompiledTaxonomy, design: Any, repetition: int) -> list[Any]:
+    """The paths a different selection seed draws.
+
+    A bound covers over path selection as well as outcomes, so a coverage test that kept one
+    selection would measure coverage conditional on where its draws happened to land.
+    """
+
+    seed = design.selection_seed + 1 + repetition
+    return draw_selections(taxonomy, replace(design, selection_seed=seed))
+
+
+def seed_risk(
+    taxonomy: CompiledTaxonomy,
+    level: str,
+    value: str,
+    path_risk: Callable[[str], float] = risk_of,
+) -> dict[str, tuple[float, float]]:
     """Per seed: the seed's weight, and the declared risk of its paths carrying the value."""
 
     seed: dict[str, float] = {}
@@ -73,12 +103,19 @@ def seed_risk(taxonomy: CompiledTaxonomy, level: str, value: str) -> dict[str, t
         seed[key] = seed.get(key, 0.0) + node.target_path_weight
         if f"{level}={value}" in node.node_id.split("|"):
             cell[key] = cell.get(key, 0.0) + node.target_path_weight
-            risk[key] = risk.get(key, 0.0) + node.target_path_weight * risk_of(node.node_id)
+            risk[key] = risk.get(key, 0.0) + node.target_path_weight * path_risk(node.node_id)
     return {key: (seed[key], risk[key] / cell[key]) for key in cell}
 
 
-def true_contrast(taxonomy: CompiledTaxonomy, level: str, a: str, b: str) -> float:
-    first, second = seed_risk(taxonomy, level, a), seed_risk(taxonomy, level, b)
+def true_contrast(
+    taxonomy: CompiledTaxonomy,
+    level: str,
+    a: str,
+    b: str,
+    path_risk: Callable[[str], float] = risk_of,
+) -> float:
+    first = seed_risk(taxonomy, level, a, path_risk)
+    second = seed_risk(taxonomy, level, b, path_risk)
     shared = sorted(set(first) & set(second))
     mass = sum(first[key][0] for key in shared)
     return sum(first[key][0] / mass * (first[key][1] - second[key][1]) for key in shared)
@@ -166,6 +203,10 @@ def test_a_confounded_contrast_uses_the_ratio_construction_on_shared_seeds(
         assert contrast.frontier_size == 1
         # Two frontiers share 0.05, and two-sided coverage halves each one's share.
         assert contrast.endpoint_alpha == pytest.approx(0.0125, rel=1e-12, abs=0)
+        # The union bound halves it again over the two arms, at both ends of each.
+        for arm in (contrast.candidate, contrast.baseline):
+            assert arm.alpha_lower == pytest.approx(0.00625, rel=1e-12, abs=0)
+            assert arm.alpha_upper == pytest.approx(0.00625, rel=1e-12, abs=0)
 
 
 def test_a_contrast_is_restricted_to_the_seeds_holding_both_values(tmp_path: Path) -> None:
@@ -232,9 +273,7 @@ def test_unclassified_rollouts_widen_both_endpoints(tmp_path: Path) -> None:
     [("direct", False), ("direct", True), ("proportional_stratified", True)],
 )
 def test_the_family_covers_simultaneously(tmp_path: Path, method: str, confounded: bool) -> None:
-    taxonomy, design, selections = prepare(
-        tmp_path, method=method, total=300, confounded=confounded
-    )
+    taxonomy, design, _ = prepare(tmp_path, method=method, total=300, confounded=confounded)
     slices = [SliceMember("wrapper", "plain"), SliceMember("wrapper", "roleplay")]
     contrasts = [
         ContrastMember("roleplay-vs-plain", "wrapper", "roleplay", "plain"),
@@ -245,23 +284,61 @@ def test_the_family_covers_simultaneously(tmp_path: Path, method: str, confounde
         true_contrast(taxonomy, item.level, item.candidate, item.baseline) for item in contrasts
     ]
     rng = np.random.default_rng(7)
-    repetitions, misses = 300, 0
-    for _ in range(repetitions):
+    alpha, repetitions = 0.10, 300
+    upper_misses = lower_misses = 0
+    for repetition in range(repetitions):
+        drawn = redrawn(taxonomy, design, repetition)
         family = estimate_slice_family(
-            taxonomy, design, selections, outcomes(selections, rng),
-            slices=slices, contrasts=contrasts, alpha=0.10, coverage_mode="two_sided",
+            taxonomy, design, drawn, outcomes(drawn, rng),
+            slices=slices, contrasts=contrasts, alpha=alpha, coverage_mode="two_sided",
         )
-        covered = all(
-            item.arm.lower <= truth <= item.arm.upper
-            for item, truth in zip(family.slices, slice_truth, strict=True)
-        ) and all(
-            item.lower <= truth <= item.upper
-            for item, truth in zip(family.contrasts, contrast_truth, strict=True)
+        pairs = [
+            *((item.arm.lower, item.arm.upper, truth)
+              for item, truth in zip(family.slices, slice_truth, strict=True)),
+            *((item.lower, item.upper, truth)
+              for item, truth in zip(family.contrasts, contrast_truth, strict=True)),
+        ]
+        upper_misses += any(upper < truth for _, upper, truth in pairs)
+        lower_misses += any(lower > truth for lower, _, truth in pairs)
+    # The family covers each direction at 1 - alpha: every upper bound together, and every
+    # lower bound together. A binomial allowance of three standard errors keeps the test from
+    # failing by chance. Two random arms make the union bound of a contrast far from tight,
+    # so this test cannot see an arm given too much alpha; the exact-value tests above pin
+    # the levels, and the next test bounds a contrast whose union bound is tight.
+    allowance = 3 * np.sqrt(alpha * (1 - alpha) / repetitions)
+    assert upper_misses / repetitions <= alpha + allowance
+    assert lower_misses / repetitions <= alpha + allowance
+
+
+@pytest.mark.parametrize(
+    ("confounded", "mode"),
+    [(False, "one_sided_upper"), (False, "two_sided"), (True, "one_sided_upper")],
+)
+def test_a_contrast_with_a_never_failing_baseline_covers_at_its_level(
+    tmp_path: Path, confounded: bool, mode: str
+) -> None:
+    taxonomy, design, _ = prepare(tmp_path, total=300, confounded=confounded)
+    truth = true_contrast(taxonomy, "wrapper", "roleplay", "plain", only_roleplay_fails)
+    # The seed-matched contrast is 0.6 * 0.1 + 0.4 * 0.5 with or without confounding; the
+    # confounded roleplay slice alone would be 0.184.
+    assert truth == pytest.approx(0.26, rel=1e-12, abs=0)
+    contrasts = [ContrastMember("c", "wrapper", "roleplay", "plain")]
+    rng = np.random.default_rng(12)
+    alpha, repetitions, misses = 0.10, 400, 0
+    for repetition in range(repetitions):
+        drawn = redrawn(taxonomy, design, repetition)
+        family = estimate_slice_family(
+            taxonomy, design, drawn, outcomes(drawn, rng, only_roleplay_fails),
+            contrasts=contrasts, alpha=alpha, coverage_mode=mode,  # type: ignore[arg-type]
         )
-        misses += not covered
-    # Per direction 0.10, so at most 0.20 overall; the bounds are conservative, and a binomial
-    # allowance keeps the test from failing by chance.
-    assert misses / repetitions <= 0.20 + 3 * np.sqrt(0.2 * 0.8 / repetitions)
+        misses += family.contrasts[0].upper < truth
+    # plain never fails, so its lower bound is its risk, 0, and the contrast's upper bound
+    # misses exactly when the roleplay arm's does: the union bound is tight, and the miss
+    # rate follows the level the arm is given. Under one_sided_upper that is alpha / 2; under
+    # two_sided alpha / 4. The upper bound covers at 1 - alpha in either mode, with an
+    # allowance of three binomial standard errors. Confounded, the arm reweights its draws by
+    # a maximum ratio of 1.9, so dropping the ratio or not rescaling by it also misses here.
+    assert misses / repetitions <= alpha + 3 * np.sqrt(alpha * (1 - alpha) / repetitions)
 
 
 def test_true_contrast_holds_the_seed_mix_fixed(tmp_path: Path) -> None:
