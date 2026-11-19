@@ -51,10 +51,12 @@ described in their pull requests.
   cohorts to `(rho_1, rho_0)` boxes. A listed cohort's group risks, hierarchy rows and
   comparison arms are corrected with its box, and every other cohort with the scenario's own
   box, so a judge whose accuracy depends on the model under test can be stress-tested without
-  human labels. The corrected intervals stay diagnostic sensitivities. An undeclared cohort is
-  `PLAN_UNKNOWN_REFERENCE`, and generative plans reject the field. The report records the boxes
-  under `presentation.judge_calibration.scenarios[].cohorts` and lists them in its text. Plans
-  that do not use the field keep their hash and report bytes.
+  human labels. The corrected intervals stay diagnostic sensitivities. The assumptions of each
+  corrected row, and of each arm of a corrected comparison, say whether it used its cohort's
+  own box or the scenario's default box. An undeclared cohort is `PLAN_UNKNOWN_REFERENCE`, and
+  generative plans reject the field. The report records the boxes under
+  `presentation.judge_calibration.scenarios[].cohorts` and lists them in its text. Plans that
+  do not use the field keep their hash and report bytes.
 
 - **The README walks through the offline demo.** A new section follows the demo from its
   inputs (logs, design and the plan `init` writes) through the `validate` and `analyze` commands

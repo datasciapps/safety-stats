@@ -15,7 +15,7 @@ from inspect_safety_stats.analysis.judge_calibration import (
     _judge_scopes,
     _JudgeScope,
     _labelled_population,
-    _per_cohort_scenarios,
+    _scenario_cohort_boxes,
     _scope_population,
     _transported_judge_interval,
     _uncertified_correction_warning,
@@ -417,7 +417,7 @@ def _add_judge_corrections(
         }
 
     if spec.mode == "assumed":
-        per_cohort = _per_cohort_scenarios(plan)
+        cohort_boxes = _scenario_cohort_boxes(plan)
         for result in targets:
             if _judge_scope(plan, result.cohort_id, result.group_id) is None:
                 continue
@@ -434,7 +434,7 @@ def _add_judge_corrections(
                     judge_alpha=None,
                     unclassified_share=share,
                     scoped_groups=spec.groups,
-                    per_cohort=calibration.scenario_id in per_cohort,
+                    cohort_boxes=cohort_boxes[calibration.scenario_id],
                 )
                 if interval is not None:
                     result.intervals.append(interval)
@@ -450,7 +450,7 @@ def _add_judge_corrections(
             None,
             diagnostics,
             primary_scenario=spec.primary,
-            per_cohort=per_cohort,
+            cohort_boxes=cohort_boxes,
         )
         return {
             "mode": "assumed",

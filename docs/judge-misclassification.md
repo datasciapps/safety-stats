@@ -112,7 +112,9 @@ applies to the listed groups' rows of that cohort, like the default box.
 A plan with no `cohorts` in any scenario gives the same results, report bytes and plan hash as
 before the field existed. The report records each scenario's cohort boxes under
 `presentation.judge_calibration.scenarios[].cohorts` and lists them in the report's text.
-Generative plans reject the field.
+Each corrected row's assumption list says which box it used: the one the scenario declares
+for its cohort, or the scenario's default box. A corrected comparison says the same for each
+arm. Generative plans reject the field.
 
 Reports gain a **Judge misclassification sensitivity** section listing, for every corrected
 row and scenario, the judge-system bounds, the true-risk bounds, and the corrected estimate

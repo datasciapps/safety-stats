@@ -1423,12 +1423,21 @@ def test_assumed_scenarios_correct_each_cohort_and_arm_with_its_own_box(
             assert corrected.lower == pytest.approx(expected.lower, abs=1e-12)
             assert corrected.upper == pytest.approx(expected.upper, abs=1e-12)
             assert corrected.eligibility == "diagnostic"
-            # Only a scenario that declares boxes by cohort says so.
-            per_cohort = (
-                "The declared accuracies are prevalence-dependent; the scenario declares this "
-                f"box for cohort {risk.cohort_id!r}."
-            )
-            assert (per_cohort in corrected.assumptions) == (scenario == "declared")
+            # Only a cohort the scenario lists has a box of its own; a cohort it does not list
+            # takes its default box, and says so, also when the scenario lists another cohort.
+            # A scenario that lists no cohort applies its one box to every cohort.
+            wording = {
+                ("declared", "candidate"): "The declared accuracies are prevalence-dependent; "
+                "the scenario declares this box for cohort 'candidate'.",
+                ("declared", "baseline"): "The declared accuracies are prevalence-dependent; "
+                "cohort 'baseline' takes the scenario's default box, which is applied unchanged "
+                "to every cohort the scenario does not list.",
+                ("pessimistic", "candidate"): "The declared accuracies are prevalence-dependent "
+                "and are applied unchanged to every cohort.",
+                ("pessimistic", "baseline"): "The declared accuracies are prevalence-dependent "
+                "and are applied unchanged to every cohort.",
+            }
+            assert _prevalence_assumptions(corrected) == [wording[(scenario, risk.cohort_id)]]
 
     row = next(item for item in report.comparisons if item.level is None)
     primary = next(item for item in row.intervals if item.role == "primary")
@@ -1462,10 +1471,20 @@ def test_assumed_scenarios_correct_each_cohort_and_arm_with_its_own_box(
         "Baseline P(truly unsafe | judge said unsafe) lies in [0.9, 1]; "
         "P(truly unsafe | judge said safe) in [0, 0.02].",
     ]
+    # The baseline arm's cohort is not listed, so it takes the scenario's default box.
+    assert _prevalence_assumptions(declared) == [
+        "The declared accuracies are prevalence-dependent; the scenario declares the candidate "
+        "arm's box for cohort 'candidate', and the baseline arm takes the scenario's default "
+        "box, which is applied unchanged to every cohort the scenario does not list."
+    ]
     pessimistic = next(
         item for item in row.intervals if item.interval_id == "judge_corrected_pessimistic"
     )
     assert pessimistic.assumptions[1].startswith("On both arms P(truly unsafe")
+    assert _prevalence_assumptions(pessimistic) == [
+        "The declared accuracies are prevalence-dependent and are applied unchanged to both "
+        "arms' cohorts."
+    ]
 
     # The report records each cohort box and lists it under its scenario.
     presentation = report.presentation.judge_calibration
@@ -1481,6 +1500,98 @@ def test_assumed_scenarios_correct_each_cohort_and_arm_with_its_own_box(
         "  - cohort `candidate`: P(truly unsafe | judge said unsafe) in [0.6, 0.8]; "
         "P(truly unsafe | judge said safe) in [0.01, 0.1]"
     ) in markdown
+
+
+def _prevalence_assumptions(interval: Any) -> list[str]:
+    """The assumption that says which of a scenario's boxes a corrected interval used."""
+    return [item for item in interval.assumptions if "prevalence-dependent" in item]
+
+
+_OWN_BOX = "{rho_1: {lower: 0.6, upper: 0.8}, rho_0: {lower: 0.01, upper: 0.1}}"
+
+
+@pytest.mark.parametrize(
+    ("listed", "boxes", "wording"),
+    [
+        (
+            ("baseline",),
+            [
+                "Candidate P(truly unsafe | judge said unsafe) lies in [0.9, 1]; "
+                "P(truly unsafe | judge said safe) in [0, 0.02].",
+                "Baseline P(truly unsafe | judge said unsafe) lies in [0.6, 0.8]; "
+                "P(truly unsafe | judge said safe) in [0.01, 0.1].",
+            ],
+            "the scenario declares the baseline arm's box for cohort 'baseline', and the "
+            "candidate arm takes the scenario's default box, which is applied unchanged to "
+            "every cohort the scenario does not list.",
+        ),
+        (
+            ("candidate", "baseline"),
+            [
+                "Candidate P(truly unsafe | judge said unsafe) lies in [0.6, 0.8]; "
+                "P(truly unsafe | judge said safe) in [0.01, 0.1].",
+                "Baseline P(truly unsafe | judge said unsafe) lies in [0.6, 0.8]; "
+                "P(truly unsafe | judge said safe) in [0.01, 0.1].",
+            ],
+            "the scenario declares each arm's box for that arm's cohort.",
+        ),
+        (
+            ("other",),
+            [
+                "On both arms P(truly unsafe | judge said unsafe) lies in [0.9, 1] and "
+                "P(truly unsafe | judge said safe) in [0, 0.02]."
+            ],
+            "both arms take the scenario's default box, which is applied unchanged to every "
+            "cohort the scenario does not list.",
+        ),
+    ],
+    ids=["baseline-listed", "both-listed", "neither-listed"],
+)
+def test_each_comparison_arm_says_whether_it_took_a_cohort_box_or_the_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    listed: tuple[str, ...],
+    boxes: list[str],
+    wording: str,
+) -> None:
+    """An arm whose cohort the scenario does not list takes, and is said to take, its default box.
+
+    The scenario once said it declared each arm's box for that arm's cohort as soon as it
+    listed any cohort, so an unlisted arm read as having a box of its own.
+    """
+    plan_path = _comparison_judge_plan(
+        tmp_path, method="weighted_kl_chernoff", calibrated=False, assumed=True, cohort_boxes=True
+    )
+    text = plan_path.read_text(encoding="utf-8")
+    own = "cohorts: {candidate: " + _OWN_BOX + "}"
+    assert text.count(own) == 1
+    text = text.replace(
+        own, "cohorts: {" + ", ".join(f"{cohort}: {_OWN_BOX}" for cohort in listed) + "}"
+    )
+    if "other" in listed:
+        # A third declared cohort, outside the comparison and without runs, so that the
+        # scenario lists a cohort but neither arm's.
+        text = text.replace(
+            "groups:\n", "  other:\n    match:\n      model: model/other\ngroups:\n", 1
+        )
+    plan_path.write_text(text, encoding="utf-8")
+    _patch_two_cohort_frames(monkeypatch)
+
+    report = analyze(plan=load_plan(plan_path), logs="ignored")
+
+    row = next(item for item in report.comparisons if item.level is None)
+    declared = next(
+        item for item in row.intervals if item.interval_id == "judge_corrected_declared"
+    )
+    assert declared.assumptions[1 : 1 + len(boxes)] == boxes
+    assert _prevalence_assumptions(declared) == [
+        "The declared accuracies are prevalence-dependent; " + wording
+    ]
+    # An arm with a box of its own is held within that box, and arms sharing one box within it.
+    assert (
+        "Each arm is corrected over its own declared box independently of the other"
+        in " ".join(declared.assumptions)
+    ) == (len(boxes) == 2)
 
 
 def test_contrast_only_comparisons_say_the_assumed_correction_is_unavailable(

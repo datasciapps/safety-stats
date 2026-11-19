@@ -307,13 +307,37 @@ def _assumed_judge_calibrations(plan: AnalysisPlan, cohort_id: str) -> list[Judg
     return calibrations
 
 
-def _per_cohort_scenarios(plan: AnalysisPlan) -> set[str]:
-    """The assumed scenarios that give some cohort a box of its own."""
+def _scenario_cohort_boxes(plan: AnalysisPlan) -> dict[str, frozenset[str]]:
+    """The cohorts each assumed scenario gives a box of its own, by scenario; empty for a
+    scenario that gives every cohort its default box."""
 
     spec = plan.inputs.judge_calibration
     if spec is None or spec.mode != "assumed":
-        return set()
-    return {item.id for item in spec.scenarios if item.cohorts is not None}
+        return {}
+    return {item.id: frozenset(item.cohorts or {}) for item in spec.scenarios}
+
+
+def _assumed_box_assumption(cohort_id: str, cohort_boxes: frozenset[str], scope: str) -> str:
+    """Which of an assumed scenario's boxes a cohort's rows were corrected with.
+
+    A cohort the scenario lists under ``cohorts`` has a box of its own. Every other cohort
+    takes the scenario's default box, also when the scenario lists some other cohort."""
+
+    if cohort_id in cohort_boxes:
+        return (
+            "The declared accuracies are prevalence-dependent; the scenario declares this box "
+            f"for cohort {cohort_id!r}{scope}."
+        )
+    if cohort_boxes:
+        return (
+            f"The declared accuracies are prevalence-dependent; cohort {cohort_id!r} takes the "
+            "scenario's default box, which is applied unchanged to every cohort the scenario "
+            f"does not list{scope}."
+        )
+    return (
+        "The declared accuracies are prevalence-dependent and are applied unchanged to every "
+        f"cohort{scope}."
+    )
 
 
 def _validated_judge_calibrations(
@@ -622,12 +646,12 @@ def _judge_corrected_interval(
     scoped_group: str | None = None,
     scoped_groups: list[str] | None = None,
     stratified: bool = False,
-    per_cohort: bool = False,
+    cohort_boxes: frozenset[str] = frozenset(),
 ) -> RiskIntervalResult | None:
     """Correct one row; ``scoped_group`` names a validated calibration's group, and
-    ``scoped_groups`` the groups an assumed calibration is scoped to. ``per_cohort`` says
-    that the assumed scenario declares boxes by cohort, so ``calibration`` is the row's
-    cohort's box."""
+    ``scoped_groups`` the groups an assumed calibration is scoped to. ``cohort_boxes`` names
+    the cohorts the assumed scenario gives a box of their own: ``calibration`` is that box
+    for a listed cohort, and the scenario's default box for any other."""
 
     if result.lower is None or result.upper is None:
         return None
@@ -780,13 +804,7 @@ def _judge_corrected_interval(
             [
                 "These conditional accuracies are declared assumptions, not measurements; "
                 "the interval inherits no coverage guarantee from them.",
-                (
-                    f"The declared accuracies are prevalence-dependent; the scenario declares "
-                    f"this box for cohort {result.cohort_id!r}{scope}."
-                    if per_cohort
-                    else "The declared accuracies are prevalence-dependent and are applied "
-                    f"unchanged to every cohort{scope}."
-                ),
+                _assumed_box_assumption(result.cohort_id, cohort_boxes, scope),
             ]
         )
     if unclassified_share > 0:
