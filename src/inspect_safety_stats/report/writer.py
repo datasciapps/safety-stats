@@ -531,6 +531,28 @@ def _has(count: int) -> str:
     return "has" if count == 1 else "have"
 
 
+def _joined(parts: list[str]) -> str:
+    return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def _about_true_risk(report: SafetyReport, claim: ClaimResult) -> bool:
+    """Whether a claim's limits are about true failure risk rather than judge-reported risk.
+
+    A validated judge calibration makes every claim one about true risk: it is decided on a
+    certifying judge correction or by the noisy-but-valid test, or left INCONCLUSIVE. Node
+    rows stay judge-reported risks, so comparing them with such a claim's limit is not like
+    with like.
+    """
+
+    calibration = report.presentation.judge_calibration
+    if calibration is not None and calibration.mode == "validated":
+        return True
+    return any(
+        ref.startswith("interval:judge_corrected_") or ref == "test:noisy_valid_certification"
+        for ref in claim.evidence_refs
+    )
+
+
 def _path_text(report: SafetyReport, path: dict[str, str]) -> str:
     """A node's path, outermost level first.
 
@@ -695,6 +717,7 @@ def _exceedance_lines(
         weight = (
             node.design_weight if isinstance(node, HierarchyRiskResult) else node.resolved_weight
         )
+        qualifier = "judge-reported " if _about_true_risk(report, claim) else ""
         lines.append(
             "| "
             + " | ".join(
@@ -708,7 +731,7 @@ def _exceedance_lines(
                     f"{_number(node.lower, places)}–{_number(node.upper, places)}",
                     _number(claim.acceptable_upper, places),
                     _number(claim.estimate, places),
-                    f"{basis} above the limit",
+                    f"{qualifier}{basis} above the limit",
                 ]
             )
             + " |"
@@ -732,15 +755,86 @@ def _exceedance_lines(
                 ),
             ]
         )
-    if rows:
-        lines.extend(
-            [
-                "",
-                "Node rows are judge-reported risks; any judge correction applies only to the "
-                "claim.",
-            ]
-        )
+    lines.extend(_true_risk_lines(report, claim_nodes, listed=bool(rows)))
     return lines
+
+
+def _true_risk_lines(
+    report: SafetyReport,
+    claim_nodes: list[tuple[ClaimResult, str, list[_Node]]],
+    *,
+    listed: bool,
+) -> list[str]:
+    """What is compared for claims on true failure risk; nothing for other claims."""
+
+    reached = [
+        (claim, nodes) for claim, _, nodes in claim_nodes if _about_true_risk(report, claim)
+    ]
+    if not reached:
+        return []
+    single = len(reached) == 1
+    titles = _joined([f"“{_escape(claim.title)}”" for claim, _ in reached])
+    # A node reached by two claims on the same evidence is counted once.
+    nodes = list({id(node): node for _, items in reached for node in items}.values())
+    certified = diagnostic = absent = 0
+    files: set[str] = set()
+    for node in nodes:
+        corrected = next(
+            (item for item in node.intervals if item.interval_id.startswith("judge_corrected_")),
+            None,
+        )
+        if corrected is None:
+            absent += 1
+            continue
+        files.add(
+            "hierarchy-risks.csv" if isinstance(node, HierarchyRiskResult) else "comparisons.csv"
+        )
+        if corrected.eligibility == "certifying":
+            certified += 1
+        else:
+            diagnostic += 1
+    text = (
+        f"{'Claim' if single else 'Claims'} {titles} {'is' if single else 'are'} about true "
+        "failure risk, under the validated judge calibration, but node rows are "
+        "judge-reported risks, which can be above or below true risk"
+        + (
+            f", so the Position of {'its' if single else 'their'} rows says “judge-reported”."
+            if listed
+            else "."
+        )
+    )
+    reach = f"{_rows(len(nodes))} {'this claim reaches' if single else 'these claims reach'}"
+    where = " and ".join(f"`{name}`" for name in sorted(files))
+    one = len(nodes) == 1
+    if not (certified or diagnostic):
+        text += f" None of the {reach} has a judge-corrected interval."
+    elif not (certified or absent):
+        text += (
+            f" The judge-corrected interval{'' if one else 's'} of the {reach}, in {where}, "
+            f"{'is' if one else 'are'} diagnostic: {'it certifies' if one else 'they certify'} "
+            "nothing."
+        )
+    elif not (diagnostic or absent):
+        text += (
+            f" The judge-corrected interval{'' if one else 's'} of the {reach}, in {where}, "
+            f"{'is' if one else 'are'} certified."
+        )
+    else:
+        parts = []
+        if certified:
+            parts.append(f"{certified} {_has(certified)} a certified judge-corrected interval")
+        if diagnostic:
+            parts.append(
+                f"{diagnostic} {_has(diagnostic)} a diagnostic "
+                + ("one" if certified else "judge-corrected interval")
+                + ", which certifies nothing"
+            )
+        if absent:
+            parts.append(f"{absent} {_has(absent)} none")
+        text += (
+            f" Of the {reach}: " + "; ".join(parts) + f". The corrected intervals are in {where}."
+        )
+    return ["", text]
 
 
 def _claim_nodes(

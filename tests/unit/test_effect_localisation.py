@@ -329,6 +329,7 @@ def test_nodes_above_a_claims_limit_say_whether_the_interval_or_the_estimate_is_
     ) in section
     assert "fraud" not in section
     assert "comparison interval" not in section
+    assert "judge" not in section
 
 
 def test_a_node_without_an_estimate_is_listed_when_its_interval_is_above_the_limit() -> None:
@@ -434,10 +435,91 @@ def test_a_comparison_claim_reaches_only_its_own_comparison() -> None:
     assert "fraud" not in limits
 
 
+def test_a_claim_on_true_risk_says_its_node_rows_are_judge_reported() -> None:
+    report = _limit_report(
+        [
+            _node("misinformation", 0.152, 0.116, 0.194, corrected="diagnostic"),
+            _node("cybercrime", 0.074, 0.049, 0.116, corrected="diagnostic"),
+        ],
+        refs=["risk:on:all:mean", "interval:judge_corrected_validated"],
+        judge_mode="validated",
+    )
+    section = _section(_markdown(report))
+    assert (
+        "| 0.152 | 0.116–0.194 | 0.050 | 0.032 | judge-reported interval above the limit |"
+        in section
+    )
+    assert "| judge-reported estimate above the limit |" in section
+    assert (
+        "Claim “Harmful compliance below 5%” is about true failure risk, under the validated "
+        "judge calibration, but node rows are judge-reported risks, which can be above or "
+        "below true risk, so the Position of its rows says “judge-reported”. The "
+        "judge-corrected intervals of the 2 node rows this claim reaches, in "
+        "`hierarchy-risks.csv`, are diagnostic: they certify nothing."
+    ) in section
 
 
+def test_a_noisy_valid_claim_is_on_true_risk_too() -> None:
+    # Its evidence names the test even in a report that does not record the calibration.
+    report = _limit_report(
+        [_node("misinformation", 0.152, 0.116, 0.194)],
+        refs=["risk:on:all:mean", "test:noisy_valid_certification"],
+    )
+    section = _section(_markdown(report))
+    assert "| judge-reported interval above the limit |" in section
+    assert "None of the 1 node row this claim reaches has a judge-corrected interval." in section
 
 
+def test_the_judge_note_counts_certified_and_missing_node_corrections() -> None:
+    report = _limit_report(
+        [
+            _node("misinformation", 0.152, 0.116, 0.194, corrected="certifying"),
+            _node("cybercrime", 0.074, 0.049, 0.116, corrected="diagnostic"),
+            _node("fraud", 0.02, 0.005, 0.06),
+        ],
+        judge_mode="validated",
+    )
+    section = _section(_markdown(report))
+    assert (
+        "Of the 3 node rows this claim reaches: 1 has a certified judge-corrected interval; 1 "
+        "has a diagnostic one, which certifies nothing; 1 has none. The corrected intervals are "
+        "in `hierarchy-risks.csv`."
+    ) in section
+
+
+def test_a_comparison_claims_corrected_node_intervals_are_in_the_comparisons_file() -> None:
+    node = _comparison(*MISINFORMATION_EFFECT)
+    node.intervals.append(_node("x", 0.1, 0.0, 0.2, corrected="diagnostic").intervals[0])
+    report = _report(
+        comparisons=[_comparison(None, 0.028, -0.01, 0.06), node],
+        hierarchy=[],
+        claims=[_claim("increase", "Increase below 5 points")],
+        claim_specs=[{"id": "increase", "comparison": "thinking"}],
+        judge_mode="validated",
+    )
+    section = _section(_markdown(report))
+    assert "| judge-reported interval above the limit |" in section
+    assert (
+        "The judge-corrected interval of the 1 node row this claim reaches, in "
+        "`comparisons.csv`, is diagnostic: it certifies nothing."
+    ) in section
+
+
+def test_a_true_risk_claim_with_no_node_above_still_says_what_was_compared() -> None:
+    report = _limit_report([_node("fraud", 0.02, 0.005, 0.06)], judge_mode="validated")
+    section = _section(_markdown(report))
+    assert "No hierarchy node's interval or estimate is above" in section
+    assert "but node rows are judge-reported risks, which can be above or below true risk." in (
+        section
+    )
+
+
+def test_claims_on_judge_reported_risk_get_no_judge_note() -> None:
+    for mode in (None, "assumed"):
+        report = _limit_report([_node("misinformation", 0.152, 0.116, 0.194)], judge_mode=mode)
+        section = _section(_markdown(report))
+        assert "| interval above the limit |" in section
+        assert "judge" not in section
 
 
 def test_a_claim_on_another_measure_does_not_reach_hierarchy_nodes() -> None:
