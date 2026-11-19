@@ -480,14 +480,6 @@ described in their pull requests.
   hierarchy rows. See
   [Where effects sit](docs/interpretation.md#where-effects-sit).
 
-- **The fixed-design planner reads the plan.** `plan fixed-design --plan PLAN` takes groups,
-  weights, hierarchy, independence profile, multiplicity family and thresholds from the
-  analysis plan and reports detectable rates for every claim, at the endpoint alpha `analyze`
-  will use. Before, they had to be repeated on the command line, and the default hierarchy
-  could silently plan a different design. Claims it cannot plan are listed with the reason.
-  The rates are guaranteed for `weighted_hoeffding`; the output names the plan's primary
-  method. See [Command-line interface](docs/api-reference.md#command-line-interface).
-
 - **Random pilot selection (experimental).** `plan pilot --manifest DESIGN.csv
   --per-stratum K --seed S --output PILOT.csv` draws `K` prompts at random from each
   stratum of a design manifest (`--strata`, `task_id` by default), where a pilot taken from
