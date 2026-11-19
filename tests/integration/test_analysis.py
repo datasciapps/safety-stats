@@ -2043,6 +2043,169 @@ def test_paired_and_clustered_comparison_outputs(
     }
 
 
+def test_unscored_pairs_are_bounded_instead_of_breaking_the_pairing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "groups:\n",
+        "  baseline:\n"
+        "    match:\n"
+        "      model: model/baseline\n"
+        "    require_uniform: [task_version, model_generate_config]\n"
+        "groups:\n",
+    )
+    plan_text = plan_text.replace(
+        "multiplicity:\n",
+        "comparisons:\n"
+        "  - id: candidate_vs_baseline\n"
+        "    candidate: candidate\n"
+        "    baseline: baseline\n"
+        "    group: cyber\n"
+        "    measure: mean\n"
+        "    method: weighted_empirical_bernstein\n"
+        "    family: direct_means\n"
+        "    independence:\n"
+        "      primary: rollout\n"
+        "    pair_key: [prompt_id, epoch]\n"
+        "    diagnostic_methods: [exact_mcnemar, newcombe_paired, fixed_cluster_bootstrap]\n"
+        "    cluster_key: question_id\n"
+        "    bootstrap_replicates: 100\n"
+        "    bootstrap_seed: 7\n"
+        "multiplicity:\n",
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+    plan = load_plan(plan_path)
+    plan.inputs.score.missing = "conservative_bounds"
+
+    candidate_eval, candidate_samples = _frames()
+    baseline_eval = candidate_eval.copy()
+    baseline_eval.loc[0, "eval_id"] = "eval-2"
+    baseline_eval.loc[0, "model"] = "model/baseline"
+    baseline_samples = candidate_samples.copy()
+    baseline_samples["eval_id"] = "eval-2"
+    baseline_samples["sample_id"] = "baseline-" + baseline_samples["sample_id"]
+
+    def rows(frame: pd.DataFrame, prompt: str, epoch: int) -> pd.Series:
+        return (frame["id"] == prompt) & (frame["epoch"] == epoch)
+
+    candidate_samples.loc[rows(candidate_samples, "p1", 1), "score_harmful"] = "FAIL"
+    baseline_samples.loc[rows(baseline_samples, "p2", 1), "score_harmful"] = "FAIL"
+    # One pair unscored in the candidate arm, one in the baseline arm, one in both.
+    candidate_samples.loc[rows(candidate_samples, "p1", 2), "score_harmful"] = None
+    baseline_samples.loc[rows(baseline_samples, "p2", 3), "score_harmful"] = None
+    candidate_samples.loc[rows(candidate_samples, "p2", 4), "score_harmful"] = None
+    baseline_samples.loc[rows(baseline_samples, "p2", 4), "score_harmful"] = None
+    eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
+    sample_frame = pd.concat([candidate_samples, baseline_samples], ignore_index=True)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan, logs="ignored")
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "PAIR_BROKEN" not in codes
+    assert "PAIR_UNSCORED_COMPLETED" in codes
+    # PAIR_BROKEN was an error and made the whole report invalid; the unscored rollouts
+    # now only degrade it, as they do without pairing.
+    assert report.integrity.status == "degraded"
+    comparison = report.comparisons[0]
+    assert comparison.pair_count == 40
+    assert comparison.cluster_count == 2
+    assert comparison.discordant_counts == {
+        "candidate_safe_baseline_failure": 1,
+        "candidate_failure_baseline_safe": 1,
+    }
+    outputs = comparison.diagnostic_outputs
+    assert outputs["partial_pairing"] == {
+        "pair_count": 40,
+        "scored_pair_count": 37,
+        "candidate_unscored_pair_count": 1,
+        "baseline_unscored_pair_count": 1,
+        "both_unscored_pair_count": 1,
+        "completion": "every_completion_of_unscored_outcomes",
+    }
+    # Favourable completion: n10 = 1, n01 = 3. Adverse completion: n10 = 3, n01 = 1.
+    mcnemar = outputs["exact_mcnemar"]
+    assert mcnemar["estimate_lower"] == pytest.approx(-0.05, abs=1e-12)
+    assert mcnemar["estimate_upper"] == pytest.approx(0.05, abs=1e-12)
+    assert mcnemar["p_value_candidate_worse"] == pytest.approx(15 / 16, abs=1e-12)
+    assert mcnemar["p_value_candidate_better"] == pytest.approx(15 / 16, abs=1e-12)
+    assert mcnemar["p_value_two_sided"] == 1.0
+    assert comparison.p_value == 1.0
+    newcombe = outputs["newcombe_paired"]
+    assert newcombe["estimate_lower"] == pytest.approx(-0.05, abs=1e-12)
+    assert newcombe["estimate_upper"] == pytest.approx(0.05, abs=1e-12)
+    assert -1 <= newcombe["lower"] <= -0.05 < 0.05 <= newcombe["upper"] <= 1
+    boot = outputs["fixed_cluster_bootstrap"]
+    assert boot["estimate_lower"] == pytest.approx(-0.05, abs=1e-12)
+    assert boot["estimate_upper"] == pytest.approx(0.05, abs=1e-12)
+    assert boot["lower"] <= boot["estimate_lower"] < boot["estimate_upper"] <= boot["upper"]
+
+
+def test_a_pair_missing_from_one_arm_still_breaks_the_pairing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan_path = _write_inputs(tmp_path)
+    plan_text = plan_path.read_text(encoding="utf-8")
+    plan_text = plan_text.replace(
+        "groups:\n",
+        "  baseline:\n"
+        "    match:\n"
+        "      model: model/baseline\n"
+        "    require_uniform: [task_version, model_generate_config]\n"
+        "groups:\n",
+    )
+    plan_text = plan_text.replace(
+        "multiplicity:\n",
+        "comparisons:\n"
+        "  - id: candidate_vs_baseline\n"
+        "    candidate: candidate\n"
+        "    baseline: baseline\n"
+        "    group: cyber\n"
+        "    measure: mean\n"
+        "    method: weighted_empirical_bernstein\n"
+        "    family: direct_means\n"
+        "    independence:\n"
+        "      primary: rollout\n"
+        "    pair_key: [prompt_id, epoch]\n"
+        "    diagnostic_methods: [exact_mcnemar]\n"
+        "multiplicity:\n",
+    )
+    plan_path.write_text(plan_text, encoding="utf-8")
+
+    candidate_eval, candidate_samples = _frames()
+    baseline_eval = candidate_eval.copy()
+    baseline_eval.loc[0, "eval_id"] = "eval-2"
+    baseline_eval.loc[0, "model"] = "model/baseline"
+    baseline_samples = candidate_samples.copy()
+    baseline_samples["eval_id"] = "eval-2"
+    baseline_samples["sample_id"] = "baseline-" + baseline_samples["sample_id"]
+    baseline_samples["epoch"] = baseline_samples["epoch"].where(
+        ~((baseline_samples["id"] == "p1") & (baseline_samples["epoch"] == 1)), 99
+    )
+    eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
+    sample_frame = pd.concat([candidate_samples, baseline_samples], ignore_index=True)
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+    )
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: sample_frame,
+    )
+
+    report = analyze(plan=plan_path, logs="ignored")
+    broken = [item for item in report.integrity.diagnostics if item.code == "PAIR_BROKEN"]
+    assert len(broken) == 1
+    assert "1 candidate-only and 1 baseline-only pairs" in broken[0].message
+    assert report.comparisons[0].pair_count is None
+
+
 def test_first_class_direct_comparisons_expand_hierarchy_and_write_artifacts(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
