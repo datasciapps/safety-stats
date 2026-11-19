@@ -156,7 +156,11 @@ def test_the_report_says_that_excluded_rollouts_are_left_out_of_the_bounds(
 
     (estimate,) = report.prompt_estimates
     assert (estimate.n_unclassified, estimate.missingness_robust) == (20, False)
-    assert report.integrity.status == "valid"
+    # Each excluded rollout is a warning, and integrity is degraded: the bounds rest on the
+    # excluded rollouts failing as often as the classified ones.
+    code = "SCORE_MISSING_EXCLUDED" if unknown == "missing" else "SAMPLE_ERROR_EXCLUDED"
+    assert [item.code for item in report.integrity.diagnostics].count(code) == 20
+    assert report.integrity.status == "degraded"
     sentence = (
         f" Under {excluded} is left out of the bounds, which then cover only the classified "
         "rollouts."

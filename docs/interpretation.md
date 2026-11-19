@@ -114,6 +114,12 @@ profile's independence assumption. See
 covered by conservative bounds. Degraded evidence may certify a claim only when the claim passes
 under the adverse completion of all unknown outcomes.
 
+Integrity is also `degraded` when `inputs.score.missing: exclude` or `inputs.score.errors:
+exclude` leaves an attempted rollout out of the bounds. The bounds then cover the classified
+rollouts alone and certify on them, as the plan asks; they rest on the excluded rollouts failing
+as often as the classified ones, which the inputs cannot confirm. Each such rollout is a
+`SCORE_MISSING_EXCLUDED` or `SAMPLE_ERROR_EXCLUDED` warning.
+
 Integrity is also `degraded` when the source gives no data for a safeguard, so that it cannot be
 checked. Each case is a warning that names the evaluations concerned:
 

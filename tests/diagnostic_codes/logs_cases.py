@@ -155,6 +155,23 @@ def _unclassified_p1(triggered: Outcome, control: Outcome) -> None:
     assert before.upper is not None and estimate.upper > before.upper
 
 
+
+def _excluded_p1(triggered: Outcome, control: Outcome) -> None:
+    # The rollout is left out of the bounds: p1's bounds are those of its classified rollouts
+    # alone, one fewer than the control's, and cover neither of the left-out one's outcomes.
+    estimate, before = _estimate(triggered, "p1"), _estimate(control, "p1")
+    assert (estimate.n_unclassified, before.n_unclassified) == (1, 0)
+    assert estimate.n_valid == before.n_valid - 1
+    assert estimate.alpha_upper is not None and estimate.alpha_lower is not None
+    failures, rollouts = estimate.n_failure, estimate.n_valid
+    assert estimate.upper == pytest.approx(
+        binomial_upper_bound(failures, rollouts, alpha=estimate.alpha_upper), rel=1e-12, abs=0
+    )
+    assert estimate.lower == pytest.approx(
+        binomial_lower_bound(failures, rollouts, alpha=estimate.alpha_lower), rel=1e-12, abs=0
+    )
+
+
 # --- cohorts and runs ------------------------------------------------------------------------
 
 
@@ -937,6 +954,14 @@ CASES = [
         effect=_only_prompt_withheld("p1"),
     ),
     Case(
+        code="SAMPLE_ERROR_EXCLUDED",
+        shows="degraded",
+        # A rollout ends in a sample error under errors: exclude.
+        trigger=analysis(_changes(_plan_score(errors="exclude"), _first(None, error="boom"))),
+        control=analysis(_plan_score(errors="exclude")),
+        effect=_excluded_p1,
+    ),
+    Case(
         code="SAMPLE_ERROR_UNCLASSIFIED",
         shows="degraded",
         # A rollout ends in a sample error of unknown stage under errors: end_to_end.
@@ -991,6 +1016,14 @@ CASES = [
         trigger=analysis(_first(None)),
         control=analysis(),
         effect=_unclassified_p1,
+    ),
+    Case(
+        code="SCORE_MISSING_EXCLUDED",
+        shows="degraded",
+        # A rollout has no score under missing: exclude.
+        trigger=analysis(_changes(_plan_score(missing="exclude"), _first(None))),
+        control=analysis(_plan_score(missing="exclude")),
+        effect=_excluded_p1,
     ),
     Case(
         code="SCORE_UNMAPPED",

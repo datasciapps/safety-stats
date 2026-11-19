@@ -71,8 +71,9 @@ and "Limitations" shows the policy it used:
 
 - `count_as_failure` counts each as a failure, in both bounds.
 - `exclude` leaves them out, so the bounds cover only the classified rollouts. The bounds are
-  narrower, and biased if outcomes are missing for a reason linked to them. The excluded
-  rollouts do not degrade integrity, and no diagnostic reports them.
+  narrower, and biased if outcomes are missing for a reason linked to them. Each excluded
+  rollout gets a warning (`SCORE_MISSING_EXCLUDED` or `SAMPLE_ERROR_EXCLUDED`) and integrity
+  becomes `degraded`, but the bounds and the claims stay those of the classified rollouts.
 - `block` makes integrity `invalid` and withholds the bounds of each prompt concerned.
 
 ## Which independence the result rests on

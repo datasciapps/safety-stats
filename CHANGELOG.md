@@ -7,6 +7,17 @@ described in their pull requests.
 
 ### Fixed
 
+- **A rollout that an `exclude` score policy leaves out of the bounds is reported, and integrity
+  is degraded (changes report bytes).** Under `inputs.score.missing: exclude` or
+  `inputs.score.errors: exclude` an unscored or errored rollout was dropped with no diagnostic,
+  and integrity stayed `valid`, the state that says every required outcome was classified. With
+  20 of 40 rollouts unscored, `exclude` reported `valid` where the default reports `degraded`.
+  Each excluded rollout now gets a `SCORE_MISSING_EXCLUDED` or `SAMPLE_ERROR_EXCLUDED` warning
+  (source `logs`, effect `degraded`) and integrity becomes `degraded`, since the bounds rest on
+  the excluded rollouts failing as often as the classified ones, which the inputs cannot confirm.
+  The bounds and the claims are unchanged: they cover the classified rollouts, as the plan asks.
+  Reports of such plans gain the warnings and change in bytes, `report_hash` included.
+
 - **The generative slice family's two-sided coverage is stated as it is computed.** Under
   `coverage_mode: two_sided` each endpoint gets half of its member's level, so every lower and
   upper bound of the family covers jointly at `1 - alpha`, and each direction at
