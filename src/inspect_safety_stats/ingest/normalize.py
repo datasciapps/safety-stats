@@ -31,7 +31,7 @@ from inspect_safety_stats.ingest.manifest import (
     plan_manifest_columns,
     resolve_groups,
 )
-from inspect_safety_stats.ingest.outcomes import is_missing, map_outcome
+from inspect_safety_stats.ingest.outcomes import UnmappedScoreError, is_missing, map_outcome
 from inspect_safety_stats.ingest.records import (
     EvaluationSource,
     NormalizedData,
@@ -242,6 +242,38 @@ def _cohort_empty_message(
         for field in match
     )
     return f"{message}: it requires {required}, and the selected evaluations have {observed}"
+
+
+def _unmapped_summary(
+    code: str, path: str, scope: str, mapping: OutcomeMappingSpec, counts: Counter[str]
+) -> Diagnostic:
+    """One error that lists the distinct unmapped score values and says how to map them.
+
+    Each unmapped rollout keeps its own error, which withholds its prompt's bounds. This one
+    is about the plan, so its scope is the plan path: an unscoped error would withhold the
+    bounds of every prompt. Its own code sorts it ahead of the rollouts' errors in reports.
+    """
+    total = sum(counts.values())
+    values = _listing(counts, "rollout")
+    if mapping.failure_if is not None:
+        message = (
+            f"{total} rollout(s) have a nonnumeric score, which {path}.failure_if cannot "
+            f"compare: {values}. Map categorical scores with failure_values and safe_values."
+        )
+    else:
+        message = (
+            f"{total} rollout(s) have a score value that {path} lists in neither "
+            f"failure_values {mapping.failure_values!r} nor safe_values "
+            f"{mapping.safe_values!r}: {values}. Add each value the scorer gives to one of "
+            "the two lists; matching is type-sensitive."
+        )
+    return Diagnostic(
+        code=code,
+        severity="ERROR",
+        message=message,
+        scope=scope,
+        details={"rollouts": total, "distinct_values": len(counts)},
+    )
 
 
 def _rollout_field(
@@ -542,6 +574,7 @@ def normalize(
             judge_series[judge.id] = {id(rollout): None for _, rollout in selected}
             continue
         verdicts: dict[int, bool | None] = {}
+        judge_unmapped: Counter[str] = Counter()
         for _, rollout in selected:
             value = _native(scores[id(rollout)].get(judge.score.name))
             if is_missing(value):
@@ -550,6 +583,8 @@ def normalize(
             try:
                 verdicts[id(rollout)] = map_outcome(value, judge.score.mapping)
             except ValueError as exc:
+                if isinstance(exc, UnmappedScoreError):
+                    judge_unmapped[f"{exc.value!r} ({exc.type_name})"] += 1
                 diagnostics.append(
                     Diagnostic(
                         code="JUDGE_SCORE_UNMAPPED",
@@ -559,6 +594,16 @@ def normalize(
                     )
                 )
                 verdicts[id(rollout)] = None
+        if judge_unmapped:
+            diagnostics.append(
+                _unmapped_summary(
+                    "JUDGE_SCORE_MAPPING_MISMATCH",
+                    f"inputs.judges.{judge.id}.score.mapping",
+                    plan_scope("inputs", "judges", judge.id, "score", "mapping"),
+                    judge.score.mapping,
+                    judge_unmapped,
+                )
+            )
         judge_series[judge.id] = verdicts
     # Composites become ordinary scores, so a composite may serve as the primary outcome
     # and every downstream construction runs unchanged.
@@ -600,6 +645,8 @@ def normalize(
     source_names: dict[str, str] = {}
     # Transcripts that could not be read, by report name: the reason and how many errors.
     unread_transcripts: dict[str, tuple[str, int]] = {}
+    # Score values the plan's mapping does not cover, quoted with their type, and how often.
+    unmapped: Counter[str] = Counter()
     for collection_order, (_, rollout) in enumerate(selected, start=1):
         run_key = rollout.run_key
         prompt_id = rollout.item_id
@@ -806,6 +853,8 @@ def normalize(
                 failure = map_outcome(raw_score, plan.inputs.score.mapping)
                 outcome_status = "classified_failure" if failure else "classified_safe"
             except ValueError as exc:
+                if isinstance(exc, UnmappedScoreError):
+                    unmapped[f"{exc.value!r} ({exc.type_name})"] += 1
                 diagnostics.append(
                     Diagnostic(
                         code="SCORE_UNMAPPED",
@@ -872,6 +921,17 @@ def normalize(
                 configuration_fingerprint=sha256_value(config),
                 collection_order=collection_order,
                 token_limit_unscored=None if token_limit == "score" else truncated,
+            )
+        )
+
+    if unmapped:
+        diagnostics.append(
+            _unmapped_summary(
+                "SCORE_MAPPING_MISMATCH",
+                "inputs.score.mapping",
+                plan_scope("inputs", "score", "mapping"),
+                plan.inputs.score.mapping,
+                unmapped,
             )
         )
 

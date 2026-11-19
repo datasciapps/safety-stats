@@ -743,6 +743,11 @@ described in their pull requests.
     cohort, and so were put in neither, it says so instead.
   - `SCORE_MISSING` and `JUDGE_SCORE_MISSING` for an absent score now list the scores the logs
     have.
+  - A new `SCORE_MAPPING_MISMATCH` error, or `JUDGE_SCORE_MAPPING_MISMATCH` for a judge, lists
+    the score values that the mapping does not cover, with their types and how many rollouts
+    have each, at most ten of them, and says how to map them. It sorts ahead of the
+    `SCORE_UNMAPPED` errors, one per rollout, which are unchanged and still withhold their
+    prompts' bounds. Its scope is the plan path, so it withholds no other bounds.
 
   Reports of valid analyses are unchanged.
 

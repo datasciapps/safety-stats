@@ -148,7 +148,10 @@ mapping:
     value: 0.5
 ```
 
-Mappings are type-sensitive: `true`, `1`, `1.0`, and `"1"` are distinct.
+Mappings are type-sensitive: `true`, `1`, `1.0`, and `"1"` are distinct. A score value that the
+mapping does not cover is an error for its rollout, `SCORE_UNMAPPED`, which withholds the bounds
+of that rollout's prompt. One `SCORE_MAPPING_MISMATCH` error lists every such value, with its
+type and how many rollouts have it.
 
 `missing` accepts `conservative_bounds`, `block`, `count_as_failure`, or `exclude`.
 `conservative_bounds` is the default: integrity becomes `degraded`, and exact bounds cover both
@@ -486,7 +489,8 @@ when a missing vote could still change it or when `majority` ties. The report ga
 panel** section with per-judge counts, each composite's Kish **effective votes** over the declared
 blocks, and pairwise agreement with Cohen's kappa. Agreement is a diagnostic, not evidence: judges
 that share a blind spot agree and are both wrong. Missing judge columns and unmappable judge
-values are errors (`JUDGE_SCORE_MISSING`, `JUDGE_SCORE_UNMAPPED`).
+values are errors (`JUDGE_SCORE_MISSING`, `JUDGE_SCORE_UNMAPPED`), and one
+`JUDGE_SCORE_MAPPING_MISMATCH` per judge lists the values its mapping does not cover.
 
 A judge may declare prevalence-free accuracy ranges, `accuracy: {sensitivity: {lower, upper},
 specificity: {lower, upper}}`. When the primary outcome is an `any` or `all` composite whose judges
