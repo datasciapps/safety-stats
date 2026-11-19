@@ -44,6 +44,12 @@ described in their pull requests.
   header showed 30, and the rollout budgets under "Precision" were computed from 30. Both now
   use the median as it is.
 
+- **report.md says what its tail-measure budget assumes (changes `report.md`).** Under
+  "Precision", the rollouts per prompt that tail and threshold measures need are computed for
+  a prompt with no failures, the fewest any prompt needs, while the text said every budget
+  assumed the observed rate. The line now says so, and shows the precision target exactly
+  rather than at two decimals.
+
 - **report.md's prompt-level sensitivity is the prompt profile's (changes `report.md`).** The
   column showed the first sensitivity interval of the primary's method, whatever its profile:
   with a category profile listed before the prompt profile it showed the category interval,

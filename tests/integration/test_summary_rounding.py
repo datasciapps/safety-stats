@@ -190,3 +190,33 @@ def test_the_median_rollouts_per_prompt_is_not_truncated(
     ]
     halfway = summary_markdown(report.model_copy(update={"prompt_estimates": estimates}))
     assert "· 30.5 rollouts per prompt (median) ·" in halfway.splitlines()[2]
+
+
+def test_the_tail_budget_says_it_is_for_a_prompt_with_no_failures(
+    confirmatory: tuple[SafetyReport, str],
+) -> None:
+    """The per-prompt budget is computed at rate 0, which needs fewer rollouts than any other.
+
+    The other budgets assume the observed rate holds; this one says what it assumes instead.
+    """
+
+    from inspect_safety_stats.report.summary import precision_target
+    from inspect_safety_stats.stats.planning import rollouts_for_half_width
+
+    report, summary = confirmatory
+    target = precision_target(report)
+    alpha = next(item.alpha_upper for item in report.prompt_estimates if item.alpha_upper)
+    needed = rollouts_for_half_width(rate=0.0, half_width=target, alpha=alpha)
+    assert needed is not None
+    for rate in (0.001, 0.01, 0.05, 0.2, 0.5, 0.8, 0.99):
+        other = rollouts_for_half_width(rate=rate, half_width=target, alpha=alpha)
+        assert other is not None and other >= needed, rate
+    line = next(
+        line for line in section(summary, "Precision").splitlines() if "tail or threshold" in line
+    )
+    assert line.endswith(
+        f"per-prompt bounds that tight need about {needed} rollouts on every prompt, the count "
+        "for a prompt with no failures and the fewest any prompt needs (currently 30 per "
+        "prompt, median)"
+    )
+    assert "assume the observed rate holds, unless they say otherwise" in summary

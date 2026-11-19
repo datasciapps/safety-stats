@@ -30,7 +30,7 @@ from typing import Any
 
 from inspect_safety_stats.config.models import DEFAULT_PRECISION_TARGET
 from inspect_safety_stats.registry import CODES
-from inspect_safety_stats.report.rounding import bound_text, decimals, threshold_text
+from inspect_safety_stats.report.rounding import bound_text, decimals, exact, threshold_text
 from inspect_safety_stats.report.writer import _claim_status, _escape
 from inspect_safety_stats.schema.reports import (
     ComparisonResult,
@@ -581,11 +581,14 @@ def _other_measures_section(
             if prompt_alpha
             else None
         )
+        # The count at rate 0 is the fewest any prompt needs: a prompt that fails needs more.
+        # It is computed here, from the plan's precision target, and is not in report.json.
         flags.append(
-            f"{flagged} tail or threshold intervals exceed ±{target:.2f}"
+            f"{flagged} tail or threshold intervals exceed ±{exact(target)}"
             + (
                 f"; per-prompt bounds that tight need about {needed} rollouts on every "
-                f"prompt (currently {budget.per_prompt_text})"
+                "prompt, the count for a prompt with no failures and the fewest any prompt "
+                f"needs (currently {budget.per_prompt_text} per prompt, median)"
                 if needed
                 else ""
             )
@@ -973,7 +976,8 @@ def summary_markdown(report: SafetyReport) -> str:
                 "",
                 f"† marks an interval with an endpoint more than ±{rate_text(target)} from its "
                 "estimate (`report.precision_target`). The budgets below assume the observed "
-                "rate holds; they are planning figures, not guarantees.",
+                "rate holds, unless they say otherwise; they are planning figures, not "
+                "guarantees.",
                 "",
                 *[f"- {flag}" for flag in flags],
                 "",
