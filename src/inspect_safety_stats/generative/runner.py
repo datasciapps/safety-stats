@@ -327,6 +327,7 @@ def materialize_run(
     if overwrite:
         for name in (SELECTION_LEDGER, REWRITE_LEDGER, PROMPT_STORE, ATTEMPT_LEDGER):
             (directory / name).unlink(missing_ok=True)
+            (directory / f"{name}.partial").unlink(missing_ok=True)
 
     taxonomy = compile_taxonomy(plan, base_path=base)
     check_conversation_arms(plan, taxonomy)

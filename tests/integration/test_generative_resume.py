@@ -8,6 +8,7 @@ ledgers have to survive the interruption for that to be usable.
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,9 +17,9 @@ import yaml
 from typer.testing import CliRunner
 
 from inspect_safety_stats.cli import app
-from inspect_safety_stats.generative.execution import read_prompt_store
+from inspect_safety_stats.generative.execution import check_attempts, read_prompt_store
 from inspect_safety_stats.generative.kernels import RewriteOutcome, RewriteRequest
-from inspect_safety_stats.generative.ledger import read_rewrites
+from inspect_safety_stats.generative.ledger import read_attempts, read_rewrites
 from inspect_safety_stats.generative.runner import materialize_run
 from tests.integration.test_generative_cli import write_plan
 
@@ -319,3 +320,108 @@ def test_resume_continues_ledgers_a_development_version_wrote_with_crlf(tmp_path
     stored = read_prompt_store(artifacts / "prompts.restricted.csv")
     assert len(stored) == 60
     assert {key: stored[key].prompt for key in prompts} == prompts
+
+
+def near_duplicate_plan(tmp_path: Path, total: int) -> Path:
+    """A plan that also records attempts.csv, so a resume replaces all three ledgers."""
+
+    path = write_plan(tmp_path, total=total)
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["rewrite"].setdefault("deduplication", {})["near_duplicate"] = "normalized_text"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    return path
+
+
+@pytest.mark.parametrize(
+    "where",
+    [
+        "rewrites.csv header",
+        "rewrites.csv first row",
+        "rewrites.csv last row",
+        "prompts.restricted.csv row",
+        "attempts.csv row",
+    ],
+)
+def test_a_resume_killed_while_it_replaces_the_ledgers_loses_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, where: str
+) -> None:
+    """Each ledger is either as it was or fully replaced, never cut short.
+
+    The resume replaces rewrites.csv, prompts.restricted.csv and attempts.csv in that
+    order, each through a sibling file. Killed while it writes one of them, it must leave
+    that one byte for byte as it was, and the ones before it complete.
+    """
+
+    plan = near_duplicate_plan(tmp_path, total=60)
+    artifacts = tmp_path / "run"
+    run_with(ScriptedKernel(error_every=5), plan, artifacts)
+    names = ("rewrites.csv", "prompts.restricted.csv", "attempts.csv")
+    before = {name: (artifacts / name).read_bytes() for name in names}
+    lines = {name: before[name].splitlines(keepends=True) for name in names}
+    errored = {line.split(b",")[0] for line in lines["rewrites.csv"] if b",error," in line}
+    assert len(errored) == 12
+    kept = {
+        name: b"".join(
+            line for index, line in enumerate(lines[name])
+            if index == 0 or line.split(b",")[0] not in errored
+        )
+        for name in names
+    }
+    assert kept["prompts.restricted.csv"] == before["prompts.restricted.csv"]
+    assert kept["rewrites.csv"] != before["rewrites.csv"] != kept["attempts.csv"]
+
+    # One writerow call per header and per row, ledger after ledger.
+    rows = {name: len(kept[name].splitlines()) for name in names}
+    first = {"rewrites.csv": 1}
+    first["prompts.restricted.csv"] = first["rewrites.csv"] + rows["rewrites.csv"]
+    first["attempts.csv"] = first["prompts.restricted.csv"] + rows["prompts.restricted.csv"]
+    failing = {
+        "rewrites.csv header": first["rewrites.csv"],
+        "rewrites.csv first row": first["rewrites.csv"] + 1,
+        "rewrites.csv last row": first["prompts.restricted.csv"] - 1,
+        "prompts.restricted.csv row": first["prompts.restricted.csv"] + 10,
+        "attempts.csv row": first["attempts.csv"] + 10,
+    }[where]
+    failed = where.split(" ")[0]
+
+    writerow = csv.DictWriter.writerow
+    calls = 0
+
+    def dying(self: csv.DictWriter, row: dict) -> object:
+        nonlocal calls
+        calls += 1
+        if calls == failing:
+            raise Interrupted("killed while the ledgers were being replaced")
+        return writerow(self, row)
+
+    monkeypatch.setattr(csv.DictWriter, "writerow", dying)
+    with pytest.raises(Interrupted):
+        run_with(ScriptedKernel(), plan, artifacts, resume=True)
+    monkeypatch.setattr(csv.DictWriter, "writerow", writerow)
+
+    order = list(names)
+    for name in names:
+        now = (artifacts / name).read_bytes()
+        if order.index(name) < order.index(failed):
+            assert now == kept[name], f"{name} was replaced before the failure"
+        else:
+            assert now == before[name], f"{name} is unchanged"
+    assert sorted(item.name for item in artifacts.glob("*.partial")) == []
+
+    run = run_with(ScriptedKernel(), plan, artifacts, resume=True)
+    assert run is not None and run.resumed == 48 and run.accepted == 60
+    records = read_rewrites(artifacts / "rewrites.csv")
+    assert len(records) == 60
+    check_attempts(records, read_attempts(artifacts / "attempts.csv"))
+    assert len(read_prompt_store(artifacts / "prompts.restricted.csv")) == 60
+    assert sorted(item.name for item in artifacts.glob("*.partial")) == []
+
+
+def test_overwrite_removes_a_partial_ledger_a_killed_resume_left(tmp_path: Path) -> None:
+    plan = write_plan(tmp_path, total=20)
+    artifacts = tmp_path / "run"
+    run_with(ScriptedKernel(), plan, artifacts)
+    for name in ("rewrites.csv", "prompts.restricted.csv"):
+        (artifacts / f"{name}.partial").write_bytes(b"half a ledger\n")
+    materialize_run(plan, artifacts, overwrite=True)
+    assert sorted(item.name for item in artifacts.glob("*.partial")) == []

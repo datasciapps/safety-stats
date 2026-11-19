@@ -134,7 +134,9 @@ class IncrementalCsvWriter:
 
         The rows go to a sibling file first, which then takes the ledger's place in one
         step, so an interruption leaves the old ledger or the new one, never a truncated
-        one. Call it while the writer is closed: Windows cannot replace an open file.
+        one. A failure that the process survives removes the sibling; one it does not is
+        overwritten by the next replace. Call it while the writer is closed: Windows cannot
+        replace an open file.
 
         The sibling's rows reach the disk before the rename does. Otherwise a power loss
         soon after could leave the ledger's name on an empty file, on file systems that may
@@ -143,14 +145,20 @@ class IncrementalCsvWriter:
         """
 
         partial = self._path.with_name(self._path.name + ".partial")
-        with partial.open("w", newline="", encoding="utf-8") as handle:
-            writer = csv.DictWriter(handle, fieldnames=self._columns, lineterminator="\n")
-            writer.writeheader()
-            for row in rows:
-                writer.writerow({key: row.get(key) for key in self._columns})
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(partial, self._path)
+        try:
+            with partial.open("w", newline="", encoding="utf-8") as handle:
+                writer = csv.DictWriter(
+                    handle, fieldnames=self._columns, lineterminator="\n"
+                )
+                writer.writeheader()
+                for row in rows:
+                    writer.writerow({key: row.get(key) for key in self._columns})
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(partial, self._path)
+        except BaseException:
+            partial.unlink(missing_ok=True)
+            raise
         _sync_directory(self._path.parent)
 
     def __exit__(
