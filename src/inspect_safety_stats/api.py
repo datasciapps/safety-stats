@@ -14,6 +14,7 @@ from inspect_safety_stats.analysis.core import (
     _analysis_core,
 )
 from inspect_safety_stats.analysis.inputs import _coerce_plan, _JudgeInputs, _sorted_integrity
+from inspect_safety_stats.analysis.judge_flip import judge_flip_diagnostic
 from inspect_safety_stats.analysis.judge_panel import _judge_panel_summary
 from inspect_safety_stats.analysis.policy import _apply_decision_policy, _decision_policy_record
 from inspect_safety_stats.analysis.report import (
@@ -306,7 +307,9 @@ def analyze(
     data, judge_inputs = read
     # ORDER MATTERS: the record adds its diagnostic before the analysis reads integrity.
     policy_record = _decision_policy_record(application, data.first_started_at, diagnostics)
-    core = _analysis_core(resolved, data, diagnostics)
+    # ORDER MATTERS too: an invalid flip manifest must be an error before integrity is read.
+    judge_flip_diagnostic(resolved, data, diagnostics)
+    core =_analysis_core(resolved, data, diagnostics)
     estimates = core.estimates
     risks = core.risks
     hierarchy_risks = core.hierarchy_risks
