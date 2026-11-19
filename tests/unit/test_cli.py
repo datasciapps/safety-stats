@@ -474,11 +474,11 @@ def test_direct_script_invocation_registers_all_commands() -> None:
         assert command in result.stdout, output
 
 
-def test_every_command_explains_itself_in_help() -> None:
-    """A command without a docstring shows an empty line in --help."""
+def _leaf_commands() -> list[tuple[tuple[str, ...], str]]:
+    """Every command that runs, as its words on the command line and its help text."""
     import typer.main
 
-    def leaves(command: Any, path: tuple[str, ...]) -> list[tuple[str, str]]:
+    def leaves(command: Any, path: tuple[str, ...]) -> list[tuple[tuple[str, ...], str]]:
         # Typer's groups need not subclass the click package's Group, so look for children.
         children = getattr(command, "commands", None)
         if isinstance(children, dict):
@@ -487,12 +487,34 @@ def test_every_command_explains_itself_in_help() -> None:
                 for name, child in sorted(children.items())
                 for leaf in leaves(child, (*path, name))
             ]
-        return [(" ".join(path), (command.help or "").strip())]
+        return [(path, (command.help or "").strip())]
 
     commands = leaves(typer.main.get_command(app), ())
     # Guards the walk itself: one that stopped at the root would pass without looking.
     assert len(commands) > 10
-    assert [name for name, text in commands if not text] == []
+    return commands
+
+
+def test_every_command_explains_itself_in_help() -> None:
+    """A command without a docstring shows an empty line in --help."""
+    assert [" ".join(path) for path, text in _leaf_commands() if not text] == []
+
+
+def test_every_word_of_a_command_docstring_reaches_its_help() -> None:
+    """Rich reads square brackets in help text as markup and drops what they enclose.
+
+    plan comparison's help lost its block_by lists that way. Every word of each docstring
+    must appear in the rendered --help.
+    """
+    lost: dict[str, list[str]] = {}
+    for path, text in _leaf_commands():
+        result = runner.invoke(app, [*path, "--help"])
+        assert result.exit_code == 0, result.output
+        shown = plain(result.output)
+        missing = [word for word in text.split() if word not in shown]
+        if missing:
+            lost[" ".join(path)] = missing
+    assert lost == {}
 
 
 def _pilot_manifest(tmp_path: Path) -> Path:
