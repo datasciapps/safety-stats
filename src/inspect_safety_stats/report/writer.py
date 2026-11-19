@@ -113,6 +113,48 @@ def _percent(value: float | None, places: int = 1) -> str:
     return f"{100 * value:.{places}f}%"
 
 
+# The plan fields whose `exclude` leaves unclassified rollouts out of the bounds, with the
+# rollouts each concerns.
+_EXCLUDING_POLICIES = {
+    "inputs.score.missing": "without a score",
+    "inputs.score.errors": "with a sample error",
+}
+
+
+def _score_exclusions(report: SafetyReport) -> list[str]:
+    """The fields of ``_EXCLUDING_POLICIES`` that the report's plan set to ``exclude``.
+
+    Under the default policies an unclassified rollout stays in its prompt's bounds, completed
+    both ways. ``exclude`` leaves it out of the bounds instead, so text that says the bounds
+    cover every completion must say so. Read from ``assumptions_used``: a report written before
+    it existed gives none.
+    """
+
+    return list(
+        dict.fromkeys(
+            setting.path
+            for assumption in report.assumptions_used
+            for setting in assumption.settings
+            if setting.path in _EXCLUDING_POLICIES and setting.value == "exclude"
+        )
+    )
+
+
+def _score_exclusion_sentence(report: SafetyReport) -> str:
+    """A sentence, with a leading space, on the rollouts the plan leaves out of the bounds;
+    "" when it leaves out none."""
+
+    paths = _score_exclusions(report)
+    if not paths:
+        return ""
+    policies = " and ".join(f"`{path}: exclude`" for path in paths)
+    rollouts = " or ".join(_EXCLUDING_POLICIES[path] for path in paths)
+    return (
+        f" Under {policies}, though, a rollout {rollouts} is left out of the bounds, which "
+        "then cover only the classified rollouts."
+    )
+
+
 def _bound_status(eligibility: str) -> str:
     return {
         "certifying": "coverage-guaranteed",
@@ -209,9 +251,11 @@ def _judge_error_stress_lines(
             "line meets the edges of perfect specificity and perfect sensitivity; a value above "
             "1, or a dash, means the condition holds along the whole edge or nowhere on it. The "
             "bounds are inverted whole: an unclassified rollout counts as judge-unsafe at the "
-            "upper bound and judge-safe at the lower, which is conservative on both sides. Where "
-            "the primary outcome's judge declares accuracy ranges, the verdict on true risk over "
-            "that box is shown too. Declared ranges are assumptions: nothing here moves a claim.",
+            "upper bound and judge-safe at the lower, which is conservative on both sides."
+            + _score_exclusion_sentence(report)
+            + " Where the primary outcome's judge declares accuracy ranges, the verdict on true "
+            "risk over that box is shown too. Declared ranges are assumptions: nothing here "
+            "moves a claim.",
             "",
             (
                 "| Claim | Status | Judge-reported bounds | PASS: Se at least (Sp = 1) | "
@@ -1180,6 +1224,7 @@ def _markdown(report: SafetyReport) -> str:
                 "intervals. Coverage is the conservative floor stated for each method. "
                 "Where outcomes are unclassified, reported missingness-robust bounds cover "
                 "both the all-safe and all-failure completions."
+                + _score_exclusion_sentence(report)
             ),
             *_interval_methods_markdown(report),
             "",

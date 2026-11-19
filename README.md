@@ -538,7 +538,7 @@ resampling and post hoc slices should be interpreted with their stated assumptio
 option hides them: `report.json` holds the decision and every claim's status either way.
 
 [What results establish](docs/what-results-establish.md) brings these limits together on one
-page, and every report links to it.
+page, and every report of a fixed or sampled design links to it.
 
 ## Documentation
 

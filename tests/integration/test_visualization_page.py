@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from inspect_safety_stats import analyze
+from inspect_safety_stats.analysis.report import RESULTS_ESTABLISH_URL
 from inspect_safety_stats.report.visualization import render_visualization
 from inspect_safety_stats.schema.reports import STORED_REPORT, SafetyReport
 from tests.page_script import PageRun, node_or_skip, run_page
@@ -66,3 +67,42 @@ def test_the_page_script_of_a_report_without_results_runs_to_its_end(tmp_path: P
     run = run_page(node, render_visualization(report), tmp_path)
 
     _assert_the_page_rendered(run, decisions=False)
+
+
+LINK_TEXT = "What these results establish, and what they do not"
+
+
+@pytest.mark.parametrize(
+    "address",
+    [
+        "javascript:alert(document.domain)",
+        " javascript:alert(1)",
+        "data:text/html,<script>alert(1)</script>",
+        "http://example.org/what-results-establish.md",
+    ],
+)
+def test_the_page_does_not_link_an_address_other_than_https(address: str, tmp_path: Path) -> None:
+    # report.html renders whatever report.json it is given (inspect-safety-stats visualize).
+    node = node_or_skip()
+    report = SafetyReport.model_validate_json(
+        EXAMPLE_REPORTS["simpleqa"].read_text(encoding="utf-8"), context={STORED_REPORT: True}
+    )
+    report.scope["what_results_establish"] = address
+
+    run = run_page(node, render_visualization(report), tmp_path)
+
+    assert run.error is None, run.error
+    assert [link for link in run.links if link[0] == LINK_TEXT] == []
+    assert all(href is None or href.startswith("https://") for _, href in run.links)
+
+
+def test_the_page_links_the_https_address_of_the_results_page(tmp_path: Path) -> None:
+    node = node_or_skip()
+    report = SafetyReport.model_validate_json(
+        EXAMPLE_REPORTS["simpleqa"].read_text(encoding="utf-8"), context={STORED_REPORT: True}
+    )
+
+    run = run_page(node, render_visualization(report), tmp_path)
+
+    assert run.error is None, run.error
+    assert (LINK_TEXT, RESULTS_ESTABLISH_URL) in run.links

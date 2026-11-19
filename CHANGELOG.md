@@ -33,6 +33,22 @@ described in their pull requests.
   shared report revealed the local directory layout. Each now gives the path relative to the
   plan.
 
+- **report.html links only an https:// address for what results establish.** The page made
+  `scope.what_results_establish` from the `report.json` it renders into a link, whatever its
+  address, and `visualize` renders any `report.json` it is given: a `javascript:` address there
+  ran in the page when the link was clicked. An address that does not start with `https://` is
+  now left out of the page, which then shows no link. The package writes an `https://`
+  address, so no report it writes changes bytes.
+
+- **Reports say when the plan leaves unclassified rollouts out of the bounds (changes those
+  reports' bytes).** `report-full.md` said that missingness-robust bounds cover both
+  completions of unclassified outcomes, its judge-error stress that an unclassified rollout
+  counts as judge-unsafe at the upper bound, and `report.html` that unclassified outcomes are
+  "Included in robust bounds". Under `inputs.score.missing: exclude` or
+  `inputs.score.errors: exclude` those rollouts are left out of the bounds instead, which then
+  cover only the classified rollouts. Each text now says so for such a plan. Reports of plans
+  that exclude nothing keep their bytes.
+
 - **A zero-tolerance column that the manifest lacks is an error.** When a plan sets
   `policy.zero_tolerance.manifest_field` and the manifest has no such column, the analysis
   silently held no prompt to zero tolerance. It now stops with an error that names the column.
@@ -193,14 +209,15 @@ described in their pull requests.
   that an interval width needs. The summary's "Scope" carries the link to
   [What results establish](docs/what-results-establish.md) as well.
 
-- **Every report links to a page on what results establish (#12).** `scope` in `report.json`
-  gains `what_results_establish`, the address of
+- **Every report of a fixed or sampled design links to a page on what results establish
+  (#12).** `scope` in `report.json` gains `what_results_establish`, the address of
   [What results establish](docs/what-results-establish.md), a one-page summary of what a
   result shows and what it does not. `report.md` shows the link under "Scope" and `report.html`
   beside the scope statement. The scope statement itself now ends with the condition every
   bound rests on: "Every bound assumes that the evaluated model is not strategically
   underperforming on the evaluation." Every `report.json`, `report.md` and `report.html`
   changes bytes; the CSVs do not. A `report.json` written before renders without the link.
+  The experimental generative report does not link to the page.
 
 - **Diagnostics say what they concern and what they do.** Every diagnostic in `report.json`
   now carries `source`, the kind of input it concerns (`plan`, `registration`, `manifest`,

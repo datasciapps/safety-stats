@@ -24,7 +24,7 @@ For a single-file API reference, estimator selection table, and runnable templat
 - [Analysis plan reference](docs/plan-reference.md): Complete `schema_version: "2.0"` YAML/JSON specification, score mappings, missing/error policies, cohorts, groups, multiplicity families, and claims.
 - [Reading a report as an agent](docs/agent-guide.md): Which file of a report directory to open first (`index.json`), how its JSON pointers into `report.json` work, the summary and warnings fields, and what not to conclude.
 - [Interpreting results](docs/interpretation.md): Scope boundaries, simultaneous versus diagnostic intervals, two-sided versus per-direction coverage, and optional threshold decisions.
-- [What results establish](docs/what-results-establish.md): What a result shows and does not show, and where in the report to check each condition it rests on; every report links to this page.
+- [What results establish](docs/what-results-establish.md): What a result shows and does not show, and where in the report to check each condition it rests on; every report of a fixed or sampled design links to this page.
 - [Diagnostic codes and assumptions](docs/diagnostics.md): Every diagnostic code a report can contain and every assumption its results rest on, with its effect on the results and what to change.
 - [Limitations log](docs/limitations.md): Limitations found on real evaluations, numbered L1, L2, ..., with what the package now does about each.
 
