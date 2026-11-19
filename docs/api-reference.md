@@ -47,7 +47,8 @@ source; `inspect_safety_stats.ingest.EvaluationSource` is the protocol. Passing 
 `registration_receipt` (experimental) names a receipt written by `hash-plan --register`.
 `analyze` and `validate` check it against the plan's hash and the earliest evaluation start;
 see [Registration receipts](plan-reference.md#registration-receipts-experimental). `analyze`
-raises `ValueError` for a malformed receipt, and `validate` reports it as `INGEST_FAILED`.
+raises `ValueError` for a malformed receipt and `OSError`, such as `FileNotFoundError`, for one
+it cannot read; `validate` reports either as `INGEST_FAILED`.
 
 ### `validate`
 
@@ -644,7 +645,8 @@ files of a neutral rollout source instead of Inspect logs, and are given togethe
 `validate` check one with `--registration-receipt RECEIPT.json`, and the Python functions with
 `registration_receipt=` (experimental; see
 [Registration receipts](plan-reference.md#registration-receipts-experimental)). `hash-plan`
-exits `3` when the receipt file already exists.
+exits `3` when the receipt file already exists or cannot be written, for example because its
+directory does not exist.
 
 ### Exit codes
 

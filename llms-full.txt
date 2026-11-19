@@ -463,7 +463,7 @@ Every command draws its exit status from `ExitCode` in `src/inspect_safety_stats
 | `analyze` (default) | `3` | Integrity is `invalid` (`report.json` is still written; pass `--allow-invalid` to exit `0` instead), or an execution error prevented report creation. |
 | `analyze --decision-exit-codes` | `0` / `1` / `2` / `3` | `0` = `PASS`, `1` = `FAIL`, `2` = `INCONCLUSIVE`, `3` = `invalid` integrity or execution failure. With `--allow-invalid`, an `invalid` integrity exits `2`, because an invalid analysis is never `PASS`. |
 | `plan fixed-design --plan` | `1` | No claim of the plan could be planned (`ExitCode.NOTHING_PLANNED`). |
-| `hash-plan` | `3` | The plan cannot be read or validated, or the `--register` file already exists. |
+| `hash-plan` | `3` | The plan cannot be read or validated, or the `--register` file already exists or cannot be written. |
 | `generative analyze` | `3` | The report carries an `ERROR` diagnostic (the report is still written). |
 
 ### Report directory contents (`SafetyReport.write(output)`)

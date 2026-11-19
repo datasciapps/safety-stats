@@ -77,10 +77,12 @@ inspect-safety-stats hash-plan --plan plan.yaml --register plan.receipt.json
 ```
 
 The command prints the hash as before, then writes `plan.receipt.json`, which holds the plan's
-canonical SHA-256 and the current UTC time to the second. It never overwrites an existing
-receipt. The time comes from the local clock, so a receipt proves nothing until it is anchored
-somewhere a reader trusts, before generation starts. For example, commit it in a signed commit
-and push it, or have a timestamping service sign its hash
+canonical SHA-256 and the current UTC time, rounded up to the whole second so that it never
+precedes the registration. Inspect records a run's start truncated to the second, so a receipt
+written less than a second before generation starts can read as later than it. The command
+never overwrites an existing receipt. The time comes from the local clock, so a receipt proves
+nothing until it is anchored somewhere a reader trusts, before generation starts. For example,
+commit it in a signed commit and push it, or have a timestamping service sign its hash
 (`openssl ts -query -data plan.receipt.json -sha256 -cert -out plan.receipt.tsq`, sent to an RFC 3161 server).
 
 Pass the receipt to `analyze` or `validate` with `--registration-receipt plan.receipt.json`,

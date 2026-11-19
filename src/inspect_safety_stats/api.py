@@ -252,9 +252,9 @@ def validate(
     ``parallel`` passed to Inspect's log reader. Passing both ``logs`` and ``source`` is an
     error. As in ``analyze``, a failure to read the data does not raise: it is reported as an
     ``INGEST_FAILED`` diagnostic. ``decision_policy`` is checked against the plan as
-    ``analyze`` checks it, and so is ``registration_receipt``; a malformed receipt is reported
-    as ``INGEST_FAILED``. Returns the integrity status (``valid``, ``degraded`` or
-    ``invalid``) and the sorted diagnostics.
+    ``analyze`` checks it, and so is ``registration_receipt``; a receipt that cannot be read,
+    or is malformed, is reported as ``INGEST_FAILED``. Returns the integrity status
+    (``valid``, ``degraded`` or ``invalid``) and the sorted diagnostics.
     """
 
     resolved = _coerce_plan(plan)
@@ -262,7 +262,8 @@ def validate(
     _apply_decision_policy(resolved, decision_policy, diagnostics)
     try:
         receipt = None if registration_receipt is None else load_receipt(registration_receipt)
-    except ValueError as exc:
+    except (OSError, ValueError) as exc:
+        # A missing or unreadable receipt (OSError) is bad input, as a malformed one is.
         diagnostics.append(Diagnostic(code="INGEST_FAILED", severity="ERROR", message=str(exc)))
         return _sorted_integrity(diagnostics)
     receipt = _matched_receipt(resolved, receipt, diagnostics)
@@ -313,7 +314,8 @@ def analyze(
 
     ``registration_receipt`` (experimental) is the path of a receipt written by
     ``hash-plan --register``. It is checked against the frozen plan's hash and the earliest
-    evaluation start; a malformed receipt raises ``ValueError``.
+    evaluation start; a malformed receipt raises ``ValueError``, and one that cannot be read
+    raises ``OSError``, such as ``FileNotFoundError``.
     """
 
     frozen = _coerce_plan(plan)
