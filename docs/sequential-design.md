@@ -50,12 +50,24 @@ Draw the item for step \(t\) at random, independently of the past, with
 \mathbb E[X_t\mid\mathcal F_{t-1}]=\sum_i w_i\,p_i=\theta
 \]
 
-for every \(t\), although the items differ. Hsu and Shekhar prove the general form: for any
-predictable querying rule \(q_t\) with \(q_t(i)>0\) for every item, their inverse-probability
-betting factor is a conditional e-value (*Efficient Sequential Evaluation of Large Language
-Models*, arXiv:2607.17409, Proposition 4.2). Drawing in proportion to the weights,
-\(q_t=w\), makes the inverse-probability correction cancel. Each observation is then the plain
-outcome in \([0,1]\), so the weighting costs nothing in the range of admissible bets.
+for every \(t\), although the items differ. The identity also rests on three assumptions about
+the evaluation, which the draws cannot supply:
+
+- **Fixed failure probabilities.** Each \(p_i\) stays the same while the stream runs. The
+  model, its configuration, the scaffold and the judge do not change between draws, and
+  nothing in the system learns from earlier rollouts.
+- **Fresh rollouts.** Each draw runs its rollouts anew, sharing no state, cache or conversation
+  with earlier draws. An item drawn again is run again, not replayed.
+- **A hidden draw sequence.** The selection seed is fixed before the run and kept from the
+  system under evaluation, so that its behaviour on a draw cannot depend on which items come
+  next.
+
+Hsu and Shekhar prove the general form: for any predictable querying rule \(q_t\) with
+\(q_t(i)>0\) for every item, their inverse-probability betting factor is a conditional e-value
+(*Efficient Sequential Evaluation of Large Language Models*, arXiv:2607.17409, Proposition
+4.2). Drawing in proportion to the weights, \(q_t=w\), makes the inverse-probability correction
+cancel. Each observation is then the plain outcome in \([0,1]\), so the weighting costs nothing
+in the range of admissible bets.
 
 Two limits follow from that proposition:
 
