@@ -329,7 +329,8 @@ Optstop's repository (MIT licence) releases its shadow-mode results as
 optstop would have stopped and the sample ids, but no per-trial outcomes. The bound at the stop
 cannot be computed from them. Their runs also record `sample_shuffle: null`, so the analysis
 would refuse them for having no recorded order. A shadow-mode replay needs the run's Inspect
-log, run with `sample_shuffle` set to a seed.
+log, run with `sample_shuffle` set to a nonzero integer seed (Inspect does not shuffle under
+the seed 0).
 
 ## Work that builds on this
 

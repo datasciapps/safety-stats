@@ -86,7 +86,16 @@ def _recorded_order(
         raise _Refused(
             "ANYTIME_ORDER_UNRECORDED",
             f"run {order.run_key!r} has no recorded random order: {why}. Run it with "
-            "sample_shuffle set to an integer seed",
+            "sample_shuffle set to a nonzero integer seed",
+        )
+    if shuffle == 0 and not order.shuffled:
+        # Inspect records the seed 0 but, as it shuffles only under a truthy seed, leaves the
+        # samples in dataset order.
+        raise _Refused(
+            "ANYTIME_ORDER_UNRECORDED",
+            f"run {order.run_key!r} has no recorded random order: its samples were not "
+            "shuffled, as Inspect does not shuffle under sample_shuffle 0. Run it with "
+            "sample_shuffle set to a nonzero integer seed",
         )
     if not order.shuffled or not order.sample_ids:
         raise _Refused(

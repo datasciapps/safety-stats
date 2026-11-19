@@ -400,15 +400,16 @@ _CODES: tuple[CodeEntry, ...] = (
         effect="invalid",
         assumption=(
             "The run's samples ran in a random order fixed before the run and recorded in its "
-            "Inspect log: sample_shuffle set to an integer seed, with the shuffled sample ids."
+            "Inspect log: sample_shuffle set to a nonzero integer seed, with the shuffled sample "
+            "ids. Inspect does not shuffle under the seed 0."
         ),
         consequence=(
             "No anytime-valid bound is reported for the cohort and group, and the error makes "
             "the integrity status invalid, so no claim can pass."
         ),
         remedy=(
-            "Rerun the evaluation as Inspect logs with sample_shuffle set to an integer seed, "
-            "or remove outputs.anytime_bounds."
+            "Rerun the evaluation as Inspect logs with sample_shuffle set to a nonzero integer "
+            "seed, or remove outputs.anytime_bounds."
         ),
     ),
     CodeEntry(

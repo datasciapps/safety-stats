@@ -152,6 +152,8 @@ def logs(tmp_path_factory: pytest.TempPathFactory) -> dict[str, str]:
         "seeded": _run(root / "seeded", SEED),
         "unseeded": _run(root / "unseeded", True),
         "unshuffled": _run(root / "unshuffled", None),
+        # Inspect records the seed 0, and does not shuffle under it.
+        "zero": _run(root / "zero", 0),
     }
 
 
@@ -262,6 +264,8 @@ def test_the_bound_certifies_no_claim_where_no_claim_can_pass(
     [
         ("unshuffled", "Inspect does not shuffle by default"),
         ("unseeded", "without a recorded seed"),
+        ("zero", "its samples were not shuffled, as Inspect does not shuffle under "
+                 "sample_shuffle 0"),
     ],
 )
 def test_a_run_without_a_recorded_order_is_refused(
@@ -272,11 +276,12 @@ def test_a_run_without_a_recorded_order_is_refused(
     (diagnostic,) = _found(report, "ANYTIME_ORDER_UNRECORDED")
     assert diagnostic.severity == "ERROR"
     assert why in diagnostic.message
+    assert diagnostic.message.endswith("Run it with sample_shuffle set to a nonzero integer seed")
     assert not _found(report, "ANYTIME_UPPER_BOUND")
     assert report.integrity.status == "invalid"
 
 
-@pytest.mark.parametrize("run", ["seeded", "unseeded", "unshuffled"])
+@pytest.mark.parametrize("run", ["seeded", "unseeded", "unshuffled", "zero"])
 def test_validate_refuses_what_analyze_refuses(
     logs: dict[str, str], tmp_path: Path, run: str
 ) -> None:

@@ -1103,10 +1103,11 @@ outputs:
 What it needs from the run:
 
 - **A random order fixed before the run, recorded in the log.** Run the evaluation with
-  Inspect's `sample_shuffle` set to an integer seed. Inspect then records the seed and lists
-  the sample ids in the shuffled order. Inspect does not shuffle by default. A run without a
-  shuffle, or shuffled without a recorded seed (`sample_shuffle: true`), is refused with an
-  `ANYTIME_ORDER_UNRECORDED` error, and so is any source other than Inspect logs.
+  Inspect's `sample_shuffle` set to a nonzero integer seed. Inspect then records the seed and
+  lists the sample ids in the shuffled order. Inspect does not shuffle by default, nor under
+  the seed 0. A run without a shuffle, `sample_shuffle: 0` included, or shuffled without a
+  recorded seed (`sample_shuffle: true`), is refused with an `ANYTIME_ORDER_UNRECORDED` error,
+  and so is any source other than Inspect logs.
 - **A stopping rule that only stops.** The rule may decide when to stop, but never which
   prompt runs next.
 - **One run per cohort**, whose order lists every prompt of each group once. A `limit` that

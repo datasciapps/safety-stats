@@ -891,8 +891,8 @@ class AnytimeBoundsSpec(StrictModel):
     For each cohort and group, a one-sided upper bound on the weighted mean failure
     probability that holds at every prefix of the run's sample order at once, and so wherever
     a rule such as optstop's stopped the run. The order must be Inspect's ``sample_shuffle``
-    with a recorded integer seed; the stream is the first ``rollouts_per_item`` epochs of each
-    item, in that order. ``independence_profile`` names a profile of
+    with a recorded nonzero integer seed; the stream is the first ``rollouts_per_item`` epochs
+    of each item, in that order. ``independence_profile`` names a profile of
     ``design.independence_profiles``: ``[rollout]`` treats an item's rollouts as independent,
     and any profile that blocks by ``prompt_id`` treats only items as independent. The bounds
     split the ``family``'s alpha equally. They are reported as diagnostics beside the claims,
