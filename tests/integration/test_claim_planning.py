@@ -282,8 +282,9 @@ def test_planned_intervals_match_analyze_for_every_profile_and_node(
 ) -> None:
     """#9: for each profile and node, the planning alpha equals the alpha analyze assigns.
 
-    Blocks, effective sample size and calibration match too, and on logs where every rollout
-    is safe the planned certification floor is the upper bound analyze reports.
+    Blocks, effective sample size and calibration match too. On logs where every rollout is
+    safe the planned certification floor is the upper bound analyze reports, after its
+    hierarchy-region projection, and the raw floor the interval's own bound before it.
     """
     plan_path = _write(tmp_path, plan=_parity_plan(calibration, method))
     _patch_logs(monkeypatch, all_safe=True)
@@ -314,6 +315,10 @@ def test_planned_intervals_match_analyze_for_every_profile_and_node(
     # Two groups (all, cyber) with 2 + 3 and 1 + 2 nodes, under two profiles.
     assert len(planned) == 2 * (2 + 5 + 3)
     assert set(planned) == set(reported)
+    # The floor is the bound analyze reports, after its hierarchy-region projection.
+    assert {key: item.certification_floor for key, item in planned.items()} == pytest.approx(
+        {key: reported[key].upper for key in planned}, rel=1e-9, abs=1e-15
+    )
     for key, item in planned.items():
         interval = reported[key]
         assert item.alpha.endpoint_alpha == pytest.approx(interval.alpha_lower, rel=1e-12, abs=0)
@@ -324,9 +329,70 @@ def test_planned_intervals_match_analyze_for_every_profile_and_node(
             interval.effective_sample_size, rel=1e-12, abs=0
         )
         unprojected = interval.raw_upper if interval.raw_upper is not None else interval.upper
-        assert item.certification_floor == pytest.approx(unprojected, rel=1e-9, abs=1e-15)
+        assert item.raw_certification_floor == pytest.approx(unprojected, rel=1e-9, abs=1e-15)
+        assert item.resolves == (
+            None if item.acceptable_upper is None else interval.upper <= item.acceptable_upper
+        )
+    if calibration == "frontier_sidak" or method in {"weighted_kl_chernoff", "weighted_betting"}:
+        # The projection lowers some of these floors, so the parity covers it.
+        assert any(
+            item.certification_floor < item.raw_certification_floor - 1e-6
+            for item in planned.values()
+        )
     if calibration == "frontier_sidak":
         assert {item.alpha.calibration for item in planned.values()} == {"frontier_sidak"}
+    decided = {claim.claim_id: claim for claim in report.claims}
+    for claim in design.claims:
+        if not isinstance(claim, PlannedClaim):
+            continue
+        result = decided[claim.claim_id]
+        assert result.upper is not None
+        assert claim.certification_floor == pytest.approx(result.upper, rel=1e-9, abs=1e-15)
+        assert (result.status == "PASS") == (claim.certification_floor <= claim.acceptable_upper)
+
+
+def test_a_floor_the_projection_lowers_below_the_threshold_passes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Questions as blocks leave the root interval at 1 when every rollout is safe.
+
+    analyze projects it onto the hierarchy region, to 0.96, and PASSes a claim at 0.97. The
+    planner reports that floor, and says that its rates are planned before the projection.
+    """
+    plan = (
+        _parity_plan("flat_bonferroni", "weighted_kl_chernoff")
+        .replace(
+            "primary: rollout, sensitivities: [question]",
+            "primary: question, sensitivities: [rollout]",
+        )
+        .replace(
+            "group: all, measure: mean, family: gate,\n"
+            "     acceptable_upper: 0.3, unacceptable_lower: 0.6}",
+            "group: all, measure: mean, family: gate,\n"
+            "     acceptable_upper: 0.97, unacceptable_lower: 0.99}",
+        )
+    )
+    assert plan.count("primary: question") == 1 and plan.count("acceptable_upper: 0.97") == 1
+    plan_path = _write(tmp_path, plan=plan)
+    _patch_logs(monkeypatch, all_safe=True)
+    result = next(claim for claim in analyze(plan=plan_path, logs="ignored").claims)
+    assert result.claim_id == "all_mean" and result.status == "PASS"
+    item = next(
+        claim
+        for claim in plan_claims(load_plan(plan_path), power=0.9)
+        if isinstance(claim, PlannedClaim) and claim.claim_id == "all_mean"
+    )
+    assert item.raw_certification_floor == 1.0
+    assert item.certification_floor == pytest.approx(result.upper, rel=1e-9, abs=0)
+    assert item.certification_floor < 0.97
+    # Planned on the raw interval, whose floor is above the threshold.
+    assert item.planned.maximum_certifiable_failure_rate is None
+    output = plain(runner.invoke(app, ["plan", "fixed-design", "--plan", str(plan_path)]).output)
+    assert (
+        f"Certification floor: {item.certification_floor:.8g}, the upper bound analyze reports "
+        "when every rollout is safe (1 before the hierarchy-region projection; the rates above "
+        "are planned before it, and the projection can only raise their power)"
+    ) in output
 
 
 def test_planned_claims_are_decided_on_the_plan_method(tmp_path: Path) -> None:

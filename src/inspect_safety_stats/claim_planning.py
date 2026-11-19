@@ -8,6 +8,11 @@ recompute them: it gives analyze's own functions the rollouts the manifest decla
 already observed, and reads the calibration and the blocks off the result. The interval
 method is the plan's, and the detectable rates invert that method's interval. Claims decided
 any other way are reported as not planned, with the reason.
+
+The certification floors are the upper bounds analyze reports when every rollout is safe:
+analyze's own interval and hierarchy-region stages compute them on those rollouts. The
+detectable rates are planned on the interval before that projection, which can only lower an
+upper bound and raise a lower one, so they hold for the projected bounds too.
 """
 
 from __future__ import annotations
@@ -29,6 +34,7 @@ from inspect_safety_stats.ingest.manifest import (
 )
 from inspect_safety_stats.ingest.records import NormalizedData
 from inspect_safety_stats.schema.observations import Observation, observation_field
+from inspect_safety_stats.schema.reports import Diagnostic
 from inspect_safety_stats.stats.independence import (
     _BLOCK_OBSERVATION_FIELDS,
     BoundedBlocks,
@@ -39,13 +45,16 @@ from inspect_safety_stats.stats.planning import (
     INVERTIBLE_METHODS,
     FixedDesignDetectableRates,
     MethodDetectableRates,
-    certification_floor,
     detectable_failure_rates,
     fixed_design_detectable_failure_rates,
 )
 
 if TYPE_CHECKING:
-    from inspect_safety_stats.analysis.direct_mean import _EndpointCalibration
+    from inspect_safety_stats.analysis.direct_mean import (
+        _DirectMeanContext,
+        _EndpointCalibration,
+        _HierarchyNode,
+    )
 
 # Fields a block may be formed by before any rollout exists: the manifest's, and the
 # observation fields that the manifest or the plan fix. analyze reads every other observation
@@ -75,10 +84,13 @@ class EndpointAlpha:
 class PlannedInterval:
     """One direct-mean interval analyze will report: a profile, a cohort and a target.
 
-    ``certification_floor`` is the interval's upper endpoint when every rollout is safe.
-    ``acceptable_upper`` is the smallest of the group's planned claims in the cohort, and
-    ``resolves`` whether the floor is at or below it, that is whether any outcome can certify
-    this target at the group's threshold. Both are ``None`` without such a claim.
+    ``certification_floor`` is the upper bound analyze reports when every rollout is safe:
+    the interval's own upper endpoint then, ``raw_certification_floor``, projected onto the
+    hierarchy region when the plan asks for it (``hierarchy_region: linear_program``, the
+    default), which can only lower it. ``acceptable_upper`` is the smallest of the group's
+    planned claims in the cohort, and ``resolves`` whether the floor is at or below it: whether
+    this target is certified at the group's threshold when every rollout is safe. A target
+    that does not resolve is not certified even then. Both are ``None`` without such a claim.
     """
 
     independence_profile: str
@@ -92,6 +104,7 @@ class PlannedInterval:
     alpha: EndpointAlpha
     method: DirectMeanMethod
     certification_floor: float
+    raw_certification_floor: float
     acceptable_upper: float | None
     resolves: bool | None
 
@@ -118,6 +131,11 @@ class PlannedClaim:
     # threshold cannot be crossed by a failure rate.
     hoeffding_support: FixedDesignDetectableRates | None
     hoeffding_rejection: FixedDesignDetectableRates | None
+    # The upper bound analyze decides the claim on when every rollout is safe, and the primary
+    # interval's own upper endpoint then; they differ when the hierarchy-region projection
+    # lowers the bound. ``planned`` inverts the interval before the projection.
+    certification_floor: float
+    raw_certification_floor: float
 
 
 @dataclass(frozen=True)
@@ -259,6 +277,66 @@ def _check_plannable_profiles(plan: AnalysisPlan, frame: pd.DataFrame, profiles:
             )
 
 
+def _all_safe_upper_bounds(
+    plan: AnalysisPlan,
+    data: NormalizedData,
+    nodes: list[_HierarchyNode],
+    context: _DirectMeanContext,
+) -> dict[tuple[str, str, str], tuple[float, float]]:
+    """The upper bound of every direct-mean interval of the plan's method on ``data``.
+
+    Keyed by independence profile, cohort and target, each entry holds the bound analyze
+    reports and the interval's own, raw bound. analyze's own stages compute them, the
+    hierarchy-region projection included, so they are the bounds analyze reports on the same
+    rollouts.
+    """
+
+    from inspect_safety_stats.analysis.direct_mean import _hierarchy_region_target_id
+    from inspect_safety_stats.analysis.estimates import _prompt_estimates
+    from inspect_safety_stats.analysis.regions import project_hierarchy_regions
+    from inspect_safety_stats.analysis.results import RiskRows
+    from inspect_safety_stats.analysis.risks import _group_risks, _hierarchy_risks
+
+    diagnostics: list[Diagnostic] = []
+    estimates = _prompt_estimates(plan, data, diagnostics)
+    computed = RiskRows(
+        risks=_group_risks(plan, data, estimates, diagnostics, direct_context=context),
+        hierarchy_risks=_hierarchy_risks(plan, data, nodes, estimates, diagnostics, context),
+        comparisons=[],
+    )
+    rows = project_hierarchy_regions(plan, data, nodes, computed, diagnostics)
+    means = {item.id for item in plan.outputs.risk_measures if item.type == "weighted_mean"}
+    method = plan.outputs.direct_mean_intervals.method
+    # A group's intervals are read off its first weighted_mean row, as the projection reads
+    # them; a node has one row.
+    targets = [
+        (risk.cohort_id, _hierarchy_region_target_id(risk.group_id, None, {}), risk.intervals)
+        for risk in rows.risks
+        if risk.measure_id in means
+    ] + [
+        (
+            row.cohort_id,
+            _hierarchy_region_target_id(row.group_id, row.level, row.path),
+            row.intervals,
+        )
+        for row in rows.hierarchy_risks
+    ]
+    bounds: dict[tuple[str, str, str], tuple[float, float]] = {}
+    for cohort_id, target_id, intervals in targets:
+        for interval in intervals:
+            if (
+                interval.method == method
+                and interval.interval_id.startswith("direct_")
+                and interval.independence_profile is not None
+                and interval.upper is not None
+            ):
+                raw = interval.upper if interval.raw_upper is None else interval.raw_upper
+                bounds.setdefault(
+                    (interval.independence_profile, cohort_id, target_id), (interval.upper, raw)
+                )
+    return bounds
+
+
 def _endpoint_alpha(
     calibration: _EndpointCalibration,
     *,
@@ -344,6 +422,8 @@ def plan_design(
     )
     nodes = _hierarchy_nodes(plan, data)
     context = _direct_mean_context(plan, data, nodes=nodes)
+    # The planned rollouts are all safe, so analyze's upper bounds on them are the floors.
+    all_safe = _all_safe_upper_bounds(plan, data, nodes, context)
     directional, _, _ = _coverage_floors(family.alpha, spec.coverage_mode)
     selected = sorted(spec.groups or [group.id for group in data.groups])
     targets: list[tuple[ResolvedGroup, str | None, dict[str, str], tuple[str, ...], np.ndarray]]
@@ -389,6 +469,15 @@ def plan_design(
             index=_block_index(data),
         )
 
+    def floors_of(cohort_id: str, target_id: str, profile: str) -> tuple[float, float]:
+        floors = all_safe.get((profile, cohort_id, target_id))
+        if floors is None:
+            raise RuntimeError(
+                f"analyze reported no {spec.method} interval for target {target_id!r} of "
+                f"cohort {cohort_id!r} under profile {profile!r}"
+            )
+        return floors
+
     method: DirectMeanMethod = spec.method
     claims: list[ClaimPlan] = []
     strictest: dict[tuple[str, str], float] = {}
@@ -405,6 +494,7 @@ def plan_design(
         target_id = _hierarchy_region_target_id(group.id, None, {})
         blocks = blocks_of(cohort_id, prompt_ids, weights, independence.primary)
         alpha = alpha_of(cohort_id, target_id, independence.primary)
+        reported, raw = floors_of(cohort_id, target_id, independence.primary)
         # A threshold at or beyond 0 or 1 can never be crossed by a failure rate.
         acceptable = claim.acceptable_upper if 0 < claim.acceptable_upper < 1 else None
         unacceptable = claim.unacceptable_lower if 0 < claim.unacceptable_lower < 1 else None
@@ -461,6 +551,8 @@ def plan_design(
                 ),
                 hoeffding_support=hoeffding["support"],
                 hoeffding_rejection=hoeffding["rejection"],
+                certification_floor=reported,
+                raw_certification_floor=raw,
             )
         )
 
@@ -471,9 +563,7 @@ def plan_design(
                 target_id = _hierarchy_region_target_id(group.id, level, path)
                 blocks = blocks_of(cohort_id, prompt_ids, weights, profile_id)
                 alpha = alpha_of(cohort_id, target_id, profile_id)
-                floor = certification_floor(
-                    blocks.weights, method=method, alpha=alpha.endpoint_alpha
-                )
+                floor, raw = floors_of(cohort_id, target_id, profile_id)
                 threshold = strictest.get((cohort_id, group.id))
                 intervals.append(
                     PlannedInterval(
@@ -488,6 +578,7 @@ def plan_design(
                         alpha=alpha,
                         method=method,
                         certification_floor=floor,
+                        raw_certification_floor=raw,
                         acceptable_upper=threshold,
                         resolves=None if threshold is None else floor <= threshold,
                     )

@@ -249,9 +249,10 @@ so no single estimate boundary separates PASS from not PASS.
 class MethodDetectableRates:
     """Detectable rates of a fixed weighted mean under the interval method analyze uses.
 
-    ``certification_floor`` is the upper endpoint when every block is safe: a claim whose
-    acceptable_upper lies below it can never PASS. ``rejection_ceiling`` is the lower endpoint
-    when every block fails: a claim whose unacceptable_lower lies above it can never FAIL.
+    ``certification_floor`` is the upper endpoint when every block is safe, and
+    ``rejection_ceiling`` the lower endpoint when every block fails. They are the interval's
+    own endpoints: analyze's hierarchy-region projection can lower the reported upper bound
+    and raise the lower one. ``claim_planning`` reports the projected floor.
     """
 
     method: DirectMeanMethod
@@ -437,7 +438,8 @@ def certification_floor(weights: ArrayLike, *, method: DirectMeanMethod, alpha: 
     """The upper endpoint of ``method``'s interval when every block is safe.
 
     The data are then fully known, so this holds for every method, the ones the planner
-    cannot invert included: a threshold below it can never PASS.
+    cannot invert included. It is the interval's own endpoint, before any hierarchy-region
+    projection, which can lower it.
     """
 
     from inspect_safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES

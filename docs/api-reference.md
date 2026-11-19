@@ -582,10 +582,18 @@ decides it. That is the group's primary direct-mean interval, under the method t
 These guarantees hold whatever the individual prompts' rates are. The empirical-Bernstein
 interval is planned at the largest variance its estimate allows. The chance of missing is
 bounded by the sharpest of Hoeffding's inequality and the KL-Chernoff interval's Chernoff
-kernel. The output also gives the certification floor: the upper bound when every rollout is
-safe. An `acceptable_upper` below the floor can never PASS. Beside each rate, the output shows
-the weighted Hoeffding rate of `fixed_design_detectable_failure_rates` as a reference, and
-the rates under any `reference_methods`.
+kernel. Beside each rate, the output shows the weighted Hoeffding rate of
+`fixed_design_detectable_failure_rates` as a reference, and the rates under any
+`reference_methods`.
+
+The output also gives the certification floor: the upper bound `analyze` reports when every
+rollout is safe. The planner runs `analyze`'s own interval and hierarchy-region stages on
+those rollouts, so under the default `hierarchy_region: linear_program` the floor is the
+projected bound, and the output gives the raw floor before the projection beside it when the
+projection lowers it. A claim whose `acceptable_upper` is below the floor does not PASS even
+when every rollout is safe. The rates are planned on the interval before the projection. The
+projection can only lower an upper bound and raise a lower one, so it can only raise their
+power.
 
 The analysis method is not always the sharper one. When the rollouts carry unequal weights,
 the KL-Chernoff interval uses a Poisson kernel. That kernel is tight at low failure rates and
@@ -604,9 +612,10 @@ Thresholds are the plan's own: the planner does not read a decision policy.
 The output then lists every direct-mean interval `analyze` will report: each independence
 profile, cohort, selected group and hierarchy node. For each it gives the independent blocks,
 the effective sample size, the endpoint alpha and its calibration, and the certification
-floor. A target resolves when its floor is at or below the smallest `acceptable_upper` of the
-claims planned on its group in that cohort. The levels with nodes that do not resolve are
-summarised at the end.
+floor before and after the hierarchy-region projection. A target resolves when its floor is at
+or below the smallest `acceptable_upper` of the claims planned on its group in that cohort.
+The levels with nodes that do not resolve are summarised at the end: those nodes are not
+certified even when every rollout is safe.
 
 Independence profiles must block by `rollout`, by manifest columns, or by `prompt_id`,
 `question_id`, `task_id` or `cohort_id`. A profile that blocks by a field `analyze` reads

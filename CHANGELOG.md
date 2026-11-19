@@ -305,8 +305,10 @@ described in their pull requests.
   `analyze`'s own construction, so `frontier_sidak` calibration is planned exactly. The output
   also lists every direct-mean interval `analyze` will report, for each independence profile,
   cohort and hierarchy node. Each comes with its alpha, effective sample size and
-  certification floor, and the output names the levels the declared rollouts cannot resolve
-  at their group's `acceptable_upper` (#9). See
+  certification floor: the upper bound `analyze` reports when every rollout is safe, which
+  `analyze`'s own stages compute, its hierarchy-region projection included. The raw floor
+  before the projection is shown beside it. The output names the levels the declared rollouts
+  cannot resolve at their group's `acceptable_upper` (#9). See
   [Command-line interface](docs/api-reference.md#command-line-interface).
 
 - **The fixed-design planner reads the plan.** `plan fixed-design --plan PLAN` takes groups,
