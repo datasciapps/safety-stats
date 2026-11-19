@@ -120,44 +120,8 @@ jobs:
       - run: python -m pip install build
       - run: python -m build
       - name: Install the built wheel into a clean environment
-        run: |
-          python -m venv /tmp/check
-          /tmp/check/bin/python -m pip install --quiet dist/*.whl
-          # The wheel must carry both HTML report templates, not just the modules.
-          /tmp/check/bin/python -c "
-          import inspect_safety_stats
-          from inspect_safety_stats.report import visualization
-          from inspect_safety_stats.generative import visualization as generative
-          print('version', inspect_safety_stats.__version__)
-          assert visualization._TEMPLATE.is_file(), 'report template missing from wheel'
-          assert generative._TEMPLATE.is_file(), 'generative template missing from wheel'
-          "
-          # Without the inspect extra the core installs no Inspect AI, and reading Inspect logs
-          # fails with a message that names the extra.
-          /tmp/check/bin/python -c "
-          import importlib.util
-          assert importlib.util.find_spec('inspect_ai') is None, 'inspect-ai is a core dependency'
-          try:
-              import inspect_safety_stats.ingest.inspect_logs
-          except ImportError as error:
-              assert 'inspect-safety-stats[inspect]' in str(error), error
-          else:
-              raise AssertionError('Inspect logs were readable without the inspect extra')
-          import inspect_safety_stats.ingest.rollout_files
-          "
-          # Reading Inspect logs must work from a clean install with the inspect extra, not only
-          # from a dev environment that happens to have inspect-ai's optional extras.
-          /tmp/check/bin/python -m pip install --quiet "$(ls dist/*.whl)[inspect]"
-          /tmp/check/bin/python -c "
-          from inspect_ai.analysis import evals_df, samples_df
-          import inspect_safety_stats.ingest.inspect_logs
-          import inspect_safety_stats.generative.logs
-          import pyarrow
-          print('log ingestion importable, pyarrow', pyarrow.__version__)
-          "
-          /tmp/check/bin/inspect-safety-stats version
-          /tmp/check/bin/inspect-safety-stats plan zero-failure --threshold 0.01 --alpha 0.05
-          /tmp/check/bin/inspect-safety-stats generative --help > /dev/null
+        # The release workflow runs the same checks on the distributions it publishes.
+        run: bash scripts/check_wheel.sh "$(ls dist/*.whl)" /tmp/check
       - uses: actions/upload-artifact@v4
         with:
           name: distributions
