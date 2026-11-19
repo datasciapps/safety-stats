@@ -581,6 +581,7 @@ described in their pull requests.
   - A `validated` correction bounds the share at a quarter of the calibration's alpha and adds
     that to its budget. `family_alpha`, the coverages and a claim's `alpha` grow by it: a claim
     at family alpha 0.05 decided on a correction with judge alpha 0.05 now reports 0.1125.
+    Each row bounds its own share, so these hold for each row or claim, not jointly over rows.
   - Corrected bounds widen where few rollouts bound the share. With none unclassified the
     bound is about `log(1/alpha) / n` over `n` independent rollouts, and about
     `log(P/alpha) / n` for each of `P` prompts of `n` rollouts when the row assumes nothing

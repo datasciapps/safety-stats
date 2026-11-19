@@ -548,9 +548,11 @@ The judge family alpha is divided equally among the **declared cohorts**, or, wh
 calibration is [scoped to groups](#scoping-the-calibration-to-groups), among the cohorts
 times the listed groups. A single risk row consumes one share; a comparison consumes the two
 shares of the cohorts it spans. A union over every calibration therefore stays inside the
-declared family budget. Each corrected row adds a quarter of each share it uses for the bound
-on its own [unclassified share](#unclassified-rollouts), and reports the total it actually
-spent in `family_alpha`.
+declared family budget. The bound on a row's own [unclassified share](#unclassified-rollouts)
+is spent on top of it: each corrected row adds a quarter of each share it uses and reports
+the total it actually spent in `family_alpha`. That total, and a claim's `alpha`, hold for
+the one row or claim, not jointly over rows. Each row bounds a different share, so a
+statement about several corrected rows at once must also add up their share bounds' alphas.
 
 ### What it assumes
 
