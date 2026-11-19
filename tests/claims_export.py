@@ -1,4 +1,9 @@
-"""Check claims.json against the report.json beside it: every exported value is a copy."""
+"""Check claims.json against the report.json beside it: every exported value is a copy.
+
+The check finds in report.json, by each claim's id, estimand and evidence refs, where each of
+its values must come from, and does not follow the pointers claims.json gives. So an exporter
+that copies faithfully from the wrong result or interval fails it too.
+"""
 
 from __future__ import annotations
 
@@ -75,6 +80,66 @@ def _flat(record: dict[str, Any]) -> dict[tuple[str, str], Any]:
     return flat
 
 
+def _interval_id(result: dict[str, Any], refs: list[str]) -> str | None:
+    """The interval a claim's bound comes from, as the claims.json docs say.
+
+    A claim decided by a test has the test's bound, computed from the result's primary
+    interval. Otherwise it is the interval an ``interval:`` ref names, else the primary one.
+    """
+
+    if any(ref.startswith("test:") for ref in refs):
+        return result["primary_interval_id"]
+    named = [ref.removeprefix("interval:") for ref in refs if ref.startswith("interval:")]
+    return named[0] if named else result["primary_interval_id"]
+
+
+def _expected_sources(report: dict[str, Any], claim_id: str) -> dict[str, str | None]:
+    """Where in report.json each value of a claim's record comes from, found by its id."""
+
+    (claim,) = [
+        index for index, item in enumerate(report["claims"]) if item["claim_id"] == claim_id
+    ]
+    (estimand,) = [
+        index
+        for index, item in enumerate(report["presentation"]["claim_evidence"])
+        if item["claim_id"] == claim_id
+    ]
+    about = report["presentation"]["claim_evidence"][estimand]
+    if about["comparison"] is not None:
+        # A comparison's hierarchy nodes share its id; the claim is about the overall row.
+        found = [
+            f"/comparisons/{index}"
+            for index, item in enumerate(report["comparisons"])
+            if item["comparison_id"] == about["comparison"] and item["level"] is None
+        ]
+    else:
+        found = [
+            f"/group_risks/{index}"
+            for index, item in enumerate(report["group_risks"])
+            if (item["cohort_id"], item["group_id"], item["measure_id"])
+            == (about["cohort"], about["group"], about["measure"])
+        ]
+    if len(found) > 1:
+        raise ValueError(f"claim {claim_id!r} is about {len(found)} results: {found}")
+    evidence = found[0] if found else None
+    interval = None
+    if evidence is not None:
+        result = _resolve(report, evidence)
+        wanted = _interval_id(result, report["claims"][claim]["evidence_refs"])
+        positions = [
+            index
+            for index, item in enumerate(result["intervals"])
+            if wanted is not None and item["interval_id"] == wanted
+        ]
+        interval = f"{evidence}/intervals/{positions[0]}" if positions else None
+    return {
+        "claim": f"/claims/{claim}",
+        "estimand": f"/presentation/claim_evidence/{estimand}",
+        "evidence": evidence,
+        "evidence_interval": interval,
+    }
+
+
 def round_trip_differences(directory: Path) -> list[str]:
     """Where claims.json differs from the report.json beside it; empty when every value is
     the report's own."""
@@ -104,6 +169,7 @@ def round_trip_differences(directory: Path) -> list[str]:
         [item["claim_id"] for item in claims["claims"]],
         [item["claim_id"] for item in report["claims"]],
     )
+
     def named(code: str) -> set[str]:
         return {
             claim_id
@@ -133,8 +199,10 @@ def round_trip_differences(directory: Path) -> list[str]:
             if ref.startswith("test:")
         ]
         expect(f"{name}.evidence.test", record["evidence"]["test"], tests[0] if tests else None)
+        sources = _expected_sources(report, name)
+        expect(f"{name}.sources", record["sources"], sources)
         for field, (source, source_field) in _RECORD_FIELDS.items():
-            pointer = record["sources"][source]
+            pointer = sources[source]
             if pointer is None:
                 recorded = [] if field == ("evidence", "assumptions") else None
             else:
