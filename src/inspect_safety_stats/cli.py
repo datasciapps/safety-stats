@@ -401,14 +401,20 @@ def validate_command(
     log_input, source = _source_arguments(logs, runs, rollouts)
     from inspect_safety_stats.api import validate as run_validation
 
-    result = run_validation(
-        plan=plan,
-        logs=log_input,
-        parallel=parallel or False,
-        source=source,
-        decision_policy=decision_policy,
-        registration_receipt=registration_receipt,
-    )
+    try:
+        result = run_validation(
+            plan=plan,
+            logs=log_input,
+            parallel=parallel or False,
+            source=source,
+            decision_policy=decision_policy,
+            registration_receipt=registration_receipt,
+        )
+    except Exception as exc:
+        # A plan or decision policy that cannot be read is invalid input: say why and exit 3,
+        # as analyze does, instead of ending in a traceback with exit status 1.
+        typer.echo(f"Validation failed: {exc}", err=True)
+        raise typer.Exit(code=ExitCode.ERROR) from exc
     for diagnostic in result.diagnostics:
         scope = f" [{diagnostic.scope}]" if diagnostic.scope else ""
         typer.echo(f"{diagnostic.severity} {diagnostic.code}{scope}: {diagnostic.message}")
