@@ -445,6 +445,8 @@ The command writes:
 
 ```text
 reports/example/
+  index.json
+  index.md
   report.json
   report.md
   report-full.md
