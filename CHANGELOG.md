@@ -359,6 +359,8 @@ described in their pull requests.
   from that effect, as `report.md` gives them. A header line names the report's `index.md` and
   its section "Errors and warnings by code", which lists each code's diagnostics, and
   `report.md` and its section "Warnings", which also gives the assumption each code checks.
+  Under each error's line come up to three of its distinct messages, which say what went
+  wrong, such as a missing manifest or a log reader that needs the `inspect` extra.
   The assumption is not printed in the terminal: it is phrased as what the results rest on,
   so printed alone it would read as a fact where the code reports that it may not hold. A user
   or a coding agent that reads only the command's output now sees what qualifies the headline.

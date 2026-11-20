@@ -92,6 +92,30 @@ def test_analyze_reports_a_missing_manifest_instead_of_raising(tmp_path: Path) -
     assert "INGEST_FAILED" in (written / "report.md").read_text(encoding="utf-8")
 
 
+def test_the_analyze_command_prints_why_an_error_occurred(tmp_path: Path) -> None:
+    # The code and its consequence alone do not say what to change: the message does.
+    plan, source = _inputs(tmp_path, manifest=False)
+    message = analyze(plan=plan, source=source).integrity.diagnostics[0].message
+    result = CliRunner().invoke(
+        app,
+        [
+            "analyze",
+            "--plan",
+            str(plan),
+            "--runs",
+            str(source.runs),
+            "--rollouts",
+            str(source.rollouts),
+            "--output",
+            str(tmp_path / "report"),
+        ],
+    )
+    output = plain(result.output)
+    assert result.exit_code == 3, output
+    line = output.index("ERROR INGEST_FAILED (1 occurrence")
+    assert output.index(" ".join(message.split()), line) > line
+
+
 def test_validate_and_analyze_report_bad_input_the_same_way(tmp_path: Path) -> None:
     plan, source = _inputs(tmp_path)
     source.rollouts.write_text("{not json\n", encoding="utf-8", newline="\n")
