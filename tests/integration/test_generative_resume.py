@@ -237,10 +237,13 @@ def test_resume_through_the_cli(tmp_path: Path) -> None:
     assert "Resumed: 60 units carried over, 40 executed" in result.stdout
 
 
-def test_errored_units_are_named_with_the_way_to_rerun_them(
+def test_errored_units_are_named_with_the_way_to_rerun_them_and_fail_the_command(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A run that finished with errored units says how many, and that --resume reruns them."""
+    """A run that finished with errored units says how many, and that --resume reruns them.
+
+    It exits 3, so that a script does not go on to evaluate a dataset that lacks them.
+    """
 
     import inspect_safety_stats.generative.runner as runner_module
 
@@ -251,7 +254,7 @@ def test_errored_units_are_named_with_the_way_to_rerun_them(
         app, ["generative", "materialize", "--plan", str(plan), "--output", str(tmp_path / "run")]
     )
     output = plain(result.output)
-    assert result.exit_code == 0, output
+    assert result.exit_code == 3, output
     assert "4 errored" in output
     assert "4 units errored and are not in the dataset" in output
     assert "--resume" in output

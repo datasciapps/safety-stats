@@ -20,10 +20,11 @@ described in their pull requests.
   question_id, task_id; groups[all].weights.hierarchy names task_id)", including settings a plan
   leaves at their defaults. Which columns are required is unchanged.
 
-- **`generative materialize` says how to rerun errored units.** A run whose provider errored on
-  some units printed their count only in its summary line and exited `0`. It now also warns
-  that they are not in the dataset and that `--resume` runs them again. The exit status is
-  unchanged.
+- **`generative materialize` fails when units errored, and says how to rerun them.** A run whose
+  provider errored on some units printed their count only in its summary line and exited `0`,
+  so a script went on to evaluate a dataset that lacked them. It now warns that they are not in
+  the dataset and that `--resume` runs them again, and exits `3`. A run in which no unit
+  errored exits as before.
 
 - **`--runs` without `--rollouts` names the missing option.** `analyze` and `validate` said
   "--runs and --rollouts are given together"; they now say "--runs needs --rollouts", or the
