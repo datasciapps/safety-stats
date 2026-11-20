@@ -19,6 +19,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
+  "Typing :: Typed",
 ]
 # Each floor is the lowest version the test suite passes with, at uv's lowest-direct resolution
 # with NumPy 1 and with NumPy 2. Below them: SciPy's betaincinv, which gives the bound
