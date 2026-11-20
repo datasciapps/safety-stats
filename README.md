@@ -2,7 +2,15 @@
 
 [![CI](https://github.com/aduncan001/safety_stats/actions/workflows/ci.yml/badge.svg)](https://github.com/aduncan001/safety_stats/actions/workflows/ci.yml)
 
-`inspect-safety-stats` provides fixed-design statistical risk analysis for binary safety outcomes produced by [Inspect AI](https://inspect.aisi.org.uk/).
+`inspect-safety-stats` provides fixed-design statistical risk analysis for pass/fail LLM
+evaluations: safety, reliability, capability and LLM-as-a-judge benchmarks. It gives confidence
+intervals for failure rates, compares models and harness versions, plans how many rollouts a
+claim needs, and corrects rates for an LLM judge's misclassification.
+
+It reads [Inspect AI](https://inspect.aisi.org.uk/) logs, and results from any other evaluation
+harness written as [rollout files](https://github.com/aduncan001/safety_stats/blob/main/docs/rollout-files.md)
+(experimental). Its bounds and planning functions in [`inspect_safety_stats.stats`](#python-api)
+also work on their own, on counts from anywhere, without Inspect installed.
 
 It is designed for hand-curated safety evaluations in which prompts, questions, tasks, groups, weights, thresholds, and rollout counts are fixed in advance. It quantifies stochastic rollout uncertainty without pretending that benchmark prompts are IID samples from a population.
 

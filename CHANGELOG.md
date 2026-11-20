@@ -1190,6 +1190,13 @@ described in their pull requests.
 
 ### Changed
 
+- **The package says what it covers on PyPI.** The README's opening and the package
+  description named only Inspect AI safety outputs. They now name pass/fail LLM evaluations in
+  general, rollout files from other harnesses, and the standalone `inspect_safety_stats.stats`
+  functions, and the package keywords add the terms people search for, such as
+  `confidence-intervals`, `llm-evaluation` and `llm-as-a-judge`. `CITATION.cff`'s abstract
+  follows the description.
+
 - **A mapping value that no score can match is refused when the plan loads.** An outcome
   mapping's `failure_values` and `safe_values`, in `inputs.score`, a judge's score or an
   outcome mapping sensitivity, now list text, numbers and booleans only. A list or an object

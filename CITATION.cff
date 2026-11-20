@@ -2,7 +2,7 @@ cff-version: 1.2.0
 message: "If you use this software, please cite it using the metadata from this file."
 type: software
 title: "Inspect Safety Stats"
-abstract: "Fixed-design statistical risk analysis for Inspect AI safety evaluations."
+abstract: "Confidence intervals, model comparisons, rollout planning and LLM-judge correction for pass/fail LLM evaluations, from Inspect AI logs or any harness."
 version: 0.16.0
 license: MIT
 authors:

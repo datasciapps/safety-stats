@@ -5,12 +5,27 @@ build-backend = "hatchling.build"
 [project]
 name = "inspect-safety-stats"
 version = "0.16.0"
-description = "Fixed-design statistical risk analysis for Inspect AI safety evaluations"
+description = "Confidence intervals, model comparisons, rollout planning and LLM-judge correction for pass/fail LLM evaluations, from Inspect AI logs or any harness"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Inspect Safety Stats contributors" }]
-keywords = ["inspect-ai", "ai-safety", "statistics", "evaluation"]
+keywords = [
+  "inspect-ai",
+  "ai-safety",
+  "statistics",
+  "evaluation",
+  "llm-evaluation",
+  "benchmarks",
+  "confidence-intervals",
+  "clopper-pearson",
+  "model-comparison",
+  "sample-size",
+  "power-analysis",
+  "llm-as-a-judge",
+  "judge-calibration",
+  "red-teaming",
+]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "License :: OSI Approved :: MIT License",
