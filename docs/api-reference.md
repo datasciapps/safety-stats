@@ -189,8 +189,10 @@ machine-readable. The default `two_sided` mode splits family alpha across the tw
 
 ## Statistical functions
 
-All functions below are importable from `inspect_safety_stats.stats`. They are pure and do not read
-logs or plans.
+The functions below are importable from `inspect_safety_stats.stats`, except where a block names
+another module: those are not in `inspect_safety_stats.stats.__all__`, so they are not a
+protected interface (see `CONTRIBUTING.md`, section 4) and may change in a minor release. All are
+pure and do not read logs or plans.
 
 ### Exact binomial bounds
 
@@ -468,6 +470,8 @@ InclusionDesign(design_weights, inclusion_probabilities, sampled)
 horvitz_thompson_mean_bounds(design, completion_lower, completion_upper, *,
                              alpha_lower, alpha_upper, method="weighted_empirical_bernstein")
 
+# Not in inspect_safety_stats.stats.__all__: import these two from
+# inspect_safety_stats.stats.design_based.
 FixedSizeDesign(stratum_index, frame_weights, draws, sampled)
 fixed_size_mean_bounds(design, completion_lower, completion_upper, *,
                        alpha_lower, alpha_upper, method="weighted_empirical_bernstein")
@@ -485,6 +489,9 @@ analysis pipeline; see
 ### Judge misclassification
 
 ```python
+# Not in inspect_safety_stats.stats.__all__: import JudgeStratumCounts, TruthStratumCounts,
+# estimate_judge_calibration, completion_warning and noisy_valid_certification from
+# inspect_safety_stats.stats.misclassification.
 JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source,
                  alpha=None, completed_strata=())   # strata completed as [0, 1]
 JudgeStratumCounts(labelled, truly_unsafe, stratum_size)
