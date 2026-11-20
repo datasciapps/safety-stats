@@ -1426,6 +1426,16 @@ def generative_materialize_command(
         typer.echo(f"Warning: {run.kernel_mismatch}", err=True)
     if run.validator_mismatch:
         typer.echo(f"Warning: {run.validator_mismatch}", err=True)
+    if run.errored:
+        # An errored unit is not final (generative/runner.py): a resume runs it again.
+        units, them = ("unit errored and is", "it") if run.errored == 1 else (
+            "units errored and are", "them"
+        )
+        typer.echo(
+            f"Warning: {run.errored} {units} not in the dataset. Run the same command with "
+            f"--resume to run {them} again.",
+            err=True,
+        )
     typer.echo(f"Dataset: {run.dataset}")
     typer.echo(f"Artifacts: {run.output}")
     if run.accepted == 0:

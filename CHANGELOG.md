@@ -7,6 +7,11 @@ described in their pull requests.
 
 ### Fixed
 
+- **`generative materialize` says how to rerun errored units.** A run whose provider errored on
+  some units printed their count only in its summary line and exited `0`. It now also warns
+  that they are not in the dataset and that `--resume` runs them again. The exit status is
+  unchanged.
+
 - **`--runs` without `--rollouts` names the missing option.** `analyze` and `validate` said
   "--runs and --rollouts are given together"; they now say "--runs needs --rollouts", or the
   reverse, and still exit `2`.
