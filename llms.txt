@@ -1,0 +1,58 @@
+# inspect-safety-stats
+
+> Fixed-design statistical risk analysis, rollout sample-size planning, LLM-judge misclassification correction, and multi-model comparisons for binary LLM evaluations (safety, reliability, capability, and LLM-as-a-judge benchmarks). Quantifies stochastic rollout uncertainty over a declared prompt set without treating curated prompts as IID draws from an external population.
+
+`inspect-safety-stats` supports three entry points:
+
+1. **Standalone statistical functions (`inspect_safety_stats.stats`)**: Pure Python/NumPy/SciPy functions for rollout sample-size planning, exact Clopper-Pearson bounds, weighted Hoeffding / empirical-Bernstein / KL-Chernoff intervals, tail risk measures (CVaR, entropic, worst-of-k), paired McNemar and Newcombe comparisons, and LLM-judge misclassification correction. Operates directly on Python counts and pass/fail lists, with no log files, YAML configuration, or evaluation harness required.
+2. **Inspect AI confirmatory pipeline (`inspect-safety-stats` CLI and `analyze()`)**: Validates completed [Inspect AI](https://inspect.aisi.org.uk/) `.eval` logs against a strict `schema_version: "2.0"` YAML/JSON plan and a CSV prompt manifest, then writes a deterministic report directory: `index.json` and `index.md` (the entry point for agents), `report.json`, `report.md`, `report-full.md`, self-contained interactive `report.html`, CSV tables, and SHA-256 checksums.
+3. **Results from any other harness as rollout files (`--runs` / `--rollouts`, `source=RolloutFiles(...)`; experimental)**: Evaluators using custom harnesses write a runs file and a rollouts file in JSON Lines or CSV ([Rollout files](docs/rollout-files.md)) and pass them to `validate` and `analyze` in place of Inspect logs, with the same manifests and reports and no Inspect AI install. The plan must be `schema_version: "3.0"`, or `2.0` with `rollout_key` set.
+
+For a single-file API reference, estimator selection table, and runnable templates, read [llms-full.txt](llms-full.txt). For a procedural coding-agent workflow, load [skills/inspect-safety-stats/SKILL.md](skills/inspect-safety-stats/SKILL.md).
+
+## Getting started and installation
+
+- [Getting started](docs/getting-started.md): End-to-end walkthrough built around the offline 12-prompt comparison demo (`python examples/demo/run_demo.py`), requiring no API keys.
+- [Installation](docs/installation.md): Python 3.11+ setup, optional extras, CLI smoke checks, exit-code troubleshooting, and platform notes.
+- [Quickstart](docs/quickstart.md): Step-by-step validation and analysis of a fixed-design Inspect evaluation.
+- [Running Inspect for analysis](docs/running-inspect.md): Inspect settings that decide what the analysis can use: epochs without an epochs reducer, cohorts by task argument, the request timeout, and the connection limit a target model and an LLM judge share.
+- [Rollout files](docs/rollout-files.md): Experimental. Analysing results from any other evaluation harness by writing a runs file and a rollouts file (JSON Lines or CSV) and passing `--runs`/`--rollouts`, or `source=RolloutFiles(...)`, in place of Inspect logs.
+
+## Reference and configuration
+
+- [API reference](docs/api-reference.md): Public Python functions (`analyze`, `validate`, `load_plan`, `write_visualization`), `inspect_safety_stats.stats` signatures, and CLI commands and exit codes.
+- [Analysis plan reference](docs/plan-reference.md): Complete `schema_version: "2.0"` YAML/JSON specification, score mappings, missing/error policies, cohorts, groups, multiplicity families, and claims.
+- [Reading a report as an agent](docs/agent-guide.md): Which file of a report directory to open first (`index.json`), how its JSON pointers into `report.json` work, the summary and warnings fields, and what not to conclude.
+- [Interpreting results](docs/interpretation.md): Scope boundaries, simultaneous versus diagnostic intervals, two-sided versus per-direction coverage, and optional threshold decisions.
+- [What results establish](docs/what-results-establish.md): What a result shows and does not show, and where in the report to check each condition it rests on; every report of a fixed or sampled design links to this page.
+- [Diagnostic codes and assumptions](docs/diagnostics.md): Every diagnostic code a report can contain and every assumption its results rest on, with its effect on the results and what to change.
+- [Limitations log](docs/limitations.md): Limitations found on real evaluations, numbered L1, L2, ..., with what the package now does about each.
+
+## Statistical guides
+
+- [Judge misclassification](docs/judge-misclassification.md): Mapping imperfect LLM-judge rates onto true risk under assumed positive/negative predictive values, human-labelled validation strata, and multi-judge panels.
+- [Fixed-design model and configuration comparisons](docs/model-comparisons.md): Two-arm and multi-arm (`comparison_sets`) risk differences, risk ratios, relative reductions, simultaneous rank sets, and paired diagnostics.
+- [Configuring hierarchy and independence](docs/independence-profiles.md): Separating aggregation hierarchies (`task_id -> question_id -> prompt_id`) from rollout or prompt-cluster independence blocks.
+- [Hierarchy-aware simultaneous inference](docs/hierarchy-simultaneous-inference.md): Frontier Sidak calibration and linear-program confidence-region projection across hierarchy nodes.
+- [Design-based inference for sampled item frames](docs/design-based-sampling.md): Horvitz-Thompson frame-mean bounds when prompts are drawn from a larger frame with known inclusion probabilities.
+- [Mathematical methods and justification](docs/statistical-methods.md): Derivations, assumptions, and coverage guarantees for every implemented bound and risk functional.
+- [Decision policies](docs/decision-policy.md): Experimental. Keeping claim thresholds in a separate policy that can be written or revised after the run without changing the plan, its hash, or the error bound of its verdicts.
+- [Anytime-valid confidence sequences](docs/sequential-design.md): Design for sequential analysis when observed outcomes decide when sampling stops; only the one-sided bound for runs that optstop stopped is built (experimental).
+
+## Worked examples
+
+- [Offline comparison demo](examples/demo/README.md): Self-contained simulated baseline-versus-candidate evaluation and comparison report.
+- [Two versions of a harness, one model](examples/harness_versions/README.md): Offline comparison of a safety evaluation's failure rate under harness version 1 and version 2 with the model unchanged, with no threshold declared.
+- [Eight real SimpleQA items](examples/real_simpleqa/README.md): Bundled `.eval` log, manifest, and `v2.0` plan runnable offline in seconds.
+- [Fixed-design template](examples/fixed_design/README.md): Starter manifest, single-cohort plan, and comparison plan.
+- [HarmBench multi-rollout evaluation](examples/real_harmbench/README.md): Direct-request safety evaluation across multiple epochs.
+- [JailbreakBench multi-model and multilingual comparisons](examples/real_jailbreakbench/README.md): Joint multi-arm comparisons and simultaneous rank sets across models and languages.
+- [Sampled HarmBench frame](examples/sampled_harmbench/README.md): Poisson and stratified probability sampling with Horvitz-Thompson bounds.
+- [XSTest over-refusal calibration](examples/real_xstest/README.md): Measuring benign-prompt false refusals alongside safety evaluations.
+
+## Optional
+
+- [Generative evaluation](docs/generative-evaluation.md): Experimental taxonomy-sampled prompt generation, materialization ledgers, and analysis.
+- [Generative evaluation design decisions](docs/generative-design-decisions.md): Architecture and statistical rationale for the experimental generative subsystem.
+- [Contributing](CONTRIBUTING.md): Change classes (A/B/C), protected interfaces, determinism requirements, and CI checks.
+- [Agent contributor notes](AGENTS.md): Repository rules and regression traps for contributors modifying `inspect-safety-stats` itself.

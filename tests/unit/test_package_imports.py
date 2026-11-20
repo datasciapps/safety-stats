@@ -23,6 +23,7 @@ def _run(code: str) -> str:
         "inspect_safety_stats.ingest",
         "inspect_safety_stats.generative",
         "inspect_safety_stats.stats",
+        "inspect_safety_stats.registry",
     ],
 )
 def test_importing_the_package_or_cli_loads_no_heavy_dependency(module: str) -> None:

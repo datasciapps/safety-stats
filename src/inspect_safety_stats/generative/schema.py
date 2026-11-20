@@ -230,15 +230,72 @@ class TaxonomySpec(StrictModel):
 
 
 class RewriteValidationSpec(StrictModel):
+    """How a rewrite is judged acceptable.
+
+    ``invoke`` is experimental. Left ``false``, ``validator_id`` is only declared and
+    fingerprinted, and the kernel's own verdict is trusted. Set ``true``, materialization
+    needs a validator whose ``validator_id`` is this one, calls it on every rewrite the
+    kernel returns as valid, and records every attempt in ``attempts.csv`` so the analysis
+    can report fidelity by arm.
+    """
+
     validator_id: str = Field(min_length=1)
     mode: Literal["deterministic"] = "deterministic"
     on_invalid: Literal["retry", "fail"] = "retry"
     maximum_attempts: PlanInt = Field(default=5, ge=1)
+    invoke: bool = False
 
 
 class RewriteDeduplicationSpec(StrictModel):
+    """Which rewrites within a scope count as the same prompt.
+
+    By default only an exact repeat of the text does. ``near_duplicate: normalized_text``
+    (experimental) also counts two rewrites whose letters, combining marks and digits agree
+    after Unicode NFKC normalization and case folding: punctuation, symbols, whitespace,
+    enclosing marks, default-ignorable code points such as variation selectors, and the
+    Arabic tatweel are removed. It makes materialization record every attempt
+    in ``attempts.csv``. A near duplicate is handled by ``on_duplicate`` like an exact one.
+    ``scope: none`` compares nothing, so it is refused together with ``near_duplicate``.
+    """
+
     scope: Literal["semantic_seed_path", "structural_path", "none"] = "semantic_seed_path"
     on_duplicate: Literal["retry", "accept"] = "retry"
+    near_duplicate: Literal["off", "normalized_text"] = "off"
+
+    @model_validator(mode="after")
+    def near_duplicates_need_a_scope(self) -> RewriteDeduplicationSpec:
+        if self.near_duplicate != "off" and self.scope == "none":
+            raise ValueError(
+                f"rewrite.deduplication.near_duplicate: {self.near_duplicate} compares a "
+                "rewrite with those accepted within its deduplication scope, and scope: none "
+                "compares nothing, so it would detect nothing; set scope to "
+                "semantic_seed_path or structural_path, or near_duplicate to off"
+            )
+        return self
+
+
+def turn_count(level: str, value: str) -> int:
+    """The user-turn count a value of the conversation-turns arm declares."""
+
+    if not value.isdigit() or int(value) < 1:
+        raise ValueError(
+            f"rewrite.conversation_turns arm {level!r} has value {value!r}; its values are "
+            "user-turn counts, positive integers such as '1' or '3'"
+        )
+    return int(value)
+
+
+class SystemPromptSpec(StrictModel):
+    """An arm over system prompts (experimental).
+
+    The rewrite procedure attaches ``texts[value]`` as the system turn of every rewrite on
+    a path whose ``level`` takes that value. An empty text declares that value's paths to
+    have no system prompt. A system turn the kernel writes stops the run on every path, an
+    empty text's included, so each arm value's system prompt is exactly the declared text.
+    """
+
+    level: str = Field(min_length=1)
+    texts: dict[str, str] = Field(min_length=1)
 
 
 class RewriteSpec(StrictModel):
@@ -253,6 +310,32 @@ class RewriteSpec(StrictModel):
     seed_replayable: bool = False
     validation: RewriteValidationSpec
     deduplication: RewriteDeduplicationSpec = Field(default_factory=RewriteDeduplicationSpec)
+    # Experimental. ``conversation`` makes the kernel return whole conversations (system,
+    # user and generator-written assistant turns), materialized as Inspect message lists.
+    output: Literal["prompt", "conversation"] = "prompt"
+    system_prompts: SystemPromptSpec | None = None
+    # Experimental. An arm whose values are user-turn counts: each conversation on a path
+    # must have exactly that many user turns, or the attempt is rejected as invalid: like
+    # any invalid attempt, it uses up one of validation.maximum_attempts and follows
+    # validation.on_invalid.
+    conversation_turns: str | None = None
+
+    @model_validator(mode="after")
+    def turns_need_conversations(self) -> RewriteSpec:
+        if self.conversation_turns is not None and self.output != "conversation":
+            raise ValueError("rewrite.conversation_turns requires rewrite.output: conversation")
+        return self
+
+    def stores_conversations(self) -> bool:
+        """Whether accepted rewrites are conversations rather than bare prompts."""
+
+        return self.output == "conversation" or self.system_prompts is not None
+
+    @property
+    def records_attempts(self) -> bool:
+        """Whether materialization writes the per-attempt ledger, ``attempts.csv``."""
+
+        return self.validation.invoke or self.deduplication.near_duplicate != "off"
 
 
 class JudgeCalibrationSpec(StrictModel):
@@ -260,8 +343,10 @@ class JudgeCalibrationSpec(StrictModel):
 
     ``mode: assumed`` carries no evidence: every corrected interval it produces is a
     diagnostic sensitivity result. ``mode: validated`` estimates the same two conditional
-    accuracies from human labels drawn within each judge stratum, and its corrected
-    intervals are certifying at the combined error budget.
+    accuracies from human labels drawn within each judge stratum. Its corrected root is
+    certifying at the combined error budget when the root weights every unit equally; its
+    corrected nodes and slices are sensitivities, since the pooled labels do not measure
+    the judge's accuracy within them.
 
     Human labels key on the sample identifier materialization wrote, since a generative
     run has no prompt manifest to key on.
@@ -294,6 +379,14 @@ class JudgeCalibrationSpec(StrictModel):
                 raise ValueError(f"primary scenario {self.primary!r} is not declared")
             if self.validation_manifest is not None:
                 raise ValueError("validation_manifest applies only to mode: validated")
+            # The generative correction reads one box per scenario; a per-cohort box would
+            # be ignored, so it is refused.
+            per_cohort = [scenario.id for scenario in self.scenarios if scenario.cohorts]
+            if per_cohort:
+                raise ValueError(
+                    "per-cohort judge calibration boxes are not supported in generative "
+                    "plans; remove cohorts from scenarios " + ", ".join(map(repr, per_cohort))
+                )
         else:
             if self.validation_manifest is None:
                 raise ValueError("validated judge calibration requires a validation_manifest")
@@ -382,12 +475,58 @@ class ReweightingSpec(StrictModel):
         return self
 
 
+class FamilySliceSpec(StrictModel):
+    """Every path carrying ``level=value``, as a member of the declared family."""
+
+    level: str = Field(min_length=1)
+    value: str = Field(min_length=1)
+
+
+class ArmContrastSpec(StrictModel):
+    """Two values of one arm level, compared on the seeds that hold both."""
+
+    id: str = Field(min_length=1)
+    level: str = Field(min_length=1)
+    candidate: str = Field(min_length=1)
+    baseline: str = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def values_differ(self) -> ArmContrastSpec:
+        if self.candidate == self.baseline:
+            raise ValueError(f"contrast {self.id!r} compares {self.candidate!r} with itself")
+        return self
+
+
+class SliceFamilySpec(StrictModel):
+    """Experimental: slices and arm contrasts covered simultaneously at ``1 - alpha``.
+
+    Declared in the frozen plan for the same reason as design sensitivity: the family the
+    error budget is spent on must not be chosen after seeing the results.
+    """
+
+    slices: list[FamilySliceSpec] = Field(default_factory=list)
+    contrasts: list[ArmContrastSpec] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def family_is_well_formed(self) -> SliceFamilySpec:
+        if not self.slices and not self.contrasts:
+            raise ValueError("inference.slice_family declares no slice and no contrast")
+        keys = [(item.level, item.value) for item in self.slices]
+        if len(set(keys)) != len(keys):
+            raise ValueError("inference.slice_family declares the same slice twice")
+        ids = [item.id for item in self.contrasts]
+        if len(set(ids)) != len(ids):
+            raise ValueError("inference.slice_family declares the same contrast id twice")
+        return self
+
+
 class InferenceSpec(StrictModel):
     alpha: PlanFloat = Field(default=0.05, gt=0.0, lt=1.0)
     coverage_mode: Literal["one_sided_upper", "two_sided"] = "one_sided_upper"
     report_all_nodes: bool = True
     simultaneous_tree: bool = False
     design_sensitivity: list[ReweightingSpec] = Field(default_factory=list)
+    slice_family: SliceFamilySpec | None = None
 
 
 class GenerativePlan(StrictModel):
@@ -405,6 +544,61 @@ class GenerativePlan(StrictModel):
     sampling: SamplingSpec
     judge_calibration: JudgeCalibrationSpec | None = None
     inference: InferenceSpec = Field(default_factory=InferenceSpec)
+
+    @model_validator(mode="after")
+    def system_prompts_name_an_arm(self) -> GenerativePlan:
+        turns_level = self.rewrite.conversation_turns
+        if turns_level is not None:
+            turns_arm = self.taxonomy.arms.get(turns_level)
+            if turns_arm is None:
+                raise ValueError(
+                    f"rewrite.conversation_turns {turns_level!r} is not an arm in taxonomy.arms"
+                )
+            for value in turns_arm.values or []:
+                turn_count(turns_level, value.id)
+        spec = self.rewrite.system_prompts
+        if spec is None:
+            return self
+        if spec.level == turns_level:
+            raise ValueError(
+                "rewrite.system_prompts and rewrite.conversation_turns name the same arm"
+            )
+        arm = self.taxonomy.arms.get(spec.level)
+        if arm is None:
+            raise ValueError(
+                f"rewrite.system_prompts.level {spec.level!r} is not an arm in "
+                "taxonomy.arms; a system prompt varies only over a sampled level"
+            )
+        if arm.values is not None:
+            declared = {value.id for value in arm.values}
+            missing = sorted(declared - set(spec.texts))
+            unknown = sorted(set(spec.texts) - declared)
+            if missing:
+                raise ValueError(
+                    f"rewrite.system_prompts.texts has no text for {spec.level} values: "
+                    f"{', '.join(missing)}"
+                )
+            if unknown:
+                raise ValueError(
+                    f"rewrite.system_prompts.texts names values {spec.level!r} does not "
+                    f"declare: {', '.join(unknown)}"
+                )
+        return self
+
+    @model_validator(mode="after")
+    def slice_family_is_over_arm_levels(self) -> GenerativePlan:
+        family = self.inference.slice_family
+        if family is None:
+            return self
+        for level in [item.level for item in family.slices] + [
+            item.level for item in family.contrasts
+        ]:
+            if level not in self.taxonomy.arms:
+                raise ValueError(
+                    f"inference.slice_family names {level!r}, which is not an arm level; "
+                    "slices of fixed levels are nodes of the tree"
+                )
+        return self
 
 
 def load_generative_plan(path: str | Path) -> GenerativePlan:

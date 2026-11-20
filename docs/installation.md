@@ -4,12 +4,23 @@
 
 - Python 3.11 or newer.
 - Linux, macOS, or Windows. CI runs the test suite on all three.
-- For Inspect AI logs: Inspect AI 0.3.259 through the latest compatible 0.3 release, installed by
-  the `inspect` extra, and completed Inspect evaluation logs.
+- For Inspect AI logs: Inspect AI 0.3.289 or a later 0.3 release, installed by the `inspect`
+  extra, and completed Inspect evaluation logs. Logs written by Inspect AI 0.3.259 or later are
+  read.
 - For results from another evaluation system: [rollout files](rollout-files.md), which need no
   extra.
 
 The analyzer is offline. It does not call model providers or make network requests.
+
+## Install from PyPI
+
+```bash
+python -m pip install 'inspect-safety-stats[inspect]'
+```
+
+The `inspect` extra installs Inspect AI and pyarrow, which reading Inspect logs needs. Leave it
+out to analyse only rollout files: `python -m pip install inspect-safety-stats`. The examples
+and the offline demo are not part of the package: run them from a checkout.
 
 ## Install from a checkout
 
@@ -123,4 +134,4 @@ The manifest's `expected_rollouts` must match the number of terminal sample epoc
 
 ### The plan is reported as post hoc
 
-For a confirmatory analysis, `analysis.plan_frozen_at` must precede the earliest selected evaluation. A registration hash is recommended for stronger provenance.
+For a confirmatory analysis, `analysis.plan_frozen_at` must precede the earliest selected evaluation. A registration hash is recommended for stronger provenance. `PLAN_RECEIPT_POSTHOC` means the same for a [registration receipt](plan-reference.md#registration-receipts-experimental): it was written after generation started.

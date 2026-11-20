@@ -16,6 +16,7 @@ import pytest
 
 from inspect_safety_stats import analyze
 from inspect_safety_stats.report import visualization
+from tests.template_functions import function_source
 
 SIMPLEQA = Path(__file__).resolve().parents[2] / "examples" / "real_simpleqa"
 
@@ -52,19 +53,6 @@ process.stdout.write(JSON.stringify(out));
 """
 
 
-def _function_source(template: str, name: str) -> str:
-    start = template.index(f"function {name}(")
-    depth = 0
-    for index in range(template.index("{", start), len(template)):
-        if template[index] == "{":
-            depth += 1
-        elif template[index] == "}":
-            depth -= 1
-            if depth == 0:
-                return template[start : index + 1]
-    raise AssertionError(f"unbalanced braces in {name}")
-
-
 def _humanize(value: str) -> str:
     return re.sub(r"\b\w", lambda match: match.group(0).upper(), re.sub(r"[_-]+", " ", value))
 
@@ -79,7 +67,7 @@ def test_coverage_line_states_the_selected_intervals_method_and_assumptions(
     template = visualization._TEMPLATE.read_text(encoding="utf-8")
     functions = tmp_path / "functions.js"
     functions.write_text(
-        "\n".join(_function_source(template, name) for name in _FUNCTIONS), encoding="utf-8"
+        "\n".join(function_source(template, name) for name in _FUNCTIONS), encoding="utf-8"
     )
     payload = tmp_path / "report.json"
     payload.write_text(json.dumps(report.model_dump(mode="json")), encoding="utf-8")

@@ -162,7 +162,9 @@ inspect-safety-stats generative compile --plan plan.yaml
 ```
 
 Compiles the taxonomy and reports what it contains -- node counts, terminal paths, what the
-constraints pruned, the fingerprint -- without generating anything.
+constraints pruned, the fingerprint -- without generating anything. A declared
+[slice family](#arm-contrasts-and-a-simultaneous-slice-family-experimental) is checked against
+the paths `materialize` will select.
 
 ```bash
 inspect-safety-stats generative materialize \
@@ -173,7 +175,8 @@ Selects paths, runs the rewrite procedure, and writes `datasets/dataset.jsonl` f
 `selections.csv` and `rewrites.csv` as ledgers, and `prompts.restricted.csv` -- the only
 artifact carrying prompt text.
 
-`--kernel` takes `fake`, `fake:invalid_every=N`, `module:attribute` for something
+`--kernel` takes `fake`, `fake:` with comma-separated options (`invalid_every=N`,
+`output=conversation`), `module:attribute` for something
 importable, or `path/to/file.py:attribute` for a local file. The file form needs no
 `__init__.py` and no `PYTHONPATH`, which is usually what you want for a kernel that lives in
 your own project. Either way the attribute may be a kernel or a zero-argument factory
@@ -200,10 +203,82 @@ interrupted run would have gone on to draw.
 A unit whose retries were **exhausted** is not retried. It is part of the accepted distribution
 the estimand is defined against, and re-running it would grant it more than `maximum_attempts`.
 A unit that **errored** is retried, because an operational failure says nothing about the
-kernel. Both artifacts are append-only, so resuming cannot destroy the work it builds on.
+kernel. Before it runs anything, `--resume` writes `rewrites.csv`, `prompts.restricted.csv`
+and `attempts.csv` afresh, each once and in one step, with the rows of every finished unit.
+The errored units' rows are dropped from `rewrites.csv`, so each unit keeps one row, and the
+attempts of every unit that will run again from `attempts.csv`. After that the ledgers are
+only appended to, so resuming cannot destroy the work it builds on. All three end every line
+with LF; a resume converts the CRLF line endings a development version wrote.
 
 The plan is re-compiled and checked against the recorded selection ledger first, so a directory
 belonging to a different design is refused rather than silently continued.
+
+Each row of `rewrites.csv` records the kernel fingerprint of the rewrite procedure that produced
+it. A resume does not compare it with the plan's, so a plan whose rewrite section or prompt
+template changed before a resume, or after materialization, is still analysed. `generative
+analyze` then warns with `GENERATIVE_KERNEL_MISMATCH`, which counts the units recorded under
+another fingerprint than the plan's: the report's `kernel_sha256` does not describe them.
+Materialize again from the start to keep one procedure behind every rewrite.
+
+## Conversations and system prompts (experimental)
+
+A unit can be a whole conversation rather than a single prompt, and the system prompt the
+target runs under can be an arm of the design. Three `rewrite` keys turn this on. All are
+optional, and a plan that uses none of them materializes exactly what it did before.
+
+```yaml
+taxonomy:
+  hierarchy: [problem_class, semantic_seed_id, language, turns, deployment]
+  arms:
+    turns:
+      values: [{id: "1", weight: 0.5}, {id: "3", weight: 0.5}]
+    deployment:
+      values: [{id: none, weight: 0.5}, {id: support, weight: 0.5}]
+
+rewrite:
+  output: conversation          # the kernel returns messages, not a prompt
+  conversation_turns: turns     # an arm whose values are user-turn counts
+  system_prompts:               # an arm whose values select a system prompt
+    level: deployment
+    texts:
+      none: ""                  # empty: this value's conversations have no system prompt
+      support: You are the support assistant of an online pharmacy.
+```
+
+- **`output: conversation`.** The kernel returns `messages`, a tuple of `ChatTurn`. A
+  conversation may open with a system turn, then alternates user and assistant turns and
+  ends on a user turn, which the target answers. The assistant turns are written by the
+  kernel, not by the target. The dataset's `input` is then an Inspect message list, and the
+  prompt store holds the conversation as canonical JSON, which is what is hashed and
+  deduplicated. A validator invoked by the package (`rewrite.validation.invoke`) receives
+  that JSON, with the system turn attached, as its prompt text.
+- **`system_prompts`.** The procedure attaches `texts[value]` as the system turn of every
+  conversation on a path where `level` takes that value; an empty text gives that value's
+  conversations no system prompt. The kernel sees the text as `request.system_prompt`, or
+  `None` where it is empty, and must not write a system turn itself. If it writes one on any
+  path, including one whose value has an empty text, the run stops. The arm needs a text for
+  every value the taxonomy can draw. This key works with `output: prompt` too: the prompt
+  becomes a one-turn conversation behind the system prompt.
+- **`conversation_turns`.** Each value must be a positive integer. The kernel sees it as
+  `request.conversation_turns`. Every conversation is checked: one with another number of
+  user turns is rejected as an invalid attempt, so no conversation is counted under an arm
+  value it does not have. Like any invalid attempt, it uses up one of
+  `rewrite.validation.maximum_attempts` and follows `rewrite.validation.on_invalid`: with
+  `retry` the unit is retried while attempts remain, and with `fail` the unit is exhausted
+  at the first such conversation. An exhausted unit counts in `acceptance.csv` and is
+  completed as unclassified in the join (see [Rewrite acceptance](#rewrite-acceptance)).
+  Needs `output: conversation`, and must not name the same arm as `system_prompts`.
+
+Each key that is set enters the kernel fingerprint. The estimand stays what it was: the
+failure rate over the distribution the declared procedure induces. With these keys that
+distribution is over conversations, and a unit's outcome is the target's answer to the last
+user turn, given the scripted history. The target never wrote the assistant turns it sees,
+so a result describes how it behaves after a history it is told it produced. It does not
+describe a conversation in which it answered every turn itself.
+
+These keys are experimental. Their names and behaviour may change without a schema-version
+change. The live example's auditor kernel is a reference kernel for them; see
+[the live example](../examples/generative_live/README.md#multi-turn-conversations-experimental).
 
 ## Why the intervals are exact
 
@@ -248,15 +323,25 @@ judge_calibration:
 
 `rho_1` is P(truly unsafe | judge said unsafe) and `rho_0` is P(truly unsafe | judge said
 safe). The identity `R* = R·rho_1 + (1-R)·rho_0` is affine in `R` with positive slope, so it
-applies to the root, every node and every slice unchanged. See
+holds for the root, every node and every slice, with `rho` weighted the way each of them
+weights its units. See
 [judge misclassification](judge-misclassification.md) for the derivation.
 
 **`assumed` mode produces no evidence.** Every interval it emits is a sensitivity result and
 cannot support a claim. The root is corrected under every declared scenario; nodes and slices
 under the primary only, which keeps the artifact readable on a large taxonomy.
 
-**`validated` mode measures the same two parameters** from human labels and is certifying.
-Point it at a `validation_manifest` keyed on the sample identifier materialization wrote --
+**`validated` mode measures the same two parameters** from human labels. The labels weight
+every classified unit of the cohort equally, so they certify the corrected root only, and
+only when every unit carries the same weight in it: a direct design does, while
+`minimum_rewrites_per_stratum` oversampling small strata does not, and neither, usually, does
+plain `proportional_stratified`, whose largest-remainder rounding of `total_rewrites` rarely
+makes every stratum's draw count exactly proportional to its weight. Corrected nodes, slices
+and an unequally weighted root are sensitivity results (`eligibility: diagnostic`) with a
+warning that names the reason, because the judge's accuracy within them can differ from the
+pooled one. The certified root rests on independent draws, one rollout per unit, and labels
+drawn as a simple random sample within each judge verdict stratum; see
+[on the generative path](judge-misclassification.md#on-the-generative-path) for the argument. Point it at a `validation_manifest` keyed on the sample identifier materialization wrote --
 a generative run has no prompt manifest to key on. It needs `rollouts_per_rewrite: 1`, so
 that each unit carries a single binary verdict, and it refuses rather than correcting when
 the labels do not establish a strictly informative judge.
@@ -282,7 +367,8 @@ construction. On the worked example, reading the same question off the tree as a
 over dozens of thin nodes gives 0.13--0.36; the slice gives 0.027--0.112.
 
 Slices overlap the tree's nodes, so they cannot join its Šidák frontiers and are reported
-pointwise.
+pointwise. To cover several slices at once, declare them in a
+[slice family](#arm-contrasts-and-a-simultaneous-slice-family-experimental).
 
 ## Comparisons
 
@@ -294,6 +380,79 @@ Concordant units contribute exactly zero, which is where the pairing pays: again
 arms separately, the bound is 2.0x--9.8x tighter when the arms respond alike to prompt
 difficulty, and never worse. Comparisons are pointwise and report the risk difference only;
 both arm intervals travel with each one.
+
+## Arm contrasts and a simultaneous slice family (experimental)
+
+A comparison contrasts two target models on the same rewrites. An **arm contrast** contrasts
+two values of one transformation level -- `roleplay` against `direct_request`, Maltese against
+English -- within the primary cohort. Declare the contrasts and slices you want in the frozen
+plan, and they are covered **simultaneously**:
+
+```yaml
+inference:
+  alpha: 0.05
+  coverage_mode: one_sided_upper
+  slice_family:
+    slices:
+      - {level: language, value: maltese}
+      - {level: language, value: english}
+    contrasts:
+      - {id: roleplay-vs-direct, level: wrapper, candidate: roleplay, baseline: direct_request}
+```
+
+**What a contrast estimates.** Each draw carries one value of the level, so the two arms hold
+different draws and nothing pairs them draw by draw. What they share is the semantic seeds.
+The contrast holds the seed mix fixed:
+
+\[
+\Delta = T_a - T_b,\qquad T_v=\sum_{s\in S}\pi_s\,R_s(v),
+\]
+
+where \(S\) is the set of seeds that hold both values (`shared_seeds`), \(\pi_s\) the declared
+seed weights renormalized over \(S\), and \(R_s(v)\) the declared-weight risk of the paths
+under seed \(s\) that carry value \(v\). A context weight or a constraint that makes one value
+likelier under some seeds than others therefore cannot move the contrast. When every seed holds
+both values with the same conditional weight, \(T_v\) is the slice risk and \(\Delta\) is the
+difference of the two slices. A seed that holds only one of the values is left out of the
+contrast, not imputed.
+
+**How it is bounded.** Each arm is bounded on its own, and the two are combined by a union
+bound. Under `direct` sampling each draw is reweighted by a known ratio that makes its mean
+\(T_v\). When the ratio is constant -- no context weight or constraint skews the value across
+seeds -- the arm is bounded exactly, like a slice; otherwise the Bernoulli-KL bound is applied
+to the reweighted draws, and the arm reports the largest ratio as `maximum_ratio`. The larger
+it is, the wider the interval. Under `proportional_stratified` the arm is a fixed-coefficient
+weighted sum over the seed strata, bounded by the weighted KL/Chernoff engine.
+
+**How the family is calibrated.** Declared slices of one level hold disjoint draws under
+`direct` sampling and share one Šidák frontier, as siblings in the tree do. Every other member,
+each contrast included, is a frontier of its own, and frontiers share \(\alpha\) by Bonferroni.
+`frontier_id`, `frontier_size` and `endpoint_alpha` show how much of the budget each member
+received. Under `two_sided` each endpoint gets half of its member's share, so every lower and
+upper bound covers jointly at \(1-\alpha\), and each direction at \(1-\alpha/2\). Under
+`one_sided_upper` a contrast is bounded from above only, and
+its lower endpoint is reported as -1.
+
+A family slice is not the same calculation as `--slice`. Under `direct` sampling it uses the
+same exact construction at its calibrated level. Under `proportional_stratified` it uses fixed
+stratum coefficients from the declared weights, where `--slice` normalizes the coefficients
+within the slice, so the two can differ.
+
+Declaring the family in the plan is what makes it simultaneous: a member added after seeing the
+results would change the family the error budget was spent on. For the same reason a member
+that cannot be estimated -- an unknown value, an arm without draws, a contrast whose values
+share no seed -- is refused rather than dropped. Whether a member can be estimated depends only
+on the compiled taxonomy and the selected paths, so `generative compile` and
+`generative materialize` refuse it before anything is generated, and `generative analyze`
+refuses a family declared after materialization before it reads the logs. Raise
+`sampling.total_rewrites` when an arm receives no draws. Levels must be arm levels: slices of
+fixed levels are nodes of the tree.
+
+This is experimental. The family covers the primary cohort only; a contrast between cohorts is
+`--compare`. It stays on the judge-reported scale: `generative analyze` prints it under a
+heading that says so, and with `judge_calibration` declared,
+`JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY` says so in the report. The derivation is in
+[statistical methods](statistical-methods.md#78-arm-contrasts-on-a-generative-design-experimental).
 
 ## Sensitivity to the declared design
 
@@ -331,9 +490,83 @@ differently across the design.
 and mean attempts for every value of every level. When exhaustion rates within a level spread
 by more than five percentage points, `GENERATIVE_ACCEPTANCE_UNEVEN` says so.
 
-Nothing in the package validates a rewrite: `rewrite.validation.validator_id` is declared and
-fingerprinted, but the kernel's own verdict is trusted. These rates are the only visibility
-into the assumption the whole estimand rests on.
+By default nothing in the package validates a rewrite: `rewrite.validation.validator_id` is
+declared and fingerprinted, but the kernel's own verdict is trusted, and deduplication
+compares the exact text. Then these rates are the only visibility into the assumption the
+whole estimand rests on. The next section describes how a plan can ask for more.
+
+## Validation and near-duplicates (experimental)
+
+Two settings, both off by default, move checks from the kernel into the package:
+
+```yaml
+rewrite:
+  validation: {validator_id: semantic-equivalence-v1, on_invalid: retry,
+               maximum_attempts: 5, invoke: true}
+  deduplication: {scope: semantic_seed_path, on_duplicate: retry,
+                  near_duplicate: normalized_text}
+```
+
+**`validation.invoke: true`** makes the package call the validator the plan names.
+Materialization then needs `--validator`, which takes the same forms as `--kernel`: `fake`,
+`fake:reject_every=N`, `module:attribute` or `path/to/file.py:attribute`. The attribute is a
+validator or a zero-argument factory implementing the `RewriteValidator` protocol: a
+`validator_id` and a `validate(request, prompt) -> ValidationVerdict` method. It judges each
+rewrite the kernel returned as valid and that was not rejected as a duplicate. An `invalid`
+verdict enters the retry path like a kernel rejection, and an `error` is an operational
+failure, which `--resume` retries. A plan that invokes a validator without `--validator`, or
+`--validator` without a plan that invokes one, is refused. A validator whose `validator_id`
+differs from the plan's is reported as a warning.
+
+**`deduplication.near_duplicate: normalized_text`** also counts a rewrite as a duplicate when
+its text matches an accepted one within the deduplication scope after Unicode NFKC
+normalization and case folding, compared on its letters, combining marks and digits alone.
+Punctuation, symbols, whitespace and enclosing marks such as a keycap are removed, and so are
+the characters that render as nothing (Unicode's default-ignorable code points: a zero-width
+space, a soft hyphen, the variation selector that asks for an emoji, a Hangul filler) and
+the Arabic tatweel, which only stretches a word. They are removed, not replaced, so "don't"
+matches "dont", "step-by-step" matches "step by step" and "⚠️ Warning" matches "Warning".
+Where the words break does not count either: "a part" matches "apart". Nor does what
+separates two digits, so numbers can join: "1.5 mg" matches "15 mg", and "10-20" matches
+"1020". Such a false match only makes a unit try again under `on_duplicate: retry`; it never
+lets a duplicate through. The letters, their order and their accents still distinguish two
+rewrites. `on_duplicate` handles a near duplicate like an exact repeat. The setting needs a
+deduplication scope: with `scope: none` nothing is compared, so the plan is refused. Nothing
+compares embeddings, which would need a model the plan does not declare.
+
+Either setting enters the kernel fingerprint, so runs with and without it cannot be pooled.
+Plans that use neither keep their fingerprints and their outputs byte for byte.
+
+**The attempt ledger.** With either setting, materialization also writes `attempts.csv`: one
+row per kernel call, with the kernel's status, whether the rewrite was rejected as an `exact`
+or `near` duplicate, the validator's identifier and verdict (`not_run` when an earlier check
+had already rejected the attempt), whether the unit kept it, and the rewrite's hash. It never
+holds prompt text. Analysis refuses a run whose attempt ledger is missing or does not agree
+with the rewrite ledger.
+
+**Fidelity by arm.** From that ledger, analysis writes `fidelity.csv` and a `fidelity`
+section in `report.json`. For every value of every level they give units, attempts, kernel
+rejections and errors, exact and near duplicates, how many rewrites the validator judged and
+rejected, its rejection rate, and how many units kept a rewrite only after a duplicate
+rejection. Acceptance shows how many units ran out of attempts, and fidelity shows why
+attempts failed. So an arm whose rewrites the validator rejects more often is visible even
+when retries keep its acceptance level with the others. Plans that use neither setting get
+neither the file nor the section.
+
+Three diagnostics read it:
+
+- `GENERATIVE_FIDELITY_UNEVEN` (warning): the validator's rejection rates across the values
+  of a level spread by more than five percentage points. The rates are in its details. No
+  sample size is required and the spread is not tested against chance, so the message gives
+  the fewest rewrites judged for one value: among few, a spread that wide can be noise.
+- `GENERATIVE_VALIDATOR_MISMATCH` (warning): the attempt ledger records another validator
+  than the one the plan declares, or kept rewrites that no validator judged, as when
+  `validation.invoke` was set after materialization or before a resume. A run in which no
+  rewrite reached the validator and none was kept gets no such warning.
+- `GENERATIVE_RETRY_DEPENDENCE` (info): some units kept a rewrite only after a duplicate
+  rejection. Deduplication compares against rewrites accepted for earlier units, so those
+  units' prompts depend on the order of selection. This weakens the independence across
+  units that the intervals assume, and the diagnostic gives how many units it concerns.
 
 ## What it refuses
 
@@ -345,18 +578,36 @@ into the assumption the whole estimand rests on.
 - constraints that condition on a level at or below what they prune;
 - an identifier containing `|` or `=`, which canonical node ids are built from;
 - a rewrite ledger and prompt store that disagree about which units were accepted;
+- a plan that invokes a validator materialized without `--validator`, or `--validator`
+  without such a plan;
+- `rewrite.deduplication.near_duplicate` together with `deduplication.scope: none`, under
+  which nothing is compared, so near duplicates would go undetected;
+- a missing attempt ledger, or one that disagrees with the rewrite ledger, when the plan
+  records attempts;
 - a log whose samples match no accepted rewrite, or the same sample twice;
+- a slice family member whose value no compiled path carries or no selected path reaches, or
+  whose two values share no seed, before anything is generated;
 - a plan edited between materialization and analysis.
 
 ## Reading the report
 
 `report.html` is a self-contained page -- it embeds its data and fetches nothing. Alongside it,
-`report.json`, `nodes.csv`, `taxonomy.csv`, `comparisons.csv` and `diagnostics.csv`.
+`report.json`, `nodes.csv`, `taxonomy.csv`, `comparisons.csv`, `diagnostics.csv`,
+`acceptance.csv`, and `checksums.json`, which holds the SHA-256 of each of the others. A plan
+that declares `inference.slice_family` also gets `family.csv`, one row per member, and a
+`slice_family` block in `report.json`. `generative analyze` exits `3` when the report carries
+an `ERROR` diagnostic; the report is still written, so the diagnostics can be read.
 
-Three fields are easy to misread:
+Four fields are easy to misread:
 
 - `estimate` applies the declared design weights; `raw_failure_rate` does not. They coincide
   only when every draw carries the same coefficient.
+- `unclassified_share` is the design weight, in this run, on units with no judge verdict:
+  rejected or unevaluated rewrites and missing scores. The bounds complete those units, safe at
+  the lower end and failing at the upper, while `estimate` leaves them out, so a large share
+  widens the interval around an estimate that describes only the classified units. A judge
+  correction uses an upper confidence bound on the design's share instead, reported as
+  `unclassified_upper` in each `corrected` row.
 - `effective_sample_size` is weight geometry, not information. Precision is governed by how
   many draws there are.
 - `coefficient_ratio` above 1 means the sharp exact kernel was unavailable. Under

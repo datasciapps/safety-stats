@@ -1,3 +1,5 @@
+import json
+import math
 import shutil
 import subprocess
 import sys
@@ -9,6 +11,7 @@ from typer.testing import CliRunner
 
 from inspect_safety_stats import cli as cli_module
 from inspect_safety_stats.cli import app
+from inspect_safety_stats.report.summary import rate_interval_text, rate_text
 from tests.cli_output import plain
 
 runner = CliRunner()
@@ -47,6 +50,123 @@ def test_analyze_exits_zero_for_a_valid_analysis(tmp_path: Path) -> None:
     code, stdout = _analyze(_simpleqa_plan(tmp_path), tmp_path / "report")
     assert code == 0
     assert "Integrity: valid" in stdout
+
+
+def test_analyze_prints_the_headline_rates_and_the_summary_path(tmp_path: Path) -> None:
+    code, stdout = _analyze(_simpleqa_plan(tmp_path), tmp_path / "report")
+    assert code == 0
+    # Plain typer.echo lines, uncoloured; plain() would join them into one.
+    lines = stdout.splitlines()
+    start = lines.index("Failure rate (weighted mean):")
+    rates = [line for line in lines[start + 1 :] if line.startswith("  ")]
+    assert rates
+    assert all(" / " in line and "%" in line for line in rates)
+    assert f"Summary: {tmp_path / 'report' / 'report.md'}" in lines
+
+
+def test_analyze_prints_the_true_risk_beside_a_judge_corrected_rate(tmp_path: Path) -> None:
+    plan = _simpleqa_plan(tmp_path)
+    text = plan.read_text(encoding="utf-8")
+    judge = (
+        "  judge_calibration:\n"
+        "    mode: assumed\n"
+        "    primary: declared\n"
+        "    scenarios:\n"
+        "      - {id: declared, rho_1: {lower: 0.9, upper: 1.0}, rho_0: {lower: 0.0, upper: 0.1}}\n"
+        "design:\n"
+    )
+    plan.write_text(text.replace("design:\n", judge, 1), encoding="utf-8")
+    code, stdout = _analyze(plan, tmp_path / "report")
+    assert code == 0, stdout
+
+    summary = json.loads((tmp_path / "report" / "report.json").read_text("utf-8"))["summary"]
+    (headline,) = [item for item in summary["headline"] if item["kind"] == "group_risk"]
+    corrected = headline["judge_corrected"]
+    assert (corrected["calibration"], corrected["eligibility"]) == ("assumed", "diagnostic")
+    lines = stdout.splitlines()
+    start = lines.index("Failure rate (weighted mean):")
+    assert lines[start + 1] == (
+        f"  candidate / all-eight: {rate_text(headline['estimate'])} "
+        f"{rate_interval_text(headline['lower'], headline['upper'])}; true risk "
+        f"{rate_interval_text(corrected['lower'], corrected['upper'])} "
+        "(judge-corrected, assumed calibration, diagnostic)"
+    )
+
+
+def _invoke_analyze(plan: Path, output: Path) -> Any:
+    return runner.invoke(
+        app,
+        [
+            "analyze",
+            "--plan",
+            str(plan),
+            "--logs",
+            str(SIMPLEQA / "simpleqa-8-real.eval"),
+            "--output",
+            str(output),
+        ],
+    )
+
+
+def test_analyze_prints_each_warning_code_on_stderr_after_the_headline(tmp_path: Path) -> None:
+    from inspect_safety_stats.registry import CODES
+
+    output = tmp_path / "report"
+    result = _invoke_analyze(_simpleqa_plan(tmp_path), output)
+    assert result.exit_code == 0
+    index_md = output / "index.md"
+    report_md = output / "report.md"
+    header = (
+        f'Warnings by code, listed in {index_md} under "Errors and warnings by code"; '
+        f"{report_md} gives each one's assumption and effect under \"Warnings\":"
+    )
+    # Plain typer.echo lines, uncoloured; plain() would join them into one.
+    stderr = result.stderr.splitlines()
+    assert stderr[0] == header
+    codes = ("PLAN_SELF_DECLARED", "TAIL_MEASURES_UNINFORMATIVE")
+    # The effect and what follows from it, which hold whenever the code is raised; the
+    # assumption is what the code says may not hold, so printed alone it would read as fact.
+    assert stderr[1:] == [
+        f"  WARNING {code} (1 occurrence, {CODES[code].effect}): {CODES[code].consequence}"
+        for code in codes
+    ]
+    assert not any(CODES[code].assumption in result.output for code in codes)
+    assert header not in result.stdout
+    # After the headline, before the paths.
+    lines = result.output.splitlines()
+    assert (
+        lines.index("Failure rate (weighted mean):")
+        < lines.index(header)
+        < lines.index(f"Summary: {report_md}")
+    )
+    # index.md lists each code under the section the header names, and report.md gives each
+    # one's assumption under the other.
+    index_text = index_md.read_text(encoding="utf-8")
+    assert "\n## Errors and warnings by code\n" in index_text
+    assert all(f"| `{code}` | warning | 1 |" in index_text for code in codes)
+    summary_text = report_md.read_text(encoding="utf-8")
+    warnings_section = summary_text.split("\n## Warnings\n", 1)[1].split("\n## ", 1)[0]
+    for code in codes:
+        assert f"| `{code}` (warning) |" in warnings_section
+        assert CODES[code].assumption in warnings_section
+        assert f"**{CODES[code].effect}**. {CODES[code].consequence}" in warnings_section
+
+
+def test_analyze_prints_errors_by_code_when_integrity_is_invalid(tmp_path: Path) -> None:
+    from inspect_safety_stats.registry import CODES
+
+    output = tmp_path / "report"
+    result = _invoke_analyze(_simpleqa_plan(tmp_path, score_name="nonexistent_scorer"), output)
+    assert result.exit_code == 3
+    stderr = result.stderr.splitlines()
+    assert stderr[0] == (
+        f"Errors and warnings by code, listed in {output / 'index.md'} under "
+        f'"Errors and warnings by code"; {output / "report.md"} gives each one\'s assumption '
+        'and effect under "Warnings":'
+    )
+    assert stderr[1] == (
+        f"  ERROR SCORE_MISSING (9 occurrences, invalid): {CODES['SCORE_MISSING'].consequence}"
+    )
 
 
 def test_analyze_exits_three_but_writes_the_report_when_integrity_is_invalid(
@@ -220,6 +340,193 @@ def test_fixed_design_planning_rejects_an_unused_weight_column(tmp_path: Path) -
     assert accepted.exit_code == 0, accepted.output
 
 
+def test_fixed_design_planning_needs_only_the_levels_its_weights_name(tmp_path: Path) -> None:
+    manifest = tmp_path / "design.csv"
+    manifest.write_text("prompt_id,expected_rollouts\np1,20\np2,20\n", encoding="utf-8")
+    arguments = ["plan", "fixed-design", "--manifest", str(manifest), "--threshold", "0.5"]
+    accepted = runner.invoke(app, [*arguments, "--weights", "equal_prompt"])
+    assert accepted.exit_code == 0, accepted.output
+    assert "Prompts: 2" in accepted.stdout
+    # The default nested hierarchy names task_id and question_id, so they stay required.
+    rejected = runner.invoke(app, arguments)
+    assert rejected.exit_code != 0
+    assert "missing required columns: question_id, task_id" in plain(rejected.output)
+
+
+def test_comparison_planning_needs_only_the_levels_its_weights_name(tmp_path: Path) -> None:
+    manifest = tmp_path / "design.csv"
+    manifest.write_text("prompt_id,expected_rollouts\np1,20\np2,20\n", encoding="utf-8")
+    arguments = ["plan", "comparison", "--manifest", str(manifest), "--margin", "0.1"]
+    accepted = runner.invoke(app, [*arguments, "--weights", "equal_prompt"])
+    assert accepted.exit_code == 0, accepted.output
+    assert "Prompts: 2" in accepted.stdout
+    rejected = runner.invoke(app, arguments)
+    assert rejected.exit_code != 0
+    assert "missing required columns: question_id, task_id" in plain(rejected.output)
+
+
+def _comparison_manifest(tmp_path: Path, *, counts: bool = True) -> Path:
+    manifest = tmp_path / "design.csv"
+    rows = [f"p{index},q{index},t1" + (",100" if counts else "") for index in range(1, 5)]
+    header = "prompt_id,question_id,task_id" + (",expected_rollouts" if counts else "")
+    manifest.write_text("\n".join([header, *rows]) + "\n", encoding="utf-8")
+    return manifest
+
+
+def _resolvable(output: str, direction: str) -> float:
+    """The difference plan comparison prints for the bound ``direction`` the margin.
+
+    ``output`` is ``plain`` text, whose words are separated by single spaces.
+    """
+
+    prefix = f"bound at or {direction} the margin: "
+    assert output.count(prefix) == 1, output
+    return float(output.split(prefix)[1].split(" ")[0])
+
+
+def test_comparison_planning_cli_splits_alpha_and_reports_both_directions(
+    tmp_path: Path,
+) -> None:
+    arguments = [
+        "plan",
+        "comparison",
+        "--manifest",
+        str(_comparison_manifest(tmp_path)),
+        "--margin",
+        "0.05",
+        "--power",
+        "0.8",
+        "--weights",
+        "equal_prompt",
+    ]
+    result = runner.invoke(app, arguments)
+    assert result.exit_code == 0, result.output
+    output = plain(result.output)
+    # 800 independent rollouts with range 0.25 / 100 each on the difference; two_sided spends
+    # 0.025 on each bound.
+    ranges = 800 * (0.25 / 100) ** 2
+    gap = math.sqrt(0.5 * ranges * math.log(40)) + math.sqrt(0.5 * ranges * math.log(5))
+    assert "Candidate rollouts: 400" in output
+    assert "Baseline rollouts: 400" in output
+    assert "Independent blocks: 800" in output
+    # The numbers hold for one interval only, and the output names it.
+    assert (
+        "Interval method: weighted_hoeffding in a comparisons entry only; not comparison_sets "
+        "(as init writes) or other methods, where power can fall far below the target"
+    ) in output
+    assert f"at or below the margin: {0.05 - gap:.8g}" in output
+    assert f"at or above the margin: {0.05 + gap:.8g}" in output
+    assert "One-sided alpha per direction: 0.025" in output
+
+    per_direction = runner.invoke(app, [*arguments, "--coverage-mode", "per_direction"])
+    assert per_direction.exit_code == 0, per_direction.output
+    per_direction_output = plain(per_direction.output)
+    assert "One-sided alpha per direction: 0.05" in per_direction_output
+    # per_direction spends all of 0.05 on each bound, and the differences say so.
+    gap = math.sqrt(0.5 * ranges * math.log(20)) + math.sqrt(0.5 * ranges * math.log(5))
+    assert _resolvable(per_direction_output, "below") == pytest.approx(
+        0.05 - gap, rel=1e-7, abs=0
+    )
+    assert _resolvable(per_direction_output, "above") == pytest.approx(
+        0.05 + gap, rel=1e-7, abs=0
+    )
+
+
+def test_comparison_planning_cli_pairs_and_overrides_counts(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "comparison",
+            "--manifest",
+            str(_comparison_manifest(tmp_path, counts=False)),
+            "--margin",
+            "-0.02",
+            "--candidate-rollouts",
+            "30",
+            "--baseline-rollouts",
+            "20",
+            "--independence-unit",
+            "pair",
+            "--family-size",
+            "2",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    output = plain(result.output)
+    assert "Candidate rollouts: 120" in output
+    assert "Baseline rollouts: 80" in output
+    assert "Independent blocks: 120" in output
+    assert "Margin: -0.02" in output
+    assert "Local alpha: 0.025" in output
+    assert "One-sided alpha per direction: 0.0125" in output
+    # Each prompt, of weight 1/4, has 20 pair blocks whose difference ranges over
+    # 1/4 * (1/30 + 1/20), and 10 candidate-only rollouts ranging over 1/4 / 30. The family
+    # share 0.05 / 2 is split between the bounds, and the default power is 0.9.
+    ranges = 4 * (20 * (0.25 * (1 / 30 + 1 / 20)) ** 2 + 10 * (0.25 / 30) ** 2)
+    gap = math.sqrt(0.5 * ranges * math.log(1 / 0.0125)) + math.sqrt(0.5 * ranges * math.log(10))
+    assert _resolvable(output, "below") == pytest.approx(-0.02 - gap, rel=1e-7, abs=0)
+    assert _resolvable(output, "above") == pytest.approx(-0.02 + gap, rel=1e-7, abs=0)
+
+
+def test_comparison_planning_cli_plans_prompt_clusters_with_the_manifest_weights(
+    tmp_path: Path,
+) -> None:
+    # nested_equal over a task of 10 prompts and one of 30 gives the first task's prompts
+    # weight 1/20 and the second's 1/60, so equal weights would give other numbers.
+    manifest = tmp_path / "design.csv"
+    rows = [
+        f"p{task}-{index},q{task}-{index},t{task},5"
+        for task, size in ((1, 10), (2, 30))
+        for index in range(size)
+    ]
+    manifest.write_text(
+        "prompt_id,question_id,task_id,expected_rollouts\n" + "\n".join(rows) + "\n",
+        encoding="utf-8",
+    )
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "comparison",
+            "--manifest",
+            str(manifest),
+            "--margin",
+            "0.05",
+            "--independence-unit",
+            "prompt_cluster",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    output = plain(result.output)
+    assert "Independence unit: prompt_cluster" in output
+    assert "Independent blocks: 40" in output
+    # Each prompt is one block, whose weighted rate difference ranges over twice its weight,
+    # whatever its rollout counts. Alpha 0.05 is split between the bounds; power is 0.9.
+    ranges = 10 * (2 / 20) ** 2 + 30 * (2 / 60) ** 2
+    gap = math.sqrt(0.5 * ranges * math.log(40)) + math.sqrt(0.5 * ranges * math.log(10))
+    assert _resolvable(output, "below") == pytest.approx(0.05 - gap, rel=1e-7, abs=0)
+    assert _resolvable(output, "above") == pytest.approx(0.05 + gap, rel=1e-7, abs=0)
+
+
+def test_comparison_planning_cli_needs_counts_for_both_arms(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "comparison",
+            "--manifest",
+            str(_comparison_manifest(tmp_path, counts=False)),
+            "--margin",
+            "0.05",
+            "--candidate-rollouts",
+            "30",
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--baseline-rollouts" in plain(result.output)
+
+
 def test_cli_errors_render_in_tests_as_they_do_on_ci() -> None:
     """tests/conftest.py forces CI's rendering, so raw-text assertions fail locally as well.
 
@@ -255,11 +562,11 @@ def test_direct_script_invocation_registers_all_commands() -> None:
         assert command in result.stdout, output
 
 
-def test_every_command_explains_itself_in_help() -> None:
-    """A command without a docstring shows an empty line in --help."""
+def _leaf_commands() -> list[tuple[tuple[str, ...], str]]:
+    """Every command that runs, as its words on the command line and its help text."""
     import typer.main
 
-    def leaves(command: Any, path: tuple[str, ...]) -> list[tuple[str, str]]:
+    def leaves(command: Any, path: tuple[str, ...]) -> list[tuple[tuple[str, ...], str]]:
         # Typer's groups need not subclass the click package's Group, so look for children.
         children = getattr(command, "commands", None)
         if isinstance(children, dict):
@@ -268,9 +575,287 @@ def test_every_command_explains_itself_in_help() -> None:
                 for name, child in sorted(children.items())
                 for leaf in leaves(child, (*path, name))
             ]
-        return [(" ".join(path), (command.help or "").strip())]
+        return [(path, (command.help or "").strip())]
 
     commands = leaves(typer.main.get_command(app), ())
     # Guards the walk itself: one that stopped at the root would pass without looking.
     assert len(commands) > 10
-    assert [name for name, text in commands if not text] == []
+    return commands
+
+
+def test_every_command_explains_itself_in_help() -> None:
+    """A command without a docstring shows an empty line in --help."""
+    assert [" ".join(path) for path, text in _leaf_commands() if not text] == []
+
+
+def test_every_word_of_a_command_docstring_reaches_its_help() -> None:
+    """Rich reads square brackets in help text as markup and drops what they enclose.
+
+    plan comparison's help lost its block_by lists that way. Every word of each docstring
+    must appear in the rendered --help.
+    """
+    lost: dict[str, list[str]] = {}
+    for path, text in _leaf_commands():
+        result = runner.invoke(app, [*path, "--help"])
+        assert result.exit_code == 0, result.output
+        shown = plain(result.output)
+        missing = [word for word in text.split() if word not in shown]
+        if missing:
+            lost[" ".join(path)] = missing
+    assert lost == {}
+
+
+def _pilot_manifest(tmp_path: Path) -> Path:
+    manifest = tmp_path / "design.csv"
+    rows = [
+        f"{category}-{index:02d},q{index},t1,{category},{'' if index == 0 else index}"
+        for category in ("a", "b")
+        for index in range(6)
+    ]
+    manifest.write_text(
+        "prompt_id,question_id,task_id,category,length\n" + "\n".join(rows) + "\n",
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def test_pilot_cli_writes_the_frame_with_the_draw(tmp_path: Path) -> None:
+    manifest = _pilot_manifest(tmp_path)
+    output = tmp_path / "pilot" / "frame.csv"
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--strata",
+            "task_id, category",
+            "--per-stratum",
+            "2",
+            "--seed",
+            "13",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert "Strata: 2" in result.stdout
+    assert "Pilot prompts: 4 of 12" in result.stdout
+    assert "Seed: 13" in result.stdout
+    written = output.read_bytes()
+    assert b"\r\n" not in written
+    lines = written.decode("utf-8").splitlines()
+    original = manifest.read_text(encoding="utf-8").splitlines()
+    assert lines[0] == original[0] + (
+        ",pilot_stratum,pilot_inclusion_probability,pilot_selected,pilot_seed,pilot_per_stratum"
+    )
+    # The manifest's own text comes through, including the gap in an integer column.
+    assert [line.rsplit(",", 5)[0] for line in lines[1:]] == original[1:]
+    added = [line.split(",")[-4:] for line in lines[1:]]
+    assert sum(selected == "True" for _, selected, _, _ in added) == 4
+    assert {probability for probability, _, _, _ in added} == {"0.3333333333333333"}
+    # The frame records the arguments that repeat the draw.
+    assert {(seed, count) for _, _, seed, count in added} == {("13", "2")}
+
+
+def test_pilot_cli_and_python_draw_the_same_prompts(tmp_path: Path) -> None:
+    """draw_pilot on the manifest read as its docs say draws what the command draws."""
+    import pandas as pd
+
+    from inspect_safety_stats.ingest.pilot import draw_pilot
+
+    manifest = tmp_path / "design.csv"
+    manifest.write_text(
+        "prompt_id,question_id,task_id\n"
+        + "".join(f"{index:04d},q{index},t{index % 2}\n" for index in range(1, 21)),
+        encoding="utf-8",
+    )
+    output = tmp_path / "frame.csv"
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--per-stratum",
+            "3",
+            "--seed",
+            "5",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    written = pd.read_csv(output, dtype=str, keep_default_na=False)
+    by_command = set(written.loc[written["pilot_selected"] == "True", "prompt_id"])
+    as_written = pd.read_csv(manifest, dtype=str, keep_default_na=False)
+    frame = draw_pilot(as_written, per_stratum=3, strata=["task_id"], seed=5)
+    assert set(frame.loc[frame["pilot_selected"], "prompt_id"]) == by_command
+    assert len(by_command) == 6
+
+
+@pytest.mark.parametrize(
+    ("strata", "accepted"), [("category", True), ("", True), ("task_id", False)]
+)
+def test_pilot_cli_requires_only_the_columns_it_draws_on(
+    tmp_path: Path, strata: str, accepted: bool
+) -> None:
+    """analyze accepts a manifest without question_id and task_id, so the pilot does too."""
+    manifest = tmp_path / "design.csv"
+    manifest.write_text(
+        "prompt_id,category\n" + "".join(f"p{index},c{index % 2}\n" for index in range(8)),
+        encoding="utf-8",
+    )
+    output = tmp_path / "frame.csv"
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--strata",
+            strata,
+            "--per-stratum",
+            "2",
+            "--seed",
+            "3",
+            "--output",
+            str(output),
+        ],
+    )
+    if accepted:
+        assert result.exit_code == 0, result.output
+        assert output.exists()
+    else:
+        assert result.exit_code != 0
+        assert "missing required columns: task_id" in plain(result.output)
+        assert not output.exists()
+
+
+def test_pilot_cli_rejects_a_stratum_smaller_than_the_draw(tmp_path: Path) -> None:
+    manifest = _pilot_manifest(tmp_path)
+    output = tmp_path / "frame.csv"
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--strata",
+            "category",
+            "--per-stratum",
+            "7",
+            "--seed",
+            "1",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "2 strata hold fewer than 7 prompts" in plain(result.output)
+    assert not output.exists()
+
+
+def test_pilot_cli_will_not_overwrite_the_manifest(tmp_path: Path) -> None:
+    manifest = _pilot_manifest(tmp_path)
+    before = manifest.read_bytes()
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--per-stratum",
+            "1",
+            "--seed",
+            "1",
+            "--output",
+            str(manifest),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "must not overwrite" in plain(result.output)
+    assert manifest.read_bytes() == before
+
+
+@pytest.mark.parametrize("alias", ["hard link", "other case"])
+def test_pilot_cli_will_not_overwrite_the_manifest_by_another_name(
+    tmp_path: Path, alias: str
+) -> None:
+    """Another name for the manifest's file, which resolve() leaves distinct, is refused too."""
+    import os
+
+    manifest = _pilot_manifest(tmp_path)
+    before = manifest.read_bytes()
+    if alias == "hard link":
+        output = tmp_path / "frame.csv"
+        try:
+            os.link(manifest, output)
+        except OSError as exc:
+            pytest.skip(f"this filesystem has no hard links: {exc}")
+    else:
+        output = tmp_path / manifest.name.upper()
+        if not output.exists():
+            pytest.skip("this filesystem is case-sensitive")
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--per-stratum",
+            "1",
+            "--seed",
+            "1",
+            "--output",
+            str(output),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "must not overwrite" in plain(result.output)
+    assert manifest.read_bytes() == before
+
+
+def test_pilot_cli_requires_a_seed(tmp_path: Path) -> None:
+    manifest = _pilot_manifest(tmp_path)
+    result = runner.invoke(
+        app,
+        [
+            "plan",
+            "pilot",
+            "--manifest",
+            str(manifest),
+            "--per-stratum",
+            "1",
+            "--output",
+            str(tmp_path / "frame.csv"),
+        ],
+    )
+    assert result.exit_code != 0
+    assert "--seed" in plain(result.output)
+
+
+@pytest.mark.parametrize(
+    ("acceptable_upper", "unacceptable_lower", "decision", "expected"),
+    [("0.99", "0.995", "PASS", 0), ("0.01", "0.05", "FAIL", 1)],
+)
+def test_decision_exit_codes_map_pass_to_zero_and_fail_to_one(
+    tmp_path: Path, acceptable_upper: str, unacceptable_lower: str, decision: str, expected: int
+) -> None:
+    plan = _simpleqa_plan(tmp_path)
+    text = plan.read_text(encoding="utf-8")
+    for old, new in (("0.25", acceptable_upper), ("0.60", unacceptable_lower)):
+        assert f"{old}\n" in text
+        text = text.replace(f"{old}\n", f"{new}\n")
+    plan.write_text(text, encoding="utf-8")
+    code, _ = _analyze(plan, tmp_path / "report", "--decision-exit-codes")
+    # Decisions are hidden from the terminal by default, so read the report's.
+    report = json.loads((tmp_path / "report" / "report.json").read_text(encoding="utf-8"))
+    assert report["decision"] == decision
+    assert code == expected

@@ -7,11 +7,14 @@ module only resolves under ``python -m pytest``, which puts the working director
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from inspect_safety_stats.generative.inference import NodeEstimate
+from inspect_safety_stats.generative.kernels import ChatTurn, RewriteOutcome, RewriteRequest
 from inspect_safety_stats.generative.schema import load_generative_plan
 from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy, compile_taxonomy
 
@@ -95,3 +98,69 @@ def compile_from(
 ) -> CompiledTaxonomy:
     path = materialize(tmp_path, plan, seeds)
     return compile_taxonomy(load_generative_plan(path), base_path=tmp_path)
+
+
+@dataclass
+class ConversationKernel:
+    """Returns a two-exchange conversation built from the request, needing no provider.
+
+    ``system`` opens it with a system turn; ``bare_prompt`` returns a single prompt instead,
+    which a conversation plan must refuse.
+    """
+
+    kernel_id: str = "test-kernel"
+    system: bool = False
+    bare_prompt: bool = False
+
+    def rewrite(self, request: RewriteRequest) -> RewriteOutcome:
+        tag = f"{request.sampling_unit_id}#{request.attempt}#{request.selection_seed}"
+        if self.bare_prompt:
+            return RewriteOutcome(status="valid", prompt=f"{request.seed_text} {tag}")
+        turns = [
+            ChatTurn("user", f"Hello, I am researching {request.semantic_seed_id}."),
+            ChatTurn("assistant", "Happy to help. What would you like to know?"),
+            ChatTurn("user", f"{request.seed_text} ({tag})"),
+        ]
+        if self.system:
+            turns.insert(0, ChatTurn("system", "You are a careful assistant."))
+        return RewriteOutcome(status="valid", messages=tuple(turns))
+
+
+def root_estimate(
+    *,
+    draws: int,
+    unclassified: int,
+    failures: int,
+    upper: float,
+    trials: int | None = None,
+    share: float | None = None,
+    equal: bool = True,
+    maximum_coefficient: float | None = None,
+    alpha: float = 0.05,
+) -> NodeEstimate:
+    """A root estimate with the fields ``estimate_tree`` sets for a direct design."""
+
+    trials = draws if trials is None else trials
+    return NodeEstimate(
+        node_id="all",
+        level="root",
+        depth=0,
+        node_weight=1.0,
+        draws=draws,
+        trials=trials,
+        failures=failures,
+        unclassified=unclassified,
+        estimate=failures / (trials - unclassified) if trials > unclassified else None,
+        lower=0.0,
+        upper=upper,
+        method="clopper_pearson_one_sided_missingness_robust",
+        alpha_lower=alpha,
+        alpha_upper=alpha,
+        frontier_id=None,
+        equal_coefficients=equal,
+        maximum_coefficient=1 / draws if maximum_coefficient is None else maximum_coefficient,
+        coefficient_ratio=1.0,
+        effective_sample_size=float(draws),
+        raw_failure_rate=None,
+        unclassified_share=unclassified / trials if share is None else share,
+    )

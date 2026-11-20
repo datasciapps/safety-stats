@@ -10,8 +10,8 @@ from __future__ import annotations
 
 import re
 import zipfile
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
@@ -22,6 +22,14 @@ try:
     from inspect_ai.analysis import EvalColumn, EvalColumns, evals_df, samples_df
     from inspect_ai.log import EvalLog, read_eval_log
 except ImportError as error:  # pragma: no cover - exercised in a fresh interpreter
+    # Only a missing package of the extra (pyproject.toml) means the extra is not installed.
+    # Any other import failure, such as a module that an installed Inspect cannot find or a
+    # pyarrow built for another NumPy, keeps its own message: "install the extra" would send
+    # the user to install what they already have.
+    import importlib.util
+
+    if all(importlib.util.find_spec(package) is not None for package in ("inspect_ai", "pyarrow")):
+        raise
     raise ImportError(
         "Reading Inspect AI logs needs the inspect extra: "
         "pip install 'inspect-safety-stats[inspect]'. "
@@ -37,7 +45,9 @@ from inspect_safety_stats.ingest.records import (
     NormalizedData,
     RolloutRecord,
     RunRecord,
+    SampleOrder,
     SourceData,
+    StopContext,
 )
 
 __all__ = [
@@ -49,6 +59,7 @@ __all__ = [
     "ingest_inspect_logs",
     "read_inspect_rollouts",
     "read_inspect_runs",
+    "read_inspect_sample_orders",
     "read_inspect_source",
 ]
 
@@ -160,7 +171,165 @@ def _error_context(
     )
 
 
-# The Inspect versions whose log format this adapter reads; keep in step with pyproject.toml.
+def _carries_content(message: Any) -> bool:
+    """Whether a generated message carries any content: text, readable reasoning, a tool call
+    or any other part, such as an image or a provider's own tool use. Reasoning that the
+    provider returned only encrypted (redacted) or only as a signature is not readable."""
+
+    if getattr(message, "tool_calls", None):
+        return True
+    content = getattr(message, "content", None)
+    if isinstance(content, str):
+        return bool(content.strip())
+    for part in content or []:
+        kind = getattr(part, "type", None)
+        if kind == "text":
+            texts = [getattr(part, "text", None)]
+        elif kind == "reasoning":
+            texts = [getattr(part, "summary", None)]
+            if not getattr(part, "redacted", False):
+                texts.append(getattr(part, "reasoning", None))
+        else:
+            return True
+        if any(isinstance(text, str) and text.strip() for text in texts):
+            return True
+    return False
+
+
+def _delivers_content(output: Any) -> bool:
+    """Whether a model output delivered content. An output reported as an API error delivered
+    none, whatever stand-in text Inspect put in its place."""
+
+    if output is None or getattr(output, "error", None) is not None:
+        return False
+    choices = getattr(output, "choices", None) or []
+    return any(_carries_content(getattr(choice, "message", None)) for choice in choices)
+
+
+def _message_id(output: Any) -> str | None:
+    choices = getattr(output, "choices", None) or []
+    message = getattr(choices[0], "message", None) if choices else None
+    identifier = getattr(message, "id", None)
+    return identifier if isinstance(identifier, str) else None
+
+
+def _content_before_stop(sample: Any) -> Literal["earlier_generation", "unverifiable"] | None:
+    """Whether the target delivered content in a sample before the generation that a content
+    filter stopped, which is the sample's output.
+
+    The generations before the stopped one are the model events that the transcript records
+    before it, such as the earlier turns of a conversation or the steps of an agent; the
+    scorers' model calls come after it. Any model's content counts, since the transcript does
+    not say which calls the end-to-end system delivered. When the transcript does not record
+    the stopped generation, content delivered before it cannot be ruled out.
+    """
+
+    stopped = _message_id(getattr(sample, "output", None))
+    generations = [
+        event for event in (sample.events or []) if getattr(event, "event", None) == "model"
+    ]
+    recorded = [
+        index
+        for index, event in enumerate(generations)
+        if stopped is not None and _message_id(getattr(event, "output", None)) == stopped
+    ]
+    if not recorded:
+        return "unverifiable"
+    earlier = generations[: recorded[-1]]
+    if any(
+        getattr(event, "error", None) is None
+        and _delivers_content(getattr(event, "output", None))
+        for event in earlier
+    ):
+        return "earlier_generation"
+    return None
+
+
+def _stop_of(output: Any) -> StopContext | None:
+    """The content-filter stop of a sample's output, or None when no content filter stopped it.
+
+    Claude 5-series models report a safety-classifier decline as a normal answer with stop
+    reason `refusal`, which Inspect records as `content_filter`, with the provider's category in
+    the choice's `stop_details` (Inspect 0.3.286 and later). A decline that arrives as an API
+    error comes back with the output's `error` set and Inspect's stand-in apology as content.
+    Only the output itself is read: :func:`_sample_stop` adds the sample's earlier generations.
+    """
+
+    if output is None or getattr(output, "stop_reason", None) != "content_filter":
+        return None
+    choices = getattr(output, "choices", None) or []
+    details = getattr(choices[0], "stop_details", None) if choices else None
+    delivered = _delivers_content(output)
+    return StopContext(
+        content_delivered=delivered,
+        block_type=getattr(details, "type", None),
+        block_category=getattr(details, "category", None),
+        block_error=getattr(output, "error", None) is not None,
+        delivered_in="stopped_output" if delivered else None,
+    )
+
+
+def _sample_stop(sample: Any) -> StopContext | None:
+    """The content-filter stop of a sample, which delivered content when the stopped output or
+    any earlier generation of the sample did. A stop after an earlier turn delivered content
+    did not keep that content from the user (statistical methods, section 4.6)."""
+
+    stop = _stop_of(getattr(sample, "output", None))
+    if stop is None or stop.content_delivered:
+        return stop
+    before = _content_before_stop(sample)
+    if before is None:
+        return stop
+    return replace(stop, content_delivered=True, delivered_in=before)
+
+
+def _token_limit_stop_of(output: Any) -> StopContext | None:
+    """The stop of a sample's output at the generation token limit, or None for any other end.
+
+    Inspect records an answer that ran out of generation tokens with stop reason `max_tokens`.
+    Stop reason `model_length`, a conversation that outgrew the context window, and a sample
+    that hit one of Inspect's own sample limits, such as one of type `token`, are not read:
+    such a rollout counts by its score, as docs/plan-reference.md says.
+    """
+
+    if output is None or getattr(output, "stop_reason", None) != "max_tokens":
+        return None
+    completion = getattr(output, "completion", "") or ""
+    return StopContext(
+        content_delivered=bool(completion.strip()),
+        block_type=None,
+        block_category=None,
+        block_error=False,
+        stop_reason="max_tokens",
+    )
+
+
+def _stop_context(
+    *,
+    log_path: str,
+    eval_id: str,
+    sample_id: str,
+    provided: dict[str, EvalLog],
+    cache: dict[str, dict[str, StopContext]],
+) -> StopContext | None:
+    # Read only when the plan asks for content-filter or token-limit stops. Unlike error
+    # contexts, a log that cannot be read is an error: the plan's outcome of a stop would
+    # otherwise depend on it.
+    cache_key = eval_id if eval_id in provided else log_path
+    if cache_key not in cache:
+        log = provided.get(eval_id) or read_eval_log(log_path)
+        stops: dict[str, StopContext] = {}
+        for sample in log.samples or []:
+            stop = _sample_stop(sample) or _token_limit_stop_of(sample.output)
+            if stop is not None:
+                stops[str(sample.uuid)] = stop
+        cache[cache_key] = stops
+    return cache[cache_key].get(sample_id)
+
+
+# The Inspect versions whose logs this adapter reads: the versions that wrote them, not the
+# installed one, which the inspect extra in pyproject.toml sets. The two logs committed under
+# examples/ were written by Inspect 0.3.259.
 SOURCE_FORMAT = {"format": "inspect_logs", "inspect_version_constraint": ">=0.3.259,<0.4"}
 
 _CONFIGURATION_FIELDS = (
@@ -296,6 +465,7 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
     collected = _rollouts(samples, runs)
     provided = _provided_eval_logs(logs)
     cache: dict[str, _Transcripts] = {}
+    stop_cache: dict[str, dict[str, StopContext]] = {}
 
     def error_context(rollout: RolloutRecord) -> ErrorContext:
         return _error_context(
@@ -304,6 +474,15 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
             sample_id=str(rollout.sample_id),
             provided=provided,
             cache=cache,
+        )
+
+    def stop_context(rollout: RolloutRecord) -> StopContext | None:
+        return _stop_context(
+            log_path=rollout.source,
+            eval_id=rollout.run_key,
+            sample_id=str(rollout.sample_id),
+            provided=provided,
+            cache=stop_cache,
         )
 
     return SourceData(
@@ -315,7 +494,35 @@ def read_inspect_source(logs: LogInput, *, parallel: bool | int = False) -> Sour
         error_context=error_context,
         source_sha256=file_sha256,
         source_format=SOURCE_FORMAT,
+        stop_context=stop_context,
     )
+
+
+def read_inspect_sample_orders(
+    sources: Mapping[str, str], logs: LogInput = None
+) -> dict[str, SampleOrder]:
+    """The recorded sample order of each run, from its log header.
+
+    ``sources`` maps each run's ``eval_id`` to the log it was read from. A log passed in
+    ``logs`` as an ``EvalLog`` is used as given; any other is read from disk, header only.
+    Inspect records ``sample_shuffle`` in the eval config and lists the sample ids in the
+    shuffled order in ``eval.dataset.sample_ids``, which is the order it schedules them in:
+    every sample's first epoch, then every sample's second, and so on.
+    """
+
+    provided = _provided_eval_logs(logs)
+    orders: dict[str, SampleOrder] = {}
+    for run_key, source in sources.items():
+        log = provided.get(run_key) or read_eval_log(source, header_only=True)
+        ids = log.eval.dataset.sample_ids
+        orders[run_key] = SampleOrder(
+            run_key=run_key,
+            source=source,
+            shuffle=log.eval.config.sample_shuffle,
+            shuffled=log.eval.dataset.shuffled,
+            sample_ids=None if ids is None else tuple(str(item) for item in ids),
+        )
+    return orders
 
 
 @dataclass(frozen=True)

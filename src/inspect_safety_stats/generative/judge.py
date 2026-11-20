@@ -7,9 +7,12 @@ at 1% true prevalence and 95% specificity most of the reported number is judge e
 
 The correction is the same identity the fixed-design engine uses,
 ``R* = R*rho_1 + (1 - R)*rho_0``, which is affine in ``R`` with positive slope. Generative
-root, node and slice estimates are all weighted means, so it applies to each of them
-unchanged. See [judge misclassification](../../../docs/judge-misclassification.md) for the
-derivation and for why this parameterisation is preferred to Rogan--Gladen.
+root, node and slice estimates are all weighted means, so the identity holds for each of
+them, but only with rho weighted the way the estimate weights its units. Measured rho pools
+every classified unit of the cohort with equal weight, so it certifies only the root of a
+design that weights its units equally; every other corrected estimate is a sensitivity. See
+[judge misclassification](../../../docs/judge-misclassification.md) for the derivation and
+for why this parameterisation is preferred to Rogan--Gladen.
 
 Comparisons are deliberately not corrected -- see :func:`comparison_refusal`.
 """
@@ -21,11 +24,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from inspect_safety_stats.generative.inference import NodeEstimate
+from inspect_safety_stats.generative.inference import NodeEstimate, unclassified_upper_bound
 from inspect_safety_stats.generative.ledger import RewriteRecord
 from inspect_safety_stats.generative.schema import GenerativePlan
 from inspect_safety_stats.ingest.validation import load_validation_manifest
 from inspect_safety_stats.schema.reports import Diagnostic
+from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope, scope_path
 from inspect_safety_stats.stats.judge_calibration import (
     NO_STRATA,
     JudgeStrata,
@@ -61,6 +65,46 @@ class CorrectedEstimate:
     estimate_lower: float | None
     estimate_upper: float | None
     alpha: float
+    # The one-sided upper confidence bound on the design's share of unclassified units that
+    # the correction used, and its alpha; see :func:`correct`.
+    unclassified_upper: float = 0.0
+    unclassified_alpha: float = 0.0
+    warnings: tuple[str, ...] = ()
+
+
+def pooled_calibration_gap(estimate: NodeEstimate, *, root_id: str) -> str | None:
+    """Why a cohort's pooled labels do not measure the judge accuracies an estimate needs.
+
+    The labels are drawn uniformly within judge strata over the cohort's classified units,
+    so they estimate P(truly unsafe | verdict) with each of those units weighted equally.
+    ``R* = R rho_1 + (1 - R) rho_0`` needs the accuracies weighted the way the estimate
+    weights its units. rho depends on prevalence, so a node or slice where the judge misses
+    more failures than average would get a corrected upper bound below its true risk. That
+    holds exactly only for the root when every unit carries the same coefficient in it.
+    Returns None for such a root.
+    """
+
+    if estimate.node_id != root_id:
+        kind = "slice" if estimate.node_id.startswith("slice:") else "node"
+        return (
+            f"the {kind} covers only part of the cohort's labelled units, where the judge's "
+            "accuracy can differ from the pooled labels' average"
+        )
+    if not estimate.equal_coefficients:
+        ratio = f"{estimate.coefficient_ratio:.3g}"
+        if float(ratio) <= 1.0:
+            # Three digits round a ratio just above 1 to 1, which would read as equal weight.
+            ratio = f"{estimate.coefficient_ratio:.15g}"
+        return f"the root gives some units {ratio} times the weight of others"
+    return None
+
+
+def uncertified_correction_warning(gap: str) -> str:
+    return (
+        f"Sensitivity analysis, not a certified bound: {gap}. The human labels weight every "
+        "classified unit of the cohort equally, so they measure the judge's accuracy only for "
+        "the root of a design that does the same."
+    )
 
 
 def load_labels(path: str | Path) -> dict[str, bool]:
@@ -84,7 +128,8 @@ def judge_strata(
     ``outcomes`` are ``(sampling_unit_id, trials, failures, unclassified)`` tuples, and
     labels are keyed by the sample id a unit's rewrite was materialized under. A unit with
     an unclassified rollout belongs to neither stratum; see :func:`count_judge_strata`,
-    which does the counting.
+    which does the counting. The labels say nothing about such a unit, so :func:`correct`
+    keeps its conservative completion rather than mapping it through rho.
     """
 
     prompt_of = {
@@ -159,7 +204,7 @@ def measured_calibration(
                     f"{len(unmatched)} human labels reference samples this run did not "
                     f"evaluate, starting with {unmatched[0]!r}"
                 ),
-                scope=cohort_id,
+                scope=cohort_scope(cohort_id),
             )
         )
     outcome = calibrate_cohort(
@@ -175,7 +220,7 @@ def measured_calibration(
                 message=(
                     f"the {outcome.empty_strata[0]} stratum is empty, so rho cannot be estimated"
                 ),
-                scope=cohort_id,
+                scope=cohort_scope(cohort_id),
             )
         )
         return None, diagnostics
@@ -185,7 +230,7 @@ def measured_calibration(
                 code="JUDGE_CALIBRATION_UNINFORMATIVE",
                 severity="WARNING",
                 message=str(outcome.refusal),
-                scope=cohort_id,
+                scope=cohort_scope(cohort_id),
                 details={
                     "judge_unsafe_labelled": unsafe.labelled,
                     "judge_safe_labelled": safe.labelled,
@@ -193,7 +238,7 @@ def measured_calibration(
             )
         )
         return None, diagnostics
-    completed = completion_diagnostic(outcome.calibration, cohort_id)
+    completed = completion_diagnostic(outcome.calibration, cohort_scope(cohort_id))
     if completed is not None:
         diagnostics.append(completed)
     return outcome.calibration, diagnostics
@@ -204,22 +249,43 @@ def correct(
     calibration: JudgeCalibration,
     *,
     interval_alpha: float,
+    root_id: str,
 ) -> list[CorrectedEstimate]:
     """Map estimates onto the true-risk scale.
 
-    The reported ``alpha`` is the union of the interval's own budget and whatever the
-    calibration spent, because that is the corrected statement's real error probability.
+    A measured calibration certifies only the estimates :func:`pooled_calibration_gap`
+    finds no gap for; the rest are sensitivities that say why.
+
+    Units with no judge verdict keep the completion the observed bounds gave them, safe at
+    the lower end and failing at the upper: only the classified mass is mapped through rho.
+    How much weight they carry in the design is a parameter that the run's own share only
+    estimates, so the correction uses :func:`unclassified_upper_bound` on it. A measured
+    calibration bounds it at a quarter of its own alpha, the level of each of its four
+    endpoints; a declared one at the estimate's own upper alpha.
+
+    The reported ``alpha`` of a certifying estimate is the union of the interval's own
+    budget, whatever the calibration spent and the share bound's alpha, because that is the
+    corrected statement's real error probability.
     """
 
-    certifying = calibration.source == "validated"
+    validated = calibration.source == "validated"
     combined = interval_alpha + (calibration.alpha or 0.0)
     corrected = []
     for estimate in estimates:
+        gap = pooled_calibration_gap(estimate, root_id=root_id) if validated else None
+        certifying = validated and gap is None
+        share_alpha = (
+            calibration.alpha / 4
+            if validated and calibration.alpha
+            else estimate.alpha_upper
+        )
+        share = unclassified_upper_bound(estimate, alpha=share_alpha)
         mapped = correct_judge_risk(
             observed_lower=estimate.lower,
             observed_upper=estimate.upper,
             observed_estimate=estimate.estimate,
             calibration=calibration,
+            unclassified_share=share,
         )
         corrected.append(
             CorrectedEstimate(
@@ -234,13 +300,16 @@ def correct(
                 upper=mapped.upper,
                 estimate_lower=mapped.completion_estimate_lower,
                 estimate_upper=mapped.completion_estimate_upper,
-                alpha=combined if certifying else interval_alpha,
+                alpha=combined + share_alpha if certifying else interval_alpha,
+                unclassified_upper=share,
+                unclassified_alpha=share_alpha,
+                warnings=(uncertified_correction_warning(gap),) if gap is not None else (),
             )
         )
     return corrected
 
 
-def comparison_refusal(cohort_pair: str) -> Diagnostic:
+def comparison_refusal(candidate: str, baseline: str) -> Diagnostic:
     """Comparisons stay on the judge-reported scale, and say so.
 
     Correcting a paired comparison would mean bounding each arm separately and
@@ -254,8 +323,28 @@ def comparison_refusal(cohort_pair: str) -> Diagnostic:
         code="JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON",
         severity="WARNING",
         message=(
-            f"comparison {cohort_pair} stays on the judge-reported scale: correcting it "
+            f"comparison {candidate}:{baseline} stays on the judge-reported scale: correcting it "
             "would either discard the paired construction or assume a prevalence-free judge"
         ),
-        scope=cohort_pair,
+        # A generative comparison has no id but the candidate:baseline it is asked for by.
+        scope=scope_path("comparisons", f"{candidate}:{baseline}"),
+    )
+
+
+def slice_family_refusal() -> Diagnostic:
+    """The declared slice family stays on the judge-reported scale, and says so.
+
+    Correcting it would spend part of the family's error budget on the judge calibration
+    and map each member separately; the family's simultaneous calibration does not cover
+    that yet, so no member is corrected rather than some.
+    """
+
+    return Diagnostic(
+        code="JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY",
+        severity="WARNING",
+        message=(
+            "the declared slice family stays on the judge-reported scale: its simultaneous "
+            "calibration does not include judge correction"
+        ),
+        scope=plan_scope("inference", "slice_family"),
     )

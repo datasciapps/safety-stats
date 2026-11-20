@@ -1,0 +1,176 @@
+{
+  "analysis": {
+    "id": "real-xstest-published-gpt4-replay",
+    "intent": "exploratory",
+    "plan_sha256": "6aa8818abe40e749c05e70868542753f738401ec49f49317fb8bcba8e5e8081c",
+    "title": "Published GPT-4 behavior on four XSTest contrast pairs"
+  },
+  "artifacts": [
+    {
+      "format": "json",
+      "holds": "SHA-256 of every other file.",
+      "name": "checksums.json"
+    },
+    {
+      "format": "csv",
+      "holds": "One row per comparison set.",
+      "name": "comparison-sets.csv",
+      "rows_of": "/comparison_sets"
+    },
+    {
+      "format": "csv",
+      "holds": "One row per comparison result.",
+      "name": "comparisons.csv",
+      "rows_of": "/comparisons"
+    },
+    {
+      "format": "csv",
+      "holds": "One row per design prompt.",
+      "name": "design.resolved.csv",
+      "rows_of": "/design/prompts"
+    },
+    {
+      "format": "csv",
+      "holds": "One row per hierarchy node risk.",
+      "name": "hierarchy-risks.csv",
+      "rows_of": "/hierarchy_risks"
+    },
+    {
+      "format": "json",
+      "holds": "This index.",
+      "name": "index.json"
+    },
+    {
+      "format": "markdown",
+      "holds": "This index as Markdown.",
+      "name": "index.md"
+    },
+    {
+      "format": "csv",
+      "holds": "One row per normalised observation (analysis input).",
+      "name": "observations.csv"
+    },
+    {
+      "format": "yaml",
+      "holds": "The plan as analysed, defaults filled in.",
+      "name": "plan.resolved.yaml"
+    },
+    {
+      "format": "markdown",
+      "holds": "The full report: every interval, sensitivity and message.",
+      "name": "report-full.md"
+    },
+    {
+      "format": "html",
+      "holds": "Interactive report; embeds report.json.",
+      "name": "report.html"
+    },
+    {
+      "format": "json",
+      "holds": "Every result, diagnostic and setting; the source of all others.",
+      "name": "report.json"
+    },
+    {
+      "format": "markdown",
+      "holds": "One-page summary for people: read first.",
+      "name": "report.md"
+    }
+  ],
+  "guide": "https://github.com/aduncan001/safety_stats/blob/main/docs/agent-guide.md",
+  "index_version": "1",
+  "package_version": "0.16.0",
+  "pointers_into": "report.json",
+  "report_schema_version": "3.0",
+  "summary": {
+    "assumptions": [
+      "fixed_design",
+      "run_stability",
+      "rollout_independence",
+      "scorer_validity",
+      "judge_accuracy",
+      "missing_scores",
+      "sample_errors",
+      "token_limit",
+      "content_filter_stops",
+      "complete_design"
+    ],
+    "decisions_shown": false,
+    "error_count": 0,
+    "headline": [
+      {
+        "baseline": null,
+        "cohort": "published_gpt4_replay",
+        "csv": null,
+        "eligibility": "certifying",
+        "estimand": null,
+        "estimate": 0.125,
+        "group": "all-pairs",
+        "item": "/group_risks/2",
+        "kind": "group_risk",
+        "lower": 0.00022001687927633232,
+        "measure": "mean",
+        "upper": 0.6864501547713553
+      },
+      {
+        "baseline": null,
+        "cohort": "published_gpt4_replay",
+        "csv": null,
+        "eligibility": "certifying",
+        "estimand": null,
+        "estimate": 0.0,
+        "group": "safe-prompts",
+        "item": "/group_risks/6",
+        "kind": "group_risk",
+        "lower": 0.0,
+        "measure": "mean",
+        "upper": 0.7459336259226927
+      },
+      {
+        "baseline": null,
+        "cohort": "published_gpt4_replay",
+        "csv": null,
+        "eligibility": "certifying",
+        "estimand": null,
+        "estimate": 0.25,
+        "group": "unsafe-prompts",
+        "item": "/group_risks/10",
+        "kind": "group_risk",
+        "lower": 0.00044003375855266463,
+        "measure": "mean",
+        "upper": 0.9218829949566247
+      }
+    ],
+    "info_count": 0,
+    "integrity": "valid",
+    "warning_count": 3,
+    "warnings": [
+      {
+        "assumption": "Each prompt has enough rollouts that the tail and threshold measures built from the prompts' simultaneous bounds can lie within report.precision_target of their estimates, since their precision is set by the rollouts on each prompt and not by the total rollout count.",
+        "code": "TAIL_MEASURES_UNINFORMATIVE",
+        "consequence": "The tail and threshold measures are reported as computed, but in the cohort and group named, at the lower median of the rollouts per prompt, even if no prompt failed the named measures' upper bounds would lie more than the precision target above their estimates, so their intervals can only be wide.",
+        "count": 3,
+        "effect": "recorded",
+        "occurrences": [
+          {
+            "diagnostic": "/integrity/diagnostics/0",
+            "item": null,
+            "scope": "cohorts/published_gpt4_replay/groups/all-pairs"
+          },
+          {
+            "diagnostic": "/integrity/diagnostics/1",
+            "item": null,
+            "scope": "cohorts/published_gpt4_replay/groups/safe-prompts"
+          },
+          {
+            "diagnostic": "/integrity/diagnostics/2",
+            "item": null,
+            "scope": "cohorts/published_gpt4_replay/groups/unsafe-prompts"
+          }
+        ],
+        "severity": "WARNING",
+        "source": "analysis"
+      }
+    ]
+  },
+  "summary_page": "report.md"
+}

@@ -14,6 +14,7 @@ which are outcome-independent, and never the failures.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
@@ -27,7 +28,12 @@ from inspect_safety_stats.stats.binomial import (
     binomial_upper_bound,
     missingness_robust_binomial_bounds,
 )
-from inspect_safety_stats.stats.direct_mean import weighted_kl_chernoff_mean_bounds
+from inspect_safety_stats.stats.direct_mean import (
+    _bernoulli_kl,
+    _invert_divergence,
+    _poisson_deviance,
+    weighted_kl_chernoff_mean_bounds,
+)
 from inspect_safety_stats.stats.tree_calibration import (
     IndependentFrontier,
     calibrate_independent_frontiers,
@@ -92,6 +98,7 @@ class NodeEstimate:
     coefficient_ratio: float
     effective_sample_size: float
     raw_failure_rate: float | None
+    unclassified_share: float
 
 
 @dataclass(frozen=True)
@@ -170,6 +177,50 @@ def _raw_failure_rate(outcomes: list[UnitOutcome]) -> float | None:
     if classified <= 0:
         return None
     return sum(item.failures for item in outcomes) / classified
+
+
+def _unclassified_share(outcomes: list[UnitOutcome], coefficients: np.ndarray) -> float:
+    """The design weight the bounds complete as an unknown outcome.
+
+    Each unit contributes its coefficient times the share of its rollouts with no
+    verdict. The bounds count that mass as safe at the lower end and as failing at the
+    upper, and a judge correction must keep it there: labels say nothing about it.
+    """
+
+    share = sum(
+        float(coefficient) * outcome.unclassified / outcome.trials
+        for outcome, coefficient in zip(outcomes, coefficients, strict=True)
+    )
+    return min(1.0, share)
+
+
+def unclassified_upper_bound(estimate: NodeEstimate, *, alpha: float) -> float:
+    """A one-sided upper confidence bound on the design's share of unclassified rollouts.
+
+    ``estimate.unclassified_share`` is the run's own share; the design's share is the
+    parameter a judge correction needs, and the run's share only estimates it. Each draw's
+    share of unclassified rollouts is a [0, 1] value, independent across draws as the node's
+    own interval assumes, so the bound is the one that interval's kernel gives: exact
+    Clopper-Pearson on the unclassified count when every draw carries the same coefficient
+    and one rollout, and otherwise the KL/Chernoff bound for independent bounded blocks --
+    Bernoulli KL over the draws when the coefficients are equal, the Poisson exponent of the
+    largest coefficient when they are not.
+    """
+
+    if not 0.0 < alpha < 1.0:
+        raise ValueError("alpha must be in (0, 1)")
+    if estimate.equal_coefficients and estimate.trials == estimate.draws:
+        return binomial_upper_bound(estimate.unclassified, estimate.trials, alpha=alpha)
+    observed = min(1.0, max(0.0, estimate.unclassified_share))
+    if estimate.equal_coefficients:
+        target = math.log(1 / alpha) / estimate.draws
+        bound = _invert_divergence(observed, target, direction="upper", divergence=_bernoulli_kl)
+    else:
+        target = estimate.maximum_coefficient * math.log(1 / alpha)
+        bound = _invert_divergence(
+            observed, target, direction="upper", divergence=_poisson_deviance
+        )
+    return min(1.0, bound)
 
 
 def _point_estimate(
@@ -339,6 +390,7 @@ def estimate_tree(
                 coefficient_ratio=float(normalized.max() / normalized.min()),
                 effective_sample_size=_effective_sample_size(normalized),
                 raw_failure_rate=_raw_failure_rate(node_outcomes),
+                unclassified_share=_unclassified_share(node_outcomes, normalized),
             )
         )
 
@@ -436,6 +488,7 @@ def estimate_slice(
         coefficient_ratio=float(normalized.max() / normalized.min()),
         effective_sample_size=_effective_sample_size(normalized),
         raw_failure_rate=_raw_failure_rate(slice_outcomes),
+        unclassified_share=_unclassified_share(slice_outcomes, normalized),
     )
 
 

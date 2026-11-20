@@ -68,8 +68,8 @@ justify generalization to unseen questions.
 
 ## Read the outputs
 
-Start with `report/report.md`, or `report/report.html` in a browser, for the human-readable
-results. Use `report/report.json` for every numeric result, including the claim statuses and
+Start with `report/report.md`, the one-page summary, or `report/report.html` in a browser.
+`report/report-full.md` is the full human-readable report. Use `report/report.json` for every numeric result, including the claim statuses and
 the overall decision. The Markdown and HTML reports show decisions only when the plan sets
 `report.include_decisions: true`, which this plan does not. `observations.csv` gives one
 auditable row per rollout, `design.resolved.csv` records the effective policy weights, and

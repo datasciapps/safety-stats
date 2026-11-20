@@ -57,6 +57,9 @@ _ROOT_FILES = {
     # Notes for coding agents. CLAUDE.md only imports AGENTS.md.
     "AGENTS.md",
     "CLAUDE.md",
+    # Consumer-facing agent discovery indexes (llmstxt.org).
+    "llms.txt",
+    "llms-full.txt",
 }
 
 
@@ -108,6 +111,16 @@ def test_approx_tolerances_cannot_make_small_comparisons_vacuous() -> None:
     )
 
 
+def _undefined_tests(text: str) -> list[str]:
+    """The test functions named in backticks in ``text`` that no tracked test module defines."""
+    definitions = "\n".join(path.read_text(encoding="utf-8") for path in _tracked("tests/*.py"))
+    return [
+        name
+        for name in sorted(set(re.findall(r"`(test_\w+)`", text)))
+        if f"def {name}(" not in definitions
+    ]
+
+
 def test_agent_notes_cite_tests_and_files_that_exist() -> None:
     """AGENTS.md ties each past mistake to the test that now catches it.
 
@@ -115,15 +128,23 @@ def test_agent_notes_cite_tests_and_files_that_exist() -> None:
     pointing at nothing, and nobody would notice.
     """
     notes = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
-    definitions = "\n".join(path.read_text(encoding="utf-8") for path in _tracked("tests/*.py"))
-    missing = [
-        name
-        for name in sorted(set(re.findall(r"`(test_\w+)`", notes)))
-        if f"def {name}(" not in definitions
-    ]
+    missing = _undefined_tests(notes)
     paths = set(re.findall(r"\b((?:scripts|src|tests)/[\w./-]+\.(?:py|md|yaml))", notes))
     missing += sorted(path for path in paths if not (ROOT / path).is_file())
     assert not missing, "AGENTS.md cites what no longer exists: " + ", ".join(missing)
+
+
+def test_formal_proofs_cite_tests_that_exist() -> None:
+    """Each theorem in formal/ names the property test that checks it on the implementation.
+
+    The proof covers the mathematics and the test ties the Python code to it. Renaming the
+    test would cut that link silently.
+    """
+    proofs = _tracked("formal/*.lean")
+    if not proofs:  # pragma: no cover - formal proofs removed
+        pytest.skip("no formal proofs are tracked")
+    missing = _undefined_tests("\n".join(path.read_text(encoding="utf-8") for path in proofs))
+    assert not missing, "formal/ cites tests that no longer exist: " + ", ".join(missing)
 
 
 def test_every_tracked_example_plan_validates() -> None:
@@ -269,6 +290,27 @@ def test_the_package_has_no_runtime_asserts() -> None:
         for path in sorted(package.rglob("*.py"))
         for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
         if isinstance(node, ast.Assert)
+    ]
+    assert offenders == []
+
+
+# Characters that do not show in an editor or a diff: line and paragraph separators, zero-width
+# characters, bidirectional controls and the byte-order mark.
+_INVISIBLE = re.compile("[\u2028\u2029\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]")
+
+
+def test_the_package_source_spells_invisible_characters_as_escapes() -> None:
+    """A literal invisible character cannot be reviewed: the U+2028 and U+2029 escapes of the
+    report page's data once became the characters themselves, which read as blank strings."""
+    # The imported package, not the checkout, so that scripts/prove_red.py can test it.
+    package = Path(inspect_safety_stats.__file__).parent
+    offenders = [
+        f"{path.relative_to(package.parent).as_posix()}:{line}"
+        for path in sorted(package.rglob("*"))
+        if path.suffix in {".py", ".html"}
+        # split("\n"), not splitlines(), which would take U+2028 and U+2029 as line ends.
+        for line, text in enumerate(path.read_text(encoding="utf-8").split("\n"), start=1)
+        if _INVISIBLE.search(text)
     ]
     assert offenders == []
 

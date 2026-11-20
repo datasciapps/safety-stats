@@ -1,11 +1,18 @@
 from __future__ import annotations
 
 import itertools
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from inspect_safety_stats.stats.binomial import binomial_bounds, binomial_lower_bound
+from inspect_safety_stats.stats.binomial import (
+    binomial_bounds,
+    binomial_lower_bound,
+    binomial_upper_bound,
+)
+
+CalibrationBound = Literal["clopper_pearson", "confidence_sequence"]
 
 
 @dataclass(frozen=True)
@@ -21,6 +28,9 @@ class JudgeCalibration:
     parameter no label measured and which the box therefore completes as ``[0, 1]``. Such a
     box cannot be strictly informative, so the informativeness check applies only when no
     stratum is completed.
+
+    ``bound`` names how a validated box bounds each measured stratum: exact Clopper-Pearson
+    intervals, or anytime-valid confidence sequences for labelling that may stop on results.
     """
 
     scenario_id: str
@@ -31,6 +41,7 @@ class JudgeCalibration:
     source: str = "assumed"
     alpha: float | None = None
     completed_strata: tuple[str, ...] = ()
+    bound: CalibrationBound = "clopper_pearson"
 
     def __post_init__(self) -> None:
         for name, low, high in (
@@ -68,6 +79,8 @@ def correct_judge_risk(
     observed_estimate: float | None,
     calibration: JudgeCalibration,
     unclassified_share: float = 0.0,
+    unclassified_in_bounds: bool = True,
+    unclassified_share_per_prompt: bool = False,
     tail: bool = False,
 ) -> CorrectedRisk:
     """Map a judge-system risk interval onto the true-risk scale.
@@ -92,16 +105,57 @@ def correct_judge_risk(
     top-k mean, and the upper end then also takes that mass as 0. A weighted mean needs no
     such vertex, since it is linear in ``R`` itself.
 
-    ``unclassified_share`` is the weight on rollouts with no judge verdict, which the
-    observed bounds complete as judge-safe at the lower end and judge-unsafe at the
-    upper. The labels say nothing about those rollouts, so they keep that completion on
-    the true-risk scale. Only the classified judge-unsafe mass, which the bounds place in
-    ``[observed_lower, observed_upper - unclassified_share]``, is mapped through rho:
+    Rollouts with no judge verdict carry weight ``s``. The labels say nothing about them,
+    so on the true-risk scale they keep their worst case, truly safe at the lower end and
+    truly unsafe at the upper, and only the classified judge-unsafe mass ``M`` is mapped
+    through rho:
 
         R* = M * rho_1 + (1 - s - M) * rho_0 + s * u,   u in [0, 1].
 
-    For a tail measure, pass the largest share of any prompt it weights. The adjustment
-    is monotone and translation equivariant, so that bounds the tail too.
+    ``s`` is the population share, a parameter: the run's own share only estimates it, and
+    plugging that estimate in lets the upper bound fall below true risk whenever the run
+    saw fewer unclassified rollouts than the population holds. ``unclassified_share`` is
+    therefore an upper bound on ``s`` that holds on the event the caller budgets for, such
+    as a one-sided upper confidence bound; the default 0 says the population has none. Its
+    error probability adds to the corrected interval's.
+
+    ``unclassified_in_bounds`` says what the observed interval covers.
+
+    - True: the bounds complete every unclassified rollout, as judge-safe at the lower end
+      and as judge-unsafe at the upper, so they cover ``M`` and ``M + s``. That places ``M``
+      in ``[observed_lower, observed_upper - s]`` and ``s`` below ``observed_upper``. The
+      lower end takes the share at ``min(s_U, 1 - observed_lower)`` and the upper end at
+      ``min(s_U, observed_upper)``, so that each end needs only its own observed endpoint,
+      the share bound and its two rho endpoints.
+    - False: the ``exclude`` policy dropped some unclassified rollouts from the bounds, which
+      then cover only each prompt's judge-unsafe rate among its classified rollouts, ``Q_i``,
+      combined by the measure. Prompt ``i`` has true risk ``(1 - s_i) A_i + s_i u_i``, where
+      ``A_i = Q_i rho_1 + (1 - Q_i) rho_0`` is its true risk among classified rollouts, and
+      the plain correction ``[A_lower, A_upper]`` of the observed interval bounds the
+      measure of the ``A_i``. How the share enters depends on what ``s_U`` bounds.
+
+      - ``unclassified_share_per_prompt`` false (the default): ``s_U`` bounds the weighted
+        mean of the prompts' shares, ``sum_i w_i s_i``, as for a weighted mean. The shares
+        may sit on the riskiest prompts or on the safest, so ``R* = sum_i w_i A_i +
+        sum_i w_i s_i (u_i - A_i)`` lies in ``[A_lower - s_U, A_upper + s_U]``. Mixing
+        ``A`` with the share as if every prompt had the same share does not bound it: two
+        prompts of weight one half, one with share 0.4 whose classified rollouts are all
+        safe and one fully classified at rate 0.5, have ``Q = 0.25`` and ``s = 0.2`` and
+        true risk up to 0.45 under a perfect judge, where ``(1 - s) A_upper + s`` gives 0.4.
+      - ``unclassified_share_per_prompt`` true: ``s_U`` bounds every prompt's own share, as
+        the largest share does for a tail measure (maximum, CVaR, top-k mean). Each prompt's
+        risk lies in ``[(1 - s_U) A_i, (1 - s_U) A_i + s_U]``, and a measure that is
+        monotone, positively homogeneous and translation equivariant carries that through,
+        so the interval is ``[(1 - s_U) A_lower, (1 - s_U) A_upper + s_U]``, inside the
+        additive one.
+
+      Every end is monotone in ``s``, so the bound ``s_U`` is all it needs. This reading
+      holds for bounds that complete too, since those cover the ``Q_i`` as well, so it is
+      the conservative one when in doubt.
+
+    For a tail measure, pass a bound on the largest share of any prompt it weights, which
+    bounds every prompt's share. The adjustment is monotone and translation equivariant, so
+    that bounds the tail too.
     """
 
     if not 0 <= observed_lower <= observed_upper <= 1:
@@ -111,24 +165,52 @@ def correct_judge_risk(
     if not 0 <= unclassified_share <= 1:
         raise ValueError("the unclassified share must be in [0, 1]")
 
-    share = unclassified_share
-    # The classified judge-unsafe mass cannot exceed the classified share.
-    mass_lower = min(observed_lower, 1 - share)
-    mass_upper = max(mass_lower, observed_upper - share)
-    vertices = [
-        mass * rho_1 + (1 - share - mass) * rho_0 + share * unknown
-        for mass, rho_1, rho_0, unknown in itertools.product(
-            (mass_lower, mass_upper),
-            (calibration.rho_1_lower, calibration.rho_1_upper),
-            (calibration.rho_0_lower, calibration.rho_0_upper),
-            (0.0, 1.0),
-        )
-    ]
-    upper = max(vertices)
-    if tail and calibration.rho_1_lower < calibration.rho_0_upper:
-        # No classified judge-unsafe mass, every judge-safe rollout truly unsafe at rho_0's
-        # upper end, and every unclassified one unsafe as well.
-        upper = max(upper, (1 - share) * calibration.rho_0_upper + share)
+    def vertices(share: float, unknown: float) -> list[float]:
+        """R* at the box vertices, for a share and the unclassified rollouts' true rate."""
+        # The classified judge-unsafe mass cannot exceed the classified share.
+        mass_lower = min(observed_lower, 1 - share)
+        mass_upper = max(mass_lower, observed_upper - share)
+        return [
+            mass * rho_1 + (1 - share - mass) * rho_0 + share * unknown
+            for mass, rho_1, rho_0 in itertools.product(
+                (mass_lower, mass_upper),
+                (calibration.rho_1_lower, calibration.rho_1_upper),
+                (calibration.rho_0_lower, calibration.rho_0_upper),
+            )
+        ]
+
+    # A box that lets rho_1 fall below rho_0 reverses the order of prompts, so a tail of
+    # true risk can rest on a prompt with no classified judge-unsafe mass at all.
+    reversed_tail = tail and calibration.rho_1_lower < calibration.rho_0_upper
+    if unclassified_in_bounds:
+        # R* falls as the share rises at the lower end and rises with it at the upper, so
+        # each end takes the largest share its own observed endpoint allows: at most
+        # 1 - M <= 1 - observed_lower, and at most M + s <= observed_upper.
+        lower = min(vertices(min(unclassified_share, 1 - observed_lower), 0.0))
+        upper_share = min(unclassified_share, observed_upper)
+        upper = max(vertices(upper_share, 1.0))
+        if reversed_tail:
+            # No classified judge-unsafe mass, every judge-safe rollout truly unsafe at
+            # rho_0's upper end, and every unclassified one unsafe as well.
+            upper = max(upper, (1 - upper_share) * calibration.rho_0_upper + upper_share)
+    else:
+        # The observed interval bounds the classified rollouts' rate; correct it as if
+        # every rollout were classified, then let the share move it at its worst case.
+        plain_lower = min(vertices(0.0, 0.0))
+        plain_upper = max(vertices(0.0, 0.0))
+        if reversed_tail:
+            # A prompt with no classified judge-unsafe mass, truly unsafe at rho_0's upper end.
+            plain_upper = max(plain_upper, calibration.rho_0_upper)
+        if unclassified_share_per_prompt:
+            # Every prompt's share is at most s_U, so each prompt mixes in at most s_U.
+            lower = (1 - unclassified_share) * plain_lower
+            upper = (1 - unclassified_share) * plain_upper + unclassified_share
+        else:
+            # Only the average share is bounded, and it may sit where the rate is lowest
+            # (for the upper end) or highest (for the lower end), so the share moves each
+            # end by its whole size.
+            lower = plain_lower - unclassified_share
+            upper = plain_upper + unclassified_share
     estimate_lower = estimate_upper = None
     if observed_estimate is not None:
         estimate_lower = (
@@ -140,7 +222,7 @@ def correct_judge_risk(
             + (1 - observed_estimate) * calibration.rho_0_upper
         )
     return CorrectedRisk(
-        lower=max(0.0, min(vertices)),
+        lower=max(0.0, lower),
         upper=min(1.0, upper),
         completion_estimate_lower=estimate_lower,
         completion_estimate_upper=estimate_upper,
@@ -157,7 +239,9 @@ def transported_sensitivity_lower(
     ``human_unsafe`` items of the set are truly unsafe by human adjudication, and the judge
     flagged ``judge_flagged_unsafe`` of them. The bound is the Clopper-Pearson lower endpoint
     at ``alpha``; it describes the published set, and holds for another run's outputs only
-    under the transport assumption the caller declares.
+    under the transport assumption the caller declares. It treats the ``human_unsafe`` items
+    as independent draws that share one sensitivity, so it is too narrow for counts that
+    include several completions of the same behaviour.
     """
 
     return binomial_lower_bound(judge_flagged_unsafe, human_unsafe, alpha=alpha)
@@ -169,6 +253,8 @@ def transport_judge_risk(
     observed_estimate: float | None,
     sensitivity_lower: float,
     scenario_id: str = "transported",
+    unclassified_share: float = 0.0,
+    unclassified_share_per_prompt: bool = False,
 ) -> CorrectedRisk:
     """Bound true risk from a transported sensitivity and the run's own judged rate.
 
@@ -182,11 +268,21 @@ def transport_judge_risk(
     Gladen, Am. J. Epidemiol. 107(1), 1978) at its maximising corner ``Sp = 1``: no
     specificity is declared, because a published set's specificity does not transport.
 
-    Rollouts the judge never classified need no separate term: the observed upper bound
-    already completes them as judge failures, and dividing by a sensitivity of at most one
-    only enlarges that completion. The bound is monotone and positively homogeneous in the
-    prompt rates, so it applies to the weighted mean and to the tail measures alike,
-    provided the sensitivity bound holds on every prompt.
+    Rollouts the judge never classified need no separate term when the observed upper bound
+    completes them as judge failures: dividing by a sensitivity of at most one only enlarges
+    that completion. When the ``exclude`` policy dropped some of them from the bounds, the
+    bound covers only the classified rollouts' rates ``q_i``, and the dropped ones may all be
+    truly unsafe. Pass an upper bound ``s_U`` on their population share as
+    ``unclassified_share``. Prompt ``i`` has true risk ``(1 - s_i) pi_i + s_i u_i`` with
+    ``pi_i <= min(1, q_i / Se)``, which rises with ``s_i``. When ``s_U`` bounds only the
+    weighted mean of the shares (``unclassified_share_per_prompt`` false, the default, as
+    for a weighted mean), the shares may sit on the prompts with the lowest rates, so the
+    upper bound is ``min(1, observed_upper / Se) + s_U``. When it bounds every prompt's own
+    share (true, as the largest share does for a tail measure), each prompt's risk is at
+    most ``(1 - s_U) min(1, q_i / Se) + s_U``, and a measure that is monotone, positively
+    homogeneous and translation equivariant in the prompt rates carries that through to
+    ``(1 - s_U) min(1, observed_upper / Se) + s_U``. Both need the sensitivity bound to hold
+    on every prompt.
     """
 
     if not 0 <= observed_upper <= 1:
@@ -195,6 +291,8 @@ def transport_judge_risk(
         raise ValueError("observed estimate must be in [0, 1]")
     if not 0 <= sensitivity_lower <= 1:
         raise ValueError("the sensitivity lower bound must be in [0, 1]")
+    if not 0 <= unclassified_share <= 1:
+        raise ValueError("the unclassified share must be in [0, 1]")
 
     def inflate(rate: float) -> float:
         # A judge that may catch nothing leaves true risk unbounded within [0, 1].
@@ -204,7 +302,15 @@ def transport_judge_risk(
 
     return CorrectedRisk(
         lower=0.0,
-        upper=inflate(observed_upper),
+        upper=min(
+            1.0,
+            (
+                (1 - unclassified_share) * inflate(observed_upper)
+                if unclassified_share_per_prompt
+                else inflate(observed_upper)
+            )
+            + unclassified_share,
+        ),
         completion_estimate_lower=None if observed_estimate is None else 0.0,
         completion_estimate_upper=(
             None if observed_estimate is None else inflate(observed_estimate)
@@ -236,12 +342,80 @@ class JudgeStratumCounts:
             raise ValueError("labelled count cannot exceed the stratum size")
 
 
+def judge_accuracy_confidence_sequence(
+    stratum: JudgeStratumCounts, *, alpha: float
+) -> tuple[float, float]:
+    """An anytime-valid range for the probability that a rollout of a judge stratum is unsafe.
+
+    A validated calibration needs rho, the probability that a rollout the judge put in this
+    stratum is truly unsafe, not the share ``K / N`` of the run's ``N`` rollouts in it that
+    are. The run's rollouts only sample rho: given ``N``, ``K`` is binomial with rate rho
+    when the stratum's rollouts are independent, each truly unsafe with probability rho, the
+    rollout model under which the labels of a fixed-size calibration are binomial too. Even
+    a census, which knows ``K``, leaves ``K / N`` about ``sqrt(rho (1 - rho) / N)`` from rho.
+
+    The labelled rows are drawn one at a time, in a random order fixed before labelling, so
+    under that model their labels are independent draws, each unsafe with probability rho.
+    With a uniform prior on rho, the ratio of prior to posterior density at the true rho is
+    then a nonnegative martingale starting at one: the prior-posterior ratio martingale of
+    Waudby-Smith and Ramdas ("Confidence sequences for sampling without replacement",
+    NeurIPS 2020), here for the binomial model rather than a finite population. It is the
+    likelihood ratio of a uniform mixture of rates against the true rate. By Ville's
+    inequality it ever exceeds ``1 / alpha`` with probability at most ``alpha``, so the set
+    of rho whose posterior density exceeds ``alpha`` holds the true rho at every number of
+    labels simultaneously. Labelling may therefore stop at any time, also because of the
+    labels seen so far.
+
+    After ``n`` labels with ``S`` unsafe the posterior is Beta(S + 1, n - S + 1). Its
+    density is log-concave, so the set is an interval, and the endpoints are where the
+    density equals ``alpha``. The stratum's size does not enter: the labels carry everything
+    the run says about rho. With no labels the range is ``[0, 1]``.
+
+    ``alpha`` bounds the probability that the range ever misses on either side, and so each
+    endpoint's too.
+    """
+
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0, 1)")
+    unsafe = stratum.truly_unsafe
+    safe = stratum.labelled - unsafe
+    if stratum.labelled == 0:
+        return 0.0, 1.0
+    # The upper end for the unsafe count is one minus the lower end for the safe count.
+    lower = _posterior_density_crossing(unsafe, safe, alpha) if unsafe else 0.0
+    upper = 1.0 - _posterior_density_crossing(safe, unsafe, alpha) if safe else 1.0
+    return lower, upper
+
+
+def _posterior_density_crossing(successes: int, failures: int, alpha: float) -> float:
+    """Where the Beta(successes + 1, failures + 1) density rises through ``alpha``.
+
+    ``successes`` is positive, so the density is zero at zero and increases up to its mode,
+    ``successes / (successes + failures)``, where it is at least one, above ``alpha``.
+    """
+
+    from scipy.optimize import brentq
+    from scipy.special import betaln, xlog1py
+
+    threshold = math.log(alpha) + float(betaln(successes + 1, failures + 1))
+
+    def excess(rate: float) -> float:
+        return successes * math.log(rate) + float(xlog1py(failures, -rate)) - threshold
+
+    mode = successes / (successes + failures)
+    # The smallest positive double keeps the logarithm finite; the density there is far
+    # below alpha. The tolerances leave only the relative precision of a double.
+    tiny = math.ulp(0.0)
+    return float(brentq(excess, tiny, mode, xtol=tiny, rtol=4 * math.ulp(1.0)))
+
+
 def estimate_judge_calibration(
     *,
     scenario_id: str,
     unsafe_stratum: JudgeStratumCounts,
     safe_stratum: JudgeStratumCounts,
     alpha: float,
+    bound: CalibrationBound = "clopper_pearson",
 ) -> JudgeCalibration:
     """Estimate rho_1 and rho_0 from human labels drawn within each judge stratum.
 
@@ -252,8 +426,15 @@ def estimate_judge_calibration(
     spends no more than ``alpha``.
 
     Validity requires the labelled rows to be a simple random sample within their
-    stratum. That is a property of the collection protocol, not of the data, and is
-    recorded as a declared assumption rather than checked here.
+    stratum, of a size that did not depend on the labels. That is a property of the
+    collection protocol, not of the data, and is recorded as a declared assumption rather
+    than checked here; a plan's labelling protocol checks what the data can show.
+
+    ``bound="confidence_sequence"`` replaces each Clopper-Pearson interval with the
+    anytime-valid range of :func:`judge_accuracy_confidence_sequence` at the same endpoint
+    budget, which stays valid when labelling stopped because of the labels seen so far. It
+    rests on the same rollout model as the Clopper-Pearson bounds, and a sweep of every
+    count up to 400 labels found it never narrower than they are.
 
     A stratum without labels is completed conservatively: its parameter is a
     probability, so ``[0, 1]`` contains it with certainty and spends none of ``alpha``.
@@ -272,6 +453,9 @@ def estimate_judge_calibration(
     def bounds(stratum: JudgeStratumCounts) -> tuple[float, float]:
         if stratum.labelled == 0:
             return 0.0, 1.0
+        if bound == "confidence_sequence":
+            # Two-sided at the endpoint budget, so each endpoint keeps its alpha / 4.
+            return judge_accuracy_confidence_sequence(stratum, alpha=endpoint_alpha)
         interval = binomial_bounds(
             stratum.truly_unsafe,
             stratum.labelled,
@@ -293,6 +477,7 @@ def estimate_judge_calibration(
         rho_0=(rho_0_lower, rho_0_upper),
         alpha=alpha,
         completed=completed,
+        bound=bound,
     )
 
 
@@ -303,6 +488,7 @@ def _validated_calibration(
     rho_0: tuple[float, float],
     alpha: float,
     completed: tuple[str, ...],
+    bound: CalibrationBound = "clopper_pearson",
 ) -> JudgeCalibration:
     """The measured box, or the refusal of one that does not establish an informative judge."""
 
@@ -321,6 +507,7 @@ def _validated_calibration(
         source="validated",
         alpha=alpha,
         completed_strata=completed,
+        bound=bound,
     )
 
 
@@ -380,10 +567,15 @@ class FineStratumBounds:
 
 @dataclass(frozen=True)
 class StratifiedJudgeCalibration:
-    """A validated calibration from labels drawn by a stratified design without replacement."""
+    """A validated calibration from labels drawn by a stratified design without replacement.
+
+    ``rate_alpha`` is the level each of the four one-sided Clopper-Pearson bounds spends in
+    turning a judge stratum's count bounds into a range for its conditional probability.
+    """
 
     calibration: JudgeCalibration
     fine_strata: tuple[FineStratumBounds, ...]
+    rate_alpha: float
 
     @property
     def unlabelled_fine_strata(self) -> tuple[FineStratumBounds, ...]:
@@ -404,21 +596,40 @@ def estimate_stratified_judge_calibration(
     Each fine stratum ``h`` of a judge stratum of size ``N`` holds ``N_h`` rollouts, of which
     ``n_h`` were labelled as a simple random sample without replacement whose size was fixed
     independently of the labels. Its truly unsafe count ``K_h`` then has exact hypergeometric
-    bounds, and the judge stratum's parameter is ``sum_h K_h / N``: each fine stratum is
-    weighted back by its own size, whatever share of it was labelled.
+    bounds, and their sums ``K_L`` and ``K_U`` bound the judge stratum's truly unsafe count
+    ``K = sum_h K_h``: each fine stratum is weighted back by its own size, whatever share of
+    it was labelled.
+
+    ``K / N`` is the share of this run's rollouts that are truly unsafe, not the conditional
+    probability rho that :func:`correct_judge_risk` needs. The run's rollouts only sample
+    rho, so even a census, which knows ``K`` exactly, leaves ``K / N`` about
+    ``sqrt(rho (1 - rho) / N)`` from it. Given ``N``, ``K`` is binomial with rate rho when the
+    judge stratum's rollouts are independent draws with that common conditional
+    probability, the rollout model under which the labels of
+    :func:`estimate_judge_calibration` are binomial too. The range of rho is therefore the
+    one-sided Clopper-Pearson lower bound at ``K_L`` and upper bound at ``K_U``, out of
+    ``N``. Both bounds are nondecreasing in the count, so rho falls below the range only if
+    ``K < K_L`` or rho falls below the Clopper-Pearson lower bound at ``K`` itself, and
+    likewise above it.
 
     ``alpha`` is split as in :func:`estimate_judge_calibration`: a quarter per endpoint of
-    the pair. An endpoint's quarter is split equally over the fine strata of its judge
-    stratum that are labelled but not censused, so a union bound over every count bound
-    spends no more than ``alpha``. A census is exact and an unlabelled fine stratum is
-    completed as ``[0, N_h]``; neither spends any of it. A judge stratum without any label
-    is completed as ``[0, 1]`` and named in ``completed_strata``; with both unlabelled the
-    estimate is refused.
+    the pair. Each endpoint's quarter is halved, always: one half is the level of its
+    Clopper-Pearson bound (``rate_alpha``), and the other is split equally over the count
+    bounds of the fine strata of its judge stratum that are labelled but not censused. A
+    union bound over all of them therefore spends no more than ``alpha``. The halves stay
+    fixed when no fine stratum is sampled: whether a design censuses a fine stratum can
+    depend on the stratum's size, which is not independent of ``K``, while the
+    Clopper-Pearson bound holds only over those sizes, not given them. A census gives its
+    count exactly and an unlabelled fine stratum is completed as ``[0, N_h]``; neither count
+    bound spends anything. A judge stratum without any label is completed as ``[0, 1]`` and
+    named in ``completed_strata``; with both unlabelled the estimate is refused.
     """
 
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
     endpoint_alpha = alpha / 4
+    rate_alpha = endpoint_alpha / 2
+    count_alpha = endpoint_alpha - rate_alpha
     fine: list[FineStratumBounds] = []
 
     def bounds(judge_stratum: str, strata: Mapping[str, JudgeStratumCounts]) -> tuple[float, float]:
@@ -428,7 +639,7 @@ def estimate_stratified_judge_calibration(
         sampled = sum(
             1 for item in strata.values() if 0 < item.labelled < item.stratum_size
         )
-        level = endpoint_alpha / sampled if sampled else 0.0
+        level = count_alpha / sampled if sampled else 0.0
         lower = upper = 0
         for name in sorted(strata):
             item = strata[name]
@@ -446,7 +657,11 @@ def estimate_stratified_judge_calibration(
             fine.append(FineStratumBounds(judge_stratum, name, item, low, high, spent))
             lower += low
             upper += high
-        return lower / total, upper / total
+        # A judge stratum without labels has counts [0, N], and so the range [0, 1].
+        return (
+            binomial_lower_bound(lower, total, alpha=rate_alpha),
+            binomial_upper_bound(upper, total, alpha=rate_alpha),
+        )
 
     labelled = {
         name: sum(item.labelled for item in strata.values())
@@ -460,7 +675,9 @@ def estimate_stratified_judge_calibration(
     calibration = _validated_calibration(
         scenario_id=scenario_id, rho_1=rho_1, rho_0=rho_0, alpha=alpha, completed=completed
     )
-    return StratifiedJudgeCalibration(calibration=calibration, fine_strata=tuple(fine))
+    return StratifiedJudgeCalibration(
+        calibration=calibration, fine_strata=tuple(fine), rate_alpha=rate_alpha
+    )
 
 
 def completion_warning(calibration: JudgeCalibration) -> str | None:
@@ -565,6 +782,114 @@ class TruthStratumCounts:
                 raise ValueError(f"{name} must be a nonnegative integer")
         if self.judge_positive > self.labelled:
             raise ValueError("judge_positive cannot exceed the labelled count")
+
+
+@dataclass(frozen=True)
+class LangReiczigelCorrectedRisk:
+    """Lang-Reiczigel confidence limits for true risk with estimated judge accuracy."""
+
+    estimate: float
+    lower: float
+    upper: float
+    alpha: float
+    sensitivity_estimate: float
+    specificity_estimate: float
+
+
+def lang_reiczigel_corrected_risk(
+    *,
+    apparent_rate: float,
+    apparent_size: float,
+    truly_unsafe: TruthStratumCounts,
+    truly_safe: TruthStratumCounts,
+    alpha: float,
+) -> LangReiczigelCorrectedRisk:
+    """Two-sided limits for true risk adjusted for estimated sensitivity and specificity.
+
+    This is the interval of Lang and Reiczigel (2014, Preventive Veterinary Medicine
+    113:13-22), in the notation of that paper with the judge as the diagnostic test:
+    ``apparent_rate`` is the judge-reported rate ``AP`` over ``apparent_size`` rollouts,
+    sensitivity ``Se`` is estimated from the truly unsafe labelled rollouts and
+    specificity ``Sp`` from the truly safe ones. With ``z`` the normal quantile at
+    ``1 - alpha / 2``, the counts are adjusted in the manner of Agresti and Coull,
+
+        AP' = (n AP + z^2 / 2) / (n + z^2),   Se' = (x_Se + 1) / (n_Se + 2),
+        Sp' = (x_Sp + 1) / (n_Sp + 2),
+
+    the Rogan-Gladen estimate ``P' = (AP' + Sp' - 1) / (Se' + Sp' - 1)`` is shifted by
+    the bias correction
+
+        dP = 2 z^2 (P' Se'(1 - Se') / n_Se' - (1 - P') Sp'(1 - Sp') / n_Sp'),
+
+    and the limits are ``P' + dP -/+ z sqrt(Var)`` with
+
+        Var = (AP'(1 - AP') / n_AP' + P'^2 Se'(1 - Se') / n_Se'
+               + (1 - P')^2 Sp'(1 - Sp') / n_Sp') / (Se' + Sp' - 1)^2,
+
+    ``n_AP' = n + z^2`` and ``n_Se' = n_Se + 2``, ``n_Sp' = n_Sp + 2``. The R package
+    ``asht`` (``prevSeSp``) notes a typo in the paper's equation 4, ``(1 + P')^2`` for
+    ``(1 - P')^2`` in the last term; the latter is the delta-method variance, and both
+    that implementation and this one use it. Limits and the point estimate are clipped
+    to ``[0, 1]``.
+
+    The interval is approximate: its coverage is a simulation result, not a guarantee
+    (``research/judge_correction_lang_reiczigel.py``). Sensitivity and specificity are
+    prevalence-free, so the labels must be a simple random sample of the rollouts or
+    sampled by true class, never within judge strata. A judge the adjusted estimates do
+    not show to be informative (``Se' + Sp' <= 1``) is refused, as is one whose raw
+    estimates leave the Rogan-Gladen estimate undefined.
+    """
+
+    from scipy.stats import norm
+
+    if not 0 < alpha < 1:
+        raise ValueError("alpha must be in (0, 1)")
+    if not 0 <= apparent_rate <= 1:
+        raise ValueError("apparent rate must be in [0, 1]")
+    if not apparent_size > 0:
+        raise ValueError("apparent size must be positive")
+    if truly_unsafe.labelled == 0 or truly_safe.labelled == 0:
+        raise ValueError("both truth strata require at least one labelled observation")
+
+    sensitivity = truly_unsafe.judge_positive / truly_unsafe.labelled
+    specificity = 1 - truly_safe.judge_positive / truly_safe.labelled
+    if sensitivity + specificity <= 1:
+        raise ValueError(
+            "the labels do not establish an informative judge: estimated sensitivity "
+            f"({sensitivity:.6g}) plus specificity ({specificity:.6g}) does not exceed 1"
+        )
+    z = float(norm.ppf(1 - alpha / 2))
+    z2 = z * z
+    size_se = truly_unsafe.labelled + 2
+    size_sp = truly_safe.labelled + 2
+    se = (truly_unsafe.judge_positive + 1) / size_se
+    sp = (truly_safe.labelled - truly_safe.judge_positive + 1) / size_sp
+    youden = se + sp - 1
+    if youden <= 0:
+        raise ValueError(
+            "the labels do not establish an informative judge: adjusted sensitivity "
+            f"({se:.6g}) plus specificity ({sp:.6g}) does not exceed 1"
+        )
+    size_ap = apparent_size + z2
+    ap = (apparent_size * apparent_rate + z2 / 2) / size_ap
+    prevalence = (ap + sp - 1) / youden
+    var_se = se * (1 - se) / size_se
+    var_sp = sp * (1 - sp) / size_sp
+    bias = 2 * z2 * (prevalence * var_se - (1 - prevalence) * var_sp)
+    variance = (
+        ap * (1 - ap) / size_ap + prevalence**2 * var_se + (1 - prevalence) ** 2 * var_sp
+    ) / youden**2
+    centre = prevalence + bias
+    half_width = z * variance**0.5
+    estimate = (apparent_rate + specificity - 1) / (sensitivity + specificity - 1)
+    return LangReiczigelCorrectedRisk(
+        estimate=min(1.0, max(0.0, estimate)),
+        lower=min(1.0, max(0.0, centre - half_width)),
+        upper=min(1.0, max(0.0, centre + half_width)),
+        alpha=alpha,
+        sensitivity_estimate=sensitivity,
+        specificity_estimate=specificity,
+    )
 
 
 @dataclass(frozen=True)

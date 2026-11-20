@@ -1,0 +1,155 @@
+{
+  "analysis": {
+    "id": "real-simpleqa-eight",
+    "intent": "confirmatory",
+    "plan_sha256": "fd9ee06715157246e1e6d90d86f2cada7d7cffe96ee9fd7e280c8d026a0f654c",
+    "title": "Eight real SimpleQA items as a fixed-design failure analysis"
+  },
+  "artifacts": [
+    {
+      "format": "json",
+      "holds": "SHA-256 of every other file.",
+      "name": "checksums.json"
+    },
+    {
+      "format": "csv",
+      "holds": "One row per comparison set.",
+      "name": "comparison-sets.csv",
+      "rows_of": "/comparison_sets"
+    },
+    {
+      "format": "csv",
+      "holds": "One row per comparison result.",
+      "name": "comparisons.csv",
+      "rows_of": "/comparisons"
+    },
+    {
+      "format": "csv",
+      "holds": "One row per design prompt.",
+      "name": "design.resolved.csv",
+      "rows_of": "/design/prompts"
+    },
+    {
+      "format": "csv",
+      "holds": "One row per hierarchy node risk.",
+      "name": "hierarchy-risks.csv",
+      "rows_of": "/hierarchy_risks"
+    },
+    {
+      "format": "json",
+      "holds": "This index.",
+      "name": "index.json"
+    },
+    {
+      "format": "markdown",
+      "holds": "This index as Markdown.",
+      "name": "index.md"
+    },
+    {
+      "format": "csv",
+      "holds": "One row per normalised observation (analysis input).",
+      "name": "observations.csv"
+    },
+    {
+      "format": "yaml",
+      "holds": "The plan as analysed, defaults filled in.",
+      "name": "plan.resolved.yaml"
+    },
+    {
+      "format": "markdown",
+      "holds": "The full report: every interval, sensitivity and message.",
+      "name": "report-full.md"
+    },
+    {
+      "format": "html",
+      "holds": "Interactive report; embeds report.json.",
+      "name": "report.html"
+    },
+    {
+      "format": "json",
+      "holds": "Every result, diagnostic and setting; the source of all others.",
+      "name": "report.json"
+    },
+    {
+      "format": "markdown",
+      "holds": "One-page summary for people: read first.",
+      "name": "report.md"
+    }
+  ],
+  "guide": "https://github.com/aduncan001/safety_stats/blob/main/docs/agent-guide.md",
+  "index_version": "1",
+  "package_version": "0.16.0",
+  "pointers_into": "report.json",
+  "report_schema_version": "3.0",
+  "summary": {
+    "assumptions": [
+      "fixed_design",
+      "run_stability",
+      "rollout_independence",
+      "scorer_validity",
+      "judge_accuracy",
+      "missing_scores",
+      "sample_errors",
+      "token_limit",
+      "content_filter_stops",
+      "complete_design",
+      "plan_fixed_in_advance"
+    ],
+    "decisions_shown": false,
+    "error_count": 0,
+    "headline": [
+      {
+        "baseline": null,
+        "cohort": "candidate",
+        "csv": null,
+        "eligibility": "certifying",
+        "estimand": null,
+        "estimate": 0.5,
+        "group": "all-eight",
+        "item": "/group_risks/2",
+        "kind": "group_risk",
+        "lower": 0.0920692927984616,
+        "measure": "mean",
+        "upper": 0.9079307072015383
+      }
+    ],
+    "info_count": 0,
+    "integrity": "valid",
+    "warning_count": 2,
+    "warnings": [
+      {
+        "assumption": "The confirmatory plan's freeze time is backed by an external registration, not only by the time its author wrote in analysis.plan_frozen_at.",
+        "code": "PLAN_SELF_DECLARED",
+        "consequence": "Nothing is computed differently and integrity is unchanged; the report records that the plan's timing rests on its author's word.",
+        "count": 1,
+        "effect": "recorded",
+        "occurrences": [
+          {
+            "diagnostic": "/integrity/diagnostics/0",
+            "item": null,
+            "scope": null
+          }
+        ],
+        "severity": "WARNING",
+        "source": "registration"
+      },
+      {
+        "assumption": "Each prompt has enough rollouts that the tail and threshold measures built from the prompts' simultaneous bounds can lie within report.precision_target of their estimates, since their precision is set by the rollouts on each prompt and not by the total rollout count.",
+        "code": "TAIL_MEASURES_UNINFORMATIVE",
+        "consequence": "The tail and threshold measures are reported as computed, but in the cohort and group named, at the lower median of the rollouts per prompt, even if no prompt failed the named measures' upper bounds would lie more than the precision target above their estimates, so their intervals can only be wide.",
+        "count": 1,
+        "effect": "recorded",
+        "occurrences": [
+          {
+            "diagnostic": "/integrity/diagnostics/1",
+            "item": null,
+            "scope": "cohorts/candidate/groups/all-eight"
+          }
+        ],
+        "severity": "WARNING",
+        "source": "analysis"
+      }
+    ]
+  },
+  "summary_page": "report.md"
+}

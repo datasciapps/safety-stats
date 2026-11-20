@@ -33,6 +33,7 @@ from inspect_safety_stats.generative.inference import (
     _point_estimate,
     _raw_coefficients,
     _raw_failure_rate,
+    _unclassified_share,
 )
 from inspect_safety_stats.generative.ledger import SelectionRecord
 from inspect_safety_stats.generative.sampling import SamplingDesign
@@ -127,6 +128,7 @@ def _arm_estimate(
         coefficient_ratio=float(normalized.max() / normalized.min()),
         effective_sample_size=_effective_sample_size(normalized),
         raw_failure_rate=_raw_failure_rate(arm),
+        unclassified_share=_unclassified_share(arm, normalized),
     )
 
 

@@ -33,6 +33,12 @@ from inspect_safety_stats.stats import (
     weighted_kl_chernoff_mean_bounds,
 )
 
+# Experimental, so not in inspect_safety_stats.stats.__all__ until it graduates.
+from inspect_safety_stats.stats.direct_mean import (
+    weighted_betting_mean_bounds,
+    weighted_bounded_betting_mean_bounds,
+)
+
 Unit = Literal["rollout", "prompt_cluster"]
 
 # How the rollouts of one prompt depend on each other. "independent" makes a prompt's failure
@@ -92,13 +98,23 @@ COUNT_ENGINES = (
         always_mirror_symmetric=False,
         zero_weight_invariant=False,
     ),
+    CountEngine(
+        "weighted_betting",
+        weighted_betting_mean_bounds,
+        always_mirror_symmetric=True,
+        zero_weight_invariant=True,
+    ),
 )
 BOUNDED_ENGINES = (
     BoundedEngine("weighted_hoeffding", weighted_bounded_hoeffding_mean_bounds),
     BoundedEngine("weighted_empirical_bernstein", weighted_bounded_empirical_bernstein_mean_bounds),
     BoundedEngine("weighted_kl_chernoff", weighted_bounded_kl_chernoff_mean_bounds),
+    BoundedEngine("weighted_betting", weighted_bounded_betting_mean_bounds),
 )
 METHODS = tuple(engine.method for engine in COUNT_ENGINES)
+# Comparisons accept only these. weighted_betting is a direct-mean engine only for now, and a
+# plan that selects it for a comparison is rejected by the plan schema.
+COMPARISON_METHODS = ("weighted_hoeffding", "weighted_empirical_bernstein", "weighted_kl_chernoff")
 
 
 def count_engine(method: str) -> CountEngine:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import pytest
 
@@ -29,3 +30,26 @@ def _render_cli_output_as_ci_does() -> Iterator[None]:
         patch.setenv("COLUMNS", "80")
         patch.delenv("NO_COLOR", raising=False)
         yield
+
+
+@pytest.fixture(autouse=True)
+def _every_written_report_renders_again_from_its_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Check every report a test writes: its report.json, read back alone, must render the
+    same report.md, report.html and CSVs (L38). A renderer that reads anything outside the
+    report model, or a field that does not survive the JSON round trip, fails the test that
+    wrote the report."""
+
+    from inspect_safety_stats.report import writer
+    from tests.report_rendering import rendering_differences
+
+    write_report = writer.write_report
+
+    def checked(report: object, output: object, *, overwrite: bool = False) -> Path:
+        directory = write_report(report, output, overwrite=overwrite)  # type: ignore[arg-type]
+        differences = rendering_differences(directory)
+        assert not differences, f"{directory}: report.json renders these differently: {differences}"
+        return directory
+
+    monkeypatch.setattr(writer, "write_report", checked)

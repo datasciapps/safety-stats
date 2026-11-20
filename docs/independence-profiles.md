@@ -38,8 +38,10 @@ design:
 Multiple fields form a composite key. For example, `[question_id, repeat]` groups the same
 repeat across all prompts belonging to one question. `rollout` cannot be combined with another field.
 Unknown fields, duplicate fields, and empty block lists are rejected. So is a manifest column
-used as a block key that has no value for some prompt: a missing value identifies no block. Give
-a prompt that forms its own block a unique value, such as its `prompt_id`.
+used as a block key that has no value for some prompt: a blank cell, or one that holds a
+missing-value marker such as `NA` or `None`, identifies no block. Give
+a prompt that forms its own block a unique value, such as its `prompt_id`. A manifest block key
+is read as text, as written, so `1` and `01` are two blocks.
 If a name exists in both schemas, the normalized observation field takes precedence; use unique
 names for evaluation-specific manifest columns.
 Outcome-dependent observation fields such as `failure`, `score_raw`, `error`, and `retries` are
@@ -61,9 +63,41 @@ outputs:
 ```
 
 Each interval under a sensitivity profile has `role: sensitivity` and
-`varied_assumption: independence` in `report.json`, and `report.md` and `report.html` label it
+`varied_assumption: independence` in `report.json`, and `report-full.md` and `report.html` label it
 `sensitivity (independence)`. A judge-misclassification sensitivity has
 `varied_assumption: judge_error` instead, so the two cannot be mistaken for each other.
+
+### Verdicts by profile
+
+Each claim in `report.json` lists its verdict under every profile in `profile_verdicts`. The
+first row is the primary profile's and repeats the claim's status and bounds. Each sensitivity
+row decides the same `acceptable_upper` and `unacceptable_lower` on that profile's interval,
+computed with the primary interval's method, under the same integrity and confirmatory
+conditions. An exploratory claim certifies nothing, so all its rows are `INCONCLUSIVE`, like the
+claim; its `descriptive_status` says what the primary bounds would decide. A row also gives the
+interval id, the independent block count and the effective sample size, so a reader can see how
+many independent units each verdict rests on.
+
+The claim's `status`, and the report's decision, are always the primary profile's verdict.
+Sensitivity verdicts show how far that verdict depends on the primary independence assumption;
+they are never selected in its place. A `PASS` under `rollout` that is `INCONCLUSIVE` under
+`prompt` holds only if rollouts of the same prompt are independent.
+
+`report-full.md` adds a "Verdicts by independence profile" table under the mandatory claims when
+any of them has a sensitivity profile, and the HTML claim card lists each profile's verdict
+and bounds. Both label each row `primary` or `sensitivity`, under a note that the claim's status
+is the primary profile's verdict and that a sensitivity verdict cannot replace it.
+
+Under a sampled design the frame item is the independent block whatever `independence`
+declares, so a claim has only its `frame_item` row, and a declared sensitivity profile gives a
+`PLAN_SAMPLED_SENSITIVITY_PROFILES` warning (see
+[Design-based sampling](design-based-sampling.md#what-a-sampled-design-refuses)).
+
+Claims decided on a judge-corrected interval or the noisy-valid test have no per-profile
+counterpart and no rows; when their evidence has sensitivity profiles, a reason says so. A claim
+whose evidence has no primary interval, for example because the primary profile's calibration
+failed, is `INCONCLUSIVE` and has no rows either, and its reason says the primary interval is
+missing.
 
 Comparisons use the same selector:
 
@@ -83,7 +117,7 @@ comparisons:
 ```
 
 This interface was introduced in analysis schema `2.0` and package version `0.7.0`
-and remains current in `0.15.0`. The removed
+and remains current in `0.16.0`. The removed
 `independence_unit` and `cluster_sensitivity` fields are deliberately not translated. A schema
 `1.0` or legacy-field plan fails strict validation so its assumptions cannot silently change.
 Existing Inspect logs remain reusable: write a schema `2.0` plan and rerun only
@@ -112,7 +146,7 @@ Then $0\le Y_g\le1$, $\sum_g A_g=1$, and the target is exactly
 \]
 
 The declared assumption is independence across the $Y_g$. Dependence inside a block is
-unrestricted. The same weighted Hoeffding, empirical-Bernstein, and KL/Chernoff engines can
+unrestricted. The same weighted Hoeffding, empirical-Bernstein, KL/Chernoff, and betting engines can
 therefore operate on `(Y_g, A_g)` regardless of how the evaluation creator named or nested the
 items. Missing labels are completed as zero for a lower endpoint and one for an upper endpoint
 before block aggregation.
@@ -181,6 +215,129 @@ unmodelled provider behavior make rollout independence questionable. The profile
 smallest blocks that are defensibly independent. Making blocks coarser is not automatically more
 correct: it changes the assumption from independence of individual generations to independence of
 whole batches, and very few blocks can make meaningful finite-sample inference impossible.
+
+When a design asks one base prompt in several wordings, `block_by: [question_id, repeat]` puts
+the same epoch of every wording of a base prompt in one block, and `block_by: [question_id]`
+every rollout of every wording. Wordings that fail at similar rates leave rollouts independent.
+Wordings whose rollouts share a seed, a sandbox or a batch do not, and then one of these
+profiles (or a coarser key when the sharing reaches across base prompts) must be the primary,
+because a sensitivity never changes a claim's status. Sharing across epochs also breaks the
+prompt bounds and the measures bounded through them, whatever the primary. See
+[Prompt variants in fixed designs](plan-reference.md#prompt-variants-in-fixed-designs).
+
+### How much the grouping matters: `CLUSTER_DESIGN_EFFECT`
+
+Many benchmarks put many items into a few shared contexts: hundreds of questions asked inside ten
+conversations, or several secrets graded in one response. Items in one context can fail together.
+A profile at the item level (`[rollout]` or `[prompt_id]`) then counts every item as independent
+evidence. A profile that blocks by the context column counts only the contexts, and with very few
+blocks its bounds can be close to vacuous. `validate` and `analyze` both report how far apart
+these two choices are in the data.
+
+For every profile whose blocks hold rollouts of more than one prompt, the diagnostic
+`CLUSTER_DESIGN_EFFECT` gives, for each cohort:
+
+- the scored rollouts (failure or safe) and the number of blocks they fall in;
+- the one-way ANOVA estimate of the intra-cluster correlation $\rho$ of their outcomes within
+  the blocks;
+- the design effect $1 + (m - 1)\max(\rho, 0)$, where $m = \sum_g m_g^2 / N$ is the size of
+  the block an outcome sits in, averaged over the $N$ outcomes;
+- the effective number of rollouts, $N$ divided by the design effect.
+
+These figures count every rollout as a unit, as a `[rollout]` profile does. A primary profile
+that splits the blocks counts its own blocks instead: a `[prompt_id]` primary already treats the
+rollouts of one prompt as one block. So for each primary profile of a result the plan computes
+(enabled direct mean intervals, comparisons, comparison sets and anytime bounds) that puts
+rollouts of one block in different blocks of its own, the diagnostic gives the same figures on
+that primary's units, under `primaries` in each cohort's details:
+
+- the units: the scored rollouts of one of the primary's blocks within one of the profile's
+  blocks. Where the primary's blocks lie within the profile's, as a prompt lies within its
+  conversation, the units are the primary's blocks. A block of the primary that spans several of
+  the profile's blocks gives one unit in each;
+- `blocks`, the number of the primary's own blocks that the units come from. It is the number of
+  units unless some of the primary's blocks span several of the profile's blocks;
+- the intra-cluster correlation of the units' failure rates within the blocks, with each unit
+  counted once. Where some unit holds several rollouts, it is the covariance of the rates of two
+  units in one block, averaged over all such pairs, over the variance of all the units' rates.
+  A unit with few rollouts has a noisy rate, and this pairwise estimate, unlike the one-way ANOVA
+  estimate on the rates, does not read small blocks of such units beside a large block of
+  well-replicated ones as a correlation;
+- the design effect, with $m$ counted in units: the number of units in the block a unit sits in,
+  averaged over the $K$ units. With a correlation of 0 or more it is the variance of the units'
+  total with the blocks as independent, over that with the units as independent, so it is at
+  most the number of units in the largest block, though the correlation itself can pass 1 when
+  the blocks differ in size;
+- the effective number of units, $K$ divided by the design effect.
+
+For a `[rollout]` primary, and for any primary whose units each hold one rollout, the units are
+the rollouts and the figures are those on rollouts, from the one-way ANOVA estimate.
+
+To get it for a column, declare a profile that blocks by that column, for example as a
+sensitivity of the item-level primary:
+
+```yaml
+design:
+  independence_profiles:
+    item: {block_by: [prompt_id]}
+    conversation: {block_by: [conversation]}
+outputs:
+  direct_mean_intervals:
+    independence: {primary: item, sensitivities: [conversation]}
+```
+
+The diagnostic is a warning when, in some cohort, the design effect on a primary's units is at
+least 2: their effective number is then at most half of them, though the primary treats the units
+in one of the profile's blocks as independent. Where the primary's blocks lie within the
+profile's, its units are its blocks, and the results resting on it count at least twice as many
+independent blocks as the effective number of units. Where its blocks span several of the
+profile's blocks, as the questions of a `[question_id]` primary do when every conversation asks
+every question, those results count only its own blocks, which the diagnostic gives beside the
+units. Blocks that meet in one of the profile's blocks share its dependence, but the effective
+number of units does not say how many independent blocks they are worth, and can exceed their
+number: 5 questions asked in 8 conversations that fail alike give 40 units, about 8 of them
+effective. It is informational otherwise, for example when the grouping profile is itself the
+primary, or when no result the plan computes rests on a primary that splits the blocks. Profiles
+whose blocks never hold more than one prompt get no diagnostic. It changes no bound: it is a
+measure of how much the independence choice matters, to read beside the sensitivity bounds.
+
+The warning rests on the primary's units, not on the rollouts. Whenever prompts differ in failure
+rate, the rollouts of one prompt are correlated: a conversation that holds a hard prompt holds
+several failing rollouts. A prompt-level primary already accounts for that correlation, and with
+repeated rollouts it can dominate the figures on rollouts. In simulated runs of 10 conversations
+of 8 prompts with 10 rollouts each, where prompts differ widely and conversations add nothing,
+the design effect on rollouts reaches 2 in about 60% of runs, and on the units of a prompt-level
+primary in about 1.5%. Where a conversation effect with a standard deviation of 1 or 1.5 on the
+logit scale is added, it does in about 90% and 99% of runs.
+
+The figures describe the data, and they have limits:
+
+- Under a fixed design, the correlation also includes fixed differences in failure rates between
+  prompts. Differences between the prompts of different blocks raise it, and differences between
+  the prompts within one block lower it, so it can overstate or understate the dependence
+  between rollouts.
+- Read the design effect, not the correlation. In large blocks a small correlation can still
+  shrink the evidence a lot: with 3 failures in 800 rollouts, all in one of ten conversations of
+  80, the correlation is about 0.025 and the design effect 3, so the 800 rollouts carry about as
+  much evidence as 267 independent ones.
+- The figures count every rollout, or every unit, equally, whatever the prompt weights, while the
+  intervals bound a weighted mean. Under unequal weights the design effect of the weighted mean
+  can be larger or smaller than the one reported.
+- With few blocks the correlation rests on few block means, and the diagnostic can warn though
+  the blocks add nothing. In simulated runs with no conversation effect and single-rollout
+  prompts, it warned in about 17% of runs with 2 conversations of 40 prompts, 14% with 3 of 30,
+  9% with 5 of 16 and 2.5% with 10 of 8; with 10 rollouts per prompt, in about 5.5%, 4.6%, 3.8%
+  and 1.5%.
+- A block that holds most of the units also holds most of the pairs and dominates the
+  correlation on units, so a grouping effect can go unnoticed. Beside one conversation of 40
+  prompts with 10 or 20 rollouts each, five conversations of two single-rollout prompts with a
+  conversation effect of standard deviation 1.5 made it warn in about a third of runs, and twenty
+  in about half.
+- The correlation is undefined when every rollout falls in one block, when no block holds two
+  rollouts, or when all rollouts have the same outcome, and on a primary's units also when they
+  all have the same failure rate. The diagnostic then says so, and gives no design effect.
+- The estimate on rollouts counts rollouts equally, and the estimate on a primary's units counts
+  units equally, whatever their number of rollouts and the plan's prompt weights.
 
 The HTML report has one global independence-profile selector. It displays only the selected
 profile's intervals in risk charts, hierarchy trees, and comparison summaries. JSON and CSV retain

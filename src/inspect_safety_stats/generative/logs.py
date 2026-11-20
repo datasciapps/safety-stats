@@ -21,6 +21,7 @@ from inspect_safety_stats.ingest.inspect_logs import (
 from inspect_safety_stats.ingest.outcomes import is_missing, map_outcome
 from inspect_safety_stats.ingest.records import RunRecord
 from inspect_safety_stats.schema.reports import Diagnostic
+from inspect_safety_stats.schema.scopes import scope_path
 
 LogInput = str | Path | list[str] | list[Path]
 
@@ -57,7 +58,7 @@ def _cohorts_by_eval(
                         f"evaluation {eval_id!r} ran model {model!r}, which no declared "
                         "cohort names; its samples are ignored"
                     ),
-                    scope=eval_id,
+                    scope=scope_path("evals", eval_id),
                 )
             )
             continue
@@ -67,7 +68,7 @@ def _cohorts_by_eval(
                     code="GENERATIVE_COHORT_AMBIGUOUS",
                     severity="ERROR",
                     message=f"model {model!r} is declared by cohorts {sorted(matches)}",
-                    scope=eval_id,
+                    scope=scope_path("evals", eval_id),
                 )
             )
             continue
@@ -78,7 +79,7 @@ def _cohorts_by_eval(
                     code="GENERATIVE_LOG_INCOMPLETE",
                     severity="ERROR",
                     message=f"evaluation {eval_id!r} has status {run.status!r}",
-                    scope=eval_id,
+                    scope=scope_path("evals", eval_id),
                 )
             )
         resolved[eval_id] = matches[0]

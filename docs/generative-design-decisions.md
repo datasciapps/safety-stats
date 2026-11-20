@@ -141,10 +141,15 @@ groups, independence profiles and a prompt manifest from an `AnalysisPlan`. A ge
 none of those: the sample identifier written at materialization is the whole join key, and the
 cohort follows from the model. The score mapper is shared; nothing else is.
 
-**Ledgers are append-only.** Materialization writes each unit as it completes, and resume never
-rewrites what is there. An earlier draft deleted the ledger and re-emitted every unit, which
-would have destroyed the first run's work had the resumed run also died. Rows therefore land in
-completion order rather than selection order, which nothing downstream reads.
+**Ledgers are appended to, and a resume replaces each once.** Materialization writes each unit
+as it completes. A resume replaces the rewrite ledger, the prompt store and the attempt ledger
+once each, before any work: it writes the rows of every finished unit to a sibling file, syncs
+it to disk and renames it over the ledger in one step, dropping the rows of units that will run
+again. After that it only appends. An interruption therefore leaves each ledger as it was or
+fully replaced, never cut short. An earlier draft deleted the ledger and re-emitted every unit
+as the resumed run went, which would have destroyed the first run's work had the resumed run
+also died. Rows land in completion order rather than selection order, which nothing downstream
+reads.
 
 ## Where the implementation departs from the proposal's structure
 
@@ -285,3 +290,35 @@ faithfully but barely tests sequential adaptation; a real SMC would descend the 
 with a proposal that adapts as it goes. The conclusion does not rest on that, for the reason
 above -- the bound's dependence on \(K\) is independent of estimator quality -- but a claim
 that *adaptation cannot help the estimate* would need the multi-level version.
+
+## External evidence
+
+Two 2026 papers on sequential LLM evaluation point the same way as the measurements above. They
+answer a different question from this package (see
+[statistical methods, section 6.8](statistical-methods.md#68-ai-evaluation-precedent)), so the
+agreement shows the mechanism at work, not that their results carry over.
+
+**Hsu and Shekhar,
+[*Efficient Sequential Evaluation of Large Language Models*](https://arxiv.org/abs/2607.17409).**
+They build confidence sequences for a model's accuracy on a fixed question pool and compare
+strategies for choosing which question to query next. They find uniform sampling "a
+surprisingly competitive baseline for both CS approaches" (section 6.1). In their oracle
+experiment, the testing-by-betting sequence does "much worse" with their growth-oriented
+adaptive sampling than with uniform sampling (section 6.1, figure 1). Their width bounds
+(theorems 5.1 and 5.2, section 5.2) have \(tNh\) in the denominator, where \(h\) is a lower
+bound on the query probabilities. The authors call these bounds diagnostic and not tight
+(remark 5.3). On our reading, this is the mechanism behind the importance-sampling result
+above: an inverse-probability weight can be as large as \(1/(Nh)\), and a bounded-weight
+concentration bound pays for the largest coefficient.
+
+**Zhou et al.,
+[*CELEUS: Certifiable and Efficient LLM Evaluation via E-Processes*](https://arxiv.org/abs/2606.20820).**
+CELEUS combines uncertainty-guided selection with a surrogate for the items not yet evaluated.
+It reaches its target precision with 54%, 60% and 62% fewer labels than its EValue baseline
+(section 5.2, table 2 medians). That looks like a counterexample to the model-assisted result
+above, but the estimand differs. In CELEUS "each sample has a fixed target loss throughout
+evaluation" (section 2): a fixed model's loss on each item has no sampling noise, so a good
+surrogate can predict almost all of it. Here every outcome includes per-rollout randomness,
+which made up 97.8% of the variance of a single draw in the regime measured above, and no
+predictor of the prompt or path can remove it. This is our reading of why the results differ.
+The paper does not claim it.

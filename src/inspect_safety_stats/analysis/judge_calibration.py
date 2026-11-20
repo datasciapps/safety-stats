@@ -1,0 +1,1346 @@
+"""Judge calibration, and judge-corrected and transported intervals."""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, replace
+from typing import Any
+
+from inspect_safety_stats.analysis.direct_mean import _HierarchyNode
+from inspect_safety_stats.analysis.estimates import _bounds_carry_unknown_outcome
+from inspect_safety_stats.analysis.unclassified_share import (
+    UnclassifiedShare,
+    unclassified_assumption,
+    unclassified_share_text,
+)
+from inspect_safety_stats.config.loader import report_message
+from inspect_safety_stats.config.models import (
+    AnalysisPlan,
+    JudgeCalibrationSpec,
+    PublishedValidationSetSpec,
+)
+from inspect_safety_stats.ingest.outcomes import classified_by_policy
+from inspect_safety_stats.ingest.records import NormalizedData
+from inspect_safety_stats.ingest.validation import (
+    check_labelled_prefix,
+    fine_stratum_counts,
+    judge_stratum_counts,
+    load_validation_manifest,
+    load_validation_strata,
+    truth_stratum_counts,
+)
+from inspect_safety_stats.schema.observations import Observation
+from inspect_safety_stats.schema.reports import (
+    Diagnostic,
+    GroupRiskResult,
+    HierarchyRiskResult,
+    RiskIntervalResult,
+)
+from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope
+from inspect_safety_stats.stats.judge_calibration import (
+    JUDGE_STRATA,
+    NO_STRATA,
+    FineStrata,
+    JudgeStrata,
+    calibrate_cohort,
+    cohort_alpha_share,
+    completion_diagnostic,
+    fine_strata_summary,
+    unlabelled_fine_strata_diagnostic,
+)
+from inspect_safety_stats.stats.misclassification import (
+    CalibrationBound,
+    JudgeCalibration,
+    correct_judge_risk,
+    transport_judge_risk,
+)
+
+# Risk measures whose value is positively homogeneous and translation equivariant,
+# so the affine judge correction R* = R * rho_1 + (1 - R) * rho_0 applies unchanged.
+# A validated calibration certifies only the weighted mean: see pooled_calibration_gap.
+JUDGE_CORRECTABLE_MEASURES = frozenset(
+    {"weighted_mean", "maximum", "cvar", "top_k_mean"}
+)
+
+
+@dataclass(frozen=True)
+class PromptRollouts:
+    """One prompt's rollouts in one cohort, counted the ways its rates divide by them."""
+
+    classified: int
+    # Prompt bounds divide by the classified rollouts plus the unknown outcomes the missing
+    # and error policies keep. Direct-mean intervals divide by every rollout, and complete
+    # each unclassified one, so the two counts differ only where a policy excludes some.
+    bounded: int
+    attempted: int
+    # Of the classified rollouts, those a plan policy counted safe and counted as failures
+    # (see classified_by_policy): their classification is not a judge verdict.
+    policy_safe: int = 0
+    policy_failures: int = 0
+
+
+# A judge calibration's key: its cohort, and its group when the calibration is scoped to groups.
+_JudgeScope = tuple[str, str | None]
+
+
+def _judge_scope(plan: AnalysisPlan, cohort_id: str, group_id: str) -> _JudgeScope | None:
+    """The calibration a row of this cohort and group is corrected with, or None if none is."""
+
+    spec = plan.inputs.judge_calibration
+    if spec is None or spec.groups is None:
+        return (cohort_id, None)
+    return None if _judge_scope_excludes(plan, group_id) else (cohort_id, group_id)
+
+
+def _judge_scope_excludes(plan: AnalysisPlan, group_id: str) -> bool:
+    """Whether the judge calibration is scoped to groups that leave this one out."""
+
+    spec = plan.inputs.judge_calibration
+    return spec is not None and spec.groups is not None and group_id not in spec.groups
+
+
+def _judge_scopes(plan: AnalysisPlan) -> list[_JudgeScope]:
+    spec = plan.inputs.judge_calibration
+    groups: list[str | None] = [None] if spec is None or spec.groups is None else list(spec.groups)
+    return [(cohort_id, group_id) for cohort_id in sorted(plan.cohorts) for group_id in groups]
+
+
+def _scope_population(
+    population: dict[str, dict[str, PromptRollouts]],
+    data: NormalizedData,
+    scope: _JudgeScope,
+) -> dict[str, PromptRollouts]:
+    """The labelled population of one calibration: its cohort's, cut to its group's prompts."""
+
+    cohort_id, group_id = scope
+    rollouts = population.get(cohort_id, {})
+    if group_id is None:
+        return rollouts
+    # An undeclared group, which plan validation reports, has no prompts.
+    prompts = next((set(group.prompt_ids) for group in data.groups if group.id == group_id), set())
+    return {prompt_id: item for prompt_id, item in rollouts.items() if prompt_id in prompts}
+
+
+def _out_of_scope_reason(group_id: str) -> str:
+    return (
+        "The judge calibration is scoped to groups that do not include this row's group "
+        f"{group_id!r}, so no labels calibrate it."
+    )
+
+
+def _scope_rollouts(group_id: str | None, noun: str = "rollouts") -> str:
+    """Name the rollouts a calibration's labels are drawn from, as the wording of a sentence."""
+
+    if group_id is None:
+        return f"the cohort's {noun}"
+    return f"the {noun} of group {group_id!r} in the cohort"
+
+
+def _labelled_population(
+    plan: AnalysisPlan, data: NormalizedData
+) -> dict[str, dict[str, PromptRollouts]]:
+    """Per cohort and prompt, the rollouts behind its rates.
+
+    A cohort's classified rollouts are the population its judge labels are drawn from.
+    """
+
+    counts: dict[str, dict[str, list[int]]] = {}
+    for row in data.observations:
+        tally = counts.setdefault(row.cohort_id, {}).setdefault(row.prompt_id, [0, 0, 0, 0, 0])
+        tally[2] += 1
+        if row.failure is not None:
+            tally[0] += 1
+            tally[1] += 1
+            if classified_by_policy(row):
+                tally[4 if row.failure else 3] += 1
+        elif _bounds_carry_unknown_outcome(plan, row):
+            tally[1] += 1
+    return {
+        cohort_id: {prompt_id: PromptRollouts(*tally) for prompt_id, tally in prompts.items()}
+        for cohort_id, prompts in counts.items()
+    }
+
+
+def pooled_calibration_gap(
+    population: dict[str, PromptRollouts],
+    *,
+    design_type: str,
+    measure_type: str,
+    weights: dict[str, float],
+    group_id: str | None = None,
+) -> str | None:
+    """Why a cohort's pooled labels do not measure the judge accuracies a row needs.
+
+    With ``group_id`` the labels, and ``population``, are those of one group in the cohort.
+
+    The labels are drawn uniformly within judge strata over the cohort's classified
+    rollouts, so they estimate P(truly unsafe | verdict) with each of those rollouts
+    weighted equally. R* = R rho_1 + (1 - R) rho_0 needs the accuracies weighted the way the
+    row weights its rollouts. That holds exactly only for a weighted mean, in a fixed
+    design, that gives every classified rollout of the cohort the same weight. Returns
+    None when the row is such a mean.
+    """
+
+    if design_type != "fixed":
+        return (
+            "a sampled design estimates a frame mean, and labels on the drawn items do not "
+            "bound the judge's accuracy over the frame"
+        )
+    if measure_type != "weighted_mean":
+        return (
+            f"a {measure_type} measure concentrates on the riskiest prompts, where the "
+            "judge's accuracy can differ from the pooled labels' average"
+        )
+    labelled = [(prompt_id, item) for prompt_id, item in population.items() if item.classified]
+    if not labelled:
+        if group_id is not None:
+            return f"group {group_id!r} has no classified rollouts in the cohort"
+        return "the cohort has no classified rollouts"
+    if any(weights.get(prompt_id, 0.0) <= 0.0 for prompt_id, _ in labelled):
+        return "the row covers only part of " + _scope_rollouts(group_id, "labelled rollouts")
+    # A rollout weighs its prompt's weight over the rollouts the prompt's rate divides by.
+    # Either kind of interval can be the row's primary, so both counts must agree.
+    for per_rollout in (
+        [weights[prompt_id] / item.bounded for prompt_id, item in labelled],
+        [weights[prompt_id] / item.attempted for prompt_id, item in labelled],
+    ):
+        lightest, heaviest = min(per_rollout), max(per_rollout)
+        if heaviest > lightest * (1 + 1e-9):
+            return (
+                f"the row gives some of {_scope_rollouts(group_id)} "
+                f"{heaviest / lightest:.3g} times the weight of others"
+            )
+    return None
+
+
+def _policy_rollouts(
+    population: Mapping[str, PromptRollouts], weights: Mapping[str, float]
+) -> tuple[int, int]:
+    """The rollouts a plan policy counted safe and as failures in the prompts of a row.
+
+    Every prompt the row's weights list counts, a prompt of weight zero too: the maximum and
+    the top-k mean ignore weights, so such a prompt can set the row's bounds.
+    """
+
+    found = [item for prompt_id in weights if (item := population.get(prompt_id)) is not None]
+    return sum(item.policy_safe for item in found), sum(item.policy_failures for item in found)
+
+
+def _row_weights(
+    data: NormalizedData, hierarchy_nodes: list[_HierarchyNode]
+) -> Callable[[GroupRiskResult | HierarchyRiskResult], dict[str, float]]:
+    """The prompt weights behind a group-risk or hierarchy row."""
+
+    group_weights = {group.id: group.weights for group in data.groups}
+    node_weights = {
+        (node.group_id, node.level, tuple(node.path.items())): dict(
+            zip(node.prompt_ids, node.weights, strict=True)
+        )
+        for node in hierarchy_nodes
+    }
+
+    def weights(result: GroupRiskResult | HierarchyRiskResult) -> dict[str, float]:
+        if isinstance(result, GroupRiskResult):
+            return group_weights[result.group_id]
+        return node_weights[(result.group_id, result.level, tuple(result.path.items()))]
+
+    return weights
+
+
+def _policy_free_box(calibration: JudgeCalibration) -> JudgeCalibration:
+    """The box a row holding policy-classified rollouts is corrected over.
+
+    The row's bounds count a rollout a policy classified as the policy says, which is its true
+    outcome, beside the judge's verdicts, and they do not carry the share of such rollouts in
+    the population behind them. Mapping a policy failure through rho_1 < 1 would understate the
+    upper bound, and a policy-safe rollout through rho_0 > 0 overstate the lower; a share taken
+    at its sample value does too, by its sampling error. So rho_1 may reach 1 and rho_0 fall to
+    0: the upper bound becomes U + (1 - U) rho_0 upper and the lower L rho_1 lower. With true
+    risk P(J1) rho_1 + P(J0) rho_0 + P(policy failure) + P(unclassified) u, both hold for every
+    share of policy-classified and unclassified rollouts, since L <= P(J1) + P(policy failure)
+    and P(J1) + P(policy failure) + P(unclassified) <= U. Each is monotone, translation
+    equivariant and positively homogeneous in the prompt rates, so it bounds the tail
+    measures too. Over this box a share of unclassified rollouts that the bounds complete
+    drops out of both ends, so it needs no bound of its own. Under ``exclude`` the bounds
+    cover only the classified rollouts' rate, and the bound on the population share still
+    moves it (see ``correct_judge_risk``).
+    """
+
+    return replace(calibration, rho_1_upper=1.0, rho_0_lower=0.0)
+
+
+def _policy_assumption(safe: int, failures: int, excluded: bool = False) -> str:
+    """What a row holding policy-classified rollouts assumes; ``excluded`` when its bounds
+    leave its unclassified rollouts out, so that their share is still bounded."""
+
+    return (
+        f"{safe + failures} of the row's rollouts were classified by a plan policy, not by the "
+        f"judge ({safe} counted safe, {failures} counted as failures), and the row's bounds do "
+        "not carry their share. So the correction credits the judge with no false alarm at the "
+        "upper bound and no missed failure at the lower: P(truly unsafe | judge said unsafe) "
+        "may reach 1 and P(truly unsafe | judge said safe) fall to 0. "
+        + (
+            "That holds whatever the share of policy-classified rollouts. The plan's missing "
+            "or error policy leaves the unclassified rollouts out of the row's bounds, so the "
+            "bound on their share still moves the corrected interval."
+            if excluded
+            else "That holds whatever the share of policy-classified and unclassified rollouts."
+        )
+    )
+
+
+def _policy_cohorts(
+    plan: AnalysisPlan, population: Mapping[str, Mapping[str, PromptRollouts]]
+) -> frozenset[str]:
+    """The cohorts whose rows without policy-classified rollouts say what covers them.
+
+    A correction is widened only for a row whose sample holds a rollout a plan policy
+    classified. A row whose sample holds none is corrected over the box as given, and the
+    population its rollouts are drawn from may still hold some: the bound on the row's
+    unclassified share covers them (see ``_policy_absent_assumption``). The row says so where
+    the population may hold them: in every cohort when the plan sets a policy that classifies
+    rollouts (a missing score or a sample error counted as a failure, or token-limit or
+    content-filter stops classified), and in a cohort whose sample holds such a rollout in
+    some row. Plans at the defaults whose samples hold none state it in the documentation only.
+    """
+
+    score = plan.inputs.score
+    chosen = (
+        score.missing == "count_as_failure"
+        or score.errors == "count_as_failure"
+        or score.token_limit in {"safe", "failure"}
+        or score.content_filter_stops in {"safe", "failure"}
+    )
+    return frozenset(
+        cohort_id
+        for cohort_id, prompts in population.items()
+        if chosen or any(item.policy_safe or item.policy_failures for item in prompts.values())
+    )
+
+
+def _policy_absent_assumption() -> str:
+    """What covers the policy-classified rollouts a row's population may hold, its run none.
+
+    Read as judge verdicts, a policy failure would lower the corrected upper bound and a
+    policy-safe rollout raise the lower. The share bound is computed from the run's count of
+    unclassified rollouts, which in a run with no policy-classified rollout is also the count
+    of the two kinds together, so at its alpha it bounds their combined share. The correction
+    takes that share at its worst at each end, a failure at the upper and safe at the lower
+    (or moves each end by it under ``exclude``), which covers both kinds.
+    """
+
+    return (
+        "None of the row's rollouts was classified by a plan policy, so the correction uses "
+        "the box as given. The population the rollouts are drawn from may still hold such "
+        "rollouts, and the bound on the row's unclassified share covers them: it is computed "
+        "from the run's count of unclassified rollouts, which in this run is also the count "
+        "of both kinds together."
+    )
+
+
+def _stratified_assumptions(cohort: str = "the cohort") -> list[str]:
+    """The stratified calibration's method and design, as risk rows and comparisons state it.
+
+    ``cohort`` names the cohorts whose classified rollouts the strata must place.
+    """
+
+    return [
+        "Experimental: each judge stratum's truly unsafe count is bounded by the sum "
+        "of exact hypergeometric bounds over its declared fine strata, so each fine "
+        "stratum counts by its size; a census gives its count exactly and a fine "
+        "stratum without labels counts from none to all of its rollouts.",
+        "Each range is the exact Clopper-Pearson bound on the conditional probability "
+        "at the lower and at the upper count, out of the judge stratum's size: the "
+        "stratum's rollouts only sample that probability, so even a census leaves it "
+        "uncertain.",
+        "Each endpoint's budget is halved: one half for its Clopper-Pearson bound, the "
+        "other split equally over the count bounds of the fine strata that were "
+        "sampled but not censused.",
+        "Given a judge stratum's size, its rollouts are independent and each is truly "
+        "unsafe with the stratum's conditional probability, so its truly unsafe count "
+        "is binomial.",
+        "The labelled rows of each fine stratum are a simple random sample without "
+        "replacement of it, of a size fixed independently of the labels; this is a "
+        "property of the declared collection protocol, not of the data.",
+        f"The declared validation strata place every classified rollout of {cohort}.",
+        "Human adjudication is treated as ground truth.",
+    ]
+
+
+def _queue_assumption(stratum: str) -> str:
+    """What a declared labelling queue must be, of which the analysis checks only part."""
+
+    return (
+        f"The declared labelling queue lists, within each {stratum}, all of its classified "
+        "rollouts or a simple random sample of them, in a uniformly random order fixed before "
+        "labelling; the analysis checks that the labels are its first rows and that it lists "
+        "only classified rollouts of the run, not how its rows were drawn."
+    )
+
+
+def _uncertified_base_warning(eligibility: str) -> str:
+    return (
+        f"Sensitivity analysis, not a certified bound: the judge-system interval it corrects "
+        f"is {eligibility}, and a correction cannot support more than its base."
+    )
+
+
+def _uncertified_correction_warning(gap: str, group_id: str | None = None) -> str:
+    if group_id is not None:
+        return (
+            f"Sensitivity analysis, not a certified bound: {gap}. The human labels weight every "
+            f"classified rollout of group {group_id!r} in the cohort equally, so they measure "
+            "the judge's accuracy only for a weighted mean that does the same, over the whole "
+            "group in a fixed design."
+        )
+    return (
+        f"Sensitivity analysis, not a certified bound: {gap}. The human labels weight every "
+        "classified rollout of the cohort equally, so they measure the judge's accuracy only "
+        "for a weighted mean that does the same, over the whole cohort in a fixed design."
+    )
+
+
+def _assumed_judge_calibrations(plan: AnalysisPlan, cohort_id: str) -> list[JudgeCalibration]:
+    """Every declared scenario's box for one cohort: its own box where the scenario gives
+    the cohort one, the scenario's default box otherwise."""
+
+    spec = plan.inputs.judge_calibration
+    if spec is None or spec.mode != "assumed":
+        return []
+    ordered = sorted(spec.scenarios, key=lambda item: (item.id != spec.primary, item.id))
+    calibrations = []
+    for item in ordered:
+        rho_1, rho_0 = item.box(cohort_id)
+        calibrations.append(
+            JudgeCalibration(
+                scenario_id=item.id,
+                rho_1_lower=rho_1.lower,
+                rho_1_upper=rho_1.upper,
+                rho_0_lower=rho_0.lower,
+                rho_0_upper=rho_0.upper,
+                source=spec.mode,
+            )
+        )
+    return calibrations
+
+
+def _scenario_cohort_boxes(plan: AnalysisPlan) -> dict[str, frozenset[str]]:
+    """The cohorts each assumed scenario gives a box of its own, by scenario; empty for a
+    scenario that gives every cohort its default box."""
+
+    spec = plan.inputs.judge_calibration
+    if spec is None or spec.mode != "assumed":
+        return {}
+    return {item.id: frozenset(item.cohorts or {}) for item in spec.scenarios}
+
+
+def _assumed_box_assumption(cohort_id: str, cohort_boxes: frozenset[str], scope: str) -> str:
+    """Which of an assumed scenario's boxes a cohort's rows were corrected with.
+
+    A cohort the scenario lists under ``cohorts`` has a box of its own. Every other cohort
+    takes the scenario's default box, also when the scenario lists some other cohort."""
+
+    if cohort_id in cohort_boxes:
+        return (
+            "The declared accuracies are prevalence-dependent; the scenario declares this box "
+            f"for cohort {cohort_id!r}{scope}."
+        )
+    if cohort_boxes:
+        return (
+            f"The declared accuracies are prevalence-dependent; cohort {cohort_id!r} takes the "
+            "scenario's default box, which is applied unchanged to every cohort the scenario "
+            f"does not list{scope}."
+        )
+    return (
+        "The declared accuracies are prevalence-dependent and are applied unchanged to every "
+        f"cohort{scope}."
+    )
+
+
+def _validated_judge_calibrations(
+    plan: AnalysisPlan,
+    data: NormalizedData,
+    diagnostics: list[Diagnostic],
+) -> tuple[
+    dict[_JudgeScope, JudgeCalibration],
+    dict[_JudgeScope, dict[str, Any]],
+    float | None,
+    dict[_JudgeScope, Any],
+    dict[str, Any] | None,
+]:
+    """Estimate one calibration per cohort, or per cohort and scoped group, from human labels.
+
+    A scoped calibration counts only the labels, and the stratum sizes, of its group's rollouts.
+    The last item records the declared labelling protocol and what checking it found, or is
+    ``None`` when the plan declares none.
+    """
+
+    spec = plan.inputs.judge_calibration
+    if spec is None or spec.mode != "validated":
+        return {}, {}, None, {}, None
+    family = next((item for item in plan.multiplicity.families if item.id == spec.family), None)
+    if family is None:
+        diagnostics.append(
+            Diagnostic(
+                code="PLAN_UNKNOWN_REFERENCE",
+                severity="ERROR",
+                message="validated judge calibration requires a valid multiplicity family",
+                scope=plan_scope("inputs", "judge_calibration"),
+            )
+        )
+        return {}, {}, None, {}, None
+    if spec.validation_manifest is None:
+        raise ValueError("a validated inputs.judge_calibration requires a validation_manifest")
+    try:
+        labels = load_validation_manifest(spec.validation_manifest)
+    except (OSError, ValueError) as exc:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_VALIDATION_INVALID",
+                severity="ERROR",
+                message=report_message(str(exc), plan, (spec.validation_manifest,)),
+                scope=plan_scope("inputs", "judge_calibration"),
+            )
+        )
+        return {}, {}, None, {}, None
+
+    checked = _labelling_protocol(plan, spec, labels, data.observations, diagnostics)
+    if spec.protocol is not None and checked is None:
+        return {}, {}, None, {}, None
+    protocol = None if checked is None else checked.record
+    # The queue's rows, keyed as labels are, so that counting them per judge stratum shows
+    # how much of each stratum the queue lists.
+    queued = None if checked is None else dict.fromkeys(checked.queue, True)
+    bound: CalibrationBound = (
+        "confidence_sequence"
+        if spec.protocol is not None and spec.protocol.stopping == "data_dependent"
+        else "clopper_pearson"
+    )
+
+    # A rollout a plan policy classified is in neither judge stratum: the policy, not the
+    # judge, set its failure column, and the corrections do not read it as a verdict. The
+    # strata, their sizes and their labels are the judge's verdicts only.
+    judged = [row for row in data.observations if not classified_by_policy(row)]
+    by_policy = {row.observation_id for row in data.observations if classified_by_policy(row)}
+    declared: dict[str, str] | None = None
+    if spec.sampling == "stratified_within_judge_stratum":
+        if spec.validation_strata is None:
+            raise ValueError("stratified judge-calibration sampling requires validation_strata")
+        try:
+            declared = load_validation_strata(spec.validation_strata)
+        except (OSError, ValueError) as exc:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_VALIDATION_INVALID",
+                    severity="ERROR",
+                    message=report_message(str(exc), plan, (spec.validation_strata,)),
+                    scope=plan_scope("inputs", "judge_calibration"),
+                )
+            )
+            return {}, {}, None, {}, None
+    labels, declared = _without_policy_classified(labels, declared, by_policy, diagnostics)
+    if declared is not None:
+        design = fine_stratum_counts(judged, labels, declared)
+        # The strata file is the design: a classified row it does not place, or a key that
+        # names no classified row, means the sizes it implies are not the design's.
+        for code, keys, what in (
+            (
+                "JUDGE_VALIDATION_STRATA_INCOMPLETE",
+                design.unstratified,
+                "classified observations have no declared stratum",
+            ),
+            (
+                "JUDGE_VALIDATION_STRATA_UNMATCHED",
+                design.unknown_strata,
+                "validation strata rows reference observations absent from the analysed "
+                "logs or with unclassified outcomes",
+            ),
+        ):
+            if keys:
+                diagnostics.append(
+                    Diagnostic(
+                        code=code,
+                        severity="ERROR",
+                        message=f"{len(keys)} {what}; no judge correction is reported",
+                        scope=plan_scope("inputs", "judge_calibration"),
+                        details={"observation_ids": keys[:20]},
+                    )
+                )
+        if design.unstratified or design.unknown_strata:
+            return {}, {}, None, {}, None
+
+    _, unmatched = judge_stratum_counts(judged, labels)
+    scopes = _judge_scopes(plan)
+    group_prompts = {group.id: set(group.prompt_ids) for group in data.groups}
+    # A group the plan does not declare is reported as PLAN_UNKNOWN_REFERENCE. It has no
+    # rollouts and gets no calibration, but still takes its share of the budget below.
+    calibrated = [scope for scope in scopes if scope[1] is None or scope[1] in group_prompts]
+    counts: dict[_JudgeScope, JudgeStrata] = {}
+    queue_shares: dict[_JudgeScope, list[_QueueShare]] = {}
+    fine: dict[_JudgeScope, FineStrata] = {}
+    truth_strata: dict[_JudgeScope, Any] = {}
+    in_scope: set[str] = set()
+    for scope in calibrated:
+        cohort_id, group_id = scope
+        observations = judged
+        if group_id is not None:
+            prompts = group_prompts[group_id]
+            observations = [row for row in observations if row.prompt_id in prompts]
+            in_scope.update(row.observation_id for row in observations)
+        if declared is not None:
+            # A scoped calibration's fine strata are the declared strata within its group.
+            scoped_fine = fine_stratum_counts(observations, labels, declared)
+            if cohort_id in scoped_fine.by_cohort:
+                counts[scope] = scoped_fine.judge_strata(cohort_id)
+                fine[scope] = scoped_fine.by_cohort[cohort_id]
+        elif cohort_id in (scoped := judge_stratum_counts(observations, labels)[0]):
+            counts[scope] = scoped[cohort_id]
+        if queued is not None:
+            # The queue's rows count as labels do, within the calibration's own rollouts: per
+            # declared fine stratum in a stratified design, else per judge stratum.
+            if declared is not None:
+                listed_fine = fine_stratum_counts(observations, queued, declared).by_cohort
+                if cohort_id in listed_fine:
+                    queue_shares[scope] = _fine_queue_shares(
+                        fine.get(scope, {}), listed_fine[cohort_id]
+                    )
+            else:
+                listed = judge_stratum_counts(observations, queued)[0].get(cohort_id)
+                if listed is not None:
+                    queue_shares[scope] = _queue_shares(counts.get(scope, NO_STRATA), listed)
+        if spec.sampling == "simple_random":
+            # A simple random sample of the design also estimates sensitivity and the
+            # false-positive rate by true class, which the noisy-but-valid test needs.
+            by_class = truth_stratum_counts(observations, labels).get(cohort_id)
+            if by_class is not None:
+                truth_strata[scope] = {
+                    name: {"labelled": item.labelled, "judge_positive": item.judge_positive}
+                    for name, item in by_class.items()
+                }
+    if spec.groups is not None:
+        outside = sorted(set(labels) - set(unmatched) - in_scope)
+        if outside:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_VALIDATION_OUT_OF_SCOPE",
+                    severity="WARNING",
+                    message=(
+                        f"{len(outside)} validation rows label rollouts outside the groups the "
+                        "calibration is scoped to; they calibrate nothing"
+                    ),
+                    scope=plan_scope("inputs", "judge_calibration"),
+                    details={"observation_ids": outside[:20]},
+                )
+            )
+    if unmatched:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_VALIDATION_UNMATCHED",
+                severity="ERROR",
+                message=(
+                    f"{len(unmatched)} validation rows reference observations absent from the "
+                    "analysed logs or with unclassified outcomes"
+                ),
+                scope=plan_scope("inputs", "judge_calibration"),
+                details={"observation_ids": unmatched[:20]},
+            )
+        )
+
+    # Every calibration (one per declared cohort, or per cohort and scoped group) gets an
+    # equal share of the judge family budget. A single risk row consumes one share; a
+    # comparison consumes the two it spans. A union over all of them therefore never
+    # exceeds the declared family alpha.
+    per_calibration_alpha = cohort_alpha_share(family.alpha, len(scopes))
+    calibrations: dict[_JudgeScope, JudgeCalibration] = {}
+    summaries: dict[_JudgeScope, dict[str, Any]] = {}
+    for scope in calibrated:
+        cohort_id, group_id = scope
+        where = (
+            cohort_scope(cohort_id)
+            if group_id is None
+            else cohort_scope(cohort_id, "groups", group_id)
+        )
+        outcome = calibrate_cohort(
+            counts.get(scope, NO_STRATA),
+            scenario_id="validated",
+            alpha=per_calibration_alpha,
+            fine=None if declared is None else fine.get(scope, {}),
+            bound=bound,
+        )
+        if outcome.empty_strata:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_VALIDATION_STRATUM_EMPTY",
+                    severity="WARNING",
+                    message=(
+                        f"cohort {cohort_id!r} has no observations in one judge stratum; "
+                        "no judge correction is reported for it"
+                        if group_id is None
+                        else f"group {group_id!r} of cohort {cohort_id!r} has no observations "
+                        "in one judge stratum; no judge correction is reported for it"
+                    ),
+                    scope=where,
+                )
+            )
+            continue
+        if outcome.calibration is None:
+            diagnostics.append(
+                Diagnostic(
+                    code="JUDGE_CALIBRATION_UNINFORMATIVE",
+                    severity="WARNING",
+                    # A scoped refusal must not read as the cohort's own calibration's.
+                    message=(
+                        str(outcome.refusal)
+                        if group_id is None
+                        else f"group {group_id!r} of cohort {cohort_id!r}: {outcome.refusal}"
+                    ),
+                    scope=where,
+                )
+            )
+            continue
+        calibrations[scope] = outcome.calibration
+        completed = completion_diagnostic(outcome.calibration, where)
+        if completed is not None:
+            diagnostics.append(completed)
+        if spec.protocol is not None and scope in queue_shares:
+            partial_queue = _partial_queue_diagnostic(
+                queue_shares[scope], spec.protocol.tier, scope, where
+            )
+            if partial_queue is not None:
+                diagnostics.append(partial_queue)
+        summary: dict[str, Any] = dict(outcome.strata.summary())
+        if declared is not None:
+            partial = unlabelled_fine_strata_diagnostic(outcome.fine_strata, where)
+            if partial is not None:
+                diagnostics.append(partial)
+            summary["fine_strata"] = fine_strata_summary(outcome.fine_strata)
+        summaries[scope] = summary
+    if declared is not None and calibrations:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_CALIBRATION_STRATIFIED",
+                severity="INFO",
+                message=(
+                    "Experimental: the judge calibration reads its labels as a stratified "
+                    "sample without replacement within declared fine strata, bounds each judge "
+                    "stratum's truly unsafe count with exact hypergeometric bounds, and its "
+                    "conditional accuracy at those counts with Clopper-Pearson bounds; the "
+                    "asymptotic delta-method reference, which assumes simple random samples "
+                    "within the judge strata, is not reported"
+                ),
+                scope=plan_scope("inputs", "judge_calibration"),
+            )
+        )
+    return calibrations, summaries, family.alpha, truth_strata, protocol
+
+
+def _without_policy_classified(
+    labels: dict[str, bool],
+    declared: dict[str, str] | None,
+    by_policy: set[str],
+    diagnostics: list[Diagnostic],
+) -> tuple[dict[str, bool], dict[str, str] | None]:
+    """The labels and declared strata without the rollouts a plan policy classified.
+
+    Such a rollout is in neither judge stratum, so a label on it calibrates nothing, and a
+    declared stratum of it is not part of the design's fine strata. Left out, the remaining
+    labels of a judge stratum are still a simple random sample of its judge verdicts: a simple
+    random sample of a set, cut to a subset fixed before the draw, is one of the subset, of a
+    size that does not depend on the subset's labels.
+    """
+
+    labelled = sorted(by_policy & set(labels))
+    stratified = sorted(by_policy & set(declared or {}))
+    if labelled or stratified:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_VALIDATION_POLICY_CLASSIFIED",
+                severity="WARNING",
+                message=(
+                    f"{len(labelled)} validation labels and {len(stratified)} validation strata "
+                    "rows name rollouts a plan policy classified, not the judge; such rollouts "
+                    "are in neither judge stratum, so they are left out of the calibration"
+                ),
+                scope=plan_scope("inputs", "judge_calibration"),
+                details={
+                    "labels": len(labelled),
+                    "strata_rows": len(stratified),
+                    "observation_ids": sorted({*labelled, *stratified})[:20],
+                },
+            )
+        )
+    return (
+        {key: value for key, value in labels.items() if key not in by_policy},
+        None
+        if declared is None
+        else {key: value for key, value in declared.items() if key not in by_policy},
+    )
+
+
+@dataclass(frozen=True)
+class _CheckedProtocol:
+    """A declared labelling protocol the labels keep: its report record, and the queue's rows."""
+
+    record: dict[str, Any]
+    queue: tuple[str, ...]
+
+
+def _labelling_protocol(
+    plan: AnalysisPlan,
+    spec: JudgeCalibrationSpec,
+    labels: dict[str, bool],
+    observations: list[Observation],
+    diagnostics: list[Diagnostic],
+) -> _CheckedProtocol | None:
+    """Check the labels against the declared labelling protocol, and record both.
+
+    The labels must be the first rows of the queue (or of its tier), and every row of it
+    must name a classified rollout of the analysed run: a queue drawn from other rollouts
+    is not a random order of this run's judge strata. Every label then names a classified
+    rollout too, so a fixed size counts only labels the calibration uses.
+
+    ``None`` with an ERROR diagnostic when the labels break the protocol, and ``None``
+    without one when the plan declares no protocol.
+    """
+
+    protocol = spec.protocol
+    if protocol is None:
+        return None
+
+    def violated(message: str, details: dict[str, Any] | None = None) -> None:
+        diagnostics.append(
+            Diagnostic(
+                code="JUDGE_LABELLING_PROTOCOL_VIOLATED",
+                severity="ERROR",
+                # Every message names the queue as the report does, never by the absolute path
+                # the plan loader resolved it to.
+                message=report_message(message, plan, (protocol.queue,)),
+                scope=plan_scope("inputs", "judge_calibration", "protocol"),
+                details=details or {},
+            )
+        )
+
+    try:
+        prefix = check_labelled_prefix(protocol.queue, labels, tier=protocol.tier)
+    except (OSError, ValueError) as exc:
+        violated(str(exc))
+        return None
+    classified = {row.observation_id for row in observations if row.failure is not None}
+    stray = [
+        (row, key)
+        for row, key in enumerate(prefix.observation_ids, start=1)
+        if key not in classified
+    ]
+    if stray:
+        where = (
+            "labelling queue"
+            if protocol.tier is None
+            else f"labelling queue tier {protocol.tier!r}"
+        )
+        row, key = stray[0]
+        labelled = sum(item in labels for _, item in stray)
+        violated(
+            f"{len(stray)} rows of the {where} ({labelled} of them labelled) name "
+            "observations absent from the analysed logs or with unclassified outcomes, the "
+            f"first at row {row} ({key!r}); the queue must order classified rollouts of the "
+            "analysed run only",
+            {"observation_ids": [item for _, item in stray[:20]]},
+        )
+        return None
+    if protocol.stopping == "fixed_size" and prefix.labelled != protocol.size:
+        violated(
+            f"the labelling protocol fixes {protocol.size} labels in advance, but the "
+            f"validation manifest has {prefix.labelled}"
+        )
+        return None
+    record = {
+        "queue_sha256": prefix.queue_sha256,
+        "queue_rows": prefix.queue_rows,
+        "labelled_prefix": prefix.labelled,
+        "tier": protocol.tier,
+        "seed": protocol.seed,
+        "stopping": protocol.stopping,
+        "size": protocol.size,
+        "bound": (
+            "confidence_sequence"
+            if protocol.stopping == "data_dependent"
+            else "clopper_pearson"
+        ),
+    }
+    return _CheckedProtocol(record=record, queue=prefix.observation_ids)
+
+
+@dataclass(frozen=True)
+class _QueueShare:
+    """How much of one stratum of a calibration the labelling queue lists, and labels.
+
+    The stratum is a judge stratum, or with ``stratum`` the declared fine stratum of that name
+    within it.
+    """
+
+    judge_stratum: str
+    stratum: str | None
+    queue_rows: int
+    labelled: int
+    stratum_size: int
+
+
+def _queue_shares(labelled: JudgeStrata, queued: JudgeStrata) -> list[_QueueShare]:
+    """Each judge stratum's share of the queue; ``queued`` counts the queue's rows as labels."""
+
+    return [
+        _QueueShare(
+            judge_stratum=name,
+            stratum=None,
+            queue_rows=getattr(queued, name).labelled,
+            labelled=getattr(labelled, name).labelled,
+            stratum_size=getattr(queued, name).stratum_size,
+        )
+        for name in JUDGE_STRATA
+    ]
+
+
+def _fine_queue_shares(labelled: FineStrata, queued: FineStrata) -> list[_QueueShare]:
+    """Each declared fine stratum's share of the queue, in judge stratum and then name order.
+
+    ``queued`` counts the queue's rows as labels over the same rollouts as ``labelled``, so
+    both hold the same fine strata.
+    """
+
+    return [
+        _QueueShare(
+            judge_stratum=name,
+            stratum=stratum,
+            queue_rows=counts.labelled,
+            labelled=labelled[name][stratum].labelled,
+            stratum_size=counts.stratum_size,
+        )
+        for name in JUDGE_STRATA
+        for stratum, counts in sorted(queued.get(name, {}).items())
+    ]
+
+
+def _partial_queue_diagnostic(
+    shares: list[_QueueShare],
+    tier: str | None,
+    scope: _JudgeScope,
+    where: str,
+) -> Diagnostic | None:
+    """The warning for labelled strata the queue lists only part of, if there are any.
+
+    The strata are the calibration's judge strata, or its declared fine strata in a stratified
+    design, whose labels are a sample of each fine stratum. A queue that lists every
+    classified rollout of a stratum leaves only its order to chance; one that lists part of a
+    stratum is a random sample of it only if it was drawn as one, which the queue cannot show.
+    A stratum without labels is completed with certainty, so it rests on no sample.
+    """
+
+    partial = [
+        share
+        for share in shares
+        if share.labelled > 0 and share.queue_rows < share.stratum_size
+    ]
+    if not partial:
+        return None
+    cohort_id, group_id = scope
+    population = (
+        f"cohort {cohort_id!r}"
+        if group_id is None
+        else f"group {group_id!r} in cohort {cohort_id!r}"
+    )
+    queue = "labelling queue" if tier is None else f"labelling queue tier {tier!r}"
+    fine = partial[0].stratum is not None
+    if not fine:
+        listed = " and ".join(
+            f"{share.queue_rows} of the {share.stratum_size}"
+            + (" classified rollouts" if index == 0 else "")
+            + f" of the {share.judge_stratum.replace('_', '-')} stratum"
+            for index, share in enumerate(partial)
+        ) + f" of {population}"
+    else:
+        first = partial[0]
+        example = (
+            f"{first.queue_rows} of the {first.stratum_size} classified rollouts of declared "
+            f"stratum {first.stratum!r} in the {first.judge_stratum.replace('_', '-')} stratum"
+        )
+        listed = (
+            f"{example} of {population}"
+            if len(partial) == 1
+            else f"part of {len(partial)} labelled declared strata of {population}, such as "
+            f"{example}"
+        )
+    rows: list[dict[str, Any]] = [
+        {
+            "judge_stratum": share.judge_stratum,
+            **({"stratum": share.stratum} if fine else {}),
+            "queue_rows": share.queue_rows,
+            "labelled": share.labelled,
+            "stratum_size": share.stratum_size,
+        }
+        for share in partial
+    ]
+    return Diagnostic(
+        code="JUDGE_LABELLING_QUEUE_PARTIAL",
+        severity="WARNING",
+        message=(
+            f"the {queue} lists {listed}; the labels are a random sample of such a stratum "
+            "only if the queue's rows of it were drawn from all of its rollouts at random "
+            "before labelling, which the analysis cannot check"
+        ),
+        scope=where,
+        details={"fine_strata" if fine else "judge_strata": rows},
+    )
+
+
+def _judge_corrected_interval(
+    *,
+    result: GroupRiskResult | HierarchyRiskResult,
+    calibration: JudgeCalibration,
+    primary_scenario: str | None,
+    family_id: str | None,
+    judge_alpha: float | None,
+    gap: str | None = None,
+    unclassified: UnclassifiedShare | None = None,
+    tail: bool = False,
+    scoped_group: str | None = None,
+    scoped_groups: list[str] | None = None,
+    stratified: bool = False,
+    cohort_boxes: frozenset[str] = frozenset(),
+    policy_classified: tuple[int, int] = (0, 0),
+    policy_possible: bool = False,
+    labelling_queue: bool = False,
+) -> RiskIntervalResult | None:
+    """Correct one row; ``scoped_group`` names a validated calibration's group, and
+    ``scoped_groups`` the groups an assumed calibration is scoped to. ``cohort_boxes`` names
+    the cohorts the assumed scenario gives a box of their own: ``calibration`` is that box
+    for a listed cohort, and the scenario's default box for any other. ``unclassified``
+    bounds the row's share of unclassified rollouts; without it the row is taken to have
+    none. A measured calibration adds the bound's alpha to its own. ``policy_classified``
+    counts the row's rollouts a plan policy counted safe and as failures; a row holding any
+    is corrected over ``_policy_free_box``. A row holding none states what that assumes when
+    ``policy_possible`` (see ``_policy_cohorts``). ``labelling_queue`` says that the plan
+    declares a labelling protocol."""
+
+    if result.lower is None or result.upper is None:
+        return None
+    by_policy = any(policy_classified)
+    if by_policy and unclassified is not None and unclassified.in_bounds:
+        # Over the policy-free box a share the bounds complete drops out of both ends, so the
+        # row needs no bound on it and spends no alpha on one. A share the bounds exclude
+        # still moves the corrected rate, so it keeps its bound.
+        unclassified = None
+    corrected = correct_judge_risk(
+        observed_lower=result.lower,
+        observed_upper=result.upper,
+        observed_estimate=result.estimate,
+        calibration=_policy_free_box(calibration) if by_policy else calibration,
+        unclassified_share=unclassified.upper if unclassified is not None else 0.0,
+        unclassified_in_bounds=unclassified.in_bounds if unclassified is not None else True,
+        unclassified_share_per_prompt=unclassified is not None and unclassified.per_prompt,
+        tail=tail,
+    )
+    validated = calibration.source == "validated"
+    # Measured accuracies certify only a row they were measured for, and never more than
+    # the row's own bounds support. Elsewhere the corrected interval is a sensitivity, as an
+    # assumed one always is.
+    certified = validated and gap is None and result.eligibility == "certifying"
+    base = next((item for item in result.intervals if item.role == "primary"), None)
+    base_alpha = base.family_alpha if base is not None else None
+    spent = calibration.alpha if calibration.alpha is not None else judge_alpha
+    # The share bound is one more endpoint of a measured judge model, so its alpha joins
+    # the calibration's at both ends.
+    if spent is not None and unclassified is not None:
+        spent += unclassified.alpha
+    simultaneous = (
+        1 - (base_alpha + spent)
+        if certified and base_alpha is not None and spent is not None
+        else None
+    )
+    # Each corrected endpoint uses the base endpoint plus two of the four calibration
+    # endpoints, so a one-sided claim spends half the calibration budget.
+    base_directional = base.directional_family_alpha if base is not None else None
+    if base is not None and base.projection_method is not None:
+        # A projected base endpoint covers only at the simultaneous floor.
+        base_directional = (
+            1 - base.simultaneous_coverage if base.simultaneous_coverage is not None else None
+        )
+    share_spent = unclassified.alpha if unclassified is not None else 0.0
+    one_sided = (
+        1 - (base_directional + (spent - share_spent) / 2 + share_spent)
+        if certified and base_directional is not None and spent is not None
+        else None
+    )
+    assumptions = [
+        "The reported estimand is true failure risk, not judge-reported failure risk.",
+        f"P(truly unsafe | judge said unsafe) lies in "
+        f"[{calibration.rho_1_lower:.6g}, {calibration.rho_1_upper:.6g}].",
+        f"P(truly unsafe | judge said safe) lies in "
+        f"[{calibration.rho_0_lower:.6g}, {calibration.rho_0_upper:.6g}].",
+    ]
+    if validated and stratified:
+        if calibration.completed_strata:
+            assumptions.append(
+                "The "
+                + " and ".join(calibration.completed_strata)
+                + " judge stratum has no human label, so its range is [0, 1], which holds "
+                "with certainty."
+            )
+        assumptions.extend(_stratified_assumptions())
+        if labelling_queue:
+            assumptions.append(_queue_assumption("declared fine stratum"))
+        if scoped_group is not None:
+            assumptions.append(
+                f"The calibration is scoped to group {scoped_group!r}: its fine strata are the "
+                "declared strata of the group's rollouts in the cohort."
+            )
+        if certified:
+            population = (
+                "the cohort" if scoped_group is None else f"group {scoped_group!r} in the cohort"
+            )
+            assumptions.extend(
+                [
+                    f"The fine strata weight back to every classified rollout of {population} "
+                    "equally, and so does this row, so they measure the judge's accuracy for "
+                    "its estimand.",
+                    (
+                        "Coverage is the union bound over the underlying interval, every "
+                        "calibration count bound, the four Clopper-Pearson bounds and the "
+                        "bound on the unclassified share."
+                        if unclassified is not None
+                        else "Coverage is the union bound over the underlying interval, every "
+                        "calibration count bound and the four Clopper-Pearson bounds."
+                    ),
+                ]
+            )
+    elif validated:
+        sequence = calibration.bound == "confidence_sequence"
+        method = (
+            "anytime-valid binomial confidence sequence (a prior-posterior ratio, "
+            "Waudby-Smith and Ramdas, 2020)"
+            if sequence
+            else "exact Clopper-Pearson bound"
+        )
+        if calibration.completed_strata:
+            assumptions.append(
+                "The "
+                + " and ".join(calibration.completed_strata)
+                + " judge stratum has no human label, so its range is [0, 1], which holds "
+                f"with certainty; any other range is an {method} from "
+                "human labels drawn within its judge stratum."
+            )
+        else:
+            assumptions.append(
+                f"Each of those two ranges is an {method} from human labels drawn "
+                "within its judge stratum."
+                if sequence
+                else "Those two ranges are exact Clopper-Pearson bounds from human labels "
+                "drawn within each judge stratum."
+            )
+        if sequence:
+            assumptions.extend(
+                [
+                    "Each sequence bounds the judge stratum's conditional probability, which "
+                    "the stratum's rollouts only sample, not the share of them that is truly "
+                    "unsafe; it does not use the stratum's size, and even a census leaves the "
+                    "probability uncertain.",
+                    "Given a judge stratum's size, its rollouts are independent and each is "
+                    "truly unsafe with the stratum's conditional probability, so its labels, "
+                    "in the queue's random order, are independent draws at that probability.",
+                ]
+            )
+        assumptions.extend(
+            [
+                (
+                    "The labelled rows were drawn one at a time, without replacement and in a "
+                    "random order, within their judge stratum, as the declared labelling "
+                    "queue orders them; the ranges hold at every number of labels at once, "
+                    "so labelling may have stopped because of the labels seen."
+                    if sequence
+                    else "The labelled rows are a simple random sample within their judge "
+                    "stratum; this is a property of the declared collection protocol, not "
+                    "of the data."
+                ),
+                *([_queue_assumption("judge stratum")] if labelling_queue else []),
+                "Human adjudication is treated as ground truth.",
+            ]
+        )
+        if scoped_group is not None:
+            assumptions.append(
+                f"The calibration is scoped to group {scoped_group!r}: its labels and judge "
+                "strata are those of the group's rollouts in the cohort."
+            )
+        if certified:
+            labels = (
+                "The labels weight every rollout the judge classified in the cohort equally"
+                if scoped_group is None
+                else "The labels weight every rollout the judge classified in group "
+                f"{scoped_group!r} of the cohort equally"
+            )
+            assumptions.extend(
+                [
+                    f"{labels}, and so "
+                    "does this row, so they measure the judge's accuracy for its estimand.",
+                    (
+                        "Coverage is the union bound over the underlying interval, the four "
+                        "calibration endpoints and the bound on the unclassified share."
+                        if unclassified is not None
+                        else "Coverage is the union bound over the underlying interval and the "
+                        "four calibration endpoints."
+                    ),
+                ]
+            )
+    else:
+        scope = (
+            ""
+            if scoped_groups is None
+            else ", on the rows of groups " + ", ".join(repr(item) for item in scoped_groups)
+            + " only"
+        )
+        assumptions.extend(
+            [
+                "These conditional accuracies are declared assumptions, not measurements; "
+                "the interval inherits no coverage guarantee from them.",
+                _assumed_box_assumption(result.cohort_id, cohort_boxes, scope),
+            ]
+        )
+    if by_policy:
+        assumptions.append(
+            _policy_assumption(*policy_classified, excluded=unclassified is not None)
+        )
+    elif policy_possible:
+        assumptions.append(_policy_absent_assumption())
+    if unclassified is not None and unclassified.upper > 0:
+        assumptions.append(unclassified_assumption(unclassified))
+    assumptions.append("The underlying judge-system interval retains its own stated guarantee.")
+    warnings: list[str] = []
+    if validated and gap is not None:
+        warnings.append(_uncertified_correction_warning(gap, scoped_group))
+    elif validated and not certified:
+        warnings.append(_uncertified_base_warning(result.eligibility))
+    if not validated and primary_scenario is not None:
+        if calibration.scenario_id != primary_scenario:
+            warnings.append(
+                "Non-primary judge-calibration scenario; reported for sensitivity only."
+            )
+    return RiskIntervalResult(
+        interval_id=f"judge_corrected_{calibration.scenario_id}",
+        lower=corrected.lower,
+        upper=corrected.upper,
+        method=(
+            "validated_judge_misclassification_correction"
+            if validated
+            else "assumed_judge_misclassification_correction"
+        ),
+        role="reference" if certified else "sensitivity",
+        varied_assumption=None if certified else "judge_error",
+        coverage_scope=(
+            f"{result.coverage_scope}_judge_corrected"
+            if result.coverage_scope
+            else "judge_corrected"
+        ),
+        family=family_id,
+        family_alpha=spent,
+        simultaneous_coverage=simultaneous,
+        lower_one_sided_coverage=one_sided,
+        upper_one_sided_coverage=one_sided,
+        completion_estimate_lower=corrected.completion_estimate_lower,
+        completion_estimate_upper=corrected.completion_estimate_upper,
+        raw_lower=result.lower,
+        raw_upper=result.upper,
+        calibration_method=f"{calibration.source}_judge_calibration",
+        assumptions=assumptions,
+        eligibility="certifying" if certified else "diagnostic",
+        warnings=warnings,
+    )
+
+
+def _transported_judge_interval(
+    *,
+    result: GroupRiskResult | HierarchyRiskResult,
+    published: PublishedValidationSetSpec,
+    sensitivity_lower: float,
+    unclassified: UnclassifiedShare | None = None,
+) -> RiskIntervalResult | None:
+    """A true-risk sensitivity from a judge sensitivity measured on a published set.
+
+    Experimental. Only the sensitivity is transported; the false-positive rate is bounded
+    by the run's own judged rate, so the interval's lower end is zero. When the row's bounds
+    drop some unclassified rollouts (``unclassified.in_bounds`` false), the bound on their
+    share enters the upper end at its worst case, since every one of them may be truly
+    unsafe: added in full when it bounds only the prompts' weighted mean, and mixed in when
+    it bounds every prompt's share.
+    """
+
+    if result.upper is None:
+        return None
+    added = unclassified is not None and not unclassified.in_bounds
+    corrected = transport_judge_risk(
+        observed_upper=result.upper,
+        observed_estimate=result.estimate,
+        sensitivity_lower=sensitivity_lower,
+        unclassified_share=unclassified.upper if unclassified is not None and added else 0.0,
+        unclassified_share_per_prompt=unclassified is not None and unclassified.per_prompt,
+    )
+    completion = (
+        "The upper bound is the judge-system upper bound divided by the sensitivity bound; "
+        "unclassified rollouts stay completed as failures."
+    )
+    if unclassified is not None and added:
+        how = (
+            "weights that by one minus the unclassified share, at most "
+            f"{unclassified.upper:.6g} on every prompt, then adds the share"
+            if unclassified.per_prompt
+            else f"adds the unclassified share, at most {unclassified.upper:.6g}, in full: "
+            "the bound holds only for the prompts' weighted mean, and the share may sit on "
+            "the prompts with the lowest rates"
+        )
+        completion = (
+            "The plan's missing or error policy excludes unclassified rollouts from the "
+            "judge-system bounds, which then cover only the classified rollouts' rate. The "
+            "upper bound divides that rate's upper bound by the sensitivity bound for the "
+            f"classified rollouts and {how}. Every unclassified rollout is taken at its worst "
+            "case, truly unsafe. " + unclassified_share_text(unclassified)
+        )
+    return RiskIntervalResult(
+        interval_id="judge_corrected_transported",
+        lower=corrected.lower,
+        upper=corrected.upper,
+        method="transported_judge_sensitivity_correction",
+        role="sensitivity",
+        varied_assumption="judge_error",
+        coverage_scope=(
+            f"{result.coverage_scope}_judge_corrected"
+            if result.coverage_scope
+            else "judge_corrected"
+        ),
+        completion_estimate_lower=corrected.completion_estimate_lower,
+        completion_estimate_upper=corrected.completion_estimate_upper,
+        raw_lower=result.lower,
+        raw_upper=result.upper,
+        calibration_method="transported_judge_calibration",
+        assumptions=[
+            "The reported estimand is true failure risk, not judge-reported failure risk.",
+            f"The judge's sensitivity is at least {sensitivity_lower:.6g}: the one-sided "
+            f"Clopper-Pearson lower bound at alpha {published.sensitivity_alpha:.6g} from "
+            f"{published.judge_flagged_unsafe} of {published.human_unsafe} human-unsafe items "
+            f"flagged on the published set {published.name!r} ({published.source}).",
+            "The Clopper-Pearson bound treats the published set's human-unsafe items as "
+            "independent draws that share one sensitivity. Several completions of the same "
+            "behaviour are not independent, so counts that include them overstate the bound's "
+            "precision.",
+            f"Transport assumption: the same judge ({published.judge}) and rubric "
+            f"({published.rubric}), applied to this run's outputs, is at least as sensitive "
+            "on every prompt as on the published set, whose outputs came from other "
+            "generators. Nothing in this run checks it.",
+            "The published set's false-positive rate is not transported. This run's false "
+            "positives are bounded only by its own judged failures, so every judged failure "
+            "may be a false positive and the lower bound is zero.",
+            completion,
+            "Human adjudication on the published set is treated as ground truth.",
+        ],
+        eligibility="diagnostic",
+        warnings=[
+            "Experimental transported judge calibration: a sensitivity analysis with no "
+            "coverage guarantee, which never decides a claim."
+        ],
+    )

@@ -9,8 +9,14 @@ missing-score policies, duplicates, completeness and sampled-design checks.
 
 from __future__ import annotations
 
+import functools
 import math
-from datetime import timezone
+import re
+from collections import Counter
+from collections.abc import Iterable
+from dataclasses import dataclass, replace
+from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 import numpy as np
@@ -18,23 +24,30 @@ import pandas as pd
 
 from inspect_safety_stats.config.canonicalize import sha256_value
 from inspect_safety_stats.config.loader import report_path
-from inspect_safety_stats.config.models import ATTRIBUTE_PREFIX, AnalysisPlan
+from inspect_safety_stats.config.models import ATTRIBUTE_PREFIX, AnalysisPlan, OutcomeMappingSpec
+from inspect_safety_stats.config.registration import RegistrationReceipt
 from inspect_safety_stats.ingest.manifest import (
     ResolvedGroup,
+    check_zero_tolerance_field,
     load_inclusion_probabilities,
     load_manifest,
+    load_selection,
+    plan_grouping_columns,
+    plan_manifest_columns,
     resolve_groups,
 )
-from inspect_safety_stats.ingest.outcomes import is_missing, map_outcome
+from inspect_safety_stats.ingest.outcomes import UnmappedScoreError, is_missing, map_outcome
 from inspect_safety_stats.ingest.records import (
     EvaluationSource,
     NormalizedData,
     RolloutRecord,
     RunRecord,
     SourceData,
+    StopContext,
 )
 from inspect_safety_stats.schema.observations import Observation
 from inspect_safety_stats.schema.reports import Diagnostic
+from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope, prompt_scope, scope_path
 from inspect_safety_stats.stats.judges import compose_verdicts
 
 POLICY_BLOCK_CODES = frozenset(
@@ -77,6 +90,88 @@ def _blocked_prompt(cohort_id: str, prompt_id: str) -> dict[str, Any]:
     return {"cohort_id": cohort_id, "prompt_id": prompt_id}
 
 
+def _block_details(stop: StopContext) -> dict[str, Any]:
+    """What a provider reported of a content-filter stop, for the stop's diagnostics."""
+
+    return {
+        "stop_reason": "content_filter",
+        "block_type": stop.block_type,
+        "block_category": stop.block_category,
+        "block_error": stop.block_error,
+    }
+
+
+_DELIVERED_IN = {
+    "stopped_output": "the target delivered content in the stopped output",
+    "earlier_generation": (
+        "the target delivered content in an earlier generation of the sample, such as an "
+        "earlier turn"
+    ),
+    "unverifiable": (
+        "the transcript does not record the stopped generation, so content the target "
+        "delivered before it cannot be ruled out"
+    ),
+}
+
+
+def _stop_after_content(stop: StopContext, scope: str) -> Diagnostic:
+    """A content-filter stop that the plan's content_filter_stops leaves to the score, because
+    the target delivered content in the sample before it."""
+
+    where = _DELIVERED_IN.get(
+        stop.delivered_in or "", "the target delivered content in the sample before the stop"
+    )
+    return Diagnostic(
+        code="CONTENT_FILTER_STOP_SCORED",
+        severity="INFO",
+        message=(
+            f"a provider's content filter stopped the output, but {where}; the score "
+            "decides, as for any other answer"
+        ),
+        scope=scope,
+        details={
+            **_block_details(stop),
+            "reason": "content_delivered",
+            "content_delivered_in": stop.delivered_in,
+        },
+    )
+
+
+def _score_safe_keeps(raw_score: Any, mapping: OutcomeMappingSpec) -> str | None:
+    """Why content_filter_stops: safe leaves a stop that delivered nothing to its score:
+    ``failure_score`` when the score maps to a failure, ``unmapped_score`` when the mapping
+    does not cover it, so that it may be one. None when the score is missing or safe."""
+
+    if is_missing(raw_score):
+        return None
+    try:
+        return "failure_score" if map_outcome(raw_score, mapping) else None
+    except ValueError:
+        return "unmapped_score"
+
+
+def _stop_with_kept_score(stop: StopContext, scope: str, reason: str) -> Diagnostic:
+    """A content-filter stop that delivered nothing, whose score content_filter_stops: safe
+    does not override: a failure, or a value the mapping does not cover."""
+
+    found = (
+        "its score is a failure"
+        if reason == "failure_score"
+        else "the plan's mapping does not cover its score, which may be a failure"
+    )
+    return Diagnostic(
+        code="CONTENT_FILTER_STOP_SCORED",
+        severity="WARNING",
+        message=(
+            "a provider's content filter stopped the output before the target delivered any "
+            f"content that the transcript shows, but {found}; content_filter_stops: safe "
+            "never turns such a score into a safe outcome, so the score decides"
+        ),
+        scope=scope,
+        details={**_block_details(stop), "reason": reason, "content_delivered_in": None},
+    )
+
+
 _ABSENT = object()
 
 
@@ -101,10 +196,162 @@ def _run_field(plan: AnalysisPlan, run: RunRecord, name: str) -> Any:
     return _ABSENT if value is None else value
 
 
+# A message that lists the values found in the source names at most this many, the most
+# frequent first, and says how many more there are.
+_LISTED_VALUES = 10
+
+
+def _listing(counts: Counter[str], unit: str) -> str:
+    """Quoted values with how often each occurs, the most frequent first."""
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    listed = ", ".join(
+        f"{value} in {count} {unit}{'' if count == 1 else 's'}"
+        for value, count in ordered[:_LISTED_VALUES]
+    )
+    rest = len(ordered) - _LISTED_VALUES
+    return f"{listed}, and {rest} more" if rest > 0 else listed
+
+
+# An identifier that spells a decimal number, as pandas' type inference would read it.
+_NUMBER = re.compile(r"[+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
+
+
+def _number(text: str) -> Decimal | None:
+    """The number ``text`` spells, or None when it spells none that a Decimal can hold.
+
+    An exponent beyond the Decimal range, as in `1e999999999999999999999`, is no number here:
+    such an identifier is compared as written, with no hint.
+    """
+
+    if not _NUMBER.fullmatch(text):
+        return None
+    try:
+        return Decimal(text)
+    except InvalidOperation:
+        return None
+
+
+def _by_number(identifiers: Iterable[Any]) -> dict[Decimal, list[str]]:
+    """The identifiers that spell a number, by that number, so that `0001` and `1` meet.
+
+    Identifiers are compared as written, so two such spellings name two prompts. When one is
+    in the manifest and the other in the logs, they are most likely one prompt written two
+    ways, as an exporter that zero-pads identifiers, or a reader that drops the padding, does.
+    """
+
+    numbers: dict[Decimal, list[str]] = {}
+    for identifier in identifiers:
+        text = str(identifier)
+        number = _number(text)
+        if number is not None:
+            numbers.setdefault(number, []).append(text)
+    return numbers
+
+
+def _written_as(identifier: str, numbers: dict[Decimal, list[str]], where: str) -> str:
+    """The sentence that names the other spellings of ``identifier`` in ``where``, if any."""
+
+    number = _number(str(identifier))
+    others = [] if number is None else numbers.get(number, [])
+    if not others:
+        return ""
+    shown = ", ".join(repr(other) for other in sorted(others)[:3])
+    return (
+        f"; {where} {shown}, the same number written differently. Identifiers are compared as "
+        "written: write the manifest's prompt_id as the logs record it"
+    )
+
+
+def _score_absent(column: str, path: str, names: set[str]) -> str:
+    """Say that a score column is absent, and which scores the plan path could name instead."""
+    message = f"score column {column!r} is absent from selected logs"
+    if not names:
+        return f"{message}, which have no scores"
+    listed = ", ".join(repr(name) for name in sorted(names))
+    return f"{message}; {path} must name a score they have: {listed}"
+
+
+def _match_value_shown(plan: AnalysisPlan, run: RunRecord, field: str, expected: Any) -> str:
+    """How a COHORT_EMPTY message shows a run's value of a field its cohort matches on.
+
+    Only the model is shown. Any other run field can hold the run's configuration, such as a
+    task argument, a base URL or the generate config's headers, and no diagnostic shows those
+    values (see ``_RunValue``), so the message says only whether the run has the value the
+    cohort requires.
+    """
+    value = _run_field(plan, run, field)
+    if value is _ABSENT:
+        return "(absent)"
+    if field == "model":
+        return repr(_native(value))
+    return "the required value" if _equal(value, expected) else "another value"
+
+
+def _cohort_empty_message(
+    plan: AnalysisPlan, cohort_id: str, match: dict[str, Any], runs: list[RunRecord]
+) -> str:
+    """Say what a cohort requires and what the selected evaluations have instead."""
+    message = f"cohort {cohort_id!r} contains no evaluations"
+    if not runs:
+        return f"{message}, and no evaluation was selected"
+    # An evaluation that matches several cohorts is put in none of them (COHORT_OVERLAP).
+    overlapping = sum(cohort_id in _match_cohorts(run, plan) for run in runs)
+    if overlapping:
+        return (
+            f"{message}: the {overlapping} evaluation(s) it matches also match another cohort "
+            "(COHORT_OVERLAP)"
+        )
+    required = " and ".join(f"{field} = {expected!r}" for field, expected in match.items())
+    observed = "; ".join(
+        f"{field} "
+        + _listing(
+            Counter(_match_value_shown(plan, run, field, expected) for run in runs),
+            "evaluation",
+        )
+        for field, expected in match.items()
+    )
+    return f"{message}: it requires {required}, and the selected evaluations have {observed}"
+
+
+def _unmapped_summary(
+    code: str, path: str, scope: str, mapping: OutcomeMappingSpec, counts: Counter[str]
+) -> Diagnostic:
+    """One error that lists the distinct unmapped score values and says how to map them.
+
+    Each unmapped rollout keeps its own error, which withholds its prompt's bounds. This one
+    is about the plan, so its scope is the plan path: an unscoped error would withhold the
+    bounds of every prompt. Its own code sorts it ahead of the rollouts' errors in reports.
+    """
+    total = sum(counts.values())
+    values = _listing(counts, "rollout")
+    if mapping.failure_if is not None:
+        message = (
+            f"{total} rollout(s) have a nonnumeric score, which {path}.failure_if cannot "
+            f"compare: {values}. Map categorical scores with failure_values and safe_values."
+        )
+    else:
+        message = (
+            f"{total} rollout(s) have a score value that {path} lists in neither "
+            f"failure_values {mapping.failure_values!r} nor safe_values "
+            f"{mapping.safe_values!r}: {values}. Add each value the scorer gives to one of "
+            "the two lists; matching is type-sensitive."
+        )
+    return Diagnostic(
+        code=code,
+        severity="ERROR",
+        message=message,
+        scope=scope,
+        details={"rollouts": total, "distinct_values": len(counts)},
+    )
+
+
 def _rollout_field(
     plan: AnalysisPlan, rollout: RolloutRecord, run: RunRecord, name: str
-) -> Any:
-    """The value of a ``rollout_key`` field: the rollout's, else its run's, else None."""
+) -> tuple[Any, bool]:
+    """The value of a ``rollout_key`` field: the rollout's, else its run's, else None.
+
+    The flag says whether the value is the run's.
+    """
     if plan.schema_version == "3.0" and not name.startswith(ATTRIBUTE_PREFIX):
         neutral = {
             "run_key": rollout.run_key,
@@ -112,16 +359,30 @@ def _rollout_field(
             "repeat": rollout.repeat,
             "rollout_id": rollout.sample_id,
         }
-        return _native(neutral[name])
+        return _native(neutral[name]), False
     if plan.schema_version == "3.0":
         name = name.removeprefix(ATTRIBUTE_PREFIX)
     elif name == "id":
-        return rollout.item_id
+        return rollout.item_id, False
     if name in rollout.attributes:
-        return _native(rollout.attributes[name])
+        return _native(rollout.attributes[name]), False
     if name in run.attributes:
-        return _native(run.attributes[name])
-    return None
+        return _native(run.attributes[name]), True
+    return None, False
+
+
+@dataclass(frozen=True)
+class _RunValue:
+    """A run's value in a rollout key, shown by the name of its field.
+
+    A run's fields hold its configuration: the generate config, whose ``extra_headers`` can
+    carry credentials, the base URL, the model arguments. No diagnostic shows their values.
+    """
+
+    field: str
+
+    def __repr__(self) -> str:
+        return f"<{self.field} of the run>"
 
 
 def _match_cohorts(run: RunRecord, plan: AnalysisPlan) -> list[str]:
@@ -151,14 +412,38 @@ def _configuration(
     }
 
 
+def _utc(value: datetime) -> datetime:
+    """A time with no zone read as UTC, as the plan's freeze time is."""
+
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
 def normalize(
     plan: AnalysisPlan,
     manifest: pd.DataFrame,
     groups: list[ResolvedGroup],
     source: SourceData,
+    receipt: RegistrationReceipt | None = None,
 ) -> NormalizedData:
-    """Apply the plan's ingestion rules to the runs and rollouts of one source."""
+    """Apply the plan's ingestion rules to the runs and rollouts of one source.
 
+    ``receipt``, when given, is a registration receipt whose hash the caller has matched to
+    the frozen plan; it is checked against the earliest selected evaluation start.
+    """
+
+    stops = plan.inputs.score.content_filter_stops
+    stop_context = source.stop_context
+    if stops != "score" and stop_context is None:
+        raise ValueError(
+            f"score.content_filter_stops: {stops} needs the stop reason of each output, which "
+            f"this source ({source.source_format.get('format')}) does not report"
+        )
+    token_limit = plan.inputs.score.token_limit
+    if token_limit != "score" and stop_context is None:
+        raise ValueError(
+            f"score.token_limit: {token_limit} needs the stop reason of each output, which "
+            f"this source ({source.source_format.get('format')}) does not report"
+        )
     diagnostics: list[Diagnostic] = []
     run_cohorts: dict[str, str] = {}
     run_records: dict[str, RunRecord] = {}
@@ -172,7 +457,7 @@ def normalize(
                     code="COHORT_OVERLAP",
                     severity="ERROR",
                     message=f"evaluation {run_key!r} matches multiple cohorts: {matches}",
-                    scope=run_key,
+                    scope=scope_path("runs", run_key),
                 )
             )
         elif len(matches) == 1:
@@ -187,7 +472,7 @@ def normalize(
                             f"evaluation {run_key!r} reports no status, so it cannot be "
                             "checked for completion and is assumed complete"
                         ),
-                        scope=run_key,
+                        scope=scope_path("runs", run_key),
                         details={"integrity_degraded": True},
                     )
                 )
@@ -197,7 +482,7 @@ def normalize(
                         code="LOG_INCOMPLETE",
                         severity="ERROR",
                         message=f"evaluation {run_key!r} has status {run.status!r}",
-                        scope=run_key,
+                        scope=scope_path("runs", run_key),
                     )
                 )
 
@@ -217,8 +502,10 @@ def normalize(
                 Diagnostic(
                     code="COHORT_EMPTY",
                     severity="ERROR",
-                    message=f"cohort {cohort_id!r} contains no evaluations",
-                    scope=cohort_id,
+                    message=_cohort_empty_message(
+                        plan, cohort_id, cohort.match, list(source.runs)
+                    ),
+                    scope=cohort_scope(cohort_id),
                 )
             )
             continue
@@ -233,7 +520,7 @@ def normalize(
                     code="PROVENANCE_UNOBSERVED",
                     severity="WARNING",
                     message=f"cohort {cohort_id!r} cannot verify uniform field {field!r}",
-                    scope=cohort_id,
+                    scope=cohort_scope(cohort_id),
                 )
             )
         configs = [
@@ -255,7 +542,7 @@ def normalize(
                         "report no configuration, so configuration drift cannot be checked "
                         "for them"
                     ),
-                    scope=cohort_id,
+                    scope=cohort_scope(cohort_id),
                     details={"integrity_degraded": True, "evaluations": unconfigured},
                 )
             )
@@ -266,7 +553,7 @@ def normalize(
                     code="CONFIG_DRIFT",
                     severity="ERROR",
                     message=f"cohort {cohort_id!r} contains incompatible evaluation configurations",
-                    scope=cohort_id,
+                    scope=cohort_scope(cohort_id),
                 )
             )
         cohort_summaries.append(
@@ -279,6 +566,11 @@ def normalize(
             }
         )
 
+    first_started_at = min(
+        (_utc(run.started_at) for run in run_records.values() if run.started_at is not None),
+        default=None,
+    )
+    start_unrecorded = any(run.started_at is None for run in run_records.values())
     if plan.analysis.intent == "confirmatory" and plan.analysis.plan_frozen_at is not None:
         observed = [
             run.started_at for run in run_records.values() if run.started_at is not None
@@ -309,6 +601,8 @@ def normalize(
                     ),
                 )
             )
+        elif receipt is not None:
+            diagnostics.extend(_receipt_timing(receipt, observed))
         elif plan.analysis.registration is None:
             diagnostics.append(
                 Diagnostic(
@@ -341,15 +635,15 @@ def normalize(
                 Diagnostic(
                     code="JUDGE_SCORE_MISSING",
                     severity="ERROR",
-                    message=(
-                        f"judge {judge.id!r} score column {column!r} is absent from selected logs"
-                    ),
-                    scope=f"inputs.judges.{judge.id}",
+                    message=f"judge {judge.id!r} "
+                    + _score_absent(column, f"inputs.judges.{judge.id}.score.name", score_names),
+                    scope=plan_scope("inputs", "judges", judge.id),
                 )
             )
             judge_series[judge.id] = {id(rollout): None for _, rollout in selected}
             continue
         verdicts: dict[int, bool | None] = {}
+        judge_unmapped: Counter[str] = Counter()
         for _, rollout in selected:
             value = _native(scores[id(rollout)].get(judge.score.name))
             if is_missing(value):
@@ -358,15 +652,27 @@ def normalize(
             try:
                 verdicts[id(rollout)] = map_outcome(value, judge.score.mapping)
             except ValueError as exc:
+                if isinstance(exc, UnmappedScoreError):
+                    judge_unmapped[f"{exc.value!r} ({exc.type_name})"] += 1
                 diagnostics.append(
                     Diagnostic(
                         code="JUDGE_SCORE_UNMAPPED",
                         severity="ERROR",
                         message=f"judge {judge.id!r}: {exc}",
-                        scope=f"inputs.judges.{judge.id}:{rollout.record_id}",
+                        scope=scope_path("runs", rollout.run_key, "records", rollout.record_id),
                     )
                 )
                 verdicts[id(rollout)] = None
+        if judge_unmapped:
+            diagnostics.append(
+                _unmapped_summary(
+                    "JUDGE_SCORE_MAPPING_MISMATCH",
+                    f"inputs.judges.{judge.id}.score.mapping",
+                    plan_scope("inputs", "judges", judge.id, "score", "mapping"),
+                    judge.score.mapping,
+                    judge_unmapped,
+                )
+            )
         judge_series[judge.id] = verdicts
     # Composites become ordinary scores, so a composite may serve as the primary outcome
     # and every downstream construction runs unchanged.
@@ -383,18 +689,25 @@ def normalize(
             Diagnostic(
                 code="SCORE_MISSING",
                 severity="ERROR",
-                message=f"score column {f'score_{score_name}'!r} is absent from selected logs",
+                message=_score_absent(f"score_{score_name}", "inputs.score.name", score_names),
             )
         )
     manifest_by_prompt = manifest.set_index("prompt_id", drop=False)
     unexpected = sorted({rollout.item_id for _, rollout in selected} - set(manifest["prompt_id"]))
+    # An unexpected identifier and a manifest one that spell the same number, such as 1 and
+    # 0001, are named to each other: the remedy is to rewrite one, not to add a prompt or run it.
+    manifest_numbers = _by_number(manifest["prompt_id"])
+    unexpected_numbers = _by_number(unexpected)
     for prompt_id in unexpected[:100]:
         diagnostics.append(
             Diagnostic(
                 code="PROMPT_UNEXPECTED",
                 severity="ERROR",
-                message=f"observed prompt {prompt_id!r} is absent from the design manifest",
-                scope=prompt_id,
+                message=(
+                    f"observed prompt {prompt_id!r} is absent from the design manifest"
+                    + _written_as(prompt_id, manifest_numbers, "the manifest has")
+                ),
+                scope=scope_path("prompts", prompt_id),
                 details={"prompt_id": prompt_id},
             )
         )
@@ -408,6 +721,8 @@ def normalize(
     source_names: dict[str, str] = {}
     # Transcripts that could not be read, by report name: the reason and how many errors.
     unread_transcripts: dict[str, tuple[str, int]] = {}
+    # Score values the plan's mapping does not cover, quoted with their type, and how often.
+    unmapped: Counter[str] = Counter()
     for collection_order, (_, rollout) in enumerate(selected, start=1):
         run_key = rollout.run_key
         prompt_id = rollout.item_id
@@ -419,21 +734,26 @@ def normalize(
         sample_id, identity = rollout.sample_id, rollout.identity
         run = run_records[run_key]
         cohort_id = run_cohorts[run_key]
-        rollout_key = tuple(
-            _rollout_field(plan, rollout, run, field) for field in plan.design.rollout_key
-        )
+        key_fields = [
+            (field, *_rollout_field(plan, rollout, run, field))
+            for field in plan.design.rollout_key
+        ]
+        rollout_key = tuple(value for _, value, _ in key_fields)
         if rollout_key in rollout_keys:
+            shown = tuple(
+                _RunValue(field) if of_run else value for field, value, of_run in key_fields
+            )
             diagnostics.append(
                 Diagnostic(
                     code="ROLLOUT_DUPLICATE",
                     severity="ERROR",
-                    message=f"duplicate rollout key {rollout_key!r}",
-                    scope=prompt_id,
+                    message=f"duplicate rollout key {shown!r}",
+                    scope=scope_path("runs", run_key, "prompts", prompt_id),
                     details={"prompt_id": prompt_id},
                 )
             )
         rollout_keys.add(rollout_key)
-        scope = f"{run_key}:{prompt_id}:{rollout.repeat}"
+        scope = scope_path("runs", run_key, "prompts", prompt_id, "repeats", rollout.repeat)
         raw_error = _native(rollout.error)
         if isinstance(raw_error, str) and not raw_error.strip():
             raw_error = None
@@ -448,6 +768,34 @@ def normalize(
         error_stage: Literal["target_generation", "post_generation", "unknown"] | None = None
         content_delivered: bool | None = None
         provider_error_code: str | None = None
+        # A content-filter stop before the target delivered any content in the sample, whose
+        # outcome the plan declares. One after content, in the stopped output or an earlier
+        # turn, is scored like any other answer, and reported; so is one whose score `safe`
+        # would turn from a failure, or from a value the mapping does not cover, into safe.
+        stop = None
+        # An answer without a score that stopped at the token limit, when the plan looks for
+        # one; a truncated answer that was scored keeps its score.
+        truncated = False
+        if (
+            raw_error is None
+            and (stops != "score" or token_limit != "score")
+            and stop_context is not None
+        ):
+            found = stop_context(rollout)
+            if found is not None and found.stop_reason == "content_filter" and stops != "score":
+                kept = (
+                    _score_safe_keeps(raw_score, plan.inputs.score.mapping)
+                    if stops == "safe"
+                    else None
+                )
+                if found.content_delivered:
+                    diagnostics.append(_stop_after_content(found, scope))
+                elif kept is not None:
+                    diagnostics.append(_stop_with_kept_score(found, scope, kept))
+                else:
+                    stop = found
+            elif found is not None and found.stop_reason == "max_tokens":
+                truncated = token_limit != "score" and is_missing(raw_score)
         if raw_error is not None:
             context = source.error_context(rollout)
             if context.unread_reason is not None:
@@ -512,6 +860,61 @@ def normalize(
                         },
                     )
                 )
+            elif plan.inputs.score.errors == "exclude":
+                diagnostics.append(
+                    Diagnostic(
+                        code="SAMPLE_ERROR_EXCLUDED",
+                        severity="WARNING",
+                        message=(
+                            "sample error, and inputs.score.errors: exclude leaves the rollout "
+                            "out of the bounds"
+                        ),
+                        scope=scope,
+                        details={
+                            "integrity_degraded": True,
+                            "error_stage": context.stage,
+                            "content_delivered": context.content_delivered,
+                            "provider_error_code": context.provider_error_code,
+                        },
+                    )
+                )
+        elif stop is not None:
+            content_delivered = False
+            if stops == "safe":
+                failure = False
+                outcome_status = "target_policy_blocked_safe"
+                diagnostics.append(
+                    Diagnostic(
+                        code="TARGET_POLICY_BLOCKED_SAFE",
+                        severity="INFO",
+                        message=(
+                            "a provider's content filter stopped the output before the "
+                            "target delivered any content in the sample; the plan counts the "
+                            "block as safe"
+                        ),
+                        scope=scope,
+                        details=_block_details(stop),
+                    )
+                )
+            else:
+                failure = True
+                outcome_status = "classified_failure"
+                diagnostics.append(
+                    Diagnostic(
+                        code="TARGET_POLICY_BLOCKED_REFUSAL",
+                        severity="INFO",
+                        message=(
+                            "a provider's content filter stopped the output before the "
+                            "target delivered any content in the sample; the plan counts the "
+                            "block as a refusal"
+                        ),
+                        scope=scope,
+                        details=_block_details(stop),
+                    )
+                )
+        elif truncated and token_limit in {"safe", "failure"}:
+            failure = token_limit == "failure"
+            outcome_status = "classified_failure" if failure else "classified_safe"
         elif is_missing(raw_score):
             if plan.inputs.score.missing == "count_as_failure":
                 failure = True
@@ -539,11 +942,26 @@ def normalize(
                         details={"integrity_degraded": True},
                     )
                 )
+            elif plan.inputs.score.missing == "exclude":
+                diagnostics.append(
+                    Diagnostic(
+                        code="SCORE_MISSING_EXCLUDED",
+                        severity="WARNING",
+                        message=(
+                            "selected score is missing, and inputs.score.missing: exclude "
+                            "leaves the rollout out of the bounds"
+                        ),
+                        scope=scope,
+                        details={"integrity_degraded": True},
+                    )
+                )
         else:
             try:
                 failure = map_outcome(raw_score, plan.inputs.score.mapping)
                 outcome_status = "classified_failure" if failure else "classified_safe"
             except ValueError as exc:
+                if isinstance(exc, UnmappedScoreError):
+                    unmapped[f"{exc.value!r} ({exc.type_name})"] += 1
                 diagnostics.append(
                     Diagnostic(
                         code="SCORE_UNMAPPED",
@@ -553,6 +971,20 @@ def normalize(
                         details=_blocked_prompt(cohort_id, prompt_id),
                     )
                 )
+        if truncated:
+            counted_as = {"safe": "safe", "failure": "a failure", "missing": "a missing score"}
+            diagnostics.append(
+                Diagnostic(
+                    code="TOKEN_LIMIT_REACHED",
+                    severity="INFO",
+                    message=(
+                        "the answer stopped at the generation token limit without a score; "
+                        f"the plan counts it as {counted_as[token_limit]}"
+                    ),
+                    scope=scope,
+                    details={"stop_reason": "max_tokens", "token_limit": token_limit},
+                )
+            )
         log_path = rollout.source
         if log_path not in source_hashes:
             source_hashes[log_path] = source.source_sha256(log_path)
@@ -595,6 +1027,18 @@ def normalize(
                 model=run.model if run.model is not None else "unknown",
                 configuration_fingerprint=sha256_value(config),
                 collection_order=collection_order,
+                token_limit_unscored=None if token_limit == "score" else truncated,
+            )
+        )
+
+    if unmapped:
+        diagnostics.append(
+            _unmapped_summary(
+                "SCORE_MAPPING_MISMATCH",
+                "inputs.score.mapping",
+                plan_scope("inputs", "score", "mapping"),
+                plan.inputs.score.mapping,
+                unmapped,
             )
         )
 
@@ -607,7 +1051,7 @@ def normalize(
                     f"the transcript of {name} could not be read ({reason}), so the stage of "
                     f"its {count} sample error(s) is unknown and none counts as a policy block"
                 ),
-                scope=name,
+                scope=scope_path("logs", name),
                 details={"source": name, "reason": reason, "sample_errors": count},
             )
         )
@@ -630,8 +1074,11 @@ def normalize(
                     Diagnostic(
                         code="PROMPT_MISSING",
                         severity="ERROR",
-                        message=f"prompt {prompt_id!r} has no observations in cohort {cohort_id!r}",
-                        scope=f"{cohort_id}:{prompt_id}",
+                        message=(
+                            f"prompt {prompt_id!r} has no observations in cohort {cohort_id!r}"
+                            + _written_as(prompt_id, unexpected_numbers, "the logs have")
+                        ),
+                        scope=prompt_scope(cohort_id, prompt_id),
                         details={"cohort_id": cohort_id, "prompt_id": prompt_id},
                     )
                 )
@@ -647,7 +1094,7 @@ def normalize(
                                 f"{count} rollouts; "
                                 f"expected {expected}"
                             ),
-                            scope=f"{cohort_id}:{prompt_id}",
+                            scope=prompt_scope(cohort_id, prompt_id),
                             details={"cohort_id": cohort_id, "prompt_id": prompt_id},
                         )
                     )
@@ -661,7 +1108,7 @@ def normalize(
                                 f"{count} rollouts; "
                                 f"expected {expected}"
                             ),
-                            scope=f"{cohort_id}:{prompt_id}",
+                            scope=prompt_scope(cohort_id, prompt_id),
                             details={"cohort_id": cohort_id, "prompt_id": prompt_id},
                         )
                     )
@@ -691,6 +1138,9 @@ def normalize(
             if plan.design.stratum_column
             else ["_all"] * len(prompt_ids)
         )
+        if plan.design.selection_column:
+            drawn = load_selection(manifest, plan.design.selection_column)
+            diagnostics.extend(_selection_mismatches(plan, prompt_ids, drawn, observed_counts))
         if plan.design.sampling == "fixed_size":
             # A fixed-size design must realize exactly its planned draws. Inferring the
             # plan from pi requires pi to be constant inside a stratum and to imply an
@@ -709,7 +1159,7 @@ def normalize(
                                 "probabilities; a fixed-size design draws a fixed count "
                                 "from each stratum, so pi must equal draws/size within it"
                             ),
-                            scope=stratum,
+                            scope=scope_path("strata", stratum),
                         )
                     )
                     continue
@@ -724,7 +1174,7 @@ def normalize(
                                 f"{len(members)} frame items; a fixed-size design needs an "
                                 "integer draw count"
                             ),
-                            scope=stratum,
+                            scope=scope_path("strata", stratum),
                         )
                     )
                     continue
@@ -748,7 +1198,7 @@ def normalize(
                                     "fixed-size design must realize its plan exactly or the "
                                     "declared probabilities misstate the sample"
                                 ),
-                                scope=f"{cohort_id}:{stratum}",
+                                scope=cohort_scope(cohort_id, "strata", stratum),
                                 details={
                                     "planned_draws": count,
                                     "realized_draws": realized_stratum,
@@ -764,6 +1214,8 @@ def normalize(
                 source_hashes=source_hashes,
                 judge_verdicts=judge_verdicts,
                 source_format=dict(source.source_format),
+                first_started_at=first_started_at,
+                start_unrecorded=start_unrecorded,
             )
         for cohort_id in plan.cohorts:
             realized = sum(
@@ -783,7 +1235,7 @@ def normalize(
                         code="SAMPLE_EMPTY",
                         severity="ERROR",
                         message=f"cohort {cohort_id!r} has no sampled frame items",
-                        scope=cohort_id,
+                        scope=cohort_scope(cohort_id),
                         details=details,
                     )
                 )
@@ -798,7 +1250,7 @@ def normalize(
                             "declared inclusion probabilities do not describe this run, "
                             "which would bias the estimate"
                         ),
-                        scope=cohort_id,
+                        scope=cohort_scope(cohort_id),
                         details=details,
                     )
                 )
@@ -812,25 +1264,134 @@ def normalize(
         source_hashes=source_hashes,
         judge_verdicts=judge_verdicts,
         source_format=dict(source.source_format),
+        first_started_at=first_started_at,
+        start_unrecorded=start_unrecorded,
     )
 
 
-def read_inputs(
-    plan: AnalysisPlan, source: EvaluationSource
-) -> tuple[pd.DataFrame, list[ResolvedGroup], SourceData]:
+def _selection_mismatches(
+    plan: AnalysisPlan,
+    prompt_ids: list[str],
+    selected: np.ndarray,
+    observed_counts: dict[tuple[str, str], int],
+) -> list[Diagnostic]:
+    """An error for each cohort whose observed frame items are not the recorded selection.
+
+    The per-stratum counts a fixed-size design checks cannot tell a random draw from, say,
+    the first prompts of each stratum by identifier. The selection column records which
+    items the draw chose, so the items actually evaluated can be checked against it.
+    """
+
+    column = str(plan.design.selection_column)
+    diagnostics: list[Diagnostic] = []
+    for cohort_id in plan.cohorts:
+        observed = [observed_counts.get((cohort_id, prompt_id), 0) > 0 for prompt_id in prompt_ids]
+        unselected = sorted(
+            prompt_id
+            for prompt_id, chosen, seen in zip(prompt_ids, selected, observed, strict=True)
+            if seen and not chosen
+        )
+        unobserved = sorted(
+            prompt_id
+            for prompt_id, chosen, seen in zip(prompt_ids, selected, observed, strict=True)
+            if chosen and not seen
+        )
+        if not unselected and not unobserved:
+            continue
+        diagnostics.append(
+            Diagnostic(
+                code="SAMPLE_SELECTION_MISMATCH",
+                severity="ERROR",
+                message=(
+                    f"cohort {cohort_id!r} has observations for {len(unselected)} frame items "
+                    f"that {column!r} does not select and none for {len(unobserved)} that it "
+                    "selects; the declared inclusion probabilities describe the recorded draw, "
+                    "not the items evaluated"
+                ),
+                scope=cohort_scope(cohort_id),
+                details={
+                    "cohort_id": cohort_id,
+                    "selection_column": column,
+                    "observed_not_selected": len(unselected),
+                    "selected_not_observed": len(unobserved),
+                    "observed_not_selected_prompt_ids": unselected[:20],
+                    "selected_not_observed_prompt_ids": unobserved[:20],
+                },
+            )
+        )
+    return diagnostics
+
+
+def _receipt_timing(receipt: RegistrationReceipt, observed: list[Any]) -> list[Diagnostic]:
+    """Whether a receipt that belongs to the plan predates the earliest observed start."""
+
+    registered = receipt.registered_at.isoformat()
+    details = {"plan_sha256": receipt.plan_sha256, "registered_at": registered}
+    if observed and receipt.registered_at > min(observed):
+        return [
+            Diagnostic(
+                code="PLAN_RECEIPT_POSTHOC",
+                severity="ERROR",
+                message=(
+                    f"the plan was registered at {registered}, later than the earliest "
+                    "selected evaluation"
+                ),
+                details=details,
+            )
+        ]
+    checked = (
+        "before the earliest selected evaluation"
+        if observed
+        else "but no selected evaluation reports a start time to check it against"
+    )
+    return [
+        Diagnostic(
+            code="PLAN_REGISTERED",
+            severity="INFO",
+            message=(
+                f"the plan's hash was registered at {registered}, {checked}; the receipt's "
+                "time is only as trustworthy as the external timestamp that anchors it"
+            ),
+            details=details,
+        )
+    ]
+
+
+@dataclass(frozen=True)
+class RawInputs:
+    """The plan's design manifest and groups and the source's runs and rollouts, as read and
+    before :func:`normalize` applies the plan to them."""
+
+    manifest: pd.DataFrame
+    groups: list[ResolvedGroup]
+    source: SourceData
+
+
+def read_inputs(plan: AnalysisPlan, source: EvaluationSource) -> RawInputs:
     """Load the plan's design manifest and groups, and read the source, without normalizing.
 
-    Split from ``ingest`` so a caller can normalize what was read more than once.
+    Split from ``ingest`` so a caller can normalize what was read more than once. Each
+    normalization hashes the logs it selects; the source returned remembers each log's hash,
+    so a log is hashed once however often what was read is normalized.
     """
 
     # ORDER MATTERS: the manifest is loaded before the source is read, so a broken manifest
     # is reported before any log is opened, as it always was.
-    manifest = load_manifest(plan.inputs.design_manifest)
+    manifest = load_manifest(
+        plan.inputs.design_manifest, plan_manifest_columns(plan), plan_grouping_columns(plan)
+    )
+    check_zero_tolerance_field(plan, manifest)
     groups = resolve_groups(plan, manifest)
-    return manifest, groups, source.read()
+    read = source.read()
+    return RawInputs(
+        manifest=manifest,
+        groups=groups,
+        source=replace(read, source_sha256=functools.cache(read.source_sha256)),
+    )
 
 
 def ingest(plan: AnalysisPlan, source: EvaluationSource) -> NormalizedData:
     """Load the plan's design manifest, read the source and normalize it."""
 
-    return normalize(plan, *read_inputs(plan, source))
+    raw = read_inputs(plan, source)
+    return normalize(plan, raw.manifest, raw.groups, raw.source)

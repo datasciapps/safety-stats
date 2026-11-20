@@ -192,7 +192,6 @@ def test_a_claim_reports_its_tipping_lines_and_the_verdict_under_the_declared_bo
         box=JudgeAccuracyBox(0.8, 0.95, 0.95, 0.99),
     )
     assert expected.stressed is not None
-    assert stress.unclassified_share == 0.0
     assert stress.pass_sensitivity_at_perfect_specificity == pytest.approx(
         claim.upper / 0.30, rel=1e-12, abs=0
     )
@@ -210,9 +209,8 @@ def test_a_claim_reports_its_tipping_lines_and_the_verdict_under_the_declared_bo
     assert claim.status == "PASS"
     assert stress.pass_sensitivity_at_perfect_specificity == pytest.approx(0.8824, abs=1e-4)
     assert (stress.stressed_status, stress.robust) == ("INCONCLUSIVE", False)
-    # Diagnostic only: the claim is still decided on the judge-reported bounds.
-    assert claim.method != "derived_panel_misclassification_correction"
-    assert all("judge-error" not in reason.lower() for reason in claim.reasons)
+    # That the stress never moves a claim is checked against the same plan with it off, in
+    # test_judge_error_stress_reasons.py.
 
     other = next(item for item in report.claims if item.claim_id == "worst_of_2_safe")
     assert other.judge_error_stress is not None
@@ -220,7 +218,7 @@ def test_a_claim_reports_its_tipping_lines_and_the_verdict_under_the_declared_bo
     assert "worst_of_k" in str(other.judge_error_stress.reason)
 
     output = report.write(tmp_path / "report")
-    markdown = (output / "report.md").read_text(encoding="utf-8")
+    markdown = (output / "report-full.md").read_text(encoding="utf-8")
     assert "## Judge-error stress (experimental)" in markdown
     assert "Declared accuracy of `judge:primary_judge`" in markdown
     assert "Worst of two is acceptable: a worst_of_k measure" in markdown
@@ -244,7 +242,7 @@ def test_without_a_declared_accuracy_only_the_tipping_lines_are_reported(tmp_pat
 def test_a_report_without_decisions_says_where_the_stress_is(tmp_path: Path) -> None:
     report = analyze(plan=_write(tmp_path, include_decisions=False), logs="ignored")
 
-    markdown = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
     assert "## Judge-error stress (experimental)" in markdown
     assert "only in `report.json`" in markdown
 
@@ -257,9 +255,13 @@ def test_a_plan_that_does_not_opt_in_writes_what_it_wrote_before(tmp_path: Path)
     assert canonical_plan_hash(load_plan(off)) == canonical_plan_hash(load_plan(explicit))
 
     output = analyze(plan=off, logs="ignored").write(tmp_path / "report")
-    for name in ("report.json", "report.md", "plan.resolved.yaml"):
+    # The report's record of the defaults applied lists the option, and nothing else does.
+    report = json.loads((output / "report.json").read_text(encoding="utf-8"))
+    assert {"path": "report.judge_error_stress", "value": False} in report.pop("plan_defaults")
+    assert "judge_error_stress" not in json.dumps(report)
+    for name in ("report.md", "report-full.md", "plan.resolved.yaml"):
         assert "judge_error_stress" not in (output / name).read_text(encoding="utf-8")
-    assert "Judge-error stress" not in (output / "report.md").read_text(encoding="utf-8")
+    assert "Judge-error stress" not in (output / "report-full.md").read_text(encoding="utf-8")
 
 
 def test_an_exploratory_claim_is_not_stressed_against_its_forced_inconclusive(

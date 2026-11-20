@@ -384,13 +384,14 @@
     "use strict";
     const payload = JSON.parse(document.getElementById("inspect-safety-stats-data").textContent);
     const report = payload.report || {};
-    const designRows = Array.isArray(payload.resolved_design) ? payload.resolved_design : [];
-    const plan = payload.resolved_plan || {};
+    const designRows = Array.isArray(report.design?.prompts) ? report.design.prompts : [];
     const estimates = Array.isArray(report.prompt_estimates) ? report.prompt_estimates : [];
     const risks = Array.isArray(report.group_risks) ? report.group_risks : [];
     const hierarchyRisks = Array.isArray(report.hierarchy_risks) ? report.hierarchy_risks : [];
     const claims = Array.isArray(report.claims) ? report.claims : [];
-    const showDecisions = report.presentation?.include_decisions ?? true;
+    // Experimental (#125): claims that can only FAIL, on an attacker that adapts across runs.
+    const adaptiveClaims = Array.isArray(report.adaptive_claims) ? report.adaptive_claims : [];
+    const showDecisions = report.presentation?.include_decisions ?? false;
     const comparisons = Array.isArray(report.comparisons) ? report.comparisons : [];
     const comparisonSets = Array.isArray(report.comparison_sets) ? report.comparison_sets : [];
     const groups = (report.design && Array.isArray(report.design.groups)) ? report.design.groups : [];
@@ -405,11 +406,11 @@
       ...hierarchyRisks.flatMap(row => (row.intervals || []).map(interval => interval.independence_profile)),
       ...comparisons.flatMap(row => (row.intervals || []).map(interval => interval.independence_profile))
     ]);
-    const primaryIndependence = plan.outputs?.direct_mean_intervals?.independence?.primary
+    const primaryIndependence = report.presentation?.primary_independence_profile
       || independenceProfiles[0] || "";
+    const judgePrimaryScenario = report.presentation?.judge_calibration?.primary ?? null;
     const hierarchy = unique(
       (report.design && report.design.hierarchy) ||
-      (plan.design && plan.design.hierarchy) ||
       ["task_id", "question_id", "prompt_id"]
     );
     const groupTitles = new Map(groups.map(g => [String(g.id), g.title || g.id]));
@@ -458,6 +459,41 @@
     function roleLabel(interval) {
       const role = humanize(interval.role);
       return interval.varied_assumption ? `${role} (${humanize(interval.varied_assumption).toLowerCase()})` : role;
+    }
+    // The declared scenario an assumed judge correction applies, marked when it is the plan's
+    // primary scenario, as report-full.md labels it; null for any other interval. Each scenario
+    // adds a row that differs from the others only in its bounds.
+    function judgeScenarioLabel(interval, primaryScenario) {
+      if (!interval || interval.calibration_method !== "assumed_judge_calibration") return null;
+      const scenario = String(interval.interval_id || "").replace(/^judge_corrected_/, "");
+      return scenario === primaryScenario ? `${scenario} (primary)` : scenario;
+    }
+    // A claim's verdicts by independence profile, labelled by role, with the note report.md
+    // prints above them: a sensitivity row is never the claim's decision. Null when the claim
+    // has no sensitivity profile.
+    function profileVerdictLines(claim) {
+      const verdicts = Array.isArray(claim.profile_verdicts) ? claim.profile_verdicts : [];
+      if (verdicts.length < 2) return null;
+      return {
+        rows: verdicts.map(verdict => `${verdict.independence_profile} (${verdict.role === "primary" ? "primary" : "sensitivity"}): ${verdict.status}, ${pct(verdict.lower)}–${pct(verdict.upper)}`),
+        note: "A claim's status is its verdict under the primary profile. Each sensitivity profile decides the same thresholds on its own interval; it shows how far the verdict rests on the primary profile's independence assumption and cannot replace it."
+      };
+    }
+    // The wording that depends on the design: a sampled design's results are about the
+    // declared item frame its items were drawn from, not about a fixed set.
+    function designText(report) {
+      if (report.scope && report.scope.design === "sampled") {
+        return {
+          riskHeading: "Sampled-design risk measures",
+          prompts: "Frame items",
+          footer: "Values are design-based estimates for the declared item frame; hierarchy filters do not create claims beyond the frame."
+        };
+      }
+      return {
+        riskHeading: "Fixed-design risk measures",
+        prompts: "Fixed prompts",
+        footer: "Values are fixed-design summaries; hierarchy filters do not create population-level claims."
+      };
     }
     function boundStatus(value) {
       return ({certifying: "Coverage-guaranteed", diagnostic: "Diagnostic", invalid: "Unavailable"})[value] || humanize(value);
@@ -518,7 +554,14 @@
     function renderHeader() {
       document.title = report.analysis?.title || "Inspect Safety Statistics";
       document.getElementById("title").textContent = report.analysis?.title || report.analysis?.id || "Safety analysis";
-      document.getElementById("subtitle").textContent = report.scope?.disclaimer || "Fixed-design statistical safety analysis.";
+      const subtitle = document.getElementById("subtitle");
+      subtitle.textContent = report.scope?.disclaimer || "Fixed-design statistical safety analysis.";
+      document.getElementById("risk-heading").textContent = designText(report).riskHeading;
+      if (report.scope?.what_results_establish) {
+        const link = el("a", "", "What these results establish, and what they do not");
+        link.href = report.scope.what_results_establish;
+        subtitle.append(" ", link);
+      }
       document.getElementById("meta").textContent = [
         `Analysis ${report.analysis?.id || "—"}`,
         `Package ${report.package_version || "—"}`,
@@ -545,7 +588,7 @@
       const valid = cohortPrompts.reduce((sum, d) => sum + (Number(d.n_valid) || 0), 0);
       const unclassified = cohortPrompts.reduce((sum, d) => sum + (Number(d.n_unclassified) || 0), 0);
       root.append(
-        makeMetric("Fixed prompts", String(cohortPrompts.length), `${groups.length} declared groups`),
+        makeMetric(designText(report).prompts, String(cohortPrompts.length), `${groups.length} declared groups`),
         makeMetric("Classified rollouts", String(valid), `${unclassified} unclassified`),
         makeMetric("Observed failures", String(failures), `${pct(valid ? failures / valid : null)} of classified rollouts`),
         makeMetric("Unclassified outcomes", String(unclassified), unclassified ? "Included in robust bounds" : "None")
@@ -558,7 +601,8 @@
       const root = document.getElementById("claims"); clear(root);
       if (!showDecisions) return;
       const visible = claims.filter(c => !c.evidence_refs?.length || c.evidence_refs.some(ref => ref.includes(`:${state.cohort}:`)));
-      if (!visible.length) { root.append(el("p", "empty", "No claims were declared for this cohort.")); return; }
+      const visibleAdaptive = adaptiveClaims.filter(c => c.cohort_id === state.cohort);
+      if (!visible.length && !visibleAdaptive.length) { root.append(el("p", "empty", "No claims were declared for this cohort.")); return; }
       visible.forEach(claim => {
         const card = el("article", "card");
         const head = el("div", "claim-title");
@@ -589,6 +633,12 @@
           el("span", "", `Unsafe ≥ ${pct(claim.unacceptable_lower)}`)
         );
         card.append(values);
+        const profileVerdicts = profileVerdictLines(claim);
+        if (profileVerdicts) {
+          const profiles = el("div", "claim-values");
+          profileVerdicts.rows.forEach(row => profiles.append(el("span", "", row)));
+          card.append(profiles, el("p", "claim-reason", profileVerdicts.note));
+        }
         const reason = [...(claim.reasons || []), ...(claim.warnings || [])].join(" ");
         if (reason) card.append(el("p", "claim-reason", reason));
         const disclosure = document.createElement("details");
@@ -606,6 +656,37 @@
           warnings: claim.warnings
         }, null, 2)));
         card.append(disclosure);
+        root.append(card);
+      });
+      visibleAdaptive.forEach(claim => {
+        const card = el("article", "card");
+        const head = el("div", "claim-title");
+        head.append(el("h3", "", `${claim.title} (adaptive attacker, experimental)`));
+        const badges = el("div", "claim-badges");
+        badges.append(el("span", `badge ${statusClass(claim.status)}`, claim.status));
+        if (claim.descriptive_status) {
+          const descriptive = el("span", `badge descriptive ${statusClass(claim.descriptive_status)}`, `Descriptive: ${claim.descriptive_status}`);
+          descriptive.title = "What a confirmatory analysis of this bound would give. Not a decision.";
+          badges.append(descriptive);
+        }
+        head.append(badges);
+        card.append(head);
+        const track = el("div", "claim-track");
+        const lower = clamp01(claim.lower);
+        const bound = el("span", "claim-bound");
+        bound.style.left = `${lower * 100}%`; bound.style.width = `${Math.max(0.3, (1 - lower) * 100)}%`;
+        const unacceptable = el("span", "threshold"); unacceptable.style.left = `${clamp01(claim.unacceptable_lower) * 100}%`;
+        track.append(bound, unacceptable); card.append(track);
+        const values = el("div", "claim-values");
+        values.append(
+          el("span", "", `Runs ${claim.runs ?? "—"}, successes ${claim.successes ?? "—"}`),
+          el("span", "", `Lower bound ${pct(claim.lower)}`),
+          el("span", "", `Unsafe ≥ ${pct(claim.unacceptable_lower)}`),
+          el("span", "", "FAIL only: no PASS")
+        );
+        card.append(values);
+        const reason = (claim.reasons || []).join(" ");
+        if (reason) card.append(el("p", "claim-reason", reason));
         root.append(card);
       });
     }
@@ -692,13 +773,19 @@
           comparison.append(el("summary", "", "Compare interval methods"));
           const comparisonTable = el("table", "risk-table");
           const comparisonHead = document.createElement("thead"); const comparisonRow = document.createElement("tr");
-          ["Role", "Method", "Independence profile", "Lower bound", "Upper bound", "Completion estimate range", "Coverage floor", "Scope", "Bound status"].forEach((value, index) => comparisonRow.append(el("th", index >= 3 && index <= 6 ? "num" : "", value)));
+          const shownIntervals = intervals.filter(interval => !interval.independence_profile || interval.independence_profile === state.independenceProfile);
+          const scenarioLabels = shownIntervals.map(interval => judgeScenarioLabel(interval, judgePrimaryScenario));
+          const scenarioColumn = scenarioLabels.some(label => label !== null);
+          const numericHeadings = ["Lower bound", "Upper bound", "Completion estimate range", "Coverage floor"];
+          ["Role", "Method", ...(scenarioColumn ? ["Scenario"] : []), "Independence profile", ...numericHeadings, "Scope", "Bound status"].forEach(value => comparisonRow.append(el("th", numericHeadings.includes(value) ? "num" : "", value)));
           comparisonHead.append(comparisonRow); comparisonTable.append(comparisonHead);
           const comparisonBody = document.createElement("tbody");
-          intervals.filter(interval => !interval.independence_profile || interval.independence_profile === state.independenceProfile).forEach(interval => {
+          shownIntervals.forEach((interval, index) => {
             const intervalRow = document.createElement("tr");
             intervalRow.append(
-              el("td", "", roleLabel(interval)), el("td", "", humanize(interval.method)), el("td", "", humanize(interval.independence_profile)),
+              el("td", "", roleLabel(interval)), el("td", "", humanize(interval.method)),
+              ...(scenarioColumn ? [el("td", "", scenarioLabels[index] ?? "—")] : []),
+              el("td", "", humanize(interval.independence_profile)),
               el("td", "num", pct(interval.lower)), el("td", "num", pct(interval.upper)),
               el("td", "num", interval.completion_estimate_lower === null || interval.completion_estimate_lower === undefined ? "—" : `${pct(interval.completion_estimate_lower)}–${pct(interval.completion_estimate_upper)}`),
               el("td", "num", pct(interval.simultaneous_coverage)), el("td", "", humanize(interval.coverage_scope)),
@@ -747,9 +834,12 @@
         .join("::")}`;
     }
     function hierarchyTreeRows(rows, suppliedRoot = null) {
+      // The tree's nodes average the group's prompts, so its root is the weighted-mean row; a
+      // worst_of_k row can also have a direct primary interval.
       const directRoot = suppliedRoot || risks.find(row =>
         row.cohort_id === state.cohort &&
         String(row.group_id) === state.group &&
+        row.method === "finite_design_weighted_mean" &&
         (row.intervals || []).some(interval => interval.role === "primary" && String(interval.interval_id || "").startsWith("direct_"))
       );
       const root = directRoot ? {
@@ -1124,8 +1214,11 @@
           const disclosure = document.createElement("details"); disclosure.append(el("summary", "", `${row.comparison_id} sensitivity and diagnostics`));
           const effects = row.effect_summaries || {}; disclosure.append(el("p", "section-note", `Descriptive effects: risk difference ${pct(effects.risk_difference)} · risk ratio ${fmt(effects.risk_ratio)} · relative risk reduction ${pct(effects.relative_risk_reduction)}`));
           if (alternatives.length) {
-            const at = el("table", "risk-table"); const ah = document.createElement("thead"); const ahr = document.createElement("tr"); ["Role", "Method", "Independence profile", "Lower", "Upper", "Coverage"].forEach((v, i) => ahr.append(el("th", i >= 3 ? "num" : "", v))); ah.append(ahr); at.append(ah); const ab = document.createElement("tbody");
-            alternatives.forEach(interval => { const ar = document.createElement("tr"); const coverage = interval.simultaneous_coverage === null || interval.simultaneous_coverage === undefined ? "pointwise" : `${pct(interval.simultaneous_coverage)} simultaneous`; ar.append(el("td", "", roleLabel(interval)), el("td", "", humanize(interval.method)), el("td", "", humanize(interval.independence_profile)), el("td", "num", effectFmt(row, interval.lower)), el("td", "num", effectFmt(row, interval.upper)), el("td", "num", coverage)); ab.append(ar); }); at.append(ab); disclosure.append(at);
+            const scenarioLabels = alternatives.map(interval => judgeScenarioLabel(interval, judgePrimaryScenario));
+            const scenarioColumn = scenarioLabels.some(label => label !== null);
+            const headings = ["Role", "Method", ...(scenarioColumn ? ["Scenario"] : []), "Independence profile", "Lower", "Upper", "Coverage"];
+            const at = el("table", "risk-table"); const ah = document.createElement("thead"); const ahr = document.createElement("tr"); headings.forEach((v, i) => ahr.append(el("th", i >= headings.length - 3 ? "num" : "", v))); ah.append(ahr); at.append(ah); const ab = document.createElement("tbody");
+            alternatives.forEach((interval, index) => { const ar = document.createElement("tr"); const coverage = interval.simultaneous_coverage === null || interval.simultaneous_coverage === undefined ? "pointwise" : `${pct(interval.simultaneous_coverage)} simultaneous`; ar.append(el("td", "", roleLabel(interval)), el("td", "", humanize(interval.method)), ...(scenarioColumn ? [el("td", "", scenarioLabels[index] ?? "—")] : []), el("td", "", humanize(interval.independence_profile)), el("td", "num", effectFmt(row, interval.lower)), el("td", "num", effectFmt(row, interval.upper)), el("td", "num", coverage)); ab.append(ar); }); at.append(ab); disclosure.append(at);
           }
           if ((row.warnings || []).length) disclosure.append(el("p", "claim-reason", row.warnings.join(" · ")));
           if (Object.keys(row.diagnostic_outputs || {}).length) { const diagnostics = document.createElement("details"); diagnostics.append(el("summary", "", "Paired diagnostic outputs"), el("pre", "", JSON.stringify({pairs: row.pair_count, discordant_counts: row.discordant_counts, outputs: row.diagnostic_outputs}, null, 2))); disclosure.append(diagnostics); }
@@ -1146,12 +1239,8 @@
       if (showDecisions) addAuditDetails(root, `Policy events (${(report.policy_events || []).length})`, report.policy_events || []);
       addAuditDetails(root, `Multiplicity families (${(report.multiplicity || []).length})`, report.multiplicity || []);
       addAuditDetails(root, "Provenance", report.provenance || {});
-      const displayedPlan = JSON.parse(JSON.stringify(plan));
-      if (!showDecisions) {
-        delete displayedPlan.claims;
-        if (displayedPlan.policy) delete displayedPlan.policy.zero_tolerance;
-      }
-      addAuditDetails(root, "Resolved plan", displayedPlan);
+      // The page embeds the report alone, and report.json does not hold the plan.
+      addAuditDetails(root, "Resolved plan", "Not embedded in this page. The plan as analysed, with its defaults filled in, is plan.resolved.yaml in the report directory, beside report.json.");
     }
 
     function bind() {
@@ -1170,8 +1259,10 @@
       document.getElementById("sort-select").addEventListener("change", event => { state.sort = event.target.value; state.page = 0; renderPromptTable(); });
     }
     function renderDynamic() { renderSummary(); renderClaims(); renderRisk(); renderAllExploration(); renderHierarchyRisks(); }
+    // ORDER MATTERS: the footer holds the scope caveat, so it is set before the sections render;
+    // set after them, an uncaught error in any section would leave the page without it.
+    document.getElementById("footer").textContent = `Generated from inspect-safety-stats schema ${report.schema_version || "—"}. ${designText(report).footer}`;
     renderHeader(); bind(); renderDynamic(); renderComparisons(); renderAudit();
-    document.getElementById("footer").textContent = `Generated from inspect-safety-stats schema ${report.schema_version || "—"}. Values are fixed-design summaries; hierarchy filters do not create population-level claims.`;
   })();
   </script>
 </body>

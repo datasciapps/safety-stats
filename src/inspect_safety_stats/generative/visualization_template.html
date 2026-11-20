@@ -231,18 +231,46 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
       "so it is reported pointwise." }));
   }
 
+  // ---- declared slice family ---------------------------------------------
+  var family = data.slice_family;
+  if (family && ((family.slices || []).length || (family.contrasts || []).length)) {
+    root.appendChild(section("Declared slice family (experimental)"));
+    var familyRows = (family.slices || []).map(function (item) {
+      return [item.member_id, "slice", String(item.arm.draws), pct(item.arm.estimate),
+              family.coverage_mode === "two_sided" ? pct(item.arm.lower) : "—",
+              pct(item.arm.upper), item.frontier_id, item.arm.method];
+    }).concat((family.contrasts || []).map(function (item) {
+      return [item.id + ": " + item.candidate_value + " − " + item.baseline_value,
+              "contrast on " + item.shared_seeds + " seeds",
+              String(item.candidate.draws + item.baseline.draws), signed(item.estimate),
+              family.coverage_mode === "two_sided" ? signed(item.lower) : "—",
+              signed(item.upper), item.frontier_id,
+              item.candidate.method + " / " + item.baseline.method];
+    }));
+    root.appendChild(table(
+      [{ label: "Member" }, { label: "Kind" }, { label: "Draws", num: true },
+       { label: "Estimate", num: true }, { label: "Lower", num: true },
+       { label: "Upper", num: true }, { label: "Frontier" }, { label: "Method" }],
+      familyRows
+    ));
+    root.appendChild(el("p", { class: "sub", text:
+      "Every member is covered simultaneously at " + pct(1 - family.alpha, 0) +
+      (family.coverage_mode === "two_sided" ? ", both bounds together" : "") + ". A contrast " +
+      "compares two values of one level on the seeds that hold both, with the seed mix held " +
+      "fixed. Members stay on the judge-reported scale." }));
+  }
+
   // ---- judge correction ---------------------------------------------------
   var corrected = data.corrected || [];
   if (corrected.length) {
     var judge = (data.evaluation || {}).judge_calibration || {};
     root.appendChild(section("Judge misclassification"));
-    var certifying = corrected.some(function (item) {
-      return item.eligibility === "certifying";
-    });
     root.appendChild(el("p", { class: "sub", text:
-      certifying
-        ? "Measured from human labels. These bounds are on true risk and are certifying, " +
-          "at the union of the interval and calibration budgets."
+      judge.mode === "validated"
+        ? "Measured from human labels, which weight every classified unit of the cohort " +
+          "equally. Only a root that does the same is certifying, at the union of the " +
+          "interval's budget, the calibration's and that of the bound on the unclassified " +
+          "share; nodes and slices are sensitivity results."
         : "Declared, not measured. These are sensitivity results and carry no evidence: " +
           "they cannot support a claim." }));
     if (judge.rho_1) {
@@ -269,6 +297,20 @@ footer { margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
         ];
       })
     ));
+    var warned = {};
+    shown.forEach(function (item) {
+      (item.warnings || []).forEach(function (text) {
+        var target = item.node_id.replace(/^slice:/, "");
+        var targets = warned[text] = warned[text] || [];
+        if (targets.indexOf(target) < 0) targets.push(target);
+      });
+    });
+    Object.keys(warned).forEach(function (text) {
+      root.appendChild(el("div", { class: "diag WARNING" }, [
+        el("div", { class: "code", text: "WARNING · " + warned[text].join(", ") }),
+        el("div", { text: text })
+      ]));
+    });
     root.appendChild(el("p", { class: "sub", text:
       "The corrected band is normally wider, because uncertainty about the judge is real " +
       "uncertainty being added. The corrected estimate is normally lower, because false " +

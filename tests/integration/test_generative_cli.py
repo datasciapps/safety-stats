@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -14,7 +16,10 @@ from typer.testing import CliRunner
 
 from inspect_safety_stats.cli import app
 from inspect_safety_stats.generative.ledger import read_rewrites
+from inspect_safety_stats.generative.report import ARTIFACTS
 from inspect_safety_stats.generative.runner import analyze_run, materialize_run, resolve_kernel
+from inspect_safety_stats.generative.schema import load_generative_plan
+from tests.cli_output import plain
 from tests.generative_fixtures import SEEDS_WITH_TEXT, base_plan
 
 runner = CliRunner()
@@ -142,6 +147,22 @@ def test_analyze_produces_a_report(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert set(frame["kind"]) == {"node"}
 
 
+def test_the_report_records_the_checksum_of_every_artifact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = write_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts)
+
+    path = analyze_run(plan, artifacts, "logs", cohort="candidate").write(tmp_path / "report")
+    checksums = json.loads((path / "checksums.json").read_text(encoding="utf-8"))
+    assert sorted(item.name for item in path.iterdir()) == sorted(ARTIFACTS)
+    assert set(checksums) == set(ARTIFACTS) - {"checksums.json"}
+    for name, digest in checksums.items():
+        assert hashlib.sha256((path / name).read_bytes()).hexdigest() == digest, name
+
+
 def test_text_artifacts_have_the_same_bytes_on_every_platform(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -153,12 +174,32 @@ def test_text_artifacts_have_the_same_bytes_on_every_platform(
     path = analyze_run(plan, artifacts, "logs", cohort="candidate").write(tmp_path / "report")
     written = [
         artifacts / "selections.csv",
+        artifacts / "rewrites.csv",
+        artifacts / "prompts.restricted.csv",
         *sorted((artifacts / "datasets").glob("*.jsonl")),
         *sorted(path.iterdir()),
     ]
     assert len(written) > 3
     for item in written:
         assert b"\r" not in item.read_bytes(), item.name
+
+
+def test_seed_identifiers_that_read_as_numbers_survive_the_ledgers(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The seed manifest is read as text, but its ledgers were read back with pandas' type
+    inference: a semantic seed `001` became the number 1, and analysis of the run failed."""
+
+    plan = write_plan(tmp_path)
+    seeds = SEEDS_WITH_TEXT.replace("s001", "001").replace("s002", "002").replace("s003", "1.0")
+    (tmp_path / "seeds.csv").write_text(seeds, encoding="utf-8")
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts)
+
+    report = analyze_run(plan, artifacts, "logs", cohort="candidate")
+    assert report.tree.root.draws == 200
+    assert not report.has_errors
 
 
 def test_analyze_command_end_to_end(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -259,6 +300,31 @@ def test_a_missing_score_column_is_an_error(
     assert any(item.code == "GENERATIVE_SCORE_ABSENT" for item in report.diagnostics)
     # Unclassified rather than dropped, so the bound still covers every draw.
     assert report.tree.root.unclassified == report.tree.root.trials
+
+
+def test_analyze_command_exits_3_on_error_diagnostics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Exit 2 is INCONCLUSIVE for analyze --decision-exit-codes; an error must not read so."""
+
+    plan = write_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts, score_column="score_something_else")
+
+    result = runner.invoke(
+        app,
+        [
+            "generative", "analyze",
+            "--plan", str(plan),
+            "--artifacts", str(artifacts),
+            "--logs", str(artifacts),
+            "--output", str(tmp_path / "report"),
+        ],
+    )
+    assert result.exit_code == 3, result.output
+    assert "GENERATIVE_SCORE_ABSENT" in plain(result.output)
+    assert (tmp_path / "report" / "report.json").is_file()
 
 
 @pytest.mark.parametrize(
@@ -609,3 +675,210 @@ def test_provider_errors_are_reported_as_such_not_as_validation(tmp_path: Path) 
     assert "provider error" in result.output
     assert "no credentials configured" in result.output
     assert "No rewrite passed validation" not in result.output
+
+
+FAMILY = {
+    "slices": [{"level": "language", "value": "maltese"}],
+    "contrasts": [
+        {"id": "roleplay-vs-plain", "level": "wrapper", "candidate": "roleplay",
+         "baseline": "plain"},
+    ],
+}
+
+
+def test_a_declared_slice_family_reaches_every_artifact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = write_plan(tmp_path, inference={"coverage_mode": "two_sided", "slice_family": FAMILY})
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts)
+
+    result = runner.invoke(
+        app,
+        [
+            "generative", "analyze",
+            "--plan", str(plan),
+            "--artifacts", str(artifacts),
+            "--logs", str(artifacts),
+            "--output", str(tmp_path / "report"),
+            "--cohort", "candidate",
+        ],
+    )
+    output = plain(result.output)
+    assert result.exit_code == 0, output
+    assert "Slice family (experimental, simultaneous, judge-reported scale):" in output
+    assert "language=maltese: upper" in output
+    assert "roleplay-vs-plain (roleplay - plain): upper" in output
+
+    report = tmp_path / "report"
+    family = json.loads((report / "report.json").read_text(encoding="utf-8"))["slice_family"]
+    assert family["simultaneous"] is True
+    assert family["coverage_mode"] == "two_sided"
+    assert [item["member_id"] for item in family["slices"]] == ["language=maltese"]
+    assert [item["id"] for item in family["contrasts"]] == ["roleplay-vs-plain"]
+
+    frame = pd.read_csv(report / "family.csv")
+    assert list(frame["kind"]) == ["slice", "contrast"]
+    contrast = frame.iloc[1]
+    assert contrast["lower"] <= contrast["estimate"] <= contrast["upper"]
+    assert b"\r" not in (report / "family.csv").read_bytes()
+    checksums = json.loads((report / "checksums.json").read_text(encoding="utf-8"))
+    assert checksums["family.csv"] == hashlib.sha256(
+        (report / "family.csv").read_bytes()
+    ).hexdigest()
+    assert "Declared slice family (experimental)" in (report / "report.html").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_a_plan_without_a_family_writes_no_family_artifact(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    plan = write_plan(tmp_path)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts)
+    path = analyze_run(plan, artifacts, "logs", cohort="candidate").write(tmp_path / "report")
+    assert not (path / "family.csv").exists()
+    assert "slice_family" not in json.loads((path / "report.json").read_text(encoding="utf-8"))
+
+
+def test_a_family_under_a_judge_calibration_says_it_is_uncorrected(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calibration = {
+        "mode": "assumed",
+        "primary": "declared",
+        "scenarios": [{"id": "declared", "rho_1": {"lower": 0.85, "upper": 1.0},
+                       "rho_0": {"lower": 0.0, "upper": 0.02}}],
+    }
+    plan = write_plan(
+        tmp_path, inference={"slice_family": FAMILY}, judge_calibration=calibration
+    )
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts)
+    report = analyze_run(plan, artifacts, "logs", cohort="candidate")
+    codes = {item.code for item in report.diagnostics}
+    assert "JUDGE_CORRECTION_UNAVAILABLE_FOR_SLICE_FAMILY" in codes
+
+
+@pytest.mark.parametrize(
+    ("family", "message"),
+    [
+        ({}, "declares no slice and no contrast"),
+        ({"slices": [{"level": "language", "value": "maltese"}] * 2}, "same slice twice"),
+        ({"contrasts": [{"id": "c", "level": "wrapper", "candidate": "plain",
+                         "baseline": "plain"}]}, "with itself"),
+        ({"contrasts": [{"id": "c", "level": "wrapper", "candidate": "plain",
+                         "baseline": "nested"}] * 2}, "same contrast id twice"),
+        ({"slices": [{"level": "problem_class", "value": "bio"}]}, "not an arm level"),
+        ({"slices": [{"level": "language", "value": "maltese", "extra": 1}]}, "extra"),
+    ],
+)
+def test_an_ill_formed_family_is_refused_at_load(
+    tmp_path: Path, family: dict[str, Any], message: str
+) -> None:
+    plan = write_plan(tmp_path, inference={"slice_family": family})
+    with pytest.raises(ValueError, match=message):
+        load_generative_plan(plan)
+
+
+@pytest.mark.parametrize(
+    ("family", "total", "reason"),
+    [
+        # Three draws land on roleplay and nested only, though plain carries half the weight.
+        (FAMILY, 3, "no draw landed on wrapper=plain"),
+        ({"slices": [{"level": "language", "value": "maltse"}]}, 200,
+         "no terminal path carries language=maltse"),
+    ],
+)
+def test_a_family_the_analysis_could_not_estimate_is_refused_before_generation(
+    tmp_path: Path, family: dict[str, Any], total: int, reason: str
+) -> None:
+    plan = write_plan(tmp_path, total=total, inference={"slice_family": family})
+    message = f"inference.slice_family cannot be estimated on this design: {reason}"
+
+    compiled = runner.invoke(app, ["generative", "compile", "--plan", str(plan)])
+    assert compiled.exit_code == 3
+    assert message in plain(compiled.output)
+
+    output = tmp_path / "run"
+    with pytest.raises(ValueError, match=re.escape(message)):
+        materialize_run(plan, output)
+    # Refused before the first ledger row, so no rewrite was requested.
+    assert not (output / "selections.csv").exists()
+    assert not (output / "rewrites.csv").exists()
+
+
+def test_a_family_declared_after_materialization_is_refused_before_the_logs_are_read(
+    tmp_path: Path,
+) -> None:
+    plan = write_plan(tmp_path, total=3)
+    artifacts = tmp_path / "run"
+    materialize_run(plan, artifacts)
+    plan = write_plan(tmp_path, total=3, inference={"slice_family": FAMILY})
+    with pytest.raises(ValueError, match="inference.slice_family cannot be estimated"):
+        analyze_run(plan, artifacts, str(tmp_path / "no-such-logs"))
+
+
+_GENERATIVE_CAVEAT = (
+    "The generative pipeline is experimental: its public surface, "
+    "`inspect_safety_stats.generative.__all__`, may change in any minor release."
+)
+
+
+def _generative_commands() -> list[tuple[tuple[str, ...], str]]:
+    """Every command and group of the generative surface, with its help, read from the CLI.
+
+    A command belongs to it when a word of its path starts with "generative", wherever it
+    sits: a list written by hand would miss the next generative command added elsewhere.
+    """
+    import typer.main
+
+    def walk(command: Any, path: tuple[str, ...]) -> list[tuple[tuple[str, ...], str]]:
+        # Typer's groups need not subclass the click package's Group, so look for children.
+        found = (
+            [(path, command.help or "")]
+            if any(word.startswith("generative") for word in path)
+            else []
+        )
+        children = getattr(command, "commands", None)
+        if isinstance(children, dict):
+            found += [
+                item
+                for name, child in sorted(children.items())
+                for item in walk(child, (*path, name))
+            ]
+        return found
+
+    commands = walk(typer.main.get_command(app), ())
+    # Guards the walk itself: one that stopped at the root would pass without looking.
+    paths = [path for path, _ in commands]
+    assert ("generative",) in paths and ("schema", "generative-plan") in paths
+    assert sum(path[0] == "generative" for path in paths) > 1
+    return commands
+
+
+@pytest.mark.parametrize(
+    ("command", "help_text"),
+    [pytest.param(path, text, id=" ".join(path)) for path, text in _generative_commands()],
+)
+def test_generative_help_carries_the_experimental_caveat(
+    command: tuple[str, ...], help_text: str
+) -> None:
+    # The CLI is an entry point to the generative surface like the docs, so its help carries
+    # the same caveat word for word (#24).
+    result = runner.invoke(app, [*command, "--help"])
+
+    assert result.exit_code == 0, result.output
+    assert _GENERATIVE_CAVEAT in plain(result.output)
+    # The help of the group that lists the command says so too: the generative group's own
+    # help carries the caveat, and any other group lists only the first paragraph of the
+    # command's help, as `schema --help` lists generative-plan, so that paragraph must.
+    listing = plain(runner.invoke(app, [*command[:-1], "--help"]).output)
+    if _GENERATIVE_CAVEAT not in listing:
+        summary = " ".join(help_text.split("\n\n")[0].split())
+        assert "(experimental)" in summary
+        assert f"{command[-1]} {summary}" in listing

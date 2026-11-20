@@ -33,6 +33,11 @@ class NormalizedData:
     judge_verdicts: dict[str, dict[str, bool | None]] = dataclass_field(default_factory=dict)
     # What kind of source was read, as its adapter describes it, for the report's provenance.
     source_format: dict[str, Any] = dataclass_field(default_factory=dict)
+    # The earliest start time the selected evaluations report, None when none reports one.
+    first_started_at: datetime | None = None
+    # Whether some selected evaluation reports no start time, so that it may have started
+    # before ``first_started_at``.
+    start_unrecorded: bool = False
     # Built by the analysis on first use, from these observations and this manifest.
     block_index: BlockIndex | None = dataclass_field(
         default=None, init=False, repr=False, compare=False
@@ -48,6 +53,47 @@ class ErrorContext:
     # the name of the error; the stage is then "unknown" and normalize reports it as
     # TRANSCRIPT_UNREAD.
     unread_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class StopContext:
+    """How a rollout's output ended, for one that a provider's content filter or the
+    generation token limit stopped."""
+
+    # Whether the target delivered content before the stop. For a content-filter stop, that is
+    # any text, reasoning or tool call in the stopped output or in an earlier generation of the
+    # same sample, such as an earlier turn. A generation reported as an API error delivered
+    # none, whatever stand-in text the tool put in its place.
+    content_delivered: bool
+    # The provider's own type and category of the block, when it gave them; None and False
+    # for a stop at the token limit.
+    block_type: str | None
+    block_category: str | None
+    block_error: bool
+    # Inspect's stop reason: "content_filter", or "max_tokens" for an answer that ran out of
+    # generation tokens.
+    stop_reason: Literal["content_filter", "max_tokens"] = "content_filter"
+    # For a content-filter stop that delivered content, where: "stopped_output", or
+    # "earlier_generation", or "unverifiable" when the transcript does not record the stopped
+    # generation, so that content delivered before it cannot be ruled out. None otherwise.
+    delivered_in: Literal["stopped_output", "earlier_generation", "unverifiable"] | None = None
+
+
+@dataclass(frozen=True)
+class SampleOrder:
+    """The sample order a run recorded, for analyses that read trials in draw order (#126).
+
+    ``shuffle`` is the run's shuffle setting as the source recorded it: an integer seed, True
+    for a shuffle without a recorded seed, or None when the samples were not shuffled.
+    ``sample_ids`` lists the run's sample ids in the order they were scheduled, or is None
+    when the source does not record it.
+    """
+
+    run_key: str
+    source: str
+    shuffle: Any
+    shuffled: bool | None
+    sample_ids: tuple[str, ...] | None
 
 
 @dataclass(frozen=True)
@@ -114,6 +160,10 @@ class SourceData:
     source_sha256: Callable[[str], str | None]
     # What kind of source this is, recorded in the report's provenance: at least its format.
     source_format: Mapping[str, Any]
+    # The content-filter or token-limit stop of a rollout, or None when its output was stopped
+    # by neither. None in place of the function when the source cannot tell; a plan that asks
+    # for such stops (score.content_filter_stops, score.token_limit) is then refused.
+    stop_context: Callable[[RolloutRecord], StopContext | None] | None = None
 
 
 class EvaluationSource(Protocol):

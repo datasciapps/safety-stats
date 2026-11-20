@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import itertools
 import math
+from collections.abc import Callable
 
 import numpy as np
 import pytest
@@ -454,3 +455,64 @@ def test_empirical_bernstein_difference_covers_in_the_sparse_regime(
         )
         misses += not bounds.lower <= truth <= bounds.upper
     assert misses / replicates <= 0.05 + 3 * math.sqrt(0.05 * 0.95 / replicates)
+
+
+@pytest.mark.parametrize("method", ["weighted_betting", "not_a_method"])
+@pytest.mark.parametrize("independence_unit", ["rollout", "prompt_cluster"])
+@pytest.mark.parametrize("function", [direct_risk_difference_bounds, direct_ratio_bounds])
+def test_the_stats_comparison_functions_refuse_betting_and_unknown_methods(
+    function: Callable[..., object], independence_unit: str, method: str
+) -> None:
+    with pytest.raises(ValueError, match="unsupported comparison method"):
+        function(
+            [1, 2],
+            [0, 0],
+            [10, 10],
+            [3, 1],
+            [0, 0],
+            [10, 10],
+            [0.5, 0.5],
+            alpha_lower=0.05,
+            alpha_upper=0.05,
+            method=method,
+            independence_unit=independence_unit,
+        )
+
+
+@pytest.mark.parametrize(
+    "method", ["weighted_hoeffding", "weighted_empirical_bernstein", "weighted_kl_chernoff"]
+)
+def test_prompt_cluster_difference_does_not_depend_on_the_integer_type_of_the_counts(
+    method: str,
+) -> None:
+    # The prompt-cluster encoding multiplies the two arms' counts. In int32, NumPy's default
+    # integer on Windows with NumPy 1, 2 * 65,871 ** 2 wraps to a positive number, and the
+    # bounds came out wrong without an error.
+    trials = 65_871
+    prompts = 200
+    candidate_failures = [(index * 37) % 600 for index in range(prompts)]
+    baseline_failures = [(index * 53) % 600 for index in range(prompts)]
+    results = []
+    for dtype in (np.int32, np.int64):
+        results.append(
+            direct_risk_difference_bounds(
+                candidate_failures=np.asarray(candidate_failures, dtype=dtype),
+                candidate_unclassified=np.zeros(prompts, dtype=dtype),
+                candidate_trials=np.full(prompts, trials, dtype=dtype),
+                baseline_failures=np.asarray(baseline_failures, dtype=dtype),
+                baseline_unclassified=np.zeros(prompts, dtype=dtype),
+                baseline_trials=np.full(prompts, trials, dtype=dtype),
+                weights=np.full(prompts, 1 / prompts),
+                alpha_lower=0.05,
+                alpha_upper=0.05,
+                method=method,  # type: ignore[arg-type]
+                independence_unit="prompt_cluster",
+            )
+        )
+    narrow, wide = results
+    assert narrow == wide
+    expected = (sum(candidate_failures) - sum(baseline_failures)) / (prompts * trials)
+    # The engine averages q = (1 + difference) / 2, near 1/2, so the difference keeps its
+    # absolute, not its relative, precision.
+    assert wide.completion_estimate_lower == pytest.approx(expected, rel=0, abs=1e-14)
+    assert -1 < wide.lower < expected < wide.upper < 1

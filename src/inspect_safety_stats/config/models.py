@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import re
 from datetime import datetime
 from pathlib import Path
@@ -14,6 +15,13 @@ from pydantic import (
     SerializerFunctionWrapHandler,
     model_serializer,
     model_validator,
+)
+
+from inspect_safety_stats.config.methods import (
+    DEFAULT_COMPARISON_METHOD,
+    DEFAULT_DIRECT_MEAN_INTERVAL_METHOD,
+    ComparisonMethod,
+    DirectMeanMethod,
 )
 
 
@@ -31,6 +39,14 @@ def _refuse_booleans(kind: str) -> BeforeValidator:
 # Every integer and every float in a plan, analysis or generative, uses one of these types.
 PlanInt = Annotated[int, _refuse_booleans("an integer")]
 PlanFloat = Annotated[float, _refuse_booleans("a number")]
+
+# report.precision_target when a plan leaves it out.
+DEFAULT_PRECISION_TARGET = 0.05
+
+# The thresholds a claim takes, from its plan or a decision policy: acceptable_upper below
+# unacceptable_lower, both in [THRESHOLD_MIN, THRESHOLD_MAX]. Verdict ranges read the same limits.
+THRESHOLD_MIN = -1
+THRESHOLD_MAX = 1
 
 
 class StrictModel(BaseModel):
@@ -140,6 +156,79 @@ class OutcomeMappingSpec(StrictModel):
             raise ValueError("categorical mapping requires both failure_values and safe_values")
         return self
 
+    @model_validator(mode="after")
+    def values_a_score_can_take(self) -> OutcomeMappingSpec:
+        for field in ("failure_values", "safe_values"):
+            for value in getattr(self, field) or []:
+                reason = _never_a_score_value(value)
+                if reason is not None:
+                    shown = "null" if value is None else repr(value)
+                    raise ValueError(f"{field} lists {shown}, {reason}")
+        return self
+
+
+def _never_a_score_value(value: Any) -> str | None:
+    """Why no score value can ever match ``value`` in a mapping, or None when one can.
+
+    A score value reaches ``map_outcome`` as text, a number or a boolean: a missing score
+    never reaches it, a list or an object cannot be matched, and reading a score turns a date
+    into its ISO text.
+    """
+
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return (
+            "a missing score, which never reaches the mapping: score.missing says how a "
+            "missing score counts"
+        )
+    if isinstance(value, (str, int, float)):
+        return None
+    return (
+        f"a {type(value).__name__}, which no score value matches: a mapping lists text, "
+        "numbers and booleans, and in YAML a date must be quoted to be text"
+    )
+
+
+def _tag(value: Any) -> tuple[str, Any]:
+    if isinstance(value, bool):
+        return ("bool", value)
+    if isinstance(value, int):
+        return ("int", value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return ("float", str(value))
+        return ("float", value)
+    if isinstance(value, str):
+        return ("str", value)
+    return (type(value).__name__, value)
+
+
+def _same_classification(first: OutcomeMappingSpec, second: OutcomeMappingSpec) -> bool:
+    """Whether two mappings classify every score value alike, as ``map_outcome`` reads them."""
+
+    if first.failure_if is not None or second.failure_if is not None:
+        return first.failure_if == second.failure_if
+    return all(
+        {_tag(value) for value in getattr(first, field) or []}
+        == {_tag(value) for value in getattr(second, field) or []}
+        for field in ("failure_values", "safe_values")
+    )
+
+
+class OutcomeMappingSensitivitySpec(StrictModel):
+    """Experimental: an alternative reading of the same score, reported beside the primary one.
+
+    The whole analysis is repeated under ``mapping``; its results are shown side by side with
+    the primary results and never enter a claim's status or the decision.
+    """
+
+    id: str = Field(min_length=1, pattern=r"^[A-Za-z0-9_.-]+$")
+    title: str | None = None
+    mapping: OutcomeMappingSpec
+
+
+# The id the primary mapping has in the side-by-side outputs.
+PRIMARY_MAPPING_ID = "primary"
+
 
 class ScoreSpec(StrictModel):
     name: str = Field(min_length=1)
@@ -150,6 +239,97 @@ class ScoreSpec(StrictModel):
     errors: Literal["end_to_end", "conservative_bounds", "block", "count_as_failure", "exclude"] = (
         "end_to_end"
     )
+    # Experimental. How a rollout counts whose output a provider's content filter stopped
+    # before it delivered any content, without a sample error: `score` leaves it to the score,
+    # as before; `safe` counts it as a target policy block, safe for a harm estimand; `failure`
+    # counts it as a refusal, for an over-refusal estimand on safe prompts.
+    content_filter_stops: Literal["score", "safe", "failure"] = "score"
+    # Experimental. How a rollout counts whose answer stopped at the generation token limit
+    # (Inspect's stop reason `max_tokens`) and has no score and no sample error: `score` does
+    # not look, and leaves it to `missing`, as before; `missing` also leaves it to `missing`,
+    # but counts it on its own; `safe` and `failure` classify it, and count it on its own. A
+    # truncated answer that was scored keeps its score.
+    token_limit: Literal["score", "missing", "safe", "failure"] = "score"
+    # Experimental. Left out of the plan when empty, so that plans without it keep their hash.
+    mapping_sensitivities: list[OutcomeMappingSensitivitySpec] = Field(
+        default_factory=list,
+        description=(
+            "Experimental. Alternative outcome mappings of the same score, analysed and "
+            "reported beside the primary mapping; they never enter claims or the decision."
+        ),
+    )
+
+    @model_serializer(mode="wrap")
+    def leave_out_defaults(self, handler: SerializerFunctionWrapHandler) -> dict[str, Any]:
+        # The experimental fields are left out at their defaults, so that plans written before
+        # them keep their hash.
+        data: dict[str, Any] = handler(self)
+        if self.content_filter_stops == "score":
+            data.pop("content_filter_stops", None)
+        if self.token_limit == "score":
+            data.pop("token_limit", None)
+        if not self.mapping_sensitivities:
+            data.pop("mapping_sensitivities", None)
+        return data
+
+    @model_validator(mode="after")
+    def distinct_mapping_sensitivities(self) -> ScoreSpec:
+        identifiers = [item.id for item in self.mapping_sensitivities]
+        if len(set(identifiers)) != len(identifiers):
+            raise ValueError("outcome mapping sensitivity identifiers must be unique")
+        if PRIMARY_MAPPING_ID in identifiers:
+            raise ValueError(
+                f"{PRIMARY_MAPPING_ID!r} names the primary mapping and cannot name a sensitivity"
+            )
+        for item in self.mapping_sensitivities:
+            # Compared as map_outcome reads them: the order and repeats of the values do not
+            # matter, and their types do. Every value is one a score can take
+            # (OutcomeMappingSpec.values_a_score_can_take), so each has a tag to compare.
+            if _same_classification(item.mapping, self.mapping):
+                raise ValueError(
+                    f"outcome mapping sensitivity {item.id!r} repeats the primary mapping: it "
+                    "classifies every score value as the primary mapping does"
+                )
+        return self
+
+
+def judge_run_score(primary: ScoreSpec, judge: ScoreSpec) -> ScoreSpec:
+    """The score a judge's run under ``outputs.judge_claims`` reads: the judge's own, except
+    the stop reasons the judge leaves at ``score``, which it takes from the primary score.
+
+    ``content_filter_stops`` and ``token_limit`` say how rollouts count that the target's
+    provider stopped, which is the same for every judge of the same rollouts. Left at
+    ``score`` the judge's score says nothing about them, so its run counts them as the plan's
+    primary analysis does, and differs from it in the judge's verdicts alone. A judge's score
+    cannot set ``content_filter_stops`` (``JudgeSpec`` refuses it), so every judge's run takes
+    the primary's; a ``token_limit`` the judge sets is kept.
+    """
+
+    update: dict[str, Any] = {}
+    if judge.content_filter_stops == "score":
+        update["content_filter_stops"] = primary.content_filter_stops
+    if judge.token_limit == "score":
+        update["token_limit"] = primary.token_limit
+    return judge.model_copy(update=update) if update else judge
+
+
+def _content_filter_stops_problem(score: ScoreSpec, estimand: str) -> str | None:
+    """Why ``score.content_filter_stops`` does not fit the estimand or ``score.errors``, if it
+    does not."""
+
+    stops = score.content_filter_stops
+    if stops != "score" and estimand != "end_to_end_system":
+        return (
+            "score.content_filter_stops counts a provider's block as the outcome of the "
+            "end-to-end system; it needs estimand end_to_end_system"
+        )
+    if stops == "failure" and score.errors == "end_to_end":
+        return (
+            "score.content_filter_stops: failure counts a block as a refusal, but "
+            "score.errors: end_to_end counts a policy-blocked sample error as safe; "
+            "choose another score.errors"
+        )
+    return None
 
 
 class JudgeRateRangeSpec(StrictModel):
@@ -165,16 +345,32 @@ class JudgeRateRangeSpec(StrictModel):
         return self
 
 
-class JudgeCalibrationScenarioSpec(StrictModel):
+class JudgeCohortBoxSpec(StrictModel):
+    """A scenario's declared accuracy box for one cohort, replacing its default box there."""
+
+    rho_1: JudgeRateRangeSpec
+    rho_0: JudgeRateRangeSpec
+
+
+class JudgeCalibrationScenarioSpec(OmitsAbsentFields):
     """One named assumption about the judge's conditional accuracy.
 
     ``rho_1`` is P(truly unsafe | judge said unsafe) and ``rho_0`` is
     P(truly unsafe | judge said safe).
+
+    ``cohorts`` gives some cohorts a box of their own, for a judge whose accuracy depends on
+    the model that produced the output. A cohort it does not list takes ``rho_1`` and
+    ``rho_0``. Each arm of a corrected comparison takes its own cohort's box.
     """
+
+    # Left out of the serialised plan when absent, so the hash and the resolved plan of a
+    # plan without it are what they were before the field existed.
+    absent_when_none = ("cohorts",)
 
     id: str = Field(min_length=1)
     rho_1: JudgeRateRangeSpec
     rho_0: JudgeRateRangeSpec
+    cohorts: dict[str, JudgeCohortBoxSpec] | None = None
 
     @model_validator(mode="after")
     def strictly_informative(self) -> JudgeCalibrationScenarioSpec:
@@ -183,7 +379,25 @@ class JudgeCalibrationScenarioSpec(StrictModel):
                 f"judge calibration scenario {self.id!r} is not strictly informative: "
                 "the rho_1 lower endpoint must exceed the rho_0 upper endpoint"
             )
+        if self.cohorts is not None and not self.cohorts:
+            raise ValueError(
+                f"judge calibration scenario {self.id!r} cohorts cannot be empty; leave the "
+                "field out to give every cohort the scenario's box"
+            )
+        for cohort_id, box in (self.cohorts or {}).items():
+            if box.rho_1.lower <= box.rho_0.upper:
+                raise ValueError(
+                    f"judge calibration scenario {self.id!r} is not strictly informative for "
+                    f"cohort {cohort_id!r}: the rho_1 lower endpoint must exceed the rho_0 "
+                    "upper endpoint"
+                )
         return self
+
+    def box(self, cohort_id: str) -> tuple[JudgeRateRangeSpec, JudgeRateRangeSpec]:
+        """The (rho_1, rho_0) box this scenario declares for one cohort."""
+
+        own = (self.cohorts or {}).get(cohort_id)
+        return (self.rho_1, self.rho_0) if own is None else (own.rho_1, own.rho_0)
 
 
 class PublishedValidationSetSpec(StrictModel):
@@ -211,6 +425,55 @@ class PublishedValidationSetSpec(StrictModel):
         return self
 
 
+class LabellingProtocolSpec(StrictModel):
+    """Experimental: how the human labels of a validated calibration were collected.
+
+    ``queue`` is a CSV whose ``observation_id`` column lists the rollouts in the order they
+    are to be labelled. A queue that lists, within each of the calibration's judge strata (per
+    cohort, and per group when it is scoped to groups), all of its classified rollouts or a
+    simple random sample of them, in a seeded random order, makes every prefix a simple random
+    sample within each stratum. A queue ordered within finer strata, interleaved in shares
+    other than their sizes, is such a queue only for a calibration of those strata, and the
+    analysis cannot tell. ``tier`` keeps only the queue rows whose ``tier`` column has that
+    value, for a queue that also holds rows the calibration does not use. ``seed`` records the
+    permutation's seed for an audit; the package cannot recompute the queue from it.
+
+    The analysis checks that the queue lists only classified rollouts of the analysed run and
+    that the validation manifest labels exactly its first rows, and warns when the queue lists
+    only part of a labelled judge stratum (of a labelled declared fine stratum in a stratified
+    design), whose draw it cannot check. ``stopping`` declares why labelling stopped there:
+    ``fixed_size`` at ``size`` rows, which the analysis checks; ``label_independent`` at a
+    point chosen without looking at the labels, such as when time ran out; ``data_dependent``
+    possibly because of the labels, which only anytime-valid bounds allow, so the calibration
+    then uses confidence sequences.
+    """
+
+    queue: Path
+    tier: str | None = Field(default=None, min_length=1)
+    seed: PlanInt | None = None
+    stopping: Literal["fixed_size", "label_independent", "data_dependent"]
+    size: PlanInt | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def size_only_when_fixed(self) -> LabellingProtocolSpec:
+        if self.stopping == "fixed_size" and self.size is None:
+            raise ValueError("labelling protocol stopping: fixed_size requires a size")
+        if self.stopping != "fixed_size" and self.size is not None:
+            raise ValueError("labelling protocol size applies only to stopping: fixed_size")
+        return self
+
+    @model_validator(mode="after")
+    def tier_without_padding(self) -> LabellingProtocolSpec:
+        # The queue's tier cells are read without surrounding whitespace, so a padded tier
+        # would select no row, and every label would read as outside the queue.
+        if self.tier is not None and self.tier != self.tier.strip():
+            raise ValueError(
+                f"labelling protocol tier {self.tier!r} begins or ends with whitespace; "
+                "write the tier name without it"
+            )
+        return self
+
+
 class JudgeCalibrationSpec(OmitsAbsentFields):
     """Judge-misclassification calibration, either declared, transported or measured.
 
@@ -218,8 +481,13 @@ class JudgeCalibrationSpec(OmitsAbsentFields):
     diagnostic sensitivity result. ``mode: transported`` (experimental) bounds true risk
     from the judge's sensitivity on a published human-labelled set and is likewise a
     diagnostic sensitivity result. ``mode: validated`` estimates the two conditional
-    accuracies from human labels drawn within each judge stratum, and its corrected
-    intervals are certifying at the combined error budget.
+    accuracies from human labels, and its corrected intervals are certifying at the combined
+    error budget. ``sampling`` says how the labels were drawn: a simple random sample within
+    each judge stratum (the default); a simple random sample of the classified rollouts
+    (``simple_random``), which also estimates the judge's sensitivity and false-positive
+    rate by true class; or, experimental, a stratified design whose declared strata, given
+    in ``validation_strata``, nest within the judge strata
+    (``stratified_within_judge_stratum``).
 
     ``groups`` scopes an assumed or validated calibration to declared groups. Without it
     there is one calibration per cohort, for every row of the cohort. With it the assumed
@@ -229,7 +497,7 @@ class JudgeCalibrationSpec(OmitsAbsentFields):
 
     # Left out of the serialised plan when absent, so the hash and the resolved plan of a
     # plan without them are what they were before the fields existed.
-    absent_when_none = ("published_set", "groups", "validation_strata")
+    absent_when_none = ("published_set", "groups", "validation_strata", "protocol")
 
     mode: Literal["assumed", "validated", "transported"] = "assumed"
     scenarios: list[JudgeCalibrationScenarioSpec] = Field(default_factory=list)
@@ -237,25 +505,40 @@ class JudgeCalibrationSpec(OmitsAbsentFields):
     validation_manifest: Path | None = None
     family: str | None = None
     sampling: Literal[
-        "simple_random_within_judge_stratum", "simple_random", "stratified_without_replacement"
+        "simple_random_within_judge_stratum", "simple_random", "stratified_within_judge_stratum"
     ] = "simple_random_within_judge_stratum"
     published_set: PublishedValidationSetSpec | None = None
     groups: list[str] | None = None
     # Experimental: the declared fine stratum of every classified observation, for
-    # sampling: stratified_without_replacement.
+    # sampling: stratified_within_judge_stratum.
     validation_strata: Path | None = None
+    # Experimental: how the labels were collected, which the analysis checks.
+    protocol: LabellingProtocolSpec | None = None
 
     @model_validator(mode="after")
     def validate_mode(self) -> JudgeCalibrationSpec:
         _group_scope(self.groups, "judge calibration")
+        if self.protocol is not None and self.mode != "validated":
+            raise ValueError("a labelling protocol requires mode: validated")
+        if (
+            self.protocol is not None
+            and self.protocol.stopping == "data_dependent"
+            and self.sampling != "simple_random_within_judge_stratum"
+        ):
+            # The noisy-but-valid test's bounds by true class, and the stratified design's
+            # fine-stratum bounds, have no anytime-valid form here yet.
+            raise ValueError(
+                "labelling protocol stopping: data_dependent requires sampling: "
+                "simple_random_within_judge_stratum"
+            )
         if self.mode != "transported" and self.published_set is not None:
             raise ValueError("published_set requires mode: transported")
-        stratified = self.sampling == "stratified_without_replacement"
+        stratified = self.sampling == "stratified_within_judge_stratum"
         if stratified and self.mode != "validated":
-            raise ValueError("sampling: stratified_without_replacement requires mode: validated")
+            raise ValueError("sampling: stratified_within_judge_stratum requires mode: validated")
         if stratified != (self.validation_strata is not None):
             raise ValueError(
-                "validation_strata and sampling: stratified_without_replacement go together; "
+                "validation_strata and sampling: stratified_within_judge_stratum go together; "
                 "declare both or neither"
             )
         if self.mode == "transported":
@@ -338,9 +621,33 @@ class JudgeSpec(StrictModel):
     accuracy: JudgeAccuracySpec | None = None
 
     @model_validator(mode="after")
+    def no_mapping_sensitivities(self) -> JudgeSpec:
+        if self.score.mapping_sensitivities:
+            raise ValueError(
+                f"judge {self.id!r}: mapping_sensitivities applies to inputs.score only"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def no_content_filter_stops(self) -> JudgeSpec:
+        # A content-filter stop is the target's, the same whichever judge reads the rollout,
+        # so every judge's run takes inputs.score's content_filter_stops (judge_run_score). A
+        # judge's own value would count the same stops differently, so it is refused.
+        if self.score.content_filter_stops != "score":
+            raise ValueError(
+                f"judge {self.id!r}: content_filter_stops applies to inputs.score only, and "
+                "every judge's run takes it from there; remove it from the judge's score"
+            )
+        return self
+
+    @model_validator(mode="after")
     def resolve_block(self) -> JudgeSpec:
         if self.block is None:
-            return self.model_copy(update={"block": self.id})
+            # Set without marking block as written (model_fields_set), so the plan's hash
+            # leaves out a block the author did not write, and the report lists it among the
+            # defaults applied.
+            object.__setattr__(self, "block", self.id)
+            return self
         if not self.block.strip():
             raise ValueError("judge block must be a non-empty identifier")
         return self
@@ -354,9 +661,47 @@ class CompositeJudgeSpec(StrictModel):
     judges: list[str] = Field(min_length=2)
 
 
+class JudgeFlipSpec(StrictModel):
+    """Experimental: the judge's flip rate under content-preserving wrappers (#122).
+
+    ``manifest`` is a CSV with columns ``observation_id``, ``wrapper`` and ``verdict``: the
+    primary judge's verdict (``safe`` or ``unsafe``) on a judge-positive completion of the run
+    after it was rescored inside one wrapper, one row per completion and wrapper. A
+    judge-positive completion is one the primary judge scored unsafe; a failure that a plan
+    policy classified, such as a sample error counted as a failure, is not one and is not
+    rescored. Every rescored completion carries a row for every declared wrapper. With
+    ``sampling: all`` every judge-positive completion of the run was rescored; with
+    ``simple_random`` a simple random sample of them was. The flip rate is a diagnostic: it
+    never changes a claim status, and a rate above ``warn_above`` gives a warning. ``alpha`` is
+    the two-sided error level of its Clopper-Pearson interval.
+    """
+
+    manifest: Path
+    wrappers: list[str] = Field(min_length=1)
+    sampling: Literal["all", "simple_random"] = "all"
+    warn_above: PlanFloat = Field(gt=0, lt=1)
+    alpha: PlanFloat = Field(default=0.05, gt=0, lt=1)
+
+    @model_validator(mode="after")
+    def distinct_wrappers(self) -> JudgeFlipSpec:
+        if any(not item.strip() for item in self.wrappers):
+            raise ValueError("judge_flip wrappers must be non-empty names")
+        # The manifest's wrapper names are read stripped, so a padded name here could never
+        # match one of its rows.
+        padded = [item for item in self.wrappers if item != item.strip()]
+        if padded:
+            raise ValueError(
+                "judge_flip wrappers must not start or end with whitespace: "
+                + ", ".join(repr(item) for item in padded)
+            )
+        if len(set(self.wrappers)) != len(self.wrappers):
+            raise ValueError("judge_flip wrappers must be unique")
+        return self
+
+
 class InputsSpec(OmitsAbsentFields):
     # sample_join is None only under schema 3.0, which leaves it out of the plan.
-    absent_when_none = ("sample_join", "panel_groups")
+    absent_when_none = ("sample_join", "panel_groups", "judge_flip")
 
     design_manifest: Path
     estimand: Literal["end_to_end_system", "underlying_model"] = "end_to_end_system"
@@ -368,6 +713,8 @@ class InputsSpec(OmitsAbsentFields):
     composites: list[CompositeJudgeSpec] = Field(default_factory=list)
     # The groups the judge panel section also breaks its counts and agreement down by.
     panel_groups: list[str] | None = None
+    # Experimental: the primary judge's flip rate under content-preserving wrappers.
+    judge_flip: JudgeFlipSpec | None = None
 
     @model_validator(mode="after")
     def validate_judge_panel(self) -> InputsSpec:
@@ -387,6 +734,13 @@ class InputsSpec(OmitsAbsentFields):
                 )
             if len(set(composite.judges)) != len(composite.judges):
                 raise ValueError(f"composite {composite.id!r} lists a judge more than once")
+        return self
+
+    @model_validator(mode="after")
+    def content_filter_stops_fit_the_estimand(self) -> InputsSpec:
+        problem = _content_filter_stops_problem(self.score, self.estimand)
+        if problem is not None:
+            raise ValueError(problem)
         return self
 
 
@@ -432,11 +786,16 @@ class IndependenceSelectionSpec(StrictModel):
         return self
 
 
-class DesignSpec(StrictModel):
+class DesignSpec(OmitsAbsentFields):
+    absent_when_none = ("selection_column",)
+
     type: Literal["fixed", "sampled"] = "fixed"
     sampling: Literal["poisson", "fixed_size"] = "poisson"
     inclusion_probability_column: str | None = None
     stratum_column: str | None = None
+    # Experimental: the manifest column that marks the frame items the draw selected. The
+    # analysis then checks that each cohort observed exactly those items.
+    selection_column: str | None = Field(default=None, min_length=1)
     hierarchy: list[str] = Field(default_factory=lambda: ["task_id", "question_id", "prompt_id"])
     # The schema 2.0 default; a schema 3.0 plan defaults to NEUTRAL_ROLLOUT_KEY.
     rollout_key: list[str] = Field(default_factory=lambda: list(LEGACY_ROLLOUT_KEY))
@@ -461,6 +820,8 @@ class DesignSpec(StrictModel):
             )
         if self.stratum_column is not None:
             raise ValueError("stratum_column requires design.type: sampled")
+        if self.selection_column is not None:
+            raise ValueError("selection_column requires design.type: sampled")
         if self.sampling != "poisson":
             raise ValueError("design.sampling requires design.type: sampled")
         return self
@@ -510,6 +871,19 @@ class RiskMeasureSpec(StrictModel):
     threshold: PlanFloat | None = None
     threshold_column: str | None = None
     diagnostic_only: bool = False
+    # Experimental, worst_of_k only: a direct interval from the unbiased per-prompt shares.
+    direct_interval: bool = False
+
+    @model_serializer(mode="wrap")
+    def leave_out_absent_direct_interval(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        # Left out unless requested, so plans without it keep their hash and rows their
+        # parameters.
+        data: dict[str, Any] = handler(self)
+        if not self.direct_interval:
+            data.pop("direct_interval", None)
+        return data
 
     @model_validator(mode="after")
     def validate_parameters(self) -> RiskMeasureSpec:
@@ -521,6 +895,11 @@ class RiskMeasureSpec(StrictModel):
             raise ValueError("top_k_mean requires k > 0")
         if self.type == "worst_of_k" and (self.k is None or self.k <= 0):
             raise ValueError("worst_of_k requires k > 0")
+        if self.direct_interval and self.type != "worst_of_k":
+            raise ValueError(
+                "direct_interval applies to worst_of_k measures only; weighted means get "
+                "direct intervals from outputs.direct_mean_intervals"
+            )
         if self.type in {"threshold_exceedance", "threshold_excess"}:
             if (self.threshold is None) == (self.threshold_column is None):
                 raise ValueError(f"{self.type} requires exactly one threshold source")
@@ -550,18 +929,8 @@ class PromptBoundsSpec(StrictModel):
 
 class DirectMeanIntervalsSpec(StrictModel):
     enabled: bool = False
-    method: Literal[
-        "weighted_hoeffding",
-        "weighted_empirical_bernstein",
-        "weighted_kl_chernoff",
-    ] = "weighted_empirical_bernstein"
-    reference_methods: list[
-        Literal[
-            "weighted_hoeffding",
-            "weighted_empirical_bernstein",
-            "weighted_kl_chernoff",
-        ]
-    ] = Field(default_factory=list)
+    method: DirectMeanMethod = DEFAULT_DIRECT_MEAN_INTERVAL_METHOD
+    reference_methods: list[DirectMeanMethod] = Field(default_factory=list)
     family: str | None = None
     groups: list[str] | None = None
     simultaneous: bool = True
@@ -606,6 +975,33 @@ class DirectMeanIntervalsSpec(StrictModel):
         return self
 
 
+class AnytimeBoundsSpec(StrictModel):
+    """Experimental: anytime-valid upper bounds for runs stopped early (#126).
+
+    For each cohort and group, a one-sided upper bound on the weighted mean failure
+    probability that holds at every prefix of the run's sample order at once, and so wherever
+    a rule such as optstop's stopped the run. The order must be Inspect's ``sample_shuffle``
+    with a recorded nonzero integer seed; the stream is the first ``rollouts_per_item`` epochs
+    of each item, in that order. ``independence_profile`` names a profile of
+    ``design.independence_profiles``: ``[rollout]`` treats an item's rollouts as independent,
+    and any profile that blocks by ``prompt_id`` treats only items as independent. The bounds
+    split the ``family``'s alpha equally. They are reported as diagnostics beside the claims,
+    and never change a claim's status. They bound the judge-reported failure probability, so
+    no judge calibration may cover a bounded group.
+    """
+
+    order: Literal["inspect_sample_shuffle"] = "inspect_sample_shuffle"
+    rollouts_per_item: PlanInt = Field(default=1, ge=1)
+    independence_profile: str = Field(min_length=1)
+    family: str = Field(min_length=1)
+    groups: list[str] | None = None
+
+    @model_validator(mode="after")
+    def validate_groups(self) -> AnytimeBoundsSpec:
+        _group_scope(self.groups, "anytime bound")
+        return self
+
+
 class OutputsSpec(StrictModel):
     prompt_bounds: PromptBoundsSpec = Field(default_factory=PromptBoundsSpec)
     direct_mean_intervals: DirectMeanIntervalsSpec = Field(default_factory=DirectMeanIntervalsSpec)
@@ -613,6 +1009,9 @@ class OutputsSpec(StrictModel):
     # Experimental. Decide every claim again on each declared judge's own verdicts, as if the
     # plan named that judge as its primary outcome, and record the judges' configurations.
     judge_claims: bool = False
+    # Experimental (#126): anytime-valid upper bounds for runs stopped early. Left out of the
+    # dump while absent, so plans without it keep their hash.
+    anytime_bounds: AnytimeBoundsSpec | None = None
 
     @model_serializer(mode="wrap")
     def leave_out_judge_claims_when_off(
@@ -623,6 +1022,8 @@ class OutputsSpec(StrictModel):
         data: dict[str, Any] = handler(self)
         if not self.judge_claims:
             data.pop("judge_claims", None)
+        if self.anytime_bounds is None:
+            data.pop("anytime_bounds", None)
         return data
 
 
@@ -638,18 +1039,8 @@ class ComparisonSpec(StrictModel):
         "risk_ratio",
         "relative_risk_reduction",
     ] = "risk_difference"
-    method: Literal[
-        "weighted_hoeffding",
-        "weighted_empirical_bernstein",
-        "weighted_kl_chernoff",
-    ] = "weighted_kl_chernoff"
-    reference_methods: list[
-        Literal[
-            "weighted_hoeffding",
-            "weighted_empirical_bernstein",
-            "weighted_kl_chernoff",
-        ]
-    ] = Field(default_factory=list)
+    method: ComparisonMethod = DEFAULT_COMPARISON_METHOD
+    reference_methods: list[ComparisonMethod] = Field(default_factory=list)
     family: str | None = None
     simultaneous: bool = True
     coverage_mode: Literal["two_sided", "per_direction"] = "two_sided"
@@ -712,18 +1103,8 @@ class ComparisonSetSpec(StrictModel):
     ]
     group: str
     measure: str
-    method: Literal[
-        "weighted_hoeffding",
-        "weighted_empirical_bernstein",
-        "weighted_kl_chernoff",
-    ] = "weighted_kl_chernoff"
-    reference_methods: list[
-        Literal[
-            "weighted_hoeffding",
-            "weighted_empirical_bernstein",
-            "weighted_kl_chernoff",
-        ]
-    ] = Field(default_factory=list)
+    method: ComparisonMethod = DEFAULT_COMPARISON_METHOD
+    reference_methods: list[ComparisonMethod] = Field(default_factory=list)
     family: str
     coverage_mode: Literal["two_sided", "per_direction"] = "two_sided"
     independence: IndependenceSelectionSpec
@@ -813,8 +1194,8 @@ class ClaimSpec(StrictModel):
     measure: str | None = None
     comparison: str | None = None
     family: str
-    acceptable_upper: PlanFloat = Field(ge=-1, le=1)
-    unacceptable_lower: PlanFloat = Field(ge=-1, le=1)
+    acceptable_upper: PlanFloat = Field(ge=THRESHOLD_MIN, le=THRESHOLD_MAX)
+    unacceptable_lower: PlanFloat = Field(ge=THRESHOLD_MIN, le=THRESHOLD_MAX)
     mandatory: bool = True
     method: Literal["corrected_interval", "noisy_valid_test"] = "corrected_interval"
 
@@ -831,6 +1212,40 @@ class ClaimSpec(StrictModel):
         if self.acceptable_upper >= self.unacceptable_lower:
             raise ValueError("acceptable_upper must be less than unacceptable_lower")
         return self
+
+
+class AdaptiveClaimSpec(StrictModel):
+    """Experimental (#125): a claim that an attacker adapting across behaviours fails the gate.
+
+    The cohort's runs on the group's behaviours, taken in the order of the design manifest's
+    ``order_field``, form one stream. The claim bounds the attacker's running mean of
+    conditional success probabilities from below, with an anytime-valid bound that needs no
+    independence between runs, and is FAIL when that bound reaches ``unacceptable_lower``.
+
+    It can only FAIL. An upper bound on one adaptive attacker is no evidence about other
+    attackers or budgets, so the claim takes no ``acceptable_upper`` and is never PASS.
+    """
+
+    id: str = Field(min_length=1)
+    title: str
+    cohort: str
+    group: str
+    order_field: str = Field(min_length=1)
+    family: str
+    unacceptable_lower: PlanFloat = Field(gt=0, le=1)
+    mandatory: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def refuse_pass(cls, data: Any) -> Any:
+        if isinstance(data, dict) and "acceptable_upper" in data:
+            raise ValueError(
+                "an adaptive claim can only FAIL, so it takes no acceptable_upper: its lower "
+                "bound describes one attacker at one budget, and an upper bound on that "
+                "attacker is no evidence about other attackers or budgets. Put a PASS claim "
+                "on a fixed set of attacks in claims instead"
+            )
+        return data
 
 
 class ZeroToleranceSpec(StrictModel):
@@ -851,6 +1266,24 @@ class ReportSpec(StrictModel):
     # Experimental. Left out of the plan dump while off, so a plan that does not opt in keeps
     # its hash and every artifact it produced before the field existed.
     judge_error_stress: bool = False
+    # Experimental (#11): write claims.json beside report.json. Left out of the plan dump while
+    # off, like judge_error_stress.
+    claims_export: bool = False
+    # The widest a bound may lie from its estimate and still count as precise. Left out of
+    # the plan dump at its default, so plans that do not set it keep their hash (#56).
+    precision_target: PlanFloat = Field(default=DEFAULT_PRECISION_TARGET, gt=0, lt=0.5)
+
+    @model_validator(mode="after")
+    def claims_export_needs_decisions(self) -> ReportSpec:
+        # claims.json carries every claim's status. With include_decisions false the rendered
+        # report leaves statuses out, and whether that hides or redacts them is open (#58), so
+        # the export is refused rather than deciding it here.
+        if self.claims_export and not self.include_decisions:
+            raise ValueError(
+                "report.claims_export needs report.include_decisions: true, because claims.json "
+                "carries each claim's status"
+            )
+        return self
 
     @model_serializer(mode="wrap")
     def leave_out_judge_error_stress_when_off(
@@ -859,6 +1292,10 @@ class ReportSpec(StrictModel):
         data: dict[str, Any] = handler(self)
         if not self.judge_error_stress:
             data.pop("judge_error_stress", None)
+        if not self.claims_export:
+            data.pop("claims_export", None)
+        if self.precision_target == DEFAULT_PRECISION_TARGET:
+            data.pop("precision_target", None)
         return data
 
 
@@ -881,36 +1318,71 @@ class AnalysisPlan(StrictModel):
     comparison_sets: list[ComparisonSetSpec] = Field(default_factory=list)
     multiplicity: MultiplicitySpec
     claims: list[ClaimSpec]
+    # Experimental (#125). Left out of the plan dump while empty, so a plan without it keeps
+    # its hash and every artifact it produced before the field existed.
+    adaptive_claims: list[AdaptiveClaimSpec] = Field(default_factory=list)
     policy: PolicySpec = Field(default_factory=PolicySpec)
     report: ReportSpec = Field(default_factory=ReportSpec)
 
     _source_path: Path | None = PrivateAttr(default=None)
 
+    @model_serializer(mode="wrap")
+    def leave_out_absent_adaptive_claims(
+        self, handler: SerializerFunctionWrapHandler
+    ) -> dict[str, Any]:
+        data: dict[str, Any] = handler(self)
+        if not self.adaptive_claims:
+            data.pop("adaptive_claims", None)
+        return data
+
+    @model_validator(mode="after")
+    def adaptive_claims_stay_out_of_claims_export(self) -> AnalysisPlan:
+        # claims.json follows the claim schema of #11, which has an acceptable_upper for every
+        # claim. Until it has a form for a claim that can only FAIL, the two are refused
+        # together rather than leaving the adaptive claims out of the export.
+        if self.adaptive_claims and self.report.claims_export:
+            raise ValueError(
+                "report.claims_export cannot export adaptive_claims yet: claims.json has no "
+                "form for a claim that can only FAIL. Turn one of them off"
+            )
+        return self
+
     @model_validator(mode="before")
     @classmethod
-    def apply_schema_version_defaults(cls, data: Any) -> Any:
-        """Fill the defaults that differ between schema versions, before validation."""
+    def check_schema_version_fields(cls, data: Any) -> Any:
+        """Refuse a null sample_join, and any sample_join under schema 3.0."""
 
         if not isinstance(data, dict):
             return data
         inputs = data.get("inputs")
-        if data.get("schema_version") != "3.0":
-            if isinstance(inputs, dict) and "sample_join" in inputs:
-                if inputs["sample_join"] is None:
-                    raise ValueError("inputs.sample_join cannot be null")
+        if not isinstance(inputs, dict) or "sample_join" not in inputs:
             return data
-        data = dict(data)
-        if isinstance(inputs, dict):
-            if "sample_join" in inputs:
-                raise ValueError(
-                    "inputs.sample_join was removed in schema 3.0: rollouts join the design "
-                    "manifest's prompt_id by their item_id"
-                )
-            data["inputs"] = {**inputs, "sample_join": None}
-        design = data.get("design", {})
-        if isinstance(design, dict) and "rollout_key" not in design:
-            data["design"] = {**design, "rollout_key": list(NEUTRAL_ROLLOUT_KEY)}
+        if data.get("schema_version") == "3.0":
+            raise ValueError(
+                "inputs.sample_join was removed in schema 3.0: rollouts join the design "
+                "manifest's prompt_id by their item_id"
+            )
+        if inputs["sample_join"] is None:
+            raise ValueError("inputs.sample_join cannot be null")
         return data
+
+    # ORDER MATTERS: this validator comes before neutral_field_names, which reads the
+    # rollout key it fills.
+    @model_validator(mode="after")
+    def apply_schema_version_defaults(self) -> AnalysisPlan:
+        """Fill the defaults that differ between schema versions.
+
+        They are set without marking the fields as written (``model_fields_set``), so the
+        plan's hash, which covers only what the author wrote, leaves them out, and the report
+        lists them among the defaults it applied.
+        """
+
+        if self.schema_version != "3.0":
+            return self
+        object.__setattr__(self.inputs, "sample_join", None)
+        if "rollout_key" not in self.design.model_fields_set:
+            object.__setattr__(self.design, "rollout_key", list(NEUTRAL_ROLLOUT_KEY))
+        return self
 
     @model_validator(mode="after")
     def neutral_field_names(self) -> AnalysisPlan:
@@ -972,6 +1444,26 @@ class AnalysisPlan(StrictModel):
                 "but inputs.judges declares no judge. Declare the judges, or set "
                 "outputs.judge_claims: false"
             )
+        return self
+
+    @model_validator(mode="after")
+    def judge_runs_count_content_filter_stops_consistently(self) -> AnalysisPlan:
+        # Each judge's run reads the judge's score with the primary's content_filter_stops,
+        # which a judge cannot set (judge_run_score), so the value must fit each judge's own
+        # errors as it fits the primary's. The estimand is the plan's, which the primary's
+        # value already fits. Without judge_claims no run reads a judge's stop reasons.
+        if not self.outputs.judge_claims:
+            return self
+        for judge in self.inputs.judges:
+            score = judge_run_score(self.inputs.score, judge.score)
+            problem = _content_filter_stops_problem(score, self.inputs.estimand)
+            if problem is not None:
+                raise ValueError(
+                    f"outputs.judge_claims runs judge {judge.id!r} on its own score, where "
+                    f"{problem}. Every judge's run takes content_filter_stops from "
+                    f"inputs.score, so the judge's run takes {score.content_filter_stops} "
+                    "from inputs.score."
+                )
         return self
 
     def source_path(self) -> Path | None:

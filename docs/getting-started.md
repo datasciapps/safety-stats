@@ -8,7 +8,14 @@ larger population.
 
 ## Install
 
-You need Python 3.11 or newer. The demo below needs no API key.
+You need Python 3.11 or newer. To use the package in your own project, install it with the
+`inspect` extra, which reads Inspect logs:
+
+```bash
+python -m pip install 'inspect-safety-stats[inspect]'
+```
+
+The demo below runs from a checkout of the repository and needs no API key:
 
 ```bash
 git clone https://github.com/aduncan001/safety_stats.git
@@ -30,7 +37,7 @@ The script runs a 12-prompt refusal evaluation in Inspect for two simulated conf
 baseline and a candidate. It then analyzes the logs and prints the comparison. The whole run takes
 about half a minute, and the [demo README](../examples/demo/README.md) explains the simulation.
 
-The recordings show the same steps one command at a time. Planning comes first: how many
+The recordings show the first steps one command at a time. Planning comes first: how many
 failure-free rollouts it takes to show that a failure rate is below 1%, and which rates 500
 rollouts can tell apart from a 5% threshold.
 
@@ -42,13 +49,8 @@ configuration.
 ![Running the evaluation in Inspect](media/demo/light/2-eval.gif)
 
 `validate` checks the logs against the plan and the design manifest. `analyze` then writes the
-report.
-
-![Validating and analyzing the logs](media/demo/light/3-analyze.gif)
-
-`show_results.py` prints the headline numbers from `report.json`.
-
-![The headline results](media/demo/light/4-results.gif)
+report, and `show_results.py` prints the headline numbers from `report.json`. The
+[demo README](../examples/demo/README.md#the-same-steps-one-at-a-time) has these commands.
 
 The full report is `reports/demo/report.html`, a single file that opens in any browser. It adds
 the bounds for every prompt and every level of the hierarchy, and the audit details.
@@ -57,7 +59,7 @@ the bounds for every prompt and every level of the hierarchy, and the audit deta
 
 Each rate comes with a 95% interval. The intervals are simultaneous, meaning the 95% covers all
 of them at once, so each one is wider than it would be on its own. In the demo the baseline fails
-on 5% of its 80 bio rollouts, and its interval still reaches 0.31.
+on 5% of its 80 bio rollouts, and its interval still reaches 0.18.
 
 A prompt that never failed still has an upper bound above zero. After n rollouts without a
 failure, the one-sided 95% upper bound is `1 - 0.05^(1/n)`, roughly 3/n, so 20 clean rollouts
@@ -82,14 +84,18 @@ values are failures and which are safe. The package never guesses whether `C`, `
 means a failure.
 
 The manifest is a CSV file with one row per prompt and columns for `prompt_id`, your hierarchy
-(`question_id` and `task_id` in the demo), `expected_rollouts` and anything a group filters on.
+(`risk_domain` in the demo), `expected_rollouts` and anything a group filters on.
+It needs only the hierarchy levels your plan names; see the
+[plan reference](plan-reference.md#inputs).
 [examples/demo/design.csv](../examples/demo/design.csv) is a small one to start from.
 
 In the plan, cohorts match logs to a model or configuration, and groups select the prompts to
-report on. The plan also sets the comparisons and the confidence level. Copy
-[examples/demo/plan.yaml](../examples/demo/plan.yaml) and adapt it; the
-[plan reference](plan-reference.md) documents every field. Write the plan before you look at any
-results.
+report on. The plan also sets the comparisons and the confidence level.
+`inspect-safety-stats init` writes a starter manifest and plan from your logs, as it wrote
+[examples/demo/plan.yaml](../examples/demo/plan.yaml), and you edit them from there; the
+[plan reference](plan-reference.md) documents every field. A plan written after the logs exist,
+as `init`'s is, is exploratory. For a confirmatory claim, write and freeze the plan before you
+look at any results.
 
 Then run the evaluation and the analysis:
 
@@ -101,6 +107,8 @@ inspect-safety-stats analyze --plan my-plan.yaml --logs logs/mine --output repor
 
 Fix anything `validate` reports as an error before you read the analysis. The
 [quickstart](quickstart.md) goes through the same steps with a real provider.
+[Running Inspect for analysis](running-inspect.md) covers the Inspect settings that matter for
+larger runs: cohorts by task argument, the request timeout, and connections shared with a judge.
 
 ## Finding what you need
 

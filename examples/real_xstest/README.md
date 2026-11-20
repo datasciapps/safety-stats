@@ -139,7 +139,8 @@ on a prompt declared zero-tolerance. This illustrates an important distinction:
 - sparse stochastic evidence can still be insufficient to establish either a low or a high
   rollout failure probability.
 
-Read the complete generated [report](report-current/report.md) and
+Read the generated [summary](report-current/report.md), the complete
+[report](report-current/report-full.md) and the
 [machine-readable result](report-current/report.json). Claim statuses and the overall decision
 are in `report.json`; the Markdown and HTML reports show them only when the plan sets
 `report.include_decisions: true`, which this plan does not. `tests/test_example_reports.py`
@@ -212,7 +213,8 @@ Every run gets a new UTC-stamped directory under `live-runs/` containing:
 design.csv          fixed design with the requested expected rollout count
 safety-plan.yaml    model-specific plan frozen before generation
 logs/*.eval         complete generations, refusal grades, scores, and provenance
-report/report.md    human-readable PASS / FAIL / INCONCLUSIVE report
+report/report.md    one-page summary
+report/report-full.md  full human-readable report
 report/report.json  machine-readable report
 ```
 

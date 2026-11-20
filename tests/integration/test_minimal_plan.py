@@ -66,12 +66,12 @@ def _diagnostics(plan: Path, scope: str) -> list[Diagnostic]:
 
 
 def test_a_minimal_plan_says_exactly_what_it_is_missing(tmp_path: Path) -> None:
-    (family,) = _diagnostics(_plan(tmp_path), "outputs.prompt_bounds")
+    (family,) = _diagnostics(_plan(tmp_path), "plan/outputs/prompt_bounds")
     assert (family.code, family.severity) == ("PLAN_UNKNOWN_REFERENCE", "ERROR")
     assert "outputs.prompt_bounds.family, which is not set" in family.message
     assert "{id: displayed, purpose: simultaneous_intervals" in family.message
     assert "outputs.prompt_bounds.enabled: false" in family.message
-    (measures,) = _diagnostics(_plan(tmp_path), "outputs.risk_measures")
+    (measures,) = _diagnostics(_plan(tmp_path), "plan/outputs/risk_measures")
     assert (measures.code, measures.severity) == ("PLAN_NO_RISK_MEASURES", "WARNING")
     assert "{id: mean, type: weighted_mean}" in measures.message
 
@@ -153,16 +153,61 @@ def test_following_the_guidance_gives_a_working_analysis(
 def test_pointwise_prompt_bounds_need_a_family_too(tmp_path: Path) -> None:
     # Without one they used to be silently absent, with no diagnostic at all.
     plan = _plan(tmp_path, prompt_bounds="simultaneous: false")
-    (family,) = _diagnostics(plan, "outputs.prompt_bounds")
+    (family,) = _diagnostics(plan, "plan/outputs/prompt_bounds")
     assert family.code == "PLAN_UNKNOWN_REFERENCE"
 
 
 def test_disabled_prompt_bounds_need_no_family(tmp_path: Path) -> None:
     plan = _plan(tmp_path, prompt_bounds="enabled: false")
-    assert _diagnostics(plan, "outputs.prompt_bounds") == []
+    assert _diagnostics(plan, "plan/outputs/prompt_bounds") == []
+
+
+@pytest.mark.parametrize("simultaneous", ["true", "false"])
+@pytest.mark.parametrize(
+    ("family", "families", "enabled_code"),
+    [
+        ("", "", "PLAN_UNKNOWN_REFERENCE"),
+        ("family: undeclared", "", "PLAN_UNKNOWN_REFERENCE"),
+        (
+            "family: mandatory",
+            "{id: mandatory, purpose: all_mandatory, method: intersection_union, alpha: 0.05}",
+            "PLAN_INVALID_MULTIPLICITY",
+        ),
+    ],
+    ids=["unset", "undeclared", "not_bonferroni"],
+)
+def test_disabled_prompt_bounds_ignore_simultaneous(
+    tmp_path: Path, simultaneous: str, family: str, families: str, enabled_code: str
+) -> None:
+    # Validation used to test simultaneous before enabled, so {enabled: false} alone still
+    # failed with PLAN_UNKNOWN_REFERENCE, or PLAN_INVALID_MULTIPLICITY with a family that is
+    # not bonferroni, unless simultaneous: false was set too.
+    def prompt_bound_codes(enabled: str) -> tuple[list[str], set[str]]:
+        prompt_bounds = ", ".join(
+            part
+            for part in (f"enabled: {enabled}", f"simultaneous: {simultaneous}", family)
+            if part
+        )
+        plan = _plan(tmp_path, prompt_bounds=prompt_bounds, families=families)
+        diagnostics = validate_plan_references(load_plan(plan))
+        # Matched on any scope naming prompt_bounds: that old code scoped it
+        # outputs.prompt_bounds. Every code is returned too, so that the check does not rest
+        # on the scope alone.
+        return (
+            [item.code for item in diagnostics if "prompt_bounds" in str(item.scope)],
+            {item.code for item in diagnostics},
+        )
+
+    scoped, codes = prompt_bound_codes("false")
+    assert scoped == []
+    assert not codes & {"PLAN_UNKNOWN_REFERENCE", "PLAN_INVALID_MULTIPLICITY"}
+    # The control: enabled, the same plan raises what a disabled one must not, and the scope
+    # filter above finds it. Pointwise bounds need a family, but not a bonferroni one.
+    raised = enabled_code == "PLAN_UNKNOWN_REFERENCE" or simultaneous == "true"
+    assert prompt_bound_codes("true")[0] == ([enabled_code] if raised else [])
 
 
 def test_an_undeclared_family_is_named(tmp_path: Path) -> None:
     plan = _plan(tmp_path, prompt_bounds="family: shown")
-    (family,) = _diagnostics(plan, "outputs.prompt_bounds")
+    (family,) = _diagnostics(plan, "plan/outputs/prompt_bounds")
     assert "names 'shown', not a declared multiplicity family" in family.message

@@ -13,6 +13,8 @@ from inspect_safety_stats.generative.judge import judge_strata
 from inspect_safety_stats.generative.ledger import read_rewrites
 from inspect_safety_stats.generative.runner import analyze_run, materialize_run
 from inspect_safety_stats.generative.schema import load_generative_plan
+from inspect_safety_stats.ingest import inspect_logs
+from inspect_safety_stats.stats.binomial import binomial_upper_bound
 from tests.integration.test_generative_cli import stub_logs, write_plan
 
 ASSUMED = {
@@ -105,7 +107,7 @@ def test_a_pessimistic_scenario_is_never_tighter(
     assert root["pessimistic"].upper >= root["declared"].upper
 
 
-def test_validated_mode_is_certifying_and_spends_its_own_alpha(
+def test_validated_mode_certifies_the_root_and_spends_its_own_alpha(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     artifacts = tmp_path / "run"
@@ -116,12 +118,78 @@ def test_validated_mode_is_certifying_and_spends_its_own_alpha(
 
     report = analyze_run(plan, artifacts, "logs", cohort="candidate")
     assert report.corrected
-    assert {item.eligibility for item in report.corrected} == {"certifying"}
+    # The pooled labels measure the judge for the equal-weight root only (#109).
+    eligibility = {item.node_id: item.eligibility for item in report.corrected}
+    assert eligibility.pop("all") == "certifying"
+    assert eligibility and set(eligibility.values()) == {"diagnostic"}
     block = report.evaluation["judge_calibration"]
     assert block["mode"] == "validated" and block["available"] is True
     assert block["rho_1"][0] > block["rho_0"][1]        # strictly informative
     root = next(i for i in report.corrected if i.node_id == "all")
     assert root.alpha > report.tree.alpha               # the union, not the interval alone
+
+
+def test_unclassified_units_keep_their_worst_case_through_the_correction(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The labels say nothing about units with no verdict, so rho must not shrink them."""
+
+    artifacts = tmp_path / "run"
+    plan = with_judge(
+        tmp_path, {"mode": "validated", "validation_manifest": "labels.csv"}, total=300
+    )
+    materialize_run(plan, artifacts)
+    stub_logs(monkeypatch, artifacts, candidate_failures=20)
+    # The last 160 of 300 units, none of them labelled, never come back from the judge.
+    prompt_ids = [
+        str(record.prompt_id)
+        for record in read_rewrites(artifacts / "rewrites.csv")
+        if record.is_evaluable()
+    ]
+    missing = set(prompt_ids[-160:])
+    samples = inspect_logs.samples_df
+    monkeypatch.setattr(
+        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        lambda logs, parallel=False: (
+            lambda frame: frame[~frame["id"].isin(missing)]
+        )(samples(logs, parallel=parallel)),
+    )
+    write_labels(tmp_path, artifacts, unsafe_of_flagged=8, unsafe_of_clean=0)
+
+    report = analyze_run(plan, artifacts, "logs", cohort="candidate")
+    tree_root = report.tree.root
+    assert tree_root.unclassified == 160
+    assert tree_root.unclassified_share == pytest.approx(160 / 300, abs=1e-12)
+    root = next(i for i in report.corrected if i.node_id == "all")
+    assert root.eligibility == "certifying"
+    # Every unit with no verdict being unsafe, with the 8 flagged units the labels found
+    # unsafe, is a true risk these labels allow; the certified upper bound must cover it.
+    # Mapping the whole interval through rho_1 < 1 put it below the share alone.
+    assert root.upper >= (160 + 8) / 300
+    # The run's 160 in 300 only estimate the design's share of such units. The correction
+    # takes a one-sided upper confidence bound on it, at a quarter of the calibration's
+    # alpha, which joins the root's own: the units keep their worst case at that bound.
+    block = report.evaluation["judge_calibration"]
+    share_alpha = block["alpha_spent"] / 4
+    share = binomial_upper_bound(160, 300, alpha=share_alpha)
+    upper, at_most = tree_root.upper, min(share, tree_root.upper)
+    assert root.upper == pytest.approx(
+        min(
+            1.0,
+            max(
+                (upper - at_most) * rho_1 + (1 - upper) * rho_0 + at_most
+                for rho_1 in block["rho_1"]
+                for rho_0 in block["rho_0"]
+            ),
+        ),
+        rel=1e-12,
+        abs=0,
+    )
+    assert root.alpha == pytest.approx(
+        report.tree.alpha + block["alpha_spent"] + share_alpha, rel=1e-12, abs=0
+    )
+    assert root.unclassified_upper == pytest.approx(share, rel=1e-12, abs=0)
+    assert root.unclassified_alpha == pytest.approx(share_alpha, rel=1e-12, abs=0)
 
 
 def test_an_uninformative_label_set_refuses_rather_than_correcting(
@@ -163,7 +231,10 @@ def test_an_unlabelled_judge_stratum_is_completed_with_a_warning(
     assert block["available"] is True
     assert block["rho_1"] == [0.0, 1.0]
     assert block["completed_strata"] == ["judge_unsafe"]
-    assert {item.eligibility for item in report.corrected} == {"certifying"}
+    # The pooled labels measure the judge for the equal-weight root only (#109).
+    eligibility = {item.node_id: item.eligibility for item in report.corrected}
+    assert eligibility.pop("all") == "certifying"
+    assert eligibility and set(eligibility.values()) == {"diagnostic"}
     root = next(i for i in report.corrected if i.node_id == "all")
     assert root.lower == 0.0
     assert root.upper >= report.tree.root.upper
@@ -194,9 +265,12 @@ def test_comparisons_are_refused_rather_than_silently_corrected(
     report = analyze_run(
         plan, artifacts, "logs", cohort="candidate", comparisons=("candidate:baseline",)
     )
-    assert any(
-        i.code == "JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON" for i in report.diagnostics
-    )
+    # A comparison belongs to no one cohort; its scope is the candidate:baseline it was asked for.
+    assert [
+        item.scope
+        for item in report.diagnostics
+        if item.code == "JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON"
+    ] == ["comparisons/candidate:baseline"]
     assert all(item.node_id != "comparison" for item in report.corrected)
 
 

@@ -29,6 +29,11 @@ import yaml
 from _source_trees import run_module
 
 DEMO_MODELS = ("mockllm/baseline", "mockllm/candidate")
+# A frozen copy of the offline demo's task, plan and design as they stood when the cases were
+# written. The cases rely on what that plan declares (paired comparisons with diagnostic
+# methods, nested weights, risk-domain groups), so the example can change without changing
+# what the cases cover.
+_DEMO_INPUTS = Path(__file__).resolve().parent / "artifact_inputs" / "demo"
 
 
 class Inputs(NamedTuple):
@@ -59,7 +64,7 @@ def _write_plan(plan: dict[str, Any], path: Path) -> Path:
 
 
 def _demo_plan(builder: Builder) -> dict[str, Any]:
-    text = (builder.repository / "examples" / "demo" / "plan.yaml").read_text(encoding="utf-8")
+    text = (_DEMO_INPUTS / "plan.yaml").read_text(encoding="utf-8")
     plan: dict[str, Any] = yaml.safe_load(text)
     return plan
 
@@ -68,9 +73,7 @@ def _demo_inputs(builder: Builder, name: str) -> Path:
     """A directory holding the demo's design, ready for a plan and logs of its own."""
     directory = builder.directory / name
     directory.mkdir(parents=True)
-    shutil.copyfile(
-        builder.repository / "examples" / "demo" / "design.csv", directory / "design.csv"
-    )
+    shutil.copyfile(_DEMO_INPUTS / "design.csv", directory / "design.csv")
     return directory
 
 
@@ -93,7 +96,7 @@ def demo_logs(builder: Builder) -> Path:
         return logs
     from inspect_ai import eval as inspect_eval
 
-    sys.path.insert(0, str(builder.repository / "examples" / "demo"))
+    sys.path.insert(0, str(_DEMO_INPUTS))
     try:
         from demo_eval import refusal_demo
     finally:

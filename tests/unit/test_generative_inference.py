@@ -351,3 +351,34 @@ def test_unclassified_rollouts_leave_the_raw_rate_undefined(tmp_path: Path) -> N
     tree = estimate_tree(taxonomy, design, selections, outcomes, report_all_nodes=False)
     assert tree.root.raw_failure_rate is None
     assert tree.root.estimate is None
+
+
+def test_the_unclassified_share_weights_each_unit_by_its_design_coefficient(
+    tmp_path: Path,
+) -> None:
+    """Each unit adds its coefficient times its share of unclassified rollouts.
+
+    Proportional allocation with a minimum per stratum gives the oversampled strata less
+    weight per draw. Units in the first stratum leave one of their three rollouts
+    unclassified, so the share is that stratum's weight over three: an unweighted mean,
+    a count of units with any unclassified rollout, or a sum of unclassified rollouts
+    without dividing by the unit's trials each give another number.
+    """
+
+    taxonomy, design, selections = prepare(
+        tmp_path, "proportional_stratified", 600, SEVEN_SEEDS, minimum=80
+    )
+    first = sorted(design.draws_by_stratum)[0]
+    outcomes = [
+        UnitOutcome(record.sampling_unit_id, 3, 0, int(record.stratum == first))
+        for record in selections
+    ]
+    tree = estimate_tree(taxonomy, design, selections, outcomes, report_all_nodes=False)
+    assert not tree.root.equal_coefficients
+    assert tree.root.trials == 3 * len(selections)
+
+    weights = design.weight_by_stratum
+    expected = weights[first] / sum(weights.values()) / 3
+    assert tree.root.unclassified_share == pytest.approx(expected, rel=1e-12, abs=0)
+    unweighted = design.draws_by_stratum[first] / len(selections) / 3
+    assert unweighted != pytest.approx(expected, rel=1e-3, abs=0)

@@ -1,0 +1,199 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: The maintainer <maintainer@example.com>
+Subject: [PATCH] fix: eval-retry runs a sample again when its input changed
+ since the earlier log
+
+A task can take an input from outside its arguments, such as a dataset file
+named by an environment variable. The log records the task's arguments, not
+that input, so `eval_retry()` rebuilds the task from whatever the variable
+names at retry time and then reuses each completed sample of the earlier log
+by id, checking only that the dataset has the same number of samples. If the
+file changed, the retried log mixes results from two inputs, silently.
+
+Before reusing a completed sample, the retry now compares its input, target
+and choices in the earlier log with the sample of the same id in the rebuilt
+dataset. A sample that differs is run again (its checkpoints dropped) instead
+of being reused, and one warning names the first such sample. Chat inputs are
+compared by role and text, since message ids are assigned at run time and
+images may be condensed or left out of the log. The log schema is unchanged.
+
+`test_eval_retry_reruns_a_sample_whose_input_changed` (explicit and
+positional sample ids) fails without the change, where the retried log keeps
+the old first prompt next to the new second one, and passes with it.
+---
+ src/inspect_ai/_eval/task/run.py | 72 +++++++++++++++++++++++++++++++++++++++-
+ tests/test_retry.py              | 63 +++++++++++++++++++++++++++++++++++
+ 2 files changed, 134 insertions(+), 1 deletion(-)
+
+diff --git a/src/inspect_ai/_eval/task/run.py b/src/inspect_ai/_eval/task/run.py
+index b4c643751..8188c1002 100644
+--- a/src/inspect_ai/_eval/task/run.py
++++ b/src/inspect_ai/_eval/task/run.py
+@@ -147,6 +147,7 @@ from inspect_ai.log._transcript import (
+     transcript_bounded_enabled,
+ )
+ from inspect_ai.model import (
++    ChatMessage,
+     GenerateConfig,
+     GenerateConfigArgs,
+     Model,
+@@ -4120,6 +4121,33 @@ def scores_as_logged(
+ # we can reuse samples from a previous eval_log if and only if:
+ #   - The datasets have not been shuffled OR the samples in the dataset have unique ids
+ #   - The datasets have the exact same length
++class _SampleInputs(NamedTuple):
++    """The text a sample presents to the model and scorer, for retry checks."""
++
++    input: str | tuple[tuple[str, str], ...]
++    target: str | tuple[str, ...]
++    choices: tuple[str, ...] | None
++
++
++def _sample_inputs(
++    input: str | list[ChatMessage],
++    target: str | list[str],
++    choices: list[str] | None,
++) -> _SampleInputs:
++    """Text-only view of a sample's inputs.
++
++    Message ids are assigned at run time and media may be condensed or removed
++    in the log (`log_images=False`), so messages compare by role and text only.
++    """
++    return _SampleInputs(
++        input=input
++        if isinstance(input, str)
++        else tuple((message.role, message.text) for message in input),
++        target=target if isinstance(target, str) else tuple(target),
++        choices=tuple(choices) if choices is not None else None,
++    )
++
++
+ def eval_log_sample_source(
+     eval_log: EvalLog | None,
+     eval_log_info: EvalLogInfo | None,
+@@ -4153,11 +4181,53 @@ def eval_log_sample_source(
+             return PreviousError(sample=sample)
+         return None
+ 
++    # built on first use: sample ids are assigned to id-less samples after the
++    # sample source is created, in place on these same dataset samples
++    current_inputs: dict[int | str, _SampleInputs] | None = None
++    changed_input_warned = False
++
++    def _input_changed(id: int | str, epoch: int, sample: EvalSample) -> bool:
++        """Is the prior sample's input, target or choices not the dataset's now?"""
++        nonlocal current_inputs, changed_input_warned
++        if current_inputs is None:
++            current_inputs = {
++                s.id: _sample_inputs(s.input, s.target, s.choices)
++                for s in dataset
++                if s.id is not None
++            }
++        current = current_inputs.get(id)
++        if current is None or current == _sample_inputs(
++            sample.input, sample.target, sample.choices
++        ):
++            return False
++        if not changed_input_warned:
++            changed_input_warned = True
++            py_logger.warning(
++                "The input, target or choices of sample "
++                + f"{id} (epoch {epoch}) changed since the prior run, so the "
++                + "task built its dataset from different inputs. Samples that "
++                + "changed are re-run instead of reused."
++            )
++        else:
++            py_logger.info(
++                f"Re-running sample {id} (epoch {epoch}): its input, target "
++                + "or choices changed since the prior run."
++            )
++        return True
++
+     async def classify(
+         id: int | str, epoch: int, sample: EvalSample | None
+     ) -> PriorResolution:
+-        """Resolve a prior record: clean → reuse it, otherwise seed the re-run."""
++        """Resolve a prior record: clean → reuse it, otherwise seed the re-run.
++
++        A clean record whose input, target or choices differ from the current
++        dataset's sample is not reused: the task's inputs changed between
++        attempts (e.g. a file named by an environment variable, which the log
++        does not record), and reusing it would mix results from two inputs.
++        """
+         if sample is not None and sample.error is None and sample.invalidation is None:
++            if _input_changed(id, epoch, sample):
++                return InvalidatedPrior()
+             return sample
+         return _seed_retry(sample)
+ 
+diff --git a/tests/test_retry.py b/tests/test_retry.py
+index f15867213..916fae8d8 100644
+--- a/tests/test_retry.py
++++ b/tests/test_retry.py
+@@ -1000,3 +1000,66 @@ def test_eval_retry_model_cost_config(tmp_path: Path) -> None:
+         [log.location, "--model-cost-config", str(pricing_file), "--display", "none"],
+     )
+     assert res.exit_code == 0, f"CLI retry failed: {res.output}\n{res.exception}"
++
++
++@pytest.mark.parametrize("explicit_ids", [True, False])
++def test_eval_retry_reruns_a_sample_whose_input_changed(
++    tmp_path: Path,
++    monkeypatch: pytest.MonkeyPatch,
++    caplog: pytest.LogCaptureFixture,
++    explicit_ids: bool,
++) -> None:
++    # The task reads its prompts from a file named by an environment variable,
++    # which the log does not record, so the retry rebuilds the dataset from
++    # whatever file the variable names then.
++    fail_file = tmp_path / "fail"
++
++    @solver
++    def fail_second_while_flagged():
++        async def solve(state: TaskState, generate: Any) -> TaskState:
++            if state.sample_id == 2 and fail_file.exists():
++                raise RuntimeError("transient failure")
++            return state
++
++        return solve
++
++    @task
++    def prompts_from_environment() -> Task:
++        lines = Path(os.environ["RETRY_TEST_PROMPTS"]).read_text().splitlines()
++        return Task(
++            dataset=[
++                Sample(id=index if explicit_ids else None, input=line, target="x")
++                for index, line in enumerate(lines, start=1)
++            ],
++            solver=[fail_second_while_flagged(), generate()],
++        )
++
++    first = tmp_path / "first.txt"
++    first.write_text("first prompt one\nfirst prompt two\n")
++    second = tmp_path / "second.txt"
++    second.write_text("second prompt one\nfirst prompt two\n")
++
++    monkeypatch.setenv("RETRY_TEST_PROMPTS", str(first))
++    fail_file.touch()
++    log = eval(
++        prompts_from_environment(),
++        model="mockllm/model",
++        log_dir=str(tmp_path),
++        display="none",
++    )[0]
++    assert log.status == "error"
++
++    fail_file.unlink()
++    monkeypatch.setenv("RETRY_TEST_PROMPTS", str(second))
++    with caplog.at_level(logging.WARNING):
++        retried = eval_retry(log, log_dir=str(tmp_path), display="none")[0]
++
++    assert retried.status == "success"
++    inputs = {
++        sample.id: sample.input
++        for sample in read_eval_log_samples(
++            retried.location, all_samples_required=False
++        )
++    }
++    assert inputs == {1: "second prompt one", 2: "first prompt two"}
++    assert "changed since the prior run" in caplog.text

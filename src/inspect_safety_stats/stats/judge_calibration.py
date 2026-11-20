@@ -22,6 +22,7 @@ from typing import Any
 
 from inspect_safety_stats.schema.reports import Diagnostic
 from inspect_safety_stats.stats.misclassification import (
+    CalibrationBound,
     FineStratumBounds,
     JudgeCalibration,
     JudgeStratumCounts,
@@ -121,15 +122,15 @@ FineStrata = dict[str, dict[str, JudgeStratumCounts]]
 class FineStrataCounts:
     """Labels crossed against judge verdicts within declared fine strata.
 
-    ``by_cohort`` maps a cohort to its :data:`FineStrata`. ``unmatched_labels`` are label
-    keys no classified row matched, as :func:`count_judge_strata` reports them.
-    ``unstratified`` are classified rows the strata file does not place, and
-    ``unknown_strata`` are strata-file keys that name no classified row; either means the
-    file does not describe the design the labels were drawn from.
+    ``by_cohort`` maps a cohort to its :data:`FineStrata`. ``unstratified`` are the keys of
+    classified rows the strata file does not place, and ``unknown_strata`` are strata-file
+    keys that name no classified row; either means the file does not describe the design
+    the labels were drawn from. Both are bare keys, as the labels and strata files name rows.
+    Labels that match no classified row are reported by :func:`count_judge_strata`, which
+    every validated calibration runs.
     """
 
     by_cohort: dict[str, FineStrata]
-    unmatched_labels: list[str]
     unstratified: list[str]
     unknown_strata: list[str]
 
@@ -152,13 +153,14 @@ class FineStrataCounts:
 
 
 def count_fine_strata(
-    rows: Iterable[tuple[str, str | None, bool | None]],
+    rows: Iterable[tuple[str, str, bool | None]],
     labels: dict[str, bool],
     strata: dict[str, str],
 ) -> FineStrataCounts:
     """Cross human labels against judge verdicts within declared fine strata, per cohort.
 
-    Each row is ``(cohort_id, label_key, verdict)``, as for :func:`count_judge_strata`, and
+    Each row is ``(cohort_id, label_key, verdict)``, as for :func:`count_judge_strata` but
+    with a key on every row, since the strata file must place each classified row by it.
     ``strata`` maps a label key to its declared stratum. A fine stratum is the declared
     stratum within one cohort and one judge verdict, so declared strata need not respect the
     judge's verdicts: the counting nests them. An unclassified row belongs to no stratum.
@@ -167,14 +169,13 @@ def count_fine_strata(
     sizes: dict[tuple[str, str, str], int] = {}
     labelled: dict[tuple[str, str, str], int] = {}
     unsafe: dict[tuple[str, str, str], int] = {}
-    seen_labels: set[str] = set()
     seen_strata: set[str] = set()
     unstratified: list[str] = []
     for cohort_id, label_key, verdict in rows:
         if verdict is None:
             continue
-        if label_key is None or label_key not in strata:
-            unstratified.append(f"{cohort_id}/{label_key}")
+        if label_key not in strata:
+            unstratified.append(label_key)
             continue
         declared = strata[label_key]
         seen_strata.add(label_key)
@@ -183,7 +184,6 @@ def count_fine_strata(
         human = labels.get(label_key)
         if human is None:
             continue
-        seen_labels.add(label_key)
         labelled[key] = labelled.get(key, 0) + 1
         if human:
             unsafe[key] = unsafe.get(key, 0) + 1
@@ -200,7 +200,6 @@ def count_fine_strata(
         )
     return FineStrataCounts(
         by_cohort=by_cohort,
-        unmatched_labels=sorted(set(labels) - seen_labels),
         unstratified=sorted(unstratified),
         unknown_strata=sorted(set(strata) - seen_strata),
     )
@@ -240,12 +239,13 @@ def calibrate_cohort(
     scenario_id: str,
     alpha: float,
     fine: FineStrata | None = None,
+    bound: CalibrationBound = "clopper_pearson",
 ) -> CohortCalibration:
     """Estimate one cohort's calibration from its strata within its share ``alpha``.
 
     With ``fine``, the declared fine strata whose sums ``strata`` holds, the labels are
     read as a stratified sample without replacement; without, as a simple random sample
-    within each judge stratum.
+    within each judge stratum, bounded by ``bound``.
     """
 
     empty = strata.empty
@@ -258,6 +258,7 @@ def calibrate_cohort(
                 unsafe_stratum=strata.judge_unsafe,
                 safe_stratum=strata.judge_safe,
                 alpha=alpha,
+                bound=bound,
             )
             return CohortCalibration(strata=strata, calibration=calibration)
         stratified = estimate_stratified_judge_calibration(

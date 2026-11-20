@@ -210,7 +210,8 @@ edited between the two phases is rejected rather than silently changing the esti
 ledger records what was evaluated, and the plan has to still reproduce it.
 
 The report directory carries `report.html`, `report.json`, `nodes.csv`, `taxonomy.csv`,
-`comparisons.csv` and `diagnostics.csv`. `report.html` is a self-contained page -- it
+`comparisons.csv`, `diagnostics.csv`, `acceptance.csv` and `checksums.json`, which holds the
+SHA-256 of each of the others. `report.html` is a self-contained page -- it
 embeds its own data and fetches nothing -- showing the root bound, the design, comparisons,
 slices, a collapsible hierarchy with unsampled nodes marked, and provenance. Both it and
 `report.json` name the taxonomy and kernel fingerprints they were produced under, so two
@@ -224,5 +225,6 @@ runs cannot be pooled by accident, and state the estimand in words.
 - **Risk difference only.** Ratios and relative reductions are not implemented; the two arm
   intervals are reported alongside each comparison, so they can be derived by hand under a
   union bound.
-- **The judge is not modelled.** [Judge misclassification](../../docs/judge-misclassification.md)
-  applies to fixed designs; nothing here corrects for a fallible scorer.
+- **The judge is not modelled here.** Neither plan declares a judge calibration, so nothing
+  here corrects for a fallible scorer. A generative plan can declare one: see
+  [Judge misclassification](../../docs/judge-misclassification.md#on-the-generative-path).

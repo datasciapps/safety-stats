@@ -112,9 +112,12 @@ def test_a_scope_naming_an_undeclared_group_is_a_plan_reference_error() -> None:
         if item.code == "PLAN_UNKNOWN_REFERENCE"
     ]
     assert unknown == [
-        ("inputs.judge_calibration", "inputs.judge_calibration references unknown groups: cyber"),
         (
-            "inputs.judges.first.accuracy",
+            "plan/inputs/judge_calibration",
+            "inputs.judge_calibration references unknown groups: cyber",
+        ),
+        (
+            "plan/inputs/judges/first/accuracy",
             "inputs.judges.first.accuracy references unknown groups: typo",
         ),
     ]

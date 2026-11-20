@@ -1,5 +1,8 @@
 # Interpreting results
 
+[What results establish](what-results-establish.md) is the one-page summary of what a result
+shows and what it does not. This page gives the details.
+
 ## Start with the risk estimates
 
 The default report presents estimates and uncertainty intervals without turning them into a
@@ -8,7 +11,8 @@ examining the evaluation. The most important choices are the cohort, fixed desig
 weights, risk measure, and confidence level.
 
 Threshold decisions are an optional presentation layer enabled with
-`report.include_decisions: true`. When enabled:
+`report.include_decisions: true`. The option hides decisions rather than withholding them:
+`report.json` holds the overall decision and every claim's status either way. When enabled:
 
 `PASS` means the predeclared upper bound is at or below the acceptable threshold and all required integrity gates passed.
 
@@ -25,14 +29,82 @@ risk rather than judge-reported risk, and the claim records both intervals. See
 An analysis with `intent: exploratory` certifies nothing, so every claim and the report's
 decision are `INCONCLUSIVE`. When integrity is valid and a claim's bounds are certifying, the
 claim also has a descriptive status: the status a confirmatory analysis of the same bounds
-would give at the plan's thresholds. `report.json` records it as `descriptive_status`,
-and, with `report.include_decisions: true`, `report.md` shows it beside the status, for example
+would give at the claim's thresholds, the plan's or a [decision policy](decision-policy.md)'s.
+`report.json` records it as `descriptive_status`,
+and, with `report.include_decisions: true`, `report-full.md` shows it beside the status, for example
 `` `INCONCLUSIVE` (descriptive: `PASS`) ``, and `report.html` as a dashed badge. A claim without
 certifying bounds, or a report whose integrity is invalid, has none (`null`).
 
 A descriptive status is for reading the bounds. It is not a certification: an exploratory plan
 need not precede the evaluation it analyses, so a descriptive `PASS` is not the predeclared
 decision a confirmatory `PASS` is. To certify, freeze a confirmatory plan and evaluate again.
+
+### Adaptive-attacker claims (experimental)
+
+An [adaptive claim](plan-reference.md#adaptive_claims-experimental) bounds an attacker that
+adapts across behaviours from below, and is only ever `FAIL` or `INCONCLUSIVE`. The overall
+decision is `PASS` only when every mandatory claim is `PASS`, so a mandatory adaptive claim,
+the default, can make the decision `FAIL`, and otherwise holds it at `INCONCLUSIVE`, however
+well the plan's other claims do. A plan whose decision should be able to pass on its `claims`
+marks its adaptive claims `mandatory: false`. Their `FAIL` then no longer enters the
+decision either: the report still shows each claim and its status, for the reader to weigh.
+No setting yet lets an adaptive claim fail the decision without also keeping it from passing.
+
+### Verdicts at other thresholds
+
+Each claim also records `verdict_range`: the thresholds at which the same bounds would give
+`PASS` or `FAIL`. The claim is `PASS` for every `acceptable_upper` at or above
+`pass_acceptable_upper`, and `FAIL` for every `unacceptable_lower` at or below
+`fail_unacceptable_lower`. When `pass_strict` or `fail_strict` is true, the boundary itself is
+excluded. Every other pair of thresholds gives `INCONCLUSIVE`. A `null` boundary means that no
+threshold the plan allows gives that verdict. For an interval claim the boundaries are the upper
+and lower bounds. For the noisy-but-valid test they are the thresholds at which its critical
+values meet the judge-reported bounds. That test takes thresholds in [0, 1] only, and its range
+speaks only of those: with a negative `acceptable_upper` the test does not run, and the claim is
+`INCONCLUSIVE`.
+
+`verdict_range` is `null` when the claim's test cannot run at the plan's thresholds, as the
+noisy-but-valid test cannot at a negative `acceptable_upper`, and in reports written before
+verdict ranges were reported. The range is then unknown. That differs from a range whose
+boundaries are both `null`, which means `INCONCLUSIVE` at every threshold.
+
+The report's claims table states the same range, with each boundary rounded so that the
+statement still holds. It shows an unknown range as `—`, and one whose boundaries are both
+`null` as `INCONCLUSIVE at every threshold`. Rounding outward can print a boundary that no
+allowed threshold reaches, such as `≥ 1.0000` for an upper bound just below 1. `report.json`
+holds the exact boundary.
+
+A risk measure is never negative, so on a claim about one (rather than a comparison) a `FAIL`
+boundary at or below 0 is reached only with a negative `acceptable_upper`, and there it holds
+whatever the data. A lower bound of 0, as with no observed failures, gives such a boundary. In
+the table, so does any lower bound that rounds down to 0, for example
+`FAIL at unacceptable ≤ 0.0000`. That part of the range says nothing about the evidence.
+
+In an exploratory analysis the claim is `INCONCLUSIVE` at every threshold. Its range, like its
+descriptive status, is what a confirmatory analysis of the same bounds would give, and it
+certifies nothing.
+
+The range shows how far the verdict is from changing. The error rate of one claim's verdict
+read off it is bounded at any thresholds, because a wrong `PASS` or `FAIL` needs the true risk
+outside the bounds. That does not carry over to the overall decision: when mandatory claims' thresholds,
+or the choice of which thresholds to change, are read off the bounds, an overall `PASS` can be
+wrong whenever any one of those bounds misses, and across separate coverage events that can be
+far more often than one claim's error budget. A threshold chosen after seeing the bounds also cannot show that the
+requirement came before the evidence. To decide at revised thresholds and keep that visible,
+give the analysis a [decision policy](decision-policy.md) (experimental): it records each
+version of the thresholds with the time it was set, leaves the plan and its hash as frozen, and
+holds back an overall `PASS` that the revised thresholds leave uncertified (see
+[When the overall decision certifies](decision-policy.md#when-the-overall-decision-certifies)).
+
+### Verdicts under sensitivity profiles
+
+A claim's status is decided under its evidence's primary independence profile. When the plan
+declares sensitivity profiles, `profile_verdicts` in `report.json`, a table in `report-full.md` and
+the HTML claim card also give the verdict each sensitivity profile's interval would reach at
+the same thresholds. These verdicts never change the claim's status or the decision. A
+`PASS` that is `INCONCLUSIVE` under a coarser profile, such as `prompt`, rests on the primary
+profile's independence assumption. See
+[Verdicts by profile](independence-profiles.md#verdicts-by-profile).
 
 ## Integrity states
 
@@ -41,6 +113,12 @@ decision a confirmatory `PASS` is. To certify, freeze a confirmatory plan and ev
 `degraded` means one or more attempted outcomes are unclassified, but every missing binary label is
 covered by conservative bounds. Degraded evidence may certify a claim only when the claim passes
 under the adverse completion of all unknown outcomes.
+
+Integrity is also `degraded` when `inputs.score.missing: exclude` or `inputs.score.errors:
+exclude` leaves an attempted rollout out of the bounds. The bounds then cover the classified
+rollouts alone and certify on them, as the plan asks; they rest on the excluded rollouts failing
+as often as the classified ones, which the inputs cannot confirm. Each such rollout is a
+`SCORE_MISSING_EXCLUDED` or `SAMPLE_ERROR_EXCLUDED` warning.
 
 Integrity is also `degraded` when the source gives no data for a safeguard, so that it cannot be
 checked. Each case is a warning that names the evaluations concerned:
@@ -54,6 +132,12 @@ checked. Each case is a warning that names the evaluations concerned:
 Inspect logs always carry a status, a start time and a model, so these arise from other sources,
 such as [rollout files](rollout-files.md) that leave the fields out.
 
+Integrity is `degraded` too when a claim uses a `cvar`, `maximum`, `top_k_mean`, `entropic`,
+`threshold_exceedance` or `threshold_excess` measure and at least half the prompts of its cohort
+and group have one classified rollout: `TAIL_MEASURE_SINGLE_ROLLOUT`. Their per-prompt rates are
+then 0 or 1, so the measure is misleading or vacuous. Run repeated rollouts per prompt, or claim
+on a weighted mean.
+
 `invalid` means a structural or strict-policy error prevents certification. Examples include an
 incomplete design, an unmapped score, configuration drift, a post hoc confirmatory plan, or a
 missing/error policy explicitly set to `block`.
@@ -61,6 +145,9 @@ missing/error policy explicitly set to `block`.
 Under the default end-to-end estimand, a target-side provider policy block with no delivered
 content is a classified safe system outcome. A grader-side block is not: the target output already
 exists, so its safety label remains unknown.
+
+[Diagnostic codes and assumptions](diagnostics.md) lists every code a report can carry, with the
+assumption it reports on, its effect on integrity and results, and the remedy.
 
 ## Prompt-level bounds
 
@@ -77,7 +164,10 @@ combined floor. Reports display both figures explicitly.
 When attempted rollouts have missing labels, the lower endpoint completes every unknown as safe
 and the upper endpoint completes every unknown as a failure before applying the exact binomial
 bound. Aggregate fixed-design measures propagate those endpoint vectors through the declared
-monotone risk function.
+monotone risk function. That is what the default score policies do (`inputs.score.missing:
+conservative_bounds`, `inputs.score.errors: end_to_end`). Under `count_as_failure` those
+rollouts count as failures, under `exclude` they are left out of the bounds, which then cover
+only the classified rollouts, and under `block` their prompt's bounds are withheld.
 
 ## Risk measures
 
@@ -98,6 +188,41 @@ When enabled, **Hierarchy marginal risks** reports the same conditional weighted
 every declared non-prompt node. The original group weights are normalized among the node's fixed
 descendants. These rows describe the fixed design and do not estimate prevalence in a population
 of unseen tasks or questions.
+
+### Where effects sit
+
+A headline row averages over the hierarchy, so an effect concentrated in one node can look
+small there: a few points of difference overall can be a large difference in one category and
+none in the others. `report-full.md` has a section "Where effects sit", right after the claims,
+when a comparison has hierarchy rows, or when decisions are shown
+(`report.include_decisions: true`) and a claim's evidence has hierarchy rows. Hierarchy risk
+rows alone give no section while decisions are hidden, which is the default. The section lists:
+
+- every hierarchy node of a comparison whose interval excludes zero difference (0 for a risk
+  difference or a relative risk reduction, 1 for a risk ratio), beside the comparison's overall
+  effect;
+- every hierarchy node whose interval or estimate is above the acceptable limit of a claim on
+  the same evidence, with whether the whole interval or only the estimate is above. The claims
+  are all the claims, mandatory or not, as in `report.md`. An aggregate claim reaches the node
+  rows only through a `weighted_mean` measure, the estimand they report; a comparison claim
+  reaches its comparison's node rows.
+
+A node is placed on its interval first. A risk node has no estimate when one of its prompts has
+no classified rollout, but under `missing: conservative_bounds` or `exclude` it can still have
+an interval, and a node whose whole interval is above the limit is listed with no estimate. A
+node that neither its interval nor its estimate places, such as one whose prompts are blocked,
+is counted under the table, and so is a comparison node with no interval; neither is left out
+without a word. Values are compared as printed, at the report's decimal places, so that a listed
+row never prints a bound equal to the limit or to the null (0, or 1 for a ratio).
+
+These rows are pointers into the hierarchy tables, with the same intervals and coverage; they
+are not further claims. When those intervals are pointwise (`simultaneous: false`), each covers
+its own node only, so among many nodes some are listed by chance, and the section says so.
+Under a validated judge calibration every claim is about true failure risk, while node rows
+are judge-reported risks: those rows say "judge-reported" in their Position, and a note says
+whether the nodes' judge-corrected intervals, in `hierarchy-risks.csv` or `comparisons.csv`,
+are certified. A claim that passes on the average while nodes sit above its limit passes as
+declared: the list makes that visible, it does not change the decision.
 
 The HTML report presents these results as a collapsible tree. Choose one **Independence profile**
 for the whole report. Every interval glyph uses the same 0–100% risk axis. The strong blue band is
@@ -147,6 +272,17 @@ The amount of design weight above local safety thresholds. The report divides we
 ### Threshold excess
 
 The weighted amount by which prompt probabilities exceed their thresholds. It records both which requirements are violated and the magnitude of violation.
+
+### Rollouts per prompt and tail precision
+
+Every measure above except the weighted mean, and worst of k without `direct_interval`, gets its
+interval only from the per-prompt bounds, so its precision is set by the rollouts on each prompt,
+not by the total. A `TAIL_MEASURES_UNINFORMATIVE` warning names a cohort and group where, at the
+lower median of its prompts' rollouts, a measure's upper bound would lie more than
+`report.precision_target` above its estimate even if no prompt failed, and the rollouts per prompt
+that measure would need. Worst of k needs more than one prompt does, since `k` attempts compound
+the prompt's bound. A threshold measure is named only when a failure-free prompt's bound still
+lies above some prompt's threshold. The warning changes no result.
 
 ## Model and configuration comparisons
 
@@ -214,6 +350,30 @@ Cluster-bootstrap diagnostics report the number and size range of creator-declar
 largest-to-smallest size ratio, and the largest leave-one-cluster-out estimate shift. These are
 sensitivity indicators for imbalance and influence; resampling fixed clusters does not turn them
 into a population sample.
+
+## Assumptions and defaults a report states
+
+Every report lists what its results rest on, built from the analysis rather than from a fixed
+text:
+
+- **The interval methods.** Under "Fixed-design risk measures" ("Sampled-design risk measures"
+  under a sampled design), `report-full.md` names each method and independence profile its risk
+  intervals used, what the profile blocks by, and the assumptions recorded on those intervals
+  (`intervals[].assumptions` in `report.json`).
+- **The assumptions.** "Limitations" lists each assumption from the package's registry that
+  applies to the analysis, with the plan fields that set it, the value each had, whether the
+  plan wrote it or left it to its default, and what follows if the assumption is wrong
+  (`assumptions_used` in `report.json`). An assumption the plan does not make is left out: a
+  sampled design is not a fixed one, a plan without comparisons makes no assumption about
+  their arms, and an exploratory analysis does not claim its plan was fixed in advance. A
+  sampled design's intervals take each drawn item as one independent block, whatever
+  independence profile the plan declares, so its report states `probability_sample`, which says
+  how the items were drawn, in place of `rollout_independence`. It states
+  `rollout_independence` as well when its prompt bounds are enabled, since they take each
+  rollout of a prompt as an independent draw.
+- **The defaults.** "Defaults applied" lists the plan fields the plan left out that the
+  analysis filled with a default value (`plan_defaults` in `report.json`; see
+  [The plan hash](plan-reference.md#the-plan-hash)).
 
 ## External validity
 

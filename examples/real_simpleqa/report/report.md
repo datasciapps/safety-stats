@@ -1,89 +1,68 @@
 # Eight real SimpleQA items as a fixed-design failure analysis
 
-**Analysis ID:** `real-simpleqa-eight`  
-**Plan SHA-256:** `e27c60131ebe6bfbe19fa21de11eb03144040a3f75c70e35c9f90692d956ad7c`  
-**Integrity:** `valid`
+8 fixed prompts · 1 rollout per prompt (median) · 1 model · data integrity **valid** (2 warnings)
+
+## Warnings
+
+| Code | Where | Assumption | Effect |
+|---|---|---|---|
+| `PLAN_SELF_DECLARED` (warning) | — | The confirmatory plan's freeze time is backed by an external registration, not only by the time its author wrote in analysis.plan_frozen_at. | **recorded**. Nothing is computed differently and integrity is unchanged; the report records that the plan's timing rests on its author's word. |
+| `TAIL_MEASURES_UNINFORMATIVE` (warning) | `cohorts/candidate/groups/all-eight` | Each prompt has enough rollouts that the tail and threshold measures built from the prompts' simultaneous bounds can lie within report.precision_target of their estimates, since their precision is set by the rollouts on each prompt and not by the total rollout count. | **recorded**. The tail and threshold measures are reported as computed, but in the cohort and group named, at the lower median of the rollouts per prompt, even if no prompt failed the named measures' upper bounds would lie more than the precision target above their estimates, so their intervals can only be wide. |
+
+Each code's message for this analysis is under Data integrity in `report-full.md`; [the diagnostics reference](https://github.com/aduncan001/safety_stats/blob/main/docs/diagnostics.md) gives the remedy for each.
+
+## Failure risk
+
+| Model | Group | Failure rate | Interval | Prompt-level sensitivity |
+|---|---|---:|---|---|
+| candidate | all-eight | 50.0% | [9.2%, 90.8%] † | — |
+
+Intervals bound the rollout uncertainty on these fixed prompts with 95.0% simultaneous coverage. No profile with `block_by: [prompt_id]` is a sensitivity of these intervals, so none allows dependence among the rollouts of one prompt.
+
+## By task_id
+
+| task_id | Prompts | candidate |
+|---|---:|---|
+| simpleqa | 8 | 50.0% [9.2%, 90.8%] † |
+
+## Tail and threshold measures
+
+| Model | Group | Measure | Value | Interval |
+|---|---|---|---:|---|
+| candidate | all-eight | cvar_75 | 1.000 | [0.003, 1.000] † |
+| candidate | all-eight | entropic_5 | 0.863 | [0.001, 0.999] † |
+| candidate | all-eight | worst | 1.000 | [0.003, 1.000] † |
+
+These are built from simultaneous per-prompt bounds, so their precision is set by the rollouts on each prompt rather than the total.
+
+## Precision
+
+† marks an interval with an endpoint more than ±5.0% from its estimate (`report.precision_target`). The budgets below assume the observed rate holds, unless they say otherwise; they are planning figures, not guarantees.
+
+- candidate · all-eight: 50.0% [9.2%, 90.8%]: needs about 78.2× the current rollouts, about 79 per prompt
+- 1 of 1 task_id intervals exceed ±5.0%; the widest (candidate · simpleqa: 50.0% [9.2%, 90.8%]) needs about 78.2× the current rollouts, about 79 per prompt
+- 3 tail or threshold intervals exceed ±0.05; per-prompt bounds that tight need about 113 rollouts on every prompt, the count for a prompt with no failures and the fewest any prompt needs (currently 1 per prompt, median)
+
+## Assumptions used
+
+- **fixed_design.** Prompt, question, task and group membership are fixed, creator-declared design elements. The bounds cover these prompts, not a population they were drawn from.
+- **run_stability.** Every rollout of a cohort comes from one stable system: the same model and configuration throughout its runs.
+- **rollout_independence.** The blocks of the declared independence profile are independent: under the rollout profile, every rollout of a prompt is an independent draw.
+- **scorer_validity.** The score measures the hazard. Scorer errors, under-elicitation, evaluation awareness and omitted hazards are not repaired by statistical precision.
+- **judge_accuracy.** Judge verdicts are taken as correct unless the plan validates or transports the judge's error rates. Left to the default: `inputs.judge_calibration`.
+- **missing_scores.** A rollout without a score has an unknown outcome, bounded at both extremes, unless the plan counts it otherwise.
+- **sample_errors.** A sample error counts as the plan's score.errors says. Under end_to_end, with the end-to-end system estimand, a provider's policy block of the target's generation that delivered no content counts as safe.
+- **token_limit.** An answer that stopped at the generation token limit counts by its score, and without a score as missing. Left to the default: `inputs.score.token_limit`.
+- **content_filter_stops.** An output a provider's content filter stopped without a sample error counts by its score. Left to the default: `inputs.score.content_filter_stops`.
+- **complete_design.** Every run finished, every prompt of a fixed design was evaluated, and every prompt has the rollouts the manifest expects.
+- **plan_fixed_in_advance.** The plan was fixed before the runs started, so that no choice in it was made after seeing the outcomes.
+
+What follows if one is wrong, and the value of each setting, is under Limitations in `report-full.md`.
 
 ## Scope
 
-Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions.
+Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions. Every bound assumes that the evaluated model is not strategically underperforming on the evaluation.
 
-**Safety estimand:** `end_to_end_system`
+What these results establish, and what they do not: <https://github.com/aduncan001/safety_stats/blob/main/docs/what-results-establish.md>
 
-## Data integrity
-
-| Severity | Code | Scope | Message |
-|---|---|---|---|
-| WARNING | `PLAN_SELF_DECLARED` | — | confirmatory timing is self-declared; no external plan registration was supplied |
-
-## Fixed-design risk measures
-
-Ranges are finite-sample confidence bounds, not standard errors or bootstrap intervals. Weighted means may use direct weighted Hoeffding or variance-adaptive empirical-Bernstein intervals. Rollout-level intervals assume independent attempted rollouts; prompt-cluster sensitivities allow arbitrary dependence within a prompt. Other measures use propagated simultaneous exact prompt bounds, which do not require independence between prompts. Coverage is the conservative floor stated for each method. Where outcomes are unclassified, reported missingness-robust bounds cover both the all-safe and all-failure completions.
-
-| Cohort | Group | Measure | Parameters | Estimate | Lower bound | Upper bound | Coverage floor | Bound status | Uncertainty method |
-|---|---|---|---|---:|---:|---:|---|---|---|
-| candidate | all-eight | cvar_75 | beta=0.75 | 1.000000 | 0.003125 | 1.000000 | 95.0% joint; 97.5% each direction | coverage-guaranteed | propagated_exact_prompt_bounds |
-| candidate | all-eight | entropic_5 | lambda=5.0 | 0.862714 | 0.001569 | 0.998444 | 95.0% joint; 97.5% each direction | coverage-guaranteed | propagated_exact_prompt_bounds |
-| candidate | all-eight | mean | — | 0.500000 | 0.092069 | 0.907931 | 95.0% joint; 95.0% each direction | coverage-guaranteed | weighted_kl_chernoff |
-| candidate | all-eight | worst | — | 1.000000 | 0.003125 | 1.000000 | 95.0% joint; 97.5% each direction | coverage-guaranteed | propagated_exact_prompt_bounds |
-
-## Interval-method comparison
-
-The primary interval is used in the main risk table. Reference and sensitivity intervals show prespecified alternative constructions; their coverage statements apply construction-by-construction.
-
-| Cohort | Group | Measure | Role | Method | Independence profile | Lower bound | Upper bound | Completion estimate range | Coverage floor | Scope | Bound status |
-|---|---|---|---|---|---|---:|---:|---|---|---|---|
-| candidate | all-eight | mean | primary | weighted_kl_chernoff | rollout | 0.092069 | 0.907931 | 0.500000–0.500000 | 95.0% joint; 95.0% each direction | simultaneous_frontier_sidak_rollout_fixed_design_mean_family_hierarchy_region | coverage-guaranteed |
-| candidate | all-eight | mean | reference | weighted_empirical_bernstein | rollout | 0.000000 | 1.000000 | 0.500000–0.500000 | 95.0% joint; 95.0% each direction | simultaneous_frontier_sidak_rollout_fixed_design_mean_family_hierarchy_region | coverage-guaranteed |
-| candidate | all-eight | mean | reference | weighted_hoeffding | rollout | 0.000000 | 1.000000 | 0.500000–0.500000 | 95.0% joint; 95.0% each direction | simultaneous_frontier_sidak_rollout_fixed_design_mean_family_hierarchy_region | coverage-guaranteed |
-| candidate | all-eight | mean | reference | propagated_exact_prompt_bounds | — | 0.001563 | 0.998437 | — | 95.0% joint; 97.5% each direction | simultaneous_over_declared_prompt_family | coverage-guaranteed |
-
-## Hierarchy marginal risks
-
-Node estimates use the declared fixed-design weights normalized within each node. When enabled, displayed endpoints are projections of one common hierarchy-constrained confidence region. Coverage guarantees apply construction-by-construction.
-
-| Cohort | Group | Level | Node path | Design weight | Prompts | Estimate | Primary CI | Prompt-cluster sensitivity | Method | Calibration |
-|---|---|---|---|---:|---:|---:|---|---|---|---|
-| candidate | all-eight | task_id | simpleqa | 1.000000 | 8 | 0.500000 | 0.092069–0.907931 | — | weighted_kl_chernoff | frontier_sidak(k=1) |
-| candidate | all-eight | question_id | simpleqa → q-11 | 0.125000 | 1 | 1.000000 | 0.001571–1.000000 | — | weighted_kl_chernoff | frontier_sidak(k=8) |
-| candidate | all-eight | question_id | simpleqa → q-13 | 0.125000 | 1 | 0.000000 | 0.000000–0.998429 | — | weighted_kl_chernoff | frontier_sidak(k=8) |
-| candidate | all-eight | question_id | simpleqa → q-14 | 0.125000 | 1 | 0.000000 | 0.000000–0.998429 | — | weighted_kl_chernoff | frontier_sidak(k=8) |
-| candidate | all-eight | question_id | simpleqa → q-17 | 0.125000 | 1 | 0.000000 | 0.000000–0.998429 | — | weighted_kl_chernoff | frontier_sidak(k=8) |
-| candidate | all-eight | question_id | simpleqa → q-18 | 0.125000 | 1 | 1.000000 | 0.001571–1.000000 | — | weighted_kl_chernoff | frontier_sidak(k=8) |
-| candidate | all-eight | question_id | simpleqa → q-5 | 0.125000 | 1 | 0.000000 | 0.000000–0.998429 | — | weighted_kl_chernoff | frontier_sidak(k=8) |
-| candidate | all-eight | question_id | simpleqa → q-7 | 0.125000 | 1 | 1.000000 | 0.001571–1.000000 | — | weighted_kl_chernoff | frontier_sidak(k=8) |
-| candidate | all-eight | question_id | simpleqa → q-9 | 0.125000 | 1 | 1.000000 | 0.001571–1.000000 | — | weighted_kl_chernoff | frontier_sidak(k=8) |
-
-## Prompt-level evidence
-
-The complete normalized table is in `observations.csv`.
-
-| Cohort | Prompt | Failures | Valid | Unclassified | Estimate | Lower | Upper |
-|---|---|---:|---:|---:|---:|---:|---:|
-| candidate | 11 | 1 | 1 | 0 | 1.000000 | 0.003125 | 1.000000 |
-| candidate | 13 | 0 | 1 | 0 | 0.000000 | 0.000000 | 0.996875 |
-| candidate | 14 | 0 | 1 | 0 | 0.000000 | 0.000000 | 0.996875 |
-| candidate | 17 | 0 | 1 | 0 | 0.000000 | 0.000000 | 0.996875 |
-| candidate | 18 | 1 | 1 | 0 | 1.000000 | 0.003125 | 1.000000 |
-| candidate | 5 | 0 | 1 | 0 | 0.000000 | 0.000000 | 0.996875 |
-| candidate | 7 | 1 | 1 | 0 | 1.000000 | 0.003125 | 1.000000 |
-| candidate | 9 | 1 | 1 | 0 | 1.000000 | 0.003125 | 1.000000 |
-
-## Multiplicity
-
-- `displayed_prompt_bounds`: bonferroni, alpha=0.05, purpose=simultaneous_intervals.
-- `displayed_direct_means`: bonferroni, alpha=0.05, purpose=simultaneous_intervals.
-- `decision_gate`: intersection_union, alpha=0.05, purpose=all_mandatory.
-
-## Limitations
-
-- Prompt, question, task, and group membership are fixed creator-declared design elements.
-- Statistical bounds quantify rollout randomness only under the declared stability and independence assumptions.
-- Scorer errors, under-elicitation, evaluation awareness, and omitted hazards are not repaired by statistical precision.
-- Outputs marked diagnostic cannot independently produce a safety pass.
-
-## Provenance
-
-Generated by `inspect-safety-stats` 0.15.0.
-
-- `simpleqa-8-real.eval` — SHA-256 `14968ffe05c430705d918cdce76d499ff164048ef47ec75b2f025870e892d1a7`
+Every interval, sensitivity, prompt-level bound and diagnostic message is in `report-full.md`, the interactive `report.html` and the CSV files beside this page. Plan SHA-256 `fd9ee06715157246e1e6d90d86f2cada7d7cffe96ee9fd7e280c8d026a0f654c`; inspect-safety-stats 0.16.0.

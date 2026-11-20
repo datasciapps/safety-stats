@@ -1,25 +1,22 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
 from numpy.typing import ArrayLike
 
+from inspect_safety_stats.config.methods import (
+    DEFAULT_STATS_FUNCTION_METHOD,
+    ComparisonMethod,
+)
 from inspect_safety_stats.stats.direct_mean import (
+    COMPARISON_ENGINES,
+    CountsFunction,
     DirectMeanBounds,
-    weighted_empirical_bernstein_mean_bounds,
-    weighted_hoeffding_mean_bounds,
-    weighted_kl_chernoff_mean_bounds,
 )
 
-ComparisonMethod = Literal[
-    "weighted_hoeffding",
-    "weighted_empirical_bernstein",
-    "weighted_kl_chernoff",
-]
 ComparisonIndependenceUnit = Literal["rollout", "prompt_cluster"]
 
 
@@ -102,7 +99,9 @@ def _arrays(
         raise ValueError("comparison counts and weights must be nonempty and aligned")
     if not all(np.issubdtype(array.dtype, np.integer) for array in arrays):
         raise TypeError("comparison counts must be integers")
-    cf, cu, cn, bf, bu, bn = arrays
+    # int64: the prompt-cluster encoding multiplies the two arms' counts, which overflows int32,
+    # NumPy's default integer on Windows with NumPy 1, from 32,768 rollouts a prompt.
+    cf, cu, cn, bf, bu, bn = (array.astype(np.int64) for array in arrays)
     if np.any(cn <= 0) or np.any(bn <= 0):
         raise ValueError("every comparison arm must have positive attempted rollout counts")
     if (
@@ -121,12 +120,13 @@ def _arrays(
     return cf, cu, cn, bf, bu, bn, w
 
 
-def _direct_function(method: ComparisonMethod) -> Callable[..., DirectMeanBounds]:
-    return {
-        "weighted_hoeffding": weighted_hoeffding_mean_bounds,
-        "weighted_empirical_bernstein": weighted_empirical_bernstein_mean_bounds,
-        "weighted_kl_chernoff": weighted_kl_chernoff_mean_bounds,
-    }[method]
+def _direct_function(method: ComparisonMethod) -> CountsFunction:
+    engine = COMPARISON_ENGINES.get(method)
+    if engine is None:
+        raise ValueError(
+            f"unsupported comparison method {method!r}; use one of {sorted(COMPARISON_ENGINES)}"
+        )
+    return engine.counts
 
 
 def _variance_centers(method: ComparisonMethod, centers: np.ndarray) -> dict[str, np.ndarray]:
@@ -173,7 +173,7 @@ def direct_risk_difference_bounds(
     *,
     alpha_lower: float,
     alpha_upper: float,
-    method: ComparisonMethod = "weighted_empirical_bernstein",
+    method: ComparisonMethod = DEFAULT_STATS_FUNCTION_METHOD,
     independence_unit: ComparisonIndependenceUnit = "rollout",
 ) -> DirectComparisonBounds:
     """Bound a fixed-design weighted candidate-minus-baseline failure risk.
@@ -325,7 +325,7 @@ def direct_ratio_bounds(
     *,
     alpha_lower: float,
     alpha_upper: float,
-    method: ComparisonMethod = "weighted_empirical_bernstein",
+    method: ComparisonMethod = DEFAULT_STATS_FUNCTION_METHOD,
     independence_unit: ComparisonIndependenceUnit = "rollout",
     estimand: Literal["risk_ratio", "relative_risk_reduction"] = "risk_ratio",
 ) -> RatioComparisonBounds:

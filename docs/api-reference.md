@@ -44,6 +44,12 @@ Any object with a `read()` method that returns the package's `SourceData` record
 source; `inspect_safety_stats.ingest.EvaluationSource` is the protocol. Passing both `logs` and
 `source` is an error. `validate` takes the same `source` keyword.
 
+`registration_receipt` (experimental) names a receipt written by `hash-plan --register`.
+`analyze` and `validate` check it against the plan's hash and the earliest evaluation start;
+see [Registration receipts](plan-reference.md#registration-receipts-experimental). `analyze`
+raises `ValueError` for a malformed receipt and `OSError`, such as `FileNotFoundError`, for one
+it cannot read; `validate` reports either as `INGEST_FAILED`.
+
 ### `validate`
 
 ```python
@@ -52,9 +58,40 @@ from inspect_safety_stats import validate
 integrity = validate(plan="safety-plan.yaml", logs="logs/")
 ```
 
-Runs plan-reference, manifest, provenance, cohort, rollout, and score-mapping checks without
+Runs plan-reference, manifest, provenance, cohort, rollout, and score-mapping checks, and,
+under `outputs.anytime_bounds`, the checks of the runs' recorded sample orders, without
 making a deployment decision. `integrity.status` is `valid`, `degraded`, or `invalid`; individual diagnostics
-carry a severity, stable code, message, and optional scope.
+carry a severity, stable code, `source` and `effect` (from the code's entry in
+`inspect_safety_stats.registry`), message, and optional scope. The scope is a `/`-separated path
+of where the finding sits: `plan/claims/<claim>` for a place in the plan,
+`cohorts/<cohort>/prompts/<prompt>` or `runs/<run key>` for the data,
+`comparisons/<comparison>/methods/<method>/units/<unit>` for a result. After the root, segments
+come in collection/id pairs, and each id has `%` written as `%25` and `/` as `%2F`, so a path
+splits back into its ids. `inspect_safety_stats.schema.scopes` builds and reads them. A
+scope goes down to the result row, method and profile the finding concerns, and a hierarchy
+node is `levels/<level>/nodes/<node>` below its group or comparison, the node written as its
+`level=value` pairs joined by `/`, as in
+`cohorts/candidate/groups/all/levels/question_id/nodes/task_id=t1%2Fquestion_id=q1`. An ERROR
+scoped to a whole cohort, `cohorts/<cohort>`, withholds the bounds of every prompt in it; one
+scoped to a group, measure or node of the cohort withholds none.
+
+In a report, each diagnostic also has `item`: a JSON pointer into `report.json` to the record
+its scope names, such as `/claims/0` for `plan/claims/<claim>`, `/prompt_estimates/12` for
+`cohorts/<cohort>/prompts/<prompt>` or `/group_risks/3` for
+`cohorts/<cohort>/groups/<group>/measures/<measure>`. A comparison's hierarchy node,
+`comparisons/<comparison>/levels/<level>/nodes/<node>`, has the row of that node, not the
+overall comparison's. It is null when the report holds no record of the item, as for a plan
+setting or a run. `inspect_safety_stats.schema.pointers`
+lists every scope that has one. The report computes `item` from the scope, also when a saved
+`report.json` is read back, so it always points into the report that holds the diagnostic.
+
+Read a saved `report.json` back with
+`SafetyReport.model_validate_json(text, context={STORED_REPORT: True})`, with `STORED_REPORT`
+from `inspect_safety_stats.schema.reports`, as `visualize` does. The report then says what its
+diagnostics were when it was written: each keeps the `source` and `effect` it was written with,
+takes them from the registry only where the report has none, and a code a later version no
+longer lists still reads. Without the context, a code the registry does not list, or a `source`
+or `effect` that differs from its entry, is rejected.
 
 ### `load_plan`
 
@@ -74,9 +111,21 @@ output = report.write("reports/run-001")
 ```
 
 Writes deterministic JSON, Markdown, a self-contained interactive HTML visualization,
-resolved-plan YAML, resolved-design CSV, optional normalized observations, and a checksum
-manifest. A non-empty destination is rejected unless
+resolved-plan YAML, resolved-design CSV, optional normalized observations, an index, and a
+checksum manifest. A non-empty destination is rejected unless
 `overwrite=True`.
+
+`report.json` has a `summary` object: the integrity status, the headline estimates, the errors
+and warnings by code, and the decisions when `report.include_decisions` is true, each with a
+JSON pointer to its full record (`inspect_safety_stats.schema.summary`). Where a judge correction
+applies, a headline estimate also gives the interval of the true failure risk
+(`judge_corrected`), which its own bounds, of the judge-reported rate, are not.
+`SafetyReport.summary` returns it. It is derived from the other fields, so reading a saved `report.json` back drops it
+and computes it again.
+
+`index.json` lists every file the report wrote and copies the summary; `index.md` holds the
+same content as Markdown (`inspect_safety_stats.report.index`). The
+[agent guide](agent-guide.md) says how to read both.
 
 ### Exact threshold planning
 
@@ -94,12 +143,19 @@ rejection_power(*, trials, true_rate, threshold, alpha)
 rejection_sample_size(*, true_rate, threshold, alpha, power, max_trials=1_000_000)
 fixed_design_detectable_failure_rates(trials, weights, *, threshold, support_alpha,
                                       rejection_alpha, power, independence_unit="rollout")
+comparison_resolvable_differences(candidate_trials, baseline_trials, weights, *, margin,
+                                  alpha_lower, alpha_upper, power, independence_unit="rollout")
 ```
 
 The detectable-rate functions exactly invert the corresponding one-sided binomial test. They
 return `None` when the requested direction is unattainable at the supplied horizon and alpha.
 `fixed_design_detectable_failure_rates` gives the weighted-design analogue under an
 independent-rollout Hoeffding guarantee, permitting heterogeneous prompt probabilities.
+`comparison_resolvable_differences` (experimental) returns the risk differences a two-arm
+design resolves at a margin under the same kind of guarantee, for a `comparisons` entry with
+`method: weighted_hoeffding` and `rollout`, `pair` or `prompt_cluster` blocks. It does not hold
+for a `comparison_sets` entry or another method; see
+[Planning a comparison](model-comparisons.md#planning-a-comparison-experimental).
 
 Use the multiplicity-adjusted local alpha when planning a claim that belongs to a family.
 
@@ -116,6 +172,15 @@ The report data, resolved hierarchy, and declared group weights are embedded loc
 network access, or external JavaScript is required. When the source is a `SafetyReport`, `output`
 is required. For a report path, omitting `output` writes `report.html` beside `report.json`.
 
+A `report.json` is enough on its own to render the report: the prompt rows and weights are in
+its `design.prompts`, and what the report text depends on beyond the results (decimal places,
+the primary independence profile, each claim's evidence, the judge calibration's mode and
+scenarios) is in its `presentation`. It does not hold the resolved plan, which is
+`plan.resolved.yaml` in the report directory; the page's audit trail points there rather than
+showing the plan. A `report.json` written by an earlier version lacks `design.prompts` and the
+primary profile; for such a report the visualization reads them from `design.resolved.csv` and
+`plan.resolved.yaml` beside it.
+
 Group-risk records expose `lower_one_sided_coverage` and `upper_one_sided_coverage` separately.
 `simultaneous_coverage` is the Bonferroni lower bound for displaying both directions jointly; it
 must not be read as the coverage of either individual direction. `coverage_mode`, `family_alpha`,
@@ -124,8 +189,10 @@ machine-readable. The default `two_sided` mode splits family alpha across the tw
 
 ## Statistical functions
 
-All functions below are importable from `inspect_safety_stats.stats`. They are pure and do not read
-logs or plans.
+The functions below are importable from `inspect_safety_stats.stats`, except where a block names
+another module: those are not in `inspect_safety_stats.stats.__all__`, so they are not a
+protected interface (see `CONTRIBUTING.md`, section 4) and may change in a minor release. All are
+pure and do not read logs or plans.
 
 ### Exact binomial bounds
 
@@ -149,6 +216,12 @@ weighted_bounded_hoeffding_mean_bounds(
 )
 weighted_bounded_empirical_bernstein_mean_bounds(...)
 weighted_bounded_kl_chernoff_mean_bounds(...)
+```
+
+```python
+# Experimental; not in inspect_safety_stats.stats.__all__.
+from inspect_safety_stats.stats.direct_mean import weighted_bounded_betting_mean_bounds
+weighted_bounded_betting_mean_bounds(...)
 ```
 
 Each aligned block value lies in `[0,1]`, block weights are nonnegative and sum to one, and blocks
@@ -203,6 +276,30 @@ This is a sensitivity analysis over the fixed prompts, not population inference.
 equal weight and a rigorous maximum-increment weighted Poisson-Chernoff inversion otherwise. Its
 `chernoff_kernel` result field records which construction was used. It is especially useful for
 sparse failures and does not require equal prompt failure probabilities.
+
+```python
+worst_of_k_kl_chernoff_bounds(
+    failures, unclassified, trials, weights, *, k, alpha_lower, alpha_upper,
+)
+```
+
+Experimental. Bounds the weighted chance that at least one of `k` independent attempts fails.
+Each prompt's unbiased U-statistic enters `weighted_bounded_kl_chernoff_mean_bounds` as
+`trials // k` independent blocks, so rollouts must be independent. Every prompt needs at least
+`k` attempted rollouts. At `k=1` the result equals the rollout-level
+`weighted_kl_chernoff_mean_bounds`. See
+[Worst-of-k interval](statistical-methods.md#worst-of-k-interval-experimental).
+
+Experimental. `weighted_bounded_betting_mean_bounds` (count form: `weighted_betting_mean_bounds`,
+same signature as the other count wrappers) is not exported from `inspect_safety_stats.stats`
+until it graduates; import it from `inspect_safety_stats.stats.direct_mean`. It tests each candidate mean with the capital of a common betting
+fraction applied to every block with exponent `A_g / max A`, mixed over a fixed
+Beta(1/2, 1/2)-quantile prior that places half its mass on the most aggressive bet. Jensen's
+inequality and the weighted AM-GM inequality make the mixture an e-value under
+`sum_g A_g E[Y_g] = m`, so `{m : capital(m) < 1/alpha}` is a confidence set. It reports
+`chernoff_kernel = "common_bet_mixture_jensen_exponent"`. The bet is common to all blocks and fixed
+in advance; a block-adaptive bet would be invalid under heterogeneous block means. See
+[Betting interval](statistical-methods.md#betting-interval-from-a-fixed-mixture-of-common-bets-experimental).
 
 When hierarchy-region projection is enabled, each reported direct interval also records
 `raw_lower`, `raw_upper`, `projection_method`, and `projection_constraint_count`. The displayed
@@ -341,6 +438,27 @@ candidate minus baseline. `exact_mcnemar` returns the full 2×2 table and three 
 p-values. `newcombe_paired_interval` implements Newcombe method 10 with separate one-sided error
 levels.
 
+```python
+exact_mcnemar_partial(candidate, baseline)
+newcombe_paired_interval_partial(
+    candidate,
+    baseline,
+    *,
+    alpha_lower=0.05,
+    alpha_upper=0.05,
+)
+```
+
+These accept `None` for an unscored outcome and return bounds that hold for every completion of
+the unknown outcomes. `exact_mcnemar_partial` returns the largest one-sided and two-sided
+p-values over the completions, `estimate_lower` and `estimate_upper`, and the McNemar result of
+the fully scored pairs as `scored`, or `None` when there are none.
+`newcombe_paired_interval_partial` returns the lowest lower bound and the highest upper bound
+over the completions, the range of the estimate, and `completion_count`, the number of distinct
+2×2 tables the completions produce. It evaluates its bound on every one of them, and raises
+`ValueError` before evaluating any when there are more than 50 million, as from 668 pairs
+unscored in both arms.
+
 `paired_cluster_bootstrap` is available from
 `inspect_safety_stats.stats.clusters`. It resamples whole creator-declared clusters while
 preserving pairs. It is a fixed-design sensitivity analysis, not a population interval.
@@ -352,6 +470,8 @@ InclusionDesign(design_weights, inclusion_probabilities, sampled)
 horvitz_thompson_mean_bounds(design, completion_lower, completion_upper, *,
                              alpha_lower, alpha_upper, method="weighted_empirical_bernstein")
 
+# Not in inspect_safety_stats.stats.__all__: import these two from
+# inspect_safety_stats.stats.design_based.
 FixedSizeDesign(stratum_index, frame_weights, draws, sampled)
 fixed_size_mean_bounds(design, completion_lower, completion_upper, *,
                        alpha_lower, alpha_upper, method="weighted_empirical_bernstein")
@@ -369,16 +489,24 @@ analysis pipeline; see
 ### Judge misclassification
 
 ```python
+# Not in inspect_safety_stats.stats.__all__: import JudgeStratumCounts, TruthStratumCounts,
+# estimate_judge_calibration, completion_warning and noisy_valid_certification from
+# inspect_safety_stats.stats.misclassification.
 JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source,
                  alpha=None, completed_strata=())   # strata completed as [0, 1]
 JudgeStratumCounts(labelled, truly_unsafe, stratum_size)
 estimate_judge_calibration(*, scenario_id, unsafe_stratum, safe_stratum, alpha)
 completion_warning(calibration)   # message naming completed strata, or None
 correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration,
-                   unclassified_share=0.0, tail=False)   # tail=True: maximum, cvar, top_k_mean
+                   unclassified_share=0.0,   # upper bound on the population share
+                   unclassified_in_bounds=True,   # False: bounds cover the classified rate
+                   unclassified_share_per_prompt=False,   # True: the share bounds every prompt
+                   tail=False)   # tail=True: maximum, cvar, top_k_mean
 delta_method_corrected_risk(*, observed_estimate, observed_variance, unsafe_stratum,
                             safe_stratum, alpha)   # asymptotic reference, diagnostic
 TruthStratumCounts(labelled, judge_positive)
+lang_reiczigel_corrected_risk(*, apparent_rate, apparent_size, truly_unsafe, truly_safe,
+                              alpha)   # approximate limits, diagnostic
 noisy_valid_certification(*, judge_reported_lower, judge_reported_upper, judge_reported_alpha,
                           truly_unsafe, truly_safe, calibration_alpha, acceptable_upper,
                           unacceptable_lower)   # finite-sample threshold test
@@ -402,7 +530,13 @@ agreement statistics are descriptive diagnostics only.
 Maps a judge-system risk interval onto the true-risk scale via
 `R* = R * rho_1 + (1 - R) * rho_0`. The identity is multilinear, so the returned bounds are
 the exact extrema over the declared box. It applies unchanged to any positively homogeneous,
-translation-equivariant risk measure. `estimate_judge_calibration` derives the same box from
+translation-equivariant risk measure. Rollouts with no judge verdict keep their worst case, and
+`unclassified_share` must bound their share in the population, not just in the run. When the
+bounds cover only the classified rate, a bound on the prompts' mean share moves each end by
+the share, and only a bound on every prompt's share (`unclassified_share_per_prompt=True`, as
+for a tail measure) may be mixed in; see
+[Unclassified rollouts](judge-misclassification.md#unclassified-rollouts).
+`estimate_judge_calibration` derives the same box from
 human labels by exact Clopper-Pearson bounds within each judge stratum. See
 [Judge misclassification](judge-misclassification.md).
 
@@ -419,6 +553,8 @@ see [Hierarchy-aware simultaneous inference](hierarchy-simultaneous-inference.md
 ## Command-line interface
 
 ```text
+inspect-safety-stats init --logs LOGS (--failure-values V [--safe-values V] | --failure-threshold T)
+    [--score NAME] [--group-by FIELD] [--baseline MODEL] [--output DIRECTORY] [--overwrite]
 inspect-safety-stats analyze --plan PLAN --logs LOGS --output DIRECTORY
 inspect-safety-stats validate --plan PLAN --logs LOGS
 inspect-safety-stats analyze --plan PLAN --runs RUNS --rollouts ROLLOUTS --output DIRECTORY
@@ -430,13 +566,47 @@ inspect-safety-stats plan detectable-rate --trials N --threshold P --alpha A --p
 inspect-safety-stats plan fixed-design --manifest DESIGN.csv --threshold P [--alpha A] [--power B]
     [--rollouts N] [--weights STRATEGY] [--hierarchy LEVELS] [--weight-column COLUMN]
     [--independence-unit UNIT] [--family-size M]
-inspect-safety-stats hash-plan --plan PLAN
+inspect-safety-stats plan fixed-design --plan PLAN [--manifest DESIGN.csv] [--power B] [--rollouts N]
+inspect-safety-stats plan comparison --manifest DESIGN.csv --margin D [--alpha A] [--power B]
+    [--candidate-rollouts N] [--baseline-rollouts N] [--weights STRATEGY] [--hierarchy LEVELS]
+    [--weight-column COLUMN] [--independence-unit rollout|pair|prompt_cluster]
+    [--coverage-mode two_sided|per_direction] [--family-size M]
+inspect-safety-stats plan pilot --manifest DESIGN.csv --per-stratum K --seed S --output PILOT.csv
+    [--strata COLUMNS]
+inspect-safety-stats hash-plan --plan PLAN [--inference | --register RECEIPT.json]
 inspect-safety-stats schema plan
 inspect-safety-stats schema report
+inspect-safety-stats schema claims
+inspect-safety-stats schema decision-policy
 inspect-safety-stats version
 ```
 
-Every `plan` subcommand accepts `--family-size M`, which plans at the Bonferroni share
+`init` (experimental) reads completed Inspect logs and writes a starter `design.csv` and
+`safety-plan.yaml` into `--output`. The plan has one cohort per model, the root failure risk
+with a prompt-level sensitivity, an optional one-level breakdown by `--group-by`, and a
+comparison when there are several models. `--group-by` names a sample metadata field that
+every sample records; `init` refuses one that some samples lack or leave empty, naming them,
+rather than invent a group for them. The plan covers one task: `analyze` requires a cohort's
+evaluations to share one configuration, task included, so `init` refuses logs of several tasks;
+run it once for each task. `init` never guesses which scores are failures: name them with
+`--failure-values` or `--failure-threshold`. Nor does it take a value nobody named as safe: when
+the score has more than two values, name the safe ones with `--safe-values`, or `init` refuses
+and lists the values left over. With two, the one `--failure-values` does not name is safe, and
+`init` says so. `design.csv` has no `zero_tolerance` column, so the plan turns the
+zero-tolerance gate off, and its header says how to turn it on. `init` uses only the
+evaluations that finished successfully and names the logs it ignored; its suggested `analyze`
+command then lists the logs it used, since `analyze` would report the others incomplete.
+`--alpha` (default 0.05) is spent once in each multiplicity family the plan writes: the prompt
+bounds, the risk intervals and, with several models, the comparisons. The plan's header and the
+command's output say so, and with what probability all the intervals hold together. The plan's
+header lists each choice `init` made and the assumption it rests on, from
+`inspect_safety_stats.registry`: rollout independence first, then the rest. Each note says what
+goes wrong if the assumption does not hold and how to change it. The command prints the same
+list. A plan written after the logs exist cannot be confirmatory, so `--intent confirmatory` is
+refused with exit status `3`; the plan is `exploratory`. For a confirmatory analysis, write the
+plan before the runs.
+
+Every `plan` subcommand except `pilot` accepts `--family-size M`, which plans at the Bonferroni share
 `alpha / M`. Use it to match the `equal_bonferroni` allocation that `analyze` applies to a
 family of `M` simultaneous claims, so a planned rollout count is sufficient at analysis time
 rather than only in isolation. `plan fixed-design` reads the design manifest itself: weights
@@ -446,9 +616,128 @@ follow the declared strategy (`nested_equal` by default, `equal_prompt`, or `exp
 Hoeffding construction of `fixed_design_detectable_failure_rates`; pass
 `--independence-unit prompt_cluster` to plan under prompt-level independence instead.
 
+`plan fixed-design --plan PLAN` reads the analysis plan instead of those options, so planning
+cannot drift from the design `analyze` will use. Rollout counts come from the plan's design
+manifest (or `--manifest`), or from `--rollouts`. The planner runs `analyze`'s own node,
+calibration and block construction on the rollouts the manifest declares, before any of them
+exist. So every planned endpoint alpha, `frontier_sidak` calibration included, and every
+independence block is the one `analyze` will use on the same plan.
+
+A `weighted_mean` claim on a group with direct-mean intervals is planned the way `analyze`
+decides it. That is the group's primary direct-mean interval, under the method that
+`outputs.direct_mean_intervals.method` declares (`weighted_kl_chernoff`,
+`weighted_empirical_bernstein` or `weighted_hoeffding`). The planner inverts that interval:
+
+- The PASS side is planned at the claim's `acceptable_upper`. The maximum certifiable failure
+  rate is a guaranteed rate: at every weighted failure rate up to it, the interval's upper
+  bound falls to that threshold with at least `--power`.
+- The FAIL side is planned at the claim's `unacceptable_lower`. The minimum detectable failure
+  rate is a guaranteed rate too: at every weighted failure rate from it up, the interval's
+  lower bound reaches that threshold with at least `--power`.
+
+Each is a guarantee, not the rate at which the power falls to `--power`. The power at the
+planned rate is often well above `--power`, and a less extreme rate may still have it. The
+margin is largest for empirical Bernstein on sparse failures. The guarantees hold whatever the
+individual prompts' rates are, provided that:
+
+- the blocks of the plan's primary independence profile are independent;
+- every rollout the manifest declares (or `--rollouts` sets) is attempted; and
+- every rollout is classified. An unclassified outcome widens the interval, and the planner
+  does not model that.
+
+The empirical-Bernstein interval is planned at the largest variance its estimate allows. The
+chance of missing is bounded by the sharpest of Hoeffding's inequality and the KL-Chernoff
+interval's Chernoff kernel, applied to the failures and to the safe outcomes. The derivation is
+in [Statistical methods, section 5.7](statistical-methods.md#57-detectable-failure-rates-under-the-analysis-interval).
+Beside each rate, the output shows the weighted Hoeffding rate of
+`fixed_design_detectable_failure_rates` as a reference, and the rates under any
+`reference_methods`.
+
+The output also gives the certification floor: the upper bound `analyze` reports when every
+rollout is safe. The planner runs `analyze`'s own interval and hierarchy-region stages on
+those rollouts, so under the default `hierarchy_region: linear_program` the floor is the
+projected bound, and the output gives the raw floor before the projection beside it when the
+projection lowers it. A claim whose `acceptable_upper` is below the floor does not PASS even
+when every rollout is safe. The rates are planned on the interval before the projection. The
+projection can only lower an upper bound and raise a lower one, so it can only raise their
+power.
+
+The analysis method is not always the sharper one. When the rollouts carry unequal weights,
+the KL-Chernoff interval uses a Poisson kernel. That kernel is tight at low failure rates and
+can be wider than Hoeffding's at high ones. The planner reports such cases as they are.
+
+The experimental `weighted_betting` interval cannot be inverted this way. Its endpoints depend
+on the individual block values, not only on their mean. Claims decided on it are listed as not
+planned, and a `weighted_betting` reference method is named as not planned. The certification
+floors of its intervals are still exact, because the data are fully known when every rollout
+is safe.
+
+Every other claim (other risk measures, a direct `worst_of_k` interval, comparisons,
+`noisy_valid_test`, a validated judge calibration) is listed as not planned, with the reason.
+Thresholds are the plan's own: the planner does not read a decision policy.
+
+The output then lists every direct-mean interval `analyze` will report: each independence
+profile, cohort, selected group and hierarchy node. For each it gives the independent blocks,
+the effective sample size, the endpoint alpha and its calibration, and the certification
+floor before and after the hierarchy-region projection. A target resolves when its floor is at
+or below the smallest `acceptable_upper` of the claims planned on its group in that cohort.
+The levels with nodes that do not resolve are summarised at the end: those nodes are not
+certified even when every rollout is safe.
+
+Independence profiles must block by `rollout`, by manifest columns, or by `prompt_id`,
+`question_id`, `task_id` or `cohort_id`. A profile that blocks by a field `analyze` reads
+from the logs (a run or model, say) is refused, even when the manifest has a column of that
+name: `analyze` would not use the column. The command exits with status 1 when no claim can be
+planned, and refuses sampled designs. `--threshold`, `--alpha`, `--weights`, `--hierarchy`,
+`--weight-column`, `--independence-unit` and `--family-size` are refused with `--plan`,
+which supplies them.
+
+A plan with errors, the ones `validate` reports, is refused with them: `analyze` would find it
+invalid and report every claim INCONCLUSIVE, so no rate would describe what it decides. Every
+claim of an exploratory plan (`analysis.intent: exploratory`) is listed as not planned, for the
+same reason: `analyze` reports each one INCONCLUSIVE, whatever the rollouts show. The output
+starts with the design manifest the command reads: the plan's `inputs.design_manifest`, or
+`--manifest` in its place. A manifest it cannot read is refused, naming whichever supplied it.
+
+`analyze` and `validate` take `--decision-policy POLICY`, a file whose thresholds replace the
+plan's for the claims it sets, and `hash-plan --inference` prints the hash such a policy names
+(experimental; see [Decision policies](decision-policy.md)).
+
+`plan comparison` (experimental) reads the manifest as `plan fixed-design --manifest` does and
+reports the risk differences a two-arm design resolves at `--margin`, guaranteed only for a
+`comparisons` entry with `method: weighted_hoeffding`; see
+[Planning a comparison](model-comparisons.md#planning-a-comparison-experimental).
+
+`plan pilot` (experimental) draws `K` prompts at random from each combination of the
+`--strata` columns (`task_id` by default) and writes the whole manifest with
+`pilot_stratum`, `pilot_inclusion_probability`, `pilot_selected`, `pilot_seed` and
+`pilot_per_stratum` added. See
+[Drawing a random pilot](design-based-sampling.md#drawing-a-random-pilot).
+
 Repeat `--logs` to select multiple files or directories. `--runs` and `--rollouts` name the two
 files of a neutral rollout source instead of Inspect logs, and are given together
 (experimental; see [Rollout files](rollout-files.md)).
+
+`hash-plan --register RECEIPT.json` also writes a registration receipt. `analyze` and
+`validate` check one with `--registration-receipt RECEIPT.json`, and the Python functions with
+`registration_receipt=` (experimental; see
+[Registration receipts](plan-reference.md#registration-receipts-experimental)). `hash-plan`
+exits `3` when the receipt file already exists or cannot be written, for example because its
+directory does not exist.
+
+### Exit codes
+
+Every status a command chooses comes from one table, `ExitCode` in `cli.py`. Only `analyze`,
+`hash-plan`, `init`, `validate`, `visualize` and the `generative` commands guarantee `3` for
+input they cannot run on; the other commands below do not, and a malformed plan given to
+`plan fixed-design --plan` is not mapped to `3`:
+
+| Status | Meaning |
+|---|---|
+| `0` | The command completed. |
+| `1` | `analyze --decision-exit-codes`: the decision is FAIL. `plan fixed-design --plan`: no claim of the plan could be planned. |
+| `2` | `analyze --decision-exit-codes`: the decision is INCONCLUSIVE. typer also exits `2` on a usage error, such as a missing option, before the command runs. |
+| `3` | `analyze`, `hash-plan`, `init`, `validate`, `visualize` and the `generative` commands: the command could not run. `analyze` and `generative analyze` also: the result supports no claim (an `invalid` integrity, or a `generative analyze` report with `ERROR` diagnostics). `validate`: an `invalid` integrity. |
 
 Exit codes of `analyze`:
 
@@ -459,12 +748,25 @@ Exit codes of `analyze`:
 | Integrity `invalid` with `--allow-invalid` | `0` | `2`, because an invalid analysis is never PASS |
 | The analysis cannot run, for example an unreadable plan | `3` | `3` |
 
-`validate` exits `3` for invalid input and `0` otherwise.
+`validate` exits `3` when its integrity is `invalid`, and when it cannot read its plan or
+decision policy (malformed YAML, or a schema failure), printing `Validation failed:` with the
+reason; otherwise it exits `0`. Before this release an unreadable plan ended in a traceback and
+exit status `1`. `plan fixed-design --plan` exits `2`, as a usage error, for a plan that fails
+validation or that `analyze` would find invalid on the design manifest, such as a
+`frontier_sidak` direct-mean hierarchy with a node of zero weight, and `1` for malformed YAML.
+Check its exit status only for zero versus nonzero.
+
+`hash-plan` exits `3` for a plan it cannot read or validate, and prints `Plan invalid:` with
+each failing field on one line.
+Before this release it printed a traceback and exited `1`. `generative analyze` exits `3` when
+its report carries an `ERROR` diagnostic, and still writes the report. Before this release it
+exited `2`, which `analyze` uses for INCONCLUSIVE.
 
 ## Compatibility and stability
 
 The runtime supports Python 3.11 or newer. Reading Inspect logs needs Inspect AI
-`>=0.3.259,<0.4`, which the `inspect` extra installs. This release reads analysis plans of
+`>=0.3.289,<0.4`, which the `inspect` extra installs, and reads logs written by Inspect AI
+0.3.259 or later. This release reads analysis plans of
 schema version `2.0` and `3.0` (see [the plan reference](plan-reference.md#schema-versions)) and
 writes reports of schema version `3.0`. Plans and reports are strict: unknown fields are errors,
 and a plan declaring any other version, `1.0` included, is refused. New fields or methods may
@@ -513,6 +815,25 @@ projection.root_upper, projection.levels, projection.expected_unsampled_nodes
 `rewrite(request) -> RewriteOutcome` method. `DeterministicFakeKernel` stands in for it in
 tests; [`examples/generative_live/rewriter.py`](../examples/generative_live/rewriter.py) is a
 provider-backed reference implementation.
+
+**Conversations (experimental).** Under `rewrite.output: conversation` a kernel returns
+`RewriteOutcome(status="valid", messages=...)`, a tuple of `ChatTurn(role, content)` with
+the roles `user` and `assistant` and, unless the plan attaches system prompts, `system`.
+`conversation_problem(turns)` says why a conversation cannot be evaluated, or returns
+`None`, so a kernel parsing one out of model output can report a malformed reply as
+`invalid`. `RewriteRequest.system_prompt` and `RewriteRequest.conversation_turns` carry the
+plan's system-prompt and turns arms for the request's path. See
+[conversations and system prompts](generative-evaluation.md#conversations-and-system-prompts-experimental).
+
+**Supplying a validator** (experimental) is needed only when the plan sets
+`rewrite.validation.invoke`. Pass `validator=` to `materialize_run` (or `--validator` on the
+command line), in the same forms as `kernel=`, naming an object implementing
+`RewriteValidator`: `validator_id` and a `validate(request, prompt) -> ValidationVerdict`
+method. `DeterministicFakeValidator` stands in
+for it in tests. Such a run, and one with `rewrite.deduplication.near_duplicate` set, records
+attempts that `read_attempts` reads as `AttemptRecord`s, and its report carries `fidelity`, a
+list of `FidelityRow`s that `fidelity_by_level` computes. See
+[validation and near-duplicates](generative-evaluation.md#validation-and-near-duplicates-experimental).
 
 **Composing a flow by hand** — when the two-phase runner does not fit — is supported through
 `plan_design`, `draw_selections`, `execute_rewrites`, `join_outcomes`, `estimate_tree`,

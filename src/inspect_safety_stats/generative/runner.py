@@ -9,22 +9,37 @@ estimand.
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import importlib.util
 import sys
+from collections import Counter
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from inspect_safety_stats.generative.comparisons import ComparisonResult, compare_cohorts
+from inspect_safety_stats.generative.contrasts import (
+    ContrastMember,
+    SliceMember,
+    check_slice_family,
+    estimate_slice_family,
+)
 from inspect_safety_stats.generative.execution import (
     AcceptedRewrite,
+    FidelityRow,
     acceptance_by_level,
+    check_attempts,
+    check_conversation_arms,
     execute_rewrites,
+    fidelity_by_level,
     load_seed_texts,
     prompt_store_writer,
     read_prompt_store,
     uneven_acceptance,
+    uneven_fidelity,
+    units_retried_after_duplicate,
 )
 from inspect_safety_stats.generative.inference import (
     NodeEstimate,
@@ -43,26 +58,38 @@ from inspect_safety_stats.generative.judge import (
     declared_calibration,
     load_labels,
     measured_calibration,
+    slice_family_refusal,
 )
 from inspect_safety_stats.generative.kernels import (
     DeterministicFakeKernel,
+    DeterministicFakeValidator,
     KernelFingerprint,
     RewriteKernel,
+    RewriteValidator,
     resolve_kernel_fingerprint,
 )
 from inspect_safety_stats.generative.ledger import (
+    AttemptRecord,
     RewriteRecord,
     SelectionRecord,
+    attempt_ledger_writer,
+    read_attempts,
+    read_rewrite_rows,
     read_rewrites,
     read_selections,
     rewrite_ledger_writer,
     write_selections,
 )
 from inspect_safety_stats.generative.report import GenerativeReport, plan_sha256
-from inspect_safety_stats.generative.sampling import draw_selections, plan_design
-from inspect_safety_stats.generative.schema import GenerativePlan, load_generative_plan
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+from inspect_safety_stats.generative.sampling import SamplingDesign, draw_selections, plan_design
+from inspect_safety_stats.generative.schema import (
+    GenerativePlan,
+    SliceFamilySpec,
+    load_generative_plan,
+)
+from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy, compile_taxonomy
 from inspect_safety_stats.schema.reports import Diagnostic
+from inspect_safety_stats.schema.scopes import plan_scope
 
 if TYPE_CHECKING:
     from inspect_safety_stats.generative.logs import LogInput
@@ -70,6 +97,7 @@ if TYPE_CHECKING:
 SELECTION_LEDGER = "selections.csv"
 REWRITE_LEDGER = "rewrites.csv"
 PROMPT_STORE = "prompts.restricted.csv"
+ATTEMPT_LEDGER = "attempts.csv"
 
 
 @dataclass(frozen=True)
@@ -93,10 +121,15 @@ class MaterializedRun:
     kernel_mismatch: str | None
     resumed: int = 0
     first_error: str | None = None
+    validator_id: str | None = None
+    validator_mismatch: str | None = None
 
 
 def resolve_kernel(specification: str) -> RewriteKernel:
-    """Resolve ``fake``, ``fake:invalid_every=N``, ``module:attribute`` or ``file.py:attribute``.
+    """Resolve ``fake``, ``fake:OPTIONS``, ``module:attribute`` or ``file.py:attribute``.
+
+    The fake kernel's options are ``invalid_every=N`` and ``output=prompt|conversation``,
+    separated by commas.
 
     A provider-backed kernel is supplied as an import path so nothing in this package
     depends on a particular rewriter client. The attribute may be a kernel or a
@@ -110,32 +143,75 @@ def resolve_kernel(specification: str) -> RewriteKernel:
     if specification == "fake" or specification.startswith("fake:"):
         options = specification[5:] if ":" in specification else ""
         invalid_every = 0
+        output: Literal["prompt", "conversation"] = "prompt"
+        for option in options.split(",") if options else []:
+            key, _, value = option.partition("=")
+            if key == "invalid_every" and value.isdigit():
+                invalid_every = int(value)
+            elif key == "output" and value in ("prompt", "conversation"):
+                output = "conversation" if value == "conversation" else "prompt"
+            else:
+                raise ValueError(
+                    f"unrecognised fake kernel option {option!r}; expected invalid_every=N "
+                    "or output=prompt|conversation, separated by commas"
+                )
+        return DeterministicFakeKernel(invalid_every=invalid_every, output=output)
+
+    candidate = _load_attribute(specification, "kernel", "'fake', 'fake:invalid_every=N,...'")
+    if not hasattr(candidate, "rewrite"):
+        raise ValueError(f"{specification!r} does not provide a rewrite() method")
+    return candidate  # type: ignore[no-any-return]
+
+
+def resolve_validator(specification: str) -> RewriteValidator:
+    """Resolve ``fake``, ``fake:reject_every=N``, or ``module:attribute``, as for a kernel.
+
+    The fake validator takes the identifier ``fake-validator``; a plan that declares another
+    gets the mismatch reported, as a fake kernel run against a real plan does.
+    """
+
+    if specification == "fake" or specification.startswith("fake:"):
+        options = specification[5:] if ":" in specification else ""
+        reject_every = 0
         if options:
             key, _, value = options.partition("=")
-            if key != "invalid_every" or not value.isdigit():
+            if key != "reject_every" or not value.isdigit():
                 raise ValueError(
-                    f"unrecognised fake kernel option {options!r}; expected invalid_every=N"
+                    f"unrecognised fake validator option {options!r}; expected reject_every=N"
                 )
-            invalid_every = int(value)
-        return DeterministicFakeKernel(invalid_every=invalid_every)
+            reject_every = int(value)
+        return DeterministicFakeValidator(reject_every=reject_every)
+
+    candidate = _load_attribute(specification, "validator", "'fake', 'fake:reject_every=N'")
+    if not hasattr(candidate, "validate"):
+        raise ValueError(f"{specification!r} does not provide a validate() method")
+    return candidate  # type: ignore[no-any-return]
+
+
+def _load_attribute(specification: str, role: str, builtins: str) -> Any:
+    """Import ``module:attribute`` or ``path/to/file.py:attribute``, calling a factory.
+
+    An attribute that is callable and has neither ``rewrite`` nor ``validate`` is taken as a
+    zero-argument factory and called.
+    """
 
     # rpartition, so a Windows drive letter in a file path is not mistaken for the
     # separator.
     target, separator, attribute = specification.rpartition(":")
     if not separator or not attribute or not target:
         raise ValueError(
-            f"kernel {specification!r} must be 'fake', 'fake:invalid_every=N', "
+            f"{role} {specification!r} must be {builtins}, "
             "'module:attribute', or 'path/to/file.py:attribute'"
         )
 
     candidate = Path(target)
     if candidate.suffix == ".py":
         if not candidate.is_file():
-            raise ValueError(f"kernel file {candidate} does not exist")
-        name = f"_inspect_safety_stats_kernel_{candidate.stem}"
+            raise ValueError(f"{role} file {candidate} does not exist")
+        name = f"_inspect_safety_stats_{role}_{candidate.stem}"
         loader = importlib.util.spec_from_file_location(name, candidate)
         if loader is None or loader.loader is None:
-            raise ValueError(f"kernel file {candidate} could not be loaded")
+            raise ValueError(f"{role} file {candidate} could not be loaded")
         module = importlib.util.module_from_spec(loader)
         # ORDER MATTERS: the module is registered before execution and removed after it.
         # dataclasses look the defining module up in sys.modules while the class body runs,
@@ -156,7 +232,7 @@ def resolve_kernel(specification: str) -> RewriteKernel:
             module = importlib.import_module(target)
         except ModuleNotFoundError as exc:
             raise ValueError(
-                f"kernel module {target!r} could not be imported ({exc}). Name an "
+                f"{role} module {target!r} could not be imported ({exc}). Name an "
                 "installed module, or point at the file directly as "
                 f"'path/to/file.py:{attribute}'."
             ) from exc
@@ -165,10 +241,8 @@ def resolve_kernel(specification: str) -> RewriteKernel:
         resolved = getattr(module, attribute)
     except AttributeError as exc:
         raise ValueError(f"{target!r} has no attribute {attribute!r}") from exc
-    candidate = resolved() if callable(resolved) and not hasattr(resolved, "rewrite") else resolved
-    if not hasattr(candidate, "rewrite"):
-        raise ValueError(f"{specification!r} does not provide a rewrite() method")
-    return candidate  # type: ignore[no-any-return]
+    protocol = hasattr(resolved, "rewrite") or hasattr(resolved, "validate")
+    return resolved() if callable(resolved) and not protocol else resolved
 
 
 def _load(plan_path: str | Path) -> tuple[GenerativePlan, Path]:
@@ -176,8 +250,49 @@ def _load(plan_path: str | Path) -> tuple[GenerativePlan, Path]:
     return load_generative_plan(path), path.parent
 
 
+def _family_members(
+    declared: SliceFamilySpec,
+) -> tuple[list[SliceMember], list[ContrastMember]]:
+    return (
+        [SliceMember(item.level, item.value) for item in declared.slices],
+        [
+            ContrastMember(item.id, item.level, item.candidate, item.baseline)
+            for item in declared.contrasts
+        ],
+    )
+
+
+def check_declared_slice_family(
+    plan: GenerativePlan,
+    taxonomy: CompiledTaxonomy,
+    design: SamplingDesign,
+    selections: Sequence[SelectionRecord],
+) -> None:
+    """Refuse a declared slice family that the analysis could not estimate.
+
+    Whether a member can be estimated depends on the compiled taxonomy and the selected
+    paths only, both known before any rewrite is generated. Checked then, a value no path
+    carries or no draw lands on costs nothing to find; found by the analysis, it would cost
+    the whole generated and evaluated run its report.
+    """
+
+    declared = plan.inference.slice_family
+    if declared is None:
+        return
+    slices, contrasts = _family_members(declared)
+    try:
+        check_slice_family(taxonomy, design, selections, slices=slices, contrasts=contrasts)
+    except ValueError as exc:
+        raise ValueError(
+            f"inference.slice_family cannot be estimated on this design: {exc}. Each member "
+            "must name values that the compiled taxonomy holds and the selected paths reach, "
+            "and a contrast's two values must share a semantic seed; correct or remove the "
+            "member, or raise sampling.total_rewrites if an arm received no draws"
+        ) from exc
+
+
 def _prior_work(
-    directory: Path, selections: list[SelectionRecord]
+    directory: Path, selections: list[SelectionRecord], *, conversations: bool = False
 ) -> tuple[dict[str, RewriteRecord], dict[str, AcceptedRewrite]]:
     """Read what an earlier run finished, and check it describes this same design.
 
@@ -185,6 +300,10 @@ def _prior_work(
     accepted distribution the estimand is defined against, so re-running it would grant it
     more attempts than the plan allows. A unit recorded as ``error`` is not final: an
     operational failure says nothing about the kernel, so it is left out and runs again.
+
+    Error rows are left out before the ledger is checked for a unit recorded twice. A resume
+    by an earlier version kept a unit's error row beside the row of its rerun, and such a
+    directory then resumes like any other.
     """
 
     ledger = directory / REWRITE_LEDGER
@@ -201,12 +320,14 @@ def _prior_work(
         )
 
     store = directory / PROMPT_STORE
-    prompts = read_prompt_store(store) if store.exists() else {}
+    prompts = read_prompt_store(store, conversations=conversations) if store.exists() else {}
     completed: dict[str, RewriteRecord] = {}
     accepted: dict[str, AcceptedRewrite] = {}
-    for record in read_rewrites(ledger):
+    for record in read_rewrite_rows(ledger):
         if record.validation_status == "error":
             continue
+        if record.sampling_unit_id in completed:
+            raise ValueError(f"rewrite ledger {ledger} repeats a sampling_unit_id")
         completed[record.sampling_unit_id] = record
         if record.is_evaluable():
             entry = prompts.get(record.sampling_unit_id)
@@ -228,6 +349,7 @@ def materialize_run(
     overwrite: bool = False,
     resume: bool = False,
     rewrite_salt: str = "",
+    validator: str | None = None,
 ) -> MaterializedRun:
     """Compile, select, run the rewrite procedure, and write everything an Inspect run needs.
 
@@ -235,6 +357,12 @@ def materialize_run(
     killed partway leaves a usable record. ``resume`` picks that record up and executes only
     the units still outstanding; because selection is counter-based, the units it re-derives
     are identical to the ones the interrupted run would have gone on to draw.
+
+    ``validator`` resolves like ``kernel``. It is required when the plan sets
+    ``rewrite.validation.invoke`` (experimental) and refused otherwise. When the plan asks
+    for per-attempt records, every kernel call is appended to ``attempts.csv``. A declared
+    slice family that the analysis could not estimate on the selected paths is refused
+    before any kernel call.
     """
 
     plan, base = _load(plan_path)
@@ -249,10 +377,12 @@ def materialize_run(
         raise ValueError("--overwrite and --resume are mutually exclusive")
     directory.mkdir(parents=True, exist_ok=True)
     if overwrite:
-        for name in (SELECTION_LEDGER, REWRITE_LEDGER, PROMPT_STORE):
+        for name in (SELECTION_LEDGER, REWRITE_LEDGER, PROMPT_STORE, ATTEMPT_LEDGER):
             (directory / name).unlink(missing_ok=True)
+            (directory / f"{name}.partial").unlink(missing_ok=True)
 
     taxonomy = compile_taxonomy(plan, base_path=base)
+    check_conversation_arms(plan, taxonomy)
     fingerprint = resolve_kernel_fingerprint(plan, base_path=base)
     design = plan_design(taxonomy, plan)
     rewriter = resolve_kernel(kernel)
@@ -266,31 +396,78 @@ def materialize_run(
         if running == declared
         else f"plan declares kernel {declared!r} but {running!r} produced the rewrites"
     )
+    validation = plan.rewrite.validation
+    if validation.invoke and validator is None:
+        raise ValueError(
+            "the plan sets rewrite.validation.invoke, so pass --validator naming an "
+            f"implementation of {validation.validator_id!r}"
+        )
+    if validator is not None and not validation.invoke:
+        raise ValueError(
+            "--validator was given but the plan does not set rewrite.validation.invoke; "
+            "set it, so the plan and its fingerprint say the rewrites were validated"
+        )
+    checker = resolve_validator(validator) if validator is not None else None
+    checking = getattr(checker, "validator_id", None)
+    validator_mismatch = (
+        f"plan declares validator {validation.validator_id!r} but {checking!r} judged "
+        "the rewrites"
+        if checker is not None and checking != validation.validator_id
+        else None
+    )
     if stage not in {"pilot", "main"}:
         raise ValueError("stage must be 'pilot' or 'main'")
     selections = draw_selections(taxonomy, design, stage_id=stage)  # type: ignore[arg-type]
+    # ORDER MATTERS: before any kernel call or ledger write. A family the analysis could not
+    # estimate then stops the run while nothing has been spent on it; checked later, every
+    # rewrite would be generated and evaluated, and only the analysis would refuse.
+    check_declared_slice_family(plan, taxonomy, design, selections)
 
-    completed, accepted_before = _prior_work(directory, selections) if resume else ({}, {})
+    completed, accepted_before = (
+        _prior_work(
+            directory, selections, conversations=plan.rewrite.stores_conversations()
+        )
+        if resume
+        else ({}, {})
+    )
     resumed = len(completed)
+    attempts_path = directory / ATTEMPT_LEDGER
+    # ORDER MATTERS: the ledgers are replaced after _prior_work has read them and before the
+    # writers below open them. A writer opened first would keep appending to the file the
+    # replace unlinks, so on POSIX every row of the resumed run would be lost with it; on
+    # Windows the replace would fail, because an open file cannot be replaced.
+    if resume:
+        _keep_finished_rewrites(directory / REWRITE_LEDGER, completed)
+        _keep_accepted_prompts(directory / PROMPT_STORE, accepted_before)
+    if plan.rewrite.records_attempts:
+        _keep_finished_attempts(attempts_path, completed)
     # Selections are known before any kernel call, so they are persisted first: an
     # interrupted run then still records what it set out to evaluate.
     write_selections(selections, directory / SELECTION_LEDGER)
 
-    # Both artifacts are appended to, never rewritten. Resuming therefore cannot destroy
-    # the work it is building on, even if the resumed run is itself interrupted. Rows land
-    # in completion order rather than selection order; nothing downstream reads order.
+    # From here the artifacts are only appended to, and pruning replaced each in one step,
+    # keeping every finished unit. Resuming therefore cannot destroy the work it is
+    # building on, even if the resumed run is itself interrupted. Rows land in completion
+    # order rather than selection order; nothing downstream reads order.
     ledger = rewrite_ledger_writer(directory / REWRITE_LEDGER)
     prompts_out = prompt_store_writer(directory / PROMPT_STORE)
-    with ledger, prompts_out:
+    attempts_out = attempt_ledger_writer(attempts_path)
+    # The attempt ledger is opened only when the plan records attempts, so a plan that does
+    # not leaves no attempts.csv behind.
+    with ledger, prompts_out, (
+        attempts_out if plan.rewrite.records_attempts else contextlib.nullcontext()
+    ):
+        def note_attempt(entry: AttemptRecord) -> None:
+            attempts_out.append(entry.model_dump(mode="json"))
+
         def persist(record: RewriteRecord, entry: AcceptedRewrite | None) -> None:
-            ledger.append(record.model_dump(mode="json"))
+            # ORDER MATTERS: the prompt row before the rewrite row. A run killed between
+            # the two then leaves a prompt no finished unit claims, which a resume drops
+            # before it reruns the unit. The other way round, it leaves a unit recorded as
+            # accepted without its text, and every resume refuses the directory.
             if entry is not None:
-                prompts_out.append({
-                    "sampling_unit_id": entry.sampling_unit_id,
-                    "prompt_id": entry.prompt_id,
-                    "prompt": entry.prompt,
-                    "prompt_sha256": entry.prompt_sha256,
-                })
+                prompts_out.append(_prompt_row(entry))
+            ledger.append(record.model_dump(mode="json"))
 
         result = execute_rewrites(
             plan,
@@ -302,6 +479,8 @@ def materialize_run(
             completed=completed,
             already_accepted=accepted_before,
             on_unit=persist,
+            validator=checker,
+            on_attempt=note_attempt,
         )
 
     datasets = materialize_for_cohorts(plan, selections, result, directory / "datasets")
@@ -318,7 +497,99 @@ def materialize_run(
         kernel_mismatch=mismatch,
         resumed=resumed,
         first_error=result.first_error,
+        validator_id=checking,
+        validator_mismatch=validator_mismatch,
     )
+
+
+def _other_kernels(
+    rewrites: list[RewriteRecord], kernel: KernelFingerprint
+) -> Diagnostic | None:
+    """Warn of rewrites the ledger records under another rewrite procedure than the plan's.
+
+    The report names the plan's kernel fingerprint as the procedure behind its prompts. A
+    plan whose rewrite section or prompt template changed after materialization, or before
+    a resume, no longer describes the rewrites recorded before the change.
+    """
+
+    recorded = Counter(record.rewrite_kernel_sha256 for record in rewrites)
+    other = {digest: count for digest, count in sorted(recorded.items()) if digest != kernel.sha256}
+    if not other:
+        return None
+    return Diagnostic(
+        code="GENERATIVE_KERNEL_MISMATCH",
+        severity="WARNING",
+        message=(
+            f"the rewrite ledger records {sum(other.values())} of {len(rewrites)} unit(s) "
+            "under another rewrite procedure than the plan declares, so the plan's rewrite "
+            "section or prompt template changed after they were materialized; the report's "
+            "kernel_sha256 does not describe them, and the details give the fingerprints the "
+            "ledger records"
+        ),
+        scope=plan_scope("rewrite"),
+        details={"plan": kernel.sha256, **{f"ledger:{key}": value for key, value in other.items()}},
+    )
+
+
+def _prompt_row(entry: AcceptedRewrite) -> dict[str, str]:
+    return {
+        "sampling_unit_id": entry.sampling_unit_id,
+        "prompt_id": entry.prompt_id,
+        "prompt": entry.prompt,
+        "prompt_sha256": entry.prompt_sha256,
+    }
+
+
+def _keep_finished_rewrites(path: Path, completed: dict[str, RewriteRecord]) -> None:
+    """Leave in the rewrite ledger only the rows of units that will not run again.
+
+    A unit recorded as ``error`` runs again, and its new row is appended. Left in place, its
+    old row would record the unit twice, which the analysis refuses. The ledger is written
+    afresh even when no row is dropped, so one that a development version wrote with CRLF
+    line endings continues with the LF rows the resumed run appends, never a mix.
+    """
+
+    if not path.exists():
+        return
+    rewrite_ledger_writer(path).replace(
+        record.model_dump(mode="json") for record in completed.values()
+    )
+
+
+def _keep_accepted_prompts(path: Path, accepted: dict[str, AcceptedRewrite]) -> None:
+    """Leave in the prompt store only the prompts of the accepted units it was read for.
+
+    Those are the prompts the resumed run builds on, and their text is written back as it
+    was read. Written afresh like the rewrite ledger, for the same reason.
+    """
+
+    if not path.exists():
+        return
+    prompt_store_writer(path).replace(_prompt_row(entry) for entry in accepted.values())
+
+
+def _keep_finished_attempts(path: Path, completed: dict[str, RewriteRecord]) -> None:
+    """Leave in the attempt ledger only the attempts of units that will not run again.
+
+    Attempts are appended as they are made, before their unit's row reaches the rewrite
+    ledger, so an interrupted run can leave attempts of a unit that is not finished. That
+    unit runs again from its first attempt, and its stale rows would collide with the new
+    ones. A unit that errored runs again for the same reason.
+
+    The kept rows are written by the ledger's own writer, so the rows the resumed run
+    appends end their lines as they do.
+    """
+
+    if not completed:
+        path.unlink(missing_ok=True)
+        return
+    if not path.exists():
+        raise ValueError(
+            f"the plan records attempts, but the partial run being resumed has no "
+            f"{ATTEMPT_LEDGER}; it was materialized under different rewrite settings"
+        )
+    kept = [record for record in read_attempts(path) if record.sampling_unit_id in completed]
+    attempt_ledger_writer(path).replace(record.model_dump(mode="json") for record in kept)
 
 
 
@@ -338,7 +609,9 @@ def _judge_correction(
 
     The root is corrected under every declared scenario, since sensitivity to the judge is
     mostly a root-level question. Nodes and slices are corrected under the primary scenario
-    only, which keeps the artifact readable on a taxonomy with hundreds of nodes.
+    only, which keeps the artifact readable on a taxonomy with hundreds of nodes. A measured
+    calibration certifies the root only, and only when the root weights its units equally:
+    every other corrected estimate is a sensitivity that names why.
     """
 
     spec = plan.judge_calibration
@@ -358,7 +631,9 @@ def _judge_correction(
             targets = [tree.root]
             if scenario.id == spec.primary:
                 targets = [*tree.nodes, *slices]
-            corrected.extend(correct(targets, calibration, interval_alpha=alpha))
+            corrected.extend(
+                correct(targets, calibration, interval_alpha=alpha, root_id=tree.root.node_id)
+            )
         meta: dict[str, Any] = {
             "judge_calibration": {"mode": "assumed", "primary": spec.primary}
         }
@@ -373,7 +648,14 @@ def _judge_correction(
                 "judge_calibration": {"mode": "validated", "available": False}
             }
             return [], unavailable
-        corrected.extend(correct([*tree.nodes, *slices], measured, interval_alpha=alpha))
+        corrected.extend(
+            correct(
+                [*tree.nodes, *slices],
+                measured,
+                interval_alpha=alpha,
+                root_id=tree.root.node_id,
+            )
+        )
         meta = {
             "judge_calibration": {
                 "mode": "validated",
@@ -388,9 +670,7 @@ def _judge_correction(
 
     for comparison in comparisons:
         diagnostics.append(
-            comparison_refusal(
-                f"{comparison.candidate_cohort}:{comparison.baseline_cohort}"
-            )
+            comparison_refusal(comparison.candidate_cohort, comparison.baseline_cohort)
         )
     return corrected, meta
 
@@ -423,6 +703,12 @@ def analyze_run(
             "edited after materialization, so the declared design and the evaluated one "
             "differ"
         )
+    # A family declared after materialization is refused here, before the logs are read.
+    check_declared_slice_family(plan, taxonomy, design, selections)
+    kernel = resolve_kernel_fingerprint(plan, base_path=base)
+    other_kernels = _other_kernels(rewrites, kernel)
+    if other_kernels is not None:
+        diagnostics.append(other_kernels)
 
     # Reading Inspect logs needs the inspect extra; materialization reads none, so the
     # reader is imported only here.
@@ -511,13 +797,15 @@ def analyze_run(
                     "different rates, so the accepted prompt distribution is shaped "
                     "differently across that level"
                 ),
-                scope=level,
+                scope=plan_scope("taxonomy", "hierarchy", level),
                 details={
                     row.value: round(row.exhaustion_rate, 4)
                     for row in sorted(spread, key=lambda item: -item.exhaustion_rate)
                 },
             )
         )
+
+    fidelity = _fidelity(plan, ledger_path, selections, rewrites, diagnostics)
 
     reweightings = [
         estimate_reweighted(
@@ -534,6 +822,22 @@ def analyze_run(
         )
         for reweighting in plan.inference.design_sensitivity
     ]
+
+    family = None
+    if plan.inference.slice_family is not None:
+        family_slices, family_contrasts = _family_members(plan.inference.slice_family)
+        family = estimate_slice_family(
+            taxonomy,
+            design,
+            selections,
+            joined[primary],
+            slices=family_slices,
+            contrasts=family_contrasts,
+            alpha=plan.inference.alpha,
+            coverage_mode=plan.inference.coverage_mode,
+        )
+        if plan.judge_calibration is not None:
+            diagnostics.append(slice_family_refusal())
 
     corrected, judge_meta = _judge_correction(
         plan,
@@ -554,7 +858,7 @@ def analyze_run(
             "intent": plan.evaluation.intent,
             "plan_sha256": plan_sha256(plan_path),
             "taxonomy_fingerprint": taxonomy.fingerprint,
-            "kernel_sha256": resolve_kernel_fingerprint(plan, base_path=base).sha256,
+            "kernel_sha256": kernel.sha256,
             "primary_cohort": primary,
             **judge_meta,
         },
@@ -581,5 +885,105 @@ def analyze_run(
         corrected=corrected,
         acceptance=acceptance,
         reweightings=reweightings,
+        slice_family=family,
         diagnostics=diagnostics,
+        fidelity=fidelity,
     )
+
+
+def _fidelity(
+    plan: GenerativePlan,
+    directory: Path,
+    selections: list[SelectionRecord],
+    rewrites: list[RewriteRecord],
+    diagnostics: list[Diagnostic],
+) -> list[FidelityRow] | None:
+    """Fidelity by arm from the attempt ledger, when the plan records one.
+
+    Appends three diagnostics: a validator that judged rewrites under another identifier
+    than the plan's, or a kept rewrite that no validator judged; a level whose values it
+    rejects at rates more than five percentage points apart, however few rewrites it
+    judged; and units whose kept rewrite followed a duplicate rejection, whose prompts
+    therefore depend on the rewrites kept for earlier units. A run in which no rewrite
+    reached the validator and none was kept gives the first nothing to compare.
+    """
+
+    if not plan.rewrite.records_attempts:
+        return None
+    path = directory / ATTEMPT_LEDGER
+    if not path.exists():
+        raise ValueError(
+            f"the plan records rewrite attempts but {path} is missing; materialize the run "
+            "under this plan"
+        )
+    attempts = read_attempts(path)
+    check_attempts(rewrites, attempts)
+    rows = fidelity_by_level(selections, attempts)
+
+    declared = plan.rewrite.validation.validator_id
+    used = sorted({item.validator_id for item in attempts if item.validator_id is not None})
+    # A kept rewrite without a validator was materialized under a plan that did not invoke
+    # one, as when validation.invoke was set after materialization or before a resume.
+    unjudged = sum(1 for item in attempts if item.accepted and item.validator_id is None)
+    findings: list[str] = []
+    if any(item != declared for item in used):
+        findings.append(f"records {', '.join(repr(item) for item in used)}")
+    if unjudged:
+        findings.append(f"records {unjudged} kept rewrite(s) that no validator judged")
+    if plan.rewrite.validation.invoke and findings:
+        diagnostics.append(
+            Diagnostic(
+                code="GENERATIVE_VALIDATOR_MISMATCH",
+                severity="WARNING",
+                message=(
+                    f"the plan declares validator {declared!r}, but the attempt ledger "
+                    + ", and ".join(findings)
+                ),
+                scope=plan_scope("rewrite", "validation"),
+            )
+        )
+
+    for level in uneven_fidelity(rows):
+        spread = [row for row in rows if row.level == level]
+        fewest = min(
+            row.validator_judged for row in spread if row.validator_rejection_rate is not None
+        )
+        diagnostics.append(
+            Diagnostic(
+                code="GENERATIVE_FIDELITY_UNEVEN",
+                severity="WARNING",
+                message=(
+                    f"the validator's rejection rates for the values of {level!r} are more "
+                    "than five percentage points apart, so arm fidelity may differ across "
+                    f"that level; the fewest rewrites it judged for one value is {fewest}, "
+                    "and among few judged rewrites a spread this wide can arise by chance"
+                ),
+                scope=plan_scope("taxonomy", "hierarchy", level),
+                details={
+                    row.value: round(row.validator_rejection_rate, 4)
+                    for row in sorted(
+                        spread, key=lambda item: -(item.validator_rejection_rate or 0.0)
+                    )
+                    if row.validator_rejection_rate is not None
+                },
+            )
+        )
+
+    dependent = units_retried_after_duplicate(attempts)
+    if dependent:
+        diagnostics.append(
+            Diagnostic(
+                code="GENERATIVE_RETRY_DEPENDENCE",
+                severity="INFO",
+                message=(
+                    f"{len(dependent)} unit(s) kept a rewrite only after a duplicate "
+                    "rejection, so their prompts depend on the rewrites accepted for "
+                    "earlier units in selection order"
+                ),
+                scope=plan_scope("rewrite", "deduplication"),
+                details={"units": len(dependent), "evaluable_units": sum(
+                    1 for record in rewrites if record.is_evaluable()
+                )},
+            )
+        )
+    return rows

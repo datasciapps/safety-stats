@@ -1,3 +1,4 @@
+import itertools
 import math
 
 import numpy as np
@@ -5,9 +6,12 @@ import pytest
 from scipy.stats import binom
 
 from inspect_safety_stats.stats import (
+    weighted_bounded_kl_chernoff_mean_bounds,
     weighted_empirical_bernstein_mean_bounds,
     weighted_hoeffding_mean_bounds,
     weighted_kl_chernoff_mean_bounds,
+    worst_of_k_estimate,
+    worst_of_k_kl_chernoff_bounds,
 )
 
 
@@ -354,6 +358,125 @@ def test_direct_mean_rejects_invalid_inputs() -> None:
             alpha_lower=0.025,
             alpha_upper=0.025,
         )
+
+
+@pytest.mark.parametrize(
+    ("trials", "weights", "probabilities", "k"),
+    [
+        ((10,), (1.0,), (0.05,), 2),
+        ((10,), (1.0,), (0.1,), 3),
+        ((10,), (1.0,), (0.05,), 5),
+        ((8, 8), (0.5, 0.5), (0.05, 0.05), 3),
+        ((8, 8), (0.5, 0.5), (0.1, 0.1), 5),
+        ((8, 8), (0.5, 0.5), (0.02, 0.3), 2),
+        ((6, 9), (0.3, 0.7), (0.05, 0.05), 5),
+        ((6, 9), (0.3, 0.7), (0.4, 0.1), 3),
+        ((60,), (1.0,), (0.3,), 2),
+        ((40, 40), (0.5, 0.5), (0.1, 0.2), 2),
+    ],
+)
+def test_worst_of_k_bounds_have_one_sided_finite_sample_coverage(
+    trials: tuple[int, ...],
+    weights: tuple[float, ...],
+    probabilities: tuple[float, ...],
+    k: int,
+) -> None:
+    # Exact enumeration over the binomial outcomes. Entering every rollout as its own block
+    # at the prompt's share, instead of floor(n / k) blocks, covers as little as 40% here.
+    # The small designs have too few blocks to tell the estimand apart, so the last two have
+    # many: bounding the mean failure rate in place of 1 - (1 - p)^k, from the same blocks,
+    # covers the risk from above only 44% and 67% of the time there.
+    alpha = 0.1
+    risk = float(np.dot(weights, [1 - (1 - p) ** k for p in probabilities]))
+    lower_coverage = upper_coverage = 0.0
+    for counts in itertools.product(*(range(n + 1) for n in trials)):
+        mass = math.prod(
+            float(binom.pmf(count, n, p))
+            for count, n, p in zip(counts, trials, probabilities, strict=True)
+        )
+        result = worst_of_k_kl_chernoff_bounds(
+            list(counts),
+            [0] * len(trials),
+            list(trials),
+            list(weights),
+            k=k,
+            alpha_lower=alpha,
+            alpha_upper=alpha,
+        )
+        lower_coverage += mass * (result.lower <= risk)
+        upper_coverage += mass * (risk <= result.upper)
+    assert lower_coverage >= 1 - alpha - 1e-12
+    assert upper_coverage >= 1 - alpha - 1e-12
+
+
+def test_worst_of_k_bounds_at_one_attempt_are_the_rollout_level_bounds() -> None:
+    arguments = {
+        "failures": [3, 0, 7],
+        "unclassified": [1, 2, 0],
+        "trials": [20, 15, 20],
+        "weights": [0.25, 0.25, 0.5],
+        "alpha_lower": 0.01,
+        "alpha_upper": 0.02,
+    }
+    worst = worst_of_k_kl_chernoff_bounds(**arguments, k=1)  # type: ignore[arg-type]
+    rollout = weighted_kl_chernoff_mean_bounds(**arguments)  # type: ignore[arg-type]
+    assert worst.lower == pytest.approx(rollout.lower, rel=1e-9, abs=0)
+    assert worst.upper == pytest.approx(rollout.upper, rel=1e-9, abs=0)
+    assert worst.chernoff_kernel == rollout.chernoff_kernel
+
+
+def test_worst_of_k_bounds_enter_each_prompt_as_floor_n_over_k_blocks() -> None:
+    # With 20 rollouts, k = 7 leaves two blocks per prompt and k = 11 one, the prompt level.
+    failures, trials, weights = [2, 5], [20, 20], [0.5, 0.5]
+    for k, blocks in ((7, 2), (11, 1)):
+        shares = [
+            worst_of_k_estimate([failures[i]], [trials[i]], [1.0], k=k) for i in range(2)
+        ]
+        expected = weighted_bounded_kl_chernoff_mean_bounds(
+            np.repeat(shares, blocks),
+            np.repeat(shares, blocks),
+            np.full(2 * blocks, 0.5 / blocks),
+            alpha_lower=0.025,
+            alpha_upper=0.025,
+            independence_profile="rollout",
+        )
+        result = worst_of_k_kl_chernoff_bounds(
+            failures, [0, 0], trials, weights, k=k, alpha_lower=0.025, alpha_upper=0.025
+        )
+        assert (result.lower, result.upper) == (expected.lower, expected.upper)
+        assert result.completion_estimate_lower == pytest.approx(
+            worst_of_k_estimate(failures, trials, weights, k=k), rel=1e-12, abs=0
+        )
+
+
+def test_worst_of_k_bounds_complete_unclassified_rollouts_both_ways() -> None:
+    def bounds(failures: list[int], unclassified: list[int]) -> tuple[float, float]:
+        result = worst_of_k_kl_chernoff_bounds(
+            failures,
+            unclassified,
+            [12, 12],
+            [0.5, 0.5],
+            k=4,
+            alpha_lower=0.05,
+            alpha_upper=0.05,
+        )
+        return result.lower, result.upper
+
+    lower, upper = bounds([1, 2], [2, 1])
+    for extra in itertools.product(range(3), range(2)):
+        labelled_lower, labelled_upper = bounds([1 + extra[0], 2 + extra[1]], [0, 0])
+        assert lower <= labelled_lower
+        assert labelled_upper <= upper
+
+
+def test_worst_of_k_bounds_refuse_what_the_design_cannot_bound() -> None:
+    arguments = {"alpha_lower": 0.05, "alpha_upper": 0.05}
+    with pytest.raises(ValueError, match="at least 5 attempted rollouts"):
+        worst_of_k_kl_chernoff_bounds([0, 0], [0, 0], [10, 4], [0.5, 0.5], k=5, **arguments)
+    with pytest.raises(ValueError, match="integer of at least one"):
+        worst_of_k_kl_chernoff_bounds([0], [0], [4], [1.0], k=True, **arguments)
+    with pytest.raises(ValueError, match="integer of at least one"):
+        worst_of_k_kl_chernoff_bounds([0], [0], [4], [1.0], k=0, **arguments)
 
 
 @pytest.mark.parametrize(

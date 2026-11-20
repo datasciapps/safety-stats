@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
-from enum import Enum
+from enum import Enum, IntEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Literal
 
@@ -11,7 +11,15 @@ import typer
 from inspect_safety_stats.version import __version__
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    import numpy as np
+    import pandas as pd
+
+    from inspect_safety_stats.claim_planning import EndpointAlpha
     from inspect_safety_stats.ingest.records import EvaluationSource
+    from inspect_safety_stats.schema.reports import Diagnostic
+    from inspect_safety_stats.schema.summary import SummaryWarning
 
 # Each command imports what it needs when it runs, so that `version`, `--help`, `plan` and
 # `schema` do not load Inspect AI, pandas and the analysis pipeline.
@@ -19,10 +27,16 @@ if TYPE_CHECKING:
 app = typer.Typer(help="Fixed-design statistical risk analysis for Inspect AI evaluations.")
 plan_app = typer.Typer(help="Prospective evaluation planning tools.")
 schema_app = typer.Typer(help="Print machine-readable schemas.")
+# The caveat every entry point to the generative surface carries, word for word (#24; the
+# docs' copies are checked by tests/test_repository_consistency.py).
+GENERATIVE_CAVEAT = (
+    "The generative pipeline is experimental: its public surface, "
+    "`inspect_safety_stats.generative.__all__`, may change in any minor release."
+)
 generative_app = typer.Typer(
     help=(
         "Generative-design evaluations, where prompts are sampled from a declared "
-        "taxonomy rather than fixed in advance."
+        "taxonomy rather than fixed in advance. " + GENERATIVE_CAVEAT
     )
 )
 app.add_typer(plan_app, name="plan")
@@ -30,6 +44,59 @@ app.add_typer(schema_app, name="schema")
 app.add_typer(generative_app, name="generative")
 
 
+class ExitCode(IntEnum):
+    """Every exit status a command chooses, in one table (docs/api-reference.md#exit-codes).
+
+    ERROR is guaranteed only by analyze, hash-plan, init, validate, visualize and the generative
+    commands. A plan that plan fixed-design --plan cannot load is not routed here (exit 1 for
+    malformed YAML, or a usage error exiting 2).
+
+    typer itself exits 2 on a usage error, such as a missing option, before any command runs.
+    """
+
+    OK = 0
+    # analyze --decision-exit-codes: the decision is FAIL.
+    FAIL = 1
+    # plan fixed-design --plan: no claim of the plan could be planned.
+    NOTHING_PLANNED = 1
+    # analyze --decision-exit-codes: the decision is INCONCLUSIVE.
+    INCONCLUSIVE = 2
+    # The command could not run, or its result supports no claim: an invalid integrity, or a
+    # generative analysis with ERROR diagnostics.
+    ERROR = 3
+
+
+_DECISION_EXIT_CODES = {
+    "PASS": ExitCode.OK,
+    "FAIL": ExitCode.FAIL,
+    "INCONCLUSIVE": ExitCode.INCONCLUSIVE,
+}
+
+
+DecisionPolicyOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--decision-policy",
+        exists=True,
+        dir_okay=False,
+        help=(
+            "A decision policy whose thresholds replace the plan's for the claims it sets, "
+            "without changing the plan's hash (experimental; docs/decision-policy.md)."
+        ),
+    ),
+]
+ReceiptOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--registration-receipt",
+        exists=True,
+        dir_okay=False,
+        help=(
+            "Receipt written by hash-plan --register: checked against the plan's hash and "
+            "the earliest evaluation start. Experimental: see docs/plan-reference.md."
+        ),
+    ),
+]
 RunsOption = Annotated[
     Path | None,
     typer.Option(
@@ -62,8 +129,10 @@ def _source_arguments(
     """What to analyse, as ``logs`` and ``source``: Inspect logs or rollout files."""
 
     if runs is not None or rollouts is not None:
-        if runs is None or rollouts is None:
-            raise typer.BadParameter("--runs and --rollouts are given together")
+        if rollouts is None:
+            raise typer.BadParameter("--runs needs --rollouts: the two files are read together")
+        if runs is None:
+            raise typer.BadParameter("--rollouts needs --runs: the two files are read together")
         if logs:
             raise typer.BadParameter("pass either --logs or --runs and --rollouts, not both")
         from inspect_safety_stats.ingest.rollout_files import RolloutFiles
@@ -72,6 +141,186 @@ def _source_arguments(
     if not logs:
         raise typer.BadParameter("at least one --logs path is required")
     return (str(logs[0]) if len(logs) == 1 else [str(path) for path in logs]), None
+
+
+@app.command("init")
+def init_command(
+    logs: Annotated[list[Path] | None, typer.Option("--logs", exists=True)] = None,
+    failure_values: Annotated[
+        list[str] | None,
+        typer.Option("--failure-values", help="Score values that count as a safety failure."),
+    ] = None,
+    safe_values: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--safe-values",
+            help=(
+                "Score values that count as safe. Required when the score has more than two "
+                "values; with two, the one --failure-values does not name is safe."
+            ),
+        ),
+    ] = None,
+    failure_threshold: Annotated[
+        float | None,
+        typer.Option("--failure-threshold", help="Numeric scores at or above this are failures."),
+    ] = None,
+    score: Annotated[str | None, typer.Option("--score", help="Scorer name to analyze.")] = None,
+    group_by: Annotated[
+        str | None,
+        typer.Option("--group-by", help="Sample metadata field for a one-level breakdown."),
+    ] = None,
+    baseline: Annotated[
+        str | None,
+        typer.Option("--baseline", help="Model (or cohort id) to compare the others against."),
+    ] = None,
+    alpha: Annotated[
+        float,
+        typer.Option(
+            "--alpha",
+            min=0.0,
+            max=1.0,
+            help=(
+                "The error rate each multiplicity family of the plan spends on its own: the "
+                "prompt bounds, the risk intervals and, with several models, the comparisons."
+            ),
+        ),
+    ] = 0.05,
+    nested_weights: Annotated[
+        bool,
+        typer.Option(
+            "--nested-weights/--equal-prompt-weights",
+            help="Weight each group equally rather than each prompt.",
+        ),
+    ] = False,
+    output: Annotated[Path, typer.Option("--output", file_okay=False)] = Path("."),
+    overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
+    intent: Annotated[
+        str,
+        typer.Option(
+            "--intent",
+            help=(
+                "The plan's analysis.intent. Only exploratory: a plan written after the logs "
+                "exist cannot be confirmatory."
+            ),
+        ),
+    ] = "exploratory",
+) -> None:
+    """Write a starter design manifest and plan from completed Inspect logs (experimental).
+
+    The plan reports the root failure risk per model with a prompt-level sensitivity,
+    an optional one-level breakdown, and a comparison when there are several models.
+    Its header notes each assumption the plan rests on, rollout independence first,
+    with what goes wrong if it does not hold and how to change it.
+    Edit it to add claims, risk measures or judge calibration.
+    """
+
+    if not logs:
+        raise typer.BadParameter("at least one --logs path is required")
+    from inspect_safety_stats.scaffold import scaffold_plan
+
+    try:
+        result = scaffold_plan(
+            [str(path) for path in logs],
+            output,
+            score=score,
+            failure_values=failure_values,
+            safe_values=safe_values,
+            failure_threshold=failure_threshold,
+            group_by=group_by,
+            baseline=baseline,
+            alpha=alpha,
+            weights="nested_equal" if nested_weights else "equal_prompt",
+            overwrite=overwrite,
+            intent=intent,
+        )
+    except Exception as exc:
+        typer.echo(f"Init failed: {exc}", err=True)
+        raise typer.Exit(code=ExitCode.ERROR) from exc
+    typer.echo(f"Score: {result.score}")
+    if result.failure_values is not None:
+        typer.echo(f"  failure values: {result.failure_values!r}")
+        typer.echo(f"  safe values:    {result.safe_values!r}")
+    else:
+        typer.echo(f"  failure if score >= {failure_threshold}")
+    typer.echo(
+        f"Prompts: {result.prompts}, rollouts per prompt: {result.rollouts_per_prompt}"
+        + (f", grouped by {result.group_by!r}" if result.group_by else "")
+    )
+    for cohort, model in result.cohorts.items():
+        marker = " (reference)" if cohort == result.reference else ""
+        typer.echo(f"Cohort {cohort}: {model}{marker}")
+    for note in result.notes:
+        typer.echo(f"Note: {note}")
+    typer.echo("Assumptions (the plan's header says what each means and how to change it):")
+    for assumption in result.assumptions:
+        typer.echo(f"  {assumption.assumption}: {assumption.choice}")
+    typer.echo(f"Manifest: {result.manifest_path}")
+    typer.echo(f"Plan: {result.plan_path}")
+    log_args = " ".join(f"--logs {path}" for path in result.logs)
+    typer.echo(
+        f"Next: inspect-safety-stats analyze --plan {result.plan_path} {log_args} "
+        "--output <report-dir>"
+    )
+
+
+# How many distinct messages of one error code the command prints under its line.
+_ERROR_MESSAGES_SHOWN = 3
+
+
+def _echo_warnings(
+    warnings: list[SummaryWarning], index_md: Path, diagnostics: Sequence[Diagnostic] = ()
+) -> None:
+    """Print the report's errors and warnings by code on stderr, as index.md lists them.
+
+    Each code gets one line: its severity, how often it occurred, its effect on the results
+    and the registry's consequence, which says what the analysis did about it, so that a
+    reader of the command's output alone sees what qualifies the headline. The registry's
+    assumption is phrased as the assumption, so printed alone it would state as fact what the
+    code says may not hold; the header names the section of report.md that gives it beside
+    the effect, and the section of index.md that lists each code's diagnostics.
+
+    Under an error's line come the messages of its first diagnostics, which say what went
+    wrong, such as a missing manifest or a log reader that is not installed: the code and
+    its consequence alone do not say what to change.
+    """
+
+    from inspect_safety_stats.report.index import SUMMARY_PAGE, WARNINGS_HEADING
+    from inspect_safety_stats.report.summary import WARNINGS_SECTION
+
+    if not warnings:
+        return
+    kinds = (
+        "Errors and warnings"
+        if any(warning.severity == "ERROR" for warning in warnings)
+        else "Warnings"
+    )
+    typer.echo(
+        f'{kinds} by code, listed in {index_md} under "{WARNINGS_HEADING}"; '
+        f"{index_md.with_name(SUMMARY_PAGE)} gives each one's assumption and effect under "
+        f'"{WARNINGS_SECTION}":',
+        err=True,
+    )
+    for warning in warnings:
+        times = "occurrence" if warning.count == 1 else "occurrences"
+        effect = f", {warning.effect}" if warning.effect else ""
+        consequence = warning.consequence or "no registry entry gives its consequence"
+        typer.echo(
+            f"  {warning.severity} {warning.code} ({warning.count} {times}{effect}): "
+            f"{consequence}",
+            err=True,
+        )
+        if warning.severity != "ERROR":
+            continue
+        messages = list(
+            dict.fromkeys(item.message for item in diagnostics if item.code == warning.code)
+        )
+        for message in messages[:_ERROR_MESSAGES_SHOWN]:
+            typer.echo(f"    {message}", err=True)
+        if len(messages) > _ERROR_MESSAGES_SHOWN:
+            typer.echo(
+                f"    and {len(messages) - _ERROR_MESSAGES_SHOWN} more, listed in {index_md}",
+                err=True,
+            )
 
 
 @app.command("analyze")
@@ -87,6 +336,8 @@ def analyze_command(
         bool, typer.Option("--decision-exit-codes/--no-decision-exit-codes")
     ] = False,
     allow_invalid: Annotated[bool, typer.Option("--allow-invalid")] = False,
+    decision_policy: DecisionPolicyOption = None,
+    registration_receipt: ReceiptOption = None,
 ) -> None:
     """Analyze completed Inspect logs or rollout files against a plan and write the report."""
 
@@ -95,22 +346,59 @@ def analyze_command(
 
     try:
         report = run_analysis(
-            plan=plan, logs=log_input, parallel=parallel or False, source=source
+            plan=plan,
+            logs=log_input,
+            parallel=parallel or False,
+            source=source,
+            decision_policy=decision_policy,
+            registration_receipt=registration_receipt,
         )
         path = report.write(output, overwrite=overwrite)
     except Exception as exc:
         typer.echo(f"Analysis failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
+        raise typer.Exit(code=ExitCode.ERROR) from exc
     typer.echo(f"Analysis: {report.analysis['id']}")
     typer.echo(f"Plan SHA-256: {report.analysis['plan_sha256']}")
     typer.echo(f"Integrity: {report.integrity.status}")
-    if report.presentation.get("include_decisions", False):
+    if report.presentation.include_decisions:
         for claim in report.claims:
             if claim.mandatory:
                 typer.echo(f"{claim.status}: {claim.title}")
+        for adaptive in report.adaptive_claims:
+            if adaptive.mandatory:
+                typer.echo(
+                    f"{adaptive.status}: {adaptive.title} "
+                    "(adaptive attacker, experimental, FAIL only)"
+                )
         typer.echo(f"Decision: {report.decision}")
-    else:
-        typer.echo(f"Risk measures: {len(report.group_risks)}")
+    from inspect_safety_stats.report.summary import rate_interval_text, rate_text
+
+    # The headline is each weighted-mean failure rate of report.json's summary, printed as
+    # report.md prints it: each bound rounded outward, and where a judge correction applies
+    # the true risk after it.
+    summary = report.summary
+    headline = [item for item in summary.headline if item.kind == "group_risk"]
+    if headline:
+        typer.echo("Failure rate (weighted mean):")
+    for item in headline:
+        interval = (
+            rate_interval_text(item.lower, item.upper)
+            if item.lower is not None and item.upper is not None
+            else "interval unavailable"
+        )
+        corrected = item.judge_corrected
+        true_risk = (
+            ""
+            if corrected is None
+            else f"; true risk {rate_interval_text(corrected.lower, corrected.upper)} "
+            f"(judge-corrected, {corrected.calibration} calibration, {corrected.eligibility})"
+        )
+        typer.echo(
+            f"  {item.cohort} / {item.group}: {rate_text(item.estimate)} {interval}{true_risk}"
+        )
+    _echo_warnings(summary.warnings, path / "index.md", report.integrity.diagnostics)
+    typer.echo(f"Summary: {path / 'report.md'}")
+    typer.echo(f"Index: {path / 'index.json'}")
     typer.echo(f"Report: {path}")
     # An invalid analysis supports no statistical claim, so it must not pass a CI gate by
     # exiting 0. The report is still written above so that its diagnostics can be audited.
@@ -120,9 +408,9 @@ def analyze_command(
             "Pass --allow-invalid to exit 0 anyway.",
             err=True,
         )
-        raise typer.Exit(code=3)
+        raise typer.Exit(code=ExitCode.ERROR)
     if decision_exit_codes:
-        raise typer.Exit(code={"PASS": 0, "FAIL": 1, "INCONCLUSIVE": 2}[report.decision])
+        raise typer.Exit(code=_DECISION_EXIT_CODES[report.decision])
 
 
 @app.command("validate")
@@ -132,18 +420,33 @@ def validate_command(
     runs: RunsOption = None,
     rollouts: RolloutsOption = None,
     parallel: Annotated[int, typer.Option("--parallel", min=0)] = 0,
+    decision_policy: DecisionPolicyOption = None,
+    registration_receipt: ReceiptOption = None,
 ) -> None:
     """Check logs or rollout files against a plan (manifest, cohorts, rollouts, scores)."""
 
     log_input, source = _source_arguments(logs, runs, rollouts)
     from inspect_safety_stats.api import validate as run_validation
 
-    result = run_validation(plan=plan, logs=log_input, parallel=parallel or False, source=source)
+    try:
+        result = run_validation(
+            plan=plan,
+            logs=log_input,
+            parallel=parallel or False,
+            source=source,
+            decision_policy=decision_policy,
+            registration_receipt=registration_receipt,
+        )
+    except Exception as exc:
+        # A plan or decision policy that cannot be read is invalid input: say why and exit 3,
+        # as analyze does, instead of ending in a traceback with exit status 1.
+        typer.echo(f"Validation failed: {exc}", err=True)
+        raise typer.Exit(code=ExitCode.ERROR) from exc
     for diagnostic in result.diagnostics:
         scope = f" [{diagnostic.scope}]" if diagnostic.scope else ""
         typer.echo(f"{diagnostic.severity} {diagnostic.code}{scope}: {diagnostic.message}")
     typer.echo(f"Integrity: {result.status}")
-    raise typer.Exit(code=3 if result.status == "invalid" else 0)
+    raise typer.Exit(code=ExitCode.ERROR if result.status == "invalid" else ExitCode.OK)
 
 
 @app.command("visualize")
@@ -160,7 +463,7 @@ def visualize_command(
         path = write_visualization(report, output, overwrite=overwrite)
     except Exception as exc:
         typer.echo(f"Visualization failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
+        raise typer.Exit(code=ExitCode.ERROR) from exc
     typer.echo(f"Visualization: {path}")
 
 
@@ -321,10 +624,72 @@ class IndependenceUnitOption(str, Enum):
     prompt_cluster = "prompt_cluster"
 
 
+def _planning_design(
+    manifest: Path,
+    weights: WeightStrategyOption,
+    hierarchy: str,
+    weight_column: str | None,
+) -> tuple[pd.DataFrame, np.ndarray]:
+    """Read a design manifest and resolve its weights as `analyze` would."""
+
+    from inspect_safety_stats.config.models import WeightSpec
+    from inspect_safety_stats.ingest.manifest import (
+        REQUIRED_COLUMNS,
+        load_manifest,
+        resolve_weights,
+    )
+
+    # resolve_weights only reads the column for explicit weights; ignoring it silently would
+    # plan under a weighting the user did not ask for.
+    if weight_column is not None and weights is not WeightStrategyOption.explicit:
+        raise typer.BadParameter("--weight-column applies only with --weights explicit")
+    try:
+        spec = WeightSpec.model_validate(
+            {
+                "strategy": weights.value,
+                "hierarchy": [level.strip() for level in hierarchy.split(",") if level.strip()],
+                "column": weight_column,
+            }
+        )
+        # Only the identifier levels the weighting names are required, as in analyze, and
+        # its hierarchy levels are read as text, as analyze reads them.
+        levels = spec.hierarchy if spec.strategy == "nested_equal" else []
+        named = {"prompt_id", *levels}
+        if spec.column is not None:
+            named.add(spec.column)
+        frame = load_manifest(
+            manifest, [column for column in REQUIRED_COLUMNS if column in named], levels
+        )
+        return frame, resolve_weights(frame, spec)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+
 @plan_app.command("fixed-design")
 def fixed_design_planning_command(
-    manifest: Annotated[Path, typer.Option("--manifest", exists=True, dir_okay=False)],
-    threshold: Annotated[float, typer.Option("--threshold", min=0.0, max=1.0)],
+    ctx: typer.Context,
+    manifest: Annotated[
+        Path | None,
+        typer.Option(
+            "--manifest",
+            exists=True,
+            dir_okay=False,
+            help="Design manifest; with --plan, overrides the plan's inputs.design_manifest.",
+        ),
+    ] = None,
+    threshold: Annotated[float | None, typer.Option("--threshold", min=0.0, max=1.0)] = None,
+    plan_path: Annotated[
+        Path | None,
+        typer.Option(
+            "--plan",
+            exists=True,
+            dir_okay=False,
+            help=(
+                "Analysis plan: plan every claim with the plan's groups, weights, hierarchy, "
+                "independence profile, multiplicity family and thresholds."
+            ),
+        ),
+    ] = None,
     alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
     power: Annotated[float, typer.Option("--power", min=0.0, max=1.0)] = 0.9,
     rollouts: Annotated[int | None, typer.Option("--rollouts", min=1)] = None,
@@ -338,36 +703,49 @@ def fixed_design_planning_command(
     ] = IndependenceUnitOption.rollout,
     family_size: Annotated[int, typer.Option("--family-size", min=1)] = 1,
 ) -> None:
-    """Detectable rates for a declared weighted design under a Hoeffding guarantee.
+    """Detectable rates for a declared weighted design.
 
     Reads the design manifest so planning sees the same prompts, weights, and
     expected rollout counts that `analyze` will resolve. Rollout counts come
     from the manifest's `expected_rollouts` column unless `--rollouts` supplies
-    a uniform override.
+    a uniform override. Without --plan the rates are weighted Hoeffding guarantees.
+
+    With --plan, every claim is planned as `analyze` will decide it, and the options the
+    plan supplies are refused rather than overridden.
     """
 
-    from inspect_safety_stats.config.models import WeightSpec
-    from inspect_safety_stats.ingest.manifest import load_manifest, resolve_weights
+    if plan_path is not None:
+        supplied = [
+            f"--{name.replace('_', '-')}"
+            for name in (
+                "threshold",
+                "alpha",
+                "weights",
+                "hierarchy",
+                "weight_column",
+                "independence_unit",
+                "family_size",
+            )
+            # typer vendors its own click, so the source is compared by name.
+            if getattr(ctx.get_parameter_source(name), "name", "DEFAULT") != "DEFAULT"
+        ]
+        if supplied:
+            raise typer.BadParameter(
+                f"{', '.join(supplied)} cannot be combined with --plan, which supplies them"
+            )
+        _plan_fixed_design_from_plan(plan_path, manifest, power=power, rollouts=rollouts)
+        return
+    if manifest is None or threshold is None:
+        raise typer.BadParameter("give --manifest and --threshold, or --plan")
+
     from inspect_safety_stats.stats.planning import fixed_design_detectable_failure_rates
 
-    # resolve_weights only reads the column for explicit weights; ignoring it silently would
-    # plan under a weighting the user did not ask for.
-    if weight_column is not None and weights is not WeightStrategyOption.explicit:
-        raise typer.BadParameter("--weight-column applies only with --weights explicit")
     local_alpha = alpha / family_size
     unit: Literal["rollout", "prompt_cluster"] = (
         "rollout" if independence_unit is IndependenceUnitOption.rollout else "prompt_cluster"
     )
+    frame, weight_values = _planning_design(manifest, weights, hierarchy, weight_column)
     try:
-        frame = load_manifest(manifest)
-        spec = WeightSpec.model_validate(
-            {
-                "strategy": weights.value,
-                "hierarchy": [level.strip() for level in hierarchy.split(",") if level.strip()],
-                "column": weight_column,
-            }
-        )
-        weight_values = resolve_weights(frame, spec)
         if rollouts is not None:
             trials = [rollouts] * len(frame)
         elif "expected_rollouts" in frame:
@@ -418,6 +796,389 @@ def fixed_design_planning_command(
     typer.echo(f"One-sided alpha per direction: {local_alpha:g}")
 
 
+def _rate(value: float | None) -> str:
+    return "unattainable" if value is None else f"{value:.8g}"
+
+
+def _alpha_share(alpha: EndpointAlpha) -> str:
+    if alpha.calibration == "pointwise":
+        return "pointwise, not simultaneous"
+    if alpha.calibration == "frontier_sidak":
+        return (
+            f"Sidak share of {alpha.frontier_alpha:g} across the {alpha.frontier_size} "
+            f"target(s) of frontier {alpha.frontier_id}"
+        )
+    return (
+        f"Bonferroni share of {alpha.directional_family_alpha:g} across "
+        f"{alpha.target_count} targets and {alpha.cohort_count} cohorts"
+    )
+
+
+def _plan_fixed_design_from_plan(
+    plan_path: Path, manifest: Path | None, *, power: float, rollouts: int | None
+) -> None:
+    from inspect_safety_stats.claim_planning import PlannedClaim, plan_design
+    from inspect_safety_stats.config.loader import load_plan
+
+    try:
+        plan = load_plan(plan_path)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    source, named_by = (
+        (plan.inputs.design_manifest, "inputs.design_manifest")
+        if manifest is None
+        else (manifest, "--manifest")
+    )
+    try:
+        design = plan_design(plan, power=power, manifest=source, rollouts=rollouts)
+    except OSError as exc:
+        # The design manifest is the only file plan_design reads.
+        raise typer.BadParameter(
+            f"cannot read the design manifest {source}, which {named_by} names: "
+            f"{exc.strerror or exc}"
+        ) from exc
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    claims = design.claims
+    typer.echo(
+        f"Design manifest: {source} "
+        + (
+            "(inputs.design_manifest)"
+            if manifest is None
+            else "(--manifest, in place of the plan's inputs.design_manifest)"
+        )
+    )
+    typer.echo(f"Claims: {len(claims)}")
+    typer.echo(f"Target power: {power:.8g}")
+    if design.method is not None:
+        typer.echo(
+            f"Interval method: {design.method}, as outputs.direct_mean_intervals declares; "
+            "Hoeffding is shown as the reference"
+        )
+    for item in claims:
+        typer.echo("")
+        if not isinstance(item, PlannedClaim):
+            typer.echo(f"Claim {item.claim_id}: not planned: {item.reason}")
+            continue
+        typer.echo(
+            f"Claim {item.claim_id}: cohort {item.cohort}, group {item.group}, "
+            f"measure {item.measure}"
+        )
+        typer.echo(f"  Prompts: {item.prompts}")
+        typer.echo(f"  Total rollouts: {item.total_rollouts}")
+        typer.echo(
+            f"  Independence profile: {item.independence_profile}"
+            + (
+                ""
+                if item.independent_blocks is None
+                else f" ({item.independent_blocks} independent blocks)"
+            )
+        )
+        planned = item.planned
+        typer.echo(f"  Effective sample size: {planned.effective_sample_size:.8g}")
+        alpha = item.alpha
+        typer.echo(
+            f"  One-sided alpha per direction: {alpha.endpoint_alpha:.8g} "
+            f"(family {alpha.family_id}, {_alpha_share(alpha)})"
+        )
+        support = item.hoeffding_support
+        rejection = item.hoeffding_rejection
+        typer.echo(
+            f"  PASS at acceptable_upper {item.acceptable_upper:.8g}: maximum certifiable "
+            f"failure rate at target power {_rate(planned.maximum_certifiable_failure_rate)} "
+            f"({planned.method}); Hoeffding reference "
+            + _rate(support.maximum_certifiable_failure_rate if support else None)
+        )
+        typer.echo(
+            f"  FAIL at unacceptable_lower {item.unacceptable_lower:.8g}: minimum detectable "
+            f"failure rate at target power {_rate(planned.minimum_detectable_failure_rate)} "
+            f"({planned.method}); Hoeffding reference "
+            + _rate(rejection.minimum_detectable_failure_rate if rejection else None)
+        )
+        typer.echo(
+            f"  Certification floor: {item.certification_floor:.8g}, the upper bound analyze "
+            "reports when every rollout is safe"
+            + (
+                f" ({item.raw_certification_floor:.8g} before the hierarchy-region projection; "
+                "the rates above are planned before it, and the projection can only raise "
+                "their power)"
+                if item.certification_floor < item.raw_certification_floor
+                else ""
+            )
+        )
+        for reference in item.references:
+            typer.echo(
+                f"  Reference method {reference.method}: maximum certifiable "
+                f"{_rate(reference.maximum_certifiable_failure_rate)}, minimum detectable "
+                f"{_rate(reference.minimum_detectable_failure_rate)}"
+            )
+        for unplanned in item.unplanned_references:
+            typer.echo(
+                f"  Reference method {unplanned}: not planned; the planner cannot invert its "
+                "interval"
+            )
+    if design.intervals:
+        typer.echo("")
+        typer.echo(
+            f"Direct-mean intervals analyze will report ({design.method}); "
+            "raw floor is the interval's upper bound when every rollout is safe, and floor "
+            "the bound analyze reports then, after the hierarchy-region projection when the "
+            "plan asks for it. A target resolves when its floor is at or below its group's "
+            "smallest acceptable_upper:"
+        )
+        typer.echo(
+            f"  {'profile':<14} {'cohort':<14} {'target':<36} {'blocks':>7} {'ESS':>9} "
+            f"{'alpha':>11} {'calibration':<15} {'raw floor':>9} {'floor':>9} {'resolves':>8}"
+        )
+        for interval in design.intervals:
+            target = (
+                f"{interval.group}"
+                if interval.level is None
+                else f"{interval.group}:" + "/".join(interval.path.values())
+            )
+            resolves = {None: "-", True: "yes", False: "no"}[interval.resolves]
+            typer.echo(
+                f"  {interval.independence_profile:<14} {interval.cohort:<14} {target:<36} "
+                f"{interval.independent_blocks:>7} {interval.effective_sample_size:>9.4g} "
+                f"{interval.alpha.endpoint_alpha:>11.4g} {interval.alpha.calibration:<15} "
+                f"{interval.raw_certification_floor:>9.4g} "
+                f"{interval.certification_floor:>9.4g} {resolves:>8}"
+            )
+        unresolved: dict[tuple[str, str, str, str], list[int]] = {}
+        for interval in design.intervals:
+            if interval.resolves is None or interval.level is None:
+                continue
+            key = (
+                interval.independence_profile,
+                interval.cohort,
+                interval.group,
+                interval.level,
+            )
+            tally = unresolved.setdefault(key, [0, 0])
+            tally[1] += 1
+            if not interval.resolves:
+                tally[0] += 1
+        notes = [
+            f"  level {level} of group {group} in cohort {cohort} under profile {profile}: "
+            f"{failed} of {total} nodes cannot be certified at the group's acceptable_upper, "
+            "even when every rollout is safe"
+            for (profile, cohort, group, level), (failed, total) in unresolved.items()
+            if failed
+        ]
+        if notes:
+            typer.echo("")
+            typer.echo("Levels the declared rollouts cannot resolve:")
+            for note in notes:
+                typer.echo(note)
+    if not any(isinstance(item, PlannedClaim) for item in claims):
+        typer.echo("")
+        typer.echo("No claim of this plan could be planned.", err=True)
+        raise typer.Exit(code=ExitCode.NOTHING_PLANNED)
+
+
+@plan_app.command("pilot")
+def pilot_command(
+    manifest: Annotated[
+        Path,
+        typer.Option("--manifest", exists=True, dir_okay=False, help="Design manifest CSV."),
+    ],
+    per_stratum: Annotated[
+        int, typer.Option("--per-stratum", min=1, help="Prompts to draw from each stratum.")
+    ],
+    seed: Annotated[
+        int, typer.Option("--seed", help="Selection seed; the frame records it as pilot_seed.")
+    ],
+    output: Annotated[
+        Path,
+        typer.Option("--output", dir_okay=False, help="Pilot frame CSV to write."),
+    ],
+    strata: Annotated[
+        str,
+        typer.Option(
+            "--strata",
+            help="Comma-separated manifest columns whose combinations form the strata; "
+            "empty for one stratum.",
+        ),
+    ] = "task_id",
+) -> None:
+    """Draw a random pilot within strata of a design manifest (experimental).
+
+    Writes the whole manifest with pilot_stratum, pilot_inclusion_probability,
+    pilot_selected, pilot_seed and pilot_per_stratum added. Run the pilot on the rows where
+    pilot_selected is true. The same file is the frame of a sampled design (sampling:
+    fixed_size, stratum_column: pilot_stratum, inclusion_probability_column:
+    pilot_inclusion_probability, selection_column: pilot_selected). Analyse a pilot as
+    exploratory: a pilot enlarged after its outcomes were seen certifies nothing.
+    """
+
+    import pandas as pd
+
+    from inspect_safety_stats.ingest.manifest import REQUIRED_COLUMNS, load_manifest
+    from inspect_safety_stats.ingest.pilot import draw_pilot
+
+    # samefile also catches a path that differs only in case on a case-insensitive
+    # filesystem (macOS, Windows) and a hard link, which resolve() leaves distinct.
+    if output.resolve() == manifest.resolve() or (output.exists() and output.samefile(manifest)):
+        raise typer.BadParameter("--output must not overwrite the design manifest")
+    columns = [column.strip() for column in strata.split(",") if column.strip()]
+    try:
+        # Check the manifest as analyze reads it, requiring only the identifier columns the
+        # draw uses: analyze gives a plan that never names question_id or task_id each
+        # prompt's own. draw_pilot checks strata columns outside REQUIRED_COLUMNS.
+        load_manifest(
+            manifest,
+            required=("prompt_id", *(column for column in columns if column in REQUIRED_COLUMNS)),
+        )
+        # Read every value as written, so the pilot frame repeats the manifest's own text
+        # rather than pandas' reading of it (an integer column with a gap would turn into
+        # floats, for example).
+        frame = pd.read_csv(manifest, dtype=str, keep_default_na=False)
+        pilot = draw_pilot(frame, per_stratum=per_stratum, strata=columns, seed=seed)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    output.parent.mkdir(parents=True, exist_ok=True)
+    pilot.to_csv(output, index=False, lineterminator="\n")
+    selected = pilot.loc[pilot["pilot_selected"]]
+    typer.echo(f"Strata: {pilot['pilot_stratum'].nunique()}")
+    typer.echo(f"Pilot prompts: {len(selected)} of {len(pilot)}")
+    typer.echo(f"Seed: {seed}")
+    typer.echo(f"Pilot frame: {output}")
+
+class ComparisonUnitOption(str, Enum):
+    rollout = "rollout"
+    pair = "pair"
+    prompt_cluster = "prompt_cluster"
+
+
+_COMPARISON_UNITS: dict[ComparisonUnitOption, Literal["rollout", "pair", "prompt_cluster"]] = {
+    ComparisonUnitOption.rollout: "rollout",
+    ComparisonUnitOption.pair: "pair",
+    ComparisonUnitOption.prompt_cluster: "prompt_cluster",
+}
+
+
+class CoverageModeOption(str, Enum):
+    two_sided = "two_sided"
+    per_direction = "per_direction"
+
+
+@plan_app.command("comparison")
+def comparison_planning_command(
+    manifest: Annotated[Path, typer.Option("--manifest", exists=True, dir_okay=False)],
+    margin: Annotated[float, typer.Option("--margin", min=-1.0, max=1.0)],
+    alpha: Annotated[float, typer.Option("--alpha", min=0.0, max=1.0)] = 0.05,
+    power: Annotated[float, typer.Option("--power", min=0.0, max=1.0)] = 0.9,
+    candidate_rollouts: Annotated[int | None, typer.Option("--candidate-rollouts", min=1)] = None,
+    baseline_rollouts: Annotated[int | None, typer.Option("--baseline-rollouts", min=1)] = None,
+    weights: Annotated[
+        WeightStrategyOption, typer.Option("--weights")
+    ] = WeightStrategyOption.nested_equal,
+    hierarchy: Annotated[str, typer.Option("--hierarchy")] = "task_id,question_id,prompt_id",
+    weight_column: Annotated[str | None, typer.Option("--weight-column")] = None,
+    independence_unit: Annotated[
+        ComparisonUnitOption, typer.Option("--independence-unit")
+    ] = ComparisonUnitOption.rollout,
+    coverage_mode: Annotated[
+        CoverageModeOption, typer.Option("--coverage-mode")
+    ] = CoverageModeOption.two_sided,
+    family_size: Annotated[int, typer.Option("--family-size", min=1)] = 1,
+) -> None:
+    """Risk differences a two-arm design resolves at a margin (experimental).
+
+    The difference is candidate minus baseline risk over the manifest's weighted design.
+    Reports the largest true difference whose upper bound falls at or below --margin, and
+    the smallest whose lower bound reaches it, each with --power, under the Hoeffding
+    guarantee of a comparisons entry with method weighted_hoeffding. That is not the setup
+    init writes, nor the one the guide recommends for two or more configurations: both use a
+    comparison_sets entry with method weighted_kl_chernoff. To rely on the numbers, declare
+    the contrast as a comparisons entry with method weighted_hoeffding. The numbers do not
+    hold for a comparison_sets entry or another method: a comparison set bounds each arm
+    separately, which is usually wider, and weighted_kl_chernoff and
+    weighted_empirical_bernstein, often narrower on sparse failures when prompt weights are
+    even, can be wider with uneven weights or at moderate failure rates. Rollout counts per
+    arm come from the manifest's expected_rollouts column unless --candidate-rollouts or
+    --baseline-rollouts override them. --independence-unit pair plans for a profile that
+    blocks by prompt_id and repeat with joint coupling; prompt_cluster for one that blocks
+    by prompt_id with joint coupling.
+    """
+
+    from inspect_safety_stats.stats.planning import comparison_resolvable_differences
+
+    # As in analyze: two_sided splits each claim's share of the family alpha between the
+    # lower and the upper bound; per_direction spends it on each.
+    local_alpha = alpha / family_size
+    direction_alpha = (
+        local_alpha / 2 if coverage_mode is CoverageModeOption.two_sided else local_alpha
+    )
+    frame, weight_values = _planning_design(manifest, weights, hierarchy, weight_column)
+    try:
+        expected: list[int] | None = (
+            [int(value) for value in frame["expected_rollouts"]]
+            if "expected_rollouts" in frame
+            else None
+        )
+        if expected is None and (candidate_rollouts is None or baseline_rollouts is None):
+            raise ValueError(
+                "the design manifest has no expected_rollouts column; pass "
+                "--candidate-rollouts and --baseline-rollouts for uniform counts"
+            )
+        candidate_trials = (
+            [candidate_rollouts] * len(frame) if candidate_rollouts is not None else expected
+        )
+        baseline_trials = (
+            [baseline_rollouts] * len(frame) if baseline_rollouts is not None else expected
+        )
+        if candidate_trials is None or baseline_trials is None:
+            raise ValueError("rollout counts could not be resolved for both arms")
+        plan = comparison_resolvable_differences(
+            candidate_trials,
+            baseline_trials,
+            weight_values,
+            margin=margin,
+            alpha_lower=direction_alpha,
+            alpha_upper=direction_alpha,
+            power=power,
+            independence_unit=_COMPARISON_UNITS[independence_unit],
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"Prompts: {len(frame)}")
+    typer.echo(f"Candidate rollouts: {sum(candidate_trials)}")
+    typer.echo(f"Baseline rollouts: {sum(baseline_trials)}")
+    typer.echo(f"Independence unit: {plan.independence_unit}")
+    typer.echo(f"Independent blocks: {plan.block_count}")
+    typer.echo(f"Effective sample size: {plan.effective_sample_size:.8g}")
+    typer.echo(f"Margin: {margin:.8g}")
+    typer.echo(f"Target power: {power:.8g}")
+    typer.echo(
+        "Interval method: weighted_hoeffding in a comparisons entry only; not comparison_sets "
+        "(as init writes) or other methods, where power can fall far below the target"
+    )
+    typer.echo(
+        "Largest difference with upper bound at or below the margin: "
+        + (
+            "unattainable"
+            if plan.maximum_supportable_difference is None
+            else f"{plan.maximum_supportable_difference:.8g}"
+        )
+    )
+    typer.echo(
+        "Smallest difference with lower bound at or above the margin: "
+        + (
+            "unattainable"
+            if plan.minimum_detectable_difference is None
+            else f"{plan.minimum_detectable_difference:.8g}"
+        )
+    )
+    if family_size > 1:
+        typer.echo(
+            f"Local alpha: {local_alpha:.8g} (Bonferroni share of {alpha:g} "
+            f"across {family_size} simultaneous claims)"
+        )
+    typer.echo(f"Coverage mode: {coverage_mode.value}")
+    typer.echo(f"One-sided alpha per direction: {direction_alpha:g}")
+
+
 @schema_app.command("plan")
 def plan_schema_command() -> None:
     """Print the JSON schema for analysis plans."""
@@ -436,6 +1197,24 @@ def report_schema_command() -> None:
     typer.echo(json.dumps(SafetyReport.model_json_schema(), indent=2, sort_keys=True))
 
 
+@schema_app.command("claims")
+def claims_schema_command() -> None:
+    """Print the JSON schema for claims.json (experimental)."""
+
+    from inspect_safety_stats.schema.claims import ClaimsExport
+
+    typer.echo(json.dumps(ClaimsExport.model_json_schema(), indent=2, sort_keys=True))
+
+
+@schema_app.command("decision-policy")
+def decision_policy_schema_command() -> None:
+    """Print the JSON schema for decision policies (experimental)."""
+
+    from inspect_safety_stats.config.decision_policy import DecisionPolicy
+
+    typer.echo(json.dumps(DecisionPolicy.model_json_schema(), indent=2, sort_keys=True))
+
+
 @app.command("version")
 def version_command() -> None:
     """Print the package version."""
@@ -443,24 +1222,110 @@ def version_command() -> None:
     typer.echo(__version__)
 
 
+def _one_line_error(exc: Exception) -> str:
+    """Render an error on one line, a pydantic error as ``field: message`` per failure."""
+
+    from pydantic import ValidationError
+
+    if isinstance(exc, ValidationError):
+        text = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc']) or '(root)'}: {error['msg']}"
+            for error in exc.errors()
+        )
+    else:
+        text = str(exc)
+    # A validator's own message may hold line breaks; the line is collapsed either way.
+    return " ".join(text.split())
+
+
 @app.command("hash-plan")
 def hash_plan_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
+    inference: Annotated[
+        bool,
+        typer.Option(
+            "--inference",
+            help=(
+                "Print the inference hash instead: the plan's hash without the thresholds a "
+                "decision policy may set, which a decision policy names (experimental)."
+            ),
+        ),
+    ] = False,
+    register: Annotated[
+        Path | None,
+        typer.Option(
+            "--register",
+            dir_okay=False,
+            help=(
+                "Also write a registration receipt (the hash and the current UTC time) to "
+                "this new file, for analyze --registration-receipt. Anchor it externally, "
+                "for example in a signed commit. Experimental: see docs/plan-reference.md."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Print a plan's canonical SHA-256, for registering a frozen plan."""
 
     from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
 
-    typer.echo(canonical_plan_hash(load_plan(plan)))
+    if inference and register is not None:
+        # A receipt records the canonical hash, which analyze checks; registering the
+        # inference hash would make a receipt no analysis can match.
+        raise typer.BadParameter("--register records the canonical hash; omit --inference")
+    import yaml
+
+    try:
+        resolved = load_plan(plan)
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        # pydantic's ValidationError is a ValueError; other exceptions are bugs and keep
+        # their traceback.
+        typer.echo(f"Plan invalid: {_one_line_error(exc)}", err=True)
+        raise typer.Exit(code=ExitCode.ERROR) from exc
+    if inference:
+        from inspect_safety_stats.config.decision_policy import inference_plan_hash
+
+        typer.echo(inference_plan_hash(resolved))
+        return
+    digest = canonical_plan_hash(resolved)
+    # The hash stays the first line on its own: scripts read it.
+    typer.echo(digest)
+    if register is None:
+        return
+    from inspect_safety_stats.config.registration import write_receipt
+
+    try:
+        receipt = write_receipt(register, digest, package_version=__version__)
+    except FileExistsError as exc:
+        typer.echo(
+            f"Registration failed: {register} exists; a receipt is never overwritten",
+            err=True,
+        )
+        raise typer.Exit(code=ExitCode.ERROR) from exc
+    except OSError as exc:
+        # Such as a directory that does not exist or cannot be written: no receipt is written.
+        typer.echo(
+            f"Registration failed: cannot write {register}: {exc.strerror or exc}", err=True
+        )
+        raise typer.Exit(code=ExitCode.ERROR) from exc
+    typer.echo(f"Registered at: {receipt.registered_at.isoformat()}")
+    typer.echo(f"Receipt: {register}")
+    typer.echo(
+        "The receipt's time is the local clock's. Anchor the receipt externally, for "
+        "example in a signed commit or with a timestamping service, before generation starts."
+    )
 
 
-@generative_app.command("compile")
+@generative_app.command("compile", epilog=GENERATIVE_CAVEAT)
 def generative_compile_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
 ) -> None:
-    """Compile a generative plan and report what the canonical taxonomy contains."""
+    """Compile a generative plan and report what the canonical taxonomy contains.
 
-    from inspect_safety_stats.generative.sampling import plan_design
+    A declared slice family is checked against the paths materialize will select, so a
+    member the analysis could not estimate is refused before anything is generated.
+    """
+
+    from inspect_safety_stats.generative.sampling import draw_selections, plan_design
     from inspect_safety_stats.generative.schema import load_generative_plan
     from inspect_safety_stats.generative.taxonomy import compile_taxonomy
 
@@ -468,9 +1333,18 @@ def generative_compile_command(
         parsed = load_generative_plan(plan)
         taxonomy = compile_taxonomy(parsed, base_path=plan.parent)
         design = plan_design(taxonomy, parsed)
+        if parsed.inference.slice_family is not None:
+            # The runner imports Inspect and pandas, which a plan without a family never needs.
+            from inspect_safety_stats.generative.runner import check_declared_slice_family
+
+            # The selected paths do not depend on the stage: these are the ones materialize
+            # selects under --stage pilot or main.
+            check_declared_slice_family(
+                parsed, taxonomy, design, draw_selections(taxonomy, design)
+            )
     except Exception as exc:
         typer.echo(f"Compilation failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
+        raise typer.Exit(code=ExitCode.ERROR) from exc
 
     typer.echo(f"Evaluation: {parsed.evaluation.id}")
     typer.echo(f"Taxonomy fingerprint: {taxonomy.fingerprint}")
@@ -484,11 +1358,23 @@ def generative_compile_command(
     typer.echo(f"Cohorts: {', '.join(parsed.target.cohorts)}")
 
 
-@generative_app.command("materialize")
+@generative_app.command("materialize", epilog=GENERATIVE_CAVEAT)
 def generative_materialize_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
     output: Annotated[Path, typer.Option("--output")] = Path("generative-run"),
     kernel: Annotated[str, typer.Option("--kernel")] = "fake",
+    validator: Annotated[
+        str | None,
+        typer.Option(
+            "--validator",
+            help=(
+                "Experimental. The validator the plan's rewrite.validation.validator_id "
+                "names, resolved like --kernel ('fake', 'fake:reject_every=N', "
+                "'module:attribute' or 'path/to/file.py:attribute'). Required when the plan "
+                "sets rewrite.validation.invoke, refused otherwise."
+            ),
+        ),
+    ] = None,
     stage: Annotated[str, typer.Option("--stage")] = "main",
     salt: Annotated[str, typer.Option("--rewrite-salt")] = "",
     overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
@@ -518,13 +1404,16 @@ def generative_materialize_command(
             overwrite=overwrite,
             resume=resume,
             rewrite_salt=salt,
+            validator=validator,
         )
     except Exception as exc:
         typer.echo(f"Materialization failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
+        raise typer.Exit(code=ExitCode.ERROR) from exc
 
     typer.echo(f"Taxonomy fingerprint: {run.taxonomy_fingerprint}")
     typer.echo(f"Kernel: {run.kernel.kernel_id} @ {run.kernel.sha256}")
+    if run.validator_id is not None:
+        typer.echo(f"Validator: {run.validator_id}")
     typer.echo(f"Selections: {run.selections}")
     if run.resumed:
         typer.echo(f"Resumed: {run.resumed} units carried over, "
@@ -535,6 +1424,18 @@ def generative_materialize_command(
     )
     if run.kernel_mismatch:
         typer.echo(f"Warning: {run.kernel_mismatch}", err=True)
+    if run.validator_mismatch:
+        typer.echo(f"Warning: {run.validator_mismatch}", err=True)
+    if run.errored:
+        # An errored unit is not final (generative/runner.py): a resume runs it again.
+        units, them = ("unit errored and is", "it") if run.errored == 1 else (
+            "units errored and are", "them"
+        )
+        typer.echo(
+            f"Warning: {run.errored} {units} not in the dataset. Run the same command with "
+            f"--resume to run {them} again.",
+            err=True,
+        )
     typer.echo(f"Dataset: {run.dataset}")
     typer.echo(f"Artifacts: {run.output}")
     if run.accepted == 0:
@@ -553,10 +1454,10 @@ def generative_materialize_command(
                 "check that the kernel returns usable text.",
                 err=True,
             )
-        raise typer.Exit(code=3)
+        raise typer.Exit(code=ExitCode.ERROR)
 
 
-@generative_app.command("analyze")
+@generative_app.command("analyze", epilog=GENERATIVE_CAVEAT)
 def generative_analyze_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
     artifacts: Annotated[Path, typer.Option("--artifacts", exists=True, file_okay=False)],
@@ -588,7 +1489,7 @@ def generative_analyze_command(
         path = report.write(output, overwrite=overwrite)
     except Exception as exc:
         typer.echo(f"Analysis failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
+        raise typer.Exit(code=ExitCode.ERROR) from exc
 
     root = report.tree.root
     typer.echo(f"Evaluation: {report.evaluation['id']}")
@@ -603,6 +1504,16 @@ def generative_analyze_command(
             f"  {comparison.candidate_cohort} - {comparison.baseline_cohort}: "
             f"upper {comparison.upper:+.5f} ({comparison.method})"
         )
+    if report.slice_family is not None:
+        # The family is never judge-corrected, even where the plan declares a calibration.
+        typer.echo("Slice family (experimental, simultaneous, judge-reported scale):")
+        for member in report.slice_family.slices:
+            typer.echo(f"  {member.member_id}: upper {member.arm.upper:.5f}")
+        for contrast in report.slice_family.contrasts:
+            typer.echo(
+                f"  {contrast.id} ({contrast.candidate_value} - {contrast.baseline_value}): "
+                f"upper {contrast.upper:+.5f}"
+            )
     typer.echo(f"Nodes reported: {len(report.tree.nodes)}, unsampled: "
                f"{len(report.tree.unsampled_nodes)}")
     for diagnostic in report.diagnostics:
@@ -610,10 +1521,10 @@ def generative_analyze_command(
             typer.echo(f"[ERROR] {diagnostic.code}: {diagnostic.message}", err=True)
     typer.echo(f"Report: {path}")
     if report.has_errors:
-        raise typer.Exit(code=2)
+        raise typer.Exit(code=ExitCode.ERROR)
 
 
-@generative_app.command("budget")
+@generative_app.command("budget", epilog=GENERATIVE_CAVEAT)
 def generative_budget_command(
     plan: Annotated[Path, typer.Option("--plan", exists=True, dir_okay=False)],
     assumed_rate: Annotated[float, typer.Option("--assumed-rate", min=0.0, max=0.999)] = 0.03,
@@ -643,7 +1554,7 @@ def generative_budget_command(
         taxonomy = compile_taxonomy(parsed, base_path=plan.parent)
     except Exception as exc:
         typer.echo(f"Planning failed: {exc}", err=True)
-        raise typer.Exit(code=3) from exc
+        raise typer.Exit(code=ExitCode.ERROR) from exc
 
     declared = parsed.sampling.total_rewrites
     budgets = sorted(set(budget)) if budget else sorted(
@@ -752,9 +1663,9 @@ def generative_budget_command(
             typer.echo(f"! {note}")
 
 
-@schema_app.command("generative-plan")
+@schema_app.command("generative-plan", epilog=GENERATIVE_CAVEAT)
 def generative_plan_schema_command() -> None:
-    """Print the JSON schema for a generative evaluation plan."""
+    """Print the JSON schema for a generative evaluation plan (experimental)."""
 
     from inspect_safety_stats.generative.schema import GenerativePlan
 

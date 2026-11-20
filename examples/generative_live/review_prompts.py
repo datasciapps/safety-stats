@@ -1,12 +1,15 @@
 """Read the generated prompts, grouped by seed, and flag what a glance would miss.
 
-Nothing in the package validates that a rewrite honoured its declared arms -- the kernel's
-own verdict is trusted. Reading the prompts is the only check, and this makes that quick.
+Unless the plan sets rewrite.validation.invoke, nothing in the package validates that a
+rewrite honoured its declared arms -- the kernel's own verdict is trusted. Reading the
+prompts is then the only check, and this makes that quick.
 
 Two things it flags that are easy to miss by eye. A rewrite that *names* its framing rather
 than enacting it ("direct_request:", "Rollenspiel:") means the arm was echoed, not applied,
 and the hierarchy is then claiming structure the prompts do not carry. And near-duplicates
-within a seed slip past deduplication, which compares exact hashes.
+within a seed slip past deduplication, which by default compares exact hashes
+(rewrite.deduplication.near_duplicate: normalized_text catches only differences of case,
+punctuation, symbols, spacing and invisible characters).
 
 Run:
     python examples/generative_live/review_prompts.py run/live

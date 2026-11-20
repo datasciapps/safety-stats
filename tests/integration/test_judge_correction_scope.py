@@ -12,13 +12,26 @@ is about 0.84, and the correction understates true risk.
 
 from __future__ import annotations
 
+import json
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 import pytest
 
 from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.schema.reports import ComparisonResult, GroupRiskResult, SafetyReport
+from inspect_safety_stats.report.rounding import bound_text
+from inspect_safety_stats.report.summary import rate_interval_text
+from inspect_safety_stats.schema.reports import (
+    ComparisonResult,
+    GroupRiskResult,
+    HierarchyRiskResult,
+    RiskIntervalResult,
+    SafetyReport,
+    VerdictRange,
+)
+from tests.summary_fixtures import section, table
 
 EPOCHS = 200
 PROMPTS = [("h1", "qh", "tH", "hard")] + [(f"e{i}", f"qe{i}", "tE", "easy") for i in range(1, 10)]
@@ -127,7 +140,9 @@ NOISY_VALID_CLAIM = """
 """.strip("\n")
 
 
-def _frames(cohorts: tuple[str, ...]) -> tuple[pd.DataFrame, pd.DataFrame]:
+def _frames(
+    cohorts: tuple[str, ...], judge: Callable[[str, int], bool] = _judge_unsafe
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     evals = []
     samples = []
     for cohort in cohorts:
@@ -160,7 +175,7 @@ def _frames(cohorts: tuple[str, ...]) -> tuple[pd.DataFrame, pd.DataFrame]:
                         "log": "/not/a/local/log.eval",
                         "id": prompt_id,
                         "epoch": epoch,
-                        "score_harmful": "FAIL" if _judge_unsafe(prompt_id, epoch) else "PASS",
+                        "score_harmful": "FAIL" if judge(prompt_id, epoch) else "PASS",
                         "error": None,
                         "retries": 0,
                     }
@@ -177,6 +192,7 @@ def _write_plan(
     calibrated: bool,
     compare: bool,
     judge_groups: str | None = None,
+    edit: Callable[[str], str] = lambda text: text,
 ) -> Path:
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "design.csv").write_text(
@@ -203,7 +219,7 @@ def _write_plan(
         .strip()
     )
     plan = directory / "plan.yaml"
-    plan.write_text(text + "\n", encoding="utf-8")
+    plan.write_text(edit(text) + "\n", encoding="utf-8")
     return plan
 
 
@@ -216,10 +232,15 @@ def _analyze(
     sampling: str | None = None,
     compare: bool = False,
     judge_groups: str | None = None,
+    label: Callable[[str, int], bool] = lambda prompt_id, epoch: True,
+    judge: Callable[[str, int], bool] = _judge_unsafe,
+    edit: Callable[[str], str] = lambda text: text,
 ) -> SafetyReport:
-    """Label every classified rollout with its truth, then analyse with the labels."""
+    """Label the classified rollouts that ``label`` picks with their truth, then analyse."""
 
-    eval_frame, sample_frame = _frames(("candidate", "baseline") if compare else ("candidate",))
+    eval_frame, sample_frame = _frames(
+        ("candidate", "baseline") if compare else ("candidate",), judge
+    )
     monkeypatch.setattr(
         "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
@@ -234,6 +255,7 @@ def _analyze(
         sampling=None,
         calibrated=False,
         compare=compare,
+        edit=edit,
     )
     baseline = analyze(plan=load_plan(unlabelled), logs="ignored")
     rows = ["observation_id,human_label"]
@@ -241,6 +263,8 @@ def _analyze(
         if observation.failure is None:
             continue
         epoch = int(observation.rollout_id.rsplit("-", 1)[1])
+        if not label(observation.prompt_id, epoch):
+            continue
         truth = _truly_unsafe(observation.prompt_id, epoch)
         rows.append(f"{observation.observation_id},{'unsafe' if truth else 'safe'}")
     (tmp_path / "labels.csv").write_text("\n".join(rows) + "\n", encoding="utf-8")
@@ -252,6 +276,7 @@ def _analyze(
         calibrated=True,
         compare=compare,
         judge_groups=judge_groups,
+        edit=edit,
     )
     return analyze(plan=load_plan(plan), logs="ignored")
 
@@ -264,7 +289,7 @@ def _risk(report: SafetyReport, group: str, measure: str) -> GroupRiskResult:
     )
 
 
-def _corrected(row: GroupRiskResult | ComparisonResult) -> object:
+def _corrected(row: GroupRiskResult | HierarchyRiskResult | ComparisonResult) -> object:
     return next(item for item in row.intervals if item.interval_id == "judge_corrected_validated")
 
 
@@ -274,10 +299,11 @@ def test_a_pooled_calibration_never_certifies_a_row_it_does_not_measure(
     report = _analyze(tmp_path, monkeypatch)
 
     # The pooled correction understates every true risk: all 0.15, hard 0.30, worst 0.30.
-    # Each corrected upper bound clears its claim's threshold, so these claims used to PASS.
+    # The hard and worst corrected upper bounds clear their claims' thresholds, so those
+    # claims used to PASS.
     mean_all = _risk(report, "all", "mean")
     corrected = _corrected(mean_all)
-    assert corrected.upper is not None and corrected.upper < 0.12 < 0.15
+    assert corrected.upper is not None and corrected.upper < 0.15
     for group, measure, threshold in [("hard", "mean", 0.25), ("all", "worst", 0.25)]:
         interval = _corrected(_risk(report, group, measure))
         assert interval.upper is not None and interval.upper < threshold < 0.30
@@ -309,6 +335,8 @@ def test_a_pooled_calibration_never_certifies_a_row_it_does_not_measure(
         item for item in report.integrity.diagnostics if item.code == "JUDGE_CORRECTION_UNAVAILABLE"
     )
     assert unavailable.details["claim_ids"] == ["mean_all", "mean_hard", "worst_all"]
+    # A calibration over the whole cohort is not experimental.
+    assert "experimental" not in report.provenance["judge_calibration"]
 
     # The delta-method reference beside it is diagnostic anyway, and now says why too.
     delta = next(
@@ -317,7 +345,7 @@ def test_a_pooled_calibration_never_certifies_a_row_it_does_not_measure(
     assert delta.warnings == corrected.warnings
 
     # The report states the restriction.
-    markdown = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
     assert "so they certify only a weighted mean that does the same" in markdown
 
 
@@ -362,6 +390,116 @@ def test_a_self_weighting_whole_cohort_mean_is_still_certified(
     assert _corrected(_risk(report, "all", "worst")).eligibility == "diagnostic"
 
 
+def _headline(directory: Path, kind: str, group: str) -> dict[str, Any]:
+    """The candidate's headline of ``kind`` on ``group`` in the index of ``directory``."""
+
+    index = json.loads((directory / "index.json").read_text(encoding="utf-8"))
+    (item,) = [
+        item
+        for item in index["summary"]["headline"]
+        if item["kind"] == kind and item["cohort"] == "candidate" and item["group"] == group
+    ]
+    return dict(item)
+
+
+def test_the_headline_gives_the_true_risk_the_claim_is_decided_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With equal prompt weights the validated correction certifies the whole-cohort mean.
+
+    Here the judge misses 40% of the hard prompt's failures and flags nothing else, so the
+    judge-reported interval lies below the true risk, 0.03. The claim is decided on the
+    corrected interval, which covers it. The headline of index.json gave the judge-reported
+    bounds alone, marked certifying, while report.md gave both.
+    """
+
+    report = _analyze(
+        tmp_path,
+        monkeypatch,
+        weights="equal_prompt",
+        judge=lambda prompt_id, epoch: prompt_id == "h1" and epoch <= 36,
+    )
+    directory = report.write(tmp_path / "report")
+    risk = _risk(report, "all", "mean")
+    corrected = _corrected(risk)
+    assert isinstance(corrected, RiskIntervalResult)
+    assert corrected.lower is not None and corrected.upper is not None
+    true_risk = 0.30 / 10
+    assert risk.eligibility == "certifying"
+    assert risk.upper is not None and risk.upper < true_risk
+    assert corrected.eligibility == "certifying"
+    assert corrected.lower <= true_risk <= corrected.upper
+    claim = next(item for item in report.claims if item.claim_id == "mean_all")
+    assert (claim.lower, claim.upper) == (corrected.lower, corrected.upper)
+
+    headline = _headline(directory, "group_risk", "all")
+    assert (headline["lower"], headline["upper"]) == (risk.lower, risk.upper)
+    position = report.group_risks.index(risk)
+    assert headline["judge_corrected"] == {
+        "calibration": "validated",
+        "lower": corrected.lower,
+        "upper": corrected.upper,
+        "eligibility": "certifying",
+        "simultaneous_coverage": corrected.simultaneous_coverage,
+        "item": f"/group_risks/{position}/intervals/{risk.intervals.index(corrected)}",
+    }
+    assert corrected.simultaneous_coverage is not None
+
+    # index.md gives the same, and report.md's true risk column the same interval.
+    index_page = (directory / "index.md").read_text(encoding="utf-8")
+    (row,) = [
+        row
+        for row in table(section(index_page, "Headline estimates"))
+        if row["Pointer"] == f"`{headline['item']}`"
+    ]
+    assert row["True risk lower"] == bound_text(corrected.lower, 4, upper=False)
+    assert row["True risk upper"] == bound_text(corrected.upper, 4, upper=True)
+    assert row["True risk coverage"] == bound_text(
+        corrected.simultaneous_coverage, 4, upper=False
+    )
+    assert row["True risk eligibility"] == "certifying"
+    assert row["Judge calibration"] == "validated"
+    assert row["True risk pointer"] == f"`{headline['judge_corrected']['item']}`"
+    summary_page = (directory / "report.md").read_text(encoding="utf-8")
+    (row,) = [
+        row
+        for row in table(section(summary_page, "Failure risk"))
+        if (row["Model"], row["Group"]) == ("candidate", "all")
+    ]
+    assert row["True risk (judge-corrected)"] == rate_interval_text(
+        corrected.lower, corrected.upper
+    )
+
+    # The part of the cohort is a sensitivity of the correction, and says so.
+    hard = _headline(directory, "group_risk", "hard")
+    assert hard["judge_corrected"]["eligibility"] == "diagnostic"
+    assert hard["judge_corrected"]["simultaneous_coverage"] is None
+
+
+def test_report_md_marks_a_validated_correction_that_does_not_certify_as_a_sensitivity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The labels measure the judge on the whole cohort, so the hard group's is a sensitivity.
+
+    report.md marked it assumed, which its note says means declared rather than measured
+    judge accuracy, while the summary says the calibration is validated.
+    """
+
+    report = _analyze(tmp_path, monkeypatch, weights="equal_prompt")
+    directory = report.write(tmp_path / "report")
+    rows = {
+        row["Group"]: row["True risk (judge-corrected)"]
+        for row in table(section((directory / "report.md").read_text("utf-8"), "Failure risk"))
+    }
+    for group, mark in [("all", ""), ("hard", " (sensitivity)")]:
+        corrected = _corrected(_risk(report, group, "mean"))
+        assert isinstance(corrected, RiskIntervalResult)
+        assert rows[group] == rate_interval_text(corrected.lower, corrected.upper) + mark
+        assert _headline(directory, "group_risk", group)["judge_corrected"]["calibration"] == (
+            "validated"
+        )
+
+
 def test_noisy_valid_test_refuses_a_row_its_labels_do_not_measure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -372,6 +510,7 @@ def test_noisy_valid_test_refuses_a_row_its_labels_do_not_measure(
     assert claim.status == "INCONCLUSIVE"
     (reason,) = claim.reasons
     assert reason.startswith("The noisy-but-valid test cannot certify this row: the row gives")
+    assert claim.verdict_range == VerdictRange()
 
 
 # A calibration scoped to the hard group (F19) is estimated from that group's labels alone.
@@ -395,6 +534,8 @@ def test_a_group_scoped_calibration_measures_its_group_and_certifies_its_mean(
     assert summary["groups"] == ["hard"]
     assert summary["per_calibration_alpha"] == pytest.approx(0.05, abs=0)
     assert "per_cohort_alpha" not in summary
+    # The scope certifies rows an unscoped calibration could not, so it is experimental.
+    assert summary["experimental"] is True
     assert summary["cohorts"] == {
         "candidate": {
             "hard": {
@@ -434,7 +575,15 @@ def test_a_group_scoped_calibration_measures_its_group_and_certifies_its_mean(
     )
     assert outside.message.startswith("1800 validation rows")
 
-    markdown = (report.write(tmp_path / "report") / "report.md").read_text(encoding="utf-8")
+    markdown = (report.write(tmp_path / "report") / "report-full.md").read_text(encoding="utf-8")
+    # The preamble says what the scoped labels certify: a mean over the group, not the cohort.
+    assert (
+        "Experimental. These accuracies are exact Clopper-Pearson bounds from human labels "
+        "drawn within each judge stratum. The labels weight every classified rollout of a "
+        "group equally, so they certify only a weighted mean that does the same, over the "
+        "whole group in a fixed design."
+    ) in markdown
+    assert "over the whole cohort" not in markdown
     assert "The calibration is scoped to the groups `hard`" in markdown
     assert "| candidate | hard | 39 / 39 | 36 | 161 / 161 | 24 |" in markdown
 
@@ -456,8 +605,104 @@ def test_a_group_scoped_calibration_splits_the_judge_budget_over_cohorts_and_gro
     corrected = _corrected(comparison)
     assert corrected.eligibility == "certifying"
     assert corrected.warnings == []
-    assert corrected.family_alpha == pytest.approx(0.025, abs=0)
+    # Each arm also bounds its unclassified share at a quarter of its calibration's alpha.
+    assert corrected.family_alpha == pytest.approx(2 * (0.0125 + 0.0125 / 4), rel=1e-12, abs=0)
     assert any("calibration for group 'hard'" in item for item in corrected.assumptions)
+
+
+def test_a_headline_comparison_gives_its_true_risk_difference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = _analyze(tmp_path, monkeypatch, compare=True, judge_groups="[all, hard]")
+    directory = report.write(tmp_path / "report")
+    comparison = next(item for item in report.comparisons if item.level is None)
+    corrected = _corrected(comparison)
+    assert isinstance(corrected, RiskIntervalResult)
+
+    headline = _headline(directory, "comparison", "hard")
+    assert (headline["lower"], headline["upper"]) == (comparison.lower, comparison.upper)
+    position = report.comparisons.index(comparison)
+    assert headline["judge_corrected"] == {
+        "calibration": "validated",
+        "lower": corrected.lower,
+        "upper": corrected.upper,
+        "eligibility": "certifying",
+        "simultaneous_coverage": corrected.simultaneous_coverage,
+        "item": f"/comparisons/{position}/intervals/{comparison.intervals.index(corrected)}",
+    }
+
+
+def test_a_refused_group_calibration_says_which_group_and_cohort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # One of the hard prompt's 161 judge-safe rollouts is labelled, so its calibration cannot
+    # bound rho_0 below rho_1 and is refused, while the group of every prompt still has the
+    # labels it needs. The labels are picked, not drawn, to make that certain.
+    report = _analyze(
+        tmp_path,
+        monkeypatch,
+        claims=HARD_CLAIMS,
+        judge_groups="[all, hard]",
+        label=lambda prompt_id, epoch: (
+            prompt_id != "h1" or _judge_unsafe(prompt_id, epoch) or epoch == 100
+        ),
+    )
+
+    (refused,) = [
+        item
+        for item in report.integrity.diagnostics
+        if item.code == "JUDGE_CALIBRATION_UNINFORMATIVE"
+    ]
+    # Both say which calibration was refused, so it cannot read as the cohort's own.
+    assert refused.scope == "cohorts/candidate/groups/hard"
+    assert refused.message.startswith(
+        "group 'hard' of cohort 'candidate': the validation sample does not establish a "
+        "strictly informative judge"
+    )
+    summary = report.provenance["judge_calibration"]
+    assert list(summary["cohorts"]["candidate"]) == ["all"]
+    # The refused calibration still took its share of the judge family's budget.
+    assert summary["per_calibration_alpha"] == pytest.approx(0.025, abs=0)
+
+    # The hard rows are not corrected, and their claim is not decided from the labels.
+    for measure in ("mean", "worst"):
+        row = _risk(report, "hard", measure)
+        assert not [item for item in row.intervals if item.interval_id.startswith("judge_")]
+    claim = next(item for item in report.claims if item.claim_id == "mean_hard")
+    assert claim.method != "validated_judge_misclassification_correction"
+    assert claim.status == "INCONCLUSIVE"
+
+
+def test_a_group_without_a_judge_stratum_says_which_group_and_cohort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Here the judge never flags the hard prompt, so the hard group has no judge-unsafe
+    # stratum to calibrate. The easy prompts' flags are all false, so the group of every
+    # prompt has a judge-unsafe stratum but cannot show an informative judge either.
+    report = _analyze(
+        tmp_path,
+        monkeypatch,
+        claims=HARD_CLAIMS,
+        judge_groups="[all, hard]",
+        judge=lambda prompt_id, epoch: prompt_id != "h1" and _judge_unsafe(prompt_id, epoch),
+    )
+
+    withheld = {
+        item.code: (item.scope, item.message)
+        for item in report.integrity.diagnostics
+        if item.code in {"JUDGE_VALIDATION_STRATUM_EMPTY", "JUDGE_CALIBRATION_UNINFORMATIVE"}
+    }
+    assert withheld["JUDGE_VALIDATION_STRATUM_EMPTY"] == (
+        "cohorts/candidate/groups/hard",
+        "group 'hard' of cohort 'candidate' has no observations in one judge stratum; no judge "
+        "correction is reported for it",
+    )
+    scope, message = withheld["JUDGE_CALIBRATION_UNINFORMATIVE"]
+    assert scope == "cohorts/candidate/groups/all"
+    assert message.startswith("group 'all' of cohort 'candidate': ")
+    assert report.provenance["judge_calibration"]["cohorts"] == {}
+    for claim in report.claims:
+        assert claim.status == "INCONCLUSIVE"
 
 
 def test_noisy_valid_test_uses_the_labels_of_the_rows_group(
@@ -493,6 +738,7 @@ def test_noisy_valid_test_uses_the_labels_of_the_rows_group(
         "The judge calibration is scoped to groups that do not include this row's group "
         "'all', so no labels calibrate it."
     ]
+    assert claims_by_id["mean_all"].verdict_range == VerdictRange()
 
 
 def test_an_assumed_calibration_scoped_to_a_group_corrects_only_its_rows(
@@ -514,6 +760,7 @@ def test_an_assumed_calibration_scoped_to_a_group_corrects_only_its_rows(
         calibrated=False,
         compare=False,
     )
+    uncalibrated = analyze(plan=load_plan(path), logs="ignored")
     path.write_text(
         path.read_text(encoding="utf-8").replace(
             "design:\n",
@@ -544,6 +791,113 @@ def test_an_assumed_calibration_scoped_to_a_group_corrects_only_its_rows(
         row = _risk(report, "all", measure)
         assert not [item for item in row.intervals if item.interval_id.startswith("judge_")]
     assert report.provenance["judge_calibration"]["groups"] == ["hard"]
-    # An assumed correction never moves a claim, scoped or not.
-    claim = next(item for item in report.claims if item.claim_id == "mean_hard")
-    assert claim.method != "assumed_judge_misclassification_correction"
+    # Scoping declared accuracies certifies nothing, so it is not experimental.
+    assert "experimental" not in report.provenance["judge_calibration"]
+    # An assumed correction never moves a claim, scoped or not: each claim is decided as it
+    # is without the calibration.
+    assert report.claims == uncalibrated.claims
+
+
+def _hierarchy_nodes(text: str) -> str:
+    return text.replace(
+        "    groups: [all, hard]\n    simultaneous: true\n",
+        "    groups: [all, hard]\n    hierarchy_nodes: true\n    simultaneous: true\n",
+        1,
+    )
+
+
+def test_a_group_scoped_calibration_corrects_the_hierarchy_nodes_of_its_groups_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    report = _analyze(
+        tmp_path, monkeypatch, claims=HARD_CLAIMS, judge_groups="[hard]", edit=_hierarchy_nodes
+    )
+
+    nodes = [row for row in report.hierarchy_risks if row.cohort_id == "candidate"]
+    hard = [row for row in nodes if row.group_id == "hard"]
+    # The hard group's task and question nodes each hold its one prompt, so each is a whole-
+    # group mean that the group's calibration certifies, and covers the true risk 0.30.
+    assert sorted(row.level for row in hard) == ["question_id", "task_id"]
+    for row in hard:
+        corrected = _corrected(row)
+        assert corrected.eligibility == "certifying"
+        assert corrected.warnings == []
+        assert corrected.lower is not None and corrected.upper is not None
+        assert corrected.lower <= 0.30 <= corrected.upper
+        assert any("scoped to group 'hard'" in item for item in corrected.assumptions)
+    # The nodes of group all are not corrected, not even the ones that hold the hard prompt.
+    others = [row for row in nodes if row.group_id == "all"]
+    assert {row.path.get("task_id") for row in others} == {"tE", "tH"}
+    for row in others:
+        assert not [item for item in row.intervals if item.interval_id.startswith("judge_")]
+
+
+def test_a_comparison_of_a_group_outside_the_scope_is_not_corrected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    claims = """
+  - {id: hard_diff, title: Hard difference, comparison: hard_candidate_vs_baseline,
+     family: gate, acceptable_upper: 0.1, unacceptable_lower: 0.3}
+""".strip("\n")
+    report = _analyze(tmp_path, monkeypatch, claims=claims, compare=True, judge_groups="[all]")
+
+    (comparison,) = report.comparisons
+    assert not [item for item in comparison.intervals if item.interval_id.startswith("judge_")]
+    # The plan scoped the calibration away from the comparison, so it is not reported as one
+    # that could not be corrected. Its claim says why it is not decided.
+    codes = {item.code for item in report.integrity.diagnostics}
+    assert "JUDGE_CORRECTION_UNAVAILABLE_FOR_COMPARISON" not in codes
+    (claim,) = report.claims
+    assert claim.status == "INCONCLUSIVE"
+    assert (
+        "The judge calibration is scoped to groups that do not include this row's group "
+        "'hard', so no labels calibrate it."
+    ) in claim.reasons
+    unavailable = next(
+        item for item in report.integrity.diagnostics if item.code == "JUDGE_CORRECTION_UNAVAILABLE"
+    )
+    assert unavailable.details["claim_ids"] == ["hard_diff"]
+
+
+@pytest.mark.parametrize("sampling", [None, "simple_random"])
+def test_an_undeclared_calibration_group_is_reported_not_crashed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, sampling: str | None
+) -> None:
+    """analyze raised a bare StopIteration here, and the CLI printed an empty message."""
+
+    report = _analyze(
+        tmp_path,
+        monkeypatch,
+        claims=HARD_CLAIMS,
+        sampling=sampling,
+        compare=True,
+        judge_groups="[hard, hardd]",
+    )
+
+    assert report.integrity.status == "invalid"
+    unknown = [
+        (item.scope, item.message)
+        for item in report.integrity.diagnostics
+        if item.code == "PLAN_UNKNOWN_REFERENCE"
+    ]
+    assert unknown == [
+        (
+            "plan/inputs/judge_calibration",
+            "inputs.judge_calibration references unknown groups: hardd",
+        )
+    ]
+    # The declared group is calibrated as before. The undeclared one has no rollouts and no
+    # calibration, but keeps its share of the budget: two cohorts and two listed groups.
+    summary = report.provenance["judge_calibration"]
+    assert summary["groups"] == ["hard", "hardd"]
+    assert summary["per_calibration_alpha"] == pytest.approx(0.0125, abs=0)
+    assert {cohort: sorted(groups) for cohort, groups in summary["cohorts"].items()} == {
+        "baseline": ["hard"],
+        "candidate": ["hard"],
+    }
+    # An invalid plan decides nothing.
+    assert {item.claim_id: item.status for item in report.claims} == {
+        "mean_all": "INCONCLUSIVE",
+        "mean_hard": "INCONCLUSIVE",
+    }
+    assert (report.write(tmp_path / "report") / "report.json").is_file()

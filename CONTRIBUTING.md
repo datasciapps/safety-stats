@@ -16,7 +16,7 @@ Contents:
 [engineering](#5-engineering-practices) · [cross-platform](#6-linux-macos-and-windows) ·
 [tests](#7-tests) · [statistics](#8-statistical-contributions) ·
 [data and security](#9-data-secrets-and-sensitive-content) · [review](#10-pull-requests-and-review) ·
-[commits](#11-commits-and-branches) · [releases](#12-releases-and-deprecation)
+[commits](#11-commits-and-branches) · [releases](#12-releases-and-deprecation-proposed)
 
 ---
 
@@ -109,9 +109,11 @@ Plans are strict (`extra="forbid"`).
 - changing what an existing value means.
 
 **Plan hash:** `inspect-safety-stats hash-plan` must give an unchanged plan file the same hash
-from any directory (#42).
-
-- **[gap]** It does not yet survive package upgrades, because defaults are hashed (#56).
+from any directory (#42). The hash covers only the fields the plan writes, so it also survives a
+package upgrade that adds a field or changes a default (#56). A field set by a validator, such
+as a schema version's defaults, must not count as written: set it with `object.__setattr__`, not
+`model_copy(update=...)`. `report.json` lists the defaults an analysis applied in
+`plan_defaults`.
 
 ### 4.3 Report outputs
 
@@ -299,8 +301,9 @@ All three are first-class platforms.
 | Property | `tests/property/` | Hypothesis invariants: monotonicity, bound ordering, coverage direction |
 | Integration | `tests/integration/` | `analyze` and `validate` end to end on synthetic logs |
 | Examples | `tests/test_*_example.py` | The bundled examples still run offline |
-| Repository | `tests/test_repository_consistency.py` | Example plans validate, documentation links resolve, the version agrees in all three places, CI tests every advertised Python version, and only expected files sit at the repository root |
+| Repository | `tests/test_repository_consistency.py` | Example plans validate, documentation links resolve, the version agrees in all four places, CI tests every advertised Python version, and only expected files sit at the repository root |
 | Scripts | `tests/test_dev_scripts.py` | The developer scripts in `scripts/` do what they claim, on every platform |
+| Formal | `formal/` | Optional Lean proofs that every risk measure is monotone, each tied to a property test (see [formal/README.md](formal/README.md)). Python work never needs Lean. |
 | Golden **[proposed]** | `tests/golden/` | Byte-for-byte expected outputs for representative plans (#27) |
 
 - **Bug fixes.** Every bug fix comes with a test that fails without it. Check it with
@@ -381,8 +384,9 @@ All three are first-class platforms.
 
 - **Versioning.** Bump the minor version for class B and C changes, and the patch version for
   class A changes and fixes that do not change output.
-- **What a release includes.** A git tag, a changelog section, and a GitHub release. It is
-  published to PyPI through trusted publishing once that exists (#20).
+- **What a release includes.** A git tag, a changelog section, and a GitHub release. A version
+  tag publishes it to PyPI through trusted publishing (#20); [docs/releasing.md](docs/releasing.md)
+  has the steps and the one-time setup.
 - **Deprecation.** Removing or renaming a protected interface takes at least one minor release.
   During it, the old interface keeps working and warns with a `DeprecationWarning` or a plan
   diagnostic that names the replacement. The migration is documented in the changelog.

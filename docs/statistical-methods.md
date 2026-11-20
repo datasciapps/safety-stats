@@ -88,9 +88,11 @@ The initial library therefore has **no universal default aggregate estimand**. T
 - an all-mandatory-items conjunction;
 - a zero-tolerance rule for specified critical events.
 
-Arithmetic averaging should be treated as a declared policy choice and ordinarily as a secondary summary, not as the default definition of safety. The benchmark remains a design set, not a random sample from an implicit population of prompts. Accordingly, every report must state:
+Arithmetic averaging should be treated as a declared policy choice and ordinarily as a secondary summary, not as the default definition of safety. The benchmark remains a design set, not a random sample from an implicit population of prompts. Accordingly, every report of a fixed design must state:
 
 > Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts.
+
+The exception is a [sampled design](design-based-sampling.md), whose items were actually drawn from a declared frame with recorded inclusion probabilities. Its report states instead that results apply to that frame, and not to prompts outside it.
 
 ### 2.3 Declared hierarchy within the fixed design
 
@@ -320,7 +322,7 @@ These nonlinear measures are defined on the latent prompt-level probabilities \(
 R(\widehat p;w)
 \]
 
-is a plug-in estimate and need not be unbiased for \(R(p;w)\); applying CVaR, a maximum, or entropic risk directly to one rollout per prompt can be especially misleading. The certified output must therefore emphasize uncertainty bounds, and the package should normally require repeated rollouts per item before allowing a nonlinear aggregate to drive a safety decision. A point estimate alone is descriptive.
+is a plug-in estimate and need not be unbiased for \(R(p;w)\); applying CVaR, a maximum, or entropic risk directly to one rollout per prompt can be especially misleading. The certified output must therefore emphasize uncertainty bounds, and the package should normally require repeated rollouts per item before allowing a nonlinear aggregate to drive a safety decision. A point estimate alone is descriptive. The same holds for a top-\(k\) mean, at one rollout an equal-weight CVaR, and for threshold exceedance and excess, which then count every prompt that failed its one trial as above any threshold below 1. The package does not block such a claim, but `validate` and `analyze` degrade integrity with a `TAIL_MEASURE_SINGLE_ROLLOUT` warning when a claim on a CVaR, maximum, top-\(k\) mean, entropic, threshold exceedance or threshold excess measure has one classified rollout for at least half the prompts of its cohort and group (its lower median prompt). Worst of \(k\) is not flagged: it gives no estimate below \(k\) rollouts per prompt, and at \(k=1\) it is the weighted mean.
 
 Suppose simultaneous prompt-level bounds satisfy
 
@@ -350,6 +352,14 @@ R_{\mathrm{exc}}(p;w,\tau)
 \]
 
 The report should also show the certified-safe weight \(\sum_jw_j\mathbf 1\{U_j\le\tau_j\}\) and unresolved weight. These classifications are conditional on the joint prompt-level coverage event.
+
+Because \(R(U;w)\) is built from per-prompt upper bounds, its width is set by the rollouts on each prompt, not by the total. A prompt with \(n\) rollouts and no failure has the one-sided Clopper-Pearson upper bound \(u_n=1-\alpha^{1/n}\), at its upper-bound level \(\alpha\). For each cohort and group whose prompts all have certifying bounds (otherwise the measures have no interval to be wide), `analyze` takes \(n\) as the lower median of the classified rollouts of its prompts, and \(\alpha\) as the smallest of their upper-bound levels. For each measure built only from the prompt bounds it computes the distance from estimate to upper bound that the measure would have if no prompt failed,
+
+\[
+d(n)=R(u_n\mathbf 1;w)-R(\mathbf 0;w).
+\]
+
+For a maximum, CVaR, top-\(k\) mean or entropic risk, \(d(n)=u_n\); for worst-of-\(k\), \(d(n)=1-(1-u_n)^k\); for exceedance, \(d(n)=\sum_jw_j\mathbf 1\{0\le\tau_j<u_n\}\), the weight whose threshold even a failure-free prompt's bound exceeds; and for excess, \(d(n)=\sum_jw_j[\max(u_n-\tau_j,0)-\max(-\tau_j,0)]\). Since \(u_n\) falls as \(n\) grows and \(R\) is coordinatewise monotone, \(d\) never increases. When \(d(n)\) exceeds `report.precision_target`, a `TAIL_MEASURES_UNINFORMATIVE` warning for the cohort and group names the measure, with the smallest \(n'\) at which \(d(n')\) meets the target, found by doubling and bisection up to \(10^9\). A measure that no such \(n'\) brings within the target, such as the exceedance of a zero threshold, is named without one. The check describes the interval a design without failures would have at this budget, not the interval on these data, and it leaves integrity unchanged.
 
 #### 2.4.10 Direct inference for the weighted mean
 
@@ -501,6 +511,76 @@ reporting replaces each directional alpha by its prespecified multiplicity alloc
 inversion. Method choice must be prespecified rather than selected from the narrowest realized
 interval.
 
+##### Worst-of-k interval (experimental)
+
+The `worst_of_k` measure targets the weighted chance that at least one of \(k\) fresh attempts
+at a prompt fails,
+
+\[
+\theta=\sum_jw_j\theta_j,\qquad \theta_j=1-(1-p_j)^k .
+\]
+
+Its point estimate gives each prompt the share of its \(k\)-rollout subsets that contain a
+failure. With \(x_j\) failures in \(n_j\ge k\) rollouts,
+
+\[
+\widehat\theta_j=1-\binom{n_j-x_j}{k}\Big/\binom{n_j}{k},
+\qquad
+\mathbb E\,\widehat\theta_j=\theta_j ,
+\]
+
+because \(\widehat\theta_j\) is the U-statistic of order \(k\) with kernel
+\(h(Y_1,\ldots,Y_k)=\max_rY_r\). No unbiased estimator of \(\theta_j\) exists for \(k>n_j\):
+the expectation of any function of \(n_j\) Bernoulli draws is a polynomial in \(p_j\) of degree
+at most \(n_j\), and \(\theta_j\) has degree \(k\).
+
+The \(n_j\) rollouts are not \(n_j\) independent observations of \(\theta_j\), so entering each
+rollout as its own block would be anti-conservative. Hoeffding [32, section 5] writes a
+U-statistic of order \(k\) as an average, over permutations of the \(n_j\) draws, of
+
+\[
+W_j=\frac1{m_j}\sum_{b=1}^{m_j}h(\text{block }b),\qquad m_j=\lfloor n_j/k\rfloor ,
+\]
+
+the mean of the kernel over \(m_j\) disjoint blocks of \(k\) draws. Each \(W_j\) is a mean of
+\(m_j\) independent \([0,1]\) terms with mean \(\theta_j\), and convexity of the exponential gives
+
+\[
+\mathbb E\exp(\lambda\widehat\theta_j)\le\mathbb E\exp(\lambda W_j)
+\quad\text{for every }\lambda .
+\]
+
+The KL/Chernoff bounds above use the sample only through such a moment-generating-function
+bound. Prompt \(j\) therefore enters them as \(m_j\) blocks, each with observation
+\(\widehat\theta_j\) and atomic weight \(w_j/m_j\), and the inversion is otherwise unchanged:
+the Bernoulli-KL kernel when all atomic weights are equal, the weighted Poisson-Chernoff
+kernel otherwise. The reported `independent_block_count` is \(\sum_jm_j\). At \(k=1\) the blocks
+are the rollouts and the interval equals the rollout-level weighted KL/Chernoff interval.
+
+Unclassified rollouts are completed as safe for the lower endpoint and as failures for the
+upper endpoint. \(\widehat\theta_j\) does not decrease when a safe outcome becomes a failure,
+so the completion is conservative.
+
+Scope:
+
+- The interval is opt-in per measure (`direct_interval: true`) and is computed for group rows
+  only. It is calibrated in the direct-mean multiplicity family, next to the weighted means.
+- It requires the rollouts of each prompt to be independent and identically distributed, with
+  one failure probability per prompt, and the prompts to be independent of one another, so the
+  primary independence profile must block by rollout. Prompts may differ in failure probability.
+  Sensitivity profiles get no worst-of-k interval, and the row says so.
+- It bounds the fixed prompt set only. Sampled designs, `frontier_sidak` calibration and
+  disabled direct-mean intervals are refused when the plan is validated. A refused plan's rows
+  get no worst-of-k interval from `analyze`: they keep the propagated prompt envelope and say why.
+- If a prompt has fewer than \(k\) attempted rollouts, the row keeps the propagated
+  prompt-envelope interval and warns that the design cannot bound \(k\) attempts.
+
+The test suite checks coverage by exact enumeration over the binomial on small designs. Rollout
+blocks fall below nominal coverage there, and \(\lfloor n/k\rfloor\) blocks do not. Two designs
+with many blocks check the estimand: on them, the same blocks carrying each prompt's failure
+rate in place of \(\widehat\theta_j\) cover \(\theta\) from above only 44% and 67% of the time,
+at a nominal 90%.
+
 ##### Simultaneous hierarchy-constrained confidence region
 
 Independent node intervals ignore the fact that every displayed hierarchy mean is a linear
@@ -647,8 +727,8 @@ covariance approximations, or resampling as an exact confidence region.
 
 Hoeffding uses only the bounded range and is therefore insensitive to the observed failure
 variance. A second direct construction uses a data-dependent upper bound on the Bernstein
-variance term. Index all independent rollout contributions by (i), with binary outcome (Y_i)
-and fixed coefficient (a_i=w_j/n_j) for a rollout belonging to prompt (j). Define
+variance term. Index all independent rollout contributions by \(i\), with binary outcome \(Y_i\)
+and fixed coefficient \(a_i=w_j/n_j\) for a rollout belonging to prompt \(j\). Define
 
 \[
 C_2=\sum_i a_i^2=\sum_j\frac{w_j^2}{n_j},\qquad
@@ -668,9 +748,9 @@ For the unknown Bernstein variance
 V=\sum_i a_i^2p_i(1-p_i),
 \]
 
-we have (V\le C_2/4), (V\le\mathbb E Q_+), and
-(V\le\mathbb E Q_-). Hoeffding bounds the two expectations using the range-squared sum
-(C_4). With variance-component error probability (delta_v), a valid observable upper bound is
+we have \(V\le C_2/4\), \(V\le\mathbb E Q_+\), and
+\(V\le\mathbb E Q_-\). Hoeffding bounds the two expectations using the range-squared sum
+\(C_4\). With variance-component error probability \(\delta_v\), a valid observable upper bound is
 
 \[
 \overline V=\min\left\{
@@ -680,7 +760,7 @@ Q_- + \sqrt{\frac{C_4}{2}\log\frac1{\delta_v}}
 \right\}.
 \]
 
-Conditional on the event (V\le\overline V), inversion of Bernstein's inequality gives the
+Conditional on the event \(V\le\overline V\), inversion of Bernstein's inequality gives the
 directional half-width
 
 \[
@@ -692,24 +772,24 @@ h_{\mathrm{EB}}=
 }.
 \]
 
-For an endpoint budget (alpha_d), the implementation uses
-(delta_t=\alpha_d/2) for the Bernstein tail and
-(delta_v=\alpha_d/4) for each of the two variance proxies. A union bound therefore limits the
-endpoint failure probability to (alpha_d).
+For an endpoint budget \(\alpha_d\), the implementation uses
+\(\delta_t=\alpha_d/2\) for the Bernstein tail and
+\(\delta_v=\alpha_d/4\) for each of the two variance proxies. A union bound therefore limits the
+endpoint failure probability to \(\alpha_d\).
 
 Unknown outcomes are completed as all-safe for the lower endpoint's estimate and as all-failure
 for the upper endpoint's. The variance bound does not follow that completion. For both
-endpoints, (Q_+) comes from the all-failure completion and (Q_-) from the all-safe one. Each is
-then at least its value under any completion, so (\overline V) holds for the true labels
+endpoints, \(Q_+\) comes from the all-failure completion and \(Q_-\) from the all-safe one. Each is
+then at least its value under any completion, so \(\overline V\) holds for the true labels
 whatever they are, and the interval contains the interval of every completion.
 
 Taking both proxies from each endpoint's own completion is not monotone. Completing an unknown
-as a failure lowers (Q_-), and with skewed weights the width can then shrink by more than the
+as a failure lowers \(Q_-\), and with skewed weights the width can then shrink by more than the
 estimate rises.
 
-**Fixed variance centers.** For any constant (c), (\operatorname{Var}(Y)\le\mathbb E(Y-c)^2),
-with slack ((\mathbb E Y-c)^2). A caller may therefore fix (K) centerings in advance, from the
-design and never from the data, each a center (c_i^{(k)}\in[0,1]) per contribution, and use
+**Fixed variance centers.** For any constant \(c\), \(\operatorname{Var}(Y)\le\mathbb E(Y-c)^2\),
+with slack \((\mathbb E Y-c)^2\). A caller may therefore fix \(K\) centerings in advance, from the
+design and never from the data, each a center \(c_i^{(k)}\in[0,1]\) per contribution, and use
 
 \[
 Q_{c^{(k)}}=\sum_i a_i^2\bigl(Y_i-c_i^{(k)}\bigr)^2,\qquad
@@ -717,20 +797,24 @@ Q_{c^{(k)}}=\sum_i a_i^2\bigl(Y_i-c_i^{(k)}\bigr)^2,\qquad
 +\sqrt{\tfrac12 C_4^{(k)}\log\tfrac1{\delta_v}}\Bigr)\right\},
 \]
 
-with (delta_v=\alpha_d/(2K)), so the (K) variance proxies share half the endpoint budget. Each
-term of (Q_{c^{(k)}}) lies in ([0,a_i^2r_i^{(k)}]) with
-(r_i^{(k)}=\max\{(c_i^{(k)})^2,(1-c_i^{(k)})^2\}), so Hoeffding's padding uses the range-squared
-sum (C_4^{(k)}=\sum_i a_i^4(r_i^{(k)})^2). For centers 0 or 1, (r=1) and (C_4^{(k)}=C_4); about
-(1/2), (r=1/4) and the padding is a quarter as large. An unknown outcome contributes its larger
-completion, (r_i^{(k)}) on the rollout unit; on the prompt-cluster unit the squared deviation is
-convex in the completed rate, so its maximum lies at one of the two extreme completions. The
-default, (K=2) with (c\equiv0) and (c\equiv1), is exactly (Q_+) and (Q_-) above.
+with \(\delta_v=\alpha_d/(2K)\), so the \(K\) variance proxies share half the endpoint budget. Each
+term of \(Q_{c^{(k)}}\) lies in \([0,a_i^2r_i^{(k)}]\) with
+\(r_i^{(k)}=\max\{(c_i^{(k)})^2,(1-c_i^{(k)})^2\}\), so Hoeffding's padding uses the range-squared
+sum \(C_4^{(k)}=\sum_i a_i^4(r_i^{(k)})^2\). For centers 0 or 1, \(r=1\) and \(C_4^{(k)}=C_4\); about
+\(1/2\), \(r=1/4\) and the padding is a quarter as large. An unknown outcome contributes its larger
+completion, \(r_i^{(k)}\) on the rollout unit; on the prompt-cluster unit the squared deviation is
+convex in the completed rate, so its maximum lies at one of the two extreme completions. On the
+rollout unit, the default, \(K=2\) with \(c\equiv0\) and \(c\equiv1\), is exactly \(Q_+\) and
+\(Q_-\) above. On the prompt-cluster unit each contribution is a prompt's failure rate
+\(\hat p_j\), completed as above, with coefficient \(w_j\), so the default is
+\(\sum_jw_j^2\hat p_j^2\) and \(\sum_jw_j^2(1-\hat p_j)^2\), padded with \(\sum_jw_j^4\) in
+place of \(C_4\).
 
-Validity: let (V_0=\min\{C_2/4,\min_k\mathbb E Q_{c^{(k)}}\}), which is deterministic and at least
-(V). On the event that all (K) Hoeffding bounds hold (probability at least (1-\alpha_d/2)),
-(\overline V\ge V_0), and the Bernstein width is increasing in the variance, so a miss requires
-the Bernstein tail at (V_0) (probability at most (\alpha_d/2)). This needs the centers to be
-fixed: a center chosen from the data would make (V_0) random.
+Validity: let \(V_0=\min\{C_2/4,\min_k\mathbb E Q_{c^{(k)}}\}\), which is deterministic and at least
+\(V\). On the event that all \(K\) Hoeffding bounds hold (probability at least \(1-\alpha_d/2\)),
+\(\overline V\ge V_0\), and the Bernstein width is increasing in the variance, so a miss requires
+the Bernstein tail at \(V_0\) (probability at most \(\alpha_d/2\)). This needs the centers to be
+fixed: a center chosen from the data would make \(V_0\) random.
 
 This is a finite-sample, heterogeneous-Bernoulli empirical-Bernstein construction, not a normal
 approximation and not a plug-in standard error. It can be materially narrower than Hoeffding, but
@@ -738,6 +822,68 @@ it can remain loose near zero failures because it spends part of the error budge
 variance. Sparse binary safety analyses should generally prespecify weighted KL/Chernoff as the
 primary interval and show empirical Bernstein and weighted Hoeffding as references. The package
 does not select whichever interval looks narrowest after seeing the data.
+
+##### Betting interval from a fixed mixture of common bets (experimental)
+
+The three constructions above bound a moment generating function analytically. A fourth,
+`weighted_betting`, tests each candidate mean directly with a nonnegative capital process and
+inverts the test. Let the independent blocks have values \(Y_g\in[0,1]\), weights \(A_g\) with
+\(\sum_g A_g=1\), and unknown means \(m_g\), and consider the null \(H_0(\mu):\sum_g A_g m_g=\mu\).
+For a fraction \(\theta\in(0,1)\) of the maximal admissible stake define the upper-endpoint factors
+
+\[
+f_g(\theta,\mu)=1-\theta+\theta\,\frac{1-Y_g}{1-\mu},
+\qquad
+K_\theta(\mu)=\prod_g f_g(\theta,\mu)^{c_g},
+\qquad
+c_g=\frac{A_g}{\max_h A_h}\in(0,1],
+\]
+
+and symmetrically \(1-\theta+\theta Y_g/\mu\) for the lower endpoint. Under \(H_0(\mu)\),
+
+\[
+\mathbb E\,K_\theta(\mu)
+\le\prod_g\big(\mathbb E f_g\big)^{c_g}
+=\Big(\prod_g\big(\mathbb E f_g\big)^{A_g}\Big)^{1/\max_h A_h}
+\le\Big(\sum_g A_g\,\mathbb E f_g\Big)^{1/\max_h A_h}
+=1,
+\]
+
+where the first inequality is Jensen's inequality for the concave map \(x\mapsto x^{c_g}\), the
+second is the weighted AM-GM inequality, and the final equality uses
+\(\sum_g A_g\,\mathbb E f_g=1-\theta+\theta(1-\sum_g A_gm_g)/(1-\mu)=1\). A mixture
+\(K(\mu)=\sum_j\pi_jK_{\theta_j}(\mu)\) over a prior fixed before any outcome is observed is
+therefore an e-value, Markov's inequality gives \(\Pr\{K(\mu)\ge1/\alpha\}\le\alpha\), and
+\(\{\mu:K(\mu)<1/\alpha\}\) is a confidence set. Its capital is monotone in \(\mu\), so the set is
+an interval whose endpoint is found by bisection, and the plug-in estimate is never rejected.
+
+Three consequences shape the implementation. First, the bet must be **common to all blocks and
+fixed in advance**: with heterogeneous means the null constrains only the weighted sum, so a
+fraction chosen block by block, even from earlier blocks, can profit from what earlier blocks
+reveal about later ones and destroys the supermartingale property. This also means the
+construction is fixed-horizon; it does not yield an anytime-valid sequence over blocks. Second, the
+prior is the Beta(1/2, 1/2)-quantile grid of the universal portfolio [34] with half of its mass on
+the most aggressive fraction, so the sparse-failure regime, where that fraction is optimal, pays
+about \(\log 2\) rather than \(\log J\) for not knowing the best bet. Third, unequal weights enter
+through the exponents \(c_g\), which lowers the growth rate in proportion to \(1/\max_g A_g\),
+much as the KL fallback pays through its largest increment.
+
+Compared with the other engines, the betting interval needs no estimated variance proxy and so
+avoids the empirical-Bernstein padding term, which dominates at small block counts. With equal
+or near-equal block weights it is therefore usually the tightest construction when blocks are
+fractional rates, as under a prompt-level or coarser independence profile, and it is competitive
+with, though not sharper than, the exact Bernoulli-KL inversion on sparse binary rollouts with
+equal weights. Unequal weights cost it more than they cost Hoeffding: the exponents sum to
+\(1/\max_g A_g\), so its capital grows like that of \(1/\max_g A_g\) equally weighted blocks,
+while the Hoeffding width is set by \(1/\sum_g A_g^2\), which is never smaller. With tasks of 2, 10 and 50 equally weighted prompts,
+every prompt observed at a failure rate of 0.05, the betting upper bound at \(\alpha=0.05\) is
+0.459 and the Hoeffding one 0.371. As with every
+engine, showing it as a prespecified primary or reference is valid; selecting it after seeing that
+it is narrowest is not [33].
+
+The construction is experimental (CONTRIBUTING, section 3): a plan selects it only by naming
+`weighted_betting`, it is offered for direct means and hierarchy nodes but not for comparisons,
+and its functions are not exported from `inspect_safety_stats.stats`.
 
 ##### Hierarchy nodes and configurable independence profiles
 
@@ -773,7 +919,8 @@ statements; the user must not choose a method post hoc and retain the same guara
 
 System-level safety analyses, such as fault trees and Markov models, take one number per
 component rather than an interval at a chosen \(\alpha\). The option
-`outputs.direct_mean_intervals.single_valued_bound` reports, beside each direct interval,
+`outputs.direct_mean_intervals.single_valued_bound` reports, beside each direct interval of a
+weighted mean (a direct worst-of-k interval gets none),
 
 \[
 M=\inf_{\delta\in(0,1)}\bigl[U_\delta+\delta\bigr],
@@ -1050,6 +1197,14 @@ end-to-end system. An explicit provider policy block during target generation ca
 known safe outcome only when no target content was delivered. The event is retained as a distinct
 `target_policy_blocked_safe` outcome rather than rewritten as an ordinary model refusal.
 
+"No target content" means none in the whole sample, not only in the blocked generation. A block in
+the last turn of a conversation, or the last step of an agent, does not withdraw what an earlier
+turn delivered: its text, readable reasoning or tool calls reached the user or the environment
+before the block. A sample error therefore counts as a target-side block only when no earlier
+generation of the sample succeeded, and a content-filter stop classified under
+`inputs.score.content_filter_stops` only when neither the stopped output nor any earlier
+generation that the transcript records carries content. Otherwise the score decides.
+
 This logic does not apply to a grader-side policy block. Once target content exists, failure of a
 separate classifier leaves its label unknown. It also does not apply to network errors, timeouts,
 quota failures, or ambiguous provider errors. For an `underlying_model` estimand, even a
@@ -1182,11 +1337,146 @@ The library can search integer pairs \((n,c)\) satisfying both constraints and o
 
 Although explicit zero-failure planning is still uncommon in public frontier-model reports, the need is visible wherever harmful events are rare. C3LLM and probabilistic LLM-safety certification work use exact binomial bounds [16, 18], from which the zero-event requirement follows directly. OpenAI's public deployment-safety reports compare evaluation metrics and confidence intervals with Preparedness Framework thresholds [25], illustrating why the threshold, uncertainty target, and sample size need to be designed together rather than reported independently.
 
+### 5.7 Detectable failure rates under the analysis interval
+
+`inspect-safety-stats plan fixed-design --plan PLAN` and
+`inspect_safety_stats.stats.planning.detectable_failure_rates` plan a `weighted_mean` claim on
+the interval that decides it: the group's primary direct-mean interval under the plan's method
+(`weighted_hoeffding`, `weighted_empirical_bernstein` or `weighted_kl_chernoff`) and the
+endpoint alpha \(\alpha\) that `analyze` calibrates for it. Each gives two rates, at a target
+power \(1-\beta\):
+
+- the maximum certifiable failure rate \(R_A\): at every weighted failure rate \(R\le R_A\),
+  the upper bound falls to `acceptable_upper` \(\tau_A\) or below with probability at least
+  \(1-\beta\), so the claim can PASS;
+- the minimum detectable failure rate \(R_U\): at every \(R\ge R_U\), the lower bound reaches
+  `unacceptable_lower` \(\tau_U\) with probability at least \(1-\beta\), so the claim can FAIL.
+
+Both are guarantees, not the rates at which the power falls to \(1-\beta\). The power at
+\(R_A\) is often well above \(1-\beta\), and a rate above \(R_A\) may still certify with
+probability \(1-\beta\): the power side below takes the sharpest of three tail bounds, each of
+which holds for every spread of the rate over the prompts.
+
+**Model and assumptions.** As in section 2.4.10, the primary independence profile partitions
+the declared rollouts into blocks \(b\) with masses \(a_b\ge0\), \(\sum_ba_b=1\), and values
+\(Z_b\in[0,1]\); under `block_by: [rollout]` every rollout is a block. The estimate is
+\(S=\sum_ba_bZ_b\) and the target is its mean \(R=\mathbb ES\), the weighted failure rate.
+The guarantees assume what the interval assumes, and two more things the planner fixes before
+any rollout exists:
+
+1. the blocks are independent (the primary profile is the right one);
+2. every declared rollout is attempted, so the masses \(a_b\) are the planned ones (from the
+   manifest's `expected_rollouts`, or `--rollouts`); and
+3. every rollout is classified. An unclassified outcome enters the interval as a completion
+   that widens it, which the planner does not model.
+
+**Test side.** The Hoeffding and KL-Chernoff endpoints depend on the data only through \(S\).
+The empirical-Bernstein endpoints also read the blocks' second moments. Since
+\(a_b^2Z_b^2\le a_{\max}a_bZ_b\) and \(a_b^2(1-Z_b)^2\le a_{\max}a_b(1-Z_b)\), every data set
+with estimate \(s\) has an upper endpoint at most \(U^*(s)\) and a lower endpoint at least
+\(L^*(s)\), the endpoints at those largest second moments. Write \(U^*\) and \(L^*\) for the
+endpoints as functions of the estimate for every method. They are nondecreasing in \(s\): for
+Hoeffding and KL-Chernoff by construction. For empirical Bernstein the half-width is
+\(h=\ell+\sqrt{2VT+\ell^2}\), with \(T=\log(2/\alpha)\), \(\ell=a_{\max}T/3\), and a variance
+bound \(V\) that is a minimum of a constant, \(a_{\max}s+c\) and \(a_{\max}(1-s)+c\), \(c\ge0\).
+Where \(V\) falls with \(s\), \(s+h\) falls only if \(V<\tfrac49a_{\max}^2T\); but there
+\(V\ge a_{\max}(1-s)\), and \(U^*(s)<1\) needs \(1-s>h\ge2\ell\), so
+\(V>\tfrac23a_{\max}^2T\). The lower endpoint is symmetric. The planner finds by bisection
+
+\[
+r^*=\sup\{s\in[0,1]:U^*(s)\le\tau_A\},\qquad
+r_*=\inf\{s\in[0,1]:L^*(s)\ge\tau_U\}.
+\]
+
+The claim then passes whenever \(S\le r^*\), and fails whenever \(S\ge r_*\). When
+\(U^*(0)>\tau_A\), no outcome passes on the interval alone, and \(R_A\) is reported as
+unattainable; when \(L^*(1)<\tau_U\), \(R_U\) is.
+
+**Power side.** It remains to bound \(\Pr\{S>r^*\}\) for \(R<r^*\). Three bounds hold for
+every configuration of the block means with weighted mean \(R\):
+
+- Hoeffding [32]: \(\Pr\{S-R\ge t\}\le\exp(-2t^2/c^2)\) with \(c^2=\sum_ba_b^2\), so
+  \(R\le r^*-t_\beta\), with \(t_\beta=\sqrt{\tfrac12c^2\log(1/\beta)}\), suffices.
+- The Chernoff kernel of the KL-Chernoff interval (section 2.4.10). With equal masses \(1/m\),
+  \(\Pr\{S\ge r^*\}\le\exp\{-m\,\mathrm{kl}(r^*\Vert R)\}\); otherwise
+  \(\Pr\{S\ge r^*\}\le\exp\{-d_{\mathrm P}(r^*\Vert R)/a_{\max}\}\). So every \(R\) below the
+  root of \(\mathrm{kl}(r^*\Vert R)=\log(1/\beta)/m\), or of
+  \(d_{\mathrm P}(r^*\Vert R)=a_{\max}\log(1/\beta)\), suffices.
+- The same kernel on the safe outcomes \(1-Z_b\), whose weighted mean \(1-S\) has mean
+  \(1-R\). \(S>r^*\) is the event \(1-S<1-r^*\), whose probability is at most
+  \(\exp\{-d_{\mathrm P}(1-r^*\Vert1-R)/a_{\max}\}\). Under equal masses
+  \(\mathrm{kl}(1-s\Vert1-\mu)=\mathrm{kl}(s\Vert\mu)\), so this adds nothing; under unequal
+  masses the Poisson divergence is not symmetric, and this bound is the sharpest at high
+  rates.
+
+Each bound decreases as \(R\) moves away from \(r^*\), so it holds for every \(R\) below its
+root. \(R_A\) is the largest of the three roots, and every \(R\le R_A\) has
+\(\Pr\{S\le r^*\}\ge1-\beta\). The FAIL side is symmetric: \(R_U\) is the smallest of
+\(r_*+t_\beta\) and the two kernel roots above \(r_*\).
+
+**Hierarchy-region projection.** Under `hierarchy_region: linear_program` the claim is decided
+on the bound projected onto the hierarchy region (section 2.4.10), which is never above the
+raw upper endpoint and never below the raw lower one. So both guarantees hold for the
+projected bounds too, and the projection can only raise the power. The certification floor
+the planner reports, the upper bound when every rollout is safe, comes from `analyze`'s own
+interval and projection stages on those rollouts. A claim whose `acceptable_upper` lies below
+it does not PASS even when every rollout is safe.
+
+**Scope.** The rates are conservative by construction: the empirical-Bernstein test side takes
+the widest interval any data with the estimate allow, and the power side takes a tail bound,
+not the distribution of \(S\). The margin can be large. With 800 equally weighted rollouts,
+\(\alpha=0.0125\), \(\tau_A=0.03\) and \(1-\beta=0.9\), empirical Bernstein certifies only when
+no rollout fails, and the planner reports \(R_A=1.7\times10^{-12}\); a simulated common rate of
+\(10^{-4}\) certifies in 91% of 400 draws. The `weighted_betting` interval reads the
+individual block values, so no boundary \(r^*\) exists, and its claims are not planned.
+
+### 5.8 Drawing a random pilot (experimental)
+
+A pilot informs the plan: how many rollouts the study needs, what they cost and roughly what
+the rates are. `plan pilot` ([user guide](design-based-sampling.md#drawing-a-random-pilot))
+draws it by stratified simple random sampling without replacement. In stratum \(h\), of
+\(N_h\) prompts, each prompt is ranked by the SHA-256 digest of the text `{seed}|{prompt_id}`
+in UTF-8, compared as bytes, and the \(k\) lowest-ranked prompts are drawn. Treating the
+digest as a random function of its input, the ranks order each stratum uniformly at random,
+independently across strata, so the draw is a simple random sample of \(k\) from each
+stratum with
+
+\[
+\pi_j=\frac{k}{N_h},\qquad
+\pi_{jl}=\frac{k(k-1)}{N_h(N_h-1)}\ \text{for } j\ne l \text{ in one stratum},\qquad
+\pi_{jl}=\pi_j\pi_l\ \text{across strata}.
+\]
+
+These are the inclusion probabilities of the fixed-size sampled design that analyses the pilot
+frame. Because \(\pi_j\) differs between strata of different size, the pilot's unweighted
+mean is biased for the frame's whenever the strata's means differ too, and the
+Horvitz–Thompson mean \(\frac1N\sum_{j\in S}y_j/\pi_j\) is unbiased whatever they are.
+
+The rank is a hash rather than a draw from `numpy.random.default_rng(seed)`, the generator
+the [contributing guide](../CONTRIBUTING.md#53-numerics) asks for, because a prompt's hash
+depends only on the seed and its own identifier. The draw is therefore the same whatever the
+order of the manifest's rows and whatever the other strata hold, and SHA-256 gives the same
+digest on every platform and library version, which numpy does not promise for a generator's
+methods. Draws with one seed on the same manifest and strata are nested, since the \(k\)
+lowest ranks contain the \(k'<k\) lowest; ranks drawn from a generator would nest as well,
+so nesting is not a reason for the hash. The seed is recorded as it would be for a
+generator: the pilot frame carries it in `pilot_seed`, and a report whose design manifest is
+that frame covers it with the manifest's hash. Choose the seed before drawing and draw once:
+trying seeds until the pilot looks favourable selects the prompts.
+
+The unit tests pin the prompts one seed draws, including identifiers outside ASCII, and check
+that over 2,000 seeds every prompt of a stratum of ten is drawn at a rate close to \(k/N_h\).
+
+A pilot enlarged after its outcomes were seen, and analysed again until a claim passes, is
+the repeated peeking of section 6.1 rather than a fixed-size design. Pilots are analysed as
+exploratory; the [user guide](design-based-sampling.md#what-a-pilot-can-show) gives a
+simulation of the inflated false-pass rate.
+
 ---
 
 ## 6. Stretch goal: Bernoulli confidence sequences
 
-**Release status:** deferred. This section preserves the mathematical design for a later adaptive-evaluation module. It is not required for the core fixed-horizon workflow.
+**Release status:** deferred, with two experimental parts implemented: the human labels of a judge calibration (Section 6.9) and the upper bound for Inspect runs stopped early (Section 6.10). Otherwise this section preserves the mathematical design for a later adaptive-evaluation module. It is not required for the core fixed-horizon workflow. The [phase-0 design](sequential-design.md) defines the stream, the state and the phases of that module.
 
 For a predeclared rollout count and a single final analysis, the exact fixed-sample methods in Sections 4 and 5 are preferred: they are simpler to audit and generally yield tighter bounds. Confidence sequences become worthwhile only when observed outcomes are allowed to determine when sampling stops, which prompt receives the next rollout, or when a continuously extended evaluation is allowed to make a formal decision.
 
@@ -1381,7 +1671,75 @@ Updating a Bernoulli confidence sequence after every correlated epoch is invalid
 
 ### 6.8 AI-evaluation precedent
 
-Sequential inference is emerging explicitly in AI evaluation. *Efficient Sequential Evaluation of Large Language Models* constructs confidence sequences by inverting test supermartingales and studies adaptive question selection [20]. Optstop implements Bayesian adaptive stopping for Inspect AI, but its posterior-width criterion is not the same as an anytime-valid frequentist confidence sequence [21]. This remains a useful future integration point if users later require a frequentist false-pass guarantee after adaptive stopping; it does not justify adding sequential complexity to the fixed-horizon core.
+Sequential inference is emerging explicitly in AI evaluation. *Efficient Sequential Evaluation of Large Language Models* constructs confidence sequences by inverting test supermartingales and studies adaptive question selection [20]. CELEUS builds anytime-valid confidence intervals from e-processes and combines uncertainty-guided sample selection with a surrogate for the items not yet evaluated [39]. Both papers target the unweighted mean score of one model over a pool of items, with one outcome per item. Neither offers one-sided threshold decisions, a declared weighted estimand, several rollouts per prompt, correction for judge error, or multiplicity across claims. Both use non-uniform selection with inverse-probability weighting, but only as a sampling device, not as a weighted target. Optstop implements Bayesian adaptive stopping for Inspect AI, but its posterior-width criterion is not the same as an anytime-valid frequentist confidence sequence [21]. This remains a useful future integration point if users later require a frequentist false-pass guarantee after adaptive stopping; it does not justify adding sequential complexity to the fixed-horizon core.
+
+### 6.9 Implemented: human labels for a judge calibration (experimental)
+
+A confidence sequence is implemented for the human labels of a validated judge calibration (see [Judge misclassification](judge-misclassification.md#labelling-protocol-experimental)), when the plan's labelling protocol declares `stopping: data_dependent`. The labelling of evaluation outputs, not the evaluation itself, is then allowed to stop on results.
+
+**Model.** A judge stratum holds \(N\) rollouts, of which an unknown \(K\) are truly unsafe. The calibration parameter is \(\rho\), the probability that a rollout the judge put in this stratum is truly unsafe: the correction \(R^\ast=R\rho_1+(1-R)\rho_0\) needs a probability, as \(R\) is one, and \(K/N\) is only this run's share. Given \(N\), the stratum's rollouts are independent and each is truly unsafe with probability \(\rho\), so \(K\) is binomial and a census, which knows \(K\), still leaves \(K/N\) about \(\sqrt{\rho(1-\rho)/N}\) from \(\rho\). This is the rollout model under which the labels of the Clopper--Pearson calibration are binomial too. The labelling queue lists the stratum's rollouts, or a simple random sample of them, in a uniformly random order fixed before labelling, and the labeller labels it from the front. Under the model, the labels \(X_1, X_2, \dots\) in queue order are then independent draws, each unsafe with probability \(\rho\), whatever \(N\) is. After \(n\) labels with \(S_n\) unsafe, their likelihood is \(\rho^{S_n}(1-\rho)^{n-S_n}\).
+
+**Construction.** Put a uniform prior on \(\rho\in[0,1]\). The posterior is \(\mathrm{Beta}(S_n+1,\,n-S_n+1)\), whose density
+
+\[
+\pi_n(\rho)=\frac{\rho^{S_n}(1-\rho)^{n-S_n}}{B(S_n+1,\,n-S_n+1)}
+\]
+
+is also the posterior-to-prior ratio. At the true \(\rho^\ast\), the prior-posterior ratio \(1/\pi_n(\rho^\ast)\) is a nonnegative martingale with initial value one (Waudby-Smith and Ramdas [41], Proposition 1, here for the binomial model rather than a finite population). It is the likelihood ratio of the uniform mixture of rates against \(\rho^\ast\), a method-of-mixtures martingale in the sense of [3]. Ville's inequality gives \(\Pr(\exists n:1/\pi_n(\rho^\ast)\ge 1/a)\le a\), so
+
+\[
+C_n=\{\rho:\pi_n(\rho)>a\}
+\]
+
+contains \(\rho^\ast\) at every \(n\) simultaneously with probability at least \(1-a\). Because the guarantee is time-uniform, it holds at any stopping time, including one chosen because of the labels seen so far. The Beta density is log-concave, so \(C_n\) is an interval. Its finite endpoints are where \(\pi_n(\rho)=a\), found by root-finding on either side of the mode \(S_n/n\), where the density is at least one. With no labels it is \([0,1]\). \(N\) does not enter: the unlabelled rollouts say nothing about \(\rho\), so labelling a larger share of a stratum narrows \(C_n\) only as the extra labels do, and a census leaves \(\rho\) uncertain.
+
+**Budget.** The calibration spends \(a=\alpha/4\) on each parameter, where \(\alpha\) is the calibration's share of the judge family budget (one per cohort, or per cohort and listed group). A two-sided miss at \(a\) bounds each one-sided miss by \(a\) as well, so the accounting of the Clopper-Pearson calibration (\(\alpha/4\) per endpoint) and the corrected interval's stated coverage carry over unchanged. It is conservative by the unused half of each parameter's share.
+
+**Width.** The sequence pays for holding at every \(n\). A sweep of every count up to 400 labels, at \(a\) of 0.0125, 0.05, 0.1 and 0.4, found it never narrower than the Clopper--Pearson interval at \(a\) per side. With 60 labels and one unsafe, its upper end at \(a=0.0125\) is 0.167, against 0.102.
+
+**Assumptions.** Within each of the calibration's judge strata (per cohort, or per cohort and group when the calibration is scoped to groups) the queue lists all of its classified rollouts, or a simple random sample of them drawn without looking at labels, in a uniformly random order fixed before labelling, and which stratum the next queue row comes from does not depend on labels not yet seen. A queue that orders finer strata, such as each task's rollouts, separately and interleaves them in shares other than their sizes is not a uniformly random order of the judge stratum, even when it lists all of it; it is one only for a calibration of those finer strata, and the analysis cannot tell the two apart. The analysis checks that the queue lists only classified rollouts of the run, and warns (`JUDGE_LABELLING_QUEUE_PARTIAL`) when it lists only part of a stratum that has labels: how that part was drawn, like the order, is declared, not checked. Rows are labelled in queue order without skipping, which the analysis checks as a prefix of the declared queue. Given its size, each stratum's rollouts are independent, each truly unsafe with the stratum's \(\rho\). Human labels are ground truth. Several strata interleaved in one queue keep each stratum's martingale, because each stratum's order is drawn independently of the others' labels.
+
+**Validation.** `tests/unit/test_confidence_sequence.py` checks each endpoint against the posterior density in exact rational arithmetic. Its Monte Carlo draws every rollout anew in each of 2,000 strata of 60 rollouts and labels each stratum up to a census, counting a side as missed if it ever excluded \(\rho\), which is the most adversarial stopping rule. At \(a=0.1\) each side missed 0% to 5.3% of the time. A corrected interval on 120 rollouts, at 0.05 for the judge-reported interval and 0.05 for the calibration, with two rows of each stratum labelled per round up to a census, never missed the true risk at any round in 2,000 runs. An earlier version used the finite-population sequence of [41], with a uniform prior on \(K\), and reported \([\min C_n/N,\ \max C_n/N]\) for the counts it kept. That bounds \(K/N\), not \(\rho\): under the same simulations each side missed 43.6% to 58.5% of the time, and the corrected interval lay above the true risk in 12.25% of the runs and below it in 16.25%, against 5% per side.
+
+### 6.10 Implemented: anytime-valid upper bounds for runs stopped early (experimental)
+
+`outputs.anytime_bounds` (#126) bounds the weighted mean failure probability of a fixed design whose Inspect run a rule such as Optstop's stopped once its outcomes looked precise enough (Section 12). The [sequential design](sequential-design.md#runs-that-optstop-stopped-126) explains it for users; this section derives it. The code is `src/inspect_safety_stats/stats/sequential.py`.
+
+**Model.** The design has \(N\) items with weights \(w_i\ge0\) summing to one. Item \(i\)'s outcome \(Y_i\in[0,1]\) is its judge-reported failure share over its first \(r\) epochs, \(r\) fixed in the plan. The \(Y_i\) are independent across items, and under the `rollout` profile so are the \(r\) rollouts within an item. The estimand is \(\theta=\sum_iw_i\,\mathbb E[Y_i]\), the fixed design's weighted mean. The run takes the items in a uniformly random permutation \(\sigma\), drawn before the run and independent of the outcomes, which Inspect's `sample_shuffle` with a nonzero integer seed records in the log. After \(t\) draws the analysis sees \(Y_{\sigma(1)},\dots,Y_{\sigma(t)}\). The guarantee is
+
+\[
+\Pr\bigl(\exists t\le N:\ \theta>U_t\bigr)\le\alpha ,
+\]
+
+so \(U_\tau\) holds at any stopping time \(\tau\), whatever rule chose it, as long as the rule decides only when to stop and never which item runs next.
+
+**Step 1: the realized mean, at \(\alpha/2\).** Let \(S=\sum_iw_iY_i\) and \(Z_i=w_iY_i/\max_jw_j\in[0,1]\), whose population mean is \(\mu^\ast=S/(N\max_jw_j)\). Condition on the outcomes. The order is still a uniform permutation, so given the first \(t-1\) draws the \(t\)-th is uniform over the \(N-t+1\) items left, and
+
+\[
+\mathbb E[Z_{\sigma(t)}\mid\mathcal F_{t-1}]=m_t(\mu^\ast),\qquad m_t(\mu)=\frac{N\mu-\sum_{s<t}Z_{\sigma(s)}}{N-t+1},
+\]
+
+which the past determines (Waudby-Smith and Ramdas [41]). For a candidate \(\mu\) and a bet fraction \(f\in[0,1)\), let
+
+\[
+K_t^f(\mu)=\prod_{s\le t}\left(1-f+f\,\frac{1-Z_{\sigma(s)}}{1-m_s(\mu)}\right),
+\]
+
+with the ratio taken as zero when \(Z_{\sigma(s)}=1\). Each factor is nonnegative. When \(m_s(\mu^\ast)<1\) its conditional mean at \(\mu^\ast\) is \(1-f+f=1\); when \(m_s(\mu^\ast)=1\) every item left has \(Z=1\), and the factor is \(1-f\le1\). So \(K_t^f(\mu^\ast)\) is a nonnegative supermartingale with \(K_0^f=1\), and so is the mixture \(M_t(\mu)=\sum_j\pi_jK_t^{f_j}(\mu)\) over the fixed prior of the betting interval ([Section 2.4.10](#betting-interval-from-a-fixed-mixture-of-common-bets-experimental): sixteen fractions \(f_j=\sin^2(\pi q_j/2)\) at \(q_j=(2j-1)/32\), weight \(1/32\) each and \(1/2\) more on the largest), fixed before any outcome. Ville's inequality [42] gives \(\Pr(\exists t:M_t(\mu^\ast)\ge 2/\alpha)\le\alpha/2\). A candidate is rejected for good once \(M_t(\mu)\ge 2/\alpha\) at some prefix \(s\le t\), and outright when \(m_s(\mu)\ge1\) while \(Z_{\sigma(s)}<1\), which no population with mean \(\mu\) allows. Every factor rises with \(\mu\), since \(m_s(\mu)\) does, so the rejected candidates form an upper ray; \(\mu=0\) is never rejected, as every factor is then at most one. The unseen values are at most one each, so \(\mu^\ast\le c_t=\min\{1,(\sum_{s\le t}Z_{\sigma(s)}+N-t)/N\}\). Step 1's bound \(U^Z_t\) is \(c_t\) when \(c_t\) is not rejected, and otherwise the least rejected candidate, found by bisection on \([0,c_t]\) and reported at its rejected end. On the event of probability at least \(1-\alpha/2\) that \(\mu^\ast\) is never rejected, \(S\le R_t=\min\{1,N\max_jw_j\,U^Z_t\}\) for every \(t\) at once.
+
+**Step 2: from \(S\) to \(\theta\), at \(\alpha/2\).** The fixed-horizon weighted KL/Chernoff bound ([Section 2.4.10](#weighted-klchernoff-interval)) gives \(\Pr(\theta>B(S))\le\alpha/2\) for the independent \(Y_i\), with \(N\) blocks of weight \(w_i\), or \(Nr\) blocks of weight \(w_i/r\) under the `rollout` profile. \(B\) does not decrease in its argument. The bound reported is \(U_t=B(R_t)\). If \(\theta>U_t\) for some \(t\), then either \(R_t<S\), which step 1 allows with probability at most \(\alpha/2\), or \(\theta>B(S)\), which step 2 allows with probability at most \(\alpha/2\). A union bound gives the guarantee.
+
+**Outcomes the run did not finish.** The stream runs in the recorded order up to the last item with any of its first \(r\) epochs observed. Before it, an epoch that is missing or unclassified counts as a failure. Raising a draw's \(Z\) lowers its factor and, through \(m_s\), every later factor, and raises \(c_t\), so the bound with the raised values is at least the bound with the true ones. Leaving such an item out instead would not be valid: the prefix would no longer be a uniform sample, and an item that finishes late may finish late because it fails.
+
+**At \(t=N\).** Then \(c_N=\mu^\ast\), so step 1's bound is \(S\) itself, unless the sequence rejected \(\mu^\ast\) at an earlier prefix, the miss of probability at most \(\alpha/2\) step 1 is allowed; it is then below \(S\). The fixed-horizon bound of the full run, at \(\alpha\), is \(B\) at \(S\) with the whole \(\alpha\); this one spends half, which is its price where the run did not stop early.
+
+**Budget.** The plan's `family` gives \(\alpha\), split equally over every bounded cohort and group, so the bounds hold simultaneously with probability at least \(1-\alpha\) across them.
+
+**Width.** With equal weights \(N\max_jw_j=1\). With uneven weights, step 1 scales every outcome by the largest weight and, not knowing which items are left, treats each unseen one as if it could carry the largest weight, so \(R_t\) is \(N\max_jw_j\) times a bound in \([0,1]\) and stays at one until that bound falls below \(1/(N\max_jw_j)\). With every outcome safe it depends only on how many items were drawn, not on which: drawing a heavy item early does not tighten it. For 100 items all safe at \(\alpha=0.05\), \(R_t\) is 0.057 after 50 draws and 0.018 after 90 with equal weights; with one item carrying half the weight, it is 1 after 50, 0.88 after 90 and 0.45 after 99, and step 2, whose largest block carries half the weight, leaves \(U_t\) at 1 even after all 100.
+
+**Assumptions.** The order is a uniformly random permutation fixed before the run, recorded in the log, and kept from the system under evaluation, so that its behaviour on an item cannot depend on which come next. Each item's failure probability stays fixed while the run goes on: the model, its configuration, the scaffold and the judge do not change, and nothing learns from earlier samples. Each rollout runs anew, sharing no state, cache or conversation with others, which makes the \(Y_i\) independent across items, and the rollouts of an item independent under the `rollout` profile. The stopping rule only stops. These are the assumptions of the [phase-0 stream](sequential-design.md#draws-with-known-probabilities), for a permutation in place of draws with replacement. The bound is on the judge-reported failure probability, so a plan whose judge calibration covers a bounded group is refused.
+
+**Validation.** `tests/unit/test_sequential.py` pins step 1 before the end of the order to an exact rational reference written from the definition above, including draws of one and a candidate capped by the unseen values, and step 1 and step 2 together at \(\alpha/2\) each with uneven weights and two rollouts per item. It checks that the capital is a fair game at the true mean, and, in seeded Monte Carlo at \(\alpha=0.1\), that the bound misses at some prefix, and where a rule that peeks at the running estimate stops, no more often than \(\alpha\) plus three standard errors. `tests/integration/test_anytime_bounds.py` runs Inspect's mock model in seeded shuffled orders with early-stopping managers that stop the run or skip chosen samples and epochs, and checks the bound against the library on the recorded order, and every refusal. `research/optstop_coverage.py` simulates Optstop's stopping rule (sequential design, coverage table): the bound missed at most \(\alpha\), while Clopper-Pearson at the stop missed up to 0.208 at a nominal 0.05.
 
 ---
 
@@ -1708,9 +2066,191 @@ The library must report and normally reject:
 - different prompts or task versions under the same key;
 - mismatched generation settings that invalidate the intended comparison.
 
+A case that both arms attempted but one did not score is not a broken pair. The package keeps it
+and bounds each paired diagnostic over every completion of the unknown outcome. A one-sided exact
+McNemar p-value \(P(\mathrm{Bin}(d, 1/2) \ge n_{10})\) cannot fall when a pair's difference
+falls, so its maximum over the completions is attained at one of the two extreme completions.
+Newcombe's bound is not monotone in the cell counts, so it is minimised and maximised over every
+reachable table. See
+[Pairs with an unscored arm](model-comparisons.md#pairs-with-an-unscored-arm).
+
 ### 7.6 AI-evaluation precedent
 
 Paired analysis is increasingly being productized for model evaluation. NVIDIA NeMo Evaluator uses exact McNemar comparisons on the same problems and reports human-readable `PASS`, `WARN`, `BLOCK`, and `INCONCLUSIVE` outcomes [22]. In safety-adjacent clinical LLM evaluation, exact McNemar tests with Holm correction have been used to compare harmful-content and safety outcomes across models [27]. These are useful precedents for both the mathematics and the decision interface.
+
+### 7.7 Planning a comparison at a margin (experimental)
+
+`inspect-safety-stats plan comparison` and
+`inspect_safety_stats.stats.planning.comparison_resolvable_differences` say, before a run,
+which risk differences \(\Delta=R_C-R_B\) a fixed two-arm design can resolve at a margin
+\(\delta\in(-1,1)\). They give two numbers:
+
+- the largest true \(\Delta\) at which the upper bound \(U_\Delta\) falls at or below
+  \(\delta\) with probability at least \(1-\beta\) (a non-inferiority claim at margin
+  \(\delta\) passes); and
+- the smallest true \(\Delta\) at which the lower bound \(L_\Delta\) reaches \(\delta\) with
+  probability at least \(1-\beta\) (a regression of at least \(\delta\) is shown).
+
+The guarantee is that of the `weighted_hoeffding` difference of section 7.0, as `analyze`
+computes it for a `comparisons` entry, with no unclassified outcomes. That interval bounds
+\(Q=(1+\Delta)/2\) by a weighted mean of independent blocks \(b\) with values in \([0,1]\) and
+masses \(m_b\). With \(c^2=\sum_bm_b^2\), Hoeffding's inequality [32] gives
+
+\[
+\Pr\{\widehat Q-Q\ge s\}\le\exp\{-2s^2/c^2\},
+\qquad
+s(\gamma)=\sqrt{\tfrac12c^2\log(1/\gamma)},
+\]
+
+and \(U_\Delta=2\widehat Q-1+2s(\alpha_U)\). With probability at least \(1-\beta\),
+\(\widehat Q<Q+s(\beta)\), and then \(U_\Delta<\Delta+2s(\alpha_U)+2s(\beta)\). So every
+\(\Delta\le\delta-g_U\) with
+
+\[
+g_U=2s(\alpha_U)+2s(\beta)
+\]
+
+has \(\Pr\{U_\Delta\le\delta\}\ge1-\beta\). The lower side is symmetric, with
+\(g_L=2s(\alpha_L)+2s(\beta)\) and \(\Delta\ge\delta+g_L\). A difference that would lie
+outside \([-1,1]\) is reported as unattainable. Prompt probabilities may differ, and the
+guarantee holds for every configuration of them.
+
+The block masses follow the independence profile the analysis will use. For prompt \(j\) with
+weight \(w_j\) and \(n_{Cj}\), \(n_{Bj}\) rollouts in the two arms:
+
+| Unit | Profile | \(c^2\) |
+|---|---|---|
+| `rollout` | `block_by: [rollout]` (arms independent) | \(\sum_j\frac{w_j^2}{4}\left(\frac1{n_{Cj}}+\frac1{n_{Bj}}\right)\) |
+| `pair` | `block_by: [prompt_id, repeat]`, `comparison_coupling: joint` | \(\sum_j\left[\underline n_j\frac{w_j^2}{4}\left(\frac1{n_{Cj}}+\frac1{n_{Bj}}\right)^2+(\overline n_j-\underline n_j)\frac{w_j^2}{4\overline n_j^2}\right]\) |
+| `prompt_cluster` | `block_by: [prompt_id]`, `comparison_coupling: joint` | \(\sum_jw_j^2\) |
+
+Here \(\underline n_j=\min(n_{Cj},n_{Bj})\) and \(\overline n_j=\max(n_{Cj},n_{Bj})\): a pair
+block holds one rollout of each arm with the same repeat index, and repeats that only the
+longer arm has form blocks of one rollout. The pair profile permits arbitrary dependence
+within a pair, for example a shared seed. Hoeffding uses only the range of a block, so it
+cannot gain from the correlation of paired outcomes; at equal counts a pair block has twice
+the variance proxy of two independent rollouts, and the resolvable differences are
+\(\sqrt2\) times further from the margin. Pairing helps the paired diagnostics of section 7.2
+to 7.4, not this guarantee.
+
+The family alpha is shared as in `analyze`: a claim's Bonferroni share
+\(\alpha/M\) is split between the two bounds under `two_sided` coverage, and spent on each
+under `per_direction`. \(M\) is the number of targets among which the family divides its
+alpha, as under `flat_bonferroni`. Hierarchy-node contrasts and `frontier_sidak` calibration
+are not planned.
+
+**Scope.** The guarantee holds only for a `comparisons` entry with
+`method: weighted_hoeffding`. A `comparison_sets` entry, whatever its method, and
+`weighted_kl_chernoff` in a `comparisons` entry bound each arm's weighted mean at
+\(\alpha_U/2\) and report \(U_\Delta=U_C-L_B\) (section 7.0). With per-arm masses \(c_C^2\),
+\(c_B^2\) and \(s_X(\gamma)=\sqrt{\tfrac12c_X^2\log(1/\gamma)}\), the confidence term of that
+rectangle under `weighted_hoeffding` is \(s_C(\alpha_U/2)+s_B(\alpha_U/2)\) rather than
+\(2s(\alpha_U)\). For unpaired arms at equal counts, \(c_C^2=c_B^2=2c^2\), so it is
+\(\sqrt{2\log(2/\alpha_U)/\log(1/\alpha_U)}\approx1.54\) times as large at
+\(\alpha_U=0.025\), and \(g_U\) no longer suffices. In the example of
+[Planning a comparison](model-comparisons.md#planning-a-comparison-experimental) (100 equally
+weighted prompts, 10 unpaired rollouts per arm, \(\delta=0.05\), \(\alpha_U=0.025\),
+\(1-\beta=0.9\)), `research/comparison_planning_scope.py` simulates 10,000 runs at the
+planned \(\Delta=\delta-g_U\approx-0.059\). \(U_\Delta\le\delta\) holds in 0.773 of them for
+the `weighted_hoeffding` rectangle at a baseline rate of 0.3, and in 0.755 at 0.5 (standard
+error at most 0.005); for the `weighted_empirical_bernstein` rectangle, in 0.582 at either
+rate. The `weighted_kl_chernoff` and `weighted_empirical_bernstein` differences are often
+narrower than the Hoeffding difference on sparse failures when prompt weights are even; with
+uneven weights, or at moderate rates, either can be wider. In the same example,
+KL/Chernoff's upper half-width equals Hoeffding's 0.061 when both arms observe a failure rate
+of 0.12 and is 0.093 at 0.5, and at a baseline rate of 0.5 the planned difference gives
+\(U_\Delta\le\delta\) in 0.756 of the runs. With `nested_equal` weights over tasks of 2 and
+98 prompts, 10 rollouts each, and one failure per arm on each of the first ten prompts (both
+of the small task's among them), the upper half-widths are 0.217 for Hoeffding, 0.243 for
+KL/Chernoff, which then uses its Poisson kernel, and 0.276 for empirical Bernstein; over tasks
+of 5, 10, 20, 25 and 40 prompts with 20 such failures, 0.078 for Hoeffding and 0.081 for
+KL/Chernoff. The planner states no guarantee for these methods, in either direction.
+Unclassified outcomes widen the analysis bounds and are not planned for.
+
+### 7.8 Arm contrasts on a generative design (experimental)
+
+The [generative engine](generative-evaluation.md) samples terminal paths of a declared taxonomy
+in which semantic seeds $s$ are a fixed stratification level and transformation levels (arms)
+lie below them, with declared path weights $w(h)$. An arm contrast compares two values $a$ and
+$b$ of one arm level $L$ within one target cohort. Unlike the comparisons above it is not
+paired: each sampling unit carries a single value of $L$, so the two arms hold disjoint units.
+
+**Estimand.** Write $w(s)$ for the declared weight of seed $s$, $w(s,v)$ for the total weight of
+its paths with $L=v$, and $R_s(v)$ for the risk of those paths under the declared weights
+normalized by $w(s,v)$. Let $S$ be the seeds with $w(s,a)>0$ and $w(s,b)>0$, and
+$\pi_s=w(s)/\sum_{t\in S}w(t)$. Then
+
+\[
+\Delta=T_a-T_b,\qquad T_v=\sum_{s\in S}\pi_s\,R_s(v).
+\]
+
+Both arms are averaged over the same seed mix, so a context weight or constraint that makes $a$
+likelier under some seeds than under others does not enter $\Delta$. If $w(s,v)/w(s)$ is the
+same for every seed and $S$ holds every seed, $T_v$ equals the slice risk
+$\sum_{h:L=v}w(h)p_h/\sum_{h:L=v}w(h)$ and $\Delta$ is a difference of two slices. A declared
+slice $L=v$ is bounded by the same construction with $\pi_s=w(s,v)/\sum_t w(t,v)$ over every
+seed holding $v$, which makes $T_v$ exactly the slice risk.
+
+**Direct sampling.** Paths are drawn i.i.d. from the declared distribution, independently of
+outcomes. Conditional on the number $n_v$ of draws with $L=v$ under a seed of $S$, those draws
+are i.i.d. from the declared distribution restricted there, whose mass is
+$W_v=\sum_{s\in S}w(s,v)$; a draw falls under seed $s$ with probability $w(s,v)/W_v$. With
+the known ratio $r_s=\pi_sW_v/w(s,v)$ and the unit's failure fraction $Y\in[0,1]$ (a
+failure indicator with one rollout per rewrite),
+
+\[
+\mathbb E[r_{s(j)}Y_j]=\sum_{s\in S}\frac{w(s,v)}{W_v}\,r_s\,R_s(v)=T_v.
+\]
+
+With $M=\max_s r_s$, the values $r_{s(j)}Y_j/M$ lie in $[0,1]$ and are independent with common
+mean $T_v/M$, so the Bernoulli-KL (Hoeffding 1963) bound on their mean, rescaled by $M$, bounds
+$T_v$ for every realized $n_v$, and therefore unconditionally. When all $r_s=1$, the
+observations are Bernoulli and the bound is exact Clopper--Pearson (section 4.2) with one
+rollout per rewrite. The result reports $M$ as `maximum_ratio`; the interval widens with it.
+
+**Proportional stratified sampling.** Seeds are strata with fixed draw counts $n_s$ drawn
+within the stratum from its declared distribution. Since
+$\mathbb E[\mathbf 1\{L_j=v\}Y_j]=R_s(v)\,w(s,v)/w(s)$ for a draw $j$ in stratum $s$,
+
+\[
+T_v=\mathbb E\Big[\sum_{s\in S}\frac{\pi_s\,w(s)}{w(s,v)\,n_s}\sum_{j\in s}\mathbf 1\{L_j=v\}Y_j\Big],
+\]
+
+a Horvitz--Thompson sum with fixed coefficients over independent observations in $[0,1]$. After
+normalizing the coefficients it is bounded by the weighted KL/Chernoff interval (section
+2.4.10), rescaled by the coefficients' total. Every stratum of $S$ must have received draws;
+otherwise the arm is refused.
+
+**Unclassified rollouts** are completed conservatively in both constructions: as failures for
+the upper endpoint and as safe for the lower one (section 4.5).
+
+**The contrast** at endpoint level $\alpha_e$ bounds each arm at $\alpha_e/2$ per endpoint and
+takes
+
+\[
+\big[L_a-U_b,\;U_a-L_b\big]
+\]
+
+clipped to $[-1,1]$; by the union bound it covers $\Delta$ with probability at least
+$1-\alpha_e$ per endpoint. Under `one_sided_upper` the lower endpoint is reported as $-1$.
+
+**Simultaneous family.** A plan declares slices and contrasts in `inference.slice_family`, and
+the family is calibrated by independent frontiers (section 2.4.10, *Tree-wide calibration by
+independent frontiers*). Under direct sampling, declared slices of one level hold disjoint
+units, and conditional on their counts those are independent, so they form one Šidák frontier.
+When members read shared units -- slices under proportional stratified sampling, where the
+Horvitz--Thompson sum of each slice reads every unit of its strata -- each is a frontier of its
+own. Every contrast is a frontier of its own. Frontiers share $\alpha$ by Bonferroni. Under
+`one_sided_upper` every member's upper bound covers simultaneously with probability at least
+$1-\alpha$; under `two_sided` each endpoint receives half of its member's calibrated level, so
+every lower and upper bound covers jointly with probability at least $1-\alpha$, and each
+direction at $1-\alpha/2$.
+
+**Assumptions and limits.** Sampling units are independent, which path selection and rewrite
+generation deliver; dependence between rollouts within a unit is unrestricted. The family must
+be declared before the results are seen. It covers one cohort and the judge-reported scale
+only; contrasts between cohorts use the paired construction of the comparisons. The guarantee
+is about the declared design, not a population of prompts beyond it.
 
 ---
 
@@ -1740,6 +2280,18 @@ n_{\mathrm{eff}}\approx\frac{n}{\operatorname{DEFF}}.
 \]
 
 Thus 1,000 attempts grouped into 20 highly correlated scenarios may provide much closer to 20 than 1,000 independent units of evidence.
+
+`validate` and `analyze` estimate \(\rho\), the design effect and \(n_{\mathrm{eff}}\) from the data for every independence profile whose blocks group rollouts of several prompts, and report them in the `CLUSTER_DESIGN_EFFECT` diagnostic. With unequal block sizes they take \(\rho\) from the one-way ANOVA estimator and \(m=\sum_g m_g^2/N\). These figures treat each rollout as the unit.
+
+For a primary independence profile whose blocks split the grouping, the unit is instead one of the primary's blocks within a grouping block, with its failure rate \(y_u\) over its \(R_u\) scored rollouts as the outcome. With \(K\) units in \(G\) blocks of \(k_g\) units, \(\bar y=\sum_u y_u/K\) and \(d_u=y_u-\bar y\), the correlation is the covariance of two distinct units of one block over the variance of all units,
+
+\[
+\hat\rho=\frac{\sum_g\bigl[\bigl(\sum_{u\in g}d_u\bigr)^2-\sum_{u\in g}d_u^2\bigr]\big/\sum_g k_g(k_g-1)}{\sum_u d_u^2/K},
+\]
+
+with \(m=\sum_g k_g^2/K\), \(\operatorname{DEFF}=1+(m-1)\max(\hat\rho,0)\) and \(K_{\mathrm{eff}}=K/\operatorname{DEFF}\). For \(\hat\rho\ge0\) this design effect is \(\sum_g(\sum_{u\in g}d_u)^2/\sum_u d_u^2\), the variance of \(\sum_u y_u\) estimated with the blocks as the independent units over that with the units as independent, so it is at most \(\max_g k_g\), though \(\hat\rho\) itself can exceed 1 when blocks differ in size. When every unit is one rollout, \(\hat\rho\) is instead the one-way ANOVA estimate on rollouts above, so that a `[rollout]` primary's figures are those on rollouts. The pairwise form is used because the units' rates differ in precision: \(\operatorname{Var}(y_u)\) includes the binomial term \(p_u(1-p_u)/R_u\). The one-way ANOVA estimator on the rates, \((\mathrm{MSB}-\mathrm{MSW})/(\mathrm{MSB}+(k_0-1)\mathrm{MSW})\) with \(\mathrm{MSB}=\sum_g k_g(\bar y_g-\bar y)^2/(G-1)\) and \(\mathrm{MSW}=\sum_g\sum_{u\in g}(y_u-\bar y_g)^2/(K-G)\), lets every block's mean count in \(\mathrm{MSB}\) but large blocks dominate \(\mathrm{MSW}\). Small blocks of units with few rollouts beside a large block of well-replicated units then read as a positive correlation though the blocks are independent: in simulations of such designs it reached \(\operatorname{DEFF}\ge2\) in 45-99% of runs. The product of two independent units' deviations has mean about zero whatever their precision, and in every simulated design with independent blocks in which some units had several rollouts the pairwise estimate reached \(\operatorname{DEFF}\ge2\) in at most about 6% of runs. With 10 blocks of 8 units of 10 rollouts, unit effects of standard deviation 1 and a block effect of standard deviation 1 or 1.5 on the logit scale, it did in about 90% and 99% of runs. A primary whose units have \(\operatorname{DEFF}\ge 2\), so \(K_{\mathrm{eff}}\le K/2\), makes the diagnostic a warning. When the primary's blocks lie within the grouping blocks, its \(K\) units are its blocks, and its results count at least \(2K_{\mathrm{eff}}\) independent blocks. When some of its blocks span several grouping blocks, it has \(B<K\) blocks, and the diagnostic gives \(B\) beside \(K\): its results count \(B\) blocks as independent, though blocks that meet in one grouping block share its dependence, and \(K_{\mathrm{eff}}\) does not say how many independent blocks they are worth (it can exceed \(B\)). The units matter with repeated rollouts: whenever prompts differ in failure rate, the rollouts of one prompt are correlated, which a prompt-level primary already accounts for, and which would otherwise raise the design effect on rollouts to about \(1+(R-1)\rho_{\mathrm{prompt}}\) with \(R\) rollouts per prompt even when the grouping adds no dependence.
+
+With few blocks \(\hat\rho\) rests on few block means, and the warning can fire though the blocks are independent. With single-rollout units, which take the one-way ANOVA estimate, it fired in about 17%, 14%, 9% and 2.5% of simulated runs with 2 blocks of 40, 3 of 30, 5 of 16 and 10 of 8 units; with 10 rollouts per unit, the pairwise estimate fired in about 5.5%, 4.6%, 3.8% and 1.5%. A block that holds most of the units also holds most of the pairs and dominates \(\hat\rho\), so a block effect can be missed: beside one block of 40 units of 10 or 20 rollouts, five blocks of 2 single-rollout units with a block effect of standard deviation 1.5 warned in about a third of runs, and twenty in about half. See [How much the grouping matters](independence-profiles.md#how-much-the-grouping-matters-cluster_design_effect).
 
 For the initial fixed-design setting, declaring a hierarchy does not make tasks or questions random samples from a larger population. Cluster-aware analysis is used first to avoid pseudoreplication, preserve pairing, and prevent large groups from dominating through accidental row count. Resampling fixed task or question identifiers is not presented as evidence about unseen tasks unless the analysis declares a genuine cluster-sampling population. Where only rollout randomness is modeled, uncertainty should be propagated from rollouts within the fixed design; cluster bootstrap results should be labeled as sensitivity analyses rather than population confidence guarantees.
 
@@ -1906,6 +2458,16 @@ and overall `PASS` occurs only when every component test rejects its unsafe null
 
 Correction is still required when the report asserts simultaneous coverage for every displayed interval, permits separate component-level safety claims, selects favorable claims after inspection, or uses “any significant result” logic. The analysis plan must record which decision semantics apply; the library must not apply multiplicity mechanically without first identifying the claim being protected.
 
+The argument needs the thresholds fixed before the data. Let claim \(j\) of the mandatory claims \(M\) pass when its upper bound \(U_j\) is at or below its threshold \(a_j\), and let \(E_j=\{R_j\le U_j\}\) be its coverage event, with \(\Pr(E_j^c)\le\alpha_j\). A false overall pass needs some claim with \(U_j\le a_j<R_j\), so it lies in \(E_j^c\) for that claim. With fixed thresholds the set \(W=\{j: R_j>a_j\}\) is fixed. When it is not empty, a pass needs \(E_{j_0}^c\) for any one \(j_0\in W\), and the bound is \(\alpha_{j_0}\).
+
+When a [decision policy](decision-policy.md) sets thresholds after the run, both the thresholds and the choice of which claims to move may depend on the data, so \(W\) is no longer fixed. What remains is that a false overall pass needs some claim, whichever the data make it, with \(R_j>a_j\ge U_j\):
+
+\[
+\Pr(\text{false overall pass})\le\Pr\Big(\textstyle\bigcup_{j\in M}E_j^c\Big).
+\]
+
+This is at most one budget \(\alpha\) when one simultaneous coverage event \(E\subseteq\bigcap_{j\in M}E_j\) with \(\Pr(E^c)\le\alpha\) covers every mandatory claim's bound. Otherwise it can reach the sum of the separate events' budgets. Setting each \(a_j\) at \(U_j\) reaches it: every claim then passes, and the pass is false whenever any bound misses. With ten independent claims at \(\alpha=0.05\) that is close to \(1-0.95^{10}\approx0.40\); exact binomial bounds, being conservative, give about 0.27. Moving one threshold reaches it as well, when the claim is chosen from the data: with the others at loose plan thresholds, tightening the claim with the lowest upper bound to that bound gives a false pass whenever any bound misses, since the lowest bound is then below its true risk too (the same 0.27 in the same setting). A set of moved claims fixed in advance would keep a sharper bound, but the analysis cannot tell such a set from one chosen after the run. The library therefore treats every threshold a decision policy moves as data-dependent, whatever time the policy states for it, and does not certify an overall pass when a policy moves any mandatory claim's `acceptable_upper` while the mandatory claims rest on more than one coverage event (`DECISION_POLICY_OVERALL_UNCERTIFIED`). Each claim's own verdict is unaffected: its error is bounded by \(\alpha_j\) at any threshold, because a wrong pass of claim \(j\) alone needs \(E_j^c\).
+
 ### 9.4 Holm step-down procedure
 
 Given valid p-values \(p_1,\ldots,p_m\), sort them:
@@ -2053,9 +2615,15 @@ This asymmetric roll-up reflects the logic of a safety case: all required claims
 ### 10.7 Data-quality gates
 
 The report uses three integrity states. `valid` means all required outcomes are classified;
-`degraded` means attempted outcomes are unclassified but conservative completion bounds cover
-them; `invalid` means a structural or strict-policy error prevents certification. A degraded run
-may certify only if the adverse completion of every unknown outcome supports the claim.
+`degraded` means the results rest on something the inputs could not confirm: either attempted
+outcomes are unclassified but conservative completion bounds cover them, or a safeguard could
+not be checked, or a tail measure rests on one rollout per prompt, or an `exclude` score policy
+left attempted rollouts out of the bounds, and the bounds are unchanged
+([integrity states](interpretation.md#integrity-states)); `invalid` means a structural or
+strict-policy error prevents certification. A degraded run may certify only if the adverse
+completion of every unknown outcome supports the claim, except where the plan's `exclude` policy
+asks for bounds over the classified rollouts alone: those certify on that assumption, and the
+`SCORE_MISSING_EXCLUDED` and `SAMPLE_ERROR_EXCLUDED` warnings name each rollout it covers.
 
 The default outcome must be `INCONCLUSIVE`, not pass, when any of the following is unresolved and
 not covered by a valid conservative construction:
@@ -2079,6 +2647,32 @@ blocks remain unclassified.
 Frontier-AI governance already relies on threshold-linked decisions. OpenAI's Preparedness Framework assesses whether capability thresholds have been crossed and allows decision-makers to request further evaluation or stronger safeguards rather than forcing an immediate approval [24]. OpenAI deployment reports publish confidence intervals around metrics compared with Preparedness thresholds [25]. Anthropic's Responsible Scaling Policy similarly connects capability thresholds with required safeguards while acknowledging that evaluation science may not provide dispositive answers [26].
 
 The proposed `INCONCLUSIVE` status operationalizes that uncertainty explicitly. NVIDIA's model-comparison tooling is a closer software precedent: it exposes an inconclusive outcome when paired evidence is insufficient [22].
+
+### 10.9 Judge-error stress of a verdict (experimental)
+
+With `report.judge_error_stress`, each threshold claim decided on judge-reported bounds \([L,U]\) is also read as a statement about true risk. The stress is a diagnostic: it never changes a claim. The user-level description is in [Stressing a threshold verdict](judge-misclassification.md#stressing-a-threshold-verdict-experimental).
+
+**Model.** On every prompt \(j\), the judge classifies a truly unsafe rollout as unsafe with probability \(s\) and a truly safe one as unsafe with probability \(f=1-c\), with the same \(s\) and \(f\) on every prompt (prevalence-free). The judge is informative: \(D=s-f>0\).
+
+**Guarantee.** Let \(g(x)=(x-f)/D\). If \((s,f)\) lies in the declared box and \(P(\text{judge-reported row risk}\le U)\ge1-\alpha_U\), then \(P(\text{true row risk}\le\max_{\text{box}}g(U))\ge1-\alpha_U\), and likewise \(P(\text{true row risk}\ge\min_{\text{box}}g(L))\ge1-\alpha_L\). The row measure is `weighted_mean`, `maximum`, `cvar` or `top_k_mean`, and no rollout of the row is classified by a plan policy.
+
+**Derivation.** On prompt \(j\), let \(k_j\) be the share of rollouts the judge classified, with true risk \(\pi^k_j\) among them, and \(u_j=1-k_j\) the unclassified share, with true risk \(\pi^u_j\in[0,1]\). True risk is \(\pi_j=k_j\pi^k_j+u_j\pi^u_j\). The upper bound counts unclassified rollouts as judge-unsafe, so it bounds \(q^+_j=u_j+k_j(f+D\pi^k_j)\), and
+
+\[
+g(q^+_j)=u_j\frac{1-f}{D}+k_j\pi^k_j\ \ge\ u_j\pi^u_j+k_j\pi^k_j=\pi_j,
+\]
+
+because \((1-f)/D\ge1\). The lower bound counts them as judge-safe, so it bounds \(q^-_j=k_j(f+D\pi^k_j)\), and \(g(q^-_j)=-u_jf/D+k_j\pi^k_j\le\pi_j\). Under `exclude` the estimand is the risk of the scored rollouts and \(u_j=0\). The map \(g\) is affine and increasing. A measure \(M\) that is monotone and satisfies \(M(ax+b)=aM(x)+b\) for \(a>0\), as the four measures above do, gives \(M(\pi)\le M(g(q^+))=g(M(q^+))\le g(U)\) on the event \(M(q^+)\le U\), and \(M(\pi)\ge g(L)\) on the event \(M(q^-)\ge L\). The guarantee needs no error budget beyond the bounds' own. `worst_of_k` is not affine in the prompt risks, `entropic` is not positively homogeneous, and the threshold measures are not translation-equivariant, so none of them is stressed.
+
+Over a box, \(g(U)=(U-f)/(s-f)\) is monotone in \(s\) for fixed \(f\) and in \(f\) for fixed \(s\), so its maximum, and the minimum of \(g(L)\), are attained at the box's vertices. The results are clipped to \([0,1]\). When the box admits \(s+c\le1\), \(D\le0\) somewhere in it and true risk is not identified: the bounds are \([0,1]\). When \(\max g(U)<0\) or \(\min g(L)>1\), the data contradict the box, and the bounds are again \([0,1]\). This is the inversion of `identified_risk_set`, which the panel-derived correction uses too, so for a composite the stress reproduces the row's `judge_corrected_panel_derived` interval.
+
+**Why no unclassified share.** The excess \(u_j\bigl((1-f)/D-\pi^u_j\bigr)\) could be taken back only with each prompt's \(u_j\). For a tail measure there is no single share: the largest prompt's share, subtracted from the inversion of a prompt that carries the maximum with fewer unclassified rollouts, moves the upper bound below true risk, and adding it to the lower bound moves that above. Under `exclude` the prompt bounds and the direct-mean intervals divide by different rollouts, so neither count's share is exact. With every share set to 0 the guarantee holds for every measure above.
+
+**Rollouts a policy classifies.** A rollout counted safe by a plan policy has true value 0 in the estimand, but contributes \(g(0)=-f/D<0\) when \(f>0\). One counted as a failure has true value 1, but contributes \(g(1)=(1-f)/D>1\) when \(s<1\). The first breaks the upper inequality and the second the lower one. The bounds do not carry the population share of such rollouts, so they cannot be corrected, and a claim whose row holds one is not stressed. The panel-derived correction, a sensitivity analysis that does not decide, inverts such a row at \(f=0\) for the upper bound and at \(s=1\) for the lower, over the box's worst remaining end. At \(f=0\), \(g(0)=0\) and \(g(1)=1/s\ge1\); at \(s=1\), \(g(1)=1\) and \(g(0)=-f/(1-f)\le0\). Both inequalities then hold for every share of policy-classified rollouts.
+
+**Tipping lines.** PASS (\(U\le a\)) holds for true risk iff \(g(U)\le a\), that is \(as+(1-a)f\ge U\). FAIL (\(L\ge b\)) holds iff \(g(L)\ge b\), that is \(bs+(1-b)f\le L\). At \(f=0\) these give \(s\ge U/a\) and \(s\le L/b\); at \(s=1\) they give \(c\le(1-U)/(1-a)\) and \(c\ge(1-L)/(1-b)\). The coefficients are positive for thresholds inside \((0,1)\), so the side of a line on which a verdict holds is the side the box verdict finds.
+
+**Validation.** `tests/unit/test_judge_stress.py` checks the bounds by seeded Monte Carlo: three prompts of 300 rollouts with outcomes missing by true label, missingness-robust Clopper--Pearson prompt bounds at \(0.1/6\) per side, and a point box at the true accuracy. Each side's miss rate must stay within three Monte Carlo standard errors of \(3\times0.1/6=0.05\) for all four measures, and the uninverted bounds must miss at least half the time. The same simulation misses far more often than that with no inversion, with the forward map in place of the inversion, with \(s\) and \(c\) swapped, and, on tail rows, with an unclassified share taken out.
 
 ---
 
@@ -2105,14 +2699,65 @@ then
 \le\alpha_{\mathrm{family}}.
 \]
 
-This single union-bound argument controls both dimensions:
+Two mechanisms control the two dimensions:
 
-- repeated looks over time;
-- repeated claims across the safety family.
+- repeated looks over time, by each claim's time-uniform guarantee in the first display, which spends no alpha per look;
+- repeated claims across the safety family, by the union bound over \(i\).
 
-It is simple and conservative, which makes it an appropriate first implementation within the later sequential module. More powerful online multiple-testing or e-value procedures may follow, but they should not obscure the guarantee.
+The union bound is simple and conservative, which makes it an appropriate first implementation within the later sequential module. More powerful online multiple-testing or e-value procedures may follow, but they should not obscure the guarantee.
 
 The analysis plan must freeze each claim's \(\alpha_i\) before monitoring begins. Adding claims midstream requires reserving alpha in advance or starting a new declared family.
+
+### 11.1 Attackers that adapt across behaviours (experimental)
+
+**Release status:** implemented as `adaptive_claims` in the plan (#125), in `stats/adaptive.py`. The rest of this section's sequential module remains deferred.
+
+An attacker that carries what it learned on one behaviour into the next makes its runs dependent: the success probability of run \(i\) depends on runs \(1,\ldots,i-1\). The binomial bounds of Section 4 assume independent runs and do not apply. Let \(X_i\in\{0,1\}\) indicate that run \(i\) succeeded, \(S_t=\sum_{i\le t}X_i\), and
+
+\[
+m_i=\Pr(X_i=1\mid X_1,\ldots,X_{i-1}),\qquad
+\bar m_t=\frac1t\sum_{i\le t}m_i .
+\]
+
+The estimand is \(\bar m_t\), the attacker's running average of conditional success probabilities for the declared attacker, budget, behaviours and order. The order of the behaviours must be fixed in advance or randomised; the attacker may adapt within and across runs.
+
+**Guarantee.** Fix \(\lambda>0\) and let \(\psi_\lambda(m)=\log(1-m+m e^\lambda)\), the cumulant generating function of a Bernoulli(\(m\)) variable. Since \(\mathbb E[e^{\lambda X_i}\mid X_1,\ldots,X_{i-1}]=e^{\psi_\lambda(m_i)}\), the process
+
+\[
+N_t(\lambda)=\exp\Bigl(\lambda S_t-\sum_{i\le t}\psi_\lambda(m_i)\Bigr)
+\]
+
+is a nonnegative martingale with \(N_0=1\). \(\psi_\lambda\) is concave, so by Jensen's inequality \(\sum_{i\le t}\psi_\lambda(m_i)\le t\,\psi_\lambda(\bar m_t)\), and
+
+\[
+G_t(\lambda)=\exp\bigl(\lambda S_t-t\,\psi_\lambda(\bar m_t)\bigr)\le N_t(\lambda).
+\]
+
+For weights \(w_j>0\) summing to one on values \(\lambda_j>0\), all fixed before the data, \(N_t=\sum_j w_j N_t(\lambda_j)\) is again a nonnegative martingale with \(N_0=1\), and \(G_t=\sum_j w_j G_t(\lambda_j)\le N_t\). Ville's inequality [42] gives \(\Pr(\exists t:N_t\ge 1/\alpha)\le\alpha\). Define
+
+\[
+L_t=\inf\Bigl\{m\in[0,1]:\sum_j w_j\exp\bigl(\lambda_j S_t-t\,\psi_{\lambda_j}(m)\bigr)<1/\alpha\Bigr\}.
+\]
+
+Each term falls in \(m\), because \(\psi_\lambda\) rises in \(m\) for \(\lambda>0\), so the set is the interval \((L_t,1]\), or all of \([0,1]\) when the mixture is below \(1/\alpha\) already at \(m=0\) and \(L_t=0\). If \(L_t>\bar m_t\) then \(G_t\ge 1/\alpha\), hence \(N_t\ge 1/\alpha\), and therefore
+
+\[
+\Pr\bigl(\exists t: L_t>\bar m_t\bigr)\le\alpha .
+\]
+
+The mixture must not depend on \(m\): a mixture chosen at each \(m\) separately would be evaluated at the random \(\bar m_t\), and \(N_t\) would no longer be a martingale. The construction is that of Howard et al. [3], with the Bernoulli cumulant generating function in place of a sub-exponential bound; Waudby-Smith and Ramdas [33] study the betting form of such processes.
+
+**What is implemented.** The mixture is 20 values of \(\lambda\), spaced geometrically from 0.05 to 5, with equal weights. \(L_t\) is the root of the mixture against \(1/\alpha\), found to an absolute tolerance of \(10^{-12}\) and then lowered by twice that tolerance, which covers the root finder's error and the rounding of the subtraction, with \(\psi_\lambda(m)\) evaluated as `log1p(m * expm1(λ))` so that tiny \(m\) stay exact. The claim is `FAIL` when \(L_t\) is at or above `unacceptable_lower`, at the family's alpha.
+
+**Error budget.** Each adaptive claim takes its family's whole \(\alpha\), as each claim under `claims` does, and \(\alpha\) bounds the chance that the claim is `FAIL` wrongly. The claim never enters a `PASS`, so it leaves the chance of a wrong overall `PASS`, and the coverage of every other bound, as they were. It is a test of its own, not one of its family's simultaneous bounds: in a family whose \(\alpha\) other bounds split, such as simultaneous prompt bounds, the chance that one of those bounds misses or the claim is `FAIL` wrongly can reach \(2\alpha\). A plan cannot put two adaptive claims in one family (`PLAN_INVALID_MULTIPLICITY`), so a family's \(\alpha\) serves at most one adaptive bound.
+
+**Counting what is missing.** A behaviour inside the stream with no run, or with an unclassified outcome, is counted as \(X_i=0\). So is a run whose failure a plan policy filled in with no score to confirm it: a sample error under `errors: count_as_failure`, a missing score under `missing: count_as_failure`, an unscored answer at the token limit under `token_limit: failure`, or a content-filter stop under `content_filter_stops: failure`. Filling an unknown outcome in as a failure raises \(S_t\), which is conservative for the upper bounds of Section 4 and anti-conservative here. Counting it as \(X_i=0\) lowers \(S_t\) pathwise, so \(G_t\) only falls and the guarantee holds as stated.
+
+**Why FAIL only.** An upper bound would also be valid for this attacker. It is not offered, because a small success rate for one adaptive attacker at one budget is no evidence about other attackers or larger budgets, and a `PASS` would read as such evidence. A large one is evidence enough to fail a gate.
+
+**Width.** With \(\alpha=0.05\), 20 successes in 50 runs give \(L_{50}=0.2097\), against 0.2831 for the fixed-horizon one-sided Clopper–Pearson lower bound, which assumes independent runs and one look. 2 in 20 give 0.0033 against 0.0181, and 30 in 300 give 0.0552 against 0.0729.
+
+**Coverage.** `research/adaptive_attacker_coverage.py` draws 20,000 streams of 300 runs from four attackers and recomputes the bound after every run. At \(\alpha=0.05\), the bound rose above \(\bar m_t\) at some \(t\) on 0.0135 of streams for an attacker whose success probability grows with each success (0.05 up to 0.6), 0.0187 for one that loses with each failure (0.6 down to 0.02), 0.0049 for one at 0.9 after a success and 0.1 after a failure, and 0.0232 for independent runs at 0.3. `tests/unit/test_adaptive_bound.py` repeats the first check at a smaller size.
 
 ---
 
@@ -2120,7 +2765,7 @@ The analysis plan must freeze each claim's \(\alpha_i\) before monitoring begins
 
 Optstop and this library answer related but different questions.
 
-Optstop performs Bayesian adaptive allocation and stopping based primarily on posterior precision. Its output is useful for deciding where additional evaluation effort is valuable. Its recent paper reports substantial compute savings and empirical checks of truncation behavior [21].
+Optstop performs Bayesian adaptive allocation and stopping based primarily on posterior precision. Its output is useful for deciding where additional evaluation effort is valuable. Its recent paper reports substantial compute savings and empirical checks of truncation behavior [21]. The same paper is explicit that the two tools give different guarantees. In its simulation study (App. B.6, Table 5), 94% credible intervals covered the true rate about 80% of the time in the middle of the range (0.80 for the logit-normal model, 0.81 for the beta-binomial), and 0% of the time at the exact boundaries of 0 and 1. The paper attributes that zero to the degenerate data-generating process rather than to the model. It describes its interval-width stopping threshold as "a precision target rather than an accuracy guarantee" (App. A.1.1). Such a threshold says nothing about false passes, which is what the core gate controls.
 
 The core package focuses on fixed-horizon frequentist safety guarantees:
 
@@ -2130,9 +2775,9 @@ The core package focuses on fixed-horizon frequentist safety guarantees:
 - paired and cluster-aware safety regressions;
 - pass/fail/inconclusive decisions tied to policy thresholds.
 
-The initial package does not attempt to duplicate or certify Optstop's adaptive procedure. If an Optstop policy uses observed outcomes to stop or reallocate sampling, ordinary fixed-sample bounds from this package must not be presented as optional-stopping-valid. Such a run should be reported as adaptively collected and therefore `INCONCLUSIVE` under the core frequentist gate, or followed by a fresh, prespecified confirmatory run.
+The package does not duplicate Optstop's adaptive procedure. If an Optstop policy uses observed outcomes to stop or reallocate sampling, ordinary fixed-sample bounds from this package must not be presented as optional-stopping-valid. Such a run should be reported as adaptively collected and therefore `INCONCLUSIVE` under the core frequentist gate, or followed by a fresh, prespecified confirmatory run.
 
-A later confidence-sequence module could allow Optstop to choose what to evaluate while this package audits what can be concluded under an anytime-valid frequentist guarantee. Across current and future modules, the report must identify whether an interval is:
+For a run that Optstop only stopped, taking the items in a random order recorded before the run, the experimental `outputs.anytime_bounds` reports an anytime-valid upper bound that holds wherever the run stopped (Section 6.10). It sits beside the claims as a diagnostic, and says whether it lies at or below each weighted-mean claim's threshold; the claims keep their fixed-horizon status, which for such a run is usually `INCONCLUSIVE`. A run whose rule also chose which item to run next is not covered. A later confidence-sequence module could allow Optstop to choose what to evaluate while this package audits what can be concluded under an anytime-valid frequentist guarantee. Across current and future modules, the report must identify whether an interval is:
 
 - Bayesian posterior/credible;
 - fixed-sample frequentist;
@@ -2193,7 +2838,8 @@ The original Inspect logs should remain immutable; statistical reports should be
 | Core | Repeated attempts within declared groups | Design-respecting cluster summaries; bootstrap only with a justified sampling interpretation | Avoid pseudoreplication; optionally cluster-level sampling uncertainty | Declared hierarchy and source of randomness | Fixed groups are not automatically a sampled population |
 | Core | Multiple safety claims | Intersection-union logic, Holm tests, or Bonferroni simultaneous bounds as appropriate | Protect the declared global or simultaneous claim | Valid component methods and predeclared decision semantics | Correction is claim-dependent, not automatic |
 | Core | Exploratory discovery across many slices | Benjamini–Hochberg | False discovery rate | Standard BH dependence conditions | Must not drive deployment pass |
-| Core | Deployment gate | Two-threshold decision | Controlled false pass/fail | Valid bounds and predeclared thresholds | Inconclusive is a required outcome |
+| Core | Deployment gate | Two-threshold decision | Controlled false pass/fail | Valid bounds and predeclared thresholds; thresholds set later only when one simultaneous family decides every mandatory claim (section 9.3) | Inconclusive is a required outcome |
+| Experimental | Two values of one arm level of a generative design | Seed-matched arm contrast, simultaneous over a declared slice family (section 7.8) | Simultaneous coverage of declared slices and contrasts | Independent sampling units; family declared in the frozen plan | Not paired; widens with `maximum_ratio` when the declared weights skew a value across seeds |
 | Stretch | Continuously monitored or adaptively allocated rollouts | Bernoulli confidence sequence | Time-uniform coverage | Method-specific IID or martingale conditions | Adaptive selection can change the estimand |
 
 ---
@@ -2213,10 +2859,10 @@ A model may behave differently when it recognizes an evaluation. Statistical pre
 Every bound in this document is therefore conditional on the evaluated model not strategically
 underperforming. A model that deliberately fails to show a capability, or behaves more safely
 because it recognizes the evaluation, is measured correctly for the behaviour it chose to show;
-no amount of rollouts makes that behaviour representative [33]. Detecting sandbagging is a
+no amount of rollouts makes that behaviour representative [35]. Detecting sandbagging is a
 separate evaluation. One proposed method injects noise into the model's weights: a model that
 is not sandbagging degrades steadily as the noise grows, while a sandbagging model can improve
-anomalously. Its authors implemented it in Inspect [34]. This package does not run such checks.
+anomalously. Its authors implemented it in Inspect [36]. This package does not run such checks.
 
 ### 15.3 Scorer error
 
@@ -2226,7 +2872,57 @@ If an automated judge has false negatives, the observed binary outcome is a misc
 p_{\mathrm{obs}}=s p_{\mathrm{true}}+(1-c)(1-p_{\mathrm{true}}).
 \]
 
-Without knowledge or bounds on \(s\) and \(c\), \(p_{\mathrm{true}}\) is not identified from \(p_{\mathrm{obs}}\). [Judge misclassification](judge-misclassification.md) describes the corrections built on this identity: declared accuracy scenarios as a sensitivity analysis, validated corrections from human labels (with an experimental stratified, finite-population variant that bounds each declared stratum with exact hypergeometric bounds), the noisy-but-valid threshold test, and an experimental stress analysis. The stress analysis reports, for a threshold verdict reached on \(p_{\mathrm{obs}}\), the line in \((s,c)\) beyond which the same verdict no longer holds for \(p_{\mathrm{true}}\).
+Without knowledge or bounds on \(s\) and \(c\), \(p_{\mathrm{true}}\) is not identified from \(p_{\mathrm{obs}}\). [Judge misclassification](judge-misclassification.md) describes the corrections built on this identity: declared accuracy scenarios as a sensitivity analysis, validated corrections from human labels (with an experimental stratified variant that bounds each declared stratum's truly unsafe count with exact hypergeometric bounds, and the judge's accuracy at the summed counts with Clopper--Pearson bounds), the noisy-but-valid threshold test, an experimental transported sensitivity (15.3.1), and an experimental stress analysis. The stress analysis reports, for a threshold verdict reached on \(p_{\mathrm{obs}}\), the line in \((s,c)\) beyond which the same verdict no longer holds for \(p_{\mathrm{true}}\); Section 10.9 derives it.
+
+#### 15.3.1 Transported sensitivity (experimental)
+
+`inputs.judge_calibration.mode: transported` bounds true risk from a judge sensitivity measured on a published human-labelled set, such as HarmBench's classifier validation set, with no labels on the run's own outputs. The user-level description is in [Judge misclassification](judge-misclassification.md#transported-mode-a-published-sensitivity-experimental).
+
+**Estimand.** The row's design risk measure \(R(\pi;w)\) (section 2.4) of the prompts' true failure probabilities \(\pi=(\pi_j)\), where \(R\) is a `weighted_mean`, `maximum`, `cvar` or `top_k_mean`, or a hierarchy node's weighted mean. Under a sampled design it is the frame's measure, over every frame prompt.
+
+**Model.** On prompt \(j\) the judge has sensitivity \(Se_j\) and false-positive rate \(FPR_j\), so the probability that it reports a failure is
+
+\[
+q_j=\pi_j Se_j+(1-\pi_j)FPR_j .
+\]
+
+The published set has \(n\) items that human annotators labelled unsafe, of which the judge flagged \(k\).
+
+**Assumptions.**
+
+1. *Transport.* \(Se_j\ge Se\) on every prompt \(j\) of the estimand, where \(Se\) is the same judge's sensitivity, under the same rubric, on the population the published set's unsafe items were drawn from. Nothing in the run checks this.
+2. *Independent items.* The \(n\) unsafe items are independent Bernoulli\((Se)\) draws for the judge's verdict. Several completions of one behaviour violate this, and counts over them overstate the precision of the bound below.
+3. Human labels on the published set are ground truth.
+
+Nothing is assumed about \(FPR_j\), and in particular nothing is taken from the published set's safe items: a judge's false positives depend on the outputs it sees.
+
+**Upper bound.** Since \((1-\pi_j)FPR_j\ge 0\), assumption 1 gives \(q_j\ge\pi_j Se_j\ge\pi_j Se\), so \(\pi_j\le q_j/Se\) for every \(j\). The measures above are monotone and positively homogeneous, so
+
+\[
+R(\pi;w)\le R(q/Se;w)=R(q;w)/Se .
+\]
+
+Let \(q_U\) be the row's judge-system upper bound, with \(\Pr(R(q;w)\le q_U)\ge 1-\alpha\), and \(Se_L\) the one-sided Clopper--Pearson lower bound on \(Se\) from \(k\) of \(n\) at `sensitivity_alpha` \(=\alpha_s\) (section 4.2), with \(\Pr(Se\ge Se_L)\ge 1-\alpha_s\) under assumption 2. On the intersection of the two events,
+
+\[
+R(\pi;w)\le U=\min\{1,\ q_U/Se_L\},
+\]
+
+and \(U=1\) when \(Se_L=0\). By the union bound, \(\Pr(R(\pi;w)\le U)\ge 1-\alpha-\alpha_s\). Entropic and threshold measures are not positively homogeneous, so the step \(R(q/Se;w)=R(q;w)/Se\) fails for them and they are not corrected.
+
+**Lower bound.** Without a bound on \(FPR_j\), every judged failure may be a false positive: \(\pi_j=0\) with \(FPR_j=q_j\) reproduces any \(q_j\). The lower end is therefore zero, also for a perfectly sensitive judge.
+
+**Relation to Rogan--Gladen.** With a declared specificity \(Sp=1-FPR\) and \(Se+Sp>1\), the inversion \(\pi=(q-1+Sp)/(Se+Sp-1)\) [43] has
+
+\[
+\frac{\partial\pi}{\partial Sp}=\frac{Se-q}{(Se+Sp-1)^2}\ge 0\quad\text{when } q\le Se ,
+\]
+
+so over any box \(Se\in[Se_L,1]\), \(Sp\in[Sp_L,1]\) its maximum is \(q/Se_L\), at the corner \(Sp=1\). The upper end above is therefore what a Rogan--Gladen correction gives for any declared specificity range that reaches one; leaving the specificity undeclared loses only the lower end. This differs from issue #123, which proposed declared ranges for both accuracies, refusal when \(Se+Sp\le1\), and the uncorrected interval \([L,U]\) when both are one; the transported interval is \([0,U]\) then.
+
+**Scope.** The intervals are `diagnostic` sensitivity results and never decide a claim, because assumption 1 is untestable from the run and fails, for example, for a judge under attack. Comparisons are not corrected: with a lower end of zero on each arm, a recombined effect would span \([-U_b, U_c]\), which says little, so they stay on the judge-reported scale and the analysis names them.
+
+**Validation.** `tests/unit/test_misclassification.py` checks \(Se_L\) against SciPy's beta quantile, checks by property test that the upper end equals the Rogan--Gladen maximum of `identified_risk_set` over random boxes, and runs a seeded Monte Carlo at the bound's worst case, \(FPR_j=0\), with \(Se\in[0.60,0.65]\) and \(\pi\) up to 0.5, in two regimes: a small published set with a large run, where the sensitivity's uncertainty dominates, and the reverse. Coverage must reach \(1-\alpha-\alpha_s=0.90\) less three Monte Carlo standard errors. The same check must fail for the uncorrected judge-system bound and, in the first regime, for division by the point estimate \(k/n\), and, in the second, for division of the judged estimate rather than its upper bound.
 
 ### 15.4 Distribution shift
 
@@ -2251,7 +2947,7 @@ comparable to human drivers by test driving alone would take hundreds of million
 of billions of miles. They concluded that test driving alone cannot provide sufficient
 evidence of safety, that new ways of demonstrating it are needed, that even with them safety may
 not be established with certainty, and that regulation must therefore adapt as the technology
-and the evidence develop [35].
+and the evidence develop [37].
 
 The same holds here. A pre-deployment evaluation can bound rates that its rollout budget can
 reach. Below that, the residual risk is not shown to be small, only not measured. Claims about
@@ -2412,13 +3108,23 @@ That is the role this Inspect extension should fill.
 30. H. Föllmer and T. Knispel, “Entropic Risk Measures: Coherence vs. Convexity, Model Ambiguity, and Robust Large Deviations,” *Stochastics and Dynamics* 11(2–3), 333–351, 2011. [doi:10.1142/S0219493711003334](https://doi.org/10.1142/S0219493711003334)
 31. C. Acerbi, “Spectral Measures of Risk: A Coherent Representation of Subjective Risk Aversion,” *Journal of Banking & Finance* 26(7), 1505–1518, 2002. [doi:10.1016/S0378-4266(02)00281-9](https://doi.org/10.1016/S0378-4266(02)00281-9)
 32. W. Hoeffding, “Probability Inequalities for Sums of Bounded Random Variables,” *Journal of the American Statistical Association* 58(301), 13–30, 1963. [doi:10.1080/01621459.1963.10500830](https://doi.org/10.1080/01621459.1963.10500830)
+33. I. Waudby-Smith and A. Ramdas, “Estimating means of bounded random variables by betting,” *Journal of the Royal Statistical Society, Series B* 86(1), 1–27, 2024. [doi:10.1093/jrsssb/qkad009](https://doi.org/10.1093/jrsssb/qkad009)
+34. F. Orabona and K.-S. Jun, “Tight Concentrations and Confidence Sequences from the Regret of Universal Portfolio,” *IEEE Transactions on Information Theory* 70(1), 436–455, 2024. [arXiv:2110.14099](https://arxiv.org/abs/2110.14099)
 
 ### Threats to validity and small-sample evaluation
 
-33. T. van der Weij, F. Hofstätter, O. Jaffe, S. F. Brown, and F. R. Ward, “AI Sandbagging: Language Models can Strategically Underperform on Evaluations,” 2024. [arXiv:2406.07358](https://arxiv.org/abs/2406.07358)
-34. C. Tice, P. A. Kreer, N. Helm-Burger, P. S. Shahani, F. Ryzhenkov, F. Roger, C. Neo, J. Haimes, F. Hofstätter, and T. van der Weij, “Noise Injection Reveals Hidden Capabilities of Sandbagging Language Models,” NeurIPS 2025. [arXiv:2412.01784](https://arxiv.org/abs/2412.01784)
-35. N. Kalra and S. M. Paddock, “Driving to safety: How many miles of driving would it take to demonstrate autonomous vehicle reliability?,” *Transportation Research Part A: Policy and Practice* 94, 182–193, 2016. [doi:10.1016/j.tra.2016.09.010](https://doi.org/10.1016/j.tra.2016.09.010)
-36. S. Bowyer, L. Aitchison, and D. R. Ivanova, “Position: Don't Use the CLT in LLM Evals With Fewer Than a Few Hundred Datapoints,” ICML 2025. [arXiv:2503.01747](https://arxiv.org/abs/2503.01747)
+35. T. van der Weij, F. Hofstätter, O. Jaffe, S. F. Brown, and F. R. Ward, “AI Sandbagging: Language Models can Strategically Underperform on Evaluations,” 2024. [arXiv:2406.07358](https://arxiv.org/abs/2406.07358)
+36. C. Tice, P. A. Kreer, N. Helm-Burger, P. S. Shahani, F. Ryzhenkov, F. Roger, C. Neo, J. Haimes, F. Hofstätter, and T. van der Weij, “Noise Injection Reveals Hidden Capabilities of Sandbagging Language Models,” NeurIPS 2025. [arXiv:2412.01784](https://arxiv.org/abs/2412.01784)
+37. N. Kalra and S. M. Paddock, “Driving to safety: How many miles of driving would it take to demonstrate autonomous vehicle reliability?,” *Transportation Research Part A: Policy and Practice* 94, 182–193, 2016. [doi:10.1016/j.tra.2016.09.010](https://doi.org/10.1016/j.tra.2016.09.010)
+38. S. Bowyer, L. Aitchison, and D. R. Ivanova, “Position: Don't Use the CLT in LLM Evals With Fewer Than a Few Hundred Datapoints,” ICML 2025. [arXiv:2503.01747](https://arxiv.org/abs/2503.01747)
+
+### Sequential evaluation and judge reliability
+
+39. Z. Zhou, Z. Ye, Z. Chen, B. Li, and F. Liu, “CELEUS: Certifiable and Efficient LLM Evaluation via E-Processes,” 2026. [arXiv:2606.20820](https://arxiv.org/abs/2606.20820)
+40. Y. Gao, “How Reliable Is Your Jailbreak Judge? Calibration and Adversarial Robustness of Automated ASR Scoring,” 2026. [arXiv:2606.25487](https://arxiv.org/abs/2606.25487)
+41. I. Waudby-Smith and A. Ramdas, “Confidence sequences for sampling without replacement,” *Advances in Neural Information Processing Systems* 33, 2020. [arXiv:2006.04347](https://arxiv.org/abs/2006.04347)
+42. J. Ville, *Étude critique de la notion de collectif*, Gauthier-Villars, Paris, 1939.
+43. W. J. Rogan and B. Gladen, “Estimating prevalence from the results of a screening test,” *American Journal of Epidemiology* 107(1), 71–76, 1978. [doi:10.1093/oxfordjournals.aje.a112510](https://doi.org/10.1093/oxfordjournals.aje.a112510)
 
 ---
 
