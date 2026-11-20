@@ -1,0 +1,49 @@
+name: Bug report
+description: A command or function gave a wrong result, failed, or did not do what its documentation says.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A suspected security problem goes through the repository's **Security** tab instead (SECURITY.md).
+        Do not attach logs, reports or prompts from private evaluations, or harmful content beyond what is
+        public in the source benchmark: reduce the problem to a small offline case.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The command or call, and what it printed or returned. Paste diagnostics with their codes.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What should have happened instead, and where the documentation says so, if it does.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce it
+      description: >-
+        The smallest plan, manifest and rollout files, or Python code, that show the problem without a
+        model provider or the network. `inspect-safety-stats init` and the files under `examples/` are
+        good starting points.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: The output of `inspect-safety-stats version`.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Python and operating system
+      placeholder: Python 3.12 on Ubuntu 24.04
+    validations:
+      required: true

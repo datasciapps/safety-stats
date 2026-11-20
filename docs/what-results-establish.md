@@ -89,13 +89,17 @@ not a fault in the analysis.
 
 When the plan declares several profiles, the report gives each claim's verdict under each of
 them ([verdicts by profile](independence-profiles.md#verdicts-by-profile)). A `PASS` that is
-`INCONCLUSIVE` under a coarser profile rests on the finer profile's independence assumption.
+`INCONCLUSIVE` under a coarser profile rests on the finer profile's independence assumption. In
+`report.json` the coarser profile's intervals have `role: sensitivity` and
+`varied_assumption: independence`.
 
 ## What the judge contributes
 
 Unless a validated judge calibration is declared, every risk is the risk of a failure **as the
-judge reports it**. An interval covers that rate, not the true failure rate. An assumed or
-transported calibration only adds true-risk rows that are sensitivities and decide no claim.
+judge reports it**. An interval covers that rate, not the true failure rate, and the judge's
+errors can make up most of it: at 1% true prevalence and 95% judge specificity, about five
+sixths of the reported rate is judge error, even with a judge that misses no failure. An assumed
+or transported calibration only adds true-risk rows that are sensitivities and decide no claim.
 
 - A verdict close to its threshold can rest on the judge's error rate. In one study a claim
   passed at an upper bound of 4.98% against a 5% limit. Re-judged with a more sensitive
@@ -117,6 +121,13 @@ transported calibration only adds true-risk rows that are sensitivities and deci
 - Each claim records the thresholds at which the same bounds would pass or fail
   (`verdict_range`). A threshold chosen after seeing the bounds does not show that the
   requirement came before the evidence.
+- A confirmatory verdict means what it says only if its claims and thresholds were fixed before
+  the evaluation. A confirmatory plan records when it was frozen (`analysis.plan_frozen_at`),
+  and a plan frozen after a selected evaluation started is refused (`PLAN_POSTHOC`). The date is
+  the author's word: `PLAN_SELF_DECLARED` says nothing outside the plan confirms it, and
+  `START_TIME_UNOBSERVED` says some evaluations record no start time to check it against. A
+  [registration receipt](plan-reference.md#registration-receipts-experimental), anchored where
+  readers can check it before generation starts, lets them confirm the order.
 - An exploratory analysis certifies nothing. Its descriptive status says what a confirmatory
   analysis of the same bounds would give.
 - Group intervals and a comparison of the same groups answer different questions. When
@@ -141,12 +152,29 @@ establishes:
 - **Absence of capability.** A scaffold, prompt or budget that fails to elicit a behaviour
   gives a low rate that is not evidence of safety.
 - **Safety from rare harms.** An upper bound of θ at 95% needs about 3/θ failure-free
-  rollouts. Harms rarer than the rollout budget can reach are not shown to be rare, only
+  rollouts: 200 failure-free rollouts leave the rate possibly as high as 1.49%, and showing it
+  is below 1% takes 299 (`inspect-safety-stats plan zero-failure --threshold 0.01`). Harms
+  rarer than the rollout budget can reach are not shown to be rare, only
   unmeasured. Claims about them need other evidence, such as monitoring in deployment
   ([section 15.7](statistical-methods.md#157-residual-risk-of-rare-harms)).
 - **Uncontaminated items.** A model that has seen the benchmark may behave differently on it.
+- **How severe the failures are.** A failure rate counts every failure alike. A failure that
+  must never happen belongs in its own claim or under `policy.zero_tolerance`, not in a broad
+  average ([section 15.6](statistical-methods.md#156-severity-aggregation)).
 
 Intervals from other tools built from a mean and standard error are usually much narrower on
 small evaluations because they under-cover, not because they are more precise. Do not compare
 them with these intervals as if both had the same coverage
 ([small evaluations](interpretation.md#small-evaluations-and-stderr-based-intervals)).
+
+## Before relying on a result
+
+1. Is the design fixed? Then the result is about these prompts only. Under a sampled design it
+   is about the declared frame.
+2. Did a judge score the outcomes? Then, without a validated calibration on these outputs, the
+   result is about the judge's verdicts.
+3. Can the rollout budget reach the bound the claim needs? With few rollouts, rare harms are not
+   measured.
+4. Does the conclusion hold under every independence profile the plan declares?
+5. Were the thresholds fixed before the evaluation, and can anyone else check that?
+6. What does the evaluation leave out: hazards, elicitation, deployment conditions?

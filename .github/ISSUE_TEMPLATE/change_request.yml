@@ -1,0 +1,40 @@
+name: Change or feature
+description: Propose a behaviour change or a new capability, before writing the pull request.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        CONTRIBUTING.md section 3: a change a user can observe (class B) or a new capability (class C) needs an
+        issue a maintainer has agreed to before its pull request is merged. A new estimator, bound or risk
+        measure has its own template, "Statistical method".
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What a user cannot do, or gets wrong, today. A real evaluation that runs into it helps most.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: What should change, and what a user would see afterwards, in the report, the CLI or the API.
+    validations:
+      required: true
+  - type: dropdown
+    id: change-class
+    attributes:
+      label: Change class
+      description: CONTRIBUTING.md section 3. Anything that changes an output byte is B.
+      options:
+        - "B. Behaviour change"
+        - "C. New capability"
+        - "A. Behaviour-neutral"
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other ways to solve it, including doing nothing, and why this one is better.

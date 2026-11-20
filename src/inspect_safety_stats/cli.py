@@ -62,7 +62,8 @@ class ExitCode(IntEnum):
     # analyze --decision-exit-codes: the decision is INCONCLUSIVE.
     INCONCLUSIVE = 2
     # The command could not run, or its result supports no claim: an invalid integrity, or a
-    # generative analysis with ERROR diagnostics.
+    # generative analysis with ERROR diagnostics. generative materialize also: units errored,
+    # so the dataset lacks them.
     ERROR = 3
 
 
@@ -1454,6 +1455,10 @@ def generative_materialize_command(
                 "check that the kernel returns usable text.",
                 err=True,
             )
+        raise typer.Exit(code=ExitCode.ERROR)
+    if run.errored:
+        # The dataset lacks the errored units, so a script must not go on to evaluate it as if
+        # it were complete. The warning above says how to finish it.
         raise typer.Exit(code=ExitCode.ERROR)
 
 

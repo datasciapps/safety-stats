@@ -737,7 +737,7 @@ input they cannot run on; the other commands below do not, and a malformed plan 
 | `0` | The command completed. |
 | `1` | `analyze --decision-exit-codes`: the decision is FAIL. `plan fixed-design --plan`: no claim of the plan could be planned. |
 | `2` | `analyze --decision-exit-codes`: the decision is INCONCLUSIVE. typer also exits `2` on a usage error, such as a missing option, before the command runs. |
-| `3` | `analyze`, `hash-plan`, `init`, `validate`, `visualize` and the `generative` commands: the command could not run. `analyze` and `generative analyze` also: the result supports no claim (an `invalid` integrity, or a `generative analyze` report with `ERROR` diagnostics). `validate`: an `invalid` integrity. |
+| `3` | `analyze`, `hash-plan`, `init`, `validate`, `visualize` and the `generative` commands: the command could not run. `analyze` and `generative analyze` also: the result supports no claim (an `invalid` integrity, or a `generative analyze` report with `ERROR` diagnostics). `validate`: an `invalid` integrity. `generative materialize`: units errored, so the dataset lacks them; `--resume` runs them again. |
 
 Exit codes of `analyze`:
 

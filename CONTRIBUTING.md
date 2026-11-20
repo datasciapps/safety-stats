@@ -50,7 +50,8 @@ pytest
 
 - **Open or claim an issue first** for anything beyond a typo or a docs fix. Say which change
   class (section 3) you expect. Two implementations of the same estimator on two branches are
-  expensive to reconcile.
+  expensive to reconcile. The issue forms (bug report, change or feature, statistical method)
+  ask for what a maintainer needs to agree to it.
 - **Large or scope-changing work needs a short design note first.** That covers a new subsystem,
   removing a feature, or changing a default method. Open an issue that states the problem, the
   options, and the user impact. Scope decisions are made there, not by letting a branch drift.

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import cast
 
+from inspect_safety_stats.analysis import interval_assumptions
 from inspect_safety_stats.analysis.comparison_intervals import _comparison_targets
 from inspect_safety_stats.analysis.comparison_regions import _multi_arm_effect_interval
 from inspect_safety_stats.analysis.judge_calibration import (
@@ -358,8 +359,7 @@ def _assumed_comparison_interval(
             "The reported effect is a contrast of true failure risks, not of "
             "judge-reported risks.",
             *boxes,
-            "These conditional accuracies are declared assumptions, not measurements; "
-            "the interval inherits no coverage guarantee from them.",
+            interval_assumptions.JUDGE_ACCURACIES_DECLARED.text(),
             _assumed_arm_boxes_assumption(arm_cohorts, listed, cohort_boxes, scope),
             (
                 "Each arm is corrected over its own declared box independently of the other, "

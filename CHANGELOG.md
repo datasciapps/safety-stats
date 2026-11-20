@@ -9,10 +9,30 @@ described in their pull requests.
 
 ### Fixed
 
-- **`generative materialize` says how to rerun errored units.** A run whose provider errored on
-  some units printed their count only in its summary line and exited `0`. It now also warns
-  that they are not in the dataset and that `--resume` runs them again. The exit status is
-  unchanged.
+- **`generative budget` no longer forecasts a tighter bound for a smaller node.** It rounded
+  each node's expected failures to a whole number, so at 3% a node of 16 draws expected none and
+  one of 20 expected one: a level's worst bound could sit below its median bound, and
+  `--target-bound` searched a bound that did not fall steadily with the budget. The forecast
+  now keeps the expected count unrounded (`stats.planning.expected_upper_bound`), which gives
+  the exact Clopper-Pearson bound at whole counts and falls as draws grow. Forecast figures at
+  fractional counts change slightly.
+
+- **The README's links work on PyPI.** The README is the package's PyPI description, where its
+  60 relative links to the documentation and examples, and its demo image, led nowhere. They
+  now point to the `main` branch of the repository on GitHub.
+
+- **A missing manifest column's message names the settings that need it.** A design manifest
+  without a `question_id` or `task_id` column the plan needs was refused with "design manifest
+  is missing required columns: question_id, task_id", which did not say why the plan needs
+  them. The message now goes on to name each setting, for example "(design.hierarchy names
+  question_id, task_id; groups[all].weights.hierarchy names task_id)", including settings a plan
+  leaves at their defaults. Which columns are required is unchanged.
+
+- **`generative materialize` fails when units errored, and says how to rerun them.** A run whose
+  provider errored on some units printed their count only in its summary line and exited `0`,
+  so a script went on to evaluate a dataset that lacked them. It now warns that they are not in
+  the dataset and that `--resume` runs them again, and exits `3`. A run in which no unit
+  errored exits as before.
 
 - **`--runs` without `--rollouts` names the missing option.** `analyze` and `validate` said
   "--runs and --rollouts are given together"; they now say "--runs needs --rollouts", or the
@@ -1169,6 +1189,13 @@ described in their pull requests.
   [Verdicts by profile](docs/independence-profiles.md#verdicts-by-profile).
 
 ### Changed
+
+- **The package says what it covers on PyPI.** The README's opening and the package
+  description named only Inspect AI safety outputs. They now name pass/fail LLM evaluations in
+  general, rollout files from other harnesses, and the standalone `inspect_safety_stats.stats`
+  functions, and the package keywords add the terms people search for, such as
+  `confidence-intervals`, `llm-evaluation` and `llm-as-a-judge`. `CITATION.cff`'s abstract
+  follows the description.
 
 - **A mapping value that no score can match is refused when the plan loads.** An outcome
   mapping's `failure_values` and `safe_values`, in `inputs.score`, a judge's score or an

@@ -32,6 +32,7 @@ from inspect_safety_stats.ingest.manifest import (
     ResolvedGroup,
     load_manifest,
     plan_grouping_columns,
+    plan_manifest_column_settings,
     plan_manifest_columns,
     resolve_groups,
 )
@@ -427,6 +428,7 @@ def plan_design(
         manifest if manifest is not None else plan.inputs.design_manifest,
         plan_manifest_columns(plan),
         plan_grouping_columns(plan),
+        plan_manifest_column_settings(plan),
     )
     counts = _rollout_counts(frame, rollouts)
     groups = {group.id: group for group in resolve_groups(plan, frame)}

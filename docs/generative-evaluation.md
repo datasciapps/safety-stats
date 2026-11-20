@@ -203,7 +203,8 @@ interrupted run would have gone on to draw.
 A unit whose retries were **exhausted** is not retried. It is part of the accepted distribution
 the estimand is defined against, and re-running it would grant it more than `maximum_attempts`.
 A unit that **errored** is retried, because an operational failure says nothing about the
-kernel. Before it runs anything, `--resume` writes `rewrites.csv`, `prompts.restricted.csv`
+kernel. A run that ends with errored units says how many and exits `3`, since its dataset lacks
+them, so that a script does not evaluate it as if it were complete. Before it runs anything, `--resume` writes `rewrites.csv`, `prompts.restricted.csv`
 and `attempts.csv` afresh, each once and in one step, with the rows of every finished unit.
 The errored units' rows are dropped from `rewrites.csv`, so each unit keeps one row, and the
 attempts of every unit that will run again from `attempts.csv`. After that the ledgers are

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -97,40 +97,67 @@ def load_selection(manifest: pd.DataFrame, column: str) -> np.ndarray:
         raise ValueError(f"selection column {column!r}: {exc}") from exc
 
 
-def plan_manifest_columns(plan: AnalysisPlan) -> tuple[str, ...]:
-    """The columns of ``REQUIRED_COLUMNS`` the plan names, ``prompt_id`` always among them.
+def plan_manifest_column_settings(plan: AnalysisPlan) -> dict[str, tuple[str, ...]]:
+    """The columns of ``REQUIRED_COLUMNS`` each plan setting names, by setting.
 
-    A plan names a column through its hierarchy, a nested weight hierarchy, an explicit weight
-    column, a group filter, an independence profile, a comparison's pair or cluster key, a
-    sampling column, a threshold column or the zero-tolerance field. A level it never names takes
-    the prompt's own identity.
+    A key is a setting as a message names it, such as ``design.hierarchy`` or
+    ``groups[all].weights.hierarchy``; its value holds the columns of ``REQUIRED_COLUMNS`` the
+    setting names, in that order. A setting that names none is left out. A plan names a column
+    through its hierarchy, a nested weight hierarchy, an explicit weight column, a group
+    filter, an independence profile, a comparison's pair or cluster key, a sampling column, a
+    threshold column or the zero-tolerance field.
     """
 
-    named: set[str] = set(plan.design.hierarchy)
-    for spec in [plan.design.weights, *(group.weights for group in plan.groups)]:
+    named: dict[str, list[str]] = {"design.hierarchy": list(plan.design.hierarchy)}
+    weights: list[tuple[str, WeightSpec | None]] = [("design.weights", plan.design.weights)]
+    weights += [(f"groups[{group.id}].weights", group.weights) for group in plan.groups]
+    for setting, spec in weights:
         if spec is None:
             continue
         if spec.strategy == "nested_equal":
-            named.update(spec.hierarchy)
+            named[f"{setting}.hierarchy"] = list(spec.hierarchy)
         if spec.column is not None:
-            named.add(spec.column)
+            named[f"{setting}.column"] = [spec.column]
     for group in plan.groups:
-        named.update(group.filter)
-    for profile in plan.design.independence_profiles.values():
-        named.update(profile.block_by)
+        named[f"groups[{group.id}].filter"] = list(group.filter)
+    for name, profile in plan.design.independence_profiles.items():
+        named[f"design.independence_profiles.{name}.block_by"] = list(profile.block_by)
     for comparison in plan.expanded_comparisons():
         # A pair or cluster key may name an identifier the observations carry.
-        named.update(observation_field(name) for name in comparison.pair_key or [])
+        named[f"comparisons[{comparison.id}].pair_key"] = [
+            observation_field(name) for name in comparison.pair_key or []
+        ]
         if comparison.cluster_key:
-            named.add(observation_field(comparison.cluster_key))
-    for column in (
-        plan.design.inclusion_probability_column,
-        plan.design.stratum_column,
-        plan.policy.zero_tolerance.manifest_field,
-        *(measure.threshold_column for measure in plan.outputs.risk_measures),
+            named[f"comparisons[{comparison.id}].cluster_key"] = [
+                observation_field(comparison.cluster_key)
+            ]
+    for setting, column in (
+        ("design.inclusion_probability_column", plan.design.inclusion_probability_column),
+        ("design.stratum_column", plan.design.stratum_column),
+        ("policy.zero_tolerance.manifest_field", plan.policy.zero_tolerance.manifest_field),
+        *(
+            (f"outputs.risk_measures[{measure.id}].threshold_column", measure.threshold_column)
+            for measure in plan.outputs.risk_measures
+        ),
     ):
         if column is not None:
-            named.add(column)
+            named[setting] = [column]
+    settings = {
+        setting: tuple(column for column in REQUIRED_COLUMNS if column in columns)
+        for setting, columns in named.items()
+    }
+    return {setting: columns for setting, columns in settings.items() if columns}
+
+
+def plan_manifest_columns(plan: AnalysisPlan) -> tuple[str, ...]:
+    """The columns of ``REQUIRED_COLUMNS`` the plan names, ``prompt_id`` always among them.
+
+    ``plan_manifest_column_settings`` gives the settings that name them. A level the plan
+    never names takes the prompt's own identity.
+    """
+
+    settings = plan_manifest_column_settings(plan)
+    named = {column for columns in settings.values() for column in columns}
     return tuple(column for column in REQUIRED_COLUMNS if column == "prompt_id" or column in named)
 
 
@@ -198,6 +225,7 @@ def load_manifest(
     path: str | Path,
     required: Iterable[str] = REQUIRED_COLUMNS,
     grouping: Iterable[str] = (),
+    settings: Mapping[str, Sequence[str]] | None = None,
 ) -> pd.DataFrame:
     """Read a design manifest that has every ``required`` column.
 
@@ -212,6 +240,10 @@ def load_manifest(
     of ``MISSING_MARKERS``, such as ``NA`` or ``None``, has no value, and raises ``ValueError``
     naming the column and the rows. Every other column keeps pandas' reading, so numeric
     columns stay numbers.
+
+    ``settings`` maps each plan setting to the required columns it names, as
+    ``plan_manifest_column_settings`` gives them; a missing column's message then says which
+    settings name it.
     """
 
     required = tuple(required)
@@ -231,7 +263,15 @@ def load_manifest(
     missing = [column for column in REQUIRED_COLUMNS if column in required]
     missing = [column for column in missing if column not in manifest.columns]
     if missing:
-        raise ValueError(f"design manifest is missing required columns: {', '.join(missing)}")
+        message = f"design manifest is missing required columns: {', '.join(missing)}"
+        named = [
+            f"{setting} names {', '.join(column for column in columns if column in missing)}"
+            for setting, columns in (settings or {}).items()
+            if any(column in missing for column in columns)
+        ]
+        if named:
+            message += f" ({'; '.join(named)})"
+        raise ValueError(message)
     labels = [column for column in candidates if column in manifest.columns]
     # The file is read a second time, wholly as text and with no missing-value markers, so that
     # every other column keeps exactly the values pandas' inference gives it.
