@@ -1504,7 +1504,9 @@ described in their pull requests.
 - **Inspect AI is an optional extra (breaking for installation).** `inspect-ai` and `pyarrow`
   are no longer installed by default. Install `inspect-safety-stats[inspect]` to read Inspect
   logs with `--logs` or `logs=`; without the extra, reading them fails with an error that names
-  it. Rollout files need no extra. The `dev` extra includes it.
+  it. An installed extra that fails to import for another reason, such as a dependency of
+  Inspect that lacks a module or a `pyarrow` built for another NumPy, reports that reason
+  instead. Rollout files need no extra. The `dev` extra includes it.
 
 - **Report schema 3.0: neutral observation and provenance fields (breaking).** Reports name
   observation fields after no evaluation tool: `source_log`, `source_log_sha256`, `eval_id`,
