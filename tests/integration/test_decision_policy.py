@@ -391,6 +391,20 @@ def test_validate_exits_3_when_the_decision_policy_cannot_be_read(
     assert "Validation failed" in plain(result.output)
 
 
+@pytest.mark.parametrize(
+    "content",
+    ['schema_version: "2.0"\nnot_a_field: 1\n', "- a list, not a plan\n", "key: [\n"],
+)
+def test_validate_exits_3_when_the_plan_cannot_be_read(tmp_path: Path, content: str) -> None:
+    # A plan that fails validation, is not a mapping, or is not YAML is invalid input too.
+    plan = tmp_path / "plan.yaml"
+    plan.write_text(content, encoding="utf-8")
+    result = CliRunner().invoke(app, ["validate", "--plan", str(plan), "--logs", str(plan)])
+    assert result.exit_code == 3, plain(result.output)
+    assert "Validation failed" in plain(result.output)
+    assert "Traceback" not in plain(result.output)
+
+
 def test_the_schema_command_prints_the_decision_policy_schema() -> None:
     result = CliRunner().invoke(app, ["schema", "decision-policy"])
     assert result.exit_code == 0
