@@ -9,6 +9,13 @@ described in their pull requests.
 
 ### Fixed
 
+- **A missing manifest column's message names the settings that need it.** A design manifest
+  without a `question_id` or `task_id` column the plan needs was refused with "design manifest
+  is missing required columns: question_id, task_id", which did not say why the plan needs
+  them. The message now goes on to name each setting, for example "(design.hierarchy names
+  question_id, task_id; groups[all].weights.hierarchy names task_id)", including settings a plan
+  leaves at their defaults. Which columns are required is unchanged.
+
 - **`generative materialize` says how to rerun errored units.** A run whose provider errored on
   some units printed their count only in its summary line and exited `0`. It now also warns
   that they are not in the dataset and that `--resume` runs them again. The exit status is
