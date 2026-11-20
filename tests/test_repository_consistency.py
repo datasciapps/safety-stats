@@ -225,6 +225,30 @@ def test_the_readme_links_into_the_repository_with_absolute_urls() -> None:
     assert sum(target.startswith(blob) for _, target in links) >= 50
 
 
+def test_the_issue_forms_are_well_formed() -> None:
+    """GitHub drops an issue form it cannot parse from the chooser without saying why (#21)."""
+    directory = ROOT / ".github" / "ISSUE_TEMPLATE"
+    forms = sorted(path for path in directory.glob("*.yml") if path.name != "config.yml")
+    assert [path.name for path in forms] == [
+        "bug_report.yml",
+        "change_request.yml",
+        "statistical_method.yml",
+    ]
+    known = {"markdown", "textarea", "input", "dropdown", "checkboxes"}
+    for path in forms:
+        form = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert {"name", "description", "body"} <= set(form), path.name
+        ids = [item["id"] for item in form["body"] if item["type"] != "markdown"]
+        assert len(ids) == len(set(ids)), path.name
+        assert {item["type"] for item in form["body"]} <= known, path.name
+        assert any(item.get("validations", {}).get("required") for item in form["body"])
+    config = yaml.safe_load((directory / "config.yml").read_text(encoding="utf-8"))
+    (security,) = config["contact_links"]
+    repository = re.search(r'^Repository = "([^"]+)"$', _pyproject(), flags=re.MULTILINE)
+    assert repository is not None
+    assert security["url"] == f"{repository.group(1)}/security/advisories/new"
+
+
 def test_documentation_has_no_url_placeholders() -> None:
     """Install instructions once read ``git clone <repository-url>``, which nobody can run."""
     placeholder = re.compile(r"<[a-z-]+-url>")

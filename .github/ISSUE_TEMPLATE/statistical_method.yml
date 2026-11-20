@@ -1,0 +1,39 @@
+name: Statistical method
+description: Propose a new estimator, interval, bound or risk measure (CONTRIBUTING.md section 8).
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        CONTRIBUTING.md section 8 says what a statistical contribution needs: the derivation in
+        docs/statistical-methods.md, the method registered everywhere methods are accepted, coverage tests, and
+        review by someone with the relevant statistical background. This issue states what the method claims.
+  - type: textarea
+    id: estimand
+    attributes:
+      label: Estimand
+      description: What quantity the method estimates or bounds, and for which design.
+    validations:
+      required: true
+  - type: textarea
+    id: assumptions
+    attributes:
+      label: Assumptions
+      description: Every assumption the guarantee rests on, independence and the design included.
+    validations:
+      required: true
+  - type: textarea
+    id: guarantee
+    attributes:
+      label: Guarantee
+      description: >-
+        In one sentence, for example "under independent blocks, P(true risk ≤ U) ≥ 1 − α simultaneously over
+        all declared nodes".
+    validations:
+      required: true
+  - type: textarea
+    id: source
+    attributes:
+      label: Citation or proof sketch
+    validations:
+      required: true
