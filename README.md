@@ -133,6 +133,17 @@ anytime-valid upper bound for Inspect runs that a rule such as Optstop's stopped
 ## Install
 
 ```bash
+python -m pip install 'inspect-safety-stats[inspect]'
+```
+
+The `inspect` extra installs Inspect AI and pyarrow, which reading Inspect logs needs. Leave it
+out to analyse only [rollout files](docs/rollout-files.md).
+
+The examples, the offline demo and the walkthrough below run from a checkout of the repository:
+
+```bash
+git clone https://github.com/aduncan001/safety_stats.git
+cd safety_stats
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -434,6 +445,8 @@ The command writes:
 
 ```text
 reports/example/
+  index.json
+  index.md
   report.json
   report.md
   report-full.md

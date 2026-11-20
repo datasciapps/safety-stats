@@ -8,7 +8,14 @@ larger population.
 
 ## Install
 
-You need Python 3.11 or newer. The demo below needs no API key.
+You need Python 3.11 or newer. To use the package in your own project, install it with the
+`inspect` extra, which reads Inspect logs:
+
+```bash
+python -m pip install 'inspect-safety-stats[inspect]'
+```
+
+The demo below runs from a checkout of the repository and needs no API key:
 
 ```bash
 git clone https://github.com/aduncan001/safety_stats.git

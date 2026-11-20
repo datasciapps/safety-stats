@@ -16,7 +16,7 @@ Contents:
 [engineering](#5-engineering-practices) · [cross-platform](#6-linux-macos-and-windows) ·
 [tests](#7-tests) · [statistics](#8-statistical-contributions) ·
 [data and security](#9-data-secrets-and-sensitive-content) · [review](#10-pull-requests-and-review) ·
-[commits](#11-commits-and-branches) · [releases](#12-releases-and-deprecation)
+[commits](#11-commits-and-branches) · [releases](#12-releases-and-deprecation-proposed)
 
 ---
 
@@ -301,7 +301,7 @@ All three are first-class platforms.
 | Property | `tests/property/` | Hypothesis invariants: monotonicity, bound ordering, coverage direction |
 | Integration | `tests/integration/` | `analyze` and `validate` end to end on synthetic logs |
 | Examples | `tests/test_*_example.py` | The bundled examples still run offline |
-| Repository | `tests/test_repository_consistency.py` | Example plans validate, documentation links resolve, the version agrees in all three places, CI tests every advertised Python version, and only expected files sit at the repository root |
+| Repository | `tests/test_repository_consistency.py` | Example plans validate, documentation links resolve, the version agrees in all four places, CI tests every advertised Python version, and only expected files sit at the repository root |
 | Scripts | `tests/test_dev_scripts.py` | The developer scripts in `scripts/` do what they claim, on every platform |
 | Formal | `formal/` | Optional Lean proofs that every risk measure is monotone, each tied to a property test (see [formal/README.md](formal/README.md)). Python work never needs Lean. |
 | Golden **[proposed]** | `tests/golden/` | Byte-for-byte expected outputs for representative plans (#27) |

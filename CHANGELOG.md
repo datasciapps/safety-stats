@@ -9,6 +9,34 @@ described in their pull requests.
 
 ### Fixed
 
+- **`generative materialize` says how to rerun errored units.** A run whose provider errored on
+  some units printed their count only in its summary line and exited `0`. It now also warns
+  that they are not in the dataset and that `--resume` runs them again. The exit status is
+  unchanged.
+
+- **`--runs` without `--rollouts` names the missing option.** `analyze` and `validate` said
+  "--runs and --rollouts are given together"; they now say "--runs needs --rollouts", or the
+  reverse, and still exit `2`.
+
+- **The statistical functions take NumPy integer counts.** `binomial_upper_bound`,
+  `binomial_lower_bound`, `binomial_bounds`, `missingness_robust_binomial_bounds` and
+  `bonferroni_allocate` raised "counts must be integers" for a count such as a DataFrame
+  column's sum, which is a `numpy.int64`. They now take any integer, NumPy's included, and give
+  the result a Python integer gives. Booleans and floats are still refused.
+
+- **Dependency floors are versions the package works with.** The declared minimums installed
+  versions under which it gave wrong bounds or failed. SciPy before 1.12 computes some bound
+  endpoints wrongly at extreme quantiles: an upper bound of 1.0 instead of 0.109 for no
+  failures in 299 trials at alpha 1e-15. pandas before 2.2 cannot read Inspect logs. typer
+  before 0.17.5, under a current click, crashes on a mistyped option and no longer requires
+  required options. Inspect AI before 0.3.267 fails to import its log reader beside a current
+  agent-client-protocol, before 0.3.288 reads `model_args` from the wrong field, and before
+  0.3.289 cannot run an evaluation beside agent-client-protocol 1.0. pyarrow before 16 fails
+  to import beside NumPy 2. The floors are now `scipy>=1.12`, `pandas>=2.2`,
+  `typer>=0.17.5`, and in the `inspect` extra `inspect-ai>=0.3.289` and `pyarrow>=16`. The
+  test suite passes at every floor, with NumPy 1 and with NumPy 2. Logs written by Inspect AI
+  0.3.259 or later are still read.
+
 - **A judge correction no longer states an assumption it does not make (changes report
   bytes).** A corrected row or comparison arm holding no rollout a plan policy classified, in a
   plan that sets such a policy or a cohort that holds one, stated that its correction assumes
@@ -361,6 +389,8 @@ described in their pull requests.
   from that effect, as `report.md` gives them. A header line names the report's `index.md` and
   its section "Errors and warnings by code", which lists each code's diagnostics, and
   `report.md` and its section "Warnings", which also gives the assumption each code checks.
+  Under each error's line come up to three of its distinct messages, which say what went
+  wrong, such as a missing manifest or a log reader that needs the `inspect` extra.
   The assumption is not printed in the terminal: it is phrased as what the results rest on,
   so printed alone it would read as a fact where the code reports that it may not hold. A user
   or a coding agent that reads only the command's output now sees what qualifies the headline.
@@ -1508,7 +1538,9 @@ described in their pull requests.
 - **Inspect AI is an optional extra (breaking for installation).** `inspect-ai` and `pyarrow`
   are no longer installed by default. Install `inspect-safety-stats[inspect]` to read Inspect
   logs with `--logs` or `logs=`; without the extra, reading them fails with an error that names
-  it. Rollout files need no extra. The `dev` extra includes it.
+  it. An installed extra that fails to import for another reason, such as a dependency of
+  Inspect that lacks a module or a `pyarrow` built for another NumPy, reports that reason
+  instead. Rollout files need no extra. The `dev` extra includes it.
 
 - **Report schema 3.0: neutral observation and provenance fields (breaking).** Reports name
   observation fields after no evaluation tool: `source_log`, `source_log_sha256`, `eval_id`,
