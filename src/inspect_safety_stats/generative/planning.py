@@ -18,8 +18,7 @@ from dataclasses import dataclass
 from inspect_safety_stats.generative.sampling import plan_design
 from inspect_safety_stats.generative.schema import GenerativePlan
 from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
-from inspect_safety_stats.stats.binomial import binomial_upper_bound
-from inspect_safety_stats.stats.planning import certification_power
+from inspect_safety_stats.stats.planning import certification_power, expected_upper_bound
 
 
 @dataclass(frozen=True)
@@ -62,10 +61,14 @@ class BudgetForecast:
 
 
 def _expected_upper(draws: float, assumed_rate: float, alpha: float) -> float:
-    """The bound a node of this size would report if the design were homogeneous."""
+    """The bound a node of this size would report if the design were homogeneous.
 
-    trials = max(1, int(round(draws)))
-    return binomial_upper_bound(int(round(assumed_rate * trials)), trials, alpha=alpha)
+    The counts are not rounded (``expected_upper_bound``), so a smaller node never forecasts a
+    tighter bound than a larger one: a level's worst bound is at least its median bound, and
+    ``rewrites_for_bound`` bisects a function that falls as the budget grows.
+    """
+
+    return expected_upper_bound(draws=draws, rate=assumed_rate, alpha=alpha)
 
 
 def _median(values: list[float]) -> float:

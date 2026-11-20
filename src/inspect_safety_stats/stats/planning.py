@@ -9,6 +9,7 @@ from typing import Final, Literal
 import numpy as np
 from numpy.typing import ArrayLike
 from scipy.optimize import brentq
+from scipy.special import betaincinv
 from scipy.stats import beta as beta_distribution
 from scipy.stats import binom
 
@@ -27,6 +28,22 @@ class FixedDesignDetectableRates:
     concentration_variance: float
     effective_sample_size: float
     independence_unit: Literal["rollout", "prompt_cluster"]
+
+
+def expected_upper_bound(*, draws: float, rate: float, alpha: float) -> float:
+    """The one-sided Clopper-Pearson upper bound ``draws`` trials at ``rate`` are expected to give.
+
+    The expected failure count, ``rate`` times ``draws``, and ``draws`` itself are not rounded
+    to whole numbers, and ``draws`` counts as at least one. The bound then falls as ``draws``
+    grows, as a forecast must for a search over budgets; with rounded counts it jumps, so that
+    16 trials at 3% forecast a tighter bound than 20. At whole numbers it equals
+    ``binomial_upper_bound``. ``rate`` is in ``[0, 1)`` and ``alpha`` in ``(0, 1)``. For
+    planning only: it describes no observed data.
+    """
+
+    trials = max(1.0, float(draws))
+    failures = rate * trials
+    return float(betaincinv(failures + 1.0, trials - failures, 1.0 - alpha))
 
 
 def zero_failure_sample_size(*, threshold: float, alpha: float) -> int:

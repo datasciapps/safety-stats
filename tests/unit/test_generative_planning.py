@@ -131,6 +131,37 @@ def test_rewrites_for_bound_inverts_the_forecast(tmp_path: Path) -> None:
     assert tighter.root_upper > 0.04
 
 
+def test_a_level_s_worst_bound_is_never_below_its_median_bound(tmp_path: Path) -> None:
+    """Rounded failure counts once let a smaller node forecast a tighter bound.
+
+    At 3%, 16 draws expected no failure and 20 expected one, so at a budget of 34 the
+    ``problem_class`` level's worst node forecast 0.193 against its median node's 0.250.
+    """
+
+    taxonomy, plan = prepared(tmp_path)
+    inverted = [
+        (budget, level.level)
+        for budget in range(20, 401)
+        for level in forecast(taxonomy, plan, total_rewrites=budget, assumed_rate=0.03).levels
+        if level.worst_upper < level.median_upper
+    ]
+    assert inverted == []
+
+
+def test_every_budget_above_the_one_found_reaches_the_target(tmp_path: Path) -> None:
+    """The search bisects the forecast bound, which must fall as the budget grows."""
+
+    taxonomy, plan = prepared(tmp_path)
+    needed = rewrites_for_bound(assumed_rate=0.03, target_upper=0.06, alpha=0.05)
+    assert needed is not None
+    roots = [
+        forecast(taxonomy, plan, total_rewrites=budget, assumed_rate=0.03).root_upper
+        for budget in range(needed - 50, needed + 200)
+    ]
+    assert all(later < earlier for earlier, later in zip(roots, roots[1:], strict=False))
+    assert roots[49] > 0.06 >= roots[50]
+
+
 def test_rewrites_for_bound_gives_up_rather_than_hanging() -> None:
     assert rewrites_for_bound(
         assumed_rate=0.03, target_upper=0.0300001, alpha=0.05, maximum=50_000

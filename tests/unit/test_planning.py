@@ -4,7 +4,11 @@ import math
 
 import pytest
 
-from inspect_safety_stats.stats.planning import fixed_design_detectable_failure_rates
+from inspect_safety_stats.stats.binomial import binomial_upper_bound
+from inspect_safety_stats.stats.planning import (
+    expected_upper_bound,
+    fixed_design_detectable_failure_rates,
+)
 
 
 def test_equal_weight_rollout_geometry() -> None:
@@ -72,3 +76,29 @@ def test_weights_must_sum_to_one() -> None:
             rejection_alpha=0.05,
             power=0.9,
         )
+
+
+def test_the_expected_bound_is_the_exact_bound_at_whole_counts() -> None:
+    for trials, rate in [(1200, 0.03), (100, 0.05), (16, 0.0), (8, 0.25)]:
+        failures = round(rate * trials)
+        assert expected_upper_bound(draws=trials, rate=rate, alpha=0.05) == pytest.approx(
+            binomial_upper_bound(failures, trials, alpha=0.05), rel=1e-12, abs=0
+        )
+
+
+def test_the_expected_bound_falls_as_the_draws_grow() -> None:
+    """With rounded counts, 16 trials at 3% expected no failure and 20 expected one, so the
+    smaller sample forecast the tighter bound."""
+
+    for rate in (0.0, 0.01, 0.03, 0.2):
+        bounds = [
+            expected_upper_bound(draws=draws / 4, rate=rate, alpha=0.05) for draws in range(4, 4000)
+        ]
+        assert all(later < earlier for earlier, later in zip(bounds, bounds[1:], strict=False))
+    assert expected_upper_bound(draws=16, rate=0.03, alpha=0.05) > expected_upper_bound(
+        draws=20, rate=0.03, alpha=0.05
+    )
+    # Fewer than one draw counts as one.
+    assert expected_upper_bound(draws=0.25, rate=0.03, alpha=0.05) == expected_upper_bound(
+        draws=1, rate=0.03, alpha=0.05
+    )

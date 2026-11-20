@@ -9,6 +9,14 @@ described in their pull requests.
 
 ### Fixed
 
+- **`generative budget` no longer forecasts a tighter bound for a smaller node.** It rounded
+  each node's expected failures to a whole number, so at 3% a node of 16 draws expected none and
+  one of 20 expected one: a level's worst bound could sit below its median bound, and
+  `--target-bound` searched a bound that did not fall steadily with the budget. The forecast
+  now keeps the expected count unrounded (`stats.planning.expected_upper_bound`), which gives
+  the exact Clopper-Pearson bound at whole counts and falls as draws grow. Forecast figures at
+  fractional counts change slightly.
+
 - **The README's links work on PyPI.** The README is the package's PyPI description, where its
   60 relative links to the documentation and examples, and its demo image, led nowhere. They
   now point to the `main` branch of the repository on GitHub.
