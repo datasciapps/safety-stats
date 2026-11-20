@@ -6,6 +6,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
+from inspect_safety_stats.analysis import interval_assumptions
 from inspect_safety_stats.analysis.direct_mean import _HierarchyNode
 from inspect_safety_stats.analysis.estimates import _bounds_carry_unknown_outcome
 from inspect_safety_stats.analysis.unclassified_share import (
@@ -363,7 +364,7 @@ def _stratified_assumptions(cohort: str = "the cohort") -> list[str]:
         "replacement of it, of a size fixed independently of the labels; this is a "
         "property of the declared collection protocol, not of the data.",
         f"The declared validation strata place every classified rollout of {cohort}.",
-        "Human adjudication is treated as ground truth.",
+        interval_assumptions.JUDGE_HUMAN_LABELS_ARE_TRUTH.text(),
     ]
 
 
@@ -451,10 +452,7 @@ def _assumed_box_assumption(cohort_id: str, cohort_boxes: frozenset[str], scope:
             "scenario's default box, which is applied unchanged to every cohort the scenario "
             f"does not list{scope}."
         )
-    return (
-        "The declared accuracies are prevalence-dependent and are applied unchanged to every "
-        f"cohort{scope}."
-    )
+    return interval_assumptions.JUDGE_ACCURACIES_SHARED_ACROSS_COHORTS.text(scope=scope)
 
 
 def _validated_judge_calibrations(
@@ -1156,12 +1154,10 @@ def _judge_corrected_interval(
                     "queue orders them; the ranges hold at every number of labels at once, "
                     "so labelling may have stopped because of the labels seen."
                     if sequence
-                    else "The labelled rows are a simple random sample within their judge "
-                    "stratum; this is a property of the declared collection protocol, not "
-                    "of the data."
+                    else interval_assumptions.JUDGE_LABELS_SIMPLE_RANDOM_WITHIN_STRATUM.text()
                 ),
                 *([_queue_assumption("judge stratum")] if labelling_queue else []),
-                "Human adjudication is treated as ground truth.",
+                interval_assumptions.JUDGE_HUMAN_LABELS_ARE_TRUTH.text(),
             ]
         )
         if scoped_group is not None:
@@ -1198,8 +1194,7 @@ def _judge_corrected_interval(
         )
         assumptions.extend(
             [
-                "These conditional accuracies are declared assumptions, not measurements; "
-                "the interval inherits no coverage guarantee from them.",
+                interval_assumptions.JUDGE_ACCURACIES_DECLARED.text(),
                 _assumed_box_assumption(result.cohort_id, cohort_boxes, scope),
             ]
         )

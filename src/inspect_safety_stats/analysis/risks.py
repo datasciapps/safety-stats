@@ -6,6 +6,7 @@ from typing import cast
 
 import numpy as np
 
+from inspect_safety_stats.analysis import interval_assumptions
 from inspect_safety_stats.analysis.direct_mean import (
     _calibration_key,
     _direct_intervals,
@@ -237,8 +238,8 @@ def _group_risks(
                         else "none"
                     ),
                     assumptions=[
-                        "IID Bernoulli rollouts within each fixed prompt.",
-                        "No independence between prompts is required.",
+                        interval_assumptions.IID_WITHIN_PROMPT.text(),
+                        interval_assumptions.NO_INDEPENDENCE_BETWEEN_PROMPTS.text(),
                     ],
                     eligibility=propagated_eligibility,
                     warnings=(

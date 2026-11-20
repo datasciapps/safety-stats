@@ -7,6 +7,7 @@ from typing import Any, Literal
 
 import numpy as np
 
+from inspect_safety_stats.analysis import interval_assumptions
 from inspect_safety_stats.analysis.direct_mean import (
     _complete_ledger_blocks,
     _EndpointCalibration,
@@ -606,21 +607,19 @@ def _comparison_interval(
     if profile_block_by == ["rollout"]:
         assumptions = [
             (
-                "Attempted rollout outcomes are independent within each arm; the rectangular "
-                "two-arm construction does not require independence between arms."
+                interval_assumptions.ROLLOUT_INDEPENDENCE_WITHIN_ARMS.text()
                 if uses_two_arm_region
-                else "Attempted rollout outcomes are independent within and across comparison arms."
+                else interval_assumptions.ROLLOUT_INDEPENDENCE_ACROSS_ARMS.text()
             ),
-            "The aligned prompts, design weights, and arm rollout counts are fixed "
-            "independently of observed outcomes.",
+            interval_assumptions.FIXED_ALIGNED_WEIGHTS_AND_COUNTS.text(),
         ]
     else:
         assumptions = [
-            f"Blocks defined by {profile_block_by!r} are mutually independent.",
-            "Arbitrary dependence is allowed within each declared block, with cross-arm "
-            f"coupling set to {comparison_coupling!r}.",
-            "The block partition, aligned prompts, and design weights are fixed independently "
-            "of observed outcomes.",
+            interval_assumptions.BLOCK_INDEPENDENCE.text(block_by=profile_block_by),
+            interval_assumptions.WITHIN_BLOCK_DEPENDENCE_COUPLED.text(
+                coupling=comparison_coupling
+            ),
+            interval_assumptions.FIXED_ALIGNED_BLOCK_PARTITION.text(),
         ]
     if is_ratio:
         if not isinstance(bounds, RatioComparisonBounds):
@@ -664,7 +663,7 @@ def _comparison_interval(
                 "The risk-difference bound uses a simultaneous rectangular confidence set "
                 "for the two sparse arm means."
             )
-    assumptions.append("Every unclassified attempted outcome has a latent binary safety label.")
+    assumptions.append(interval_assumptions.LATENT_BINARY_LABEL.text())
     if calibration.method == "frontier_sidak":
         assumptions.extend(
             [

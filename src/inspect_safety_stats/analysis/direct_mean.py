@@ -9,6 +9,7 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
+from inspect_safety_stats.analysis import interval_assumptions
 from inspect_safety_stats.analysis.estimates import _block_index, prompt_blocked
 from inspect_safety_stats.analysis.measures import _coverage_floors, _independence, _parameter
 from inspect_safety_stats.config.methods import DirectMeanMethod
@@ -571,17 +572,17 @@ def _direct_interval_result(
     )
     assumptions = (
         [
-            "Attempted rollout outcomes are mutually independent across the fixed node.",
-            "Prompt weights and rollout counts are fixed independently of observed outcomes.",
+            interval_assumptions.ROLLOUT_INDEPENDENCE.text(),
+            interval_assumptions.FIXED_WEIGHTS_AND_COUNTS.text(),
         ]
         if profile.block_by == ["rollout"]
         else [
-            f"Blocks defined by {profile.block_by!r} are mutually independent.",
-            "Arbitrary dependence is allowed among observations within each declared block.",
-            "The block partition and design weights are fixed independently of outcomes.",
+            interval_assumptions.BLOCK_INDEPENDENCE.text(block_by=profile.block_by),
+            interval_assumptions.WITHIN_BLOCK_DEPENDENCE.text(),
+            interval_assumptions.FIXED_BLOCK_PARTITION.text(),
         ]
     )
-    assumptions.append("Every unclassified attempted outcome has a latent binary safety label.")
+    assumptions.append(interval_assumptions.LATENT_BINARY_LABEL.text())
     if calibration.method == "frontier_sidak":
         assumptions.extend(
             [
@@ -748,11 +749,11 @@ def _worst_of_k_direct_interval(
         "The rollouts of each fixed prompt are independent draws with a common failure "
         f"probability p, so 1 - (1 - p)^{k} is the chance that one of {k} fresh attempts fails.",
         "Prompts are mutually independent.",
-        "Prompt weights and rollout counts are fixed independently of observed outcomes.",
+        interval_assumptions.FIXED_WEIGHTS_AND_COUNTS.text(),
         f"Each prompt's share of its {k}-rollout subsets that hold a failure is unbiased for "
         f"1 - (1 - p)^{k}; as a U-statistic it enters the Chernoff bound as floor(n / {k}) "
         "independent [0, 1] blocks (Hoeffding, 1963, section 5).",
-        "Every unclassified attempted outcome has a latent binary safety label.",
+        interval_assumptions.LATENT_BINARY_LABEL.text(),
     ]
     if bounds.chernoff_kernel == "bernoulli_kl_equal_atomic_weights":
         assumptions.append(
@@ -892,8 +893,7 @@ def _sampled_frame_intervals(
         betting = method == "weighted_betting"
         if not stratified:
             draw = (
-                "Frame items were included independently with the declared "
-                "probabilities (Poisson sampling)."
+                interval_assumptions.POISSON_SAMPLING.text()
             )
         elif betting:
             draw = (
@@ -906,21 +906,18 @@ def _sampled_frame_intervals(
             )
         else:
             draw = (
-                "Each stratum drew exactly its planned number of frame items "
-                "without replacement; the bound uses Hoeffding's reduction, under "
-                "which a convex function of a without-replacement sum is dominated "
-                "by the with-replacement one, so it is conservative."
+                interval_assumptions.STRATIFIED_FIXED_SIZE_SAMPLING.text()
             )
         assumptions = [
             draw,
-            "Inclusion was determined before, and independently of, the outcomes.",
+            interval_assumptions.OUTCOME_INDEPENDENT_INCLUSION.text(),
             "Design weights are declared over the whole frame and are not "
             "renormalized to the realized sample.",
             f"Inverse-probability weighting widens every endpoint by a factor of "
             f"{bounds.inflation:.6g}.",
             f"The largest single frame item carries {bounds.maximum_weight:.6g} of "
             "the estimator's weight.",
-            "Every unclassified attempted outcome has a latent binary safety label.",
+            interval_assumptions.LATENT_BINARY_LABEL.text(),
         ]
         if betting:
             assumptions.append(_BETTING_ASSUMPTION)
