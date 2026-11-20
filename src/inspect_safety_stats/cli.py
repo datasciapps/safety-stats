@@ -11,11 +11,14 @@ import typer
 from inspect_safety_stats.version import __version__
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     import numpy as np
     import pandas as pd
 
     from inspect_safety_stats.claim_planning import EndpointAlpha
     from inspect_safety_stats.ingest.records import EvaluationSource
+    from inspect_safety_stats.schema.reports import Diagnostic
     from inspect_safety_stats.schema.summary import SummaryWarning
 
 # Each command imports what it needs when it runs, so that `version`, `--help`, `plan` and
@@ -44,9 +47,9 @@ app.add_typer(generative_app, name="generative")
 class ExitCode(IntEnum):
     """Every exit status a command chooses, in one table (docs/api-reference.md#exit-codes).
 
-    ERROR is guaranteed only by analyze, hash-plan, init, visualize and the generative commands,
-    and by validate for an invalid integrity. A plan that validate or plan fixed-design --plan
-    cannot load is not routed here (a traceback exiting 1, or a usage error exiting 2).
+    ERROR is guaranteed only by analyze, hash-plan, init, validate, visualize and the generative
+    commands. A plan that plan fixed-design --plan cannot load is not routed here (exit 1 for
+    malformed YAML, or a usage error exiting 2).
 
     typer itself exits 2 on a usage error, such as a missing option, before any command runs.
     """
@@ -126,8 +129,10 @@ def _source_arguments(
     """What to analyse, as ``logs`` and ``source``: Inspect logs or rollout files."""
 
     if runs is not None or rollouts is not None:
-        if runs is None or rollouts is None:
-            raise typer.BadParameter("--runs and --rollouts are given together")
+        if rollouts is None:
+            raise typer.BadParameter("--runs needs --rollouts: the two files are read together")
+        if runs is None:
+            raise typer.BadParameter("--rollouts needs --runs: the two files are read together")
         if logs:
             raise typer.BadParameter("pass either --logs or --runs and --rollouts, not both")
         from inspect_safety_stats.ingest.rollout_files import RolloutFiles
@@ -258,7 +263,13 @@ def init_command(
     )
 
 
-def _echo_warnings(warnings: list[SummaryWarning], index_md: Path) -> None:
+# How many distinct messages of one error code the command prints under its line.
+_ERROR_MESSAGES_SHOWN = 3
+
+
+def _echo_warnings(
+    warnings: list[SummaryWarning], index_md: Path, diagnostics: Sequence[Diagnostic] = ()
+) -> None:
     """Print the report's errors and warnings by code on stderr, as index.md lists them.
 
     Each code gets one line: its severity, how often it occurred, its effect on the results
@@ -267,6 +278,10 @@ def _echo_warnings(warnings: list[SummaryWarning], index_md: Path) -> None:
     assumption is phrased as the assumption, so printed alone it would state as fact what the
     code says may not hold; the header names the section of report.md that gives it beside
     the effect, and the section of index.md that lists each code's diagnostics.
+
+    Under an error's line come the messages of its first diagnostics, which say what went
+    wrong, such as a missing manifest or a log reader that is not installed: the code and
+    its consequence alone do not say what to change.
     """
 
     from inspect_safety_stats.report.index import SUMMARY_PAGE, WARNINGS_HEADING
@@ -294,6 +309,18 @@ def _echo_warnings(warnings: list[SummaryWarning], index_md: Path) -> None:
             f"{consequence}",
             err=True,
         )
+        if warning.severity != "ERROR":
+            continue
+        messages = list(
+            dict.fromkeys(item.message for item in diagnostics if item.code == warning.code)
+        )
+        for message in messages[:_ERROR_MESSAGES_SHOWN]:
+            typer.echo(f"    {message}", err=True)
+        if len(messages) > _ERROR_MESSAGES_SHOWN:
+            typer.echo(
+                f"    and {len(messages) - _ERROR_MESSAGES_SHOWN} more, listed in {index_md}",
+                err=True,
+            )
 
 
 @app.command("analyze")
@@ -369,7 +396,7 @@ def analyze_command(
         typer.echo(
             f"  {item.cohort} / {item.group}: {rate_text(item.estimate)} {interval}{true_risk}"
         )
-    _echo_warnings(summary.warnings, path / "index.md")
+    _echo_warnings(summary.warnings, path / "index.md", report.integrity.diagnostics)
     typer.echo(f"Summary: {path / 'report.md'}")
     typer.echo(f"Index: {path / 'index.json'}")
     typer.echo(f"Report: {path}")
@@ -1399,6 +1426,16 @@ def generative_materialize_command(
         typer.echo(f"Warning: {run.kernel_mismatch}", err=True)
     if run.validator_mismatch:
         typer.echo(f"Warning: {run.validator_mismatch}", err=True)
+    if run.errored:
+        # An errored unit is not final (generative/runner.py): a resume runs it again.
+        units, them = ("unit errored and is", "it") if run.errored == 1 else (
+            "units errored and are", "them"
+        )
+        typer.echo(
+            f"Warning: {run.errored} {units} not in the dataset. Run the same command with "
+            f"--resume to run {them} again.",
+            err=True,
+        )
     typer.echo(f"Dataset: {run.dataset}")
     typer.echo(f"Artifacts: {run.output}")
     if run.accepted == 0:

@@ -92,6 +92,30 @@ def test_analyze_reports_a_missing_manifest_instead_of_raising(tmp_path: Path) -
     assert "INGEST_FAILED" in (written / "report.md").read_text(encoding="utf-8")
 
 
+def test_the_analyze_command_prints_why_an_error_occurred(tmp_path: Path) -> None:
+    # The code and its consequence alone do not say what to change: the message does.
+    plan, source = _inputs(tmp_path, manifest=False)
+    message = analyze(plan=plan, source=source).integrity.diagnostics[0].message
+    result = CliRunner().invoke(
+        app,
+        [
+            "analyze",
+            "--plan",
+            str(plan),
+            "--runs",
+            str(source.runs),
+            "--rollouts",
+            str(source.rollouts),
+            "--output",
+            str(tmp_path / "report"),
+        ],
+    )
+    output = plain(result.output)
+    assert result.exit_code == 3, output
+    line = output.index("ERROR INGEST_FAILED (1 occurrence")
+    assert output.index(" ".join(message.split()), line) > line
+
+
 def test_validate_and_analyze_report_bad_input_the_same_way(tmp_path: Path) -> None:
     plan, source = _inputs(tmp_path)
     source.rollouts.write_text("{not json\n", encoding="utf-8", newline="\n")
@@ -208,3 +232,17 @@ def test_logs_and_a_source_together_are_refused_by_validate_too(tmp_path: Path) 
     plan, source = _inputs(tmp_path)
     with pytest.raises(ValueError, match="either logs or source"):
         validate(plan=plan, logs="x.eval", source=source)
+
+
+@pytest.mark.parametrize(
+    ("given", "missing"), [("--runs", "--rollouts"), ("--rollouts", "--runs")]
+)
+def test_one_rollout_file_without_the_other_names_the_missing_option(
+    tmp_path: Path, given: str, missing: str
+) -> None:
+    plan, source = _inputs(tmp_path)
+    path = source.runs if given == "--runs" else source.rollouts
+    result = CliRunner().invoke(app, ["analyze", "--plan", str(plan), given, str(path)])
+    output = plain(result.output)
+    assert result.exit_code == 2, output
+    assert f"{given} needs {missing}" in output

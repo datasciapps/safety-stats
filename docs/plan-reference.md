@@ -19,7 +19,8 @@ how a plan names the fields of runs and rollouts, in `design.rollout_key`, `coho
 | `inputs.sample_join` | Allowed, with its only values | Removed |
 
 Schema 3.0 works the same with every source, Inspect logs or [rollout files](rollout-files.md),
-and is the version to use for new plans. A field name that is neither neutral nor written
+and is the version to use for new plans. `init` and the bundled Inspect examples still write
+2.0, which this release reads as well. A field name that is neither neutral nor written
 `attributes.<name>` is an error. `attributes.<name>` names the source's field verbatim: for an
 Inspect run, `attributes.task_version` is the `task_version` column. For an Inspect log, a run's
 `run_key` is its `eval_id`, and a rollout's `item_id`, `repeat` and `rollout_id` are its sample

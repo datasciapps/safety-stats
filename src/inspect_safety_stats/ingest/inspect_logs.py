@@ -22,6 +22,14 @@ try:
     from inspect_ai.analysis import EvalColumn, EvalColumns, evals_df, samples_df
     from inspect_ai.log import EvalLog, read_eval_log
 except ImportError as error:  # pragma: no cover - exercised in a fresh interpreter
+    # Only a missing package of the extra (pyproject.toml) means the extra is not installed.
+    # Any other import failure, such as a module that an installed Inspect cannot find or a
+    # pyarrow built for another NumPy, keeps its own message: "install the extra" would send
+    # the user to install what they already have.
+    import importlib.util
+
+    if all(importlib.util.find_spec(package) is not None for package in ("inspect_ai", "pyarrow")):
+        raise
     raise ImportError(
         "Reading Inspect AI logs needs the inspect extra: "
         "pip install 'inspect-safety-stats[inspect]'. "
@@ -319,7 +327,9 @@ def _stop_context(
     return cache[cache_key].get(sample_id)
 
 
-# The Inspect versions whose log format this adapter reads; keep in step with pyproject.toml.
+# The Inspect versions whose logs this adapter reads: the versions that wrote them, not the
+# installed one, which the inspect extra in pyproject.toml sets. The two logs committed under
+# examples/ were written by Inspect 0.3.259.
 SOURCE_FORMAT = {"format": "inspect_logs", "inspect_version_constraint": ">=0.3.259,<0.4"}
 
 _CONFIGURATION_FIELDS = (
