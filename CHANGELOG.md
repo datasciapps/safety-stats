@@ -7,6 +7,12 @@ described in their pull requests.
 
 ### Fixed
 
+- **The statistical functions take NumPy integer counts.** `binomial_upper_bound`,
+  `binomial_lower_bound`, `binomial_bounds`, `missingness_robust_binomial_bounds` and
+  `bonferroni_allocate` raised "counts must be integers" for a count such as a DataFrame
+  column's sum, which is a `numpy.int64`. They now take any integer, NumPy's included, and give
+  the result a Python integer gives. Booleans and floats are still refused.
+
 - **Dependency floors are versions the package works with.** The declared minimums installed
   versions under which it gave wrong bounds or failed. SciPy before 1.12 computes some bound
   endpoints wrongly at extreme quantiles: an upper bound of 1.0 instead of 0.109 for no
