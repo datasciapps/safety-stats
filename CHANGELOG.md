@@ -1436,6 +1436,11 @@ described in their pull requests.
   be loaded still fails without a report. Passing both `logs` and `source` to `validate` now
   raises `ValueError`, as it does in `analyze`, where it was reported as `INGEST_FAILED`.
 
+- **`validate` exits `3` on a plan or decision policy it cannot read.** It ended in a
+  traceback with exit status `1`; it now prints `Validation failed:` with the reason and exits
+  `3`, as `analyze` does and as the
+  [command-line interface](docs/api-reference.md#command-line-interface) says.
+
 - **An unreadable transcript is reported (adds a diagnostic).** To find where a sample error
   happened, the Inspect adapter reads the log's transcript again, and any exception in that
   read silently left the error's stage `unknown`. A log that cannot be read (a missing,
