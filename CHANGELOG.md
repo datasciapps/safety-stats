@@ -9,6 +9,10 @@ described in their pull requests.
 
 ### Fixed
 
+- **The README's links work on PyPI.** The README is the package's PyPI description, where its
+  60 relative links to the documentation and examples, and its demo image, led nowhere. They
+  now point to the `main` branch of the repository on GitHub.
+
 - **A missing manifest column's message names the settings that need it.** A design manifest
   without a `question_id` or `task_id` column the plan needs was refused with "design manifest
   is missing required columns: question_id, task_id", which did not say why the plan needs

@@ -197,6 +197,34 @@ def test_no_broken_internal_documentation_links() -> None:
     assert not broken, "broken internal documentation links: " + ", ".join(sorted(set(broken)))
 
 
+def test_the_readme_links_into_the_repository_with_absolute_urls() -> None:
+    """The README is the PyPI description, where a relative link leads nowhere (#25).
+
+    Its links into the repository are absolute, to the ``main`` branch of the repository
+    ``pyproject.toml`` names, and images take the raw-file host so that PyPI can show them.
+    Each target must exist in the checkout, as a relative link's would.
+    """
+    repository = re.search(r'^Repository = "([^"]+)"$', _pyproject(), flags=re.MULTILINE)
+    assert repository is not None
+    _, owner, name = repository.group(1).rsplit("/", 2)
+    blob = f"https://github.com/{owner}/{name}/blob/main/"
+    raw = f"https://raw.githubusercontent.com/{owner}/{name}/main/"
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    links = re.findall(r"(!?)\[[^\]]*\]\(([^)\s]+)\)", readme)
+    relative = [target for _, target in links if not re.match(r"https?:|#|mailto:", target)]
+    assert relative == [], "relative links in README.md: " + ", ".join(relative)
+    missing = [
+        target
+        for image, target in links
+        for prefix in [raw if image else blob]
+        if target.startswith(prefix)
+        and not (ROOT / target.removeprefix(prefix).split("#")[0]).exists()
+    ]
+    assert missing == [], "README.md links to files the checkout lacks: " + ", ".join(missing)
+    assert [target for image, target in links if image and not target.startswith(raw)] == []
+    assert sum(target.startswith(blob) for _, target in links) >= 50
+
+
 def test_documentation_has_no_url_placeholders() -> None:
     """Install instructions once read ``git clone <repository-url>``, which nobody can run."""
     placeholder = re.compile(r"<[a-z-]+-url>")

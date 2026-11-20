@@ -28,7 +28,7 @@ and 0.117 [0.062, 0.193], and v2 minus v1 is +0.067 [-0.046, +0.176] (95% simult
 intervals). The interval includes zero, so the difference is not significant. That does not
 show the versions are equally safe: an increase of up to 0.176 is still possible. If an
 increase of that size would matter, run more rollouts.
-[The example](examples/harness_versions/README.md) shows how to put a real harness in.
+[The example](https://github.com/aduncan001/safety_stats/blob/main/examples/harness_versions/README.md) shows how to put a real harness in.
 
 ### Is model A safer than model B?
 
@@ -67,7 +67,7 @@ is at most 0.25 and fails if its lower bound is at least 0.60. Four of the eight
 wrong, and the mean is 0.500 [0.092, 0.908]. The upper bound is above 0.25 and the lower bound
 below 0.60, so the decision is `INCONCLUSIVE`. The command exits with code 2 to say so, and
 `report.json` records it under `decision`. With one rollout per question, the interval is too
-wide to decide either way. [The example](examples/real_simpleqa/README.md) explains the numbers.
+wide to decide either way. [The example](https://github.com/aduncan001/safety_stats/blob/main/examples/real_simpleqa/README.md) explains the numbers.
 Factual accuracy here only stands in for a safety outcome.
 
 The command also prints two warnings. `PLAN_SELF_DECLARED` says that the plan's freeze time is
@@ -77,11 +77,11 @@ the limit came first. `TAIL_MEASURES_UNINFORMATIVE` says that one rollout per qu
 make the tail measures narrow. The wrong answers are also the verdicts of a model-graded scorer, taken as correct. A
 threshold check that others are to rely on registers the plan before the runs
 (`hash-plan --register`, then `analyze --registration-receipt`) and validates the judge, as
-[Judge misclassification](docs/judge-misclassification.md) describes.
+[Judge misclassification](https://github.com/aduncan001/safety_stats/blob/main/docs/judge-misclassification.md) describes.
 
 ## Start here
 
-New users should begin with [Getting started](docs/getting-started.md), which goes from
+New users should begin with [Getting started](https://github.com/aduncan001/safety_stats/blob/main/docs/getting-started.md), which goes from
 installation to the analysis of your own evaluation. Its demo needs no API key and finishes in
 about half a minute:
 
@@ -137,7 +137,7 @@ python -m pip install 'inspect-safety-stats[inspect]'
 ```
 
 The `inspect` extra installs Inspect AI and pyarrow, which reading Inspect logs needs. Leave it
-out to analyse only [rollout files](docs/rollout-files.md).
+out to analyse only [rollout files](https://github.com/aduncan001/safety_stats/blob/main/docs/rollout-files.md).
 
 The examples, the offline demo and the walkthrough below run from a checkout of the repository:
 
@@ -157,17 +157,17 @@ python -m pip install -e '.[dev]'
 pytest
 ```
 
-See [Installation](docs/installation.md) for supported versions and troubleshooting.
+See [Installation](https://github.com/aduncan001/safety_stats/blob/main/docs/installation.md) for supported versions and troubleshooting.
 The hierarchy calibration and coverage proof are documented in
-[Hierarchy-aware simultaneous inference](docs/hierarchy-simultaneous-inference.md).
+[Hierarchy-aware simultaneous inference](https://github.com/aduncan001/safety_stats/blob/main/docs/hierarchy-simultaneous-inference.md).
 Configuration and block mathematics are documented in
-[Configuring hierarchy and independence](docs/independence-profiles.md).
+[Configuring hierarchy and independence](https://github.com/aduncan001/safety_stats/blob/main/docs/independence-profiles.md).
 Comparison estimands, common contrast/two-arm regions, and usage are documented in
-[Fixed-design model and configuration comparisons](docs/model-comparisons.md).
+[Fixed-design model and configuration comparisons](https://github.com/aduncan001/safety_stats/blob/main/docs/model-comparisons.md).
 
 ## Walkthrough: the offline demo
 
-This section follows the [offline demo](examples/demo/README.md) from its inputs to the report,
+This section follows the [offline demo](https://github.com/aduncan001/safety_stats/blob/main/examples/demo/README.md) from its inputs to the report,
 and reads the one warning the report shows. The model is simulated and every draw is seeded, so
 the numbers below come out the same on every run and every machine. They show how the analysis
 works and say nothing about any real model. Run the commands from the repository root after the
@@ -177,7 +177,7 @@ works and say nothing about any real model. Run the commands from the repository
 
 An analysis takes three inputs:
 
-- **Inspect logs.** [demo_eval.py](examples/demo/demo_eval.py) is a 12-prompt refusal task,
+- **Inspect logs.** [demo_eval.py](https://github.com/aduncan001/safety_stats/blob/main/examples/demo/demo_eval.py) is a 12-prompt refusal task,
   4 prompts in each of three risk domains (bio, cyber and privacy), each run for 20 epochs. Its
   scorer `safety_failure` scores each rollout `PASS` or `FAIL`. The name after `mockllm/`
   selects one of two simulated configurations, a baseline and a candidate:
@@ -190,9 +190,9 @@ An analysis takes three inputs:
   Start from an empty `logs/demo`. Logs left there by an earlier run add rollouts the design
   does not expect: `validate` reports them as `ROLLOUT_EXCESS`, and the data integrity becomes
   invalid.
-- **A design manifest.** [design.csv](examples/demo/design.csv) has one row per prompt: its
+- **A design manifest.** [design.csv](https://github.com/aduncan001/safety_stats/blob/main/examples/demo/design.csv) has one row per prompt: its
   `prompt_id`, `question_id`, `task_id`, `risk_domain` and `expected_rollouts` (20).
-- **An analysis plan.** [plan.yaml](examples/demo/plan.yaml) says which score values count as
+- **An analysis plan.** [plan.yaml](https://github.com/aduncan001/safety_stats/blob/main/examples/demo/plan.yaml) says which score values count as
   failures, which logs belong to which model, how the prompts are grouped and weighted, which
   intervals and risk measures to report, and which comparisons to make.
 
@@ -278,7 +278,7 @@ WARNING TAIL_MEASURES_UNINFORMATIVE recorded
 ```
 
 `report` is a `SafetyReport`. `SafetyReport.model_validate_json` reads a `report.json` written
-earlier, as [show_results.py](examples/demo/show_results.py) does, and the report it returns has
+earlier, as [show_results.py](https://github.com/aduncan001/safety_stats/blob/main/examples/demo/show_results.py) does, and the report it returns has
 the same `summary`. Pass `context={STORED_REPORT: True}` (from
 `inspect_safety_stats.schema.reports`), as that script does, so that a report written by an
 earlier version keeps each diagnostic's `source` and `effect` as written, and still reads when a
@@ -336,7 +336,7 @@ warnings, one for each model, record a fact and change no result. Then come, in 
 - **Assumptions used.** Every assumption the results rest on, such as rollout independence and
   the validity of the scorer, and which of them a plan setting left to its default.
 - **Scope.** The results cover these 12 prompts and this rollout process, not a population of
-  prompts, and not hazards the evaluation omits. [What results establish](docs/what-results-establish.md)
+  prompts, and not hazards the evaluation omits. [What results establish](https://github.com/aduncan001/safety_stats/blob/main/docs/what-results-establish.md)
   says more.
 
 ### The index
@@ -356,7 +356,7 @@ Baseline, Group, Measure and Eligibility columns:
 A pointer is a JSON pointer: `/comparisons/0` is the first entry of `comparisons` in
 `report.json`. Each warning code has the same kind of pointer to its diagnostic. The index also
 says that decisions are hidden (`report.include_decisions` is false by default) and that
-`report.json` still holds them. [Reading a report as an agent](docs/agent-guide.md) describes
+`report.json` still holds them. [Reading a report as an agent](https://github.com/aduncan001/safety_stats/blob/main/docs/agent-guide.md) describes
 every field.
 
 ### Reading the warnings
@@ -381,11 +381,11 @@ target of 0.05 above their estimates, and about 134 rollouts per prompt would br
 it. So `cvar_90` and `worst` cannot be narrow on this design, whatever the models do: the candidate's `worst` is 0.100 with an interval from 0.002 to
 0.446. Read them as uninformative at this budget, or run about 134 rollouts per prompt. The
 mean rates and the comparison are not affected. Every code's meaning and remedy is in
-[Diagnostic codes and assumptions](docs/diagnostics.md#tail_measures_uninformative).
+[Diagnostic codes and assumptions](https://github.com/aduncan001/safety_stats/blob/main/docs/diagnostics.md#tail_measures_uninformative).
 
 Effects other than recorded change what a report can be used for. `degraded` and `invalid`
 change the integrity status, `withheld` leaves one result out, and `adjusted` computes a result
-differently, for example with a wider bound. The [effects](docs/diagnostics.md#effects) table
+differently, for example with a wider bound. The [effects](https://github.com/aduncan001/safety_stats/blob/main/docs/diagnostics.md#effects) table
 says more.
 
 **The dagger (†).** The summary marks an interval with † when an endpoint lies more than the
@@ -400,13 +400,13 @@ not pinned to within 5 points.
 ## Quick start
 
 The [walkthrough](#walkthrough-the-offline-demo) above runs the
-[offline demo](examples/demo/README.md) step by step. To run it in one step:
+[offline demo](https://github.com/aduncan001/safety_stats/blob/main/examples/demo/README.md) step by step. To run it in one step:
 
 ```bash
 python examples/demo/run_demo.py
 ```
 
-The [quickstart](docs/quickstart.md) analyzes a bundled log of a real evaluation, also offline,
+The [quickstart](https://github.com/aduncan001/safety_stats/blob/main/docs/quickstart.md) analyzes a bundled log of a real evaluation, also offline,
 and shows what a failing validation looks like.
 
 Plan a zero-failure study:
@@ -422,7 +422,7 @@ inspect-safety-stats plan detectable-rate \
   --trials 500 --threshold 0.05 --alpha 0.05 --power 0.90
 ```
 
-![Both planning commands and their output](docs/media/demo/light/1-plan.gif)
+![Both planning commands and their output](https://raw.githubusercontent.com/aduncan001/safety_stats/main/docs/media/demo/light/1-plan.gif)
 
 Validate logs against a frozen design:
 
@@ -469,9 +469,9 @@ tighter than the analysis gives. `report-full.md` is the full report, with every
 construction, sensitivity and diagnostic.
 
 A plan that declares
-[outcome mapping sensitivities](docs/plan-reference.md#outcome-mapping-sensitivities-experimental)
+[outcome mapping sensitivities](https://github.com/aduncan001/safety_stats/blob/main/docs/plan-reference.md#outcome-mapping-sensitivities-experimental)
 also gets `outcome-mapping-sensitivity.csv`. A plan that sets
-[`report.claims_export`](docs/plan-reference.md#claimsjson-experimental) also gets `claims.json`,
+[`report.claims_export`](https://github.com/aduncan001/safety_stats/blob/main/docs/plan-reference.md#claimsjson-experimental) also gets `claims.json`,
 one machine-readable record per claim.
 
 `report.html` is a self-contained interactive visualization. It needs no server or external
@@ -547,62 +547,62 @@ Every report of a fixed design states:
 
 > Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions. Every bound assumes that the evaluated model is not strategically underperforming on the evaluation.
 
-A [sampled design](docs/design-based-sampling.md) states instead that results apply to the
+A [sampled design](https://github.com/aduncan001/safety_stats/blob/main/docs/design-based-sampling.md) states instead that results apply to the
 declared item frame, from which the evaluated items were drawn with the recorded inclusion
 probabilities, and not to prompts outside the frame.
 
 Every bound also assumes that the evaluated model is not sandbagging, that is, not
 strategically underperforming on the evaluation. The statistics here cannot detect that, and harms rarer than the rollout budget can reach remain unmeasured. See
-[Mathematical methods](docs/statistical-methods.md), sections 15.2 and 15.7.
+[Mathematical methods](https://github.com/aduncan001/safety_stats/blob/main/docs/statistical-methods.md), sections 15.2 and 15.7.
 
 The package distinguishes simultaneous uncertainty guarantees from diagnostic outputs. Diagnostic
 resampling and post hoc slices should be interpreted with their stated assumptions. Optional threshold decisions can be enabled with
 `report.include_decisions: true`; they are omitted from human-facing reports by default. The
 option hides them: `report.json` holds the decision and every claim's status either way.
 
-[What results establish](docs/what-results-establish.md) brings these limits together on one
+[What results establish](https://github.com/aduncan001/safety_stats/blob/main/docs/what-results-establish.md) brings these limits together on one
 page, and every report of a fixed or sampled design links to it.
 
 ## Documentation
 
-- [Getting started](docs/getting-started.md)
-- [Installation](docs/installation.md)
-- [Changelog](CHANGELOG.md): the changes a user can observe, newest first
-- [Contributing](CONTRIBUTING.md): development setup, engineering practices, and the interfaces that must not break
-- [Security](SECURITY.md): how to report a vulnerability, and what the package does with network access, plans, and prompt text
-- [Quickstart](docs/quickstart.md)
-- [Running Inspect for analysis](docs/running-inspect.md): epochs, cohorts by task argument, the request timeout, and connections shared with a judge
-- [Analysis plan reference](docs/plan-reference.md)
-- [Python and command-line API reference](docs/api-reference.md)
-- [Rollout files](docs/rollout-files.md): analysing results from other evaluation systems (experimental)
-- [What results establish](docs/what-results-establish.md): what a report shows, what it does not, and where it states each condition
-- [Interpreting results](docs/interpretation.md)
-- [Diagnostic codes and assumptions](docs/diagnostics.md): what each code in a report means and what to change
-- [Reading a report as an agent](docs/agent-guide.md): `index.json`, the summary in `report.json`, and the pointers that lead from each to the full record
-- [Judge misclassification](docs/judge-misclassification.md)
-- [Design-based inference for sampled item frames](docs/design-based-sampling.md)
-- [Version 1 engineering design](docs/archive/v1-design.md) (archived; superseded by the shipped package)
-- [Mathematical methods and justification](docs/statistical-methods.md)
-- [Anytime-valid confidence sequences: phase-0 design](docs/sequential-design.md) (design only; not implemented)
-- [Generative evaluation](docs/generative-evaluation.md). The generative pipeline is experimental: its public surface, `inspect_safety_stats.generative.__all__`, may change in any minor release.
-- [Generative evaluation: design decisions](docs/generative-design-decisions.md) (experimental)
-- [Generative hierarchy evaluation planner](docs/archive/generative-hierarchy-evaluation-plan.md) (archived; the original proposal, superseded by the two above)
-- [Limitations log](docs/limitations.md): limitations found on real evaluations, and what `main` does about each
-- [Harness example: two versions of a harness around the same model, offline](examples/harness_versions/README.md)
-- [Multi-model safety comparison: complete JailbreakBench-100 example](examples/real_jailbreakbench/README.md)
-- [Multilingual configuration comparison: JailbreakBench-100 in English, French, German, and Maltese](examples/real_jailbreakbench/MULTILINGUAL.md)
-- [Primary safety example: HarmBench direct-request multi-rollout evaluation](examples/real_harmbench/README.md)
-- [Sampled-frame example: HarmBench from a probability sample](examples/sampled_harmbench/README.md)
-- [Generative example: multilingual jailbreak rewrites](examples/generative_multilingual/README.md) (experimental)
-- [Live generative example: real providers end to end](examples/generative_live/README.md) (experimental)
-- [Open-weight example: thinking off and on, many rollouts per prompt, with human labels for the judge](examples/open_weights/README.md)
-- [Attack example: attack runs scored by a confirmation rollout and an independent judge](examples/attack_confirmation/README.md)
-- [Judge flip example: rescoring judge-positive completions inside content-preserving wrappers](examples/judge_flip/README.md) (experimental)
-- [Secondary calibration example: XSTest over-refusal](examples/real_xstest/README.md)
+- [Getting started](https://github.com/aduncan001/safety_stats/blob/main/docs/getting-started.md)
+- [Installation](https://github.com/aduncan001/safety_stats/blob/main/docs/installation.md)
+- [Changelog](https://github.com/aduncan001/safety_stats/blob/main/CHANGELOG.md): the changes a user can observe, newest first
+- [Contributing](https://github.com/aduncan001/safety_stats/blob/main/CONTRIBUTING.md): development setup, engineering practices, and the interfaces that must not break
+- [Security](https://github.com/aduncan001/safety_stats/blob/main/SECURITY.md): how to report a vulnerability, and what the package does with network access, plans, and prompt text
+- [Quickstart](https://github.com/aduncan001/safety_stats/blob/main/docs/quickstart.md)
+- [Running Inspect for analysis](https://github.com/aduncan001/safety_stats/blob/main/docs/running-inspect.md): epochs, cohorts by task argument, the request timeout, and connections shared with a judge
+- [Analysis plan reference](https://github.com/aduncan001/safety_stats/blob/main/docs/plan-reference.md)
+- [Python and command-line API reference](https://github.com/aduncan001/safety_stats/blob/main/docs/api-reference.md)
+- [Rollout files](https://github.com/aduncan001/safety_stats/blob/main/docs/rollout-files.md): analysing results from other evaluation systems (experimental)
+- [What results establish](https://github.com/aduncan001/safety_stats/blob/main/docs/what-results-establish.md): what a report shows, what it does not, and where it states each condition
+- [Interpreting results](https://github.com/aduncan001/safety_stats/blob/main/docs/interpretation.md)
+- [Diagnostic codes and assumptions](https://github.com/aduncan001/safety_stats/blob/main/docs/diagnostics.md): what each code in a report means and what to change
+- [Reading a report as an agent](https://github.com/aduncan001/safety_stats/blob/main/docs/agent-guide.md): `index.json`, the summary in `report.json`, and the pointers that lead from each to the full record
+- [Judge misclassification](https://github.com/aduncan001/safety_stats/blob/main/docs/judge-misclassification.md)
+- [Design-based inference for sampled item frames](https://github.com/aduncan001/safety_stats/blob/main/docs/design-based-sampling.md)
+- [Version 1 engineering design](https://github.com/aduncan001/safety_stats/blob/main/docs/archive/v1-design.md) (archived; superseded by the shipped package)
+- [Mathematical methods and justification](https://github.com/aduncan001/safety_stats/blob/main/docs/statistical-methods.md)
+- [Anytime-valid confidence sequences: phase-0 design](https://github.com/aduncan001/safety_stats/blob/main/docs/sequential-design.md) (design only; not implemented)
+- [Generative evaluation](https://github.com/aduncan001/safety_stats/blob/main/docs/generative-evaluation.md). The generative pipeline is experimental: its public surface, `inspect_safety_stats.generative.__all__`, may change in any minor release.
+- [Generative evaluation: design decisions](https://github.com/aduncan001/safety_stats/blob/main/docs/generative-design-decisions.md) (experimental)
+- [Generative hierarchy evaluation planner](https://github.com/aduncan001/safety_stats/blob/main/docs/archive/generative-hierarchy-evaluation-plan.md) (archived; the original proposal, superseded by the two above)
+- [Limitations log](https://github.com/aduncan001/safety_stats/blob/main/docs/limitations.md): limitations found on real evaluations, and what `main` does about each
+- [Harness example: two versions of a harness around the same model, offline](https://github.com/aduncan001/safety_stats/blob/main/examples/harness_versions/README.md)
+- [Multi-model safety comparison: complete JailbreakBench-100 example](https://github.com/aduncan001/safety_stats/blob/main/examples/real_jailbreakbench/README.md)
+- [Multilingual configuration comparison: JailbreakBench-100 in English, French, German, and Maltese](https://github.com/aduncan001/safety_stats/blob/main/examples/real_jailbreakbench/MULTILINGUAL.md)
+- [Primary safety example: HarmBench direct-request multi-rollout evaluation](https://github.com/aduncan001/safety_stats/blob/main/examples/real_harmbench/README.md)
+- [Sampled-frame example: HarmBench from a probability sample](https://github.com/aduncan001/safety_stats/blob/main/examples/sampled_harmbench/README.md)
+- [Generative example: multilingual jailbreak rewrites](https://github.com/aduncan001/safety_stats/blob/main/examples/generative_multilingual/README.md) (experimental)
+- [Live generative example: real providers end to end](https://github.com/aduncan001/safety_stats/blob/main/examples/generative_live/README.md) (experimental)
+- [Open-weight example: thinking off and on, many rollouts per prompt, with human labels for the judge](https://github.com/aduncan001/safety_stats/blob/main/examples/open_weights/README.md)
+- [Attack example: attack runs scored by a confirmation rollout and an independent judge](https://github.com/aduncan001/safety_stats/blob/main/examples/attack_confirmation/README.md)
+- [Judge flip example: rescoring judge-positive completions inside content-preserving wrappers](https://github.com/aduncan001/safety_stats/blob/main/examples/judge_flip/README.md) (experimental)
+- [Secondary calibration example: XSTest over-refusal](https://github.com/aduncan001/safety_stats/blob/main/examples/real_xstest/README.md)
 
 ## Citing
 
-To cite the package, use the metadata in [CITATION.cff](CITATION.cff).
+To cite the package, use the metadata in [CITATION.cff](https://github.com/aduncan001/safety_stats/blob/main/CITATION.cff).
 
 ## License
 
