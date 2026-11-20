@@ -12,6 +12,16 @@
 
 The analyzer is offline. It does not call model providers or make network requests.
 
+## Install from PyPI
+
+```bash
+python -m pip install 'inspect-safety-stats[inspect]'
+```
+
+The `inspect` extra installs Inspect AI and pyarrow, which reading Inspect logs needs. Leave it
+out to analyse only rollout files: `python -m pip install inspect-safety-stats`. The examples
+and the offline demo are not part of the package: run them from a checkout.
+
 ## Install from a checkout
 
 ```bash
