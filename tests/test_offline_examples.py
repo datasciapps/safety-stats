@@ -167,6 +167,57 @@ def test_the_demo_report_keeps_the_comparison_and_warns_about_an_assumption(
     assert [item["code"] for item in warnings] == ["TAIL_MEASURES_UNINFORMATIVE"] * 2
 
 
+# Every file the demo writes to its report directory.
+_DEMO_REPORT_FILES = {
+    "checksums.json",
+    "comparison-sets.csv",
+    "comparisons.csv",
+    "design.resolved.csv",
+    "hierarchy-risks.csv",
+    "index.json",
+    "index.md",
+    "observations.csv",
+    "plan.resolved.yaml",
+    "report-full.md",
+    "report.html",
+    "report.json",
+    "report.md",
+}
+
+
+def test_the_demo_report_pins_its_files_and_headline_numbers(demo_run: tuple[Path, str]) -> None:
+    """The demo's report files and its group and comparison bounds, to full precision."""
+    workspace, _ = demo_run
+    directory = workspace / "reports" / "demo"
+    assert {path.name for path in directory.iterdir()} == _DEMO_REPORT_FILES
+    report = _report(directory)
+    group_risks = report["group_risks"]
+    comparisons = report["comparisons"]
+    assert isinstance(group_risks, list) and isinstance(comparisons, list)
+    means = {
+        risk["cohort_id"]: risk
+        for risk in group_risks
+        if risk["group_id"] == "all" and risk["measure_id"] == "mean"
+    }
+    (difference,) = (
+        item
+        for item in comparisons
+        if item["group_id"] == "all" and not item["path"] and item["estimand"] == "risk_difference"
+    )
+    # Each run writes new Inspect logs, with new timestamps and run ids, so the order in which
+    # floating-point sums run can differ in the last bits; the tolerance absorbs only that.
+    tight = {"rel": 1e-9, "abs": 0}
+    assert means["baseline"]["estimate"] == pytest.approx(0.20416666666666666, **tight)
+    assert means["baseline"]["lower"] == pytest.approx(0.13015769549178047, **tight)
+    assert means["baseline"]["upper"] == pytest.approx(0.29463115376522186, **tight)
+    assert means["candidate"]["estimate"] == pytest.approx(0.008333333333333333, **tight)
+    assert means["candidate"]["lower"] == pytest.approx(0.00025074916300436997, **tight)
+    assert means["candidate"]["upper"] == pytest.approx(0.042445716097254504, **tight)
+    assert difference["estimate"] == pytest.approx(-0.19583333333333333, **tight)
+    assert difference["lower"] == pytest.approx(-0.2943804046022175, **tight)
+    assert difference["upper"] == pytest.approx(-0.08771197939452596, **tight)
+
+
 def test_the_demo_plan_is_the_one_init_writes_plus_two_risk_measures(
     demo_run: tuple[Path, str], tmp_path: Path
 ) -> None:
@@ -464,3 +515,16 @@ def test_what_it_is_for_runs_the_threshold_command_as_written(tmp_path: Path) ->
     report = _report(output)
     assert report["decision"] == "INCONCLUSIVE"
     assert f"the mean is {_risk(report, 'candidate')}" in " ".join(section.split())
+
+
+# The statistics API example ------------------------------------------------------------------
+
+
+def test_the_statistics_api_example_prints_its_documented_numbers(tmp_path: Path) -> None:
+    stdout = _completed(_run_script(ROOT / "examples" / "statistics_api.py", cwd=tmp_path))
+    assert stdout.splitlines() == [
+        "Zero-failure plan: n=299, upper=0.009969",
+        "Fixed-design CVaR: 0.200000",
+        "Fixed-design entropic risk: 0.085410",
+        "Paired candidate-minus-baseline: estimate=0.000000, [-0.385821, 0.385821]",
+    ]
