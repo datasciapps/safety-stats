@@ -327,7 +327,9 @@ def _stop_context(
     return cache[cache_key].get(sample_id)
 
 
-# The Inspect versions whose log format this adapter reads; keep in step with pyproject.toml.
+# The Inspect versions whose logs this adapter reads: the versions that wrote them, not the
+# installed one, which the inspect extra in pyproject.toml sets. The two logs committed under
+# examples/ were written by Inspect 0.3.259.
 SOURCE_FORMAT = {"format": "inspect_logs", "inspect_version_constraint": ">=0.3.259,<0.4"}
 
 _CONFIGURATION_FIELDS = (

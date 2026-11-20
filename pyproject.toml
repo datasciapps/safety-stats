@@ -20,13 +20,18 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
+# Each floor is the lowest version the test suite passes with, at uv's lowest-direct resolution
+# with NumPy 1 and with NumPy 2. Below them: SciPy's betaincinv, which gives the bound
+# endpoints, is inaccurate at extreme quantiles before 1.12; pandas cannot deduplicate the
+# Arrow-backed columns of Inspect's log reader before 2.2; and typer 0.17.4 and older, under
+# click 8.2 or later, crash on a mistyped option and stop enforcing required options.
 dependencies = [
   "numpy>=1.26",
-  "pandas>=2.0",
+  "pandas>=2.2",
   "pydantic>=2.7",
   "PyYAML>=6.0",
-  "scipy>=1.11",
-  "typer>=0.12",
+  "scipy>=1.12",
+  "typer>=0.17.5",
 ]
 
 [project.urls]
@@ -37,10 +42,13 @@ Issues = "https://github.com/aduncan001/safety_stats/issues"
 [project.optional-dependencies]
 # Reading Inspect AI logs, with --logs or logs=. Rollout files need neither package.
 inspect = [
-  "inspect-ai>=0.3.259,<0.4",
+  # Before 0.3.288 Inspect's log reader fills model_args with the base URL, and before 0.3.289
+  # Inspect cannot run an evaluation beside agent-client-protocol 1.0. Logs written by older
+  # Inspect versions are still read: see SOURCE_FORMAT in ingest/inspect_logs.py.
+  "inspect-ai>=0.3.289,<0.4",
   # inspect_ai.analysis, which reads the logs, needs this and declares it only as one of its
-  # own dev extras.
-  "pyarrow>=10.0.1",
+  # own dev extras. 16 is the first built for NumPy 2; older ones install beside it and fail.
+  "pyarrow>=16",
 ]
 openai = [
   "openai>=1.0",

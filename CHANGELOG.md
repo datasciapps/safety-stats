@@ -7,6 +7,19 @@ described in their pull requests.
 
 ### Fixed
 
+- **Dependency floors are versions the package works with.** The declared minimums installed
+  versions under which it gave wrong bounds or failed. SciPy before 1.12 computes some bound
+  endpoints wrongly at extreme quantiles: an upper bound of 1.0 instead of 0.109 for no
+  failures in 299 trials at alpha 1e-15. pandas before 2.2 cannot read Inspect logs. typer
+  before 0.17.5, under a current click, crashes on a mistyped option and no longer requires
+  required options. Inspect AI before 0.3.267 fails to import its log reader beside a current
+  agent-client-protocol, before 0.3.288 reads `model_args` from the wrong field, and before
+  0.3.289 cannot run an evaluation beside agent-client-protocol 1.0. pyarrow before 16 fails
+  to import beside NumPy 2. The floors are now `scipy>=1.12`, `pandas>=2.2`,
+  `typer>=0.17.5`, and in the `inspect` extra `inspect-ai>=0.3.289` and `pyarrow>=16`. The
+  test suite passes at every floor, with NumPy 1 and with NumPy 2. Logs written by Inspect AI
+  0.3.259 or later are still read.
+
 - **A judge correction no longer states an assumption it does not make (changes report
   bytes).** A corrected row or comparison arm holding no rollout a plan policy classified, in a
   plan that sets such a policy or a cohort that holds one, stated that its correction assumes

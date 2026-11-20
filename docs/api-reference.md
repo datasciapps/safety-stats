@@ -756,7 +756,8 @@ exited `2`, which `analyze` uses for INCONCLUSIVE.
 ## Compatibility and stability
 
 The runtime supports Python 3.11 or newer. Reading Inspect logs needs Inspect AI
-`>=0.3.259,<0.4`, which the `inspect` extra installs. This release reads analysis plans of
+`>=0.3.289,<0.4`, which the `inspect` extra installs, and reads logs written by Inspect AI
+0.3.259 or later. This release reads analysis plans of
 schema version `2.0` and `3.0` (see [the plan reference](plan-reference.md#schema-versions)) and
 writes reports of schema version `3.0`. Plans and reports are strict: unknown fields are errors,
 and a plan declaring any other version, `1.0` included, is refused. New fields or methods may

@@ -4,8 +4,9 @@
 
 - Python 3.11 or newer.
 - Linux, macOS, or Windows. CI runs the test suite on all three.
-- For Inspect AI logs: Inspect AI 0.3.259 through the latest compatible 0.3 release, installed by
-  the `inspect` extra, and completed Inspect evaluation logs.
+- For Inspect AI logs: Inspect AI 0.3.289 or a later 0.3 release, installed by the `inspect`
+  extra, and completed Inspect evaluation logs. Logs written by Inspect AI 0.3.259 or later are
+  read.
 - For results from another evaluation system: [rollout files](rollout-files.md), which need no
   extra.
 
