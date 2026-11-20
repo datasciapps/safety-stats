@@ -720,8 +720,8 @@ directory does not exist.
 ### Exit codes
 
 Every status a command chooses comes from one table, `ExitCode` in `cli.py`. Only `analyze`,
-`hash-plan`, `init`, `visualize` and the `generative` commands guarantee `3` for input they
-cannot run on; the other commands below do not, and a malformed plan given to `validate` or
+`hash-plan`, `init`, `validate`, `visualize` and the `generative` commands guarantee `3` for
+input they cannot run on; the other commands below do not, and a malformed plan given to
 `plan fixed-design --plan` is not mapped to `3`:
 
 | Status | Meaning |
@@ -729,7 +729,7 @@ cannot run on; the other commands below do not, and a malformed plan given to `v
 | `0` | The command completed. |
 | `1` | `analyze --decision-exit-codes`: the decision is FAIL. `plan fixed-design --plan`: no claim of the plan could be planned. |
 | `2` | `analyze --decision-exit-codes`: the decision is INCONCLUSIVE. typer also exits `2` on a usage error, such as a missing option, before the command runs. |
-| `3` | `analyze`, `hash-plan`, `init`, `visualize` and the `generative` commands: the command could not run. `analyze` and `generative analyze` also: the result supports no claim (an `invalid` integrity, or a `generative analyze` report with `ERROR` diagnostics). `validate`: an `invalid` integrity. |
+| `3` | `analyze`, `hash-plan`, `init`, `validate`, `visualize` and the `generative` commands: the command could not run. `analyze` and `generative analyze` also: the result supports no claim (an `invalid` integrity, or a `generative analyze` report with `ERROR` diagnostics). `validate`: an `invalid` integrity. |
 
 Exit codes of `analyze`:
 
@@ -740,12 +740,13 @@ Exit codes of `analyze`:
 | Integrity `invalid` with `--allow-invalid` | `0` | `2`, because an invalid analysis is never PASS |
 | The analysis cannot run, for example an unreadable plan | `3` | `3` |
 
-`validate` exits `3` when its integrity is `invalid` and `0` otherwise. A plan that cannot be
-loaded at all (malformed YAML, or a schema failure) is not mapped: `validate` prints a traceback
-and exits `1`. `plan fixed-design --plan` exits `2`, as a usage error, for a plan that fails
+`validate` exits `3` when its integrity is `invalid`, and when it cannot read its plan or
+decision policy (malformed YAML, or a schema failure), printing `Validation failed:` with the
+reason; otherwise it exits `0`. Before this release an unreadable plan ended in a traceback and
+exit status `1`. `plan fixed-design --plan` exits `2`, as a usage error, for a plan that fails
 validation or that `analyze` would find invalid on the design manifest, such as a
 `frontier_sidak` direct-mean hierarchy with a node of zero weight, and `1` for malformed YAML.
-Check the exit status of these two commands only for zero versus nonzero.
+Check its exit status only for zero versus nonzero.
 
 `hash-plan` exits `3` for a plan it cannot read or validate, and prints `Plan invalid:` with
 each failing field on one line.
