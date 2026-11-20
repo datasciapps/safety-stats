@@ -7,6 +7,10 @@ described in their pull requests.
 
 ### Fixed
 
+- **`--runs` without `--rollouts` names the missing option.** `analyze` and `validate` said
+  "--runs and --rollouts are given together"; they now say "--runs needs --rollouts", or the
+  reverse, and still exit `2`.
+
 - **The statistical functions take NumPy integer counts.** `binomial_upper_bound`,
   `binomial_lower_bound`, `binomial_bounds`, `missingness_robust_binomial_bounds` and
   `bonferroni_allocate` raised "counts must be integers" for a count such as a DataFrame

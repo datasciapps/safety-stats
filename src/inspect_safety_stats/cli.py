@@ -129,8 +129,10 @@ def _source_arguments(
     """What to analyse, as ``logs`` and ``source``: Inspect logs or rollout files."""
 
     if runs is not None or rollouts is not None:
-        if runs is None or rollouts is None:
-            raise typer.BadParameter("--runs and --rollouts are given together")
+        if rollouts is None:
+            raise typer.BadParameter("--runs needs --rollouts: the two files are read together")
+        if runs is None:
+            raise typer.BadParameter("--rollouts needs --runs: the two files are read together")
         if logs:
             raise typer.BadParameter("pass either --logs or --runs and --rollouts, not both")
         from inspect_safety_stats.ingest.rollout_files import RolloutFiles

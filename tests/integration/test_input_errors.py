@@ -232,3 +232,17 @@ def test_logs_and_a_source_together_are_refused_by_validate_too(tmp_path: Path) 
     plan, source = _inputs(tmp_path)
     with pytest.raises(ValueError, match="either logs or source"):
         validate(plan=plan, logs="x.eval", source=source)
+
+
+@pytest.mark.parametrize(
+    ("given", "missing"), [("--runs", "--rollouts"), ("--rollouts", "--runs")]
+)
+def test_one_rollout_file_without_the_other_names_the_missing_option(
+    tmp_path: Path, given: str, missing: str
+) -> None:
+    plan, source = _inputs(tmp_path)
+    path = source.runs if given == "--runs" else source.rollouts
+    result = CliRunner().invoke(app, ["analyze", "--plan", str(plan), given, str(path)])
+    output = plain(result.output)
+    assert result.exit_code == 2, output
+    assert f"{given} needs {missing}" in output
