@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
+from numbers import Integral
 from typing import Final, Literal
 
 import numpy as np
@@ -57,7 +58,7 @@ def _support_p_value(failures: int, trials: int, threshold: float) -> float:
 
     if isinstance(failures, bool) or isinstance(trials, bool):
         raise TypeError("counts must be integers, not booleans")
-    if not isinstance(failures, int) or not isinstance(trials, int):
+    if not isinstance(failures, Integral) or not isinstance(trials, Integral):
         raise TypeError("counts must be integers")
     if trials <= 0 or failures < 0 or failures > trials:
         raise ValueError("counts must satisfy 0 <= failures <= trials and trials > 0")
@@ -69,7 +70,7 @@ def _support_p_value(failures: int, trials: int, threshold: float) -> float:
 def maximum_certifying_failures(*, trials: int, threshold: float, alpha: float) -> int:
     """Largest failure count that rejects H0: p >= threshold at level alpha."""
 
-    if isinstance(trials, bool) or not isinstance(trials, int) or trials <= 0:
+    if isinstance(trials, bool) or not isinstance(trials, Integral) or trials <= 0:
         raise ValueError("trials must be a positive integer")
     if not 0 < threshold < 1 or not 0 < alpha < 1:
         raise ValueError("threshold and alpha must be in (0, 1)")
@@ -96,7 +97,7 @@ def minimum_rejecting_failures(*, trials: int, threshold: float, alpha: float) -
     Returns ``trials + 1`` when rejection is impossible even if every trial fails.
     """
 
-    if isinstance(trials, bool) or not isinstance(trials, int) or trials <= 0:
+    if isinstance(trials, bool) or not isinstance(trials, Integral) or trials <= 0:
         raise ValueError("trials must be a positive integer")
     if not 0 < threshold < 1 or not 0 < alpha < 1:
         raise ValueError("threshold and alpha must be in (0, 1)")
@@ -594,7 +595,7 @@ def certification_sample_size(
 ) -> int:
     if not 0 < power < 1:
         raise ValueError("power must be in (0, 1)")
-    if isinstance(max_trials, bool) or not isinstance(max_trials, int) or max_trials <= 0:
+    if isinstance(max_trials, bool) or not isinstance(max_trials, Integral) or max_trials <= 0:
         raise ValueError("max_trials must be a positive integer")
     for trials in range(1, max_trials + 1):
         if (
@@ -624,7 +625,7 @@ def rejection_sample_size(
         raise ValueError("true_rate must satisfy 0 < threshold < true_rate <= 1")
     if not 0 < power < 1:
         raise ValueError("power must be in (0, 1)")
-    if isinstance(max_trials, bool) or not isinstance(max_trials, int) or max_trials <= 0:
+    if isinstance(max_trials, bool) or not isinstance(max_trials, Integral) or max_trials <= 0:
         raise ValueError("max_trials must be a positive integer")
     for trials in range(1, max_trials + 1):
         if (

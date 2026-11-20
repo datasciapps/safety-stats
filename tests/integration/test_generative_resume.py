@@ -21,6 +21,7 @@ from inspect_safety_stats.generative.execution import check_attempts, read_promp
 from inspect_safety_stats.generative.kernels import RewriteOutcome, RewriteRequest
 from inspect_safety_stats.generative.ledger import read_attempts, read_rewrites
 from inspect_safety_stats.generative.runner import materialize_run
+from tests.cli_output import plain
 from tests.integration.test_generative_cli import write_plan
 
 runner = CliRunner()
@@ -234,6 +235,26 @@ def test_resume_through_the_cli(tmp_path: Path) -> None:
     )
     assert result.exit_code == 0, result.stdout
     assert "Resumed: 60 units carried over, 40 executed" in result.stdout
+
+
+def test_errored_units_are_named_with_the_way_to_rerun_them(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that finished with errored units says how many, and that --resume reruns them."""
+
+    import inspect_safety_stats.generative.runner as runner_module
+
+    plan = write_plan(tmp_path, total=20)
+    kernel = ScriptedKernel(error_every=5)
+    monkeypatch.setattr(runner_module, "resolve_kernel", lambda spec: kernel)
+    result = runner.invoke(
+        app, ["generative", "materialize", "--plan", str(plan), "--output", str(tmp_path / "run")]
+    )
+    output = plain(result.output)
+    assert result.exit_code == 0, output
+    assert "4 errored" in output
+    assert "4 units errored and are not in the dataset" in output
+    assert "--resume" in output
 
 
 def test_a_rerun_errored_unit_is_recorded_once(tmp_path: Path) -> None:

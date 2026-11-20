@@ -26,6 +26,7 @@ about other attackers, so nothing here gives one.
 from __future__ import annotations
 
 import math
+from numbers import Integral
 
 import numpy as np
 from scipy.optimize import brentq
@@ -51,7 +52,7 @@ _RELATIVE_TOLERANCE = 4 * float(np.finfo(float).eps)
 def _validate(successes: int, runs: int, alpha: float) -> None:
     if isinstance(successes, bool) or isinstance(runs, bool):
         raise TypeError("counts must be integers, not booleans")
-    if not isinstance(successes, int) or not isinstance(runs, int):
+    if not isinstance(successes, Integral) or not isinstance(runs, Integral):
         raise TypeError("counts must be integers")
     if runs <= 0:
         raise ValueError("runs must be positive")

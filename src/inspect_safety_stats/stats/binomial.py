@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Integral
 
 from scipy.special import betaincinv
 
@@ -22,7 +23,8 @@ class Bounds:
 def _validate(failures: int, trials: int, alpha: float) -> None:
     if isinstance(failures, bool) or isinstance(trials, bool):
         raise TypeError("counts must be integers, not booleans")
-    if not isinstance(failures, int) or not isinstance(trials, int):
+    # Integral, not int: NumPy's integers, such as a DataFrame column's sum, are counts too.
+    if not isinstance(failures, Integral) or not isinstance(trials, Integral):
         raise TypeError("counts must be integers")
     if trials <= 0:
         raise ValueError("trials must be positive")
@@ -103,7 +105,7 @@ def missingness_robust_binomial_bounds(
 
     if isinstance(classified, bool) or isinstance(total, bool):
         raise TypeError("counts must be integers, not booleans")
-    if not isinstance(classified, int) or not isinstance(total, int):
+    if not isinstance(classified, Integral) or not isinstance(total, Integral):
         raise TypeError("counts must be integers")
     if total <= 0:
         raise ValueError("total must be positive")

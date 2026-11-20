@@ -225,5 +225,6 @@ runs cannot be pooled by accident, and state the estimand in words.
 - **Risk difference only.** Ratios and relative reductions are not implemented; the two arm
   intervals are reported alongside each comparison, so they can be derived by hand under a
   union bound.
-- **The judge is not modelled.** [Judge misclassification](../../docs/judge-misclassification.md)
-  applies to fixed designs; nothing here corrects for a fallible scorer.
+- **The judge is not modelled here.** Neither plan declares a judge calibration, so nothing
+  here corrects for a fallible scorer. A generative plan can declare one: see
+  [Judge misclassification](../../docs/judge-misclassification.md#on-the-generative-path).

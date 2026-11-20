@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from numbers import Integral
 
 import numpy as np
 
@@ -21,7 +22,7 @@ def bonferroni_allocate(
 
     if not 0 < alpha < 1:
         raise ValueError("alpha must be in (0, 1)")
-    if isinstance(count, bool) or not isinstance(count, int) or count <= 0:
+    if isinstance(count, bool) or not isinstance(count, Integral) or count <= 0:
         raise ValueError("count must be a positive integer")
     if weights is None:
         return [alpha / count] * count

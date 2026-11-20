@@ -189,8 +189,10 @@ machine-readable. The default `two_sided` mode splits family alpha across the tw
 
 ## Statistical functions
 
-All functions below are importable from `inspect_safety_stats.stats`. They are pure and do not read
-logs or plans.
+The functions below are importable from `inspect_safety_stats.stats`, except where a block names
+another module: those are not in `inspect_safety_stats.stats.__all__`, so they are not a
+protected interface (see `CONTRIBUTING.md`, section 4) and may change in a minor release. All are
+pure and do not read logs or plans.
 
 ### Exact binomial bounds
 
@@ -468,6 +470,8 @@ InclusionDesign(design_weights, inclusion_probabilities, sampled)
 horvitz_thompson_mean_bounds(design, completion_lower, completion_upper, *,
                              alpha_lower, alpha_upper, method="weighted_empirical_bernstein")
 
+# Not in inspect_safety_stats.stats.__all__: import these two from
+# inspect_safety_stats.stats.design_based.
 FixedSizeDesign(stratum_index, frame_weights, draws, sampled)
 fixed_size_mean_bounds(design, completion_lower, completion_upper, *,
                        alpha_lower, alpha_upper, method="weighted_empirical_bernstein")
@@ -485,6 +489,9 @@ analysis pipeline; see
 ### Judge misclassification
 
 ```python
+# Not in inspect_safety_stats.stats.__all__: import JudgeStratumCounts, TruthStratumCounts,
+# estimate_judge_calibration, completion_warning and noisy_valid_certification from
+# inspect_safety_stats.stats.misclassification.
 JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source,
                  alpha=None, completed_strata=())   # strata completed as [0, 1]
 JudgeStratumCounts(labelled, truly_unsafe, stratum_size)
@@ -721,8 +728,8 @@ directory does not exist.
 ### Exit codes
 
 Every status a command chooses comes from one table, `ExitCode` in `cli.py`. Only `analyze`,
-`hash-plan`, `init`, `visualize` and the `generative` commands guarantee `3` for input they
-cannot run on; the other commands below do not, and a malformed plan given to `validate` or
+`hash-plan`, `init`, `validate`, `visualize` and the `generative` commands guarantee `3` for
+input they cannot run on; the other commands below do not, and a malformed plan given to
 `plan fixed-design --plan` is not mapped to `3`:
 
 | Status | Meaning |
@@ -730,7 +737,7 @@ cannot run on; the other commands below do not, and a malformed plan given to `v
 | `0` | The command completed. |
 | `1` | `analyze --decision-exit-codes`: the decision is FAIL. `plan fixed-design --plan`: no claim of the plan could be planned. |
 | `2` | `analyze --decision-exit-codes`: the decision is INCONCLUSIVE. typer also exits `2` on a usage error, such as a missing option, before the command runs. |
-| `3` | `analyze`, `hash-plan`, `init`, `visualize` and the `generative` commands: the command could not run. `analyze` and `generative analyze` also: the result supports no claim (an `invalid` integrity, or a `generative analyze` report with `ERROR` diagnostics). `validate`: an `invalid` integrity. |
+| `3` | `analyze`, `hash-plan`, `init`, `validate`, `visualize` and the `generative` commands: the command could not run. `analyze` and `generative analyze` also: the result supports no claim (an `invalid` integrity, or a `generative analyze` report with `ERROR` diagnostics). `validate`: an `invalid` integrity. |
 
 Exit codes of `analyze`:
 
@@ -741,12 +748,13 @@ Exit codes of `analyze`:
 | Integrity `invalid` with `--allow-invalid` | `0` | `2`, because an invalid analysis is never PASS |
 | The analysis cannot run, for example an unreadable plan | `3` | `3` |
 
-`validate` exits `3` when its integrity is `invalid` and `0` otherwise. A plan that cannot be
-loaded at all (malformed YAML, or a schema failure) is not mapped: `validate` prints a traceback
-and exits `1`. `plan fixed-design --plan` exits `2`, as a usage error, for a plan that fails
+`validate` exits `3` when its integrity is `invalid`, and when it cannot read its plan or
+decision policy (malformed YAML, or a schema failure), printing `Validation failed:` with the
+reason; otherwise it exits `0`. Before this release an unreadable plan ended in a traceback and
+exit status `1`. `plan fixed-design --plan` exits `2`, as a usage error, for a plan that fails
 validation or that `analyze` would find invalid on the design manifest, such as a
 `frontier_sidak` direct-mean hierarchy with a node of zero weight, and `1` for malformed YAML.
-Check the exit status of these two commands only for zero versus nonzero.
+Check its exit status only for zero versus nonzero.
 
 `hash-plan` exits `3` for a plan it cannot read or validate, and prints `Plan invalid:` with
 each failing field on one line.
@@ -757,7 +765,8 @@ exited `2`, which `analyze` uses for INCONCLUSIVE.
 ## Compatibility and stability
 
 The runtime supports Python 3.11 or newer. Reading Inspect logs needs Inspect AI
-`>=0.3.259,<0.4`, which the `inspect` extra installs. This release reads analysis plans of
+`>=0.3.289,<0.4`, which the `inspect` extra installs, and reads logs written by Inspect AI
+0.3.259 or later. This release reads analysis plans of
 schema version `2.0` and `3.0` (see [the plan reference](plan-reference.md#schema-versions)) and
 writes reports of schema version `3.0`. Plans and reports are strict: unknown fields are errors,
 and a plan declaring any other version, `1.0` included, is refused. New fields or methods may
