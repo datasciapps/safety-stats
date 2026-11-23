@@ -45,7 +45,7 @@ def _report(scope: dict[str, object]) -> SafetyReport:
 
 
 def test_the_link_names_a_tracked_page_on_main() -> None:
-    prefix = "https://github.com/aduncan001/safety_stats/blob/main/"
+    prefix = "https://github.com/datasciapps/safety-stats/blob/main/"
     assert RESULTS_ESTABLISH_URL.startswith(prefix)
     page = RESULTS_ESTABLISH_URL.removeprefix(prefix)
     try:

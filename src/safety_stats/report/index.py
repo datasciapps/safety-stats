@@ -24,10 +24,10 @@ INDEX_JSON = "index.json"
 INDEX_MD = "index.md"
 INDEX_VERSION = "1"
 # Absolute, as the report is read outside the repository; source docs/agent-guide.md.
-AGENT_GUIDE_URL = "https://github.com/aduncan001/safety_stats/blob/main/docs/agent-guide.md"
+AGENT_GUIDE_URL = "https://github.com/datasciapps/safety-stats/blob/main/docs/agent-guide.md"
 # The remedy for each diagnostic code, linked from index.md and report.md; absolute for the
 # same reason. Its source is docs/diagnostics.md.
-DIAGNOSTICS_URL = "https://github.com/aduncan001/safety_stats/blob/main/docs/diagnostics.md"
+DIAGNOSTICS_URL = "https://github.com/datasciapps/safety-stats/blob/main/docs/diagnostics.md"
 SUMMARY_PAGE = "report.md"
 # The section of index.md that lists the errors and warnings; analyze points to it by name.
 WARNINGS_HEADING = "Errors and warnings by code"

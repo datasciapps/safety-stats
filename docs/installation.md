@@ -25,8 +25,8 @@ and the offline demo are not part of the package: run them from a checkout.
 ## Install from a checkout
 
 ```bash
-git clone https://github.com/aduncan001/safety_stats.git
-cd safety_stats
+git clone https://github.com/datasciapps/safety-stats.git
+cd safety-stats
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -117,8 +117,8 @@ If `analyze` or `validate` fails with `FileNotFoundError` on a path that has no 
 for example `\Users\...\logs\....eval`, the logs are on a different drive from the
 directory the command runs in. inspect-ai drops the drive letter when it reads local logs on
 Windows, so it looks for them on the current drive. Run the command from the drive that holds
-the logs, or keep the logs on the same drive. This is tracked in
-[issue #35](https://github.com/aduncan001/safety_stats/issues/35).
+the logs, or keep the logs on the same drive. This is tracked as issue
+#35 of the project's earlier tracker.
 
 ### The selected score is absent
 

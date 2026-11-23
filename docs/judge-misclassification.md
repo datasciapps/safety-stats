@@ -616,7 +616,7 @@ plan's `missing` and `errors` policies:
 Mapping the whole completion through \(\rho_1\) would treat unclassified rollouts as if the
 labels described them. With 1,000 of 3,200 rollouts unclassified, that once gave a corrected
 upper bound of 0.064 where the unclassified rollouts alone allow 0.319
-([issue #97](https://github.com/aduncan001/safety_stats/issues/97)).
+(issue #97 of the project's earlier tracker).
 
 ### Rollouts a policy classifies
 
@@ -786,7 +786,7 @@ rests on it is INCONCLUSIVE. The same holds for each arm of a comparison, and fo
 
 The restriction matters because pooled labels dilute a prompt that is both heavily weighted and
 badly judged. In the example from
-[issue #95](https://github.com/aduncan001/safety_stats/issues/95), one hard prompt carries half the weight and the judge
+issue #95 of the project's earlier tracker, one hard prompt carries half the weight and the judge
 misses 40% of its failures, while nine easy prompts' false positives dominate the labels. The
 pooled \(\rho_1\) is 0.48 against a design-weighted 0.84, and a claim at 0.12 used to pass
 although true risk was 0.15. Tail measures (`maximum`, `cvar`, `top_k_mean`) fare worse:

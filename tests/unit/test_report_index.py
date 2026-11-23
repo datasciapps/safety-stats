@@ -253,7 +253,7 @@ def _checkout() -> Path | None:
 
 @pytest.mark.parametrize("url", [AGENT_GUIDE_URL, DIAGNOSTICS_URL])
 def test_the_guide_link_names_a_tracked_page_on_main(url: str) -> None:
-    prefix = "https://github.com/aduncan001/safety_stats/blob/main/"
+    prefix = "https://github.com/datasciapps/safety-stats/blob/main/"
     assert url.startswith(prefix)
     page = url.removeprefix(prefix)
     root = _checkout()
