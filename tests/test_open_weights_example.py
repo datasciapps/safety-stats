@@ -15,6 +15,8 @@ from inspect_ai.log import read_eval_log
 from inspect_ai.model import BatchConfig, ChatMessage, GenerateConfig, ModelOutput, get_model
 
 EXAMPLE_DIR = Path(__file__).parents[1] / "examples" / "open_weights"
+# Windows ignores the mode a folder or file is created with and reports 0o777 or 0o666.
+POSIX_MODES = os.name != "nt"
 sys.path.insert(0, str(EXAMPLE_DIR))
 
 import open_weights_task  # noqa: E402
@@ -375,7 +377,8 @@ def test_offline_mockllm_run_generates_judges_and_analyzes(
     xstest_csv: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     output, logs = _offline_run(xstest_csv, tmp_path, monkeypatch)
-    assert (output.stat().st_mode & 0o777) == 0o700
+    if POSIX_MODES:
+        assert (output.stat().st_mode & 0o777) == 0o700
 
     outcomes: dict[bool, Counter[str]] = {}
     for log in logs:
@@ -611,15 +614,19 @@ def test_labelling_sheet_shows_what_the_judge_saw_and_nothing_of_its_verdicts(
     shared = tmp_path / "shared"
     shared.mkdir()
     shared.chmod(0o755)
-    with pytest.raises(SystemExit, match="chmod 700"):
-        label_queue.main(["sheet", "--queue", str(queue), "--output", str(shared / "sheet.csv")])
+    if POSIX_MODES:
+        with pytest.raises(SystemExit, match="chmod 700"):
+            label_queue.main(
+                ["sheet", "--queue", str(queue), "--output", str(shared / "sheet.csv")]
+            )
     sheet = tmp_path / "private" / "sheet.csv"
     label_queue.main(["sheet", "--queue", str(queue), "--output", str(sheet)])
     with pytest.raises(FileExistsError):
         label_queue.main(["sheet", "--queue", str(queue), "--output", str(sheet)])
 
-    assert (sheet.parent.stat().st_mode & 0o777) == 0o700
-    assert (sheet.stat().st_mode & 0o777) == 0o600
+    if POSIX_MODES:
+        assert (sheet.parent.stat().st_mode & 0o777) == 0o700
+        assert (sheet.stat().st_mode & 0o777) == 0o600
     with sheet.open(encoding="utf-8", newline="") as stream:
         reader = csv.DictReader(stream)
         assert reader.fieldnames == label_queue.SHEET_COLUMNS
@@ -655,6 +662,24 @@ def test_labelling_sheet_shows_what_the_judge_saw_and_nothing_of_its_verdicts(
     # The mock judge reads the same markers, so the labels agree with it everywhere.
     summary = (manifests / "summary.md").read_text(encoding="utf-8")
     assert "| primary | " in summary and "| 0.00% | 0.00% |" in summary
+
+
+def test_the_sheet_checks_folder_modes_only_where_they_say_who_can_open_it(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """On Windows every folder reports mode 777, so checking it refused every folder (#3)."""
+
+    import label_queue
+
+    folder = tmp_path / "open"
+    folder.mkdir()
+    folder.chmod(0o777)
+    monkeypatch.setattr(label_queue, "POSIX_MODES", False, raising=False)
+    # Past the folder check, `sheet` reads the queue, which this test does not make.
+    with pytest.raises(FileNotFoundError):
+        label_queue.main(
+            ["sheet", "--queue", str(tmp_path / "queue"), "--output", str(folder / "sheet.csv")]
+        )
 
 
 @pytest.fixture
