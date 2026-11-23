@@ -81,7 +81,7 @@ def _resolved_design(data: NormalizedData, hierarchy: list[str]) -> list[dict[st
 # The page every report links to, on what a result shows and what it does not. Its source is
 # docs/what-results-establish.md; a report is read outside the repository, so the link is absolute.
 RESULTS_ESTABLISH_URL = (
-    "https://github.com/aduncan001/safety_stats/blob/main/docs/what-results-establish.md"
+    "https://github.com/datasciapps/safety-stats/blob/main/docs/what-results-establish.md"
 )
 
 # Every bound rests on this, whatever the design (#12; docs/statistical-methods.md section 15.2).

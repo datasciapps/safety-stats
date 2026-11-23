@@ -18,8 +18,8 @@ python -m pip install 'safety-stats[inspect]'
 The demo below runs from a checkout of the repository and needs no API key:
 
 ```bash
-git clone https://github.com/aduncan001/safety_stats.git
-cd safety_stats
+git clone https://github.com/datasciapps/safety-stats.git
+cd safety-stats
 python -m venv .venv
 source .venv/bin/activate        # on Windows: .venv\Scripts\activate
 python -m pip install -e '.[dev]'

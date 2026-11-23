@@ -52,6 +52,10 @@ pytest
   class (section 3) you expect. Two implementations of the same estimator on two branches are
   expensive to reconcile. The issue forms (bug report, change or feature, statistical method)
   ask for what a maintainer needs to agree to it.
+- **Numbers from before the move.** The project moved to this repository before its first
+  release. Issue and pull request numbers up to #213, in the changelog, the documentation, the
+  code and the commit history, refer to the tracker of the repository it was developed in,
+  which is not public. This repository's own numbers start at #1.
 - **Large or scope-changing work needs a short design note first.** That covers a new subsystem,
   removing a feature, or changing a default method. Open an issue that states the problem, the
   options, and the user impact. Scope decisions are made there, not by letting a branch drift.

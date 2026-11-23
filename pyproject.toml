@@ -51,9 +51,9 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/aduncan001/safety_stats"
-Repository = "https://github.com/aduncan001/safety_stats"
-Issues = "https://github.com/aduncan001/safety_stats/issues"
+Homepage = "https://github.com/datasciapps/safety-stats"
+Repository = "https://github.com/datasciapps/safety-stats"
+Issues = "https://github.com/datasciapps/safety-stats/issues"
 
 [project.optional-dependencies]
 # Reading Inspect AI logs, with --logs or logs=. Rollout files need neither package.

@@ -1190,6 +1190,12 @@ described in their pull requests.
 
 ### Changed
 
+- **The project lives at https://github.com/datasciapps/safety-stats (datasciapps/safety-stats#1).**
+  The package's project links, the README, the documentation, the issue forms and the links in
+  generated reports point there, and a clone creates `safety-stats/`. Issue and pull request
+  numbers up to #213 in this file refer to the tracker of the repository the project was
+  developed in before, which is not public.
+
 - **The package is named `safety-stats` (#212).** It installs with `pip install safety-stats`,
   its command is `safety-stats` and its import package is `safety_stats`; before this release
   all three were `inspect-safety-stats` or `inspect_safety_stats`. Inspect AI logs are still
