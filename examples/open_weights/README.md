@@ -27,7 +27,7 @@ through the same task, judged by the local model (see [A hosted model](#a-hosted
   `VLLM_API_KEY`, never from the command line. The model under test may also be
   `anthropic/...`; the judge stays local.
 - Logs hold prompts and completions. Output folders must be outside the repository and are
-  created with mode 700.
+  created with mode 700 (Windows ignores modes: keep them in a folder only you can open).
 - The XSTest prompts and both labelled sets are not in the repository. The scripts read them from
   a folder you name and check each file's SHA-256 against the published version.
 
@@ -133,7 +133,8 @@ python examples/open_weights/label_queue.py manifest --queue LABELS/queue \
 reports relative to the queue folder. `sheet` writes the prompts and
 answers to be labelled, with one yes-or-no question per row and the judge's rules in a file beside
 it, but not the judges' verdicts. Its folder must be outside the repository and closed to everyone
-else (mode 700); the sheet is a new file with mode 600. `manifest` writes the calibration rows as
+else (mode 700; Windows has no modes, so there `sheet` cannot check this, and the folder must
+be one only you can open, such as one in your user profile); the sheet is a new file with mode 600. `manifest` writes the calibration rows as
 one `judge-labels-<task>.csv` per task, and `summary.md` with each cell's corrected share and exact
 bounds and each judge's error rates.
 
