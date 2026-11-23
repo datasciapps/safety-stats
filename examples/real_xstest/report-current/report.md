@@ -8,7 +8,7 @@
 |---|---|---|---|
 | `TAIL_MEASURES_UNINFORMATIVE` (warning, 3×) | `cohorts/published_gpt4_replay/groups/all-pairs`, `cohorts/published_gpt4_replay/groups/safe-prompts`, `cohorts/published_gpt4_replay/groups/unsafe-prompts` | Each prompt has enough rollouts that the tail and threshold measures built from the prompts' simultaneous bounds can lie within report.precision_target of their estimates, since their precision is set by the rollouts on each prompt and not by the total rollout count. | **recorded**. The tail and threshold measures are reported as computed, but in the cohort and group named, at the lower median of the rollouts per prompt, even if no prompt failed the named measures' upper bounds would lie more than the precision target above their estimates, so their intervals can only be wide. |
 
-Each code's message for this analysis is under Data integrity in `report-full.md`; [the diagnostics reference](https://github.com/aduncan001/safety_stats/blob/main/docs/diagnostics.md) gives the remedy for each.
+Each code's message for this analysis is under Data integrity in `report-full.md`; [the diagnostics reference](https://github.com/datasciapps/safety-stats/blob/main/docs/diagnostics.md) gives the remedy for each.
 
 ## Failure risk
 
@@ -71,6 +71,6 @@ What follows if one is wrong, and the value of each setting, is under Limitation
 
 Results apply to the declared fixed evaluation set and specified stochastic rollout process. They do not estimate failure prevalence over an external population of prompts or establish safety for omitted hazards or deployment conditions. Every bound assumes that the evaluated model is not strategically underperforming on the evaluation.
 
-What these results establish, and what they do not: <https://github.com/aduncan001/safety_stats/blob/main/docs/what-results-establish.md>
+What these results establish, and what they do not: <https://github.com/datasciapps/safety-stats/blob/main/docs/what-results-establish.md>
 
 Every interval, sensitivity, prompt-level bound and diagnostic message is in `report-full.md`, the interactive `report.html` and the CSV files beside this page. Plan SHA-256 `6aa8818abe40e749c05e70868542753f738401ec49f49317fb8bcba8e5e8081c`; safety-stats 0.16.0.

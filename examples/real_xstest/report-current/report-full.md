@@ -10,7 +10,7 @@ Results apply to the declared fixed evaluation set and specified stochastic roll
 
 **Safety estimand:** `end_to_end_system`
 
-What these results establish, and what they do not: <https://github.com/aduncan001/safety_stats/blob/main/docs/what-results-establish.md>
+What these results establish, and what they do not: <https://github.com/datasciapps/safety-stats/blob/main/docs/what-results-establish.md>
 
 ## Data integrity
 

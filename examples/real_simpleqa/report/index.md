@@ -1,6 +1,6 @@
 # Index: Eight real SimpleQA items as a fixed-design failure analysis
 
-`report.md` is the one-page summary for people. Pointers such as `/group_risks/0` are JSON pointers into `report.json`. How to read this index: <https://github.com/aduncan001/safety_stats/blob/main/docs/agent-guide.md>.
+`report.md` is the one-page summary for people. Pointers such as `/group_risks/0` are JSON pointers into `report.json`. How to read this index: <https://github.com/datasciapps/safety-stats/blob/main/docs/agent-guide.md>.
 
 Analysis `real-simpleqa-eight` (confirmatory), plan SHA-256 `fd9ee06715157246e1e6d90d86f2cada7d7cffe96ee9fd7e280c8d026a0f654c`, safety-stats 0.16.0, report schema 3.0, index version 1.
 
@@ -21,7 +21,7 @@ Decisions are hidden (`report.include_decisions` is false); `report.json` still 
 | `PLAN_SELF_DECLARED` | warning | 1 | recorded | `/integrity/diagnostics/0` | — |
 | `TAIL_MEASURES_UNINFORMATIVE` | warning | 1 | recorded | `/integrity/diagnostics/1` | — |
 
-What each code assumes and what follows is in `index.json` and in `report.md`; [the diagnostics reference](https://github.com/aduncan001/safety_stats/blob/main/docs/diagnostics.md) gives the remedy.
+What each code assumes and what follows is in `index.json` and in `report.md`; [the diagnostics reference](https://github.com/datasciapps/safety-stats/blob/main/docs/diagnostics.md) gives the remedy.
 
 ## Assumptions used
 
