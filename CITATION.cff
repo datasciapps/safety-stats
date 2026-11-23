@@ -16,6 +16,20 @@ authors:
     family-names: Redyuk
   - given-names: Sebastian
     family-names: Vollmer
+  - given-names: Gaétan
+    family-names: Marceau Caron
+    affiliation: Mila
+  - given-names: Toluwaleke
+    family-names: Olutayo
+    affiliation: Mila
+  - given-names: Arlindo
+    family-names: Oliveira
+    affiliation: INESC-ID
+    alias: arlindololiveira
+  - given-names: Bruno
+    family-names: Martins
+    affiliation: INESC-ID
+    alias: bgmartins
   - name: "safety_stats contributors"
 keywords:
   - inspect-ai
