@@ -15,9 +15,9 @@ import math
 from dataclasses import dataclass
 from typing import Literal
 
-from inspect_safety_stats.generative.ledger import SelectionRecord
-from inspect_safety_stats.generative.schema import GenerativePlan
-from inspect_safety_stats.generative.taxonomy import CompiledNode, CompiledTaxonomy
+from safety_stats.generative.ledger import SelectionRecord
+from safety_stats.generative.schema import GenerativePlan
+from safety_stats.generative.taxonomy import CompiledNode, CompiledTaxonomy
 
 Method = Literal["direct", "proportional_stratified"]
 

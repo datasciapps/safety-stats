@@ -15,9 +15,9 @@ import math
 import numpy as np
 import pytest
 
-from inspect_safety_stats.generative.judge import correct
-from inspect_safety_stats.stats.binomial import binomial_upper_bound
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.generative.judge import correct
+from safety_stats.stats.binomial import binomial_upper_bound
+from safety_stats.stats.misclassification import (
     JudgeStratumCounts,
     estimate_judge_calibration,
 )

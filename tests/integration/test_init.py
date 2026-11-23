@@ -7,10 +7,10 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from inspect_safety_stats import analyze
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.registry import ASSUMPTIONS
-from inspect_safety_stats.scaffold import scaffold_plan
+from safety_stats import analyze
+from safety_stats.cli import app
+from safety_stats.registry import ASSUMPTIONS
+from safety_stats.scaffold import scaffold_plan
 from tests.cli_output import plain
 from tests.mock_inspect_logs import DEFAULT_METADATA, mock_task, write_mock_logs
 
@@ -90,7 +90,7 @@ def test_init_names_the_logs_it_ignored_and_analyzes_only_those_it_used(
     output = plain(result.output)
     note = re.search(r"Note: ignored 1 evaluation log\(s\) that did not \D+: (\S+)\. ", output)
     assert note is not None and Path(note.group(1)).name in failed
-    command = re.search(r"Next: inspect-safety-stats analyze --plan \S+ (.*) --output ", output)
+    command = re.search(r"Next: safety-stats analyze --plan \S+ (.*) --output ", output)
     assert command is not None
     used = re.findall(r"--logs (\S+)", command.group(1))
     assert [Path(path).name for path in used] == sorted(kept)

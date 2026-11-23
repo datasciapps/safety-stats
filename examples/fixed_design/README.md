@@ -17,11 +17,11 @@ confirmatory analysis plan.
 3. Validate and analyze:
 
    ```bash
-   inspect-safety-stats validate \
+   safety-stats validate \
      --plan examples/fixed_design/safety-plan.yaml \
      --logs logs/fixed-design-example
 
-   inspect-safety-stats analyze \
+   safety-stats analyze \
      --plan examples/fixed_design/safety-plan.yaml \
      --logs logs/fixed-design-example \
      --output reports/fixed-design-example \
@@ -39,7 +39,7 @@ baseline cohort filters, run both configurations over the same fixed design, and
 at the directory containing both sets of Inspect logs:
 
 ```bash
-inspect-safety-stats analyze \
+safety-stats analyze \
   --plan examples/fixed_design/comparison-plan.yaml \
   --logs logs/fixed-design-comparison \
   --output reports/fixed-design-comparison
@@ -81,7 +81,7 @@ inspect eval examples/fixed_design/variant_eval.py \
   --no-epochs-reducer \
   --log-dir logs/fixed-design-variants
 
-inspect-safety-stats analyze \
+safety-stats analyze \
   --plan examples/fixed_design/variant-plan.yaml \
   --logs logs/fixed-design-variants \
   --output reports/fixed-design-variants \

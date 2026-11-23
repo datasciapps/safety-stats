@@ -24,13 +24,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from inspect_safety_stats.generative.inference import NodeEstimate, unclassified_upper_bound
-from inspect_safety_stats.generative.ledger import RewriteRecord
-from inspect_safety_stats.generative.schema import GenerativePlan
-from inspect_safety_stats.ingest.validation import load_validation_manifest
-from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope, scope_path
-from inspect_safety_stats.stats.judge_calibration import (
+from safety_stats.generative.inference import NodeEstimate, unclassified_upper_bound
+from safety_stats.generative.ledger import RewriteRecord
+from safety_stats.generative.schema import GenerativePlan
+from safety_stats.ingest.validation import load_validation_manifest
+from safety_stats.schema.reports import Diagnostic
+from safety_stats.schema.scopes import cohort_scope, plan_scope, scope_path
+from safety_stats.stats.judge_calibration import (
     NO_STRATA,
     JudgeStrata,
     calibrate_cohort,
@@ -38,7 +38,7 @@ from inspect_safety_stats.stats.judge_calibration import (
     completion_diagnostic,
     count_judge_strata,
 )
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.stats.misclassification import (
     JudgeCalibration,
     JudgeStratumCounts,
     correct_judge_risk,

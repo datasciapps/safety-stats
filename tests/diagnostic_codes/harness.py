@@ -38,8 +38,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from inspect_safety_stats.registry import Effect, SourceKind
-from inspect_safety_stats.schema.reports import Diagnostic
+from safety_stats.registry import Effect, SourceKind
+from safety_stats.schema.reports import Diagnostic
 
 Status = str | None
 
@@ -74,9 +74,9 @@ class Case:
 
     Both get a directory of their own to write inputs in. ``effect`` gets the trigger's
     outcome, then the control's, and asserts what the code did to the results. ``shows`` is
-    the effect, as ``inspect_safety_stats.registry.EFFECTS`` names them, that the integrity
+    the effect, as ``safety_stats.registry.EFFECTS`` names them, that the integrity
     status and ``effect`` show the code has. ``source`` is the kind of input the trigger
-    breaks, as ``inspect_safety_stats.registry.SOURCE_KINDS`` names them, when it is not the
+    breaks, as ``safety_stats.registry.SOURCE_KINDS`` names them, when it is not the
     ``SOURCE`` of the case's module.
     """
 
@@ -231,8 +231,8 @@ def write_inputs(inputs: Inputs, directory: Path) -> Path:
 def run_analysis(inputs: Inputs, directory: Path) -> Outcome:
     """Run ``analyze`` on the inputs, written into ``directory``, and return its outcome."""
 
-    from inspect_safety_stats import analyze
-    from inspect_safety_stats.ingest.rollout_files import RolloutFiles
+    from safety_stats import analyze
+    from safety_stats.ingest.rollout_files import RolloutFiles
 
     plan = write_inputs(inputs, directory)
     report = analyze(

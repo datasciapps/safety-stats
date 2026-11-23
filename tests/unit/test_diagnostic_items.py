@@ -7,8 +7,8 @@ from typing import Any
 
 import pytest
 
-from inspect_safety_stats.report.artifacts import json_text
-from inspect_safety_stats.schema.reports import (
+from safety_stats.report.artifacts import json_text
+from safety_stats.schema.reports import (
     STORED_REPORT,
     ClaimResult,
     ComparisonResult,
@@ -18,7 +18,7 @@ from inspect_safety_stats.schema.reports import (
     PromptEstimate,
     SafetyReport,
 )
-from inspect_safety_stats.schema.scopes import (
+from safety_stats.schema.scopes import (
     cohort_scope,
     node_id,
     plan_scope,

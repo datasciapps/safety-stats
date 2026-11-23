@@ -23,7 +23,7 @@ from typing import Any, Literal, TextIO
 import pandas as pd
 from pydantic import BaseModel, ConfigDict, Field
 
-from inspect_safety_stats.generative.kernels import ValidationStatus
+from safety_stats.generative.kernels import ValidationStatus
 
 
 class LedgerModel(BaseModel):

@@ -1,13 +1,13 @@
 import numpy as np
 import pytest
 
-from inspect_safety_stats.stats.design_based import (
+from safety_stats.stats.design_based import (
     FixedSizeDesign,
     InclusionDesign,
     fixed_size_mean_bounds,
     horvitz_thompson_mean_bounds,
 )
-from inspect_safety_stats.stats.direct_mean import weighted_bounded_kl_chernoff_mean_bounds
+from safety_stats.stats.direct_mean import weighted_bounded_kl_chernoff_mean_bounds
 
 
 def _frame(size: int) -> np.ndarray:

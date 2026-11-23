@@ -1,7 +1,7 @@
 """Turn the runs and rollouts a source adapter reads into observations and diagnostics.
 
 Nothing here reads a file or knows which tool wrote the evaluation: an adapter, such as the
-Inspect reader in :mod:`inspect_safety_stats.ingest.inspect_logs`, supplies a
+Inspect reader in :mod:`safety_stats.ingest.inspect_logs`, supplies a
 :class:`SourceData`, and :func:`normalize` applies every rule of the plan to it: cohort
 matching, uniformity and drift, plan timing, judges and composites, score mapping, error and
 missing-score policies, duplicates, completeness and sampled-design checks.
@@ -22,11 +22,11 @@ from typing import Any, Literal
 import numpy as np
 import pandas as pd
 
-from inspect_safety_stats.config.canonicalize import sha256_value
-from inspect_safety_stats.config.loader import report_path
-from inspect_safety_stats.config.models import ATTRIBUTE_PREFIX, AnalysisPlan, OutcomeMappingSpec
-from inspect_safety_stats.config.registration import RegistrationReceipt
-from inspect_safety_stats.ingest.manifest import (
+from safety_stats.config.canonicalize import sha256_value
+from safety_stats.config.loader import report_path
+from safety_stats.config.models import ATTRIBUTE_PREFIX, AnalysisPlan, OutcomeMappingSpec
+from safety_stats.config.registration import RegistrationReceipt
+from safety_stats.ingest.manifest import (
     ResolvedGroup,
     check_zero_tolerance_field,
     load_inclusion_probabilities,
@@ -37,8 +37,8 @@ from inspect_safety_stats.ingest.manifest import (
     plan_manifest_columns,
     resolve_groups,
 )
-from inspect_safety_stats.ingest.outcomes import UnmappedScoreError, is_missing, map_outcome
-from inspect_safety_stats.ingest.records import (
+from safety_stats.ingest.outcomes import UnmappedScoreError, is_missing, map_outcome
+from safety_stats.ingest.records import (
     EvaluationSource,
     NormalizedData,
     RolloutRecord,
@@ -46,10 +46,10 @@ from inspect_safety_stats.ingest.records import (
     SourceData,
     StopContext,
 )
-from inspect_safety_stats.schema.observations import Observation
-from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope, prompt_scope, scope_path
-from inspect_safety_stats.stats.judges import compose_verdicts
+from safety_stats.schema.observations import Observation
+from safety_stats.schema.reports import Diagnostic
+from safety_stats.schema.scopes import cohort_scope, plan_scope, prompt_scope, scope_path
+from safety_stats.stats.judges import compose_verdicts
 
 POLICY_BLOCK_CODES = frozenset(
     {

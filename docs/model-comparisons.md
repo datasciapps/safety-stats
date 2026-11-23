@@ -334,7 +334,7 @@ Before a run, `plan comparison` says which risk differences a design can resolve
 margin. It reads the design manifest and its weights as `plan fixed-design` does:
 
 ```bash
-inspect-safety-stats plan comparison \
+safety-stats plan comparison \
   --manifest design.csv \
   --margin 0.05 \
   --candidate-rollouts 10 --baseline-rollouts 10 \
@@ -421,12 +421,12 @@ only overall effects, alternative methods for the selected profile, and paired d
 Generate the report with:
 
 ```bash
-inspect-safety-stats analyze \
+safety-stats analyze \
   --plan analysis-plan.yaml \
   --logs logs/ \
   --output report
 
-inspect-safety-stats visualize \
+safety-stats visualize \
   --report report/report.json \
   --output report/model-comparison.html
 ```

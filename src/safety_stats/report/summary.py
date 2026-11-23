@@ -28,12 +28,12 @@ from collections.abc import Callable, Iterable
 from statistics import median
 from typing import Any
 
-from inspect_safety_stats.config.models import DEFAULT_PRECISION_TARGET
-from inspect_safety_stats.registry import CODES
-from inspect_safety_stats.report.index import DIAGNOSTICS_URL
-from inspect_safety_stats.report.rounding import bound_text, decimals, exact, threshold_text
-from inspect_safety_stats.report.writer import _claim_status, _escape
-from inspect_safety_stats.schema.reports import (
+from safety_stats.config.models import DEFAULT_PRECISION_TARGET
+from safety_stats.registry import CODES
+from safety_stats.report.index import DIAGNOSTICS_URL
+from safety_stats.report.rounding import bound_text, decimals, exact, threshold_text
+from safety_stats.report.writer import _claim_status, _escape
+from safety_stats.schema.reports import (
     ComparisonResult,
     Diagnostic,
     GroupRiskResult,
@@ -41,13 +41,13 @@ from inspect_safety_stats.schema.reports import (
     RiskIntervalResult,
     SafetyReport,
 )
-from inspect_safety_stats.schema.summary import (
+from safety_stats.schema.summary import (
     JUDGE_PREFIX,
     is_headline_risk,
     judge_calibration_of,
     judge_interval,
 )
-from inspect_safety_stats.stats.planning import (
+from safety_stats.stats.planning import (
     rollout_scale_for_half_width,
     rollouts_for_half_width,
 )
@@ -1047,7 +1047,7 @@ def summary_markdown(report: SafetyReport) -> str:
             "Every interval, sensitivity, prompt-level bound and diagnostic message is in "
             "`report-full.md`, the interactive `report.html` and the CSV files beside this "
             f"page. Plan SHA-256 `{_escape(report.analysis.get('plan_sha256'))}`; "
-            f"inspect-safety-stats {_escape(report.package_version)}.",
+            f"safety-stats {_escape(report.package_version)}.",
         ]
     )
     return "\n".join(lines).rstrip() + "\n"

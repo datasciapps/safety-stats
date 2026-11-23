@@ -5,9 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from inspect_safety_stats.analysis.comparison_judges import _apply_judge_correction_to_comparisons
-from inspect_safety_stats.analysis.direct_mean import _HierarchyNode
-from inspect_safety_stats.analysis.judge_calibration import (
+from safety_stats.analysis.comparison_judges import _apply_judge_correction_to_comparisons
+from safety_stats.analysis.direct_mean import _HierarchyNode
+from safety_stats.analysis.judge_calibration import (
     JUDGE_CORRECTABLE_MEASURES,
     PromptRollouts,
     _assumed_judge_calibrations,
@@ -26,25 +26,25 @@ from inspect_safety_stats.analysis.judge_calibration import (
     _validated_judge_calibrations,
     pooled_calibration_gap,
 )
-from inspect_safety_stats.analysis.results import RiskRows
-from inspect_safety_stats.analysis.unclassified_share import (
+from safety_stats.analysis.results import RiskRows
+from safety_stats.analysis.unclassified_share import (
     UnclassifiedShare,
     bounds_complete_unclassified,
     share_alpha,
     unclassified_share_bound,
 )
-from inspect_safety_stats.config.loader import report_path
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.reports import (
+from safety_stats.config.loader import report_path
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.reports import (
     ComparisonResult,
     Diagnostic,
     GroupRiskResult,
     HierarchyRiskResult,
     RiskIntervalResult,
 )
-from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope, scope_path
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.schema.scopes import cohort_scope, plan_scope, scope_path
+from safety_stats.stats.misclassification import (
     JudgeStratumCounts,
     TruthStratumCounts,
     delta_method_corrected_risk,

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Release rehearsal for inspect-safety-stats.
+# Release rehearsal for safety-stats.
 #
 # Builds the package from a git ref in a throwaway worktree, checks the
 # distribution metadata, installs the wheel into fresh virtual environments for
@@ -31,7 +31,7 @@ trap cleanup EXIT
 step "1. Export $REF into a clean worktree"
 git -C "$REPO" worktree add --detach "$SRC" "$REF" >/dev/null
 git -C "$SRC" log -1 --format='  %h %s'
-VERSION=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$SRC/src/inspect_safety_stats/version.py")
+VERSION=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' "$SRC/src/safety_stats/version.py")
 echo "  version $VERSION"
 
 step "2. Build sdist and wheel"
@@ -60,7 +60,7 @@ for PY in "${PYTHONS[@]}"; do
   uv venv --python "$PY" "$VENV" >/dev/null 2>&1 || fail "uv venv $PY"
   # The smoke test reads the example's Inspect log, which needs the inspect extra.
   uv pip install --python "$VENV/bin/python" --quiet "${WHEEL}[inspect]" || fail "install on $PY"
-  BIN="$VENV/bin/inspect-safety-stats"
+  BIN="$VENV/bin/safety-stats"
   "$VENV/bin/python" --version | sed 's/^/  /'
   "$BIN" version | sed 's/^/  /'
   "$BIN" plan zero-failure --threshold 0.01 --alpha 0.05 | grep -q "Required rollouts: 299" \
@@ -116,7 +116,7 @@ VENV="$WORK/venv-${PYTHONS[-1]}"
 uv pip install --python "$VENV/bin/python" --quiet "${WHEEL}[dev]" || fail "install dev extras"
 # Run from the worktree so tests/ and examples/ are present, but the package under
 # test is the installed wheel: the worktree has no editable install and src/ is not on sys.path.
-(cd "$SRC" && "$VENV/bin/python" -c "import inspect_safety_stats as m, sys; p=m.__file__; assert 'site-packages' in p, p; print('  package under test:', p)")
+(cd "$SRC" && "$VENV/bin/python" -c "import safety_stats as m, sys; p=m.__file__; assert 'site-packages' in p, p; print('  package under test:', p)")
 (cd "$SRC" && "$VENV/bin/python" -m pytest -q -p no:cacheprovider 2>&1 | tail -3 | sed 's/^/  /')
 
 if ((${#WARNINGS[@]})); then

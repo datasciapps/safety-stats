@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from inspect_safety_stats.schema.reports import ReportPresentation
+from safety_stats.schema.reports import ReportPresentation
 
 
 def test_dictionary_reads_of_the_presentation_still_work_with_a_deprecation_warning() -> None:

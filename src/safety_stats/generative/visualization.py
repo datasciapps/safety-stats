@@ -15,14 +15,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from inspect_safety_stats.report.artifacts import write_text
-from inspect_safety_stats.report.visualization import _safe_json
+from safety_stats.report.artifacts import write_text
+from safety_stats.report.visualization import _safe_json
 
 if TYPE_CHECKING:  # pragma: no cover - import cycle only matters to type checkers
-    from inspect_safety_stats.generative.report import GenerativeReport
+    from safety_stats.generative.report import GenerativeReport
 
 _TEMPLATE = Path(__file__).with_name("visualization_template.html")
-_DATA_MARKER = "__INSPECT_SAFETY_STATS_GENERATIVE_DATA__"
+_DATA_MARKER = "__SAFETY_STATS_GENERATIVE_DATA__"
 
 
 def render_generative_report(report: GenerativeReport) -> str:

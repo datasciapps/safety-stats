@@ -13,7 +13,7 @@ from demo_eval import refusal_demo
 from inspect_ai import eval as inspect_eval
 from show_results import show
 
-from inspect_safety_stats import analyze
+from safety_stats import analyze
 
 HERE = Path(__file__).resolve().parent
 LOGS = Path("logs/demo")

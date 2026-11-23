@@ -4,8 +4,8 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from inspect_safety_stats.config.models import RiskMeasureSpec
-from inspect_safety_stats.stats import (
+from safety_stats.config.models import RiskMeasureSpec
+from safety_stats.stats import (
     entropic_risk,
     maximum_risk,
     threshold_exceedance,

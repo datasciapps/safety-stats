@@ -38,8 +38,8 @@ from inspect_ai.scorer import Score, Target, scorer
 from inspect_ai.solver import Generate, TaskState, solver
 from inspect_ai.tool import ToolCall
 
-from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.schema.reports import SafetyReport
+from safety_stats import analyze, load_plan
+from safety_stats.schema.reports import SafetyReport
 
 EPOCHS = 2
 MODEL = "mockllm/model"

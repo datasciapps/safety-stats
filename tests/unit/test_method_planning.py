@@ -9,15 +9,15 @@ import numpy as np
 import pytest
 from scipy.optimize import brentq
 
-from inspect_safety_stats.config.methods import DIRECT_MEAN_METHODS, DirectMeanMethod
-from inspect_safety_stats.stats.direct_mean import (
+from safety_stats.config.methods import DIRECT_MEAN_METHODS, DirectMeanMethod
+from safety_stats.stats.direct_mean import (
     DirectMeanBounds,
     weighted_bounded_betting_mean_bounds,
     weighted_bounded_empirical_bernstein_mean_bounds,
     weighted_bounded_hoeffding_mean_bounds,
     weighted_bounded_kl_chernoff_mean_bounds,
 )
-from inspect_safety_stats.stats.planning import (
+from safety_stats.stats.planning import (
     INVERTIBLE_METHODS,
     certification_floor,
     detectable_failure_rates,
@@ -258,7 +258,7 @@ def test_betting_is_refused_for_rates_but_has_an_exact_certification_floor() -> 
 def test_empirical_bernstein_planning_takes_the_widest_interval_of_an_estimate(kind: str) -> None:
     # The planner bounds the EB interval of any data by the one at the largest second moments
     # the estimate allows; observed data never gives a wider one.
-    from inspect_safety_stats.stats.planning import _planned_endpoints
+    from safety_stats.stats.planning import _planned_endpoints
 
     weights = _weights(kind)
     rng = np.random.default_rng(3)

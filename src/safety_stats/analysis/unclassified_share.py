@@ -1,7 +1,7 @@
 """The share of rollouts a judge never classified, bounded for judge corrections.
 
 A judge correction keeps the rollouts with no judge verdict at their worst case and maps only
-the classified mass through rho (:func:`~inspect_safety_stats.stats.misclassification.
+the classified mass through rho (:func:`~safety_stats.stats.misclassification.
 correct_judge_risk`). The share those rollouts hold is a parameter of the population the row
 estimates, and the run's own share only estimates it: with the run's share in its place, a
 corrected upper bound falls below true risk whenever the run saw fewer unclassified rollouts
@@ -18,13 +18,13 @@ from typing import Protocol
 
 import numpy as np
 
-from inspect_safety_stats.analysis.estimates import _block_index
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.reports import RiskIntervalResult
-from inspect_safety_stats.stats.binomial import binomial_upper_bound
-from inspect_safety_stats.stats.direct_mean import bounded_kl_chernoff_upper_bound
-from inspect_safety_stats.stats.independence import direct_bounded_blocks
+from safety_stats.analysis.estimates import _block_index
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.reports import RiskIntervalResult
+from safety_stats.stats.binomial import binomial_upper_bound
+from safety_stats.stats.direct_mean import bounded_kl_chernoff_upper_bound
+from safety_stats.stats.independence import direct_bounded_blocks
 
 # The only policy whose prompt bounds drop an unclassified rollout and keep the prompt. The
 # others keep it as an unknown outcome (``conservative_bounds``, ``end_to_end``), classify it

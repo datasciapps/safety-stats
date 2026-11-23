@@ -15,14 +15,14 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from inspect_safety_stats.generative.execution import FidelityRow
-from inspect_safety_stats.generative.kernels import (
+from safety_stats.generative.execution import FidelityRow
+from safety_stats.generative.kernels import (
     RewriteOutcome,
     RewriteRequest,
     ValidationVerdict,
 )
-from inspect_safety_stats.generative.ledger import read_attempts, read_rewrites, write_attempts
-from inspect_safety_stats.generative.runner import analyze_run, materialize_run
+from safety_stats.generative.ledger import read_attempts, read_rewrites, write_attempts
+from safety_stats.generative.runner import analyze_run, materialize_run
 from tests.generative_fixtures import SEEDS_WITH_TEXT, base_plan, materialize
 
 
@@ -57,10 +57,10 @@ def stub_logs(monkeypatch: pytest.MonkeyPatch, artifacts: Path) -> None:
         ]
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df", lambda logs, **_: samples
+        "safety_stats.ingest.inspect_logs.samples_df", lambda logs, **_: samples
     )
 
 
@@ -84,7 +84,7 @@ def run(
     validator: Any = None,
     kernel: Any = None,
 ) -> Any:
-    import inspect_safety_stats.generative.runner as runner_module
+    import safety_stats.generative.runner as runner_module
 
     if validator is not None:
         monkeypatch.setattr(runner_module, "resolve_validator", lambda spec: validator)
@@ -188,7 +188,7 @@ def test_a_missing_attempt_ledger_is_refused(
 ) -> None:
     plan = plan_path(tmp_path)
     artifacts = tmp_path / "run"
-    import inspect_safety_stats.generative.runner as runner_module
+    import safety_stats.generative.runner as runner_module
 
     monkeypatch.setattr(runner_module, "resolve_validator", lambda spec: DislikesMaltese())
     materialize_run(plan, artifacts, validator="stub")
@@ -203,7 +203,7 @@ def test_an_attempt_ledger_that_disagrees_is_refused(
 ) -> None:
     plan = plan_path(tmp_path)
     artifacts = tmp_path / "run"
-    import inspect_safety_stats.generative.runner as runner_module
+    import safety_stats.generative.runner as runner_module
 
     monkeypatch.setattr(runner_module, "resolve_validator", lambda spec: DislikesMaltese())
     materialize_run(plan, artifacts, validator="stub")
@@ -233,7 +233,7 @@ def test_a_run_resumed_after_validator_errors_can_be_analyzed(
 ) -> None:
     """Resume reruns the errored units; their old rows must not block the analysis."""
 
-    import inspect_safety_stats.generative.runner as runner_module
+    import safety_stats.generative.runner as runner_module
 
     plan = plan_path(tmp_path)
     artifacts = tmp_path / "run"
@@ -291,7 +291,7 @@ def test_no_validator_mismatch_when_no_rewrite_reached_the_validator(
 ) -> None:
     """Nothing was judged and nothing kept, so there is no validator to compare."""
 
-    import inspect_safety_stats.generative.runner as runner_module
+    import safety_stats.generative.runner as runner_module
 
     plan = plan_path(tmp_path)
     artifacts = tmp_path / "run"
@@ -301,13 +301,13 @@ def test_no_validator_mismatch_when_no_rewrite_reached_the_validator(
     assert run_summary.accepted == 0 and run_summary.exhausted == 120
     # No rewrite was accepted, so the log can only hold a sample that matches none.
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df",
+        "safety_stats.ingest.inspect_logs.evals_df",
         lambda logs, **_: pd.DataFrame(
             [{"eval_id": "e", "model": "model-a", "status": "success"}]
         ),
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, **_: pd.DataFrame(
             [{"eval_id": "e", "id": "elsewhere", "epoch": 1, "score_harmful": "PASS"}]
         ),
@@ -342,7 +342,7 @@ def test_kept_rewrites_no_validator_judged_are_a_validator_mismatch(
 ) -> None:
     """A plan that set validation.invoke only for the resume validated part of the run."""
 
-    import inspect_safety_stats.generative.runner as runner_module
+    import safety_stats.generative.runner as runner_module
 
     near = {"near_duplicate": "normalized_text"}
     artifacts = tmp_path / "run"

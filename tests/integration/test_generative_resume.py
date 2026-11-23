@@ -16,11 +16,11 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.generative.execution import check_attempts, read_prompt_store
-from inspect_safety_stats.generative.kernels import RewriteOutcome, RewriteRequest
-from inspect_safety_stats.generative.ledger import read_attempts, read_rewrites
-from inspect_safety_stats.generative.runner import materialize_run
+from safety_stats.cli import app
+from safety_stats.generative.execution import check_attempts, read_prompt_store
+from safety_stats.generative.kernels import RewriteOutcome, RewriteRequest
+from safety_stats.generative.ledger import read_attempts, read_rewrites
+from safety_stats.generative.runner import materialize_run
 from tests.cli_output import plain
 from tests.integration.test_generative_cli import write_plan
 
@@ -66,7 +66,7 @@ class ScriptedKernel:
 def run_with(kernel: ScriptedKernel, plan: Path, artifacts: Path, *, resume: bool = False):
     """Materialize with a scripted kernel, returning None if it was interrupted."""
 
-    import inspect_safety_stats.generative.runner as runner_module
+    import safety_stats.generative.runner as runner_module
 
     original = runner_module.resolve_kernel
     runner_module.resolve_kernel = lambda spec: kernel  # type: ignore[assignment]
@@ -245,7 +245,7 @@ def test_errored_units_are_named_with_the_way_to_rerun_them_and_fail_the_command
     It exits 3, so that a script does not go on to evaluate a dataset that lacks them.
     """
 
-    import inspect_safety_stats.generative.runner as runner_module
+    import safety_stats.generative.runner as runner_module
 
     plan = write_plan(tmp_path, total=20)
     kernel = ScriptedKernel(error_every=5)
@@ -458,7 +458,7 @@ def test_a_run_killed_between_a_units_two_rows_resumes(
     between them. Before, the rewrite row came first, and the unit it left recorded as
     accepted without its text made every resume refuse the directory."""
 
-    from inspect_safety_stats.generative.ledger import IncrementalCsvWriter
+    from safety_stats.generative.ledger import IncrementalCsvWriter
 
     plan = write_plan(tmp_path, total=20)
     artifacts = tmp_path / "run"

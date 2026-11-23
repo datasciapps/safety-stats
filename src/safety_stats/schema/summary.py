@@ -23,11 +23,11 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import Field, SerializerFunctionWrapHandler, model_serializer
 
-from inspect_safety_stats.registry import CODES, Effect, SourceKind
-from inspect_safety_stats.schema.reports import Decision, Eligibility, ResultModel
+from safety_stats.registry import CODES, Effect, SourceKind
+from safety_stats.schema.reports import Decision, Eligibility, ResultModel
 
 if TYPE_CHECKING:
-    from inspect_safety_stats.schema.reports import (
+    from safety_stats.schema.reports import (
         Diagnostic,
         GroupRiskResult,
         RiskIntervalResult,

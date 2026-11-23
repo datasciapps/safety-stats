@@ -8,10 +8,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.config.loader import canonical_plan_hash
-from inspect_safety_stats.stats.judge_stress import stress_verdict
-from inspect_safety_stats.stats.judges import JudgeAccuracyBox
+from safety_stats import analyze, load_plan
+from safety_stats.config.loader import canonical_plan_hash
+from safety_stats.stats.judge_stress import stress_verdict
+from safety_stats.stats.judges import JudgeAccuracyBox
 
 _PLAN = """
 schema_version: "2.0"
@@ -167,10 +167,10 @@ def _frames() -> tuple[pd.DataFrame, pd.DataFrame]:
 def _offline_logs(monkeypatch: pytest.MonkeyPatch) -> None:
     evals, samples = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
 

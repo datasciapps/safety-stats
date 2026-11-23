@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from inspect_safety_stats.schema.claims import (
+from safety_stats.schema.claims import (
     ClaimBound,
     ClaimEstimand,
     ClaimEvidence,
@@ -16,7 +16,7 @@ from inspect_safety_stats.schema.claims import (
     ClaimsProvenance,
     ClaimsSource,
 )
-from inspect_safety_stats.schema.reports import (
+from safety_stats.schema.reports import (
     ClaimEvidenceRecord,
     ComparisonResult,
     GroupRiskResult,

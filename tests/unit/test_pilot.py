@@ -6,8 +6,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from inspect_safety_stats.ingest.manifest import load_manifest
-from inspect_safety_stats.ingest.pilot import draw_pilot
+from safety_stats.ingest.manifest import load_manifest
+from safety_stats.ingest.pilot import draw_pilot
 
 
 def _manifest(sizes: dict[str, int]) -> pd.DataFrame:

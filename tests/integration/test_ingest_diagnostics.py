@@ -12,9 +12,9 @@ import json
 from pathlib import Path
 from typing import Any
 
-from inspect_safety_stats import analyze
-from inspect_safety_stats.ingest.rollout_files import RolloutFiles
-from inspect_safety_stats.schema.reports import Diagnostic, SafetyReport
+from safety_stats import analyze
+from safety_stats.ingest.rollout_files import RolloutFiles
+from safety_stats.schema.reports import Diagnostic, SafetyReport
 
 BASE_PLAN: dict[str, Any] = {
     "schema_version": "3.0",

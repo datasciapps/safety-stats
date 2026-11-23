@@ -13,8 +13,8 @@ from typing import cast
 
 import pytest
 
-from inspect_safety_stats.config.loader import report_path
-from inspect_safety_stats.config.models import AnalysisPlan
+from safety_stats.config.loader import report_path
+from safety_stats.config.models import AnalysisPlan
 
 
 def _plan(source: Path | None) -> AnalysisPlan:

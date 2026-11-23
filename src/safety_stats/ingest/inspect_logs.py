@@ -3,7 +3,7 @@
 Everything that knows Inspect's log format lives here: the columns of ``evals_df`` and
 ``samples_df``, Inspect's identifiers, its collection order, and how a sample error's stage is
 read from the transcript. The rules of the plan are applied by
-:func:`inspect_safety_stats.ingest.normalize.normalize`.
+:func:`safety_stats.ingest.normalize.normalize`.
 """
 
 from __future__ import annotations
@@ -32,15 +32,15 @@ except ImportError as error:  # pragma: no cover - exercised in a fresh interpre
         raise
     raise ImportError(
         "Reading Inspect AI logs needs the inspect extra: "
-        "pip install 'inspect-safety-stats[inspect]'. "
+        "pip install 'safety-stats[inspect]'. "
         "Rollout files (--runs and --rollouts) need no extra."
     ) from error
 
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.ingest.files import file_sha256
-from inspect_safety_stats.ingest.normalize import POLICY_BLOCK_CODES, ingest
-from inspect_safety_stats.ingest.outcomes import is_missing
-from inspect_safety_stats.ingest.records import (
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.ingest.files import file_sha256
+from safety_stats.ingest.normalize import POLICY_BLOCK_CODES, ingest
+from safety_stats.ingest.outcomes import is_missing
+from safety_stats.ingest.records import (
     ErrorContext,
     NormalizedData,
     RolloutRecord,

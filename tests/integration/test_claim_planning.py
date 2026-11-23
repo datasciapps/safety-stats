@@ -8,16 +8,16 @@ import pandas as pd
 import pytest
 from typer.testing import CliRunner
 
-from inspect_safety_stats import analyze
-from inspect_safety_stats.claim_planning import (
+from safety_stats import analyze
+from safety_stats.claim_planning import (
     PlannedClaim,
     UnplannedClaim,
     plan_claims,
     plan_design,
 )
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.config.loader import load_plan
-from inspect_safety_stats.stats.planning import fixed_design_detectable_failure_rates
+from safety_stats.cli import app
+from safety_stats.config.loader import load_plan
+from safety_stats.stats.planning import fixed_design_detectable_failure_rates
 from tests.cli_output import plain
 
 runner = CliRunner()
@@ -148,10 +148,10 @@ def test_planned_claims_use_the_alpha_and_design_analyze_uses(
     plan_path = _write(tmp_path, primary=primary)
     evals, samples = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
     report = analyze(plan=plan_path, logs="ignored")
@@ -203,10 +203,10 @@ def test_planned_alphas_are_shared_across_cohorts_as_analyze_shares_them(
         ignore_index=True,
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
     report = analyze(plan=plan_path, logs="ignored")
@@ -254,10 +254,10 @@ def test_direct_worst_of_k_intervals_count_in_the_direct_mean_family(
     plan_path = _write(tmp_path, plan=with_worst)
     evals, samples = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
     report = analyze(plan=plan_path, logs="ignored")
@@ -302,10 +302,10 @@ def test_each_side_is_planned_at_its_own_threshold(tmp_path: Path) -> None:
 def _patch_logs(monkeypatch: pytest.MonkeyPatch, *, all_safe: bool = False) -> None:
     evals, samples = _frames(all_safe=all_safe)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
 
@@ -628,7 +628,7 @@ def test_a_hierarchy_analyze_cannot_calibrate_is_refused(
     analyze reports DIRECT_MEAN_CALIBRATION_INVALID and decides no claim, so the planner refuses
     and names the code and its remedy; with every node weighted, both run as usual.
     """
-    from inspect_safety_stats.registry import CODES
+    from safety_stats.registry import CODES
 
     plan = _parity_plan("frontier_sidak", "weighted_hoeffding").replace(
         "  weights: {strategy: nested_equal, hierarchy: [task_id, question_id, prompt_id]}\n",

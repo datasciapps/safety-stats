@@ -1,15 +1,15 @@
-# Inspect Safety Stats
+# Safety Stats
 
 [![CI](https://github.com/aduncan001/safety_stats/actions/workflows/ci.yml/badge.svg)](https://github.com/aduncan001/safety_stats/actions/workflows/ci.yml)
 
-`inspect-safety-stats` provides fixed-design statistical risk analysis for pass/fail LLM
+`safety-stats` provides fixed-design statistical risk analysis for pass/fail LLM
 evaluations: safety, reliability, capability and LLM-as-a-judge benchmarks. It gives confidence
 intervals for failure rates, compares models and harness versions, plans how many rollouts a
 claim needs, and corrects rates for an LLM judge's misclassification.
 
 It reads [Inspect AI](https://inspect.aisi.org.uk/) logs, and results from any other evaluation
 harness written as [rollout files](https://github.com/aduncan001/safety_stats/blob/main/docs/rollout-files.md)
-(experimental). Its bounds and planning functions in [`inspect_safety_stats.stats`](#python-api)
+(experimental). Its bounds and planning functions in [`safety_stats.stats`](#python-api)
 also work on their own, on counts from anywhere, without Inspect installed.
 
 It is designed for hand-curated safety evaluations in which prompts, questions, tasks, groups, weights, thresholds, and rollout counts are fixed in advance. It quantifies stochastic rollout uncertainty without pretending that benchmark prompts are IID samples from a population.
@@ -62,7 +62,7 @@ You have one system and a limit declared before the runs. Does it pass, fail, or
 not decide?
 
 ```bash
-inspect-safety-stats analyze \
+safety-stats analyze \
   --plan examples/real_simpleqa/safety-plan.yaml \
   --logs examples/real_simpleqa/simpleqa-8-real.eval \
   --output reports/simpleqa \
@@ -141,7 +141,7 @@ anytime-valid upper bound for Inspect runs that a rule such as Optstop's stopped
 ## Install
 
 ```bash
-python -m pip install 'inspect-safety-stats[inspect]'
+python -m pip install 'safety-stats[inspect]'
 ```
 
 The `inspect` extra installs Inspect AI and pyarrow, which reading Inspect logs needs. Leave it
@@ -208,7 +208,7 @@ The plan and the design are what `init` writes for these logs, with `--failure-v
 because the package never guesses which score value means failure:
 
 ```bash
-inspect-safety-stats init --logs logs/demo --failure-values FAIL \
+safety-stats init --logs logs/demo --failure-values FAIL \
   --group-by risk_domain --baseline mockllm/baseline
 ```
 
@@ -225,9 +225,9 @@ because it was written after the logs existed.
 Check the logs against the plan and the design, then analyze them:
 
 ```bash
-inspect-safety-stats validate --plan examples/demo/plan.yaml --logs logs/demo
+safety-stats validate --plan examples/demo/plan.yaml --logs logs/demo
 
-inspect-safety-stats analyze --plan examples/demo/plan.yaml \
+safety-stats analyze --plan examples/demo/plan.yaml \
   --logs logs/demo --output reports/demo
 ```
 
@@ -262,7 +262,7 @@ The same analysis from Python, reading the headline and the warnings from the su
 the report:
 
 ```python
-from inspect_safety_stats import analyze
+from safety_stats import analyze
 
 report = analyze(plan="examples/demo/plan.yaml", logs="logs/demo")
 report.write("reports/demo-python")
@@ -288,7 +288,7 @@ WARNING TAIL_MEASURES_UNINFORMATIVE recorded
 `report` is a `SafetyReport`. `SafetyReport.model_validate_json` reads a `report.json` written
 earlier, as [show_results.py](https://github.com/aduncan001/safety_stats/blob/main/examples/demo/show_results.py) does, and the report it returns has
 the same `summary`. Pass `context={STORED_REPORT: True}` (from
-`inspect_safety_stats.schema.reports`), as that script does, so that a report written by an
+`safety_stats.schema.reports`), as that script does, so that a report written by an
 earlier version keeps each diagnostic's `source` and `effect` as written, and still reads when a
 later version reclassifies or retires a diagnostic code.
 
@@ -420,13 +420,13 @@ and shows what a failing validation looks like.
 Plan a zero-failure study:
 
 ```bash
-inspect-safety-stats plan zero-failure --threshold 0.01 --alpha 0.05
+safety-stats plan zero-failure --threshold 0.01 --alpha 0.05
 ```
 
 Calculate exact detectable rates at a fixed horizon:
 
 ```bash
-inspect-safety-stats plan detectable-rate \
+safety-stats plan detectable-rate \
   --trials 500 --threshold 0.05 --alpha 0.05 --power 0.90
 ```
 
@@ -435,7 +435,7 @@ inspect-safety-stats plan detectable-rate \
 Validate logs against a frozen design:
 
 ```bash
-inspect-safety-stats validate \
+safety-stats validate \
   --plan examples/fixed_design/safety-plan.yaml \
   --logs logs/
 ```
@@ -443,7 +443,7 @@ inspect-safety-stats validate \
 Run the analysis:
 
 ```bash
-inspect-safety-stats analyze \
+safety-stats analyze \
   --plan examples/fixed_design/safety-plan.yaml \
   --logs logs/ \
   --output reports/example
@@ -492,7 +492,7 @@ Regenerate or relocate a visualization from any existing report directory, or fr
 `report.json` on its own, which holds everything the report shows:
 
 ```bash
-inspect-safety-stats visualize \
+safety-stats visualize \
   --report reports/example \
   --output reports/example-dashboard.html
 ```
@@ -507,7 +507,7 @@ Use `--decision-exit-codes` to opt into decision-sensitive exit codes for comple
 ## Python API
 
 ```python
-from inspect_safety_stats import analyze, write_visualization
+from safety_stats import analyze, write_visualization
 
 report = analyze(plan="safety-plan.yaml", logs="logs/")
 report.write("reports/candidate")
@@ -520,7 +520,7 @@ for risk in report.group_risks:
 Low-level functions are also public:
 
 ```python
-from inspect_safety_stats.stats import (
+from safety_stats.stats import (
     binomial_upper_bound,
     entropic_risk,
     weighted_cvar,
@@ -592,7 +592,7 @@ page, and every report of a fixed or sampled design links to it.
 - [Version 1 engineering design](https://github.com/aduncan001/safety_stats/blob/main/docs/archive/v1-design.md) (archived; superseded by the shipped package)
 - [Mathematical methods and justification](https://github.com/aduncan001/safety_stats/blob/main/docs/statistical-methods.md)
 - [Anytime-valid confidence sequences: phase-0 design](https://github.com/aduncan001/safety_stats/blob/main/docs/sequential-design.md) (design only; not implemented)
-- [Generative evaluation](https://github.com/aduncan001/safety_stats/blob/main/docs/generative-evaluation.md). The generative pipeline is experimental: its public surface, `inspect_safety_stats.generative.__all__`, may change in any minor release.
+- [Generative evaluation](https://github.com/aduncan001/safety_stats/blob/main/docs/generative-evaluation.md). The generative pipeline is experimental: its public surface, `safety_stats.generative.__all__`, may change in any minor release.
 - [Generative evaluation: design decisions](https://github.com/aduncan001/safety_stats/blob/main/docs/generative-design-decisions.md) (experimental)
 - [Generative hierarchy evaluation planner](https://github.com/aduncan001/safety_stats/blob/main/docs/archive/generative-hierarchy-evaluation-plan.md) (archived; the original proposal, superseded by the two above)
 - [Limitations log](https://github.com/aduncan001/safety_stats/blob/main/docs/limitations.md): limitations found on real evaluations, and what `main` does about each

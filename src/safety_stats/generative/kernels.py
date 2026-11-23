@@ -17,7 +17,7 @@ from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
-from inspect_safety_stats.generative.schema import GenerativePlan
+from safety_stats.generative.schema import GenerativePlan
 
 ValidationStatus = Literal["valid", "invalid", "error"]
 ChatRole = Literal["system", "user", "assistant"]

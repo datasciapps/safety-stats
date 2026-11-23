@@ -1,7 +1,7 @@
 """Where in ``report.json`` the item a scope names is: a JSON pointer (RFC 6901).
 
 A diagnostic's ``scope`` says where a finding sits in the plan, the data or the results
-(:mod:`inspect_safety_stats.schema.scopes`). When the report holds a record of that item, its
+(:mod:`safety_stats.schema.scopes`). When the report holds a record of that item, its
 ``item`` is the pointer to that record, so a reader goes from the finding to the result it
 concerns without searching:
 
@@ -39,10 +39,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from inspect_safety_stats.schema.scopes import node_id, scope_segments
+from safety_stats.schema.scopes import node_id, scope_segments
 
 if TYPE_CHECKING:
-    from inspect_safety_stats.schema.reports import SafetyReport
+    from safety_stats.schema.reports import SafetyReport
 
 _WHOLE_LISTS = {
     ("plan", "claims"): "/claims",

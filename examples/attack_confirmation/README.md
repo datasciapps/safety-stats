@@ -108,7 +108,7 @@ The same steps by hand:
 ```bash
 inspect eval examples/attack_confirmation/attack_confirmation.py \
   --model mockllm/baseline,mockllm/candidate --log-dir logs/attack-confirmation
-inspect-safety-stats analyze --plan examples/attack_confirmation/plan.yaml \
+safety-stats analyze --plan examples/attack_confirmation/plan.yaml \
   --logs logs/attack-confirmation --output reports/attack-confirmation
 ```
 
@@ -253,6 +253,6 @@ run shows, and the claim is INCONCLUSIVE. 400 equally weighted behaviours (the s
 HarmBench's design) certify with at most 9. The exact one-sided binomial test would allow 1
 and 12 at α = 0.05, and 0 and 11 at the plan's 0.025: at 100 behaviours the difference is the
 alpha split alone, and at 400 the plan's interval is also more conservative than that test.
-`inspect-safety-stats plan fixed-design --plan` plans every claim with the plan's own
+`safety-stats plan fixed-design --plan` plans every claim with the plan's own
 interval, alpha and weights; unequal weights, such as `nested_equal` over categories of
 unequal size, widen the bound.

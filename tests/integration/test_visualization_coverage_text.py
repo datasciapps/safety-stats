@@ -14,8 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from inspect_safety_stats import analyze
-from inspect_safety_stats.report import visualization
+from safety_stats import analyze
+from safety_stats.report import visualization
 from tests.template_functions import function_source
 
 SIMPLEQA = Path(__file__).resolve().parents[2] / "examples" / "real_simpleqa"

@@ -35,9 +35,9 @@ sys.path.insert(0, str(EXAMPLE_DIR))
 
 import simulated_target  # noqa: E402
 
-from inspect_safety_stats.generative.schema import load_generative_plan  # noqa: E402
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy  # noqa: E402
-from inspect_safety_stats.stats.binomial import (  # noqa: E402
+from safety_stats.generative.schema import load_generative_plan  # noqa: E402
+from safety_stats.generative.taxonomy import compile_taxonomy  # noqa: E402
+from safety_stats.stats.binomial import (  # noqa: E402
     binomial_lower_bound,
     binomial_upper_bound,
 )

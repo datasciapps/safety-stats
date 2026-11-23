@@ -1,7 +1,7 @@
 """The schema of claims.json: a report's claims as one record each (experimental, #11).
 
 Every value is copied from report.json, and each record names, as JSON pointers (RFC 6901), the
-places in report.json it was copied from. ``inspect-safety-stats schema claims`` prints the JSON
+places in report.json it was copied from. ``safety-stats schema claims`` prints the JSON
 schema.
 """
 
@@ -11,7 +11,7 @@ from typing import Literal
 
 from pydantic import Field
 
-from inspect_safety_stats.schema.reports import Decision, Eligibility, ResultModel
+from safety_stats.schema.reports import Decision, Eligibility, ResultModel
 
 
 class ClaimEstimand(ResultModel):

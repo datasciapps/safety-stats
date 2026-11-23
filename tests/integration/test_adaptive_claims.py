@@ -11,13 +11,13 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.config.loader import canonical_plan_hash
-from inspect_safety_stats.ingest.records import StopContext
-from inspect_safety_stats.schema.reports import SafetyReport
-from inspect_safety_stats.stats.adaptive import adaptive_lower_bound
-from inspect_safety_stats.validate.plan import validate_plan_references
+from safety_stats import analyze, load_plan
+from safety_stats.cli import app
+from safety_stats.config.loader import canonical_plan_hash
+from safety_stats.ingest.records import StopContext
+from safety_stats.schema.reports import SafetyReport
+from safety_stats.stats.adaptive import adaptive_lower_bound
+from safety_stats.validate.plan import validate_plan_references
 from tests.cli_output import plain
 from tests.page_script import node_or_skip, run_page
 
@@ -135,10 +135,10 @@ def _logs(
         ]
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
 
@@ -449,7 +449,7 @@ def test_a_failure_a_plan_policy_filled_in_is_no_confirmed_success(
     )
     if stop is not None:
         monkeypatch.setattr(
-            "inspect_safety_stats.ingest.inspect_logs._stop_context",
+            "safety_stats.ingest.inspect_logs._stop_context",
             lambda **kwargs: stop if kwargs["sample_id"][:-2] in filled else None,
         )
     inputs = {**PLAN["inputs"], "score": {**PLAN["inputs"]["score"], **score_settings}}

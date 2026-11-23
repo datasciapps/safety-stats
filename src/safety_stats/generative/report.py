@@ -15,25 +15,25 @@ from typing import Any
 
 import pandas as pd
 
-from inspect_safety_stats.generative.comparisons import ComparisonResult
-from inspect_safety_stats.generative.contrasts import SliceFamilyResult
-from inspect_safety_stats.generative.execution import AcceptanceRow, FidelityRow
-from inspect_safety_stats.generative.inference import (
+from safety_stats.generative.comparisons import ComparisonResult
+from safety_stats.generative.contrasts import SliceFamilyResult
+from safety_stats.generative.execution import AcceptanceRow, FidelityRow
+from safety_stats.generative.inference import (
     NodeEstimate,
     ReweightedEstimate,
     TreeEstimate,
 )
-from inspect_safety_stats.generative.judge import CorrectedEstimate
-from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
-from inspect_safety_stats.generative.visualization import write_generative_report
-from inspect_safety_stats.report.artifacts import (
+from safety_stats.generative.judge import CorrectedEstimate
+from safety_stats.generative.taxonomy import CompiledTaxonomy
+from safety_stats.generative.visualization import write_generative_report
+from safety_stats.report.artifacts import (
     CHECKSUMS,
     write_checksums,
     write_frame,
     write_json,
 )
-from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.version import __version__
+from safety_stats.schema.reports import Diagnostic
+from safety_stats.version import __version__
 
 ARTIFACTS = (
     "report.json",

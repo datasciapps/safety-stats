@@ -253,7 +253,7 @@ difficulty or source.
 `plan pilot` (experimental) draws a pilot at random within strata of a design manifest:
 
 ```bash
-inspect-safety-stats plan pilot --manifest design.csv --per-stratum 5 --seed 20261116 \
+safety-stats plan pilot --manifest design.csv --per-stratum 5 --seed 20261116 \
     --output pilot.csv
 ```
 
@@ -291,7 +291,7 @@ label too. It also refuses labels that pandas' default type inference reads as o
 reader with its defaults would show them as one stratum to anyone who checks the draw.
 
 In Python, `draw_pilot(manifest, per_stratum=..., strata=[...], seed=...)` in
-`inspect_safety_stats.ingest.pilot` returns the same frame as a DataFrame. Read the manifest
+`safety_stats.ingest.pilot` returns the same frame as a DataFrame. Read the manifest
 as the command does, with `pd.read_csv(path, dtype=str, keep_default_na=False)`: the draw
 hashes each `prompt_id` as written, and pandas' defaults would read an identifier such as
 `0001` as the number 1. `draw_pilot` refuses a `prompt_id` that is not text or is blank.

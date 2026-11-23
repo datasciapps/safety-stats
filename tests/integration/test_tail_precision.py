@@ -17,10 +17,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.ingest.rollout_files import RolloutFiles
-from inspect_safety_stats.schema.reports import Diagnostic, SafetyReport
-from inspect_safety_stats.stats.binomial import binomial_upper_bound
+from safety_stats import analyze, load_plan
+from safety_stats.ingest.rollout_files import RolloutFiles
+from safety_stats.schema.reports import Diagnostic, SafetyReport
+from safety_stats.stats.binomial import binomial_upper_bound
 
 CODE = "TAIL_MEASURES_UNINFORMATIVE"
 
@@ -103,10 +103,10 @@ def _logs(monkeypatch: pytest.MonkeyPatch) -> None:
         ]
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
 

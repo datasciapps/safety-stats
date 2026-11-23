@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from inspect_safety_stats.report.writer import _rendered
-from inspect_safety_stats.schema.reports import SafetyReport
+from safety_stats.report.writer import _rendered
+from safety_stats.schema.reports import SafetyReport
 
 
 def rendering_differences(directory: Path) -> list[str]:

@@ -9,13 +9,13 @@ from typing import Literal
 
 import pandas as pd
 
-from inspect_safety_stats.config.loader import load_plan
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.config.registration import RegistrationReceipt
-from inspect_safety_stats.ingest.manifest import ResolvedGroup
-from inspect_safety_stats.ingest.records import SourceData
-from inspect_safety_stats.schema.reports import Diagnostic, IntegritySummary
-from inspect_safety_stats.validate.plan import validate_plan_references
+from safety_stats.config.loader import load_plan
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.config.registration import RegistrationReceipt
+from safety_stats.ingest.manifest import ResolvedGroup
+from safety_stats.ingest.records import SourceData
+from safety_stats.schema.reports import Diagnostic, IntegritySummary
+from safety_stats.validate.plan import validate_plan_references
 
 
 def _coerce_plan(plan: AnalysisPlan | str | Path) -> AnalysisPlan:

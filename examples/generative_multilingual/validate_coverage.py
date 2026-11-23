@@ -20,16 +20,16 @@ from pathlib import Path
 import numpy as np
 import simulated_target
 
-from inspect_safety_stats.generative.execution import execute_rewrites, load_seed_texts
-from inspect_safety_stats.generative.inference import estimate_slice, estimate_tree
-from inspect_safety_stats.generative.inspect_bridge import join_outcomes
-from inspect_safety_stats.generative.kernels import (
+from safety_stats.generative.execution import execute_rewrites, load_seed_texts
+from safety_stats.generative.inference import estimate_slice, estimate_tree
+from safety_stats.generative.inspect_bridge import join_outcomes
+from safety_stats.generative.kernels import (
     DeterministicFakeKernel,
     resolve_kernel_fingerprint,
 )
-from inspect_safety_stats.generative.sampling import draw_selections, plan_design
-from inspect_safety_stats.generative.schema import load_generative_plan
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+from safety_stats.generative.sampling import draw_selections, plan_design
+from safety_stats.generative.schema import load_generative_plan
+from safety_stats.generative.taxonomy import compile_taxonomy
 
 HERE = Path(__file__).parent
 LANGUAGES = ("english", "french", "german", "maltese")

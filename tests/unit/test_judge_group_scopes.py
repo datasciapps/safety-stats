@@ -13,10 +13,10 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from inspect_safety_stats.config.loader import canonical_plan_hash
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.generative.schema import load_generative_plan
-from inspect_safety_stats.validate.plan import validate_plan_references
+from safety_stats.config.loader import canonical_plan_hash
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.generative.schema import load_generative_plan
+from safety_stats.validate.plan import validate_plan_references
 from tests.generative_fixtures import SEEDS, base_plan, materialize
 
 BODY = """

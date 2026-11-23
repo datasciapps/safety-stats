@@ -8,9 +8,9 @@ from typing import Any
 from pydantic import BaseModel
 from pydantic_core import to_jsonable_python
 
-from inspect_safety_stats.config.loader import plan_defaults
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.registry import ASSUMPTIONS
+from safety_stats.config.loader import plan_defaults
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.registry import ASSUMPTIONS
 
 # Whether an assumption of the registry applies to a plan. Every registry entry has one, which
 # tests/unit/test_assumptions_used.py checks, so a new entry cannot be left out silently.

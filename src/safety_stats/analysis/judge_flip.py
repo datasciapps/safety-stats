@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from inspect_safety_stats.config.loader import report_message, report_path
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.ingest.judge_flip import load_judge_flip_manifest
-from inspect_safety_stats.ingest.outcomes import classified_by_policy, judge_positive
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.schema.scopes import plan_scope
-from inspect_safety_stats.stats.judge_flip import FlipRate, judge_flip_rate
+from safety_stats.config.loader import report_message, report_path
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.ingest.judge_flip import load_judge_flip_manifest
+from safety_stats.ingest.outcomes import classified_by_policy, judge_positive
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.reports import Diagnostic
+from safety_stats.schema.scopes import plan_scope
+from safety_stats.stats.judge_flip import FlipRate, judge_flip_rate
 
 SCOPE = plan_scope("inputs", "judge_flip")
 METHOD = "clopper_pearson_two_sided"

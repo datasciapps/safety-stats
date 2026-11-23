@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from inspect_safety_stats.ingest.records import ErrorContext
-from inspect_safety_stats.ingest.rollout_files import RolloutFiles, read_rollout_files
+from safety_stats.ingest.records import ErrorContext
+from safety_stats.ingest.rollout_files import RolloutFiles, read_rollout_files
 
 
 def _jsonl(path: Path, records: list[dict[str, object]]) -> Path:

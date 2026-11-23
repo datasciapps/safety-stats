@@ -31,13 +31,13 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from scipy.stats import binom
 
-import inspect_safety_stats.stats as stats
-from inspect_safety_stats.config.models import (
+import safety_stats.stats as stats
+from safety_stats.config.models import (
     ComparisonSetSpec,
     ComparisonSpec,
     DirectMeanIntervalsSpec,
 )
-from inspect_safety_stats.stats import (
+from safety_stats.stats import (
     binomial_bounds,
     direct_ratio_bounds,
     direct_risk_difference_bounds,

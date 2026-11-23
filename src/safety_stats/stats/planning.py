@@ -13,7 +13,7 @@ from scipy.special import betaincinv
 from scipy.stats import beta as beta_distribution
 from scipy.stats import binom
 
-from inspect_safety_stats.config.methods import DirectMeanMethod
+from safety_stats.config.methods import DirectMeanMethod
 
 
 @dataclass(frozen=True)
@@ -295,7 +295,7 @@ def _planned_endpoints(
     (a block of weight w and value v adds w^2 v^2 <= m w v, with m the largest weight).
     """
 
-    from inspect_safety_stats.stats.direct_mean import (
+    from safety_stats.stats.direct_mean import (
         DIRECT_MEAN_ENGINES,
         bounded_empirical_bernstein_width,
     )
@@ -380,7 +380,7 @@ def detectable_failure_rates(
     some true rate, 0 or 1 at the extreme, reaches the target power.
     """
 
-    from inspect_safety_stats.stats.direct_mean import (
+    from safety_stats.stats.direct_mean import (
         _bounded_chernoff_kernel,
         _invert_divergence,
     )
@@ -453,7 +453,7 @@ def certification_floor(weights: ArrayLike, *, method: DirectMeanMethod, alpha: 
     projection, which can lower it.
     """
 
-    from inspect_safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES
+    from safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES
 
     w = np.asarray(weights, dtype=float)
     zeros = np.zeros(len(w))

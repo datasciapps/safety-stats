@@ -15,14 +15,14 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.schema.reports import (
+from safety_stats import analyze, load_plan
+from safety_stats.schema.reports import (
     GroupRiskResult,
     HierarchyRiskResult,
     RiskIntervalResult,
     SafetyReport,
 )
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.stats.misclassification import (
     TruthStratumCounts,
     lang_reiczigel_corrected_risk,
 )
@@ -164,10 +164,10 @@ def _analyze(
         ]
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
     unlabelled = analyze(

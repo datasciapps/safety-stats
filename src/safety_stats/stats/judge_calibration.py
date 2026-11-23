@@ -20,8 +20,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
-from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.schema.reports import Diagnostic
+from safety_stats.stats.misclassification import (
     CalibrationBound,
     FineStratumBounds,
     JudgeCalibration,

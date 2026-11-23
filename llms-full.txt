@@ -1,6 +1,6 @@
-# inspect-safety-stats: complete agent reference
+# safety-stats: complete agent reference
 
-`inspect-safety-stats` provides finite-sample statistical risk analysis for binary LLM evaluations across safety, reliability, capability, and LLM-as-a-judge benchmarks.
+`safety-stats` provides finite-sample statistical risk analysis for binary LLM evaluations across safety, reliability, capability, and LLM-as-a-judge benchmarks.
 
 ## Scope and core assumptions
 
@@ -8,7 +8,7 @@
 - **Sampled-frame option (`design.type: sampled`)**: When prompts are drawn by a known probability mechanism from a larger frame, Horvitz-Thompson estimators extend inference to the frame mean using declared inclusion probabilities.
 - **Conservative unknown handling**: Under the default `missing: conservative_bounds` policy, unclassified rollouts (grader failures, unparseable outputs, timeouts) are completed as non-failures for lower bounds and as failures for upper bounds. Other explicit policies (`block`, `exclude`, `as_failure`) can be declared in `inputs.score`.
 - **Default estimand (`end_to_end_system`)**: Explicit target-generation provider content-policy blocks with no delivered content are counted as non-failures (`failure = False`), matching end-to-end safety red-teaming. For capability, factuality, or QA benchmarks—or whenever provider blocks should remain unclassified rather than counted as passes—set `inputs.estimand: underlying_model`.
-- **Offline execution**: Neither `inspect_safety_stats.stats` nor `analyze()` / `validate()` calls model providers or makes network requests.
+- **Offline execution**: Neither `safety_stats.stats` nor `analyze()` / `validate()` calls model providers or makes network requests.
 
 ---
 
@@ -16,19 +16,19 @@
 
 | Situation | Entry point | Files needed |
 |---|---|---|
-| You have counts, per-item failure rates, paired pass/fail lists, or LLM-judge accuracy numbers from any evaluation script | `inspect_safety_stats.stats` (and submodules `planning`, `misclassification`) | None |
-| You have completed Inspect AI `.eval` logs | CLI (`inspect-safety-stats validate` then `analyze`) or Python `analyze(plan=..., logs=...)` | `.eval` log(s), `design.csv`, `plan.yaml` (`schema_version: "2.0"`) |
+| You have counts, per-item failure rates, paired pass/fail lists, or LLM-judge accuracy numbers from any evaluation script | `safety_stats.stats` (and submodules `planning`, `misclassification`) | None |
+| You have completed Inspect AI `.eval` logs | CLI (`safety-stats validate` then `analyze`) or Python `analyze(plan=..., logs=...)` | `.eval` log(s), `design.csv`, `plan.yaml` (`schema_version: "2.0"`) |
 | You have JSONL/CSV results from another evaluation harness and want the full hierarchy report, HTML dashboard, and audit sidecars | Write them as [rollout files](docs/rollout-files.md) (experimental) and run the CLI with `--runs runs.jsonl --rollouts rollouts.jsonl` in place of `--logs`, or Python `analyze(plan=..., source=RolloutFiles(runs=..., rollouts=...))`; no Inspect AI install needed (recipe 3) | `runs.jsonl`, `rollouts.jsonl` (or `.csv`), `design.csv`, `plan.yaml` (`schema_version: "3.0"`) |
 
 ---
 
-## Problem-to-function map (`inspect_safety_stats.stats`)
+## Problem-to-function map (`safety_stats.stats`)
 
-All functions in `inspect_safety_stats.stats` are pure and take Python numbers, lists, or 1D NumPy arrays.
+All functions in `safety_stats.stats` are pure and take Python numbers, lists, or 1D NumPy arrays.
 
 ### 1. Prospective rollout sample-size and power planning
 
-Import `zero_failure_sample_size` from `inspect_safety_stats.stats`. Import the remaining planning helpers from `inspect_safety_stats.stats.planning`:
+Import `zero_failure_sample_size` from `safety_stats.stats`. Import the remaining planning helpers from `safety_stats.stats.planning`:
 
 - `zero_failure_sample_size(*, threshold, alpha) -> int`: Minimum rollouts `n` so `0` observed failures certifies failure rate `<= threshold` at one-sided level `1 - alpha` (`1 - alpha**(1/n) <= threshold`). For `threshold=0.01, alpha=0.05`, returns `299`.
 - `certification_sample_size(*, true_rate, threshold, alpha, power, max_trials=1_000_000) -> int`: Minimum rollouts to certify `rate < threshold` with target `power` when `0 <= true_rate < threshold`.
@@ -40,7 +40,7 @@ Import `zero_failure_sample_size` from `inspect_safety_stats.stats`. Import the 
 
 ### 2. Per-prompt exact binomial bounds
 
-Import from `inspect_safety_stats.stats`:
+Import from `safety_stats.stats`:
 
 - `binomial_upper_bound(failures, trials, *, alpha) -> float`: One-sided `1 - alpha` Clopper-Pearson upper bound (`failures` and `trials` must be Python `int`, never `bool`).
 - `binomial_lower_bound(failures, trials, *, alpha) -> float`: One-sided `1 - alpha` Clopper-Pearson lower bound.
@@ -49,7 +49,7 @@ Import from `inspect_safety_stats.stats`:
 
 ### 3. Fixed-design weighted mean risk intervals
 
-Import from `inspect_safety_stats.stats`:
+Import from `safety_stats.stats`:
 
 - `weighted_kl_chernoff_mean_bounds(failures, unclassified, trials, weights, *, alpha_lower, alpha_upper, independence_unit="rollout") -> DirectMeanBounds`: Sharpest under sparse or zero failures; uses exact Bernoulli-KL inversion for equal atomic weights and weighted Poisson-Chernoff otherwise.
 - `weighted_empirical_bernstein_mean_bounds(failures, unclassified, trials, weights, *, alpha_lower, alpha_upper, independence_unit="rollout", variance_centers=None) -> DirectMeanBounds`: Variance-adaptive concentration bound for heterogeneous prompt rates. `variance_centers` gives one or more centerings fixed by the design, one center in `[0, 1]` per prompt; the default uses centers `0` and `1`.
@@ -59,7 +59,7 @@ Invariants: `failures`, `unclassified`, `trials` are aligned 1D integer arrays w
 
 ### 4. Risk functionals over per-prompt rates
 
-Import from `inspect_safety_stats.stats` (`weights` must be nonnegative and sum to `1.0`):
+Import from `safety_stats.stats` (`weights` must be nonnegative and sum to `1.0`):
 
 - `weighted_mean(values, weights) -> float`
 - `weighted_cvar(values, weights, *, beta) -> float`: Conditional Value-at-Risk over the worst `1 - beta` weight fraction (`0 <= beta < 1`).
@@ -73,7 +73,7 @@ Import from `inspect_safety_stats.stats` (`weights` must be nonnegative and sum 
 
 ### 5. Two-model comparisons (paired and multi-rollout)
 
-Import from `inspect_safety_stats.stats`:
+Import from `safety_stats.stats`:
 
 - `newcombe_paired_interval(candidate, baseline, *, alpha_lower=0.05, alpha_upper=0.05) -> PairedDifferenceInterval`: Paired score interval for `candidate - baseline` where `True` means failure (negative `.estimate` and `.upper < 0` mean `candidate` failed less often). **Inputs must be `list[bool]` of Python `bool` values** (`[bool(x) for x in ...]`, not `0`/`1` ints or `np.bool_`).
 - `exact_mcnemar(candidate, baseline) -> McNemarResult`: Exact binomial test on discordant pairs; returns `.estimate`, `.discordant`, `.p_value_two_sided`, `.p_value_candidate_worse`, `.p_value_candidate_better`. Requires `list[bool]`.
@@ -91,17 +91,17 @@ Single-judge bias correction uses **predictive values conditioned on the judge v
 
 Functions:
 
-- `JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source="assumed", alpha=None, completed_strata=(), bound="clopper_pearson")` (in `inspect_safety_stats.stats`): `completed_strata` names the strata (`judge_unsafe`, `judge_safe`) that no label measured and the box completes as `[0, 1]`; `bound` is `"clopper_pearson"` or `"confidence_sequence"`.
-- `correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration, unclassified_share=0.0, unclassified_in_bounds=True, unclassified_share_per_prompt=False, tail=False) -> CorrectedRisk` (in `inspect_safety_stats.stats`): Propagates `[observed_lower, observed_upper]` onto true risk `R* = R * rho_1 + (1 - R) * rho_0` over the calibration box. Valid for positively homogeneous, translation-equivariant measures (mean, max, CVaR, top-k), not entropic or threshold measures. Pass `tail=True` for a maximum, CVaR or top-k mean: when the box lets `rho_1` fall below `rho_0`, the upper end then also takes the judge-unsafe mass as 0. Rollouts with no judge verdict keep their worst case: pass an upper confidence bound on their population share as `unclassified_share` (not the run's own share, and its alpha adds to the interval's), and `unclassified_in_bounds=False` when the observed bounds cover only the classified rollouts' rate, as under the `exclude` policy. There a bound on the prompts' mean share moves each end of the plain correction by the share; pass `unclassified_share_per_prompt=True` only when the share bounds every prompt's own share, as the largest one does for a tail measure, and it is mixed in instead.
-- `JudgeStratumCounts(labelled, truly_unsafe, stratum_size)` and `estimate_judge_calibration(*, scenario_id, unsafe_stratum, safe_stratum, alpha, bound="clopper_pearson") -> JudgeCalibration` (import from `inspect_safety_stats.stats.misclassification`): Builds a validated `JudgeCalibration` box (Clopper-Pearson, or with `bound="confidence_sequence"` anytime-valid bounds for labelling that may stop on results) from human audit labels sampled within the judge-flagged (`unsafe_stratum`) and judge-cleared (`safe_stratum`) strata, where `truly_unsafe` counts true failures.
-- Multi-judge panels (in `inspect_safety_stats.stats`): `compose_verdicts(verdicts, rule)` (`"any"`, `"all"`, `"majority"`), `effective_votes(blocks)`, `pairwise_agreement(first, second)`, `JudgeAccuracyBox(sensitivity_lower, sensitivity_upper, specificity_lower, specificity_upper)` (prevalence-free sensitivity/specificity), and `composite_accuracy_box(judges, blocks, rule)`.
+- `JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source="assumed", alpha=None, completed_strata=(), bound="clopper_pearson")` (in `safety_stats.stats`): `completed_strata` names the strata (`judge_unsafe`, `judge_safe`) that no label measured and the box completes as `[0, 1]`; `bound` is `"clopper_pearson"` or `"confidence_sequence"`.
+- `correct_judge_risk(*, observed_lower, observed_upper, observed_estimate, calibration, unclassified_share=0.0, unclassified_in_bounds=True, unclassified_share_per_prompt=False, tail=False) -> CorrectedRisk` (in `safety_stats.stats`): Propagates `[observed_lower, observed_upper]` onto true risk `R* = R * rho_1 + (1 - R) * rho_0` over the calibration box. Valid for positively homogeneous, translation-equivariant measures (mean, max, CVaR, top-k), not entropic or threshold measures. Pass `tail=True` for a maximum, CVaR or top-k mean: when the box lets `rho_1` fall below `rho_0`, the upper end then also takes the judge-unsafe mass as 0. Rollouts with no judge verdict keep their worst case: pass an upper confidence bound on their population share as `unclassified_share` (not the run's own share, and its alpha adds to the interval's), and `unclassified_in_bounds=False` when the observed bounds cover only the classified rollouts' rate, as under the `exclude` policy. There a bound on the prompts' mean share moves each end of the plain correction by the share; pass `unclassified_share_per_prompt=True` only when the share bounds every prompt's own share, as the largest one does for a tail measure, and it is mixed in instead.
+- `JudgeStratumCounts(labelled, truly_unsafe, stratum_size)` and `estimate_judge_calibration(*, scenario_id, unsafe_stratum, safe_stratum, alpha, bound="clopper_pearson") -> JudgeCalibration` (import from `safety_stats.stats.misclassification`): Builds a validated `JudgeCalibration` box (Clopper-Pearson, or with `bound="confidence_sequence"` anytime-valid bounds for labelling that may stop on results) from human audit labels sampled within the judge-flagged (`unsafe_stratum`) and judge-cleared (`safe_stratum`) strata, where `truly_unsafe` counts true failures.
+- Multi-judge panels (in `safety_stats.stats`): `compose_verdicts(verdicts, rule)` (`"any"`, `"all"`, `"majority"`), `effective_votes(blocks)`, `pairwise_agreement(first, second)`, `JudgeAccuracyBox(sensitivity_lower, sensitivity_upper, specificity_lower, specificity_upper)` (prevalence-free sensitivity/specificity), and `composite_accuracy_box(judges, blocks, rule)`.
 
 ---
 
-## Executable recipe 1: standalone Python (`inspect_safety_stats.stats`)
+## Executable recipe 1: standalone Python (`safety_stats.stats`)
 
 ```python
-from inspect_safety_stats.stats import (
+from safety_stats.stats import (
     JudgeCalibration,
     binomial_bounds,
     binomial_upper_bound,
@@ -111,7 +111,7 @@ from inspect_safety_stats.stats import (
     weighted_kl_chernoff_mean_bounds,
     zero_failure_sample_size,
 )
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.stats.misclassification import (
     JudgeStratumCounts,
     estimate_judge_calibration,
 )
@@ -186,7 +186,7 @@ assert paired.estimate < 0
 
 ## `schema_version: "2.0"` YAML plan rules
 
-Before writing a custom YAML plan, run `inspect-safety-stats schema plan` to inspect the JSON Schema. Every model uses Pydantic `extra="forbid"`.
+Before writing a custom YAML plan, run `safety-stats schema plan` to inspect the JSON Schema. Every model uses Pydantic `extra="forbid"`.
 
 1. **No unknown keys**: Any undeclared field raises a validation error immediately.
 2. **No booleans in numeric fields**: `true` and `false` are rejected in every integer and float field (`PlanInt`, `PlanFloat`).
@@ -299,11 +299,11 @@ policy:
 Run the CLI against the repository's bundled offline SimpleQA example (`examples/real_simpleqa/`):
 
 ```bash
-inspect-safety-stats validate \
+safety-stats validate \
   --plan examples/real_simpleqa/safety-plan.yaml \
   --logs examples/real_simpleqa/simpleqa-8-real.eval
 
-inspect-safety-stats analyze \
+safety-stats analyze \
   --plan examples/real_simpleqa/safety-plan.yaml \
   --logs examples/real_simpleqa/simpleqa-8-real.eval \
   --output /tmp/simpleqa-report \
@@ -317,15 +317,15 @@ inspect-safety-stats analyze \
 Results from any evaluation harness can be analyzed without Inspect AI, through an experimental
 route: write them as two plain files, a runs file (one record per run) and a rollouts file (one record per rollout), and pass them in place of the logs. Neither the CLI nor the Python API needs the optional `inspect` extra for this. [Rollout files](docs/rollout-files.md) specifies both formats (JSON Lines or CSV), the required and optional fields, and how errors and provider blocks are read.
 
-On the command line, pass `--runs runs.jsonl --rollouts rollouts.jsonl` in place of `--logs`, as in `inspect-safety-stats analyze --plan plan.yaml --runs runs.jsonl --rollouts rollouts.jsonl --output report/`; `validate` takes the same options. In Python, pass `source=RolloutFiles(...)` to `validate()` and `analyze()`. Each rollout's `item_id` is matched to `prompt_id` in `design.csv`, and `repeat` numbers its rollouts. Write the plan in `schema_version: "3.0"`, whose default `rollout_key` identifies a rollout by `[run_key, item_id, repeat]`; cohorts match any field of the run. Record each run's actual start time in `started_at`, and use `intent: exploratory` whenever the plan was not frozen before running the evaluation:
+On the command line, pass `--runs runs.jsonl --rollouts rollouts.jsonl` in place of `--logs`, as in `safety-stats analyze --plan plan.yaml --runs runs.jsonl --rollouts rollouts.jsonl --output report/`; `validate` takes the same options. In Python, pass `source=RolloutFiles(...)` to `validate()` and `analyze()`. Each rollout's `item_id` is matched to `prompt_id` in `design.csv`, and `repeat` numbers its rollouts. Write the plan in `schema_version: "3.0"`, whose default `rollout_key` identifies a rollout by `[run_key, item_id, repeat]`; cohorts match any field of the run. Record each run's actual start time in `started_at`, and use `intent: exploratory` whenever the plan was not frozen before running the evaluation:
 
 ```python
 import json
 import tempfile
 from pathlib import Path
 
-from inspect_safety_stats import analyze, validate
-from inspect_safety_stats.ingest import RolloutFiles
+from safety_stats import analyze, validate
+from safety_stats.ingest import RolloutFiles
 
 
 def write_jsonl(path: Path, records: list[dict]) -> None:
@@ -439,27 +439,27 @@ policy:
 Commands marked experimental may change between releases. `--help` on any command is the
 authoritative option list.
 
-- `inspect-safety-stats init --logs <path> [--logs <path> ...] [--failure-values <value> ... | --failure-threshold <float>] [--safe-values <value> ...] [--score <scorer>] [--group-by <metadata_field>] [--baseline <model>] [--alpha 0.05] [--nested-weights|--equal-prompt-weights] [--output <dir>] [--overwrite] [--intent exploratory]` (experimental): writes a starter `design.csv` and plan from completed Inspect logs.
-- `inspect-safety-stats plan zero-failure --threshold <float> [--alpha 0.05] [--family-size 1]`
-- `inspect-safety-stats plan certification --threshold <float> --anticipated-rate <float> [--alpha 0.05] [--power 0.9] [--family-size 1]`
-- `inspect-safety-stats plan detectable-rate --trials <int> --threshold <float> [--alpha 0.05] [--power 0.9] [--family-size 1]`
-- `inspect-safety-stats plan fixed-design (--manifest <csv> --threshold <float> | --plan <yaml|json> [--manifest <csv>]) [--alpha 0.05] [--power 0.9] [--rollouts <int>] [--weights equal_prompt|nested_equal|explicit] [--hierarchy task_id,question_id,prompt_id] [--weight-column <column>] [--independence-unit rollout|prompt_cluster] [--family-size 1]`: with `--plan`, every claim is planned as `analyze` will decide it, and options the plan supplies are refused; `--weight-column` applies only with `--weights explicit`.
-- `inspect-safety-stats plan pilot --manifest <csv> --per-stratum <int> --seed <int> --output <csv> [--strata task_id]` (experimental): draws a random pilot within strata of a design manifest.
-- `inspect-safety-stats plan comparison --manifest <csv> --margin <float> [--alpha 0.05] [--power 0.9] [--candidate-rollouts <int>] [--baseline-rollouts <int>] [--weights equal_prompt|nested_equal|explicit] [--hierarchy task_id,question_id,prompt_id] [--weight-column <column>] [--independence-unit rollout|pair|prompt_cluster] [--coverage-mode two_sided|per_direction] [--family-size 1]` (experimental): risk differences a two-arm design resolves at a margin, guaranteed only for a `comparisons` entry with `method: weighted_hoeffding` (not `comparison_sets`, not other methods).
-- `inspect-safety-stats validate --plan <yaml|json> (--logs <path> [--logs <path> ...] | --runs <file> --rollouts <file>) [--parallel <int>] [--decision-policy <file>] [--registration-receipt <file>]`
-- `inspect-safety-stats analyze --plan <yaml|json> (--logs <path> [--logs <path> ...] | --runs <file> --rollouts <file>) [--output <dir>] [--overwrite] [--parallel <int>] [--decision-exit-codes] [--allow-invalid] [--decision-policy <file>] [--registration-receipt <file>]`
+- `safety-stats init --logs <path> [--logs <path> ...] [--failure-values <value> ... | --failure-threshold <float>] [--safe-values <value> ...] [--score <scorer>] [--group-by <metadata_field>] [--baseline <model>] [--alpha 0.05] [--nested-weights|--equal-prompt-weights] [--output <dir>] [--overwrite] [--intent exploratory]` (experimental): writes a starter `design.csv` and plan from completed Inspect logs.
+- `safety-stats plan zero-failure --threshold <float> [--alpha 0.05] [--family-size 1]`
+- `safety-stats plan certification --threshold <float> --anticipated-rate <float> [--alpha 0.05] [--power 0.9] [--family-size 1]`
+- `safety-stats plan detectable-rate --trials <int> --threshold <float> [--alpha 0.05] [--power 0.9] [--family-size 1]`
+- `safety-stats plan fixed-design (--manifest <csv> --threshold <float> | --plan <yaml|json> [--manifest <csv>]) [--alpha 0.05] [--power 0.9] [--rollouts <int>] [--weights equal_prompt|nested_equal|explicit] [--hierarchy task_id,question_id,prompt_id] [--weight-column <column>] [--independence-unit rollout|prompt_cluster] [--family-size 1]`: with `--plan`, every claim is planned as `analyze` will decide it, and options the plan supplies are refused; `--weight-column` applies only with `--weights explicit`.
+- `safety-stats plan pilot --manifest <csv> --per-stratum <int> --seed <int> --output <csv> [--strata task_id]` (experimental): draws a random pilot within strata of a design manifest.
+- `safety-stats plan comparison --manifest <csv> --margin <float> [--alpha 0.05] [--power 0.9] [--candidate-rollouts <int>] [--baseline-rollouts <int>] [--weights equal_prompt|nested_equal|explicit] [--hierarchy task_id,question_id,prompt_id] [--weight-column <column>] [--independence-unit rollout|pair|prompt_cluster] [--coverage-mode two_sided|per_direction] [--family-size 1]` (experimental): risk differences a two-arm design resolves at a margin, guaranteed only for a `comparisons` entry with `method: weighted_hoeffding` (not `comparison_sets`, not other methods).
+- `safety-stats validate --plan <yaml|json> (--logs <path> [--logs <path> ...] | --runs <file> --rollouts <file>) [--parallel <int>] [--decision-policy <file>] [--registration-receipt <file>]`
+- `safety-stats analyze --plan <yaml|json> (--logs <path> [--logs <path> ...] | --runs <file> --rollouts <file>) [--output <dir>] [--overwrite] [--parallel <int>] [--decision-exit-codes] [--allow-invalid] [--decision-policy <file>] [--registration-receipt <file>]`
   - `--runs` / `--rollouts` (experimental, [docs/rollout-files.md](docs/rollout-files.md)) read results from any harness as two JSONL or CSV files instead of Inspect logs; give both, and not together with `--logs`.
   - `--decision-policy` (experimental, [docs/decision-policy.md](docs/decision-policy.md)) replaces the plan's thresholds for the claims it sets without changing the plan's hash.
   - `--registration-receipt` (experimental) checks a receipt written by `hash-plan --register` against the plan's hash and the earliest evaluation start.
-- `inspect-safety-stats visualize --report <dir|report.json> [--output <html_path>] [--overwrite]`
-- `inspect-safety-stats schema plan|report|claims|decision-policy|generative-plan` (`claims` and `decision-policy` are experimental)
-- `inspect-safety-stats hash-plan --plan <yaml|json> [--inference | --register <new_file>]`: prints the plan's canonical SHA-256. `--inference` prints the inference hash instead (the hash without the thresholds a decision policy may set; experimental). `--register` also writes a registration receipt to a new file for `analyze --registration-receipt` (experimental); it is never overwritten.
-- `inspect-safety-stats version`
-- `inspect-safety-stats generative compile|materialize|analyze|budget ...` (experimental taxonomy-sampled evaluation workflow)
+- `safety-stats visualize --report <dir|report.json> [--output <html_path>] [--overwrite]`
+- `safety-stats schema plan|report|claims|decision-policy|generative-plan` (`claims` and `decision-policy` are experimental)
+- `safety-stats hash-plan --plan <yaml|json> [--inference | --register <new_file>]`: prints the plan's canonical SHA-256. `--inference` prints the inference hash instead (the hash without the thresholds a decision policy may set; experimental). `--register` also writes a registration receipt to a new file for `analyze --registration-receipt` (experimental); it is never overwritten.
+- `safety-stats version`
+- `safety-stats generative compile|materialize|analyze|budget ...` (experimental taxonomy-sampled evaluation workflow)
 
 ### Exit-code contract
 
-Every status a command chooses comes from `ExitCode` in `src/inspect_safety_stats/cli.py`
+Every status a command chooses comes from `ExitCode` in `src/safety_stats/cli.py`
 ([docs/api-reference.md](docs/api-reference.md#exit-codes)). Only `analyze`, `hash-plan`, `init`,
 `visualize` and the `generative` commands guarantee `3` for input they cannot run on. A plan that
 cannot be loaded (malformed YAML or a schema failure) makes `validate` print a traceback and exit
@@ -505,7 +505,7 @@ With `report.include_decisions: false` (the default), the summary, the index and
 ## Further documentation
 
 - Root index: [llms.txt](llms.txt)
-- Installable Agent Skill: [skills/inspect-safety-stats/SKILL.md](skills/inspect-safety-stats/SKILL.md)
+- Installable Agent Skill: [skills/safety-stats/SKILL.md](skills/safety-stats/SKILL.md)
 - Getting started tutorial: [docs/getting-started.md](docs/getting-started.md)
 - Reading a report directory as an agent: [docs/agent-guide.md](docs/agent-guide.md)
 - Complete YAML plan reference: [docs/plan-reference.md](docs/plan-reference.md)

@@ -13,14 +13,14 @@ import math
 import numpy as np
 import pytest
 
-from inspect_safety_stats.decision.engine import (
+from safety_stats.decision.engine import (
     claim_verdict_range,
     decide_claim,
     noisy_valid_verdict_range,
 )
-from inspect_safety_stats.report.writer import _number, _verdict_range
-from inspect_safety_stats.schema.reports import Decision, VerdictRange
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.report.writer import _number, _verdict_range
+from safety_stats.schema.reports import Decision, VerdictRange
+from safety_stats.stats.misclassification import (
     TruthStratumCounts,
     noisy_valid_certification,
 )

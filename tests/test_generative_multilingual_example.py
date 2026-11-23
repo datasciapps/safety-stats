@@ -9,22 +9,22 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from inspect_safety_stats.generative.comparisons import compare_cohorts
-from inspect_safety_stats.generative.execution import (
+from safety_stats.generative.comparisons import compare_cohorts
+from safety_stats.generative.execution import (
     execute_rewrites,
     load_seed_texts,
     write_prompt_store,
 )
-from inspect_safety_stats.generative.inference import estimate_slice, estimate_tree
-from inspect_safety_stats.generative.inspect_bridge import join_outcomes, materialize_for_cohorts
-from inspect_safety_stats.generative.kernels import (
+from safety_stats.generative.inference import estimate_slice, estimate_tree
+from safety_stats.generative.inspect_bridge import join_outcomes, materialize_for_cohorts
+from safety_stats.generative.kernels import (
     DeterministicFakeKernel,
     resolve_kernel_fingerprint,
 )
-from inspect_safety_stats.generative.ledger import write_rewrites
-from inspect_safety_stats.generative.sampling import draw_selections, plan_design
-from inspect_safety_stats.generative.schema import load_generative_plan
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+from safety_stats.generative.ledger import write_rewrites
+from safety_stats.generative.sampling import draw_selections, plan_design
+from safety_stats.generative.schema import load_generative_plan
+from safety_stats.generative.taxonomy import compile_taxonomy
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "generative_multilingual"
 sys.path.insert(0, str(EXAMPLE))

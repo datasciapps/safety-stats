@@ -27,8 +27,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from inspect_safety_stats.stats import binomial_bounds
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.stats import binomial_bounds
+from safety_stats.stats.misclassification import (
     JudgeStratumCounts,
     TruthStratumCounts,
     correct_judge_risk,

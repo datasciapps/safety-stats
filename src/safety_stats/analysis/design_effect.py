@@ -29,12 +29,12 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
-from inspect_safety_stats.config.models import AnalysisPlan, IndependenceProfileSpec
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.observations import Observation
-from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.schema.scopes import plan_scope
-from inspect_safety_stats.stats.independence import _serialized_key, block_index, block_key
+from safety_stats.config.models import AnalysisPlan, IndependenceProfileSpec
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.observations import Observation
+from safety_stats.schema.reports import Diagnostic
+from safety_stats.schema.scopes import plan_scope
+from safety_stats.stats.independence import _serialized_key, block_index, block_key
 
 # A design effect of 2 on a primary profile's units means they carry about half the evidence of
 # as many independent units, which the primary counts them as. At or above it, in some cohort,

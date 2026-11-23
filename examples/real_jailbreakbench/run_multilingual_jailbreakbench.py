@@ -21,7 +21,7 @@ from jailbreakbench_multilingual import (
 )
 from run_jailbreakbench import inspect_model_name, write_design
 
-from inspect_safety_stats import analyze
+from safety_stats import analyze
 
 HERE = Path(__file__).resolve().parent
 

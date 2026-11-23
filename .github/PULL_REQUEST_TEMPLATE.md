@@ -22,7 +22,7 @@ Closes #
 <!-- Run locally; say on which operating system. Run `ruff check` only, never `ruff format`. -->
 
 - [ ] `ruff check src tests examples research scripts`
-- [ ] `mypy src/inspect_safety_stats`
+- [ ] `mypy src/safety_stats`
 - [ ] `pytest`
 
 Operating system:

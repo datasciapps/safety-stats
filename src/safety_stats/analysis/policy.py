@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from inspect_safety_stats.config.decision_policy import (
+from safety_stats.config.decision_policy import (
     DecisionPolicy,
     decision_policy_hash,
     inference_plan_hash,
@@ -15,8 +15,8 @@ from inspect_safety_stats.config.decision_policy import (
     plan_with_thresholds,
     policy_thresholds,
 )
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.schema.reports import (
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.schema.reports import (
     ClaimThresholdsRecord,
     Decision,
     DecisionPolicyRecord,
@@ -49,7 +49,7 @@ def _apply_decision_policy(
 
     if policy is None:
         return None
-    from inspect_safety_stats.validate.decision_policy import validate_decision_policy
+    from safety_stats.validate.decision_policy import validate_decision_policy
 
     resolved = policy if isinstance(policy, DecisionPolicy) else load_decision_policy(policy)
     problems = validate_decision_policy(plan, resolved)

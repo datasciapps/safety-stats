@@ -8,16 +8,16 @@ from typing import Any
 import numpy as np
 import pytest
 
-from inspect_safety_stats.generative.inference import (
+from safety_stats.generative.inference import (
     EXACT_METHOD,
     WEIGHTED_METHOD,
     UnitOutcome,
     estimate_slice,
     estimate_tree,
 )
-from inspect_safety_stats.generative.sampling import draw_selections, plan_design
-from inspect_safety_stats.generative.schema import load_generative_plan
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+from safety_stats.generative.sampling import draw_selections, plan_design
+from safety_stats.generative.schema import load_generative_plan
+from safety_stats.generative.taxonomy import compile_taxonomy
 from tests.generative_fixtures import SEEDS, base_plan, materialize
 
 # Seven equally weighted seeds: 1/7 divides no round budget, so integer allocation

@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
+from safety_stats.config.loader import canonical_plan_hash, load_plan
 
 BODY = """
 analysis: {id: versioned, title: Versioned, intent: exploratory}

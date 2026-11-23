@@ -8,29 +8,29 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from inspect_safety_stats.analysis.adaptive_claims import _adaptive_claims
-from inspect_safety_stats.analysis.claims import _claims
-from inspect_safety_stats.analysis.comparisons import _comparison_set_results, _comparisons
-from inspect_safety_stats.analysis.direct_mean import _direct_mean_context, _hierarchy_nodes
-from inspect_safety_stats.analysis.estimates import _prompt_estimates
-from inspect_safety_stats.analysis.inputs import (
+from safety_stats.analysis.adaptive_claims import _adaptive_claims
+from safety_stats.analysis.claims import _claims
+from safety_stats.analysis.comparisons import _comparison_set_results, _comparisons
+from safety_stats.analysis.direct_mean import _direct_mean_context, _hierarchy_nodes
+from safety_stats.analysis.estimates import _prompt_estimates
+from safety_stats.analysis.inputs import (
     _derived_run_diagnostics,
     _integrity_status,
     _JudgeInputs,
 )
-from inspect_safety_stats.analysis.judge_correction import apply_judge_correction
-from inspect_safety_stats.analysis.judge_panel import apply_panel_derived_correction
-from inspect_safety_stats.analysis.regions import project_hierarchy_regions
-from inspect_safety_stats.analysis.results import RiskRows
-from inspect_safety_stats.analysis.risks import _group_risks, _hierarchy_risks
-from inspect_safety_stats.analysis.tail_precision import single_rollout_tail_claims
-from inspect_safety_stats.config.canonicalize import sha256_value
-from inspect_safety_stats.config.models import AnalysisPlan, JudgeSpec, judge_run_score
-from inspect_safety_stats.decision.engine import mandatory_statuses
-from inspect_safety_stats.ingest.normalize import normalize
-from inspect_safety_stats.ingest.outcomes import is_missing
-from inspect_safety_stats.ingest.records import NormalizedData, SourceData
-from inspect_safety_stats.schema.reports import (
+from safety_stats.analysis.judge_correction import apply_judge_correction
+from safety_stats.analysis.judge_panel import apply_panel_derived_correction
+from safety_stats.analysis.regions import project_hierarchy_regions
+from safety_stats.analysis.results import RiskRows
+from safety_stats.analysis.risks import _group_risks, _hierarchy_risks
+from safety_stats.analysis.tail_precision import single_rollout_tail_claims
+from safety_stats.config.canonicalize import sha256_value
+from safety_stats.config.models import AnalysisPlan, JudgeSpec, judge_run_score
+from safety_stats.decision.engine import mandatory_statuses
+from safety_stats.ingest.normalize import normalize
+from safety_stats.ingest.outcomes import is_missing
+from safety_stats.ingest.records import NormalizedData, SourceData
+from safety_stats.schema.reports import (
     AdaptiveClaimResult,
     ClaimResult,
     ComparisonResult,
@@ -41,8 +41,8 @@ from inspect_safety_stats.schema.reports import (
     HierarchyRiskResult,
     PromptEstimate,
 )
-from inspect_safety_stats.schema.scopes import scope_path
-from inspect_safety_stats.validate.plan import noisy_valid_test_supported
+from safety_stats.schema.scopes import scope_path
+from safety_stats.validate.plan import noisy_valid_test_supported
 
 
 @dataclass

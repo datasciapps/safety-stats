@@ -19,13 +19,13 @@ def release_version(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
 
 
 def _tree(root: Path, declared: str, module: str) -> Path:
-    (root / "src" / "inspect_safety_stats").mkdir(parents=True)
+    (root / "src" / "safety_stats").mkdir(parents=True)
     (root / "pyproject.toml").write_text(
-        f'[project]\nname = "inspect-safety-stats"\nversion = "{declared}"\n'
+        f'[project]\nname = "safety-stats"\nversion = "{declared}"\n'
         '\n[tool.other]\ntarget-version = "py311"\n',
         encoding="utf-8",
     )
-    (root / "src" / "inspect_safety_stats" / "version.py").write_text(
+    (root / "src" / "safety_stats" / "version.py").write_text(
         f'__version__ = "{module}"\n', encoding="utf-8"
     )
     return root
@@ -96,7 +96,7 @@ def test_without_apply_nothing_is_written(
     release_version: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     root = _tree(tmp_path, "0.16.0", "0.16.0")
-    files = [root / "pyproject.toml", root / "src" / "inspect_safety_stats" / "version.py"]
+    files = [root / "pyproject.toml", root / "src" / "safety_stats" / "version.py"]
     before = [path.read_bytes() for path in files]
     assert release_version.main(["v0.16.0rc1", "--root", str(root)]) == 0
     assert capsys.readouterr().out == "version=0.16.0rc1\nindex=testpypi\n"

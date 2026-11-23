@@ -8,11 +8,11 @@ from fractions import Fraction
 import numpy as np
 import pytest
 
-from inspect_safety_stats.stats.direct_mean import (
+from safety_stats.stats.direct_mean import (
     bounded_kl_chernoff_upper_bound,
     weighted_bounded_kl_chernoff_mean_bounds,
 )
-from inspect_safety_stats.stats.sequential import (
+from safety_stats.stats.sequential import (
     _log_capital_path,
     anytime_upper_bound,
     without_replacement_upper_bound,

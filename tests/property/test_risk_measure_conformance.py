@@ -26,9 +26,9 @@ import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
-from inspect_safety_stats.analysis.judge_calibration import JUDGE_CORRECTABLE_MEASURES
-from inspect_safety_stats.analysis.measures import PROBABILITY_MEASURES, unclipped_risk_value
-from inspect_safety_stats.config.models import RiskMeasureSpec
+from safety_stats.analysis.judge_calibration import JUDGE_CORRECTABLE_MEASURES
+from safety_stats.analysis.measures import PROBABILITY_MEASURES, unclipped_risk_value
+from safety_stats.config.models import RiskMeasureSpec
 from tests.conformance import MEASURE_CASES, MeasureCase
 
 TOLERANCE = 1e-9

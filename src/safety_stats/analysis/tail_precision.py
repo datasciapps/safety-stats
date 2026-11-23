@@ -7,12 +7,12 @@ from collections.abc import Callable, Sequence
 
 import numpy as np
 
-from inspect_safety_stats.analysis.measures import _risk_value, _thresholds
-from inspect_safety_stats.config.models import AnalysisPlan, RiskMeasureSpec
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.reports import Diagnostic, PromptEstimate
-from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope
-from inspect_safety_stats.stats.binomial import binomial_upper_bound
+from safety_stats.analysis.measures import _risk_value, _thresholds
+from safety_stats.config.models import AnalysisPlan, RiskMeasureSpec
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.reports import Diagnostic, PromptEstimate
+from safety_stats.schema.scopes import cohort_scope, plan_scope
+from safety_stats.stats.binomial import binomial_upper_bound
 
 _THRESHOLD_TYPES = frozenset({"threshold_exceedance", "threshold_excess"})
 _PROPAGATED_TYPES = frozenset({"maximum", "cvar", "top_k_mean", "entropic", *_THRESHOLD_TYPES})

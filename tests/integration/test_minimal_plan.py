@@ -11,9 +11,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.validate.plan import validate_plan_references
+from safety_stats import analyze, load_plan
+from safety_stats.schema.reports import Diagnostic
+from safety_stats.validate.plan import validate_plan_references
 
 MINIMAL = """
 schema_version: "2.0"
@@ -129,10 +129,10 @@ def test_following_the_guidance_gives_a_working_analysis(
         ]
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
 

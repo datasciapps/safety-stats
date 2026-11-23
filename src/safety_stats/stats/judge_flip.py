@@ -23,7 +23,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal
 
-from inspect_safety_stats.stats.binomial import binomial_bounds
+from safety_stats.stats.binomial import binomial_bounds
 
 
 @dataclass(frozen=True)

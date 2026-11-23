@@ -8,18 +8,18 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from inspect_safety_stats.config.models import IndependenceProfileSpec
-from inspect_safety_stats.schema.observations import Observation
-from inspect_safety_stats.stats.comparisons import (
+from safety_stats.config.models import IndependenceProfileSpec
+from safety_stats.schema.observations import Observation
+from safety_stats.stats.comparisons import (
     DirectComparisonBounds,
     direct_risk_difference_bounds,
 )
-from inspect_safety_stats.stats.direct_mean import (
+from safety_stats.stats.direct_mean import (
     DirectMeanBounds,
     weighted_bounded_hoeffding_mean_bounds,
 )
-from inspect_safety_stats.stats.independence import comparison_contrast_blocks
-from inspect_safety_stats.stats.planning import comparison_resolvable_differences
+from safety_stats.stats.independence import comparison_contrast_blocks
+from safety_stats.stats.planning import comparison_resolvable_differences
 
 ALPHA = 0.025
 POWER = 0.8

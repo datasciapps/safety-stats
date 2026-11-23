@@ -6,16 +6,16 @@ from statistics import NormalDist
 import numpy as np
 import pytest
 
-from inspect_safety_stats.registry import CODES
-from inspect_safety_stats.stats import (
+from safety_stats.registry import CODES
+from safety_stats.stats import (
     exact_mcnemar,
     exact_mcnemar_partial,
     newcombe_paired_interval,
     newcombe_paired_interval_partial,
     paired,
 )
-from inspect_safety_stats.stats.clusters import ClusterBootstrapResult, paired_cluster_bootstrap
-from inspect_safety_stats.stats.paired import (
+from safety_stats.stats.clusters import ClusterBootstrapResult, paired_cluster_bootstrap
+from safety_stats.stats.paired import (
     _newcombe_bounds_from_counts,
     favourable_and_adverse_completions,
     partial_pairing,

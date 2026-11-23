@@ -6,33 +6,33 @@ import itertools
 from dataclasses import dataclass
 from typing import Any
 
-from inspect_safety_stats.analysis.direct_mean import _HierarchyNode
-from inspect_safety_stats.analysis.judge_calibration import (
+from safety_stats.analysis.direct_mean import _HierarchyNode
+from safety_stats.analysis.judge_calibration import (
     JUDGE_CORRECTABLE_MEASURES,
     _labelled_population,
     _policy_cohorts,
     _policy_rollouts,
     _row_weights,
 )
-from inspect_safety_stats.analysis.judge_correction import _policy_classified_diagnostics
-from inspect_safety_stats.analysis.results import RiskRows
-from inspect_safety_stats.config.models import (
+from safety_stats.analysis.judge_correction import _policy_classified_diagnostics
+from safety_stats.analysis.results import RiskRows
+from safety_stats.config.models import (
     AnalysisPlan,
     JudgeAccuracySpec,
     JudgeSpec,
     OutcomeMappingSpec,
     _same_classification,
 )
-from inspect_safety_stats.ingest.outcomes import map_outcome
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.reports import (
+from safety_stats.ingest.outcomes import map_outcome
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.reports import (
     Diagnostic,
     GroupRiskResult,
     HierarchyRiskResult,
     RiskIntervalResult,
 )
-from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope
-from inspect_safety_stats.stats.judges import (
+from safety_stats.schema.scopes import cohort_scope, plan_scope
+from safety_stats.stats.judges import (
     JudgeAccuracyBox,
     compose_verdicts,
     composite_accuracy_box,
@@ -40,7 +40,7 @@ from inspect_safety_stats.stats.judges import (
     identified_risk_set,
     pairwise_agreement,
 )
-from inspect_safety_stats.stats.paired import exact_mcnemar
+from safety_stats.stats.paired import exact_mcnemar
 
 
 def _judge_panel_summary(plan: AnalysisPlan, data: NormalizedData) -> dict[str, Any] | None:

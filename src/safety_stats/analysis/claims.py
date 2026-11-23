@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, cast
 
-from inspect_safety_stats.analysis.judge_calibration import (
+from safety_stats.analysis.judge_calibration import (
     JUDGE_CORRECTABLE_MEASURES,
     _judge_scope,
     _judge_scope_excludes,
@@ -18,16 +18,16 @@ from inspect_safety_stats.analysis.judge_calibration import (
     _scope_rollouts,
     pooled_calibration_gap,
 )
-from inspect_safety_stats.analysis.judge_panel import _DeclaredBox, _primary_accuracy_box
-from inspect_safety_stats.config.models import AnalysisPlan, ClaimSpec
-from inspect_safety_stats.decision.engine import (
+from safety_stats.analysis.judge_panel import _DeclaredBox, _primary_accuracy_box
+from safety_stats.config.models import AnalysisPlan, ClaimSpec
+from safety_stats.decision.engine import (
     claim_verdict_range,
     decide_claim,
     noisy_valid_verdict_range,
 )
-from inspect_safety_stats.ingest.outcomes import classified_by_policy
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.reports import (
+from safety_stats.ingest.outcomes import classified_by_policy
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.reports import (
     ClaimProfileVerdict,
     ClaimResult,
     ComparisonResult,
@@ -38,9 +38,9 @@ from inspect_safety_stats.schema.reports import (
     RiskIntervalResult,
     VerdictRange,
 )
-from inspect_safety_stats.schema.scopes import plan_scope
-from inspect_safety_stats.stats.judge_stress import stress_verdict
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.schema.scopes import plan_scope
+from safety_stats.stats.judge_stress import stress_verdict
+from safety_stats.stats.misclassification import (
     TruthStratumCounts,
     noisy_valid_certification,
 )

@@ -25,11 +25,11 @@ from __future__ import annotations
 
 import numpy as np
 
-from inspect_safety_stats.stats.comparisons import (
+from safety_stats.stats.comparisons import (
     COMPARISON_ENGINES,
     direct_risk_difference_bounds,
 )
-from inspect_safety_stats.stats.planning import comparison_resolvable_differences
+from safety_stats.stats.planning import comparison_resolvable_differences
 
 PROMPTS = 100
 ROLLOUTS = 10

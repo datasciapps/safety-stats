@@ -46,7 +46,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from inspect_safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
+from safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
 
 Verdict = Literal["PASS", "FAIL", "INCONCLUSIVE"]
 

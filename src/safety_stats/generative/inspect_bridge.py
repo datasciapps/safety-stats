@@ -11,15 +11,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from inspect_safety_stats.generative.execution import AcceptedRewrite, ExecutionResult
-from inspect_safety_stats.generative.join import (
+from safety_stats.generative.execution import AcceptedRewrite, ExecutionResult
+from safety_stats.generative.join import (
     EvaluatedSample,
     JoinResult,
     join_outcomes,
     samples_from_observations,
 )
-from inspect_safety_stats.generative.ledger import SelectionRecord
-from inspect_safety_stats.generative.schema import GenerativePlan
+from safety_stats.generative.ledger import SelectionRecord
+from safety_stats.generative.schema import GenerativePlan
 
 __all__ = [
     "EvaluatedSample",

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import analyze, load_plan
+from safety_stats import analyze, load_plan
 
 EXAMPLE_DIR = Path(__file__).parents[1] / "examples" / "real_jailbreakbench"
 sys.path.insert(0, str(EXAMPLE_DIR))
@@ -248,11 +248,11 @@ def test_multilingual_offline_analysis_and_unified_visualizer(
     )
     eval_frame, sample_frame = _offline_frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df",
+        "safety_stats.ingest.inspect_logs.evals_df",
         lambda logs, **_: eval_frame,
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 

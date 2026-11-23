@@ -6,14 +6,14 @@ from typing import Any, Literal, overload
 
 import numpy as np
 
-from inspect_safety_stats.config.models import (
+from safety_stats.config.models import (
     ComparisonSpec,
     DirectMeanIntervalsSpec,
     IndependenceSelectionSpec,
     RiskMeasureSpec,
 )
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.stats.risk import (
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.stats.risk import (
     entropic_risk,
     maximum_risk,
     threshold_exceedance,

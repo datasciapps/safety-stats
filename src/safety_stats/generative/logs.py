@@ -11,17 +11,17 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from inspect_safety_stats.config.models import OutcomeMappingSpec
-from inspect_safety_stats.generative.join import EvaluatedSample
-from inspect_safety_stats.generative.schema import GenerativePlan
-from inspect_safety_stats.ingest.inspect_logs import (
+from safety_stats.config.models import OutcomeMappingSpec
+from safety_stats.generative.join import EvaluatedSample
+from safety_stats.generative.schema import GenerativePlan
+from safety_stats.ingest.inspect_logs import (
     read_inspect_rollouts,
     read_inspect_runs,
 )
-from inspect_safety_stats.ingest.outcomes import is_missing, map_outcome
-from inspect_safety_stats.ingest.records import RunRecord
-from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.schema.scopes import scope_path
+from safety_stats.ingest.outcomes import is_missing, map_outcome
+from safety_stats.ingest.records import RunRecord
+from safety_stats.schema.reports import Diagnostic
+from safety_stats.schema.scopes import scope_path
 
 LogInput = str | Path | list[str] | list[Path]
 

@@ -21,17 +21,17 @@ from typing import Any
 
 import pytest
 
-from inspect_safety_stats import analyze
-from inspect_safety_stats.analysis import (
+from safety_stats import analyze
+from safety_stats.analysis import (
     comparison_intervals,
     comparison_regions,
     comparisons,
     regions,
     risks,
 )
-from inspect_safety_stats.ingest.rollout_files import RolloutFiles
-from inspect_safety_stats.schema.reports import Diagnostic, RiskIntervalResult, SafetyReport
-from inspect_safety_stats.stats.hierarchy_region import HierarchyRegionProjection
+from safety_stats.ingest.rollout_files import RolloutFiles
+from safety_stats.schema.reports import Diagnostic, RiskIntervalResult, SafetyReport
+from safety_stats.stats.hierarchy_region import HierarchyRegionProjection
 
 PLAN = """
 schema_version: "3.0"

@@ -1,6 +1,6 @@
 import pytest
 
-from inspect_safety_stats.stats.clusters import paired_cluster_bootstrap
+from safety_stats.stats.clusters import paired_cluster_bootstrap
 
 
 def test_cluster_bootstrap_is_seeded_and_preserves_clusters() -> None:

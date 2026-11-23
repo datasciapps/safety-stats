@@ -13,8 +13,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import get_args
 
-from inspect_safety_stats.config.models import ScoreSpec
-from inspect_safety_stats.registry import CODES
+from safety_stats.config.models import ScoreSpec
+from safety_stats.registry import CODES
 
 PAGE = Path(__file__).resolve().parents[1] / "docs" / "what-results-establish.md"
 

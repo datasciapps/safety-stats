@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 from scipy.stats import beta, binom
 
-from inspect_safety_stats.stats import (
+from safety_stats.stats import (
     binomial_lower_bound,
     binomial_upper_bound,
     missingness_robust_binomial_bounds,

@@ -21,10 +21,10 @@ import yaml
 from inspect_ai.log import read_eval_log, write_eval_log
 from typer.testing import CliRunner
 
-from inspect_safety_stats import validate
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.ingest.inspect_logs import read_inspect_runs
-from inspect_safety_stats.scaffold import scaffold_plan
+from safety_stats import validate
+from safety_stats.cli import app
+from safety_stats.ingest.inspect_logs import read_inspect_runs
+from safety_stats.scaffold import scaffold_plan
 from tests.mock_inspect_logs import write_mock_logs
 from tests.planted_configuration import (
     PLANTED_FIELDS,

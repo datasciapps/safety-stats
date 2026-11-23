@@ -10,17 +10,17 @@ from typing import Any
 import numpy as np
 import pytest
 
-from inspect_safety_stats.generative.contrasts import (
+from safety_stats.generative.contrasts import (
     RATIO_KL,
     STRATIFIED_HT,
     ContrastMember,
     SliceMember,
     estimate_slice_family,
 )
-from inspect_safety_stats.generative.inference import EXACT_METHOD, UnitOutcome, estimate_slice
-from inspect_safety_stats.generative.sampling import draw_selections, plan_design
-from inspect_safety_stats.generative.schema import load_generative_plan
-from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy, compile_taxonomy
+from safety_stats.generative.inference import EXACT_METHOD, UnitOutcome, estimate_slice
+from safety_stats.generative.sampling import draw_selections, plan_design
+from safety_stats.generative.schema import load_generative_plan
+from safety_stats.generative.taxonomy import CompiledTaxonomy, compile_taxonomy
 from tests.generative_fixtures import SEEDS, base_plan, materialize
 
 

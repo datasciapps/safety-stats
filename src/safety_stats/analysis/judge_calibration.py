@@ -6,23 +6,23 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
-from inspect_safety_stats.analysis import interval_assumptions
-from inspect_safety_stats.analysis.direct_mean import _HierarchyNode
-from inspect_safety_stats.analysis.estimates import _bounds_carry_unknown_outcome
-from inspect_safety_stats.analysis.unclassified_share import (
+from safety_stats.analysis import interval_assumptions
+from safety_stats.analysis.direct_mean import _HierarchyNode
+from safety_stats.analysis.estimates import _bounds_carry_unknown_outcome
+from safety_stats.analysis.unclassified_share import (
     UnclassifiedShare,
     unclassified_assumption,
     unclassified_share_text,
 )
-from inspect_safety_stats.config.loader import report_message
-from inspect_safety_stats.config.models import (
+from safety_stats.config.loader import report_message
+from safety_stats.config.models import (
     AnalysisPlan,
     JudgeCalibrationSpec,
     PublishedValidationSetSpec,
 )
-from inspect_safety_stats.ingest.outcomes import classified_by_policy
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.ingest.validation import (
+from safety_stats.ingest.outcomes import classified_by_policy
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.ingest.validation import (
     check_labelled_prefix,
     fine_stratum_counts,
     judge_stratum_counts,
@@ -30,15 +30,15 @@ from inspect_safety_stats.ingest.validation import (
     load_validation_strata,
     truth_stratum_counts,
 )
-from inspect_safety_stats.schema.observations import Observation
-from inspect_safety_stats.schema.reports import (
+from safety_stats.schema.observations import Observation
+from safety_stats.schema.reports import (
     Diagnostic,
     GroupRiskResult,
     HierarchyRiskResult,
     RiskIntervalResult,
 )
-from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope
-from inspect_safety_stats.stats.judge_calibration import (
+from safety_stats.schema.scopes import cohort_scope, plan_scope
+from safety_stats.stats.judge_calibration import (
     JUDGE_STRATA,
     NO_STRATA,
     FineStrata,
@@ -49,7 +49,7 @@ from inspect_safety_stats.stats.judge_calibration import (
     fine_strata_summary,
     unlabelled_fine_strata_diagnostic,
 )
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.stats.misclassification import (
     CalibrationBound,
     JudgeCalibration,
     correct_judge_risk,

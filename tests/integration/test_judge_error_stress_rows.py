@@ -12,8 +12,8 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import SafetyReport, analyze
-from inspect_safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
+from safety_stats import SafetyReport, analyze
+from safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
 
 _PLAN = """
 schema_version: "2.0"
@@ -146,10 +146,10 @@ def _analyze(
             rows.append(row)
     samples = pd.DataFrame(rows)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
     (tmp_path / "design.csv").write_text(

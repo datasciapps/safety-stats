@@ -13,8 +13,8 @@ from pathlib import Path
 
 import pytest
 
-from inspect_safety_stats import analyze
-from inspect_safety_stats.ingest.rollout_files import RolloutFiles
+from safety_stats import analyze
+from safety_stats.ingest.rollout_files import RolloutFiles
 
 PLAN = """
 schema_version: "3.0"

@@ -29,8 +29,8 @@ import pytest
 from jsonschema import Draft202012Validator
 from typer.testing import CliRunner
 
-from inspect_safety_stats import __version__
-from inspect_safety_stats.cli import app
+from safety_stats import __version__
+from safety_stats.cli import app
 from tests.cli_output import plain
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -134,7 +134,7 @@ def test_committed_example_report_was_written_by_this_version(name: str) -> None
 
 @pytest.mark.parametrize("name", sorted(EXAMPLE_REPORTS))
 def test_committed_example_report_follows_the_report_schema(name: str) -> None:
-    """`inspect-safety-stats schema report` is the contract for report.json (CONTRIBUTING 4.3).
+    """`safety-stats schema report` is the contract for report.json (CONTRIBUTING 4.3).
 
     The schema left out `summary`, which every report.json holds, and allows no field it does
     not list, so no report the package wrote validated against it.

@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from inspect_safety_stats.config.models import ReportSpec
+from safety_stats.config.models import ReportSpec
 from tests.plan_fields import annotation, contains, is_scalar, plan_fields
 
 PLAN_FIELDS = plan_fields()
@@ -42,7 +42,7 @@ def test_the_walk_reaches_every_integer_field_named_in_issue_85() -> None:
 
 def test_no_plan_field_hides_an_integer_from_the_probe() -> None:
     # An integer inside a list, a dict or a wider union would escape the probe below. Give it
-    # the PlanInt type from inspect_safety_stats.config.models, and a probe of its own here.
+    # the PlanInt type from safety_stats.config.models, and a probe of its own here.
     hidden = [
         name
         for name, (model, field) in PLAN_FIELDS.items()

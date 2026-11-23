@@ -8,12 +8,12 @@ from typing import Any
 
 import yaml
 
-from inspect_safety_stats.config.canonicalize import canonical_value
-from inspect_safety_stats.report.artifacts import write_text
-from inspect_safety_stats.schema.reports import STORED_REPORT, SafetyReport
+from safety_stats.config.canonicalize import canonical_value
+from safety_stats.report.artifacts import write_text
+from safety_stats.schema.reports import STORED_REPORT, SafetyReport
 
 _TEMPLATE = Path(__file__).with_name("visualization_template.html")
-_DATA_MARKER = "__INSPECT_SAFETY_STATS_DATA__"
+_DATA_MARKER = "__SAFETY_STATS_DATA__"
 # The decision policy's section goes before this one. It is written only for a report with a
 # policy, so that a report without one keeps the template's bytes.
 _AUDIT_SECTION = '    <section aria-labelledby="audit-heading">'
@@ -106,7 +106,7 @@ def _report_from_path(source: Path) -> tuple[SafetyReport, Path]:
 def _decision_policy_section(report: SafetyReport) -> str:
     """A static section on the decision policy (experimental), or "" without one."""
 
-    from inspect_safety_stats.report.summary import decision_policy_note
+    from safety_stats.report.summary import decision_policy_note
 
     record = report.decision_policy
     if record is None:
@@ -171,7 +171,7 @@ def _decision_policy_section(report: SafetyReport) -> str:
 def render_visualization(report: SafetyReport) -> str:
     """Render a self-contained interactive HTML visualization for a report."""
 
-    from inspect_safety_stats.report.writer import _score_exclusions
+    from safety_stats.report.writer import _score_exclusions
 
     template = _TEMPLATE.read_text(encoding="utf-8")
     if template.count(_DATA_MARKER) != 1:

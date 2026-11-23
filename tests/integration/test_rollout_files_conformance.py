@@ -12,9 +12,9 @@ import pandas as pd
 import pytest
 from typer.testing import CliRunner
 
-from inspect_safety_stats import analyze, validate
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.ingest.rollout_files import RolloutFiles
+from safety_stats import analyze, validate
+from safety_stats.cli import app
+from safety_stats.ingest.rollout_files import RolloutFiles
 from tests.cli_output import plain
 
 PLAN = """
@@ -202,16 +202,16 @@ def test_neutral_files_and_inspect_logs_give_the_same_report(
     plan, neutral = _inputs(tmp_path)
     evals, samples = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
     # The transcripts are read and say nothing about the errors' stage, as the rollout files
     # say nothing about it either.
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.read_eval_log",
+        "safety_stats.ingest.inspect_logs.read_eval_log",
         lambda path: SimpleNamespace(samples=[]),
     )
     # One schema 3.0 plan serves both sources.

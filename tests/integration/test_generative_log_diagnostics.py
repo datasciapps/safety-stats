@@ -14,10 +14,10 @@ import pandas as pd
 import pytest
 import yaml
 
-from inspect_safety_stats.generative.ledger import read_rewrites
-from inspect_safety_stats.generative.logs import read_evaluated_samples
-from inspect_safety_stats.generative.runner import analyze_run, materialize_run
-from inspect_safety_stats.generative.schema import GenerativePlan, load_generative_plan
+from safety_stats.generative.ledger import read_rewrites
+from safety_stats.generative.logs import read_evaluated_samples
+from safety_stats.generative.runner import analyze_run, materialize_run
+from safety_stats.generative.schema import GenerativePlan, load_generative_plan
 from tests.generative_fixtures import SEEDS_WITH_TEXT, base_plan
 
 MODEL_A = "provider/model-a"
@@ -42,10 +42,10 @@ def stub_frames(
     frame = pd.DataFrame(evals)
     rows = pd.DataFrame(samples)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False, **_: rows,
     )
 

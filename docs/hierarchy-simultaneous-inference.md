@@ -1,7 +1,7 @@
 # Hierarchy-aware simultaneous inference
 
 This document describes the finite-sample hierarchy calibration implemented by
-`inspect-safety-stats`. It applies to fixed, creator-declared evaluation trees; it does not treat
+`safety-stats`. It applies to fixed, creator-declared evaluation trees; it does not treat
 questions or prompts as IID samples from a larger population.
 
 ## Statistical target

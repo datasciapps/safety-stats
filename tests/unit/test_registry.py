@@ -26,9 +26,9 @@ from pathlib import Path
 import pytest
 from pydantic import BaseModel
 
-import inspect_safety_stats
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.registry import (
+import safety_stats
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.registry import (
     ASSUMPTIONS,
     CODES,
     EFFECTS,
@@ -36,7 +36,7 @@ from inspect_safety_stats.registry import (
     checked_by,
 )
 
-PACKAGE = Path(inspect_safety_stats.__file__).resolve().parent
+PACKAGE = Path(safety_stats.__file__).resolve().parent
 REGISTRY = PACKAGE / "registry.py"
 CODE_PATTERN = re.compile(r"[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+")
 SEVERITIES = ("ERROR", "WARNING", "INFO")
@@ -525,7 +525,7 @@ def test_code_entries_are_complete_and_consistent(code: str) -> None:
 
 
 def test_the_registry_lists_its_codes_in_order_once() -> None:
-    from inspect_safety_stats import registry
+    from safety_stats import registry
 
     codes = [entry.code for entry in registry._CODES]
     assert codes == sorted(set(codes))

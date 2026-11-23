@@ -7,70 +7,70 @@ from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from inspect_safety_stats.analysis.anytime import (
+from safety_stats.analysis.anytime import (
     OrderReader,
     anytime_bound_diagnostics,
     anytime_bounds,
     anytime_order_diagnostics,
 )
-from inspect_safety_stats.analysis.core import (
+from safety_stats.analysis.core import (
     _add_judge_claims,
     _add_judge_configurations,
     _analysis_core,
 )
-from inspect_safety_stats.analysis.design_effect import cluster_design_effects
-from inspect_safety_stats.analysis.inputs import (
+from safety_stats.analysis.design_effect import cluster_design_effects
+from safety_stats.analysis.inputs import (
     _coerce_plan,
     _derived_run_diagnostics,
     _integrity_status,
     _JudgeInputs,
     _sorted_integrity,
 )
-from inspect_safety_stats.analysis.judge_flip import judge_flip_diagnostic
-from inspect_safety_stats.analysis.judge_panel import _judge_panel_summary
-from inspect_safety_stats.analysis.policy import (
+from safety_stats.analysis.judge_flip import judge_flip_diagnostic
+from safety_stats.analysis.judge_panel import _judge_panel_summary
+from safety_stats.analysis.policy import (
     _apply_decision_policy,
     _decision_policy_record,
     _policy_roll_up,
     _policy_set_claims,
     _PolicyApplication,
 )
-from inspect_safety_stats.analysis.report import (
+from safety_stats.analysis.report import (
     _design_frame,
     _policy_events,
     _report_frame,
     _resolved_design,
     _unread_input_report,
 )
-from inspect_safety_stats.analysis.tail_precision import (
+from safety_stats.analysis.tail_precision import (
     single_rollout_tail_claims,
     tail_measure_precision,
 )
-from inspect_safety_stats.config.canonicalize import canonical_value, sha256_value
-from inspect_safety_stats.config.decision_policy import DecisionPolicy
-from inspect_safety_stats.config.loader import (
+from safety_stats.config.canonicalize import canonical_value, sha256_value
+from safety_stats.config.decision_policy import DecisionPolicy
+from safety_stats.config.loader import (
     canonical_plan_hash,
     report_message,
     report_path,
     report_plan,
 )
-from inspect_safety_stats.config.models import AnalysisPlan, OutcomeMappingSensitivitySpec
-from inspect_safety_stats.config.registration import RegistrationReceipt, load_receipt
-from inspect_safety_stats.decision.engine import roll_up
-from inspect_safety_stats.ingest.normalize import normalize, read_inputs
-from inspect_safety_stats.ingest.records import EvaluationSource, NormalizedData, SampleOrder
-from inspect_safety_stats.schema.reports import (
+from safety_stats.config.models import AnalysisPlan, OutcomeMappingSensitivitySpec
+from safety_stats.config.registration import RegistrationReceipt, load_receipt
+from safety_stats.decision.engine import roll_up
+from safety_stats.ingest.normalize import normalize, read_inputs
+from safety_stats.ingest.records import EvaluationSource, NormalizedData, SampleOrder
+from safety_stats.schema.reports import (
     Diagnostic,
     IntegritySummary,
     OutcomeMappingSensitivity,
     SafetyReport,
     result_readings,
 )
-from inspect_safety_stats.stats.independence import validate_profile_fields
-from inspect_safety_stats.validate.plan import validate_plan_references
+from safety_stats.stats.independence import validate_profile_fields
+from safety_stats.validate.plan import validate_plan_references
 
 if TYPE_CHECKING:
-    from inspect_safety_stats.ingest.inspect_logs import LogInput
+    from safety_stats.ingest.inspect_logs import LogInput
 
 
 def _source(
@@ -81,7 +81,7 @@ def _source(
     if source is not None:
         return source
     # Imported here, so that importing this module does not load Inspect AI.
-    from inspect_safety_stats.ingest.inspect_logs import InspectLogs
+    from safety_stats.ingest.inspect_logs import InspectLogs
 
     return InspectLogs(logs, parallel=parallel)
 
@@ -321,7 +321,7 @@ def _order_reader(logs: LogInput, source: EvaluationSource | None) -> OrderReade
         return None
 
     def read(sources: Mapping[str, str]) -> Mapping[str, SampleOrder]:
-        from inspect_safety_stats.ingest.inspect_logs import read_inspect_sample_orders
+        from safety_stats.ingest.inspect_logs import read_inspect_sample_orders
 
         return read_inspect_sample_orders(sources, logs)
 

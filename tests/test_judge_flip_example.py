@@ -15,9 +15,9 @@ from typing import Any
 
 import pytest
 
-from inspect_safety_stats.ingest.outcomes import judge_positive
-from inspect_safety_stats.report.artifacts import write_csv
-from inspect_safety_stats.schema.observations import Observation
+from safety_stats.ingest.outcomes import judge_positive
+from safety_stats.report.artifacts import write_csv
+from safety_stats.schema.observations import Observation
 
 EXAMPLE_DIR = Path(__file__).resolve().parents[1] / "examples" / "judge_flip"
 sys.path.insert(0, str(EXAMPLE_DIR))

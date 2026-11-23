@@ -7,7 +7,7 @@ import pandas as pd
 import pytest
 from scipy.stats import hypergeom
 
-from inspect_safety_stats.ingest.validation import load_validation_manifest
+from safety_stats.ingest.validation import load_validation_manifest
 
 EXAMPLE_DIR = Path(__file__).parents[1] / "examples" / "open_weights"
 sys.path.insert(0, str(EXAMPLE_DIR))

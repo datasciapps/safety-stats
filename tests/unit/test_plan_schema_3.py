@@ -12,10 +12,10 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from inspect_safety_stats import validate
-from inspect_safety_stats.config.loader import canonical_plan_hash, canonical_plan_value
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.ingest.rollout_files import RolloutFiles
+from safety_stats import validate
+from safety_stats.config.loader import canonical_plan_hash, canonical_plan_value
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.ingest.rollout_files import RolloutFiles
 
 BASE: dict[str, Any] = {
     "schema_version": "2.0",
@@ -242,10 +242,10 @@ def test_a_3_0_plan_reads_inspect_logs(monkeypatch: pytest.MonkeyPatch, tmp_path
         ]
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
     summary = validate(plan=plan, logs="ignored")

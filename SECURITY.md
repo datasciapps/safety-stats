@@ -8,7 +8,7 @@ a pull request for it, and do not attach logs or reports from private evaluation
 to a minimal reproduction, with local paths and usernames redacted
 ([CONTRIBUTING section 9](CONTRIBUTING.md#9-data-secrets-and-sensitive-content)).
 
-A report helps most when it says which version (`inspect-safety-stats version`) and which
+A report helps most when it says which version (`safety-stats version`) and which
 command or function it concerns, what an attacker controls (a plan, a manifest, a log, a
 rollout file, a kernel), and what they gain.
 

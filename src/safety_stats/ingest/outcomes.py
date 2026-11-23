@@ -5,10 +5,10 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import pandas as pd
 
-from inspect_safety_stats.config.models import OutcomeMappingSpec, _tag
+from safety_stats.config.models import OutcomeMappingSpec, _tag
 
 if TYPE_CHECKING:
-    from inspect_safety_stats.schema.observations import Observation
+    from safety_stats.schema.observations import Observation
 
 
 def is_missing(value: Any) -> bool:

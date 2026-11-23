@@ -6,8 +6,8 @@ from typing import cast
 
 import numpy as np
 
-from inspect_safety_stats.analysis import interval_assumptions
-from inspect_safety_stats.analysis.direct_mean import (
+from safety_stats.analysis import interval_assumptions
+from safety_stats.analysis.direct_mean import (
     _calibration_key,
     _direct_intervals,
     _direct_mean_context,
@@ -16,17 +16,17 @@ from inspect_safety_stats.analysis.direct_mean import (
     _HierarchyNode,
     _worst_of_k_direct_interval,
 )
-from inspect_safety_stats.analysis.estimates import prompt_blocked
-from inspect_safety_stats.analysis.measures import (
+from safety_stats.analysis.estimates import prompt_blocked
+from safety_stats.analysis.measures import (
     _coverage_floors,
     _independence,
     _measure_parameters,
     _risk_value,
     _thresholds,
 )
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.reports import (
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.reports import (
     Diagnostic,
     Eligibility,
     GroupRiskResult,
@@ -34,8 +34,8 @@ from inspect_safety_stats.schema.reports import (
     PromptEstimate,
     RiskIntervalResult,
 )
-from inspect_safety_stats.schema.scopes import cohort_scope, node_id, plan_scope
-from inspect_safety_stats.stats.risk import worst_of_k_estimate
+from safety_stats.schema.scopes import cohort_scope, node_id, plan_scope
+from safety_stats.stats.risk import worst_of_k_estimate
 
 
 def _group_risks(

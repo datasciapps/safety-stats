@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from inspect_safety_stats.schema.observations import Observation
+from safety_stats.schema.observations import Observation
 from tests.diagnostic_codes.harness import (
     Inputs,
     Outcome,
@@ -384,7 +384,7 @@ def test_every_policy_classification_is_recognised(
     fields: dict[str, Any], by_policy: bool
 ) -> None:
     # Imported here, so that the module's other tests still collect against a tree without it.
-    from inspect_safety_stats.ingest.outcomes import classified_by_policy
+    from safety_stats.ingest.outcomes import classified_by_policy
 
     row = Observation(
         observation_id="o",

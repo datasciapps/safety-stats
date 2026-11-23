@@ -1,6 +1,6 @@
 """Small, offline example of the public statistical API."""
 
-from inspect_safety_stats.stats import (
+from safety_stats.stats import (
     binomial_upper_bound,
     entropic_risk,
     newcombe_paired_interval,

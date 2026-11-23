@@ -10,15 +10,15 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from inspect_safety_stats.analysis.judge_calibration import (
+from safety_stats.analysis.judge_calibration import (
     _fine_queue_shares,
     _partial_queue_diagnostic,
     _queue_shares,
 )
-from inspect_safety_stats.config.models import JudgeCalibrationSpec
-from inspect_safety_stats.ingest.validation import check_labelled_prefix
-from inspect_safety_stats.stats.judge_calibration import FineStrata, JudgeStrata
-from inspect_safety_stats.stats.misclassification import JudgeStratumCounts
+from safety_stats.config.models import JudgeCalibrationSpec
+from safety_stats.ingest.validation import check_labelled_prefix
+from safety_stats.stats.judge_calibration import FineStrata, JudgeStrata
+from safety_stats.stats.misclassification import JudgeStratumCounts
 
 
 def _spec(protocol: dict[str, Any] | None, **fields: Any) -> JudgeCalibrationSpec:

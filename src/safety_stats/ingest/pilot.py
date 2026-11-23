@@ -45,7 +45,7 @@ from collections.abc import Sequence
 
 import pandas as pd
 
-from inspect_safety_stats.ingest.manifest import MISSING_MARKERS
+from safety_stats.ingest.manifest import MISSING_MARKERS
 
 STRATUM_COLUMN = "pilot_stratum"
 PROBABILITY_COLUMN = "pilot_inclusion_probability"

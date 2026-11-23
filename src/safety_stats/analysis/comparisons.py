@@ -6,7 +6,7 @@ from typing import Any, Literal, cast
 
 import numpy as np
 
-from inspect_safety_stats.analysis.comparison_intervals import (
+from safety_stats.analysis.comparison_intervals import (
     _comparison_calibrations,
     _comparison_interval,
     _comparison_target_key,
@@ -17,15 +17,15 @@ from inspect_safety_stats.analysis.comparison_intervals import (
     _paired_comparison_diagnostics,
     _ratio_from_blocks,
 )
-from inspect_safety_stats.analysis.comparison_regions import (
+from safety_stats.analysis.comparison_regions import (
     _project_comparison_hierarchy_regions,
     _project_multi_arm_comparison_regions,
 )
-from inspect_safety_stats.analysis.estimates import _block_index, prompt_blocked
-from inspect_safety_stats.analysis.measures import _coverage_floors, _independence
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.reports import (
+from safety_stats.analysis.estimates import _block_index, prompt_blocked
+from safety_stats.analysis.measures import _coverage_floors, _independence
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.reports import (
     ComparisonResult,
     ComparisonSetResult,
     Diagnostic,
@@ -33,9 +33,9 @@ from inspect_safety_stats.schema.reports import (
     PromptEstimate,
     RiskIntervalResult,
 )
-from inspect_safety_stats.schema.scopes import node_id, scope_path
-from inspect_safety_stats.stats.comparisons import DirectComparisonBounds, RatioComparisonBounds
-from inspect_safety_stats.stats.independence import (
+from safety_stats.schema.scopes import node_id, scope_path
+from safety_stats.stats.comparisons import DirectComparisonBounds, RatioComparisonBounds
+from safety_stats.stats.independence import (
     comparison_contrast_blocks,
     direct_bounded_blocks,
 )

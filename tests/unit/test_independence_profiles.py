@@ -7,12 +7,12 @@ import pandas as pd
 import pytest
 from pydantic import ValidationError
 
-from inspect_safety_stats.config.models import (
+from safety_stats.config.models import (
     DirectMeanIntervalsSpec,
     IndependenceProfileSpec,
 )
-from inspect_safety_stats.schema.observations import Observation
-from inspect_safety_stats.stats.independence import (
+from safety_stats.schema.observations import Observation
+from safety_stats.stats.independence import (
     BoundedBlocks,
     block_index,
     comparison_contrast_blocks,

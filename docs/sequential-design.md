@@ -88,7 +88,7 @@ draw: the sequence updates once all \(r\) rollouts of a draw are complete, with
 
 The generative path already draws this way. Under `sampling.method: direct`, draw \(t\) picks a
 terminal node in proportion to its target weight, from a hash of the selection seed and \(t\)
-alone (`draw_selections` in `src/inspect_safety_stats/generative/sampling.py`). The draw does not
+alone (`draw_selections` in `src/safety_stats/generative/sampling.py`). The draw does not
 depend on `sampling.total_rewrites`, so the first \(t\) draws of a long run are the same as those
 of a short one, and the stream is well defined before its length is known.
 
@@ -183,7 +183,7 @@ So:
   sample and epoch pairs are listed in the log's `results.early_stopping`, and the run's status
   can still be `success`. The package reads no early-stopping field.
 
-The checks are in `src/inspect_safety_stats/ingest/normalize.py`, after the observations are
+The checks are in `src/safety_stats/ingest/normalize.py`, after the observations are
 counted. Closing these gaps changes output bytes, so it is a class B change and needs its own
 issue (CONTRIBUTING section 3). It is a prerequisite of phase 1: a run that a sequence may stop
 must not also be certifiable by the fixed-horizon gate. What that change needs to do:
@@ -263,7 +263,7 @@ reports a one-sided upper bound \(U_t\) with
 \]
 
 so \(U_\tau\) is valid at the stopping time \(\tau\), whatever rule chose it. The code is
-`src/inspect_safety_stats/stats/sequential.py`, and the derivation is in
+`src/safety_stats/stats/sequential.py`, and the derivation is in
 [statistical methods, section 6.10](statistical-methods.md#610-implemented-anytime-valid-upper-bounds-for-runs-stopped-early-experimental).
 
 ### The stream

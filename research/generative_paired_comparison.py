@@ -21,11 +21,11 @@ sys.path.insert(0, str(EXAMPLE_DIR))
 
 import simulated_target  # noqa: E402
 
-from inspect_safety_stats.generative.comparisons import compare_cohorts  # noqa: E402
-from inspect_safety_stats.generative.inference import UnitOutcome  # noqa: E402
-from inspect_safety_stats.generative.sampling import draw_selections, plan_design  # noqa: E402
-from inspect_safety_stats.generative.schema import load_generative_plan  # noqa: E402
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy  # noqa: E402
+from safety_stats.generative.comparisons import compare_cohorts  # noqa: E402
+from safety_stats.generative.inference import UnitOutcome  # noqa: E402
+from safety_stats.generative.sampling import draw_selections, plan_design  # noqa: E402
+from safety_stats.generative.schema import load_generative_plan  # noqa: E402
+from safety_stats.generative.taxonomy import compile_taxonomy  # noqa: E402
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples" / "generative_multilingual"
 

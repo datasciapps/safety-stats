@@ -22,13 +22,13 @@ __all__ = [
 ]
 
 _EXPORTS = {
-    "EvaluationSource": "inspect_safety_stats.ingest.records",
-    "NormalizedData": "inspect_safety_stats.ingest.records",
-    "ResolvedGroup": "inspect_safety_stats.ingest.manifest",
-    "ingest_inspect_logs": "inspect_safety_stats.ingest.inspect_logs",
-    "load_manifest": "inspect_safety_stats.ingest.manifest",
-    "resolve_groups": "inspect_safety_stats.ingest.manifest",
-    "RolloutFiles": "inspect_safety_stats.ingest.rollout_files",
+    "EvaluationSource": "safety_stats.ingest.records",
+    "NormalizedData": "safety_stats.ingest.records",
+    "ResolvedGroup": "safety_stats.ingest.manifest",
+    "ingest_inspect_logs": "safety_stats.ingest.inspect_logs",
+    "load_manifest": "safety_stats.ingest.manifest",
+    "resolve_groups": "safety_stats.ingest.manifest",
+    "RolloutFiles": "safety_stats.ingest.rollout_files",
 }
 
 # Submodules stay reachable as attributes, as they were when this module imported them.

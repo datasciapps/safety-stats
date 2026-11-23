@@ -1,5 +1,5 @@
 ---
-name: inspect-safety-stats
+name: safety-stats
 description: >
   Compute finite-sample statistical bounds, rollout sample sizes, LLM-judge misclassification
   corrections, paired or multi-model comparisons, and Inspect AI (.eval) evaluation reports. Use
@@ -8,18 +8,18 @@ description: >
   across safety, reliability, and capability benchmarks.
 ---
 
-# Using `inspect-safety-stats`
+# Using `safety-stats`
 
 ## 1. Pick the right entry point first
 
 - **Counts, per-item failure rates, paired pass/fail lists, or judge calibration numbers:**
-  Call `inspect_safety_stats.stats` directly in Python—no log files, YAML plans, or [Inspect AI](https://inspect.aisi.org.uk/) harness required.
+  Call `safety_stats.stats` directly in Python—no log files, YAML plans, or [Inspect AI](https://inspect.aisi.org.uk/) harness required.
 - **Completed Inspect AI `.eval` logs:**
-  Run `inspect-safety-stats validate` then `inspect-safety-stats analyze` with a `design.csv` manifest and a strict `schema_version: "2.0"` YAML plan.
+  Run `safety-stats validate` then `safety-stats analyze` with a `design.csv` manifest and a strict `schema_version: "2.0"` YAML plan.
 - **Results from another evaluation harness needing full hierarchy reports and `report.html` (experimental):**
-  Write them as a runs file and a rollouts file ([rollout files](../../docs/rollout-files.md), JSON Lines or CSV) and run `inspect-safety-stats validate` / `analyze` with `--runs runs.jsonl --rollouts rollouts.jsonl` in place of `--logs`, or pass `source=RolloutFiles(runs=..., rollouts=...)` (from `inspect_safety_stats.ingest`) to `validate()` and `analyze()`. Use a `schema_version: "3.0"` plan and a `design.csv` whose `prompt_id` matches each rollout's `item_id` (no Inspect AI install needed).
+  Write them as a runs file and a rollouts file ([rollout files](../../docs/rollout-files.md), JSON Lines or CSV) and run `safety-stats validate` / `analyze` with `--runs runs.jsonl --rollouts rollouts.jsonl` in place of `--logs`, or pass `source=RolloutFiles(runs=..., rollouts=...)` (from `safety_stats.ingest`) to `validate()` and `analyze()`. Use a `schema_version: "3.0"` plan and a `design.csv` whose `prompt_id` matches each rollout's `item_id` (no Inspect AI install needed).
 
-## 2. Input requirements in `inspect_safety_stats.stats`
+## 2. Input requirements in `safety_stats.stats`
 
 1. **Weights sum to 1.0:** Every weighted estimator (`weighted_mean`, `weighted_cvar`, `entropic_risk`, `worst_of_k_estimate`, `worst_of_k_risk`, `weighted_*_mean_bounds`, `direct_*_bounds`, `fixed_design_detectable_failure_rates`) requires nonnegative 1D weights summing to `1.0`.
 2. **One-sided tail budgets:** Interval functions take `alpha_lower` and `alpha_upper` separately. For a 95% two-sided interval, pass `alpha_lower=0.025, alpha_upper=0.025`.
@@ -27,12 +27,12 @@ description: >
 4. **Single-judge `rho_1` and `rho_0` are predictive values, not sensitivity/specificity:**
    - `rho_1 = P(true failure | judge flagged failure)`
    - `rho_0 = P(true failure | judge cleared as pass)`
-   - Requires `rho_1_lower > rho_0_upper` (`JudgeCalibration` in `inspect_safety_stats.stats`; human-audit `JudgeStratumCounts` and `estimate_judge_calibration` are in `inspect_safety_stats.stats.misclassification`, where `truly_unsafe` counts true failures). Both depend on the evaluated output distribution and prompt weights; pooled cohort calibration does not generally certify subgroups or tail measures, and estimated calibration spends error budget alongside the rollout interval.
-   - Prevalence-free `sensitivity` and `specificity` belong only to multi-judge panels (`JudgeAccuracyBox` in `inspect_safety_stats.stats`).
-5. **Exact import locations for planning:** `zero_failure_sample_size` is in `inspect_safety_stats.stats`; `certification_sample_size`, `maximum_certifying_failures`, `maximum_certifiable_failure_rate`, `minimum_detectable_failure_rate`, `rejection_sample_size`, and `fixed_design_detectable_failure_rates` are in `inspect_safety_stats.stats.planning`.
+   - Requires `rho_1_lower > rho_0_upper` (`JudgeCalibration` in `safety_stats.stats`; human-audit `JudgeStratumCounts` and `estimate_judge_calibration` are in `safety_stats.stats.misclassification`, where `truly_unsafe` counts true failures). Both depend on the evaluated output distribution and prompt weights; pooled cohort calibration does not generally certify subgroups or tail measures, and estimated calibration spends error budget alongside the rollout interval.
+   - Prevalence-free `sensitivity` and `specificity` belong only to multi-judge panels (`JudgeAccuracyBox` in `safety_stats.stats`).
+5. **Exact import locations for planning:** `zero_failure_sample_size` is in `safety_stats.stats`; `certification_sample_size`, `maximum_certifying_failures`, `maximum_certifiable_failure_rate`, `minimum_detectable_failure_rate`, `rejection_sample_size`, and `fixed_design_detectable_failure_rates` are in `safety_stats.stats.planning`.
 
 ```python
-from inspect_safety_stats.stats import (
+from safety_stats.stats import (
     JudgeCalibration,
     binomial_bounds,
     correct_judge_risk,
@@ -71,7 +71,7 @@ Never guess YAML field names—every plan model sets Pydantic `extra="forbid"` a
 
 1. **Inspect the schema first** when using unfamiliar options:
    ```bash
-   inspect-safety-stats schema plan
+   safety-stats schema plan
    ```
 2. **Check the seven mandatory plan rules before running:**
    - Top-level keys `schema_version: "2.0"`, `analysis`, `inputs`, `cohorts`, `groups`, `outputs`, `multiplicity`, and `claims` are all present (`claims: []` if no threshold gates are declared). Optional `comparisons` and `comparison_sets` are also top-level keys, not nested inside `outputs`.
@@ -83,8 +83,8 @@ Never guess YAML field names—every plan model sets Pydantic `extra="forbid"` a
    - Each populated item in `claims` requires `id`, `title`, `family` (e.g. `purpose: all_mandatory, method: intersection_union, alpha: 0.05`), and `acceptable_upper < unacceptable_lower`, plus **either** `{cohort, group, measure}` (aggregate claim) **or** `{comparison}` alone (comparison claim).
 3. **Validate before analyzing:**
    ```bash
-   inspect-safety-stats validate --plan plan.yaml --logs logs/
-   inspect-safety-stats analyze --plan plan.yaml --logs logs/ --output reports/run-001
+   safety-stats validate --plan plan.yaml --logs logs/
+   safety-stats analyze --plan plan.yaml --logs logs/ --output reports/run-001
    ```
    - Exit `0`: `valid` or `degraded` integrity (read the warnings in `index.json`, step 4).
    - Exit `1` from `validate`: the plan cannot be loaded (malformed YAML or a schema failure), and a traceback is printed. `analyze` exits `3` for the same plan.

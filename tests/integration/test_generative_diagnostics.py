@@ -9,22 +9,22 @@ from pathlib import Path
 import pytest
 import yaml
 
-from inspect_safety_stats.generative.execution import (
+from safety_stats.generative.execution import (
     acceptance_by_level,
     execute_rewrites,
     load_seed_texts,
     uneven_acceptance,
 )
-from inspect_safety_stats.generative.inference import estimate_reweighted
-from inspect_safety_stats.generative.kernels import (
+from safety_stats.generative.inference import estimate_reweighted
+from safety_stats.generative.kernels import (
     RewriteOutcome,
     RewriteRequest,
     resolve_kernel_fingerprint,
 )
-from inspect_safety_stats.generative.runner import analyze_run, materialize_run
-from inspect_safety_stats.generative.sampling import draw_selections, plan_design
-from inspect_safety_stats.generative.schema import load_generative_plan
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+from safety_stats.generative.runner import analyze_run, materialize_run
+from safety_stats.generative.sampling import draw_selections, plan_design
+from safety_stats.generative.schema import load_generative_plan
+from safety_stats.generative.taxonomy import compile_taxonomy
 from tests.integration.test_generative_cli import stub_logs, write_plan
 
 
@@ -67,7 +67,7 @@ def test_an_evenly_accepting_kernel_raises_nothing(tmp_path: Path) -> None:
     parsed = load_generative_plan(plan_path)
     taxonomy = compile_taxonomy(parsed, base_path=tmp_path)
     selections = draw_selections(taxonomy, plan_design(taxonomy, parsed))
-    from inspect_safety_stats.generative.kernels import DeterministicFakeKernel
+    from safety_stats.generative.kernels import DeterministicFakeKernel
 
     result = execute_rewrites(
         parsed,
@@ -84,7 +84,7 @@ def test_an_evenly_accepting_kernel_raises_nothing(tmp_path: Path) -> None:
 def test_uneven_acceptance_is_reported_in_the_analysis(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import inspect_safety_stats.generative.runner as runner_module
+    import safety_stats.generative.runner as runner_module
 
     plan_path = write_plan(tmp_path, total=200)
     artifacts = tmp_path / "run"
@@ -179,7 +179,7 @@ def test_a_reweighting_must_cover_every_value_of_its_level(tmp_path: Path) -> No
     taxonomy = compile_taxonomy(parsed, base_path=tmp_path)
     design = plan_design(taxonomy, parsed)
     selections = draw_selections(taxonomy, design)
-    from inspect_safety_stats.generative.inference import UnitOutcome, estimate_tree
+    from safety_stats.generative.inference import UnitOutcome, estimate_tree
 
     outcomes = [UnitOutcome(r.sampling_unit_id, 1, 0, 0) for r in selections]
     root = estimate_tree(

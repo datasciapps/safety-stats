@@ -17,7 +17,7 @@ from pydantic import (
     model_validator,
 )
 
-from inspect_safety_stats.config.methods import (
+from safety_stats.config.methods import (
     DEFAULT_COMPARISON_METHOD,
     DEFAULT_DIRECT_MEAN_INTERVAL_METHOD,
     ComparisonMethod,
@@ -1303,7 +1303,7 @@ class AnalysisPlan(StrictModel):
     """A validated analysis plan: the design, cohorts, groups, comparisons and claims.
 
     Read one from a file with ``load_plan``. Unknown fields are rejected. The fields are
-    documented in docs/plan-reference.md, and ``inspect-safety-stats schema plan`` prints the
+    documented in docs/plan-reference.md, and ``safety-stats schema plan`` prints the
     JSON schema.
     """
 

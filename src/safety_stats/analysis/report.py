@@ -4,19 +4,19 @@ from __future__ import annotations
 
 from typing import Any
 
-from inspect_safety_stats.analysis.adaptive_claims import _unavailable_adaptive_claims
-from inspect_safety_stats.analysis.assumptions import assumptions_used
-from inspect_safety_stats.analysis.inputs import _sorted_integrity
-from inspect_safety_stats.config.loader import (
+from safety_stats.analysis.adaptive_claims import _unavailable_adaptive_claims
+from safety_stats.analysis.assumptions import assumptions_used
+from safety_stats.analysis.inputs import _sorted_integrity
+from safety_stats.config.loader import (
     canonical_plan_hash,
     plan_defaults,
     report_path,
     report_plan,
 )
-from inspect_safety_stats.config.models import DEFAULT_PRECISION_TARGET, AnalysisPlan
-from inspect_safety_stats.decision.engine import mandatory_statuses, roll_up
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.reports import (
+from safety_stats.config.models import DEFAULT_PRECISION_TARGET, AnalysisPlan
+from safety_stats.decision.engine import mandatory_statuses, roll_up
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.reports import (
     ClaimEvidenceRecord,
     ClaimResult,
     DecisionPolicyRecord,
@@ -31,7 +31,7 @@ from inspect_safety_stats.schema.reports import (
     VerdictRange,
     design_levels,
 )
-from inspect_safety_stats.version import __version__
+from safety_stats.version import __version__
 
 
 def _policy_events(plan: AnalysisPlan, data: NormalizedData) -> list[dict[str, Any]]:

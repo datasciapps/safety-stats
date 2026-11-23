@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from inspect_safety_stats.stats.binomial import (
+from safety_stats.stats.binomial import (
     binomial_bounds,
     binomial_lower_bound,
     binomial_upper_bound,
@@ -942,7 +942,7 @@ def noisy_valid_certification(
     and the outcome is INCONCLUSIVE.
     """
 
-    from inspect_safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
+    from safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
 
     if not 0 <= judge_reported_lower <= judge_reported_upper <= 1:
         raise ValueError("judge-reported bounds must satisfy 0 <= lower <= upper <= 1")

@@ -6,15 +6,15 @@ from typing import Any, cast
 
 import numpy as np
 
-from inspect_safety_stats.analysis.comparison_intervals import _ComparisonTarget
-from inspect_safety_stats.analysis.regions import (
+from safety_stats.analysis.comparison_intervals import _ComparisonTarget
+from safety_stats.analysis.regions import (
     _direct_interval_for_region,
     _keep_only_joint_coverage,
 )
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.schema.reports import ComparisonResult, Diagnostic, RiskIntervalResult
-from inspect_safety_stats.schema.scopes import scope_path
-from inspect_safety_stats.stats.hierarchy_region import (
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.schema.reports import ComparisonResult, Diagnostic, RiskIntervalResult
+from safety_stats.schema.scopes import scope_path
+from safety_stats.stats.hierarchy_region import (
     LinearIntervalConstraint,
     project_contrast_hierarchy_confidence_region,
     project_hierarchy_confidence_region,

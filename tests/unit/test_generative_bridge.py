@@ -9,28 +9,28 @@ from typing import Any
 
 import pytest
 
-from inspect_safety_stats.generative.execution import (
+from safety_stats.generative.execution import (
     execute_rewrites,
     load_seed_texts,
     write_prompt_store,
 )
-from inspect_safety_stats.generative.inference import estimate_tree
-from inspect_safety_stats.generative.inspect_bridge import (
+from safety_stats.generative.inference import estimate_tree
+from safety_stats.generative.inspect_bridge import (
     EvaluatedSample,
     join_outcomes,
     materialize_dataset,
     materialize_for_cohorts,
     samples_from_observations,
 )
-from inspect_safety_stats.generative.kernels import (
+from safety_stats.generative.kernels import (
     DeterministicFakeKernel,
     RewriteOutcome,
     RewriteRequest,
     resolve_kernel_fingerprint,
 )
-from inspect_safety_stats.generative.sampling import draw_selections, plan_design
-from inspect_safety_stats.generative.schema import load_generative_plan
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+from safety_stats.generative.sampling import draw_selections, plan_design
+from safety_stats.generative.schema import load_generative_plan
+from safety_stats.generative.taxonomy import compile_taxonomy
 from tests.generative_fixtures import SEEDS_WITH_TEXT, base_plan, materialize
 
 
@@ -273,7 +273,7 @@ def test_end_to_end_from_plan_to_interval(tmp_path: Path) -> None:
 
 
 def test_observations_adapt_to_the_join(tmp_path: Path) -> None:
-    from inspect_safety_stats.schema.observations import Observation
+    from safety_stats.schema.observations import Observation
 
     observation = Observation(
         observation_id="o1",

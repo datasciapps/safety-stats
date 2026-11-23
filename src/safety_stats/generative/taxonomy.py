@@ -16,7 +16,7 @@ from typing import Literal
 
 import pandas as pd
 
-from inspect_safety_stats.generative.schema import ArmSpec, GenerativePlan, reject_reserved
+from safety_stats.generative.schema import ArmSpec, GenerativePlan, reject_reserved
 
 WEIGHT_TOLERANCE = 1e-9
 NodeType = Literal["root", "fixed", "arm"]

@@ -17,9 +17,9 @@ from typing import Any
 
 import pytest
 
-from inspect_safety_stats.ingest.records import RolloutRecord, SourceData, StopContext
-from inspect_safety_stats.registry import SourceKind
-from inspect_safety_stats.stats.binomial import binomial_lower_bound, binomial_upper_bound
+from safety_stats.ingest.records import RolloutRecord, SourceData, StopContext
+from safety_stats.registry import SourceKind
+from safety_stats.stats.binomial import binomial_lower_bound, binomial_upper_bound
 from tests.diagnostic_codes.harness import (
     BASE_RUN,
     Case,
@@ -544,7 +544,7 @@ class StoppedRollouts:
     rollouts: Path
 
     def read(self) -> SourceData:
-        from inspect_safety_stats.ingest.rollout_files import read_rollout_files
+        from safety_stats.ingest.rollout_files import read_rollout_files
 
         def stop(item: RolloutRecord) -> StopContext | None:
             reason = item.attributes.get("stop_reason")
@@ -576,7 +576,7 @@ def _stopped(change: Change) -> Run:
     """The main analysis on the changed base inputs, read with ``StoppedRollouts``."""
 
     def run(directory: Path) -> Outcome:
-        from inspect_safety_stats import analyze
+        from safety_stats import analyze
 
         inputs = base_inputs()
         change(inputs)
@@ -681,7 +681,7 @@ def on_inspect_logs(
     from the logs, or from ``source`` of their directory."""
 
     def run(directory: Path) -> Outcome:
-        from inspect_safety_stats import analyze
+        from safety_stats import analyze
 
         directory.mkdir(parents=True, exist_ok=True)
         # Inspect drops the drive letter of a log on another drive (#35): work from this one.
@@ -708,7 +708,7 @@ class VanishingLogs:
     vanish: bool
 
     def read(self) -> SourceData:
-        from inspect_safety_stats.ingest.inspect_logs import InspectLogs
+        from safety_stats.ingest.inspect_logs import InspectLogs
 
         data = InspectLogs(str(self.log_dir)).read()
         if self.vanish:
@@ -742,7 +742,7 @@ def no_anytime_bound(triggered: Outcome, control: Outcome) -> None:
     assert bounds == [0, 1]
 
 
-# The kind of input, as inspect_safety_stats.registry.SOURCE_KINDS names them, that these
+# The kind of input, as safety_stats.registry.SOURCE_KINDS names them, that these
 # cases' triggers break. A case whose trigger breaks another kind names it as its source.
 SOURCE: SourceKind = "logs"
 

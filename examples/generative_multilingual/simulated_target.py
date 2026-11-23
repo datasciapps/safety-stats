@@ -15,9 +15,9 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from inspect_safety_stats.generative.execution import AcceptedRewrite
-from inspect_safety_stats.generative.inspect_bridge import EvaluatedSample
-from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
+from safety_stats.generative.execution import AcceptedRewrite
+from safety_stats.generative.inspect_bridge import EvaluatedSample
+from safety_stats.generative.taxonomy import CompiledTaxonomy
 
 BASE_RATE = 0.010
 

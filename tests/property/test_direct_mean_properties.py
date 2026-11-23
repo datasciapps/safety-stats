@@ -13,7 +13,7 @@ import math
 from hypothesis import given
 from hypothesis import strategies as st
 
-from inspect_safety_stats.stats import (
+from safety_stats.stats import (
     weighted_bounded_empirical_bernstein_mean_bounds,
     weighted_bounded_hoeffding_mean_bounds,
     weighted_bounded_kl_chernoff_mean_bounds,

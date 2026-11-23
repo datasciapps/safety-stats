@@ -17,8 +17,8 @@ from typing import Any
 import pytest
 import yaml
 
-from inspect_safety_stats import analyze, validate
-from inspect_safety_stats.ingest.rollout_files import RolloutFiles
+from safety_stats import analyze, validate
+from safety_stats.ingest.rollout_files import RolloutFiles
 
 CODE = "TAIL_MEASURE_SINGLE_ROLLOUT"
 

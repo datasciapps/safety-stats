@@ -9,12 +9,12 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 
-from inspect_safety_stats.generative.inference import UnitOutcome
-from inspect_safety_stats.generative.ledger import RewriteRecord, SelectionRecord
-from inspect_safety_stats.generative.schema import GenerativePlan
-from inspect_safety_stats.schema.observations import Observation
-from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.schema.scopes import cohort_scope
+from safety_stats.generative.inference import UnitOutcome
+from safety_stats.generative.ledger import RewriteRecord, SelectionRecord
+from safety_stats.generative.schema import GenerativePlan
+from safety_stats.schema.observations import Observation
+from safety_stats.schema.reports import Diagnostic
+from safety_stats.schema.scopes import cohort_scope
 
 
 @dataclass(frozen=True)

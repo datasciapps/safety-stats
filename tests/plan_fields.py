@@ -13,8 +13,8 @@ from collections.abc import Iterator
 
 from pydantic import BaseModel
 
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.generative.schema import GenerativePlan
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.generative.schema import GenerativePlan
 
 
 def _models_in(annotation: object) -> Iterator[type[BaseModel]]:
@@ -34,7 +34,7 @@ def plan_fields() -> dict[str, tuple[type[BaseModel], str]]:
         if model in seen:
             continue
         seen.add(model)
-        module = model.__module__.removeprefix("inspect_safety_stats.")
+        module = model.__module__.removeprefix("safety_stats.")
         for name, info in model.model_fields.items():
             fields[f"{module}.{model.__qualname__}.{name}"] = (model, name)
             pending.extend(_models_in(info.rebuild_annotation()))

@@ -14,11 +14,11 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.generative.ledger import read_rewrites
-from inspect_safety_stats.generative.report import ARTIFACTS
-from inspect_safety_stats.generative.runner import analyze_run, materialize_run, resolve_kernel
-from inspect_safety_stats.generative.schema import load_generative_plan
+from safety_stats.cli import app
+from safety_stats.generative.ledger import read_rewrites
+from safety_stats.generative.report import ARTIFACTS
+from safety_stats.generative.runner import analyze_run, materialize_run, resolve_kernel
+from safety_stats.generative.schema import load_generative_plan
 from tests.cli_output import plain
 from tests.generative_fixtures import SEEDS_WITH_TEXT, base_plan
 
@@ -81,10 +81,10 @@ def stub_logs(
             )
     samples = pd.DataFrame(rows)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
 
@@ -338,13 +338,13 @@ def test_resolve_kernel_builds_the_fake(specification: str, expected: int) -> No
 
 
 def test_resolve_kernel_loads_an_import_path() -> None:
-    kernel = resolve_kernel("inspect_safety_stats.generative.kernels:DeterministicFakeKernel")
+    kernel = resolve_kernel("safety_stats.generative.kernels:DeterministicFakeKernel")
     assert hasattr(kernel, "rewrite")
 
 
 @pytest.mark.parametrize(
     "specification",
-    ["nonsense", "fake:unknown=1", "inspect_safety_stats.generative.kernels:RewriteRequest"],
+    ["nonsense", "fake:unknown=1", "safety_stats.generative.kernels:RewriteRequest"],
 )
 def test_resolve_kernel_rejects_what_it_cannot_use(specification: str) -> None:
     with pytest.raises((ValueError, TypeError)):
@@ -406,7 +406,7 @@ def test_the_report_directory_carries_a_self_contained_html_page(
     path = report.write(tmp_path / "report")
     html = (path / "report.html").read_text(encoding="utf-8")
 
-    assert "__INSPECT_SAFETY_STATS_GENERATIVE_DATA__" not in html
+    assert "__SAFETY_STATS_GENERATIVE_DATA__" not in html
     assert html.startswith("<!doctype html>")
     # Self-contained: nothing is fetched when the page is opened.
     for forbidden in ("<script src=", "<link rel=\"stylesheet\"", "http://", "https://"):
@@ -419,8 +419,8 @@ def test_the_report_directory_carries_a_self_contained_html_page(
 def test_the_html_page_escapes_data_that_could_close_its_script(tmp_path: Path) -> None:
     """Embedded JSON must not be able to terminate the script element."""
 
-    from inspect_safety_stats.generative.report import GenerativeReport
-    from inspect_safety_stats.generative.visualization import render_generative_report
+    from safety_stats.generative.report import GenerativeReport
+    from safety_stats.generative.visualization import render_generative_report
 
     built = GenerativeReport(
         evaluation={"id": "x", "title": "</script><script>alert(1)</script>"},
@@ -434,17 +434,17 @@ def test_the_html_page_escapes_data_that_could_close_its_script(tmp_path: Path) 
 
 
 def _minimal_taxonomy(tmp_path: Path):
-    from inspect_safety_stats.generative.schema import load_generative_plan
-    from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+    from safety_stats.generative.schema import load_generative_plan
+    from safety_stats.generative.taxonomy import compile_taxonomy
 
     plan_path = write_plan(tmp_path, total=20)
     return compile_taxonomy(load_generative_plan(plan_path), base_path=tmp_path)
 
 
 def _minimal_tree(tmp_path: Path):
-    from inspect_safety_stats.generative.inference import UnitOutcome, estimate_tree
-    from inspect_safety_stats.generative.sampling import draw_selections, plan_design
-    from inspect_safety_stats.generative.schema import load_generative_plan
+    from safety_stats.generative.inference import UnitOutcome, estimate_tree
+    from safety_stats.generative.sampling import draw_selections, plan_design
+    from safety_stats.generative.schema import load_generative_plan
 
     plan_path = write_plan(tmp_path, total=20)
     plan = load_generative_plan(plan_path)
@@ -543,7 +543,7 @@ def test_a_kernel_can_be_named_by_file_path(tmp_path: Path) -> None:
 
     module = tmp_path / "my_kernel.py"
     module.write_text(
-        "from inspect_safety_stats.generative import RewriteOutcome\n\n\n"
+        "from safety_stats.generative import RewriteOutcome\n\n\n"
         "class Mine:\n"
         "    kernel_id = 'mine'\n\n"
         "    def rewrite(self, request):\n"
@@ -585,7 +585,7 @@ def test_an_unimportable_module_suggests_the_file_form() -> None:
 _DATACLASS_KERNEL = (
     "from __future__ import annotations\n\n"
     "from dataclasses import dataclass\n\n"
-    "from inspect_safety_stats.generative import RewriteOutcome\n\n\n"
+    "from safety_stats.generative import RewriteOutcome\n\n\n"
     "@dataclass\n"
     "class Mine:\n"
     "    kernel_id: str = 'mine'\n\n"
@@ -620,7 +620,7 @@ def test_resolving_a_module_kernel_leaves_sys_path_alone(
 ) -> None:
     monkeypatch.chdir(tmp_path)
     before = list(sys.path)
-    resolve_kernel("inspect_safety_stats.generative.kernels:DeterministicFakeKernel")
+    resolve_kernel("safety_stats.generative.kernels:DeterministicFakeKernel")
     assert sys.path == before
 
 
@@ -650,8 +650,8 @@ def test_the_cli_finds_a_kernel_module_in_the_working_directory(
 def test_provider_errors_are_reported_as_such_not_as_validation(tmp_path: Path) -> None:
     """A missing API key must not read as a validator problem."""
 
-    import inspect_safety_stats.generative.runner as runner_module
-    from inspect_safety_stats.generative import RewriteOutcome
+    import safety_stats.generative.runner as runner_module
+    from safety_stats.generative import RewriteOutcome
 
     class Broken:
         kernel_id = "broken"
@@ -825,7 +825,7 @@ def test_a_family_declared_after_materialization_is_refused_before_the_logs_are_
 
 _GENERATIVE_CAVEAT = (
     "The generative pipeline is experimental: its public surface, "
-    "`inspect_safety_stats.generative.__all__`, may change in any minor release."
+    "`safety_stats.generative.__all__`, may change in any minor release."
 )
 
 

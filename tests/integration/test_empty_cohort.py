@@ -16,10 +16,10 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from inspect_safety_stats import analyze, validate
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.ingest.rollout_files import RolloutFiles
-from inspect_safety_stats.scaffold import scaffold_plan
+from safety_stats import analyze, validate
+from safety_stats.cli import app
+from safety_stats.ingest.rollout_files import RolloutFiles
+from safety_stats.scaffold import scaffold_plan
 from tests.cli_output import plain
 from tests.diagnostic_codes.harness import Inputs, Outcome, run_analysis, write_inputs
 from tests.mock_inspect_logs import write_mock_logs

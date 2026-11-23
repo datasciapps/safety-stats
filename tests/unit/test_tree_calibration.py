@@ -6,7 +6,7 @@ import random
 
 import pytest
 
-from inspect_safety_stats.stats.tree_calibration import (
+from safety_stats.stats.tree_calibration import (
     IndependentFrontier,
     any_overlap,
     calibrate_independent_frontiers,

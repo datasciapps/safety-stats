@@ -9,14 +9,14 @@ from typing import Literal
 
 import pandas as pd
 
-from inspect_safety_stats.schema.observations import Observation
-from inspect_safety_stats.stats.judge_calibration import (
+from safety_stats.schema.observations import Observation
+from safety_stats.stats.judge_calibration import (
     FineStrataCounts,
     JudgeStrata,
     count_fine_strata,
     count_judge_strata,
 )
-from inspect_safety_stats.stats.misclassification import TruthStratumCounts
+from safety_stats.stats.misclassification import TruthStratumCounts
 
 REQUIRED_COLUMNS = ("observation_id", "human_label")
 _LABELS = {"safe": False, "unsafe": True}

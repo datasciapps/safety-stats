@@ -15,10 +15,10 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from inspect_safety_stats.generative.sampling import plan_design
-from inspect_safety_stats.generative.schema import GenerativePlan
-from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
-from inspect_safety_stats.stats.planning import certification_power, expected_upper_bound
+from safety_stats.generative.sampling import plan_design
+from safety_stats.generative.schema import GenerativePlan
+from safety_stats.generative.taxonomy import CompiledTaxonomy
+from safety_stats.stats.planning import certification_power, expected_upper_bound
 
 
 @dataclass(frozen=True)

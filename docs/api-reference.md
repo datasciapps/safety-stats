@@ -9,7 +9,7 @@ be treated as implementation details.
 ### `analyze`
 
 ```python
-from inspect_safety_stats import analyze
+from safety_stats import analyze
 
 report = analyze(
     plan="safety-plan.yaml",
@@ -31,8 +31,8 @@ Results from another evaluation system are passed as `source` instead of `logs`
 [Rollout files](rollout-files.md):
 
 ```python
-from inspect_safety_stats import analyze
-from inspect_safety_stats.ingest import RolloutFiles
+from safety_stats import analyze
+from safety_stats.ingest import RolloutFiles
 
 report = analyze(
     plan="safety-plan.yaml",
@@ -41,7 +41,7 @@ report = analyze(
 ```
 
 Any object with a `read()` method that returns the package's `SourceData` records can serve as a
-source; `inspect_safety_stats.ingest.EvaluationSource` is the protocol. Passing both `logs` and
+source; `safety_stats.ingest.EvaluationSource` is the protocol. Passing both `logs` and
 `source` is an error. `validate` takes the same `source` keyword.
 
 `registration_receipt` (experimental) names a receipt written by `hash-plan --register`.
@@ -53,7 +53,7 @@ it cannot read; `validate` reports either as `INGEST_FAILED`.
 ### `validate`
 
 ```python
-from inspect_safety_stats import validate
+from safety_stats import validate
 
 integrity = validate(plan="safety-plan.yaml", logs="logs/")
 ```
@@ -62,12 +62,12 @@ Runs plan-reference, manifest, provenance, cohort, rollout, and score-mapping ch
 under `outputs.anytime_bounds`, the checks of the runs' recorded sample orders, without
 making a deployment decision. `integrity.status` is `valid`, `degraded`, or `invalid`; individual diagnostics
 carry a severity, stable code, `source` and `effect` (from the code's entry in
-`inspect_safety_stats.registry`), message, and optional scope. The scope is a `/`-separated path
+`safety_stats.registry`), message, and optional scope. The scope is a `/`-separated path
 of where the finding sits: `plan/claims/<claim>` for a place in the plan,
 `cohorts/<cohort>/prompts/<prompt>` or `runs/<run key>` for the data,
 `comparisons/<comparison>/methods/<method>/units/<unit>` for a result. After the root, segments
 come in collection/id pairs, and each id has `%` written as `%25` and `/` as `%2F`, so a path
-splits back into its ids. `inspect_safety_stats.schema.scopes` builds and reads them. A
+splits back into its ids. `safety_stats.schema.scopes` builds and reads them. A
 scope goes down to the result row, method and profile the finding concerns, and a hierarchy
 node is `levels/<level>/nodes/<node>` below its group or comparison, the node written as its
 `level=value` pairs joined by `/`, as in
@@ -81,13 +81,13 @@ its scope names, such as `/claims/0` for `plan/claims/<claim>`, `/prompt_estimat
 `cohorts/<cohort>/groups/<group>/measures/<measure>`. A comparison's hierarchy node,
 `comparisons/<comparison>/levels/<level>/nodes/<node>`, has the row of that node, not the
 overall comparison's. It is null when the report holds no record of the item, as for a plan
-setting or a run. `inspect_safety_stats.schema.pointers`
+setting or a run. `safety_stats.schema.pointers`
 lists every scope that has one. The report computes `item` from the scope, also when a saved
 `report.json` is read back, so it always points into the report that holds the diagnostic.
 
 Read a saved `report.json` back with
 `SafetyReport.model_validate_json(text, context={STORED_REPORT: True})`, with `STORED_REPORT`
-from `inspect_safety_stats.schema.reports`, as `visualize` does. The report then says what its
+from `safety_stats.schema.reports`, as `visualize` does. The report then says what its
 diagnostics were when it was written: each keeps the `source` and `effect` it was written with,
 takes them from the registry only where the report has none, and a code a later version no
 longer lists still reads. Without the context, a code the registry does not list, or a `source`
@@ -96,7 +96,7 @@ or `effect` that differs from its entry, is rejected.
 ### `load_plan`
 
 ```python
-from inspect_safety_stats import load_plan
+from safety_stats import load_plan
 
 plan = load_plan("safety-plan.yaml")
 ```
@@ -117,19 +117,19 @@ checksum manifest. A non-empty destination is rejected unless
 
 `report.json` has a `summary` object: the integrity status, the headline estimates, the errors
 and warnings by code, and the decisions when `report.include_decisions` is true, each with a
-JSON pointer to its full record (`inspect_safety_stats.schema.summary`). Where a judge correction
+JSON pointer to its full record (`safety_stats.schema.summary`). Where a judge correction
 applies, a headline estimate also gives the interval of the true failure risk
 (`judge_corrected`), which its own bounds, of the judge-reported rate, are not.
 `SafetyReport.summary` returns it. It is derived from the other fields, so reading a saved `report.json` back drops it
 and computes it again.
 
 `index.json` lists every file the report wrote and copies the summary; `index.md` holds the
-same content as Markdown (`inspect_safety_stats.report.index`). The
+same content as Markdown (`safety_stats.report.index`). The
 [agent guide](agent-guide.md) says how to read both.
 
 ### Exact threshold planning
 
-Fixed-horizon planning functions are importable from `inspect_safety_stats.stats`:
+Fixed-horizon planning functions are importable from `safety_stats.stats`:
 
 ```python
 zero_failure_sample_size(*, threshold, alpha)
@@ -162,7 +162,7 @@ Use the multiplicity-adjusted local alpha when planning a claim that belongs to 
 ### `write_visualization`
 
 ```python
-from inspect_safety_stats import write_visualization
+from safety_stats import write_visualization
 
 write_visualization("reports/run-001", "reports/run-001-dashboard.html")
 ```
@@ -189,8 +189,8 @@ machine-readable. The default `two_sided` mode splits family alpha across the tw
 
 ## Statistical functions
 
-The functions below are importable from `inspect_safety_stats.stats`, except where a block names
-another module: those are not in `inspect_safety_stats.stats.__all__`, so they are not a
+The functions below are importable from `safety_stats.stats`, except where a block names
+another module: those are not in `safety_stats.stats.__all__`, so they are not a
 protected interface (see `CONTRIBUTING.md`, section 4) and may change in a minor release. All are
 pure and do not read logs or plans.
 
@@ -219,8 +219,8 @@ weighted_bounded_kl_chernoff_mean_bounds(...)
 ```
 
 ```python
-# Experimental; not in inspect_safety_stats.stats.__all__.
-from inspect_safety_stats.stats.direct_mean import weighted_bounded_betting_mean_bounds
+# Experimental; not in safety_stats.stats.__all__.
+from safety_stats.stats.direct_mean import weighted_bounded_betting_mean_bounds
 weighted_bounded_betting_mean_bounds(...)
 ```
 
@@ -291,8 +291,8 @@ Each prompt's unbiased U-statistic enters `weighted_bounded_kl_chernoff_mean_bou
 [Worst-of-k interval](statistical-methods.md#worst-of-k-interval-experimental).
 
 Experimental. `weighted_bounded_betting_mean_bounds` (count form: `weighted_betting_mean_bounds`,
-same signature as the other count wrappers) is not exported from `inspect_safety_stats.stats`
-until it graduates; import it from `inspect_safety_stats.stats.direct_mean`. It tests each candidate mean with the capital of a common betting
+same signature as the other count wrappers) is not exported from `safety_stats.stats`
+until it graduates; import it from `safety_stats.stats.direct_mean`. It tests each candidate mean with the capital of a common betting
 fraction applied to every block with exponent `A_g / max A`, mixed over a fixed
 Beta(1/2, 1/2)-quantile prior that places half its mass on the most aggressive bet. Jensen's
 inequality and the weighted AM-GM inequality make the mixture an e-value under
@@ -460,7 +460,7 @@ over the completions, the range of the estimate, and `completion_count`, the num
 unscored in both arms.
 
 `paired_cluster_bootstrap` is available from
-`inspect_safety_stats.stats.clusters`. It resamples whole creator-declared clusters while
+`safety_stats.stats.clusters`. It resamples whole creator-declared clusters while
 preserving pairs. It is a fixed-design sensitivity analysis, not a population interval.
 
 ### Design-based sampling
@@ -470,8 +470,8 @@ InclusionDesign(design_weights, inclusion_probabilities, sampled)
 horvitz_thompson_mean_bounds(design, completion_lower, completion_upper, *,
                              alpha_lower, alpha_upper, method="weighted_empirical_bernstein")
 
-# Not in inspect_safety_stats.stats.__all__: import these two from
-# inspect_safety_stats.stats.design_based.
+# Not in safety_stats.stats.__all__: import these two from
+# safety_stats.stats.design_based.
 FixedSizeDesign(stratum_index, frame_weights, draws, sampled)
 fixed_size_mean_bounds(design, completion_lower, completion_upper, *,
                        alpha_lower, alpha_upper, method="weighted_empirical_bernstein")
@@ -489,9 +489,9 @@ analysis pipeline; see
 ### Judge misclassification
 
 ```python
-# Not in inspect_safety_stats.stats.__all__: import JudgeStratumCounts, TruthStratumCounts,
+# Not in safety_stats.stats.__all__: import JudgeStratumCounts, TruthStratumCounts,
 # estimate_judge_calibration, completion_warning and noisy_valid_certification from
-# inspect_safety_stats.stats.misclassification.
+# safety_stats.stats.misclassification.
 JudgeCalibration(scenario_id, rho_1_lower, rho_1_upper, rho_0_lower, rho_0_upper, source,
                  alpha=None, completed_strata=())   # strata completed as [0, 1]
 JudgeStratumCounts(labelled, truly_unsafe, stratum_size)
@@ -553,32 +553,32 @@ see [Hierarchy-aware simultaneous inference](hierarchy-simultaneous-inference.md
 ## Command-line interface
 
 ```text
-inspect-safety-stats init --logs LOGS (--failure-values V [--safe-values V] | --failure-threshold T)
+safety-stats init --logs LOGS (--failure-values V [--safe-values V] | --failure-threshold T)
     [--score NAME] [--group-by FIELD] [--baseline MODEL] [--output DIRECTORY] [--overwrite]
-inspect-safety-stats analyze --plan PLAN --logs LOGS --output DIRECTORY
-inspect-safety-stats validate --plan PLAN --logs LOGS
-inspect-safety-stats analyze --plan PLAN --runs RUNS --rollouts ROLLOUTS --output DIRECTORY
-inspect-safety-stats validate --plan PLAN --runs RUNS --rollouts ROLLOUTS
-inspect-safety-stats visualize --report REPORT_OR_DIRECTORY [--output REPORT.html]
-inspect-safety-stats plan zero-failure --threshold P --alpha A [--family-size M]
-inspect-safety-stats plan certification --threshold P --anticipated-rate Q --alpha A --power B [--family-size M]
-inspect-safety-stats plan detectable-rate --trials N --threshold P --alpha A --power B [--family-size M]
-inspect-safety-stats plan fixed-design --manifest DESIGN.csv --threshold P [--alpha A] [--power B]
+safety-stats analyze --plan PLAN --logs LOGS --output DIRECTORY
+safety-stats validate --plan PLAN --logs LOGS
+safety-stats analyze --plan PLAN --runs RUNS --rollouts ROLLOUTS --output DIRECTORY
+safety-stats validate --plan PLAN --runs RUNS --rollouts ROLLOUTS
+safety-stats visualize --report REPORT_OR_DIRECTORY [--output REPORT.html]
+safety-stats plan zero-failure --threshold P --alpha A [--family-size M]
+safety-stats plan certification --threshold P --anticipated-rate Q --alpha A --power B [--family-size M]
+safety-stats plan detectable-rate --trials N --threshold P --alpha A --power B [--family-size M]
+safety-stats plan fixed-design --manifest DESIGN.csv --threshold P [--alpha A] [--power B]
     [--rollouts N] [--weights STRATEGY] [--hierarchy LEVELS] [--weight-column COLUMN]
     [--independence-unit UNIT] [--family-size M]
-inspect-safety-stats plan fixed-design --plan PLAN [--manifest DESIGN.csv] [--power B] [--rollouts N]
-inspect-safety-stats plan comparison --manifest DESIGN.csv --margin D [--alpha A] [--power B]
+safety-stats plan fixed-design --plan PLAN [--manifest DESIGN.csv] [--power B] [--rollouts N]
+safety-stats plan comparison --manifest DESIGN.csv --margin D [--alpha A] [--power B]
     [--candidate-rollouts N] [--baseline-rollouts N] [--weights STRATEGY] [--hierarchy LEVELS]
     [--weight-column COLUMN] [--independence-unit rollout|pair|prompt_cluster]
     [--coverage-mode two_sided|per_direction] [--family-size M]
-inspect-safety-stats plan pilot --manifest DESIGN.csv --per-stratum K --seed S --output PILOT.csv
+safety-stats plan pilot --manifest DESIGN.csv --per-stratum K --seed S --output PILOT.csv
     [--strata COLUMNS]
-inspect-safety-stats hash-plan --plan PLAN [--inference | --register RECEIPT.json]
-inspect-safety-stats schema plan
-inspect-safety-stats schema report
-inspect-safety-stats schema claims
-inspect-safety-stats schema decision-policy
-inspect-safety-stats version
+safety-stats hash-plan --plan PLAN [--inference | --register RECEIPT.json]
+safety-stats schema plan
+safety-stats schema report
+safety-stats schema claims
+safety-stats schema decision-policy
+safety-stats version
 ```
 
 `init` (experimental) reads completed Inspect logs and writes a starter `design.csv` and
@@ -600,7 +600,7 @@ command then lists the logs it used, since `analyze` would report the others inc
 bounds, the risk intervals and, with several models, the comparisons. The plan's header and the
 command's output say so, and with what probability all the intervals hold together. The plan's
 header lists each choice `init` made and the assumption it rests on, from
-`inspect_safety_stats.registry`: rollout independence first, then the rest. Each note says what
+`safety_stats.registry`: rollout independence first, then the rest. Each note says what
 goes wrong if the assumption does not hold and how to change it. The command prints the same
 list. A plan written after the logs exist cannot be confirmatory, so `--intent confirmatory` is
 refused with exit status `3`; the plan is `exploratory`. For a confirmatory analysis, write the
@@ -774,17 +774,17 @@ be added compatibly within the package's
 `0.x` development series, but consumers should validate `schema_version` before automated use.
 
 The generative pipeline is experimental: its public surface,
-`inspect_safety_stats.generative.__all__`, may change in any minor release.
+`safety_stats.generative.__all__`, may change in any minor release.
 
 ## Generative evaluation
 
 **Experimental.** See [Compatibility and stability](#compatibility-and-stability).
 
-`inspect_safety_stats.generative` carries its own public surface, listed in its `__all__`
+`safety_stats.generative` carries its own public surface, listed in its `__all__`
 and guarded by a snapshot test. Names outside that list are internal and may change.
 
 ```python
-from inspect_safety_stats.generative import (
+from safety_stats.generative import (
     load_generative_plan, compile_taxonomy,   # the plan and the tree it compiles to
     forecast, rewrites_for_bound,             # deciding a budget before generating anything
     RewriteKernel, RewriteRequest, RewriteOutcome,   # the piece you supply

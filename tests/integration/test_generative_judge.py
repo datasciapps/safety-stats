@@ -9,12 +9,12 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from inspect_safety_stats.generative.judge import judge_strata
-from inspect_safety_stats.generative.ledger import read_rewrites
-from inspect_safety_stats.generative.runner import analyze_run, materialize_run
-from inspect_safety_stats.generative.schema import load_generative_plan
-from inspect_safety_stats.ingest import inspect_logs
-from inspect_safety_stats.stats.binomial import binomial_upper_bound
+from safety_stats.generative.judge import judge_strata
+from safety_stats.generative.ledger import read_rewrites
+from safety_stats.generative.runner import analyze_run, materialize_run
+from safety_stats.generative.schema import load_generative_plan
+from safety_stats.ingest import inspect_logs
+from safety_stats.stats.binomial import binomial_upper_bound
 from tests.integration.test_generative_cli import stub_logs, write_plan
 
 ASSUMED = {
@@ -149,7 +149,7 @@ def test_unclassified_units_keep_their_worst_case_through_the_correction(
     missing = set(prompt_ids[-160:])
     samples = inspect_logs.samples_df
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: (
             lambda frame: frame[~frame["id"].isin(missing)]
         )(samples(logs, parallel=parallel)),

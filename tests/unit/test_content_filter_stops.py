@@ -7,9 +7,9 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from inspect_safety_stats.config.models import InputsSpec
-from inspect_safety_stats.ingest.inspect_logs import _sample_stop, _stop_of
-from inspect_safety_stats.ingest.records import StopContext
+from safety_stats.config.models import InputsSpec
+from safety_stats.ingest.inspect_logs import _sample_stop, _stop_of
+from safety_stats.ingest.records import StopContext
 
 
 def _output(

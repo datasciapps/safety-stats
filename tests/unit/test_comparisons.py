@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 from scipy.stats import binom
 
-from inspect_safety_stats.stats.comparisons import (
+from safety_stats.stats.comparisons import (
     direct_ratio_bounds,
     direct_risk_difference_bounds,
 )

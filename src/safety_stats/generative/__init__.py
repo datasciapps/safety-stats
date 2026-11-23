@@ -7,13 +7,13 @@ sampling that design. Path selection and rewrite generation are then sources of 
 in their own right.
 
 The generative pipeline is experimental: its public surface,
-``inspect_safety_stats.generative.__all__``, may change in any minor release.
+``safety_stats.generative.__all__``, may change in any minor release.
 
 The public surface is organised around what you are trying to do.
 
 **Run an evaluation.** Two phases, because an Inspect run happens between them::
 
-    from inspect_safety_stats.generative import materialize_run, analyze_run
+    from safety_stats.generative import materialize_run, analyze_run
 
     run = materialize_run("plan.yaml", "artifacts/", kernel="mypkg:build_kernel")
     # ... evaluate run.dataset with Inspect, then ...
@@ -22,7 +22,7 @@ The public surface is organised around what you are trying to do.
 
 **Decide a budget first**, from the taxonomy alone, before generating anything::
 
-    from inspect_safety_stats.generative import compile_taxonomy, forecast, load_generative_plan
+    from safety_stats.generative import compile_taxonomy, forecast, load_generative_plan
 
     plan = load_generative_plan("plan.yaml")
     taxonomy = compile_taxonomy(plan, base_path=".")
@@ -48,8 +48,8 @@ from typing import TYPE_CHECKING, Any
 # The public names are imported on first use, so that importing this package does not load
 # Inspect AI, pandas and SciPy before a name that needs them is used.
 if TYPE_CHECKING:
-    from inspect_safety_stats.generative.comparisons import ComparisonResult, compare_cohorts
-    from inspect_safety_stats.generative.contrasts import (
+    from safety_stats.generative.comparisons import ComparisonResult, compare_cohorts
+    from safety_stats.generative.contrasts import (
         ArmEstimate,
         ContrastMember,
         ContrastResult,
@@ -58,7 +58,7 @@ if TYPE_CHECKING:
         SliceMember,
         estimate_slice_family,
     )
-    from inspect_safety_stats.generative.execution import (
+    from safety_stats.generative.execution import (
         AcceptanceRow,
         AcceptedRewrite,
         ExecutionResult,
@@ -68,7 +68,7 @@ if TYPE_CHECKING:
         fidelity_by_level,
         load_seed_texts,
     )
-    from inspect_safety_stats.generative.inference import (
+    from safety_stats.generative.inference import (
         NodeEstimate,
         ReweightedEstimate,
         TreeEstimate,
@@ -77,18 +77,18 @@ if TYPE_CHECKING:
         estimate_slice,
         estimate_tree,
     )
-    from inspect_safety_stats.generative.inspect_bridge import (
+    from safety_stats.generative.inspect_bridge import (
         materialize_dataset,
         materialize_for_cohorts,
     )
-    from inspect_safety_stats.generative.join import (
+    from safety_stats.generative.join import (
         EvaluatedSample,
         JoinResult,
         join_outcomes,
         samples_from_observations,
     )
-    from inspect_safety_stats.generative.judge import CorrectedEstimate
-    from inspect_safety_stats.generative.kernels import (
+    from safety_stats.generative.judge import CorrectedEstimate
+    from safety_stats.generative.kernels import (
         ChatTurn,
         DeterministicFakeKernel,
         DeterministicFakeValidator,
@@ -101,7 +101,7 @@ if TYPE_CHECKING:
         conversation_problem,
         resolve_kernel_fingerprint,
     )
-    from inspect_safety_stats.generative.ledger import (
+    from safety_stats.generative.ledger import (
         AttemptRecord,
         RewriteRecord,
         SelectionRecord,
@@ -109,32 +109,32 @@ if TYPE_CHECKING:
         read_rewrites,
         read_selections,
     )
-    from inspect_safety_stats.generative.logs import read_evaluated_samples
-    from inspect_safety_stats.generative.planning import (
+    from safety_stats.generative.logs import read_evaluated_samples
+    from safety_stats.generative.planning import (
         BudgetForecast,
         LevelForecast,
         forecast,
         rewrites_for_bound,
     )
-    from inspect_safety_stats.generative.report import GenerativeReport
-    from inspect_safety_stats.generative.runner import (
+    from safety_stats.generative.report import GenerativeReport
+    from safety_stats.generative.runner import (
         MaterializedRun,
         analyze_run,
         materialize_run,
     )
-    from inspect_safety_stats.generative.sampling import (
+    from safety_stats.generative.sampling import (
         SamplingDesign,
         StratumAllocation,
         draw_selections,
         plan_design,
     )
-    from inspect_safety_stats.generative.schema import GenerativePlan, load_generative_plan
-    from inspect_safety_stats.generative.taxonomy import (
+    from safety_stats.generative.schema import GenerativePlan, load_generative_plan
+    from safety_stats.generative.taxonomy import (
         CompiledNode,
         CompiledTaxonomy,
         compile_taxonomy,
     )
-    from inspect_safety_stats.generative.visualization import render_generative_report
+    from safety_stats.generative.visualization import render_generative_report
 
 __all__ = [
     # The plan and the tree it compiles to.
@@ -215,73 +215,73 @@ __all__ = [
 ]
 
 _EXPORTS = {
-    "AcceptanceRow": "inspect_safety_stats.generative.execution",
-    "AcceptedRewrite": "inspect_safety_stats.generative.execution",
-    "ArmEstimate": "inspect_safety_stats.generative.contrasts",
-    "AttemptRecord": "inspect_safety_stats.generative.ledger",
-    "BudgetForecast": "inspect_safety_stats.generative.planning",
-    "ChatTurn": "inspect_safety_stats.generative.kernels",
-    "ComparisonResult": "inspect_safety_stats.generative.comparisons",
-    "CompiledNode": "inspect_safety_stats.generative.taxonomy",
-    "CompiledTaxonomy": "inspect_safety_stats.generative.taxonomy",
-    "ContrastMember": "inspect_safety_stats.generative.contrasts",
-    "ContrastResult": "inspect_safety_stats.generative.contrasts",
-    "CorrectedEstimate": "inspect_safety_stats.generative.judge",
-    "DeterministicFakeKernel": "inspect_safety_stats.generative.kernels",
-    "DeterministicFakeValidator": "inspect_safety_stats.generative.kernels",
-    "EvaluatedSample": "inspect_safety_stats.generative.join",
-    "ExecutionResult": "inspect_safety_stats.generative.execution",
-    "FamilySlice": "inspect_safety_stats.generative.contrasts",
-    "FidelityRow": "inspect_safety_stats.generative.execution",
-    "GenerativePlan": "inspect_safety_stats.generative.schema",
-    "GenerativeReport": "inspect_safety_stats.generative.report",
-    "JoinResult": "inspect_safety_stats.generative.join",
-    "KernelFingerprint": "inspect_safety_stats.generative.kernels",
-    "LevelForecast": "inspect_safety_stats.generative.planning",
-    "MaterializedRun": "inspect_safety_stats.generative.runner",
-    "NodeEstimate": "inspect_safety_stats.generative.inference",
-    "ReweightedEstimate": "inspect_safety_stats.generative.inference",
-    "RewriteKernel": "inspect_safety_stats.generative.kernels",
-    "RewriteOutcome": "inspect_safety_stats.generative.kernels",
-    "RewriteRecord": "inspect_safety_stats.generative.ledger",
-    "RewriteRequest": "inspect_safety_stats.generative.kernels",
-    "RewriteValidator": "inspect_safety_stats.generative.kernels",
-    "SamplingDesign": "inspect_safety_stats.generative.sampling",
-    "SelectionRecord": "inspect_safety_stats.generative.ledger",
-    "SliceFamilyResult": "inspect_safety_stats.generative.contrasts",
-    "SliceMember": "inspect_safety_stats.generative.contrasts",
-    "StratumAllocation": "inspect_safety_stats.generative.sampling",
-    "TreeEstimate": "inspect_safety_stats.generative.inference",
-    "UnitOutcome": "inspect_safety_stats.generative.inference",
-    "ValidationVerdict": "inspect_safety_stats.generative.kernels",
-    "acceptance_by_level": "inspect_safety_stats.generative.execution",
-    "analyze_run": "inspect_safety_stats.generative.runner",
-    "compare_cohorts": "inspect_safety_stats.generative.comparisons",
-    "compile_taxonomy": "inspect_safety_stats.generative.taxonomy",
-    "conversation_problem": "inspect_safety_stats.generative.kernels",
-    "draw_selections": "inspect_safety_stats.generative.sampling",
-    "estimate_reweighted": "inspect_safety_stats.generative.inference",
-    "estimate_slice": "inspect_safety_stats.generative.inference",
-    "estimate_slice_family": "inspect_safety_stats.generative.contrasts",
-    "estimate_tree": "inspect_safety_stats.generative.inference",
-    "execute_rewrites": "inspect_safety_stats.generative.execution",
-    "fidelity_by_level": "inspect_safety_stats.generative.execution",
-    "forecast": "inspect_safety_stats.generative.planning",
-    "join_outcomes": "inspect_safety_stats.generative.join",
-    "load_seed_texts": "inspect_safety_stats.generative.execution",
-    "load_generative_plan": "inspect_safety_stats.generative.schema",
-    "materialize_dataset": "inspect_safety_stats.generative.inspect_bridge",
-    "materialize_for_cohorts": "inspect_safety_stats.generative.inspect_bridge",
-    "materialize_run": "inspect_safety_stats.generative.runner",
-    "plan_design": "inspect_safety_stats.generative.sampling",
-    "read_attempts": "inspect_safety_stats.generative.ledger",
-    "read_evaluated_samples": "inspect_safety_stats.generative.logs",
-    "read_rewrites": "inspect_safety_stats.generative.ledger",
-    "read_selections": "inspect_safety_stats.generative.ledger",
-    "render_generative_report": "inspect_safety_stats.generative.visualization",
-    "resolve_kernel_fingerprint": "inspect_safety_stats.generative.kernels",
-    "rewrites_for_bound": "inspect_safety_stats.generative.planning",
-    "samples_from_observations": "inspect_safety_stats.generative.join",
+    "AcceptanceRow": "safety_stats.generative.execution",
+    "AcceptedRewrite": "safety_stats.generative.execution",
+    "ArmEstimate": "safety_stats.generative.contrasts",
+    "AttemptRecord": "safety_stats.generative.ledger",
+    "BudgetForecast": "safety_stats.generative.planning",
+    "ChatTurn": "safety_stats.generative.kernels",
+    "ComparisonResult": "safety_stats.generative.comparisons",
+    "CompiledNode": "safety_stats.generative.taxonomy",
+    "CompiledTaxonomy": "safety_stats.generative.taxonomy",
+    "ContrastMember": "safety_stats.generative.contrasts",
+    "ContrastResult": "safety_stats.generative.contrasts",
+    "CorrectedEstimate": "safety_stats.generative.judge",
+    "DeterministicFakeKernel": "safety_stats.generative.kernels",
+    "DeterministicFakeValidator": "safety_stats.generative.kernels",
+    "EvaluatedSample": "safety_stats.generative.join",
+    "ExecutionResult": "safety_stats.generative.execution",
+    "FamilySlice": "safety_stats.generative.contrasts",
+    "FidelityRow": "safety_stats.generative.execution",
+    "GenerativePlan": "safety_stats.generative.schema",
+    "GenerativeReport": "safety_stats.generative.report",
+    "JoinResult": "safety_stats.generative.join",
+    "KernelFingerprint": "safety_stats.generative.kernels",
+    "LevelForecast": "safety_stats.generative.planning",
+    "MaterializedRun": "safety_stats.generative.runner",
+    "NodeEstimate": "safety_stats.generative.inference",
+    "ReweightedEstimate": "safety_stats.generative.inference",
+    "RewriteKernel": "safety_stats.generative.kernels",
+    "RewriteOutcome": "safety_stats.generative.kernels",
+    "RewriteRecord": "safety_stats.generative.ledger",
+    "RewriteRequest": "safety_stats.generative.kernels",
+    "RewriteValidator": "safety_stats.generative.kernels",
+    "SamplingDesign": "safety_stats.generative.sampling",
+    "SelectionRecord": "safety_stats.generative.ledger",
+    "SliceFamilyResult": "safety_stats.generative.contrasts",
+    "SliceMember": "safety_stats.generative.contrasts",
+    "StratumAllocation": "safety_stats.generative.sampling",
+    "TreeEstimate": "safety_stats.generative.inference",
+    "UnitOutcome": "safety_stats.generative.inference",
+    "ValidationVerdict": "safety_stats.generative.kernels",
+    "acceptance_by_level": "safety_stats.generative.execution",
+    "analyze_run": "safety_stats.generative.runner",
+    "compare_cohorts": "safety_stats.generative.comparisons",
+    "compile_taxonomy": "safety_stats.generative.taxonomy",
+    "conversation_problem": "safety_stats.generative.kernels",
+    "draw_selections": "safety_stats.generative.sampling",
+    "estimate_reweighted": "safety_stats.generative.inference",
+    "estimate_slice": "safety_stats.generative.inference",
+    "estimate_slice_family": "safety_stats.generative.contrasts",
+    "estimate_tree": "safety_stats.generative.inference",
+    "execute_rewrites": "safety_stats.generative.execution",
+    "fidelity_by_level": "safety_stats.generative.execution",
+    "forecast": "safety_stats.generative.planning",
+    "join_outcomes": "safety_stats.generative.join",
+    "load_seed_texts": "safety_stats.generative.execution",
+    "load_generative_plan": "safety_stats.generative.schema",
+    "materialize_dataset": "safety_stats.generative.inspect_bridge",
+    "materialize_for_cohorts": "safety_stats.generative.inspect_bridge",
+    "materialize_run": "safety_stats.generative.runner",
+    "plan_design": "safety_stats.generative.sampling",
+    "read_attempts": "safety_stats.generative.ledger",
+    "read_evaluated_samples": "safety_stats.generative.logs",
+    "read_rewrites": "safety_stats.generative.ledger",
+    "read_selections": "safety_stats.generative.ledger",
+    "render_generative_report": "safety_stats.generative.visualization",
+    "resolve_kernel_fingerprint": "safety_stats.generative.kernels",
+    "rewrites_for_bound": "safety_stats.generative.planning",
+    "samples_from_observations": "safety_stats.generative.join",
 }
 
 

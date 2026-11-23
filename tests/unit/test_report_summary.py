@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from inspect_safety_stats.schema.reports import (
+from safety_stats.schema.reports import (
     AdaptiveClaimResult,
     ClaimResult,
     ComparisonResult,
@@ -17,8 +17,8 @@ from inspect_safety_stats.schema.reports import (
     RiskIntervalResult,
     SafetyReport,
 )
-from inspect_safety_stats.schema.scopes import plan_scope
-from inspect_safety_stats.schema.summary import judge_interval
+from safety_stats.schema.scopes import plan_scope
+from safety_stats.schema.summary import judge_interval
 
 
 def _resolve(document: Any, pointer: str) -> Any:

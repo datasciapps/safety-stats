@@ -8,12 +8,12 @@ from pathlib import Path
 
 import pytest
 
-import inspect_safety_stats
-from inspect_safety_stats.analysis import interval_assumptions
-from inspect_safety_stats.analysis.interval_assumptions import REGISTRY, Assumption
-from inspect_safety_stats.registry import ASSUMPTIONS
+import safety_stats
+from safety_stats.analysis import interval_assumptions
+from safety_stats.analysis.interval_assumptions import REGISTRY, Assumption
+from safety_stats.registry import ASSUMPTIONS
 
-PACKAGE = Path(inspect_safety_stats.__file__).resolve().parent
+PACKAGE = Path(safety_stats.__file__).resolve().parent
 MODULE = Path(interval_assumptions.__file__).resolve()
 
 # Every Assumption the module defines, by the name code refers to it with.

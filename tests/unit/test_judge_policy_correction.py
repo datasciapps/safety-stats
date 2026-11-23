@@ -20,12 +20,12 @@ import math
 import numpy as np
 import pytest
 
-from inspect_safety_stats.analysis.judge_calibration import _policy_free_box
-from inspect_safety_stats.analysis.judge_panel import _policy_free_accuracy_box
-from inspect_safety_stats.stats.binomial import missingness_robust_binomial_bounds
-from inspect_safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
-from inspect_safety_stats.stats.misclassification import JudgeCalibration, correct_judge_risk
-from inspect_safety_stats.stats.risk import maximum_risk, top_k_mean, weighted_cvar, weighted_mean
+from safety_stats.analysis.judge_calibration import _policy_free_box
+from safety_stats.analysis.judge_panel import _policy_free_accuracy_box
+from safety_stats.stats.binomial import missingness_robust_binomial_bounds
+from safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
+from safety_stats.stats.misclassification import JudgeCalibration, correct_judge_risk
+from safety_stats.stats.risk import maximum_risk, top_k_mean, weighted_cvar, weighted_mean
 
 _PROMPTS = 3
 _ALPHA_SIDE = 0.10 / (2 * _PROMPTS)

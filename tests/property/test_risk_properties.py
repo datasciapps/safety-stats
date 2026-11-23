@@ -17,7 +17,7 @@ import pytest
 from hypothesis import assume, given
 from hypothesis import strategies as st
 
-from inspect_safety_stats.stats import (
+from safety_stats.stats import (
     entropic_risk,
     maximum_risk,
     threshold_exceedance,

@@ -19,14 +19,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from inspect_safety_stats.generative.comparisons import ComparisonResult, compare_cohorts
-from inspect_safety_stats.generative.contrasts import (
+from safety_stats.generative.comparisons import ComparisonResult, compare_cohorts
+from safety_stats.generative.contrasts import (
     ContrastMember,
     SliceMember,
     check_slice_family,
     estimate_slice_family,
 )
-from inspect_safety_stats.generative.execution import (
+from safety_stats.generative.execution import (
     AcceptedRewrite,
     FidelityRow,
     acceptance_by_level,
@@ -41,7 +41,7 @@ from inspect_safety_stats.generative.execution import (
     uneven_fidelity,
     units_retried_after_duplicate,
 )
-from inspect_safety_stats.generative.inference import (
+from safety_stats.generative.inference import (
     NodeEstimate,
     TreeEstimate,
     UnitOutcome,
@@ -49,9 +49,9 @@ from inspect_safety_stats.generative.inference import (
     estimate_slice,
     estimate_tree,
 )
-from inspect_safety_stats.generative.inspect_bridge import materialize_for_cohorts
-from inspect_safety_stats.generative.join import join_outcomes
-from inspect_safety_stats.generative.judge import (
+from safety_stats.generative.inspect_bridge import materialize_for_cohorts
+from safety_stats.generative.join import join_outcomes
+from safety_stats.generative.judge import (
     CorrectedEstimate,
     comparison_refusal,
     correct,
@@ -60,7 +60,7 @@ from inspect_safety_stats.generative.judge import (
     measured_calibration,
     slice_family_refusal,
 )
-from inspect_safety_stats.generative.kernels import (
+from safety_stats.generative.kernels import (
     DeterministicFakeKernel,
     DeterministicFakeValidator,
     KernelFingerprint,
@@ -68,7 +68,7 @@ from inspect_safety_stats.generative.kernels import (
     RewriteValidator,
     resolve_kernel_fingerprint,
 )
-from inspect_safety_stats.generative.ledger import (
+from safety_stats.generative.ledger import (
     AttemptRecord,
     RewriteRecord,
     SelectionRecord,
@@ -80,19 +80,19 @@ from inspect_safety_stats.generative.ledger import (
     rewrite_ledger_writer,
     write_selections,
 )
-from inspect_safety_stats.generative.report import GenerativeReport, plan_sha256
-from inspect_safety_stats.generative.sampling import SamplingDesign, draw_selections, plan_design
-from inspect_safety_stats.generative.schema import (
+from safety_stats.generative.report import GenerativeReport, plan_sha256
+from safety_stats.generative.sampling import SamplingDesign, draw_selections, plan_design
+from safety_stats.generative.schema import (
     GenerativePlan,
     SliceFamilySpec,
     load_generative_plan,
 )
-from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy, compile_taxonomy
-from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.schema.scopes import plan_scope
+from safety_stats.generative.taxonomy import CompiledTaxonomy, compile_taxonomy
+from safety_stats.schema.reports import Diagnostic
+from safety_stats.schema.scopes import plan_scope
 
 if TYPE_CHECKING:
-    from inspect_safety_stats.generative.logs import LogInput
+    from safety_stats.generative.logs import LogInput
 
 SELECTION_LEDGER = "selections.csv"
 REWRITE_LEDGER = "rewrites.csv"
@@ -208,7 +208,7 @@ def _load_attribute(specification: str, role: str, builtins: str) -> Any:
     if candidate.suffix == ".py":
         if not candidate.is_file():
             raise ValueError(f"{role} file {candidate} does not exist")
-        name = f"_inspect_safety_stats_{role}_{candidate.stem}"
+        name = f"_safety_stats_{role}_{candidate.stem}"
         loader = importlib.util.spec_from_file_location(name, candidate)
         if loader is None or loader.loader is None:
             raise ValueError(f"{role} file {candidate} could not be loaded")
@@ -712,7 +712,7 @@ def analyze_run(
 
     # Reading Inspect logs needs the inspect extra; materialization reads none, so the
     # reader is imported only here.
-    from inspect_safety_stats.generative.logs import read_evaluated_samples
+    from safety_stats.generative.logs import read_evaluated_samples
 
     samples, log_diagnostics = read_evaluated_samples(plan, logs, parallel=parallel)
     diagnostics.extend(log_diagnostics)

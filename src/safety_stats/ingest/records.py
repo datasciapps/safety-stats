@@ -1,7 +1,7 @@
 """The records ingestion produces and consumes, free of any evaluation tool.
 
 A source adapter reads one tool's logs into :class:`RunRecord` and :class:`RolloutRecord`
-objects, wrapped in a :class:`SourceData`; :func:`inspect_safety_stats.ingest.normalize.normalize`
+objects, wrapped in a :class:`SourceData`; :func:`safety_stats.ingest.normalize.normalize`
 turns them into the :class:`NormalizedData` the analysis reads.
 """
 
@@ -16,10 +16,10 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 if TYPE_CHECKING:
     import pandas as pd
 
-    from inspect_safety_stats.ingest.manifest import ResolvedGroup
-    from inspect_safety_stats.schema.observations import Observation
-    from inspect_safety_stats.schema.reports import Diagnostic
-    from inspect_safety_stats.stats.independence import BlockIndex
+    from safety_stats.ingest.manifest import ResolvedGroup
+    from safety_stats.schema.observations import Observation
+    from safety_stats.schema.reports import Diagnostic
+    from safety_stats.stats.independence import BlockIndex
 
 
 @dataclass

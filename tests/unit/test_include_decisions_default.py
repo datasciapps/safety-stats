@@ -10,9 +10,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from inspect_safety_stats.report.summary import summary_markdown
-from inspect_safety_stats.report.visualization import render_visualization
-from inspect_safety_stats.schema.reports import STORED_REPORT, SafetyReport
+from safety_stats.report.summary import summary_markdown
+from safety_stats.report.visualization import render_visualization
+from safety_stats.schema.reports import STORED_REPORT, SafetyReport
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "real_simpleqa" / "report"
 

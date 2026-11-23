@@ -17,9 +17,9 @@ from typing import Any
 import pytest
 from scipy.stats import binom
 
-from inspect_safety_stats.stats import JudgeCalibration, correct_judge_risk
-from inspect_safety_stats.stats.binomial import binomial_upper_bound
-from inspect_safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
+from safety_stats.stats import JudgeCalibration, correct_judge_risk
+from safety_stats.stats.binomial import binomial_upper_bound
+from safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
 from tests.diagnostic_codes.harness import Inputs, Outcome, claim, rollout, run_analysis
 from tests.diagnostic_codes.judge_analysis_cases import (
     DECLARED,

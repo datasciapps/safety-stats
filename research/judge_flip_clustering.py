@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from inspect_safety_stats.stats.judge_flip import judge_flip_rate
+from safety_stats.stats.judge_flip import judge_flip_rate
 
 MEAN, ALPHA, REPLICATIONS = 0.5, 0.05, 4000
 DESIGNS = ((5, 7), (20, 2), (36, 1))

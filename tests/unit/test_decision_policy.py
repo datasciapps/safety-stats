@@ -8,15 +8,15 @@ import pytest
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.config.decision_policy import (
+from safety_stats.cli import app
+from safety_stats.config.decision_policy import (
     DecisionPolicy,
     inference_plan_hash,
     load_decision_policy,
     plan_with_thresholds,
     policy_thresholds,
 )
-from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
+from safety_stats.config.loader import canonical_plan_hash, load_plan
 from tests.cli_output import plain
 
 EXAMPLE_PLAN = Path(__file__).parents[2] / "examples" / "fixed_design" / "safety-plan.yaml"

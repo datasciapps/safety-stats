@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import cast
 
-from inspect_safety_stats.analysis import interval_assumptions
-from inspect_safety_stats.analysis.comparison_intervals import _comparison_targets
-from inspect_safety_stats.analysis.comparison_regions import _multi_arm_effect_interval
-from inspect_safety_stats.analysis.judge_calibration import (
+from safety_stats.analysis import interval_assumptions
+from safety_stats.analysis.comparison_intervals import _comparison_targets
+from safety_stats.analysis.comparison_regions import _multi_arm_effect_interval
+from safety_stats.analysis.judge_calibration import (
     PromptRollouts,
     _judge_scope,
     _JudgeScope,
@@ -23,17 +23,17 @@ from inspect_safety_stats.analysis.judge_calibration import (
     _uncertified_correction_warning,
     pooled_calibration_gap,
 )
-from inspect_safety_stats.analysis.unclassified_share import (
+from safety_stats.analysis.unclassified_share import (
     UnclassifiedShare,
     share_alpha,
     unclassified_assumption,
     unclassified_share_bound,
 )
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.reports import ComparisonResult, Diagnostic, RiskIntervalResult
-from inspect_safety_stats.schema.scopes import scope_path
-from inspect_safety_stats.stats.misclassification import JudgeCalibration, correct_judge_risk
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.reports import ComparisonResult, Diagnostic, RiskIntervalResult
+from safety_stats.schema.scopes import scope_path
+from safety_stats.stats.misclassification import JudgeCalibration, correct_judge_risk
 
 
 def _judge_corrected_comparison_interval(

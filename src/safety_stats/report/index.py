@@ -15,10 +15,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from inspect_safety_stats.config.canonicalize import canonical_value
-from inspect_safety_stats.report.artifacts import CHECKSUMS, json_text
-from inspect_safety_stats.report.rounding import bound_text
-from inspect_safety_stats.schema.reports import SafetyReport
+from safety_stats.config.canonicalize import canonical_value
+from safety_stats.report.artifacts import CHECKSUMS, json_text
+from safety_stats.report.rounding import bound_text
+from safety_stats.schema.reports import SafetyReport
 
 INDEX_JSON = "index.json"
 INDEX_MD = "index.md"
@@ -134,7 +134,7 @@ def index_markdown(document: dict[str, Any]) -> str:
         f"<{document['guide']}>.",
         "",
         f"Analysis `{_cell(analysis.get('id'))}` ({_cell(analysis.get('intent'))}), plan "
-        f"SHA-256 `{_cell(analysis.get('plan_sha256'))}`, inspect-safety-stats "
+        f"SHA-256 `{_cell(analysis.get('plan_sha256'))}`, safety-stats "
         f"{_cell(document['package_version'])}, report schema "
         f"{_cell(document['report_schema_version'])}, index version "
         f"{document['index_version']}.",

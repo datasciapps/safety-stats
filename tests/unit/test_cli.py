@@ -9,9 +9,9 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from inspect_safety_stats import cli as cli_module
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.report.summary import rate_interval_text, rate_text
+from safety_stats import cli as cli_module
+from safety_stats.cli import app
+from safety_stats.report.summary import rate_interval_text, rate_text
 from tests.cli_output import plain
 
 runner = CliRunner()
@@ -109,7 +109,7 @@ def _invoke_analyze(plan: Path, output: Path) -> Any:
 
 
 def test_analyze_prints_each_warning_code_on_stderr_after_the_headline(tmp_path: Path) -> None:
-    from inspect_safety_stats.registry import CODES
+    from safety_stats.registry import CODES
 
     output = tmp_path / "report"
     result = _invoke_analyze(_simpleqa_plan(tmp_path), output)
@@ -153,7 +153,7 @@ def test_analyze_prints_each_warning_code_on_stderr_after_the_headline(tmp_path:
 
 
 def test_analyze_prints_errors_by_code_when_integrity_is_invalid(tmp_path: Path) -> None:
-    from inspect_safety_stats.registry import CODES
+    from safety_stats.registry import CODES
 
     output = tmp_path / "report"
     result = _invoke_analyze(_simpleqa_plan(tmp_path, score_name="nonexistent_scorer"), output)
@@ -663,7 +663,7 @@ def test_pilot_cli_and_python_draw_the_same_prompts(tmp_path: Path) -> None:
     """draw_pilot on the manifest read as its docs say draws what the command draws."""
     import pandas as pd
 
-    from inspect_safety_stats.ingest.pilot import draw_pilot
+    from safety_stats.ingest.pilot import draw_pilot
 
     manifest = tmp_path / "design.csv"
     manifest.write_text(

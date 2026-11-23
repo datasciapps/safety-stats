@@ -13,7 +13,7 @@ import yaml
 from inspect_ai import eval as inspect_eval
 from xstest_live import xstest_openai
 
-from inspect_safety_stats import analyze
+from safety_stats import analyze
 
 HERE = Path(__file__).resolve().parent
 

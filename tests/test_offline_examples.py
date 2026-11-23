@@ -27,7 +27,7 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-from inspect_safety_stats.cli import app
+from safety_stats.cli import app
 from tests.cli_output import plain
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -399,7 +399,7 @@ def test_the_simpleqa_decision_is_inconclusive_and_says_so_in_its_exit_code(
             "--decision-exit-codes",
         ],
     )
-    # 2 is ExitCode.INCONCLUSIVE in inspect_safety_stats.cli.
+    # 2 is ExitCode.INCONCLUSIVE in safety_stats.cli.
     assert result.exit_code == 2, plain(result.output)
     report = _report(output)
     assert _integrity_status(report) == "valid"
@@ -500,7 +500,7 @@ def test_what_it_is_for_runs_the_threshold_command_as_written(tmp_path: Path) ->
     command = section.split("### Does one system meet a threshold?", 1)[1]
     command = command.split("```bash\n", 1)[1].split("```", 1)[0]
     arguments = command.replace("\\\n", " ").split()
-    assert arguments[:2] == ["inspect-safety-stats", "analyze"]
+    assert arguments[:2] == ["safety-stats", "analyze"]
     arguments = [
         str(ROOT / argument) if argument.startswith("examples/") else argument
         for argument in arguments[1:]
@@ -508,7 +508,7 @@ def test_what_it_is_for_runs_the_threshold_command_as_written(tmp_path: Path) ->
     output = tmp_path / "reports" / "simpleqa"
     arguments[arguments.index("reports/simpleqa")] = str(output)
     result = CliRunner().invoke(app, arguments)
-    # 2 is ExitCode.INCONCLUSIVE in inspect_safety_stats.cli, and also Click's code for a usage
+    # 2 is ExitCode.INCONCLUSIVE in safety_stats.cli, and also Click's code for a usage
     # error, so the report's headline is required as well.
     assert result.exit_code == 2, plain(result.output)
     assert "Integrity: valid" in plain(result.output)

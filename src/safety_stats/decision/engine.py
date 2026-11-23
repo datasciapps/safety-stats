@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from inspect_safety_stats.config.models import THRESHOLD_MAX, THRESHOLD_MIN
-from inspect_safety_stats.schema.reports import (
+from safety_stats.config.models import THRESHOLD_MAX, THRESHOLD_MIN
+from safety_stats.schema.reports import (
     AdaptiveClaimResult,
     ClaimResult,
     Decision,
     VerdictRange,
 )
-from inspect_safety_stats.stats.misclassification import NoisyValidCertification
+from safety_stats.stats.misclassification import NoisyValidCertification
 
 
 def claim_verdict_range(

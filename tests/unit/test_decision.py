@@ -1,4 +1,4 @@
-from inspect_safety_stats.decision.engine import decide_claim, roll_up
+from safety_stats.decision.engine import decide_claim, roll_up
 
 
 def test_claim_decision_regions() -> None:

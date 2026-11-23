@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from inspect_safety_stats.report.visualization import _safe_json
+from safety_stats.report.visualization import _safe_json
 
 
 def test_embedded_report_data_escapes_what_could_end_or_break_its_script() -> None:

@@ -1,6 +1,6 @@
 # HarmBench direct-request safety example
 
-This is the primary safety-oriented worked example for `inspect-safety-stats`. It evaluates all
+This is the primary safety-oriented worked example for `safety-stats`. It evaluates all
 400 text behaviors in HarmBench using its DirectRequest baseline, then computes fixed-design
 exact bounds and tail-sensitive risk summaries across repeated rollouts.
 

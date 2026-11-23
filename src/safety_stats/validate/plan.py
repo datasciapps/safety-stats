@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.schema.scopes import plan_scope
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.schema.reports import Diagnostic
+from safety_stats.schema.scopes import plan_scope
 
 
 def _duplicates(values: list[str]) -> set[str]:

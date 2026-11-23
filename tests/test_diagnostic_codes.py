@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 
 import tests.diagnostic_codes
-from inspect_safety_stats.registry import CODES, SourceKind
+from safety_stats.registry import CODES, SourceKind
 from tests.diagnostic_codes.harness import Case
 
 # Every module of tests/diagnostic_codes whose name ends in "_cases".

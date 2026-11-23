@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from inspect_safety_stats.stats import binomial_bounds
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.stats import binomial_bounds
+from safety_stats.stats.misclassification import (
     JudgeStratumCounts,
     correct_judge_risk,
     delta_method_corrected_risk,

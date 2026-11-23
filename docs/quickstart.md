@@ -21,7 +21,7 @@ that counts an incorrect answer as a failure.
 ### Validate
 
 ```bash
-inspect-safety-stats validate \
+safety-stats validate \
   --plan examples/real_simpleqa/safety-plan.yaml \
   --logs examples/real_simpleqa/simpleqa-8-real.eval
 ```
@@ -34,7 +34,7 @@ stay visible in the report.
 ### Analyze
 
 ```bash
-inspect-safety-stats analyze \
+safety-stats analyze \
   --plan examples/real_simpleqa/safety-plan.yaml \
   --logs examples/real_simpleqa/simpleqa-8-real.eval \
   --output reports/quickstart/valid
@@ -54,7 +54,7 @@ one change: it reads the score of a scorer named `match`, which this log does no
 
 <!-- quickstart-test: exit 3 -->
 ```bash
-inspect-safety-stats validate \
+safety-stats validate \
   --plan examples/real_simpleqa/wrong-scorer-plan.yaml \
   --logs examples/real_simpleqa/simpleqa-8-real.eval
 ```
@@ -68,7 +68,7 @@ context:
 
 <!-- quickstart-test: exit 3 -->
 ```bash
-inspect-safety-stats analyze \
+safety-stats analyze \
   --plan examples/real_simpleqa/wrong-scorer-plan.yaml \
   --logs examples/real_simpleqa/simpleqa-8-real.eval \
   --output reports/quickstart/invalid
@@ -113,7 +113,7 @@ This command requires the selected model provider's credentials. The statistical
 
 <!-- quickstart-test: needs live logs -->
 ```bash
-inspect-safety-stats validate \
+safety-stats validate \
   --plan examples/fixed_design/safety-plan.yaml \
   --logs logs/fixed-design-example
 ```
@@ -124,7 +124,7 @@ Resolve every `ERROR` before interpreting safety claims. Warnings remain visible
 
 <!-- quickstart-test: needs live logs -->
 ```bash
-inspect-safety-stats analyze \
+safety-stats analyze \
   --plan examples/fixed_design/safety-plan.yaml \
   --logs logs/fixed-design-example \
   --output reports/fixed-design-example

@@ -21,7 +21,7 @@ from flip_manifest import export_positives, write_manifest
 from inspect_ai import eval as inspect_eval
 from judge_flip import judge_flip, target_run
 
-from inspect_safety_stats import analyze, load_plan
+from safety_stats import analyze, load_plan
 
 HERE = Path(__file__).resolve().parent
 RUN = HERE / "run"

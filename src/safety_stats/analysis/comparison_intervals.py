@@ -7,8 +7,8 @@ from typing import Any, Literal
 
 import numpy as np
 
-from inspect_safety_stats.analysis import interval_assumptions
-from inspect_safety_stats.analysis.direct_mean import (
+from safety_stats.analysis import interval_assumptions
+from safety_stats.analysis.direct_mean import (
     _complete_ledger_blocks,
     _EndpointCalibration,
     _frontier_overlaps,
@@ -17,19 +17,19 @@ from inspect_safety_stats.analysis.direct_mean import (
     _own_blocks,
     _path_rows,
 )
-from inspect_safety_stats.analysis.estimates import _block_index
-from inspect_safety_stats.analysis.measures import _coverage_floors, _independence
-from inspect_safety_stats.config.methods import ComparisonMethod
-from inspect_safety_stats.config.models import AnalysisPlan, ComparisonSpec
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.observations import Observation, observation_field
-from inspect_safety_stats.schema.reports import Diagnostic, Eligibility, RiskIntervalResult
-from inspect_safety_stats.schema.scopes import scope_path
-from inspect_safety_stats.stats.clusters import paired_cluster_bootstrap
-from inspect_safety_stats.stats.comparisons import DirectComparisonBounds, RatioComparisonBounds
-from inspect_safety_stats.stats.direct_mean import COMPARISON_ENGINES, DirectMeanBounds
-from inspect_safety_stats.stats.independence import BoundedBlocks, comparison_contrast_blocks
-from inspect_safety_stats.stats.paired import (
+from safety_stats.analysis.estimates import _block_index
+from safety_stats.analysis.measures import _coverage_floors, _independence
+from safety_stats.config.methods import ComparisonMethod
+from safety_stats.config.models import AnalysisPlan, ComparisonSpec
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.observations import Observation, observation_field
+from safety_stats.schema.reports import Diagnostic, Eligibility, RiskIntervalResult
+from safety_stats.schema.scopes import scope_path
+from safety_stats.stats.clusters import paired_cluster_bootstrap
+from safety_stats.stats.comparisons import DirectComparisonBounds, RatioComparisonBounds
+from safety_stats.stats.direct_mean import COMPARISON_ENGINES, DirectMeanBounds
+from safety_stats.stats.independence import BoundedBlocks, comparison_contrast_blocks
+from safety_stats.stats.paired import (
     CompletionLimitError,
     PartialPairing,
     exact_mcnemar,
@@ -39,7 +39,7 @@ from inspect_safety_stats.stats.paired import (
     newcombe_paired_interval_partial,
     partial_pairing,
 )
-from inspect_safety_stats.stats.tree_calibration import (
+from safety_stats.stats.tree_calibration import (
     IndependentFrontier,
     any_overlap,
     calibrate_independent_frontiers,

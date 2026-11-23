@@ -21,11 +21,11 @@ workflow; factual-question accuracy is not itself a deployment-safety claim.
 From the repository root:
 
 ```bash
-inspect-safety-stats validate \
+safety-stats validate \
   --plan examples/real_simpleqa/safety-plan.yaml \
   --logs examples/real_simpleqa/simpleqa-8-real.eval
 
-inspect-safety-stats analyze \
+safety-stats analyze \
   --plan examples/real_simpleqa/safety-plan.yaml \
   --logs examples/real_simpleqa/simpleqa-8-real.eval \
   --output examples/real_simpleqa/report \

@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from inspect_safety_stats.config.decision_policy import DecisionPolicy, inference_plan_hash
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.schema.scopes import DECISION_POLICY_ROOT, scope_path
+from safety_stats.config.decision_policy import DecisionPolicy, inference_plan_hash
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.schema.reports import Diagnostic
+from safety_stats.schema.scopes import DECISION_POLICY_ROOT, scope_path
 
 
 def validate_decision_policy(plan: AnalysisPlan, policy: DecisionPolicy) -> list[Diagnostic]:
@@ -25,7 +25,7 @@ def validate_decision_policy(plan: AnalysisPlan, policy: DecisionPolicy) -> list
                     f"{policy.inference_plan_sha256}, but this plan's inference hash is "
                     f"{expected}; the plan changed in something that shapes its bounds or its "
                     "claims, or the policy was written for another plan. Print the hash with "
-                    "`inspect-safety-stats hash-plan --inference`"
+                    "`safety-stats hash-plan --inference`"
                 ),
                 details={
                     "policy_inference_plan_sha256": policy.inference_plan_sha256,

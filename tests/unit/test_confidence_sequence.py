@@ -12,9 +12,9 @@ from math import comb
 import numpy as np
 import pytest
 
-from inspect_safety_stats.stats import misclassification
-from inspect_safety_stats.stats.binomial import binomial_bounds
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.stats import misclassification
+from safety_stats.stats.binomial import binomial_bounds
+from safety_stats.stats.misclassification import (
     JudgeCalibration,
     JudgeStratumCounts,
     correct_judge_risk,

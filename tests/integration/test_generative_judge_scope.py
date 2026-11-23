@@ -16,10 +16,10 @@ import pandas as pd
 import pytest
 import yaml
 
-from inspect_safety_stats.generative.inference import NodeEstimate
-from inspect_safety_stats.generative.judge import pooled_calibration_gap
-from inspect_safety_stats.generative.ledger import read_rewrites, read_selections
-from inspect_safety_stats.generative.runner import analyze_run, materialize_run
+from safety_stats.generative.inference import NodeEstimate
+from safety_stats.generative.judge import pooled_calibration_gap
+from safety_stats.generative.ledger import read_rewrites, read_selections
+from safety_stats.generative.runner import analyze_run, materialize_run
 from tests.generative_fixtures import SEEDS_WITH_TEXT, base_plan
 
 MODEL = "provider/candidate"
@@ -89,10 +89,10 @@ def run_with_judge_misses(
         ]
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
 

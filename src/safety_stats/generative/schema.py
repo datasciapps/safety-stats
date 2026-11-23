@@ -16,7 +16,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from inspect_safety_stats.config.models import (
+from safety_stats.config.models import (
     JudgeCalibrationScenarioSpec,
     PlanFloat,
     PlanInt,

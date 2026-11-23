@@ -16,7 +16,7 @@ import sys
 
 {setup}
 try:
-    import inspect_safety_stats.ingest.inspect_logs
+    import safety_stats.ingest.inspect_logs
 except ImportError as error:
     print(type(error).__name__, "|", error)
 else:

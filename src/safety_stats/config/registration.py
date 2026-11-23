@@ -15,7 +15,7 @@ from typing import Literal
 
 from pydantic import Field, field_validator
 
-from inspect_safety_stats.config.models import StrictModel
+from safety_stats.config.models import StrictModel
 
 RECEIPT_VERSION: Literal["1"] = "1"
 

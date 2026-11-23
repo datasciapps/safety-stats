@@ -29,7 +29,7 @@ body:
       label: How to reproduce it
       description: >-
         The smallest plan, manifest and rollout files, or Python code, that show the problem without a
-        model provider or the network. `inspect-safety-stats init` and the files under `examples/` are
+        model provider or the network. `safety-stats init` and the files under `examples/` are
         good starting points.
     validations:
       required: true
@@ -37,7 +37,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: The output of `inspect-safety-stats version`.
+      description: The output of `safety-stats version`.
     validations:
       required: true
   - type: input

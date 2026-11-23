@@ -25,10 +25,10 @@ sys.path.insert(0, str(EXAMPLE_DIR))
 
 import simulated_target  # noqa: E402
 
-from inspect_safety_stats.generative.inference import UnitOutcome, estimate_tree  # noqa: E402
-from inspect_safety_stats.generative.sampling import draw_selections, plan_design  # noqa: E402
-from inspect_safety_stats.generative.schema import load_generative_plan  # noqa: E402
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy  # noqa: E402
+from safety_stats.generative.inference import UnitOutcome, estimate_tree  # noqa: E402
+from safety_stats.generative.sampling import draw_selections, plan_design  # noqa: E402
+from safety_stats.generative.schema import load_generative_plan  # noqa: E402
+from safety_stats.generative.taxonomy import compile_taxonomy  # noqa: E402
 
 BUDGET = 1200
 REPLICATES = 120

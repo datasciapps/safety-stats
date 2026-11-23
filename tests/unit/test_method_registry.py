@@ -6,13 +6,13 @@ from typing import get_args
 
 import pytest
 
-from inspect_safety_stats.config.methods import COMPARISON_METHODS, DIRECT_MEAN_METHODS
-from inspect_safety_stats.config.models import (
+from safety_stats.config.methods import COMPARISON_METHODS, DIRECT_MEAN_METHODS
+from safety_stats.config.models import (
     ComparisonSetSpec,
     ComparisonSpec,
     DirectMeanIntervalsSpec,
 )
-from inspect_safety_stats.stats.direct_mean import COMPARISON_ENGINES, DIRECT_MEAN_ENGINES
+from safety_stats.stats.direct_mean import COMPARISON_ENGINES, DIRECT_MEAN_ENGINES
 
 
 def test_the_dispatch_table_covers_exactly_the_registered_methods() -> None:

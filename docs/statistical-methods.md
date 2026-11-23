@@ -3,7 +3,7 @@
 ## Mathematical foundations, decision guarantees, and precedents in AI safety research
 
 **Status:** design specification; fixed-design core release with deferred stretch goals  
-**Target package:** `inspect-safety-stats` (working name)  
+**Target package:** `safety-stats` (working name)  
 **Target framework:** [Inspect AI](https://inspect.aisi.org.uk/)  
 **Last updated:** 18 August 2026
 
@@ -883,7 +883,7 @@ it is narrowest is not [33].
 
 The construction is experimental (CONTRIBUTING, section 3): a plan selects it only by naming
 `weighted_betting`, it is offered for direct means and hierarchy nodes but not for comparisons,
-and its functions are not exported from `inspect_safety_stats.stats`.
+and its functions are not exported from `safety_stats.stats`.
 
 ##### Hierarchy nodes and configurable independence profiles
 
@@ -1339,8 +1339,8 @@ Although explicit zero-failure planning is still uncommon in public frontier-mod
 
 ### 5.7 Detectable failure rates under the analysis interval
 
-`inspect-safety-stats plan fixed-design --plan PLAN` and
-`inspect_safety_stats.stats.planning.detectable_failure_rates` plan a `weighted_mean` claim on
+`safety-stats plan fixed-design --plan PLAN` and
+`safety_stats.stats.planning.detectable_failure_rates` plan a `weighted_mean` claim on
 the interval that decides it: the group's primary direct-mean interval under the plan's method
 (`weighted_hoeffding`, `weighted_empirical_bernstein` or `weighted_kl_chernoff`) and the
 endpoint alpha \(\alpha\) that `analyze` calibrates for it. Each gives two rates, at a target
@@ -1703,7 +1703,7 @@ contains \(\rho^\ast\) at every \(n\) simultaneously with probability at least \
 
 ### 6.10 Implemented: anytime-valid upper bounds for runs stopped early (experimental)
 
-`outputs.anytime_bounds` (#126) bounds the weighted mean failure probability of a fixed design whose Inspect run a rule such as Optstop's stopped once its outcomes looked precise enough (Section 12). The [sequential design](sequential-design.md#runs-that-optstop-stopped-126) explains it for users; this section derives it. The code is `src/inspect_safety_stats/stats/sequential.py`.
+`outputs.anytime_bounds` (#126) bounds the weighted mean failure probability of a fixed design whose Inspect run a rule such as Optstop's stopped once its outcomes looked precise enough (Section 12). The [sequential design](sequential-design.md#runs-that-optstop-stopped-126) explains it for users; this section derives it. The code is `src/safety_stats/stats/sequential.py`.
 
 **Model.** The design has \(N\) items with weights \(w_i\ge0\) summing to one. Item \(i\)'s outcome \(Y_i\in[0,1]\) is its judge-reported failure share over its first \(r\) epochs, \(r\) fixed in the plan. The \(Y_i\) are independent across items, and under the `rollout` profile so are the \(r\) rollouts within an item. The estimand is \(\theta=\sum_iw_i\,\mathbb E[Y_i]\), the fixed design's weighted mean. The run takes the items in a uniformly random permutation \(\sigma\), drawn before the run and independent of the outcomes, which Inspect's `sample_shuffle` with a nonzero integer seed records in the log. After \(t\) draws the analysis sees \(Y_{\sigma(1)},\dots,Y_{\sigma(t)}\). The guarantee is
 
@@ -2080,8 +2080,8 @@ Paired analysis is increasingly being productized for model evaluation. NVIDIA N
 
 ### 7.7 Planning a comparison at a margin (experimental)
 
-`inspect-safety-stats plan comparison` and
-`inspect_safety_stats.stats.planning.comparison_resolvable_differences` say, before a run,
+`safety-stats plan comparison` and
+`safety_stats.stats.planning.comparison_resolvable_differences` say, before a run,
 which risk differences \(\Delta=R_C-R_B\) a fixed two-arm design can resolve at a margin
 \(\delta\in(-1,1)\). They give two numbers:
 

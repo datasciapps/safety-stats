@@ -21,20 +21,20 @@ from typing import Literal
 
 import numpy as np
 
-from inspect_safety_stats.generative.ledger import SelectionRecord
-from inspect_safety_stats.generative.sampling import SamplingDesign
-from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
-from inspect_safety_stats.stats.binomial import (
+from safety_stats.generative.ledger import SelectionRecord
+from safety_stats.generative.sampling import SamplingDesign
+from safety_stats.generative.taxonomy import CompiledTaxonomy
+from safety_stats.stats.binomial import (
     binomial_upper_bound,
     missingness_robust_binomial_bounds,
 )
-from inspect_safety_stats.stats.direct_mean import (
+from safety_stats.stats.direct_mean import (
     _bernoulli_kl,
     _invert_divergence,
     _poisson_deviance,
     weighted_kl_chernoff_mean_bounds,
 )
-from inspect_safety_stats.stats.tree_calibration import (
+from safety_stats.stats.tree_calibration import (
     IndependentFrontier,
     calibrate_independent_frontiers,
 )

@@ -801,7 +801,7 @@ _CODES: tuple[CodeEntry, ...] = (
         ),
         remedy=(
             "Apply the policy to the plan it was written for, or set its inference_plan_sha256 "
-            "to the hash `inspect-safety-stats hash-plan --inference` prints for this plan."
+            "to the hash `safety-stats hash-plan --inference` prints for this plan."
         ),
     ),
     CodeEntry(

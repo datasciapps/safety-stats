@@ -34,7 +34,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from inspect_safety_stats.cli import app
+from safety_stats.cli import app
 from tests.cli_output import plain
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -147,7 +147,7 @@ def _absolute_examples(argument: str) -> str:
 
 
 def _invoke(argv: list[str]) -> str:
-    assert argv[0] == "inspect-safety-stats", f"README walkthrough runs {argv[0]!r}"
+    assert argv[0] == "safety-stats", f"README walkthrough runs {argv[0]!r}"
     result = CliRunner().invoke(app, [_absolute_examples(argument) for argument in argv[1:]])
     text = result.output
     assert result.exit_code == 0, f"{shlex.join(argv)} exited {result.exit_code}: {plain(text)}"
@@ -215,8 +215,8 @@ def test_the_walkthrough_has_the_blocks_this_module_runs() -> None:
     assert [fence.language for fence in fences["Python"]] == ["python", "text"]
     assert [fence.language for fence in fences["The summary"]] == ["text"]
     assert [command[:2] for command in _commands(fences["Command line"][0].body)] == [
-        ["inspect-safety-stats", "validate"],
-        ["inspect-safety-stats", "analyze"],
+        ["safety-stats", "validate"],
+        ["safety-stats", "analyze"],
     ]
     assert '"examples/demo/plan.yaml"' in fences["Python"][0].body
 

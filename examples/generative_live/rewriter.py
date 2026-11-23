@@ -49,7 +49,7 @@ from pathlib import Path
 
 from inspect_ai.model import GenerateConfig, get_model
 
-from inspect_safety_stats.generative import (
+from safety_stats.generative import (
     ChatTurn,
     RewriteOutcome,
     RewriteRequest,

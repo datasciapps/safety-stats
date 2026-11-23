@@ -9,7 +9,7 @@ from typing import Final, Literal, Protocol
 import numpy as np
 from numpy.typing import ArrayLike
 
-from inspect_safety_stats.config.methods import (
+from safety_stats.config.methods import (
     COMPARISON_METHODS,
     ComparisonMethod,
     DirectMeanMethod,

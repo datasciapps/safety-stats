@@ -17,12 +17,12 @@ import pandas as pd
 import pytest
 from typer.testing import CliRunner
 
-from inspect_safety_stats import analyze
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.config.loader import load_plan
-from inspect_safety_stats.ingest.normalize import read_inputs
-from inspect_safety_stats.ingest.rollout_files import RolloutFiles
-from inspect_safety_stats.schema.reports import SafetyReport
+from safety_stats import analyze
+from safety_stats.cli import app
+from safety_stats.config.loader import load_plan
+from safety_stats.ingest.normalize import read_inputs
+from safety_stats.ingest.rollout_files import RolloutFiles
+from safety_stats.schema.reports import SafetyReport
 from tests.cli_output import plain
 
 REPEATS = 4

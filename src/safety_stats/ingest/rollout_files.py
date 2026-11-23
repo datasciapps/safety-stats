@@ -15,8 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal, get_args
 
-from inspect_safety_stats.ingest.files import file_sha256
-from inspect_safety_stats.ingest.records import (
+from safety_stats.ingest.files import file_sha256
+from safety_stats.ingest.records import (
     ErrorContext,
     RolloutRecord,
     RunRecord,

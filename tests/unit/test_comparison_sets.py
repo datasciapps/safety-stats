@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from inspect_safety_stats.config.models import ComparisonSetSpec
+from safety_stats.config.models import ComparisonSetSpec
 
 
 def _set(**overrides: object) -> ComparisonSetSpec:

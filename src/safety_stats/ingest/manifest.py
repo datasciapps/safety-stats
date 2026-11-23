@@ -8,14 +8,14 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from inspect_safety_stats.config.models import (
+from safety_stats.config.models import (
     AnalysisPlan,
     GroupSpec,
     WeightSpec,
     ZeroToleranceSpec,
 )
-from inspect_safety_stats.schema.observations import observation_field
-from inspect_safety_stats.stats.independence import _BLOCK_OBSERVATION_FIELDS
+from safety_stats.schema.observations import observation_field
+from safety_stats.stats.independence import _BLOCK_OBSERVATION_FIELDS
 
 REQUIRED_COLUMNS = ("prompt_id", "question_id", "task_id")
 # Every observation and prompt estimate carries a question and a task. A manifest that omits

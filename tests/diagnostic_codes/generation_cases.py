@@ -18,12 +18,12 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from inspect_safety_stats.generative.kernels import (
+from safety_stats.generative.kernels import (
     RewriteOutcome,
     RewriteRequest,
     ValidationVerdict,
 )
-from inspect_safety_stats.registry import SourceKind
+from safety_stats.registry import SourceKind
 from tests.diagnostic_codes.harness import Case, Outcome, Run
 from tests.generative_fixtures import SEEDS_WITH_TEXT, base_plan, materialize
 
@@ -157,8 +157,8 @@ def generative(
     """
 
     def run(directory: Path) -> Outcome:
-        from inspect_safety_stats.generative.ledger import read_rewrites
-        from inspect_safety_stats.generative.runner import analyze_run, materialize_run
+        from safety_stats.generative.ledger import read_rewrites
+        from safety_stats.generative.runner import analyze_run, materialize_run
 
         directory.mkdir(parents=True)
         edited = copy.deepcopy(plan())
@@ -177,11 +177,11 @@ def generative(
         evals, samples = (logs or evaluation())(prompts)
         with pytest.MonkeyPatch.context() as patch:
             patch.setattr(
-                "inspect_safety_stats.ingest.inspect_logs.evals_df",
+                "safety_stats.ingest.inspect_logs.evals_df",
                 lambda logs, **_: pd.DataFrame(evals),
             )
             patch.setattr(
-                "inspect_safety_stats.ingest.inspect_logs.samples_df",
+                "safety_stats.ingest.inspect_logs.samples_df",
                 lambda logs, **_: pd.DataFrame(samples),
             )
             report = analyze_run(plan_path, artifacts, "logs", cohort=cohort, slices=slices)
@@ -403,7 +403,7 @@ def _unmapped(index: int) -> str:
     return "MAYBE" if index >= 55 else "PASS"
 
 
-# The kind of input, as inspect_safety_stats.registry.SOURCE_KINDS names them, that these
+# The kind of input, as safety_stats.registry.SOURCE_KINDS names them, that these
 # cases' triggers break. A case whose trigger breaks another kind names it as its source.
 SOURCE: SourceKind = "generation"
 

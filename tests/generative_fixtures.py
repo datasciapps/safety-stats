@@ -13,10 +13,10 @@ from typing import Any
 
 import yaml
 
-from inspect_safety_stats.generative.inference import NodeEstimate
-from inspect_safety_stats.generative.kernels import ChatTurn, RewriteOutcome, RewriteRequest
-from inspect_safety_stats.generative.schema import load_generative_plan
-from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy, compile_taxonomy
+from safety_stats.generative.inference import NodeEstimate
+from safety_stats.generative.kernels import ChatTurn, RewriteOutcome, RewriteRequest
+from safety_stats.generative.schema import load_generative_plan
+from safety_stats.generative.taxonomy import CompiledTaxonomy, compile_taxonomy
 
 SEEDS = """problem_class,semantic_seed_id,problem_class_weight,seed_weight
 chem,s001,0.6,0.5

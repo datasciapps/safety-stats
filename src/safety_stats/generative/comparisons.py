@@ -24,7 +24,7 @@ from typing import Literal
 
 import numpy as np
 
-from inspect_safety_stats.generative.inference import (
+from safety_stats.generative.inference import (
     CoverageMode,
     NodeEstimate,
     UnitOutcome,
@@ -35,10 +35,10 @@ from inspect_safety_stats.generative.inference import (
     _raw_failure_rate,
     _unclassified_share,
 )
-from inspect_safety_stats.generative.ledger import SelectionRecord
-from inspect_safety_stats.generative.sampling import SamplingDesign
-from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
-from inspect_safety_stats.stats.binomial import binomial_lower_bound, binomial_upper_bound
+from safety_stats.generative.ledger import SelectionRecord
+from safety_stats.generative.sampling import SamplingDesign
+from safety_stats.generative.taxonomy import CompiledTaxonomy
+from safety_stats.stats.binomial import binomial_lower_bound, binomial_upper_bound
 
 PAIRED_EXACT = "paired_binomial_cells"
 PAIRED_WEIGHTED = "paired_weighted_kl_chernoff"

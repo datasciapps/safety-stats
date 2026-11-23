@@ -6,18 +6,18 @@ from typing import cast
 
 import numpy as np
 
-from inspect_safety_stats.analysis.direct_mean import _hierarchy_region_target_id, _HierarchyNode
-from inspect_safety_stats.analysis.results import RiskRows
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.reports import (
+from safety_stats.analysis.direct_mean import _hierarchy_region_target_id, _HierarchyNode
+from safety_stats.analysis.results import RiskRows
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.reports import (
     Diagnostic,
     GroupRiskResult,
     HierarchyRiskResult,
     RiskIntervalResult,
 )
-from inspect_safety_stats.schema.scopes import cohort_scope
-from inspect_safety_stats.stats.hierarchy_region import (
+from safety_stats.schema.scopes import cohort_scope
+from safety_stats.stats.hierarchy_region import (
     LinearIntervalConstraint,
     project_hierarchy_confidence_region,
 )

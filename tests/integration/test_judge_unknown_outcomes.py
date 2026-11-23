@@ -17,10 +17,10 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.schema.reports import RiskIntervalResult, SafetyReport
-from inspect_safety_stats.stats.direct_mean import bounded_kl_chernoff_upper_bound
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats import analyze, load_plan
+from safety_stats.schema.reports import RiskIntervalResult, SafetyReport
+from safety_stats.stats.direct_mean import bounded_kl_chernoff_upper_bound
+from safety_stats.stats.misclassification import (
     JudgeCalibration,
     JudgeStratumCounts,
     correct_judge_risk,
@@ -199,10 +199,10 @@ def _analyze(
 
     eval_frame, sample_frame = _frames(cohorts)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     unlabelled = _write_plan(

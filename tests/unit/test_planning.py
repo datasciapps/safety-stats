@@ -4,8 +4,8 @@ import math
 
 import pytest
 
-from inspect_safety_stats.stats.binomial import binomial_upper_bound
-from inspect_safety_stats.stats.planning import (
+from safety_stats.stats.binomial import binomial_upper_bound
+from safety_stats.stats.planning import (
     expected_upper_bound,
     fixed_design_detectable_failure_rates,
 )

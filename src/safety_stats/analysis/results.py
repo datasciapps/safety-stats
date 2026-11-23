@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass
 
-from inspect_safety_stats.schema.reports import (
+from safety_stats.schema.reports import (
     ComparisonResult,
     GroupRiskResult,
     HierarchyRiskResult,

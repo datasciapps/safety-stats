@@ -16,13 +16,13 @@ from typing import get_args
 import pytest
 import yaml
 
-import inspect_safety_stats
-from inspect_safety_stats import __version__
-from inspect_safety_stats.config.loader import SCHEMA_VERSIONS
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.generative.schema import GenerativePlan, load_generative_plan
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy
-from inspect_safety_stats.schema.reports import SafetyReport
+import safety_stats
+from safety_stats import __version__
+from safety_stats.config.loader import SCHEMA_VERSIONS
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.generative.schema import GenerativePlan, load_generative_plan
+from safety_stats.generative.taxonomy import compile_taxonomy
+from safety_stats.schema.reports import SafetyReport
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -263,7 +263,7 @@ def test_documentation_has_no_url_placeholders() -> None:
 def test_documented_clones_enter_the_directory_they_create() -> None:
     """``git clone`` names the checkout after the URL; the next ``cd`` must use that name.
 
-    The installation page once cloned the repository and then entered ``inspect-safety-stats``,
+    The installation page once cloned the repository and then entered ``safety-stats``,
     the package name, which is not the directory git creates.
     """
     clone = re.compile(r"^git clone (\S+)\n(?:cd (\S+))?", flags=re.MULTILINE)
@@ -336,7 +336,7 @@ def test_no_tracked_file_names_a_local_home_directory() -> None:
 def test_the_package_has_no_runtime_asserts() -> None:
     """Python strips asserts under -O, so a runtime check must raise (CONTRIBUTING 5.2)."""
     # The imported package, not the checkout, so that scripts/prove_red.py can test it.
-    package = Path(inspect_safety_stats.__file__).parent
+    package = Path(safety_stats.__file__).parent
     offenders = [
         f"{path.relative_to(package.parent).as_posix()}:{node.lineno}"
         for path in sorted(package.rglob("*.py"))
@@ -355,7 +355,7 @@ def test_the_package_source_spells_invisible_characters_as_escapes() -> None:
     """A literal invisible character cannot be reviewed: the U+2028 and U+2029 escapes of the
     report page's data once became the characters themselves, which read as blank strings."""
     # The imported package, not the checkout, so that scripts/prove_red.py can test it.
-    package = Path(inspect_safety_stats.__file__).parent
+    package = Path(safety_stats.__file__).parent
     offenders = [
         f"{path.relative_to(package.parent).as_posix()}:{line}"
         for path in sorted(package.rglob("*"))
@@ -409,7 +409,7 @@ def test_documented_schema_versions_match_the_code() -> None:
 # entry point to it carries the same caveat, so none of them presents it as stable (#24).
 _GENERATIVE_CAVEAT = (
     "The generative pipeline is experimental: its public surface, "
-    "`inspect_safety_stats.generative.__all__`, may change in any minor release."
+    "`safety_stats.generative.__all__`, may change in any minor release."
 )
 
 
@@ -419,7 +419,7 @@ _GENERATIVE_CAVEAT = (
         "README.md",
         "docs/generative-evaluation.md",
         "docs/api-reference.md",
-        "src/inspect_safety_stats/generative/__init__.py",
+        "src/safety_stats/generative/__init__.py",
     ],
 )
 def test_generative_entry_points_carry_the_experimental_caveat(relative: str) -> None:

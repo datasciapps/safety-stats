@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-from inspect_safety_stats.stats.design_based import (
+from safety_stats.stats.design_based import (
     FixedSizeDesign,
     InclusionDesign,
     fixed_size_mean_bounds,

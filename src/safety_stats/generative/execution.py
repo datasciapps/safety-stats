@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from inspect_safety_stats.generative.kernels import (
+from safety_stats.generative.kernels import (
     ChatTurn,
     KernelFingerprint,
     RewriteKernel,
@@ -31,15 +31,15 @@ from inspect_safety_stats.generative.kernels import (
     encode_conversation,
     user_turns,
 )
-from inspect_safety_stats.generative.ledger import (
+from safety_stats.generative.ledger import (
     AttemptRecord,
     IncrementalCsvWriter,
     RewriteRecord,
     SelectionRecord,
     prompt_sha256,
 )
-from inspect_safety_stats.generative.schema import GenerativePlan, turn_count
-from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
+from safety_stats.generative.schema import GenerativePlan, turn_count
+from safety_stats.generative.taxonomy import CompiledTaxonomy
 
 
 @dataclass(frozen=True)

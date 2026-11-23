@@ -17,13 +17,13 @@ from typing import Any, cast
 
 import numpy as np
 
-from inspect_safety_stats.config.models import AnalysisPlan, AnytimeBoundsSpec
-from inspect_safety_stats.ingest.records import NormalizedData, SampleOrder
-from inspect_safety_stats.schema.observations import Observation
-from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.schema.scopes import cohort_scope
-from inspect_safety_stats.stats.sequential import AnytimeUpperBound, anytime_upper_bound
-from inspect_safety_stats.validate.plan import anytime_bound_problems
+from safety_stats.config.models import AnalysisPlan, AnytimeBoundsSpec
+from safety_stats.ingest.records import NormalizedData, SampleOrder
+from safety_stats.schema.observations import Observation
+from safety_stats.schema.reports import Diagnostic
+from safety_stats.schema.scopes import cohort_scope
+from safety_stats.stats.sequential import AnytimeUpperBound, anytime_upper_bound
+from safety_stats.validate.plan import anytime_bound_problems
 
 OrderReader = Callable[[Mapping[str, str]], Mapping[str, SampleOrder]]
 

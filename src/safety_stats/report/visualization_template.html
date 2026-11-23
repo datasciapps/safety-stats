@@ -378,11 +378,11 @@
     <p id="footer" class="footer"></p>
   </main>
 
-  <script id="inspect-safety-stats-data" type="application/json">__INSPECT_SAFETY_STATS_DATA__</script>
+  <script id="safety-stats-data" type="application/json">__SAFETY_STATS_DATA__</script>
   <script>
   (() => {
     "use strict";
-    const payload = JSON.parse(document.getElementById("inspect-safety-stats-data").textContent);
+    const payload = JSON.parse(document.getElementById("safety-stats-data").textContent);
     const report = payload.report || {};
     const designRows = Array.isArray(report.design?.prompts) ? report.design.prompts : [];
     const estimates = Array.isArray(report.prompt_estimates) ? report.prompt_estimates : [];
@@ -1261,7 +1261,7 @@
     function renderDynamic() { renderSummary(); renderClaims(); renderRisk(); renderAllExploration(); renderHierarchyRisks(); }
     // ORDER MATTERS: the footer holds the scope caveat, so it is set before the sections render;
     // set after them, an uncaught error in any section would leave the page without it.
-    document.getElementById("footer").textContent = `Generated from inspect-safety-stats schema ${report.schema_version || "—"}. ${designText(report).footer}`;
+    document.getElementById("footer").textContent = `Generated from safety-stats schema ${report.schema_version || "—"}. ${designText(report).footer}`;
     renderHeader(); bind(); renderDynamic(); renderComparisons(); renderAudit();
   })();
   </script>

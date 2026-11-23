@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from inspect_safety_stats.stats.planning import (
+from safety_stats.stats.planning import (
     exact_half_width,
     rollout_scale_for_half_width,
     rollouts_for_half_width,

@@ -19,24 +19,24 @@ import numpy as np
 import pytest
 import yaml
 
-from inspect_safety_stats.analysis.unclassified_share import (
+from safety_stats.analysis.unclassified_share import (
     PER_PROMPT_METHOD,
     UNBOUNDED_METHOD,
     bounds_complete_unclassified,
     share_alpha,
     unclassified_share_bound,
 )
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.generative.inference import unclassified_upper_bound
-from inspect_safety_stats.generative.judge import correct
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.stats import JudgeCalibration, correct_judge_risk
-from inspect_safety_stats.stats.binomial import (
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.generative.inference import unclassified_upper_bound
+from safety_stats.generative.judge import correct
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.stats import JudgeCalibration, correct_judge_risk
+from safety_stats.stats.binomial import (
     binomial_bounds,
     binomial_upper_bound,
     missingness_robust_binomial_bounds,
 )
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.stats.misclassification import (
     JudgeStratumCounts,
     estimate_judge_calibration,
     transport_judge_risk,
@@ -637,7 +637,7 @@ def test_a_fixed_design_share_bound_covers_the_population_share() -> None:
 
 
 def test_the_share_alpha_is_a_quarter_of_a_measured_budget_or_the_row_level() -> None:
-    from inspect_safety_stats.schema.reports import RiskIntervalResult
+    from safety_stats.schema.reports import RiskIntervalResult
 
     assert share_alpha(0.05, None) == 0.0125
     base = RiskIntervalResult(

@@ -8,11 +8,11 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from inspect_safety_stats.config.models import AdaptiveClaimSpec, AnalysisPlan
-from inspect_safety_stats.ingest.outcomes import classified_by_policy, judge_positive
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.reports import AdaptiveClaimResult
-from inspect_safety_stats.stats.adaptive import METHOD, adaptive_lower_bound
+from safety_stats.config.models import AdaptiveClaimSpec, AnalysisPlan
+from safety_stats.ingest.outcomes import classified_by_policy, judge_positive
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.reports import AdaptiveClaimResult
+from safety_stats.stats.adaptive import METHOD, adaptive_lower_bound
 
 AdaptiveStatus = Literal["FAIL", "INCONCLUSIVE"]
 

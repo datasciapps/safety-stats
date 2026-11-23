@@ -2,19 +2,19 @@
 
 **Experimental.** The format and its options may change in a minor release.
 
-`inspect-safety-stats` reads Inspect AI logs by default. Results from any other evaluation
+`safety-stats` reads Inspect AI logs by default. Results from any other evaluation
 system can be analysed by writing them as two plain files, a runs file and a rollouts file, and
 passing them in place of the logs:
 
 ```bash
-inspect-safety-stats analyze --plan plan.yaml --runs runs.jsonl --rollouts rollouts.jsonl \
+safety-stats analyze --plan plan.yaml --runs runs.jsonl --rollouts rollouts.jsonl \
   --output report/
-inspect-safety-stats validate --plan plan.yaml --runs runs.jsonl --rollouts rollouts.jsonl
+safety-stats validate --plan plan.yaml --runs runs.jsonl --rollouts rollouts.jsonl
 ```
 
 ```python
-from inspect_safety_stats import analyze
-from inspect_safety_stats.ingest import RolloutFiles
+from safety_stats import analyze
+from safety_stats.ingest import RolloutFiles
 
 report = analyze(
     plan="plan.yaml",

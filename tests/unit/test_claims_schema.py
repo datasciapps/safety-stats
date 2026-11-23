@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from inspect_safety_stats.schema.claims import ClaimsExport
+from safety_stats.schema.claims import ClaimsExport
 
 _FIELDS = {
     "ClaimsExport": [

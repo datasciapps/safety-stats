@@ -92,7 +92,7 @@ for (const [tag, id] of input.elements) {
   new Element("div").appendChild(element);
   byId.set(id, element);
 }
-byId.get("inspect-safety-stats-data").textContent = input.data;
+byId.get("safety-stats-data").textContent = input.data;
 const document = {
   title: "",
   getElementById: id => byId.get(id) || null,
@@ -223,7 +223,7 @@ def run_page(node: str, html: str, directory: Path) -> PageRun:
     if len(data) != 1 or len(code) != 1:
         raise AssertionError("a report page has one data script and one page script")
     markup = _SCRIPT.sub("", html)
-    elements = [*_ELEMENT_ID.findall(markup), ("script", "inspect-safety-stats-data")]
+    elements = [*_ELEMENT_ID.findall(markup), ("script", "safety-stats-data")]
     page = directory / "page.json"
     page.write_text(
         json.dumps({"data": data[0], "code": code[0], "elements": elements}),

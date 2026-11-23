@@ -5,8 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from inspect_safety_stats.config import load_plan
-from inspect_safety_stats.ingest.manifest import load_manifest, resolve_groups
+from safety_stats.config import load_plan
+from safety_stats.ingest.manifest import load_manifest, resolve_groups
 
 EXAMPLE_DIR = Path(__file__).parents[1] / "examples" / "real_harmbench"
 sys.path.insert(0, str(EXAMPLE_DIR))

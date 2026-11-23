@@ -153,7 +153,7 @@ establishes:
   gives a low rate that is not evidence of safety.
 - **Safety from rare harms.** An upper bound of θ at 95% needs about 3/θ failure-free
   rollouts: 200 failure-free rollouts leave the rate possibly as high as 1.49%, and showing it
-  is below 1% takes 299 (`inspect-safety-stats plan zero-failure --threshold 0.01`). Harms
+  is below 1% takes 299 (`safety-stats plan zero-failure --threshold 0.01`). Harms
   rarer than the rollout budget can reach are not shown to be rare, only
   unmeasured. Claims about them need other evidence, such as monitoring in deployment
   ([section 15.7](statistical-methods.md#157-residual-risk-of-rare-harms)).

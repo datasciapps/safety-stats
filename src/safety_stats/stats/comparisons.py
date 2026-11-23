@@ -7,11 +7,11 @@ from typing import Literal
 import numpy as np
 from numpy.typing import ArrayLike
 
-from inspect_safety_stats.config.methods import (
+from safety_stats.config.methods import (
     DEFAULT_STATS_FUNCTION_METHOD,
     ComparisonMethod,
 )
-from inspect_safety_stats.stats.direct_mean import (
+from safety_stats.stats.direct_mean import (
     COMPARISON_ENGINES,
     CountsFunction,
     DirectMeanBounds,

@@ -13,9 +13,9 @@ from typing import Any
 
 import pytest
 
-from inspect_safety_stats import analyze
-from inspect_safety_stats.analysis import core
-from inspect_safety_stats.analysis.results import RiskRows
+from safety_stats import analyze
+from safety_stats.analysis import core
+from safety_stats.analysis.results import RiskRows
 from tests.diagnostic_codes.harness import Inputs
 from tests.diagnostic_codes.judge_analysis_cases import (
     census,

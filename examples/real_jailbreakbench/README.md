@@ -164,7 +164,7 @@ python examples/real_jailbreakbench/analyze_run.py \
 Equivalently, use the package CLI:
 
 ```bash
-inspect-safety-stats analyze \
+safety-stats analyze \
   --plan examples/real_jailbreakbench/live-runs/RUN_ID/analysis-plan.yaml \
   --logs examples/real_jailbreakbench/live-runs/RUN_ID/logs \
   --output examples/real_jailbreakbench/live-runs/RUN_ID/report \

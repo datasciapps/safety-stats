@@ -45,17 +45,17 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from inspect_safety_stats.generative.inference import (
+from safety_stats.generative.inference import (
     CoverageMode,
     UnitOutcome,
     _bounds,
     _point_estimate,
 )
-from inspect_safety_stats.generative.ledger import SelectionRecord
-from inspect_safety_stats.generative.sampling import SamplingDesign
-from inspect_safety_stats.generative.taxonomy import CompiledTaxonomy
-from inspect_safety_stats.stats.direct_mean import weighted_bounded_kl_chernoff_mean_bounds
-from inspect_safety_stats.stats.tree_calibration import (
+from safety_stats.generative.ledger import SelectionRecord
+from safety_stats.generative.sampling import SamplingDesign
+from safety_stats.generative.taxonomy import CompiledTaxonomy
+from safety_stats.stats.direct_mean import weighted_bounded_kl_chernoff_mean_bounds
+from safety_stats.stats.tree_calibration import (
     IndependentFrontier,
     any_overlap,
     calibrate_independent_frontiers,

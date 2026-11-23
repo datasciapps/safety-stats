@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.ingest.manifest import resolve_weights
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.observations import Observation
-from inspect_safety_stats.schema.reports import Diagnostic, Eligibility, PromptEstimate
-from inspect_safety_stats.schema.scopes import cohort_scope, plan_scope
-from inspect_safety_stats.stats.binomial import binomial_bounds, missingness_robust_binomial_bounds
-from inspect_safety_stats.stats.independence import BlockIndex, block_index
-from inspect_safety_stats.stats.multiplicity import bonferroni_allocate
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.ingest.manifest import resolve_weights
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.observations import Observation
+from safety_stats.schema.reports import Diagnostic, Eligibility, PromptEstimate
+from safety_stats.schema.scopes import cohort_scope, plan_scope
+from safety_stats.stats.binomial import binomial_bounds, missingness_robust_binomial_bounds
+from safety_stats.stats.independence import BlockIndex, block_index
+from safety_stats.stats.multiplicity import bonferroni_allocate
 
 
 def alpha_by_prompt(

@@ -7,10 +7,10 @@ from typing import Any
 
 import pytest
 
-from inspect_safety_stats.generative.planning import forecast, rewrites_for_bound
-from inspect_safety_stats.generative.schema import load_generative_plan
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy
-from inspect_safety_stats.stats.binomial import binomial_upper_bound
+from safety_stats.generative.planning import forecast, rewrites_for_bound
+from safety_stats.generative.schema import load_generative_plan
+from safety_stats.generative.taxonomy import compile_taxonomy
+from safety_stats.stats.binomial import binomial_upper_bound
 from tests.generative_fixtures import SEEDS, base_plan, materialize
 
 

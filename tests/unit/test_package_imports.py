@@ -18,12 +18,12 @@ def _run(code: str) -> str:
 @pytest.mark.parametrize(
     "module",
     [
-        "inspect_safety_stats",
-        "inspect_safety_stats.cli",
-        "inspect_safety_stats.ingest",
-        "inspect_safety_stats.generative",
-        "inspect_safety_stats.stats",
-        "inspect_safety_stats.registry",
+        "safety_stats",
+        "safety_stats.cli",
+        "safety_stats.ingest",
+        "safety_stats.generative",
+        "safety_stats.stats",
+        "safety_stats.registry",
     ],
 )
 def test_importing_the_package_or_cli_loads_no_heavy_dependency(module: str) -> None:
@@ -37,18 +37,18 @@ def test_importing_the_package_or_cli_loads_no_heavy_dependency(module: str) -> 
 @pytest.mark.parametrize(
     "imports",
     [
-        "from inspect_safety_stats import validate",
-        "import inspect_safety_stats.validate.plan\nfrom inspect_safety_stats import validate",
-        "import inspect_safety_stats.api\nfrom inspect_safety_stats import validate",
-        "from inspect_safety_stats import analyze\nfrom inspect_safety_stats import validate",
+        "from safety_stats import validate",
+        "import safety_stats.validate.plan\nfrom safety_stats import validate",
+        "import safety_stats.api\nfrom safety_stats import validate",
+        "from safety_stats import analyze\nfrom safety_stats import validate",
     ],
 )
 def test_validate_is_the_function_whatever_was_imported_first(imports: str) -> None:
     """The validate subpackage shares the exported function's name."""
     result = _run(
         f"{imports}\n"
-        "import inspect_safety_stats as package\n"
-        "from inspect_safety_stats.api import validate as source\n"
+        "import safety_stats as package\n"
+        "from safety_stats.api import validate as source\n"
         "print(validate is source and package.validate is source)"
     )
     assert result == "True"
@@ -56,10 +56,10 @@ def test_validate_is_the_function_whatever_was_imported_first(imports: str) -> N
 
 def test_lazy_exports_are_the_objects_of_their_source_modules() -> None:
     result = _run(
-        "import inspect_safety_stats as package\n"
-        "from inspect_safety_stats import api, config\n"
-        "from inspect_safety_stats.report import visualization\n"
-        "from inspect_safety_stats.schema import reports\n"
+        "import safety_stats as package\n"
+        "from safety_stats import api, config\n"
+        "from safety_stats.report import visualization\n"
+        "from safety_stats.schema import reports\n"
         "expected = {\n"
         "    'AnalysisPlan': config.AnalysisPlan,\n"
         "    'SafetyReport': reports.SafetyReport,\n"
@@ -78,9 +78,9 @@ def test_lazy_exports_are_the_objects_of_their_source_modules() -> None:
 @pytest.mark.parametrize(
     "package",
     [
-        "inspect_safety_stats.ingest",
-        "inspect_safety_stats.generative",
-        "inspect_safety_stats.stats",
+        "safety_stats.ingest",
+        "safety_stats.generative",
+        "safety_stats.stats",
     ],
 )
 def test_subpackage_lazy_exports_cover_all_and_keep_submodules_reachable(package: str) -> None:
@@ -100,10 +100,10 @@ def test_subpackage_lazy_exports_cover_all_and_keep_submodules_reachable(package
 @pytest.mark.parametrize(
     "module",
     [
-        "inspect_safety_stats.api",
-        "inspect_safety_stats.ingest.normalize",
-        "inspect_safety_stats.ingest.records",
-        "inspect_safety_stats.ingest.rollout_files",
+        "safety_stats.api",
+        "safety_stats.ingest.normalize",
+        "safety_stats.ingest.records",
+        "safety_stats.ingest.rollout_files",
     ],
 )
 def test_the_analysis_and_the_ingestion_core_load_inspect_only_when_reading_its_logs(

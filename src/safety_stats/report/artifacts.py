@@ -16,7 +16,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any, Protocol
 
-from inspect_safety_stats.config.canonicalize import canonical_value
+from safety_stats.config.canonicalize import canonical_value
 
 CHECKSUMS = "checksums.json"
 

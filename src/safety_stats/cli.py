@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Annotated, Literal
 
 import typer
 
-from inspect_safety_stats.version import __version__
+from safety_stats.version import __version__
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
@@ -16,10 +16,10 @@ if TYPE_CHECKING:
     import numpy as np
     import pandas as pd
 
-    from inspect_safety_stats.claim_planning import EndpointAlpha
-    from inspect_safety_stats.ingest.records import EvaluationSource
-    from inspect_safety_stats.schema.reports import Diagnostic
-    from inspect_safety_stats.schema.summary import SummaryWarning
+    from safety_stats.claim_planning import EndpointAlpha
+    from safety_stats.ingest.records import EvaluationSource
+    from safety_stats.schema.reports import Diagnostic
+    from safety_stats.schema.summary import SummaryWarning
 
 # Each command imports what it needs when it runs, so that `version`, `--help`, `plan` and
 # `schema` do not load Inspect AI, pandas and the analysis pipeline.
@@ -31,7 +31,7 @@ schema_app = typer.Typer(help="Print machine-readable schemas.")
 # docs' copies are checked by tests/test_repository_consistency.py).
 GENERATIVE_CAVEAT = (
     "The generative pipeline is experimental: its public surface, "
-    "`inspect_safety_stats.generative.__all__`, may change in any minor release."
+    "`safety_stats.generative.__all__`, may change in any minor release."
 )
 generative_app = typer.Typer(
     help=(
@@ -136,7 +136,7 @@ def _source_arguments(
             raise typer.BadParameter("--rollouts needs --runs: the two files are read together")
         if logs:
             raise typer.BadParameter("pass either --logs or --runs and --rollouts, not both")
-        from inspect_safety_stats.ingest.rollout_files import RolloutFiles
+        from safety_stats.ingest.rollout_files import RolloutFiles
 
         return None, RolloutFiles(runs=runs, rollouts=rollouts)
     if not logs:
@@ -217,7 +217,7 @@ def init_command(
 
     if not logs:
         raise typer.BadParameter("at least one --logs path is required")
-    from inspect_safety_stats.scaffold import scaffold_plan
+    from safety_stats.scaffold import scaffold_plan
 
     try:
         result = scaffold_plan(
@@ -259,7 +259,7 @@ def init_command(
     typer.echo(f"Plan: {result.plan_path}")
     log_args = " ".join(f"--logs {path}" for path in result.logs)
     typer.echo(
-        f"Next: inspect-safety-stats analyze --plan {result.plan_path} {log_args} "
+        f"Next: safety-stats analyze --plan {result.plan_path} {log_args} "
         "--output <report-dir>"
     )
 
@@ -285,8 +285,8 @@ def _echo_warnings(
     its consequence alone do not say what to change.
     """
 
-    from inspect_safety_stats.report.index import SUMMARY_PAGE, WARNINGS_HEADING
-    from inspect_safety_stats.report.summary import WARNINGS_SECTION
+    from safety_stats.report.index import SUMMARY_PAGE, WARNINGS_HEADING
+    from safety_stats.report.summary import WARNINGS_SECTION
 
     if not warnings:
         return
@@ -343,7 +343,7 @@ def analyze_command(
     """Analyze completed Inspect logs or rollout files against a plan and write the report."""
 
     log_input, source = _source_arguments(logs, runs, rollouts)
-    from inspect_safety_stats.api import analyze as run_analysis
+    from safety_stats.api import analyze as run_analysis
 
     try:
         report = run_analysis(
@@ -372,7 +372,7 @@ def analyze_command(
                     "(adaptive attacker, experimental, FAIL only)"
                 )
         typer.echo(f"Decision: {report.decision}")
-    from inspect_safety_stats.report.summary import rate_interval_text, rate_text
+    from safety_stats.report.summary import rate_interval_text, rate_text
 
     # The headline is each weighted-mean failure rate of report.json's summary, printed as
     # report.md prints it: each bound rounded outward, and where a judge correction applies
@@ -427,7 +427,7 @@ def validate_command(
     """Check logs or rollout files against a plan (manifest, cohorts, rollouts, scores)."""
 
     log_input, source = _source_arguments(logs, runs, rollouts)
-    from inspect_safety_stats.api import validate as run_validation
+    from safety_stats.api import validate as run_validation
 
     try:
         result = run_validation(
@@ -458,7 +458,7 @@ def visualize_command(
 ) -> None:
     """Build a self-contained interactive HTML visualization from a report."""
 
-    from inspect_safety_stats.report.visualization import write_visualization
+    from safety_stats.report.visualization import write_visualization
 
     try:
         path = write_visualization(report, output, overwrite=overwrite)
@@ -476,7 +476,7 @@ def zero_failure_command(
 ) -> None:
     """Rollouts needed for zero observed failures to bound the rate below a threshold."""
 
-    from inspect_safety_stats.stats.planning import zero_failure_sample_size
+    from safety_stats.stats.planning import zero_failure_sample_size
 
     local_alpha = alpha / family_size
     count = zero_failure_sample_size(threshold=threshold, alpha=local_alpha)
@@ -502,7 +502,7 @@ def certification_planning_command(
 ) -> None:
     """Plan an exact one-sided binomial certification claim."""
 
-    from inspect_safety_stats.stats.planning import (
+    from safety_stats.stats.planning import (
         certification_power,
         certification_sample_size,
         maximum_certifiable_failure_rate,
@@ -569,7 +569,7 @@ def detectable_rate_command(
 ) -> None:
     """Invert exact one-sided tests at a fixed rollout horizon."""
 
-    from inspect_safety_stats.stats.planning import (
+    from safety_stats.stats.planning import (
         maximum_certifiable_failure_rate,
         minimum_detectable_failure_rate,
     )
@@ -633,8 +633,8 @@ def _planning_design(
 ) -> tuple[pd.DataFrame, np.ndarray]:
     """Read a design manifest and resolve its weights as `analyze` would."""
 
-    from inspect_safety_stats.config.models import WeightSpec
-    from inspect_safety_stats.ingest.manifest import (
+    from safety_stats.config.models import WeightSpec
+    from safety_stats.ingest.manifest import (
         REQUIRED_COLUMNS,
         load_manifest,
         resolve_weights,
@@ -739,7 +739,7 @@ def fixed_design_planning_command(
     if manifest is None or threshold is None:
         raise typer.BadParameter("give --manifest and --threshold, or --plan")
 
-    from inspect_safety_stats.stats.planning import fixed_design_detectable_failure_rates
+    from safety_stats.stats.planning import fixed_design_detectable_failure_rates
 
     local_alpha = alpha / family_size
     unit: Literal["rollout", "prompt_cluster"] = (
@@ -818,8 +818,8 @@ def _alpha_share(alpha: EndpointAlpha) -> str:
 def _plan_fixed_design_from_plan(
     plan_path: Path, manifest: Path | None, *, power: float, rollouts: int | None
 ) -> None:
-    from inspect_safety_stats.claim_planning import PlannedClaim, plan_design
-    from inspect_safety_stats.config.loader import load_plan
+    from safety_stats.claim_planning import PlannedClaim, plan_design
+    from safety_stats.config.loader import load_plan
 
     try:
         plan = load_plan(plan_path)
@@ -1014,8 +1014,8 @@ def pilot_command(
 
     import pandas as pd
 
-    from inspect_safety_stats.ingest.manifest import REQUIRED_COLUMNS, load_manifest
-    from inspect_safety_stats.ingest.pilot import draw_pilot
+    from safety_stats.ingest.manifest import REQUIRED_COLUMNS, load_manifest
+    from safety_stats.ingest.pilot import draw_pilot
 
     # samefile also catches a path that differs only in case on a case-insensitive
     # filesystem (macOS, Windows) and a hard link, which resolve() leaves distinct.
@@ -1103,7 +1103,7 @@ def comparison_planning_command(
     by prompt_id with joint coupling.
     """
 
-    from inspect_safety_stats.stats.planning import comparison_resolvable_differences
+    from safety_stats.stats.planning import comparison_resolvable_differences
 
     # As in analyze: two_sided splits each claim's share of the family alpha between the
     # lower and the upper bound; per_direction spends it on each.
@@ -1184,7 +1184,7 @@ def comparison_planning_command(
 def plan_schema_command() -> None:
     """Print the JSON schema for analysis plans."""
 
-    from inspect_safety_stats.config.models import AnalysisPlan
+    from safety_stats.config.models import AnalysisPlan
 
     typer.echo(json.dumps(AnalysisPlan.model_json_schema(), indent=2, sort_keys=True))
 
@@ -1193,7 +1193,7 @@ def plan_schema_command() -> None:
 def report_schema_command() -> None:
     """Print the JSON schema for reports."""
 
-    from inspect_safety_stats.schema.reports import SafetyReport
+    from safety_stats.schema.reports import SafetyReport
 
     typer.echo(json.dumps(SafetyReport.model_json_schema(), indent=2, sort_keys=True))
 
@@ -1202,7 +1202,7 @@ def report_schema_command() -> None:
 def claims_schema_command() -> None:
     """Print the JSON schema for claims.json (experimental)."""
 
-    from inspect_safety_stats.schema.claims import ClaimsExport
+    from safety_stats.schema.claims import ClaimsExport
 
     typer.echo(json.dumps(ClaimsExport.model_json_schema(), indent=2, sort_keys=True))
 
@@ -1211,7 +1211,7 @@ def claims_schema_command() -> None:
 def decision_policy_schema_command() -> None:
     """Print the JSON schema for decision policies (experimental)."""
 
-    from inspect_safety_stats.config.decision_policy import DecisionPolicy
+    from safety_stats.config.decision_policy import DecisionPolicy
 
     typer.echo(json.dumps(DecisionPolicy.model_json_schema(), indent=2, sort_keys=True))
 
@@ -1267,7 +1267,7 @@ def hash_plan_command(
 ) -> None:
     """Print a plan's canonical SHA-256, for registering a frozen plan."""
 
-    from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
+    from safety_stats.config.loader import canonical_plan_hash, load_plan
 
     if inference and register is not None:
         # A receipt records the canonical hash, which analyze checks; registering the
@@ -1283,7 +1283,7 @@ def hash_plan_command(
         typer.echo(f"Plan invalid: {_one_line_error(exc)}", err=True)
         raise typer.Exit(code=ExitCode.ERROR) from exc
     if inference:
-        from inspect_safety_stats.config.decision_policy import inference_plan_hash
+        from safety_stats.config.decision_policy import inference_plan_hash
 
         typer.echo(inference_plan_hash(resolved))
         return
@@ -1292,7 +1292,7 @@ def hash_plan_command(
     typer.echo(digest)
     if register is None:
         return
-    from inspect_safety_stats.config.registration import write_receipt
+    from safety_stats.config.registration import write_receipt
 
     try:
         receipt = write_receipt(register, digest, package_version=__version__)
@@ -1326,9 +1326,9 @@ def generative_compile_command(
     member the analysis could not estimate is refused before anything is generated.
     """
 
-    from inspect_safety_stats.generative.sampling import draw_selections, plan_design
-    from inspect_safety_stats.generative.schema import load_generative_plan
-    from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+    from safety_stats.generative.sampling import draw_selections, plan_design
+    from safety_stats.generative.schema import load_generative_plan
+    from safety_stats.generative.taxonomy import compile_taxonomy
 
     try:
         parsed = load_generative_plan(plan)
@@ -1336,7 +1336,7 @@ def generative_compile_command(
         design = plan_design(taxonomy, parsed)
         if parsed.inference.slice_family is not None:
             # The runner imports Inspect and pandas, which a plan without a family never needs.
-            from inspect_safety_stats.generative.runner import check_declared_slice_family
+            from safety_stats.generative.runner import check_declared_slice_family
 
             # The selected paths do not depend on the stage: these are the ones materialize
             # selects under --stage pilot or main.
@@ -1387,7 +1387,7 @@ def generative_materialize_command(
     record. --resume continues from it, executing only the units still outstanding.
     """
 
-    from inspect_safety_stats.generative.runner import materialize_run
+    from safety_stats.generative.runner import materialize_run
 
     # A console script does not put the working directory on sys.path, as `python -m` does,
     # but someone naming a module on the command line means the one in their project. The
@@ -1476,7 +1476,7 @@ def generative_analyze_command(
 ) -> None:
     """Join a completed Inspect run against the ledgers and estimate the design."""
 
-    from inspect_safety_stats.generative.runner import analyze_run
+    from safety_stats.generative.runner import analyze_run
 
     if not logs:
         raise typer.BadParameter("at least one --logs path is required")
@@ -1550,9 +1550,9 @@ def generative_budget_command(
     than what will happen.
     """
 
-    from inspect_safety_stats.generative.planning import forecast, rewrites_for_bound
-    from inspect_safety_stats.generative.schema import load_generative_plan
-    from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+    from safety_stats.generative.planning import forecast, rewrites_for_bound
+    from safety_stats.generative.schema import load_generative_plan
+    from safety_stats.generative.taxonomy import compile_taxonomy
 
     try:
         parsed = load_generative_plan(plan)
@@ -1672,7 +1672,7 @@ def generative_budget_command(
 def generative_plan_schema_command() -> None:
     """Print the JSON schema for a generative evaluation plan (experimental)."""
 
-    from inspect_safety_stats.generative.schema import GenerativePlan
+    from safety_stats.generative.schema import GenerativePlan
 
     typer.echo(json.dumps(GenerativePlan.model_json_schema(), indent=2))
 

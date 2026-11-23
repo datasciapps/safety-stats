@@ -7,13 +7,13 @@ import pytest
 from hypothesis import example, given
 from hypothesis import strategies as st
 
-from inspect_safety_stats.stats import binomial_bounds
-from inspect_safety_stats.stats.judges import (
+from safety_stats.stats import binomial_bounds
+from safety_stats.stats.judges import (
     JudgeAccuracyBox,
     composite_accuracy_box,
     identified_risk_set,
 )
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.stats.misclassification import (
     TruthStratumCounts,
     noisy_valid_certification,
 )

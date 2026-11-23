@@ -6,8 +6,8 @@ from dataclasses import dataclass
 import numpy as np
 from numpy.typing import ArrayLike
 
-from inspect_safety_stats.config.methods import DEFAULT_STATS_FUNCTION_METHOD, DirectMeanMethod
-from inspect_safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES
+from safety_stats.config.methods import DEFAULT_STATS_FUNCTION_METHOD, DirectMeanMethod
+from safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES
 
 DesignBasedMethod = DirectMeanMethod
 

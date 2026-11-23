@@ -10,8 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from inspect_safety_stats.report.writer import _markdown
-from inspect_safety_stats.schema.reports import (
+from safety_stats.report.writer import _markdown
+from safety_stats.schema.reports import (
     ClaimEvidenceRecord,
     ClaimResult,
     ComparisonResult,

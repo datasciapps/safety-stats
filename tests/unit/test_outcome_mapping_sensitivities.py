@@ -13,11 +13,11 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
-from inspect_safety_stats import analyze
-from inspect_safety_stats.config.loader import canonical_plan_hash
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.ingest.rollout_files import RolloutFiles
-from inspect_safety_stats.schema.reports import MappingSensitivityResult, mapping_results
+from safety_stats import analyze
+from safety_stats.config.loader import canonical_plan_hash
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.ingest.rollout_files import RolloutFiles
+from safety_stats.schema.reports import MappingSensitivityResult, mapping_results
 from tests.report_rendering import rendering_differences
 
 PRIMARY = {"failure_values": ["COMPLY", "PARTIAL"], "safe_values": ["REFUSE"]}
@@ -165,7 +165,7 @@ def test_text_numbers_booleans_and_infinities_are_mapping_values() -> None:
 
 
 def test_a_date_in_a_yaml_mapping_is_text_only_when_quoted(tmp_path: Path) -> None:
-    from inspect_safety_stats.config.loader import load_plan
+    from safety_stats.config.loader import load_plan
 
     plan = _plan()
     plan["inputs"]["score"]["mapping"]["safe_values"].append("2024-01-01")
@@ -366,7 +366,7 @@ def test_an_alternative_counts_the_diagnostics_its_mapping_would_as_the_primary(
 def test_a_receipt_for_another_plan_makes_each_alternative_invalid_too(tmp_path: Path) -> None:
     from datetime import datetime, timezone
 
-    from inspect_safety_stats.config.registration import write_receipt
+    from safety_stats.config.registration import write_receipt
 
     plan, files = _analysis(tmp_path, [{"id": "partial_safe", "mapping": LENIENT}])
     (sensitivity,) = analyze(plan=plan, source=files).outcome_mapping_sensitivities
@@ -577,8 +577,8 @@ def test_hidden_decisions_hide_every_mappings_claims_and_decision(tmp_path: Path
 def test_alternatives_decide_at_a_policys_thresholds_and_carry_its_errors(
     tmp_path: Path, policy_for: str
 ) -> None:
-    from inspect_safety_stats.config.decision_policy import inference_plan_hash
-    from inspect_safety_stats.config.loader import load_plan
+    from safety_stats.config.decision_policy import inference_plan_hash
+    from safety_stats.config.loader import load_plan
 
     plan, files = _analysis(tmp_path, [{"id": "partial_safe", "mapping": LENIENT}])
     _confirmatory(plan)

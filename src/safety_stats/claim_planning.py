@@ -26,9 +26,9 @@ from typing import TYPE_CHECKING, Literal
 import numpy as np
 import pandas as pd
 
-from inspect_safety_stats.config.methods import DirectMeanMethod
-from inspect_safety_stats.config.models import AnalysisPlan, ClaimSpec
-from inspect_safety_stats.ingest.manifest import (
+from safety_stats.config.methods import DirectMeanMethod
+from safety_stats.config.models import AnalysisPlan, ClaimSpec
+from safety_stats.ingest.manifest import (
     ResolvedGroup,
     load_manifest,
     plan_grouping_columns,
@@ -36,27 +36,27 @@ from inspect_safety_stats.ingest.manifest import (
     plan_manifest_columns,
     resolve_groups,
 )
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.registry import CODES
-from inspect_safety_stats.schema.observations import Observation, observation_field
-from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.stats.independence import (
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.registry import CODES
+from safety_stats.schema.observations import Observation, observation_field
+from safety_stats.schema.reports import Diagnostic
+from safety_stats.stats.independence import (
     _BLOCK_OBSERVATION_FIELDS,
     BoundedBlocks,
     direct_bounded_blocks,
     validate_profile_fields,
 )
-from inspect_safety_stats.stats.planning import (
+from safety_stats.stats.planning import (
     INVERTIBLE_METHODS,
     FixedDesignDetectableRates,
     MethodDetectableRates,
     detectable_failure_rates,
     fixed_design_detectable_failure_rates,
 )
-from inspect_safety_stats.validate.plan import validate_plan_references
+from safety_stats.validate.plan import validate_plan_references
 
 if TYPE_CHECKING:
-    from inspect_safety_stats.analysis.direct_mean import (
+    from safety_stats.analysis.direct_mean import (
         _DirectMeanContext,
         _EndpointCalibration,
         _HierarchyNode,
@@ -300,11 +300,11 @@ def _all_safe_upper_bounds(
     rollouts.
     """
 
-    from inspect_safety_stats.analysis.direct_mean import _hierarchy_region_target_id
-    from inspect_safety_stats.analysis.estimates import _prompt_estimates
-    from inspect_safety_stats.analysis.regions import project_hierarchy_regions
-    from inspect_safety_stats.analysis.results import RiskRows
-    from inspect_safety_stats.analysis.risks import _group_risks, _hierarchy_risks
+    from safety_stats.analysis.direct_mean import _hierarchy_region_target_id
+    from safety_stats.analysis.estimates import _prompt_estimates
+    from safety_stats.analysis.regions import project_hierarchy_regions
+    from safety_stats.analysis.results import RiskRows
+    from safety_stats.analysis.risks import _group_risks, _hierarchy_risks
 
     diagnostics: list[Diagnostic] = []
     estimates = _prompt_estimates(plan, data, diagnostics)
@@ -408,14 +408,14 @@ def plan_design(
 
     # Private helpers of the analysis, so that nodes, calibration and blocks are analyze's
     # own; a copy here could drift from it.
-    from inspect_safety_stats.analysis.direct_mean import (
+    from safety_stats.analysis.direct_mean import (
         _calibration_key,
         _direct_mean_context,
         _hierarchy_nodes,
         _hierarchy_region_target_id,
     )
-    from inspect_safety_stats.analysis.estimates import _block_index
-    from inspect_safety_stats.analysis.measures import _coverage_floors, _independence
+    from safety_stats.analysis.estimates import _block_index
+    from safety_stats.analysis.measures import _coverage_floors, _independence
 
     if plan.design.type != "fixed":
         raise ValueError(

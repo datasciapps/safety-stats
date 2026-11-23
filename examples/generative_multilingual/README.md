@@ -174,13 +174,13 @@ them.
 Inspect the design without generating anything:
 
 ```bash
-inspect-safety-stats generative compile --plan examples/generative_multilingual/plan-direct.yaml
+safety-stats generative compile --plan examples/generative_multilingual/plan-direct.yaml
 ```
 
 Generate the prompts and write everything an Inspect run needs:
 
 ```bash
-inspect-safety-stats generative materialize --plan examples/generative_multilingual/plan-direct.yaml --output run/generative --kernel mypackage.rewriters:build_kernel
+safety-stats generative materialize --plan examples/generative_multilingual/plan-direct.yaml --output run/generative --kernel mypackage.rewriters:build_kernel
 ```
 
 `--kernel` takes `fake` (the deterministic offline kernel used above), `fake:invalid_every=N`
@@ -199,7 +199,7 @@ the accepted distribution the estimand is defined against, but units that errore
 Evaluate the dataset with Inspect and your judge, then:
 
 ```bash
-inspect-safety-stats generative analyze --plan examples/generative_multilingual/plan-direct.yaml --artifacts run/generative --logs run/logs --output run/report --slice language=maltese --compare candidate:baseline
+safety-stats generative analyze --plan examples/generative_multilingual/plan-direct.yaml --artifacts run/generative --logs run/logs --output run/report --slice language=maltese --compare candidate:baseline
 ```
 
 Cohorts are matched to logs by the model each declares in `target.cohorts`, so the plan's

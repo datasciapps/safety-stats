@@ -9,48 +9,48 @@ from typing import Literal
 import numpy as np
 import pandas as pd
 
-from inspect_safety_stats.analysis import interval_assumptions
-from inspect_safety_stats.analysis.estimates import _block_index, prompt_blocked
-from inspect_safety_stats.analysis.measures import _coverage_floors, _independence, _parameter
-from inspect_safety_stats.config.methods import DirectMeanMethod
-from inspect_safety_stats.config.models import (
+from safety_stats.analysis import interval_assumptions
+from safety_stats.analysis.estimates import _block_index, prompt_blocked
+from safety_stats.analysis.measures import _coverage_floors, _independence, _parameter
+from safety_stats.config.methods import DirectMeanMethod
+from safety_stats.config.models import (
     AnalysisPlan,
     IndependenceProfileSpec,
     RiskMeasureSpec,
 )
-from inspect_safety_stats.ingest.manifest import load_inclusion_probabilities
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.reports import Diagnostic, PromptEstimate, RiskIntervalResult
-from inspect_safety_stats.schema.scopes import cohort_scope, scope_path
-from inspect_safety_stats.stats.design_based import (
+from safety_stats.ingest.manifest import load_inclusion_probabilities
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.reports import Diagnostic, PromptEstimate, RiskIntervalResult
+from safety_stats.schema.scopes import cohort_scope, scope_path
+from safety_stats.stats.design_based import (
     DesignBasedBounds,
     FixedSizeDesign,
     InclusionDesign,
     fixed_size_mean_bounds,
     horvitz_thompson_mean_bounds,
 )
-from inspect_safety_stats.stats.direct_mean import (
+from safety_stats.stats.direct_mean import (
     BETTING_KERNEL,
     DIRECT_MEAN_ENGINES,
     DirectMeanBounds,
     worst_of_k_kl_chernoff_bounds,
 )
-from inspect_safety_stats.stats.independence import (
+from safety_stats.stats.independence import (
     BoundedBlocks,
     direct_bounded_blocks,
     prompt_level_block_ids,
     prompt_outcome_counts,
 )
-from inspect_safety_stats.stats.single_valued import (
+from safety_stats.stats.single_valued import (
     SINGLE_VALUED_BOUND_GUARANTEE,
     single_valued_bound,
 )
-from inspect_safety_stats.stats.tree_calibration import (
+from safety_stats.stats.tree_calibration import (
     IndependentFrontier,
     any_overlap,
     calibrate_independent_frontiers,
 )
-from inspect_safety_stats.validate.plan import worst_of_k_interval_problems
+from safety_stats.validate.plan import worst_of_k_interval_problems
 
 _BETTING_ASSUMPTION = (
     "Experimental: a common betting fraction, mixed over a prior fixed before any "

@@ -15,7 +15,7 @@ from inspect_ai import eval as inspect_eval
 from inspect_ai.log import list_eval_logs, read_eval_log
 from jailbreakbench_live import behavior_id, behavior_rows, category_id, jailbreakbench_100
 
-from inspect_safety_stats import analyze
+from safety_stats import analyze
 
 HERE = Path(__file__).resolve().parent
 

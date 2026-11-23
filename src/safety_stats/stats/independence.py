@@ -8,8 +8,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from inspect_safety_stats.config.models import IndependenceProfileSpec
-from inspect_safety_stats.schema.observations import (
+from safety_stats.config.models import IndependenceProfileSpec
+from safety_stats.schema.observations import (
     LEGACY_FIELD_NAMES,
     Observation,
     observation_field,

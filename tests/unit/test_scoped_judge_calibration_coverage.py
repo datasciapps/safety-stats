@@ -20,12 +20,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from inspect_safety_stats.analysis.judge_calibration import _validated_judge_calibrations
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.ingest.manifest import ResolvedGroup
-from inspect_safety_stats.ingest.records import NormalizedData
-from inspect_safety_stats.schema.observations import Observation
-from inspect_safety_stats.schema.reports import Diagnostic
+from safety_stats.analysis.judge_calibration import _validated_judge_calibrations
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.ingest.manifest import ResolvedGroup
+from safety_stats.ingest.records import NormalizedData
+from safety_stats.schema.observations import Observation
+from safety_stats.schema.reports import Diagnostic
 
 PROMPTS, ROLLOUTS, SMALL = 100, 20, 10
 FAMILY_ALPHA = 0.05

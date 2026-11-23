@@ -20,9 +20,9 @@ from pydantic import (
 from pydantic.json_schema import JsonSchemaValue, SkipJsonSchema
 from pydantic_core import CoreSchema
 
-from inspect_safety_stats.registry import CODES, Effect, SourceKind
-from inspect_safety_stats.schema.pointers import ItemPointers
-from inspect_safety_stats.schema.scopes import scope_segments
+from safety_stats.registry import CODES, Effect, SourceKind
+from safety_stats.schema.pointers import ItemPointers
+from safety_stats.schema.scopes import scope_segments
 
 Decision = Literal["PASS", "FAIL", "INCONCLUSIVE"]
 Eligibility = Literal["certifying", "diagnostic", "invalid"]
@@ -43,7 +43,7 @@ class Diagnostic(ResultModel):
     """One finding of an analysis.
 
     ``source`` and ``effect`` are what the registry says of the code
-    (``inspect_safety_stats.registry.CODES``): the kind of input the finding concerns and what
+    (``safety_stats.registry.CODES``): the kind of input the finding concerns and what
     it does to the results. They are filled from the registry, so a reader of ``report.json``
     can act on a diagnostic without looking its code up. A code the registry does not list is
     rejected, and so is a ``source`` or ``effect`` that differs from its entry.
@@ -53,13 +53,13 @@ class Diagnostic(ResultModel):
     ``effect`` it holds, takes from the registry only those it lacks, and keeps a code the
     registry no longer lists, with whatever ``source`` and ``effect`` the report gives it.
 
-    ``scope`` is a path that says where the finding sits, as ``inspect_safety_stats.schema.scopes``
+    ``scope`` is a path that says where the finding sits, as ``safety_stats.schema.scopes``
     describes: ``plan/claims/mean_safe``, ``cohorts/candidate/prompts/p1``. A scope that does
     not follow it is rejected, except when a stored report is read back (``STORED_REPORT``).
 
     ``item`` is a JSON pointer into ``report.json`` to the record the scope names, such as
     ``/claims/0`` or ``/prompt_estimates/12``, and null when the report holds no record of it
-    (``inspect_safety_stats.schema.pointers``). The report fills it from the scope, also when
+    (``safety_stats.schema.pointers``). The report fills it from the scope, also when
     it is read back, so it always points into the report that holds the diagnostic.
     """
 
@@ -93,7 +93,7 @@ class Diagnostic(ResultModel):
         if entry is None:
             if not stored:
                 raise ValueError(
-                    f"diagnostic code {self.code!r} has no entry in inspect_safety_stats.registry"
+                    f"diagnostic code {self.code!r} has no entry in safety_stats.registry"
                 )
         else:
             for name, registered in (("source", entry.source), ("effect", entry.effect)):
@@ -716,7 +716,7 @@ class AssumptionUse(ResultModel):
     """An assumption of the registry the results rest on, with the plan settings it took.
 
     ``id``, ``statement`` and ``if_wrong`` are the registry entry's
-    (``inspect_safety_stats.registry.ASSUMPTIONS``). ``settings`` holds the value of each plan
+    (``safety_stats.registry.ASSUMPTIONS``). ``settings`` holds the value of each plan
     field that sets the assumption, empty when no plan field does.
     """
 
@@ -749,7 +749,7 @@ class SafetyReport(ResultModel):
 
     Its results apply to the declared fixed evaluation set or, under a sampled design, to the
     declared item frame; ``scope`` says which. ``write`` saves it as a report directory, and
-    ``inspect-safety-stats schema report`` prints the JSON schema of its ``report.json``.
+    ``safety-stats schema report`` prints the JSON schema of its ``report.json``.
     """
 
     schema_version: Literal["3.0"] = "3.0"
@@ -794,13 +794,13 @@ class SafetyReport(ResultModel):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def summary(self) -> ReportSummary:
-        """What to read first, with pointers to the rest (``inspect_safety_stats.schema.summary``).
+        """What to read first, with pointers to the rest (``safety_stats.schema.summary``).
 
         Written to ``report.json``; derived from the other fields, so it is dropped when a
         saved report is read back.
         """
 
-        from inspect_safety_stats.schema.summary import report_summary
+        from safety_stats.schema.summary import report_summary
 
         return report_summary(self)
 
@@ -815,7 +815,7 @@ class SafetyReport(ResultModel):
     def __get_pydantic_json_schema__(
         cls, core_schema: CoreSchema, handler: GetJsonSchemaHandler
     ) -> JsonSchemaValue:
-        # The schema describes report.json (`inspect-safety-stats schema report`), which holds
+        # The schema describes report.json (`safety-stats schema report`), which holds
         # summary. A computed field is in the serialization schema only, and that schema is
         # empty because of the wrap serializer above, so summary is added to the validation
         # schema here: optional, as a report written before it lacks it, and read-only, as
@@ -858,7 +858,7 @@ class SafetyReport(ResultModel):
         return self
 
     def write(self, output: str | Path, *, overwrite: bool = False) -> Path:
-        from inspect_safety_stats.report.writer import write_report
+        from safety_stats.report.writer import write_report
 
         return write_report(self, output, overwrite=overwrite)
 
@@ -923,6 +923,6 @@ def result_readings(
 
 # ORDER MATTERS: schema/summary.py imports this module's models, so it can only be imported once
 # they exist; SafetyReport.summary's type is resolved by the rebuild that follows.
-from inspect_safety_stats.schema.summary import ReportSummary  # noqa: E402
+from safety_stats.schema.summary import ReportSummary  # noqa: E402
 
 SafetyReport.model_rebuild()
