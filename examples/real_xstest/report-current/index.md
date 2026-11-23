@@ -2,7 +2,7 @@
 
 `report.md` is the one-page summary for people. Pointers such as `/group_risks/0` are JSON pointers into `report.json`. How to read this index: <https://github.com/aduncan001/safety_stats/blob/main/docs/agent-guide.md>.
 
-Analysis `real-xstest-published-gpt4-replay` (exploratory), plan SHA-256 `6aa8818abe40e749c05e70868542753f738401ec49f49317fb8bcba8e5e8081c`, inspect-safety-stats 0.16.0, report schema 3.0, index version 1.
+Analysis `real-xstest-published-gpt4-replay` (exploratory), plan SHA-256 `6aa8818abe40e749c05e70868542753f738401ec49f49317fb8bcba8e5e8081c`, safety-stats 0.16.0, report schema 3.0, index version 1.
 
 Data integrity: **valid** (0 errors, 3 warnings, 0 informational).
 
