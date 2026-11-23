@@ -20,10 +20,10 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.report.rounding import bound_text
-from inspect_safety_stats.report.summary import rate_interval_text
-from inspect_safety_stats.schema.reports import (
+from safety_stats import analyze, load_plan
+from safety_stats.report.rounding import bound_text
+from safety_stats.report.summary import rate_interval_text
+from safety_stats.schema.reports import (
     ComparisonResult,
     GroupRiskResult,
     HierarchyRiskResult,
@@ -242,10 +242,10 @@ def _analyze(
         ("candidate", "baseline") if compare else ("candidate",), judge
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     unlabelled = _write_plan(
@@ -746,10 +746,10 @@ def test_an_assumed_calibration_scoped_to_a_group_corrects_only_its_rows(
 ) -> None:
     eval_frame, sample_frame = _frames(("candidate",))
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     path = _write_plan(

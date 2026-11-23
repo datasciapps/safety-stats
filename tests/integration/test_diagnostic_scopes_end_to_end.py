@@ -15,9 +15,9 @@ from typing import NoReturn
 
 import pytest
 
-from inspect_safety_stats.analysis.estimates import prompt_blocked
-from inspect_safety_stats.schema.reports import SafetyReport
-from inspect_safety_stats.schema.scopes import node_id, scope_segments
+from safety_stats.analysis.estimates import prompt_blocked
+from safety_stats.schema.reports import SafetyReport
+from safety_stats.schema.scopes import node_id, scope_segments
 from tests.diagnostic_codes import interval_cases, judge_analysis_cases, logs_cases, plan_cases
 from tests.diagnostic_codes.harness import Inputs, base_inputs, run_analysis
 
@@ -98,7 +98,7 @@ MEAN = {"id": "mean", "type": "weighted_mean"}
         (
             "DIRECT_MEAN_INTERVAL_INVALID",
             {"id": "top", "type": "worst_of_k", "k": 2, "direct_interval": True},
-            "inspect_safety_stats.analysis.direct_mean.worst_of_k_kl_chernoff_bounds",
+            "safety_stats.analysis.direct_mean.worst_of_k_kl_chernoff_bounds",
         ),
     ],
 )

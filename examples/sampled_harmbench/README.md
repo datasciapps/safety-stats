@@ -47,7 +47,7 @@ python examples/sampled_harmbench/draw_sample.py \
 Then analyse the subset against the frame:
 
 ```bash
-inspect-safety-stats analyze \
+safety-stats analyze \
   --plan examples/sampled_harmbench/plan-stratified.yaml \
   --logs run/logs-stratified \
   --output run/report-stratified

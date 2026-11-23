@@ -8,7 +8,7 @@ from types import ModuleType
 
 import pytest
 
-from inspect_safety_stats.registry import ASSUMPTIONS, CODES
+from safety_stats.registry import ASSUMPTIONS, CODES
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "scripts"

@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from inspect_safety_stats.cli import app
+from safety_stats.cli import app
 from tests.cli_output import plain
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -82,7 +82,7 @@ def test_each_offline_quickstart_command_runs_verbatim(
     block: Block, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     argv = shlex.split(block.body.replace("\\\n", " "))
-    assert argv[0] == "inspect-safety-stats", (
+    assert argv[0] == "safety-stats", (
         f"quickstart.md:{block.line} runs {argv[0]!r}; mark it or teach this test to run it"
     )
     args = argv[1:]

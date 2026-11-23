@@ -9,9 +9,9 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from inspect_safety_stats.analysis.estimates import prompt_blocked
-from inspect_safety_stats.schema.reports import STORED_REPORT, Diagnostic, IntegritySummary
-from inspect_safety_stats.schema.scopes import (
+from safety_stats.analysis.estimates import prompt_blocked
+from safety_stats.schema.reports import STORED_REPORT, Diagnostic, IntegritySummary
+from safety_stats.schema.scopes import (
     cohort_of,
     cohort_scope,
     node_id,

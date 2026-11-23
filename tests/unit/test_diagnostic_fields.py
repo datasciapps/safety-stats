@@ -8,8 +8,8 @@ from collections.abc import Mapping
 import pytest
 from pydantic import ValidationError
 
-from inspect_safety_stats.registry import CODES, EFFECTS, SOURCE_KINDS
-from inspect_safety_stats.schema.reports import (
+from safety_stats.registry import CODES, EFFECTS, SOURCE_KINDS
+from safety_stats.schema.reports import (
     STORED_REPORT,
     Diagnostic,
     IntegritySummary,
@@ -38,7 +38,7 @@ def test_report_json_carries_source_and_effect_after_severity() -> None:
 def test_the_report_schema_gives_source_and_effect_as_values_never_null(
     field: str, values: Mapping[str, str]
 ) -> None:
-    # `inspect-safety-stats schema report` is the contract (CONTRIBUTING 4.3). The fields are
+    # `safety-stats schema report` is the contract (CONTRIBUTING 4.3). The fields are
     # optional, so that a report written before them reads back, but a report never holds null.
     schema = SafetyReport.model_json_schema()["$defs"]["Diagnostic"]
     written = schema["properties"][field]

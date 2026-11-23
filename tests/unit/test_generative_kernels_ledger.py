@@ -11,15 +11,15 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from inspect_safety_stats.generative.execution import prompt_store_writer
-from inspect_safety_stats.generative.kernels import (
+from safety_stats.generative.execution import prompt_store_writer
+from safety_stats.generative.kernels import (
     DeterministicFakeKernel,
     RewriteKernel,
     RewriteOutcome,
     RewriteRequest,
     resolve_kernel_fingerprint,
 )
-from inspect_safety_stats.generative.ledger import (
+from safety_stats.generative.ledger import (
     REWRITE_COLUMNS,
     SELECTION_COLUMNS,
     AttemptRecord,
@@ -33,7 +33,7 @@ from inspect_safety_stats.generative.ledger import (
     write_rewrites,
     write_selections,
 )
-from inspect_safety_stats.generative.schema import load_generative_plan
+from safety_stats.generative.schema import load_generative_plan
 from tests.generative_fixtures import base_plan, materialize
 
 
@@ -261,7 +261,7 @@ def test_a_replaced_ledger_reaches_the_disk_before_its_rename(
 ) -> None:
     """Renamed before its rows were on disk, a ledger could be left empty by a power loss."""
 
-    import inspect_safety_stats.generative.ledger as ledger_module
+    import safety_stats.generative.ledger as ledger_module
 
     rows = [rewrite(f"u-{index}").model_dump(mode="json") for index in range(3)]
     expected = tmp_path / "expected.csv"
@@ -295,7 +295,7 @@ def test_a_replaced_ledger_reaches_the_disk_before_its_rename(
 def test_a_directory_that_cannot_be_synced_fails_only_for_a_real_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int, raises: bool
 ) -> None:
-    import inspect_safety_stats.generative.ledger as ledger_module
+    import safety_stats.generative.ledger as ledger_module
 
     fsync = os.fsync
 

@@ -8,8 +8,8 @@ import numpy as np
 import pytest
 from scipy.stats import norm
 
-from inspect_safety_stats.stats import binomial_bounds
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.stats import binomial_bounds
+from safety_stats.stats.misclassification import (
     JudgeStratumCounts,
     correct_judge_risk,
     delta_method_corrected_risk,

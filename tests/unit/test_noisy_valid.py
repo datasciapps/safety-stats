@@ -5,8 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from inspect_safety_stats.stats import binomial_bounds
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.stats import binomial_bounds
+from safety_stats.stats.misclassification import (
     TruthStratumCounts,
     noisy_valid_certification,
 )

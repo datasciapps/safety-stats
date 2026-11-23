@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.schema.reports import SafetyReport
+from safety_stats.cli import app
+from safety_stats.schema.reports import SafetyReport
 from tests.cli_output import plain
 from tests.summary_fixtures import Variant, analysed, claim_spec, section, table, write_variant
 
@@ -180,7 +180,7 @@ def test_the_median_rollouts_per_prompt_is_not_truncated(
 ) -> None:
     """Half the prompts with 31 valid rollouts and half with 30 have a median of 30.5."""
 
-    from inspect_safety_stats.report.summary import summary_markdown
+    from safety_stats.report.summary import summary_markdown
 
     report, summary = confirmatory
     assert "· 30 rollouts per prompt (median) ·" in summary
@@ -200,8 +200,8 @@ def test_the_tail_budget_says_it_is_for_a_prompt_with_no_failures(
     The other budgets assume the observed rate holds; this one says what it assumes instead.
     """
 
-    from inspect_safety_stats.report.summary import precision_target
-    from inspect_safety_stats.stats.planning import rollouts_for_half_width
+    from safety_stats.report.summary import precision_target
+    from safety_stats.stats.planning import rollouts_for_half_width
 
     report, summary = confirmatory
     target = precision_target(report)
@@ -223,7 +223,7 @@ def test_the_tail_budget_says_it_is_for_a_prompt_with_no_failures(
 
 
 def test_the_coverage_figure_is_rounded_down(confirmatory: tuple[SafetyReport, str]) -> None:
-    from inspect_safety_stats.report.summary import summary_markdown
+    from safety_stats.report.summary import summary_markdown
 
     report, summary = confirmatory
     assert "with 95.0% simultaneous coverage" in summary

@@ -20,14 +20,14 @@ import pytest
 from pydantic import ValidationError
 from scipy.stats import binom
 
-from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.config.loader import canonical_plan_hash
-from inspect_safety_stats.config.models import JudgeCalibrationSpec
-from inspect_safety_stats.generative.schema import (
+from safety_stats import analyze, load_plan
+from safety_stats.config.loader import canonical_plan_hash
+from safety_stats.config.models import JudgeCalibrationSpec
+from safety_stats.generative.schema import (
     JudgeCalibrationSpec as GenerativeJudgeCalibrationSpec,
 )
-from inspect_safety_stats.schema.reports import RiskIntervalResult, SafetyReport
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.schema.reports import RiskIntervalResult, SafetyReport
+from safety_stats.stats.misclassification import (
     JudgeStratumCounts,
     estimate_stratified_judge_calibration,
 )
@@ -195,10 +195,10 @@ def observations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[int, s
 
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     baseline = analyze(plan=load_plan(_write_plan(tmp_path / "unlabelled", "")), logs="ignored")
@@ -432,10 +432,10 @@ def test_a_group_scoped_calibration_counts_only_the_group_s_fine_strata(
     # places, some of them labelled. A calibration scoped to the group must not count them.
     eval_frame, sample_frame = _frames(outside=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     unlabelled = analyze(

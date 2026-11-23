@@ -26,7 +26,7 @@ from jailbreakbench_multilingual import (
 from run_multilingual_jailbreakbench import latest_successful_logs
 from translate_jailbreakbench import NllbTranslator
 
-from inspect_safety_stats import analyze
+from safety_stats import analyze
 
 
 @dataclass(frozen=True)

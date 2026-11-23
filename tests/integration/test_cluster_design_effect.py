@@ -9,9 +9,9 @@ from typing import Any
 
 import pytest
 
-from inspect_safety_stats import validate
-from inspect_safety_stats.ingest.rollout_files import RolloutFiles
-from inspect_safety_stats.schema.reports import Diagnostic
+from safety_stats import validate
+from safety_stats.ingest.rollout_files import RolloutFiles
+from safety_stats.schema.reports import Diagnostic
 from tests.diagnostic_codes.harness import Inputs, base_inputs, rollout, run_analysis, write_inputs
 
 CODE = "CLUSTER_DESIGN_EFFECT"

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from pydantic import ValidationError
 
-from inspect_safety_stats.schema.reports import RiskIntervalResult
+from safety_stats.schema.reports import RiskIntervalResult
 
 
 def _interval(**fields: object) -> RiskIntervalResult:

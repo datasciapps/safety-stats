@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from inspect_safety_stats.stats.design_based import FixedSizeDesign, fixed_size_mean_bounds
+from safety_stats.stats.design_based import FixedSizeDesign, fixed_size_mean_bounds
 
 
 def _load(report_dir: Path, group: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:

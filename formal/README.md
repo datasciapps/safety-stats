@@ -7,7 +7,7 @@ contributor needs Lean installed.
 ## What is proved
 
 `SafetyStatsFormal/RiskMeasures.lean` covers the risk measures in
-`src/inspect_safety_stats/stats/risk.py`. The package bounds a group's risk by pushing per-prompt
+`src/safety_stats/stats/risk.py`. The package bounds a group's risk by pushing per-prompt
 bounds through a measure, which is valid only because every measure is coordinatewise
 nondecreasing.
 

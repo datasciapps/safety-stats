@@ -15,9 +15,9 @@ from typing import Any
 import pytest
 import yaml
 
-from inspect_safety_stats import analyze
-from inspect_safety_stats.config import load_plan
-from inspect_safety_stats.registry import ASSUMPTIONS
+from safety_stats import analyze
+from safety_stats.config import load_plan
+from safety_stats.registry import ASSUMPTIONS
 
 EXAMPLE = Path(__file__).parents[2] / "examples" / "real_simpleqa"
 TRUNCATED, DECLINED, BROKEN = "5", "7", "9"

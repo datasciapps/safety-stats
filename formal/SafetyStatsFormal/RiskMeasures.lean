@@ -6,7 +6,7 @@ import Mathlib
 The package reports an interval for a risk measure `R` by pushing per-prompt bounds through it.
 On the event that every prompt's interval covers its risk, `L ≤ p ≤ U`, it reports
 `[R L, R U]`. That is a bound only because every measure is coordinatewise nondecreasing. This
-file proves that for each measure in `src/inspect_safety_stats/stats/risk.py`.
+file proves that for each measure in `src/safety_stats/stats/risk.py`.
 
 Each definition follows the Python computation on real numbers. Where Python takes a different
 route to the same value, such as the greedy CVaR or the partitioned top-`k` mean, a property test

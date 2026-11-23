@@ -5,8 +5,8 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from inspect_safety_stats.stats import JudgeCalibration, correct_judge_risk
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.stats import JudgeCalibration, correct_judge_risk
+from safety_stats.stats.misclassification import (
     CorrectedRisk,
     JudgeStratumCounts,
     completion_warning,
@@ -420,7 +420,7 @@ def test_the_corrected_interval_covers_every_completion_and_calibration(
 def test_transported_sensitivity_is_the_one_sided_clopper_pearson_lower_bound() -> None:
     from scipy.stats import beta
 
-    from inspect_safety_stats.stats.misclassification import transported_sensitivity_lower
+    from safety_stats.stats.misclassification import transported_sensitivity_lower
 
     assert transported_sensitivity_lower(
         judge_flagged_unsafe=100, human_unsafe=120, alpha=0.05
@@ -433,7 +433,7 @@ def test_transported_sensitivity_is_the_one_sided_clopper_pearson_lower_bound() 
 
 
 def test_transported_correction_divides_the_upper_bound_and_floors_the_lower_at_zero() -> None:
-    from inspect_safety_stats.stats.misclassification import transport_judge_risk
+    from safety_stats.stats.misclassification import transport_judge_risk
 
     result = transport_judge_risk(
         observed_upper=0.0106, observed_estimate=0.004, sensitivity_lower=0.8
@@ -450,7 +450,7 @@ def test_transported_correction_divides_the_upper_bound_and_floors_the_lower_at_
 
 
 def test_transported_correction_caps_at_one_and_refuses_to_divide_by_zero() -> None:
-    from inspect_safety_stats.stats.misclassification import transport_judge_risk
+    from safety_stats.stats.misclassification import transport_judge_risk
 
     assert transport_judge_risk(
         observed_upper=0.6, observed_estimate=0.5, sensitivity_lower=0.5
@@ -475,7 +475,7 @@ def test_transported_correction_caps_at_one_and_refuses_to_divide_by_zero() -> N
 def test_transported_upper_never_falls_below_the_judge_system_upper(
     upper: float, sensitivity: float, looser: float
 ) -> None:
-    from inspect_safety_stats.stats.misclassification import transport_judge_risk
+    from safety_stats.stats.misclassification import transport_judge_risk
 
     result = transport_judge_risk(
         observed_upper=upper, observed_estimate=None, sensitivity_lower=sensitivity
@@ -517,8 +517,8 @@ def test_transported_upper_bound_covers_true_risk_when_sensitivity_transports(
     """
     import numpy as np
 
-    from inspect_safety_stats.stats.binomial import binomial_upper_bound
-    from inspect_safety_stats.stats.misclassification import (
+    from safety_stats.stats.binomial import binomial_upper_bound
+    from safety_stats.stats.misclassification import (
         transport_judge_risk,
         transported_sensitivity_lower,
     )
@@ -566,7 +566,7 @@ def test_transported_upper_bound_covers_true_risk_when_sensitivity_transports(
 def test_a_transported_calibration_needs_its_published_set_and_nothing_else() -> None:
     from pydantic import ValidationError
 
-    from inspect_safety_stats.config.models import JudgeCalibrationSpec
+    from safety_stats.config.models import JudgeCalibrationSpec
 
     published = {
         "name": "set",
@@ -595,7 +595,7 @@ def test_a_transported_calibration_needs_its_published_set_and_nothing_else() ->
 
 def test_plans_without_a_published_set_serialise_as_before() -> None:
     """The new field is left out when absent, so existing plan hashes do not move."""
-    from inspect_safety_stats.config.models import JudgeCalibrationSpec
+    from safety_stats.config.models import JudgeCalibrationSpec
 
     scenario = {"id": "s", "rho_1": {"lower": 0.9, "upper": 1}, "rho_0": {"lower": 0, "upper": 0}}
     spec = JudgeCalibrationSpec.model_validate(
@@ -612,7 +612,7 @@ def test_a_perfectly_sensitive_judge_keeps_the_upper_bound_but_not_the_lower() -
     failure may be a false positive and the lower end is zero whatever the judge-system
     lower bound and estimate were.
     """
-    from inspect_safety_stats.stats.misclassification import transport_judge_risk
+    from safety_stats.stats.misclassification import transport_judge_risk
 
     for upper in (0.0, 3e-17, 0.0106, 0.5, 1.0):
         result = transport_judge_risk(
@@ -643,8 +643,8 @@ def test_transported_upper_is_the_rogan_gladen_maximum_over_any_informative_spec
     """
     from hypothesis import assume
 
-    from inspect_safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
-    from inspect_safety_stats.stats.misclassification import transport_judge_risk
+    from safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
+    from safety_stats.stats.misclassification import transport_judge_risk
 
     lower, upper = bounds
     assume(sensitivity + specificity > 1)

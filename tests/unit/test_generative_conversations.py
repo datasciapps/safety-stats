@@ -10,15 +10,15 @@ import pytest
 from inspect_ai.dataset import json_dataset
 from inspect_ai.model import ChatMessageAssistant, ChatMessageSystem, ChatMessageUser
 
-import inspect_safety_stats.generative.runner as runner_module
-from inspect_safety_stats.generative.execution import (
+import safety_stats.generative.runner as runner_module
+from safety_stats.generative.execution import (
     execute_rewrites,
     load_seed_texts,
     read_prompt_store,
     write_prompt_store,
 )
-from inspect_safety_stats.generative.inspect_bridge import materialize_dataset
-from inspect_safety_stats.generative.kernels import (
+from safety_stats.generative.inspect_bridge import materialize_dataset
+from safety_stats.generative.kernels import (
     ChatTurn,
     DeterministicFakeKernel,
     RewriteOutcome,
@@ -27,11 +27,11 @@ from inspect_safety_stats.generative.kernels import (
     encode_conversation,
     resolve_kernel_fingerprint,
 )
-from inspect_safety_stats.generative.ledger import prompt_sha256, read_rewrites
-from inspect_safety_stats.generative.runner import materialize_run
-from inspect_safety_stats.generative.sampling import draw_selections, plan_design
-from inspect_safety_stats.generative.schema import load_generative_plan
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+from safety_stats.generative.ledger import prompt_sha256, read_rewrites
+from safety_stats.generative.runner import materialize_run
+from safety_stats.generative.sampling import draw_selections, plan_design
+from safety_stats.generative.schema import load_generative_plan
+from safety_stats.generative.taxonomy import compile_taxonomy
 from tests.generative_fixtures import (
     SEEDS_WITH_TEXT,
     ConversationKernel,

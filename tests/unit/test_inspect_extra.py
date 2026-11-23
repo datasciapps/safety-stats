@@ -47,9 +47,9 @@ def _run(code: str, cwd: Path) -> subprocess.CompletedProcess[str]:
 
 
 def test_reading_inspect_logs_without_the_extra_names_it(tmp_path: Path) -> None:
-    completed = _run("import inspect_safety_stats.ingest.inspect_logs", tmp_path)
+    completed = _run("import safety_stats.ingest.inspect_logs", tmp_path)
     assert completed.returncode != 0
-    assert "pip install 'inspect-safety-stats[inspect]'" in completed.stderr
+    assert "pip install 'safety-stats[inspect]'" in completed.stderr
 
 
 def test_rollout_files_are_analysed_without_the_extra(tmp_path: Path) -> None:
@@ -76,8 +76,8 @@ def test_rollout_files_are_analysed_without_the_extra(tmp_path: Path) -> None:
         newline="\n",
     )
     completed = _run(
-        "from inspect_safety_stats import analyze\n"
-        "from inspect_safety_stats.ingest import RolloutFiles\n"
+        "from safety_stats import analyze\n"
+        "from safety_stats.ingest import RolloutFiles\n"
         "report = analyze(plan='plan.yaml',\n"
         "                 source=RolloutFiles(runs='runs.jsonl', rollouts='rollouts.jsonl'))\n"
         "print(type(report).__name__, sys.modules['inspect_ai'] is not None)",
@@ -105,7 +105,7 @@ def test_the_generative_commands_need_the_extra_only_to_read_logs(tmp_path: Path
 
     def cli(*arguments: str) -> subprocess.CompletedProcess[str]:
         return _run(
-            f"from inspect_safety_stats.cli import app\napp({list(arguments)!r})", tmp_path
+            f"from safety_stats.cli import app\napp({list(arguments)!r})", tmp_path
         )
 
     materialized = cli("generative", "materialize", "--plan", "plan.yaml", "--output", "run")
@@ -114,5 +114,5 @@ def test_the_generative_commands_need_the_extra_only_to_read_logs(tmp_path: Path
         "generative", "analyze", "--plan", "plan.yaml", "--artifacts", "run", "--logs", "plan.yaml"
     )
     assert analyzed.returncode == 3, analyzed.stderr
-    assert "pip install 'inspect-safety-stats[inspect]'" in analyzed.stderr
+    assert "pip install 'safety-stats[inspect]'" in analyzed.stderr
     assert "Traceback" not in analyzed.stderr

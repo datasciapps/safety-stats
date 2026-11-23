@@ -9,8 +9,8 @@ import numpy as np
 import pytest
 from scipy.stats import binom
 
-from inspect_safety_stats.stats.binomial import binomial_lower_bound, binomial_upper_bound
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.stats.binomial import binomial_lower_bound, binomial_upper_bound
+from safety_stats.stats.misclassification import (
     JudgeStratumCounts,
     correct_judge_risk,
     estimate_judge_calibration,

@@ -1,7 +1,7 @@
 # Generative evaluation
 
 The generative pipeline is experimental: its public surface,
-`inspect_safety_stats.generative.__all__`, may change in any minor release.
+`safety_stats.generative.__all__`, may change in any minor release.
 
 Every other engine in this package conditions on prompts that already exist. This one covers
 the case where they do not: the evaluator declares a structural taxonomy with target weights
@@ -125,7 +125,7 @@ to less than one, and a plan that prunes without selecting `renormalize_valid_ch
 exists. Before committing to it:
 
 ```bash
-inspect-safety-stats generative budget --plan plan.yaml --assumed-rate 0.03 --threshold 0.05
+safety-stats generative budget --plan plan.yaml --assumed-rate 0.03 --threshold 0.05
 ```
 
 ```
@@ -158,7 +158,7 @@ permits rather than what will happen.
 Two phases, because an Inspect evaluation happens between them.
 
 ```bash
-inspect-safety-stats generative compile --plan plan.yaml
+safety-stats generative compile --plan plan.yaml
 ```
 
 Compiles the taxonomy and reports what it contains -- node counts, terminal paths, what the
@@ -167,7 +167,7 @@ constraints pruned, the fingerprint -- without generating anything. A declared
 the paths `materialize` will select.
 
 ```bash
-inspect-safety-stats generative materialize \
+safety-stats generative materialize \
   --plan plan.yaml --output run/ --kernel rewriters.py:build_kernel
 ```
 
@@ -186,7 +186,7 @@ client.
 Evaluate that dataset with Inspect and your judge, then:
 
 ```bash
-inspect-safety-stats generative analyze \
+safety-stats generative analyze \
   --plan plan.yaml --artifacts run/ --logs run/logs --output report/ \
   --slice language=maltese --compare candidate:baseline
 ```

@@ -8,17 +8,17 @@ from typing import Any
 import numpy as np
 import pytest
 
-from inspect_safety_stats.generative.comparisons import (
+from safety_stats.generative.comparisons import (
     INDEPENDENT_ARMS,
     PAIRED_EXACT,
     PAIRED_WEIGHTED,
     compare_cohorts,
     units_in_node,
 )
-from inspect_safety_stats.generative.inference import UnitOutcome
-from inspect_safety_stats.generative.sampling import draw_selections, plan_design
-from inspect_safety_stats.generative.schema import load_generative_plan
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+from safety_stats.generative.inference import UnitOutcome
+from safety_stats.generative.sampling import draw_selections, plan_design
+from safety_stats.generative.schema import load_generative_plan
+from safety_stats.generative.taxonomy import compile_taxonomy
 from tests.generative_fixtures import SEEDS, base_plan, materialize
 
 

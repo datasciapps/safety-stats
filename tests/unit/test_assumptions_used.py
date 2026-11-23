@@ -9,11 +9,11 @@ from typing import Any, get_args
 import pytest
 import yaml
 
-from inspect_safety_stats import analyze
-from inspect_safety_stats.analysis.assumptions import APPLIES, assumptions_used, plan_values
-from inspect_safety_stats.config.loader import load_plan
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.registry import ASSUMPTIONS
+from safety_stats import analyze
+from safety_stats.analysis.assumptions import APPLIES, assumptions_used, plan_values
+from safety_stats.config.loader import load_plan
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.registry import ASSUMPTIONS
 
 ROOT = Path(__file__).resolve().parents[2]
 SIMPLEQA = ROOT / "examples" / "real_simpleqa"

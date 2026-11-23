@@ -22,9 +22,9 @@ Publishing uses [trusted publishing](https://docs.pypi.org/trusted-publishers/).
 stored in the repository. A trusted publisher is bound to the repository, the workflow file and
 the environment, not to a tag, so the GitHub settings below decide who can publish.
 
-1. On PyPI, add a trusted publisher for the project `inspect-safety-stats`. Until the first upload
+1. On PyPI, add a trusted publisher for the project `safety-stats`. Until the first upload
    the project does not exist, so add it as a pending publisher. The form asks for:
-   - **PyPI project name:** `inspect-safety-stats`
+   - **PyPI project name:** `safety-stats`
    - **Owner** and **Repository name:** this repository's
    - **Workflow name:** `release.yml`
    - **Environment name:** `pypi`. Fill it in: a publisher without an environment accepts uploads
@@ -43,7 +43,7 @@ them, set `attestations: false` on both publish steps in `release.yml` through a
 
 ## Each release
 
-1. In one pull request, set the version in `pyproject.toml`, `src/inspect_safety_stats/version.py`,
+1. In one pull request, set the version in `pyproject.toml`, `src/safety_stats/version.py`,
    `CITATION.cff` and the "remains current in" line of `docs/independence-profiles.md`. The
    repository-consistency test fails if they disagree. In the same pull request, move the
    `Unreleased` notes in `CHANGELOG.md` under a heading with the version and the date.
@@ -59,8 +59,8 @@ them, set `attestations: false` on both publish steps in `release.yml` through a
    ```bash
    python -m venv /tmp/rc && . /tmp/rc/bin/activate
    python -m pip install --index-url https://test.pypi.org/simple/ \
-     --extra-index-url https://pypi.org/simple/ 'inspect-safety-stats[inspect]==0.16.0rc1'
-   inspect-safety-stats version
+     --extra-index-url https://pypi.org/simple/ 'safety-stats[inspect]==0.16.0rc1'
+   safety-stats version
    python examples/demo/run_demo.py
    ```
 

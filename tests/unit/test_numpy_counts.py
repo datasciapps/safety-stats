@@ -12,15 +12,15 @@ from typing import Any
 import numpy as np
 import pytest
 
-from inspect_safety_stats.stats import (
+from safety_stats.stats import (
     binomial_bounds,
     binomial_lower_bound,
     binomial_upper_bound,
     bonferroni_allocate,
     missingness_robust_binomial_bounds,
 )
-from inspect_safety_stats.stats.adaptive import adaptive_lower_bound
-from inspect_safety_stats.stats.planning import (
+from safety_stats.stats.adaptive import adaptive_lower_bound
+from safety_stats.stats.planning import (
     certification_sample_size,
     maximum_certifying_failures,
     minimum_rejecting_failures,

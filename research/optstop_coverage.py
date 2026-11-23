@@ -30,8 +30,8 @@ from __future__ import annotations
 import numpy as np
 from scipy.stats import beta
 
-from inspect_safety_stats.stats.direct_mean import weighted_bounded_kl_chernoff_mean_bounds
-from inspect_safety_stats.stats.sequential import anytime_upper_bound
+from safety_stats.stats.direct_mean import weighted_bounded_kl_chernoff_mean_bounds
+from safety_stats.stats.sequential import anytime_upper_bound
 
 ALPHA = 0.05
 ITEMS = 200

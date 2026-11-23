@@ -11,8 +11,8 @@ import sys
 import textwrap
 from pathlib import Path
 
-from inspect_safety_stats import SafetyReport
-from inspect_safety_stats.schema.reports import STORED_REPORT
+from safety_stats import SafetyReport
+from safety_stats.schema.reports import STORED_REPORT
 
 COHORTS = ("baseline", "candidate")
 

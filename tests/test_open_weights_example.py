@@ -517,7 +517,7 @@ def test_unbiased_worst_of_k_interval_is_the_rollout_interval_for_one_attempt() 
     import storyboard_numbers
     from scipy.special import comb
 
-    from inspect_safety_stats.stats.direct_mean import (
+    from safety_stats.stats.direct_mean import (
         weighted_bounded_kl_chernoff_mean_bounds,
         weighted_kl_chernoff_mean_bounds,
     )
@@ -599,7 +599,7 @@ def test_labelling_sheet_shows_what_the_judge_saw_and_nothing_of_its_verdicts(
     import label_queue
     from inspect_ai.log import read_eval_log_sample
 
-    from inspect_safety_stats.ingest.validation import load_validation_manifest
+    from safety_stats.ingest.validation import load_validation_manifest
 
     output, _ = _offline_run(xstest_csv, tmp_path, monkeypatch)
     run_open_weights.analyze_run(output)

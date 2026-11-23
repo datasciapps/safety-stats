@@ -2,11 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from inspect_safety_stats.ingest.validation import (
+from safety_stats.ingest.validation import (
     judge_stratum_counts,
     load_validation_manifest,
 )
-from inspect_safety_stats.schema.observations import Observation
+from safety_stats.schema.observations import Observation
 
 
 def _write(tmp_path: Path, body: str) -> Path:

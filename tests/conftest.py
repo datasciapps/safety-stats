@@ -41,7 +41,7 @@ def _every_written_report_renders_again_from_its_json(
     report model, or a field that does not survive the JSON round trip, fails the test that
     wrote the report."""
 
-    from inspect_safety_stats.report import writer
+    from safety_stats.report import writer
     from tests.report_rendering import rendering_differences
 
     write_report = writer.write_report

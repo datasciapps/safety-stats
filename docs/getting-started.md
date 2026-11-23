@@ -1,6 +1,6 @@
 # Getting started
 
-inspect-safety-stats analyzes [Inspect](https://inspect.aisi.org.uk/) evaluations in which every
+safety-stats analyzes [Inspect](https://inspect.aisi.org.uk/) evaluations in which every
 prompt was run several times. It reports how often the model failed, with finite-sample bounds on
 that rate. You fix the prompts and the analysis in advance, in a design manifest and a plan.
 Unless you declare a sampled design, the package does not treat the prompts as a sample from a
@@ -12,7 +12,7 @@ You need Python 3.11 or newer. To use the package in your own project, install i
 `inspect` extra, which reads Inspect logs:
 
 ```bash
-python -m pip install 'inspect-safety-stats[inspect]'
+python -m pip install 'safety-stats[inspect]'
 ```
 
 The demo below runs from a checkout of the repository and needs no API key:
@@ -63,7 +63,7 @@ on 5% of its 80 bio rollouts, and its interval still reaches 0.18.
 
 A prompt that never failed still has an upper bound above zero. After n rollouts without a
 failure, the one-sided 95% upper bound is `1 - 0.05^(1/n)`, roughly 3/n, so 20 clean rollouts
-rule out only rates above about 14%. `inspect-safety-stats plan zero-failure` works out how many
+rule out only rates above about 14%. `safety-stats plan zero-failure` works out how many
 rollouts a given threshold needs.
 
 A comparison uses the same prompts, with the same weights, for both configurations. In the demo
@@ -91,7 +91,7 @@ It needs only the hierarchy levels your plan names; see the
 
 In the plan, cohorts match logs to a model or configuration, and groups select the prompts to
 report on. The plan also sets the comparisons and the confidence level.
-`inspect-safety-stats init` writes a starter manifest and plan from your logs, as it wrote
+`safety-stats init` writes a starter manifest and plan from your logs, as it wrote
 [examples/demo/plan.yaml](../examples/demo/plan.yaml), and you edit them from there; the
 [plan reference](plan-reference.md) documents every field. A plan written after the logs exist,
 as `init`'s is, is exploratory. For a confirmatory claim, write and freeze the plan before you
@@ -101,8 +101,8 @@ Then run the evaluation and the analysis:
 
 ```bash
 inspect eval my_task.py --model provider/model --epochs 20 --no-epochs-reducer --log-dir logs/mine
-inspect-safety-stats validate --plan my-plan.yaml --logs logs/mine
-inspect-safety-stats analyze --plan my-plan.yaml --logs logs/mine --output reports/mine
+safety-stats validate --plan my-plan.yaml --logs logs/mine
+safety-stats analyze --plan my-plan.yaml --logs logs/mine --output reports/mine
 ```
 
 Fix anything `validate` reports as an error before you read the analysis. The
@@ -137,6 +137,6 @@ full rules. Before you open a pull request, run:
 
 ```bash
 ruff check src tests examples research scripts
-mypy src/inspect_safety_stats
+mypy src/safety_stats
 pytest
 ```

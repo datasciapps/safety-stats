@@ -26,8 +26,8 @@ from collections.abc import Callable
 
 import numpy as np
 
-from inspect_safety_stats.stats.adaptive import adaptive_lower_bound
-from inspect_safety_stats.stats.binomial import binomial_lower_bound
+from safety_stats.stats.adaptive import adaptive_lower_bound
+from safety_stats.stats.binomial import binomial_lower_bound
 
 ALPHA = 0.05
 HORIZON = 300

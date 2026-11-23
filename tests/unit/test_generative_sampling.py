@@ -8,14 +8,14 @@ from typing import Any
 
 import pytest
 
-from inspect_safety_stats.generative.sampling import (
+from safety_stats.generative.sampling import (
     draw_selections,
     largest_remainder,
     plan_design,
     stratification_frontier,
 )
-from inspect_safety_stats.generative.schema import load_generative_plan
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+from safety_stats.generative.schema import load_generative_plan
+from safety_stats.generative.taxonomy import compile_taxonomy
 from tests.generative_fixtures import SEEDS, base_plan, materialize
 
 

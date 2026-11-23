@@ -3,7 +3,7 @@ import itertools
 import numpy as np
 import pytest
 
-from inspect_safety_stats.stats import (
+from safety_stats.stats import (
     LinearIntervalConstraint,
     project_contrast_hierarchy_confidence_region,
     project_hierarchy_confidence_region,

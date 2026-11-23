@@ -33,8 +33,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from inspect_safety_stats.stats.binomial import binomial_upper_bound
-from inspect_safety_stats.stats.direct_mean import (
+from safety_stats.stats.binomial import binomial_upper_bound
+from safety_stats.stats.direct_mean import (
     weighted_bounded_empirical_bernstein_mean_bounds,
 )
 

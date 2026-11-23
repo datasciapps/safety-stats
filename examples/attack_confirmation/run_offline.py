@@ -17,7 +17,7 @@ from attack_confirmation import attack_confirmation
 from inspect_ai import eval as inspect_eval
 from inspect_ai.log import EvalLog
 
-from inspect_safety_stats import analyze
+from safety_stats import analyze
 
 HERE = Path(__file__).resolve().parent
 LOGS = Path("logs/attack-confirmation")

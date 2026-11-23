@@ -14,34 +14,34 @@ from pathlib import Path
 
 import pytest
 
-import inspect_safety_stats
+import safety_stats
 
 # The package as imported, so that the check reads the source the tests run against.
-PACKAGE = Path(inspect_safety_stats.__file__).resolve().parent
+PACKAGE = Path(safety_stats.__file__).resolve().parent
 
 # Each adapter, by the source it reads, with the modules that make it up.
 ADAPTERS = {
     "inspect": {
-        "inspect_safety_stats.ingest.inspect_logs",
-        "inspect_safety_stats.generative.logs",
-        "inspect_safety_stats.generative.inspect_bridge",
+        "safety_stats.ingest.inspect_logs",
+        "safety_stats.generative.logs",
+        "safety_stats.generative.inspect_bridge",
         # init: reads the structure of Inspect logs to write a starter plan.
-        "inspect_safety_stats.scaffold",
+        "safety_stats.scaffold",
     },
-    "rollout_files": {"inspect_safety_stats.ingest.rollout_files"},
+    "rollout_files": {"safety_stats.ingest.rollout_files"},
 }
 # Third-party packages that belong to one tool, and may be imported only by its adapter.
 TOOL_PACKAGES = {"inspect": {"inspect_ai"}}
 # Modules that pick an adapter for the caller, or re-export one, when called.
 FACADES = {
-    "inspect_safety_stats",
-    "inspect_safety_stats.api",
-    "inspect_safety_stats.cli",
-    "inspect_safety_stats.generative",
-    "inspect_safety_stats.ingest",
+    "safety_stats",
+    "safety_stats.api",
+    "safety_stats.cli",
+    "safety_stats.generative",
+    "safety_stats.ingest",
 }
 # Orchestration that drives one tool end to end, and so may load its adapter on import.
-TOOL_PIPELINES = {"inspect_safety_stats.generative.runner": "inspect"}
+TOOL_PIPELINES = {"safety_stats.generative.runner": "inspect"}
 
 
 def _module_name(path: Path) -> str:
@@ -136,23 +136,23 @@ def test_only_adapters_depend_on_an_evaluation_tool(module: str) -> None:
 
 
 def test_the_check_reports_a_core_module_that_imports_a_tool_even_lazily() -> None:
-    planted = {"inspect_ai.log": False, "inspect_safety_stats.ingest.inspect_logs": False}
-    assert len(_departures("inspect_safety_stats.ingest.normalize", planted)) == 2
+    planted = {"inspect_ai.log": False, "safety_stats.ingest.inspect_logs": False}
+    assert len(_departures("safety_stats.ingest.normalize", planted)) == 2
 
 
 def test_the_check_reports_a_facade_that_loads_an_adapter_on_import() -> None:
-    lazy = {"inspect_safety_stats.ingest.inspect_logs": False}
-    eager = {"inspect_safety_stats.ingest.inspect_logs": True}
-    assert _departures("inspect_safety_stats.api", lazy) == []
-    assert len(_departures("inspect_safety_stats.api", eager)) == 1
+    lazy = {"safety_stats.ingest.inspect_logs": False}
+    eager = {"safety_stats.ingest.inspect_logs": True}
+    assert _departures("safety_stats.api", lazy) == []
+    assert len(_departures("safety_stats.api", eager)) == 1
 
 
 def test_the_check_reports_an_adapter_that_imports_another_adapter() -> None:
-    ADAPTERS["other"] = {"inspect_safety_stats.ingest.other_logs"}
+    ADAPTERS["other"] = {"safety_stats.ingest.other_logs"}
     try:
         found = _departures(
-            "inspect_safety_stats.ingest.other_logs",
-            {"inspect_safety_stats.ingest.inspect_logs": True},
+            "safety_stats.ingest.other_logs",
+            {"safety_stats.ingest.inspect_logs": True},
         )
     finally:
         del ADAPTERS["other"]
@@ -174,7 +174,7 @@ def test_imports_in_functions_and_for_type_checking_do_not_run_on_import(
         "    from inspect_ai.model import get_model\n",
         encoding="utf-8",
     )
-    found = _imports(source, "inspect_safety_stats.probe")
+    found = _imports(source, "safety_stats.probe")
     assert found["inspect_ai"] is True
     assert found["inspect_ai.analysis"] is True
     assert found["inspect_ai.log.EvalLog"] is False

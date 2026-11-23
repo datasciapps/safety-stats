@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from inspect_safety_stats.config.models import InputsSpec
-from inspect_safety_stats.stats.judges import (
+from safety_stats.config.models import InputsSpec
+from safety_stats.stats.judges import (
     compose_verdicts,
     effective_votes,
     pairwise_agreement,

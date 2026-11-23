@@ -15,11 +15,11 @@ from pathlib import Path
 
 import pytest
 
-from inspect_safety_stats.analysis.report import RESULTS_ESTABLISH_URL
-from inspect_safety_stats.report.summary import summary_markdown
-from inspect_safety_stats.report.visualization import render_visualization
-from inspect_safety_stats.report.writer import _markdown
-from inspect_safety_stats.schema.reports import IntegritySummary, SafetyReport
+from safety_stats.analysis.report import RESULTS_ESTABLISH_URL
+from safety_stats.report.summary import summary_markdown
+from safety_stats.report.visualization import render_visualization
+from safety_stats.report.writer import _markdown
+from safety_stats.schema.reports import IntegritySummary, SafetyReport
 
 ROOT = Path(__file__).resolve().parents[2]
 SANDBAGGING = "not strategically underperforming"
@@ -109,7 +109,7 @@ def test_report_html_shows_the_link() -> None:
     )
     assert f'"what_results_establish":"{RESULTS_ESTABLISH_URL}"' in page
     template = (
-        ROOT / "src/inspect_safety_stats/report/visualization_template.html"
+        ROOT / "src/safety_stats/report/visualization_template.html"
     ).read_text(encoding="utf-8")
     # The page script puts one address into a link, this one; the payload guards it.
     assert re.findall(r"\.href\s*=\s*([^;]+);", template) == [

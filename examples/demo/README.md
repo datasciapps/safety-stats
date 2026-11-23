@@ -1,7 +1,7 @@
 # Offline demo
 
 The demo runs a 12-prompt refusal evaluation in Inspect for two configurations, a baseline and a
-candidate, then analyzes the logs under the plan that `inspect-safety-stats init` writes for
+candidate, then analyzes the logs under the plan that `safety-stats init` writes for
 them and compares the two. It needs no API key and takes about half a minute.
 
 The model is simulated. [demo_eval.py](demo_eval.py) gives each configuration a fixed failure
@@ -28,9 +28,9 @@ the interactive report.
 inspect eval examples/demo/demo_eval.py \
   --model mockllm/baseline,mockllm/candidate --log-dir logs/demo
 
-inspect-safety-stats validate --plan examples/demo/plan.yaml --logs logs/demo
+safety-stats validate --plan examples/demo/plan.yaml --logs logs/demo
 
-inspect-safety-stats analyze --plan examples/demo/plan.yaml \
+safety-stats analyze --plan examples/demo/plan.yaml \
   --logs logs/demo --output reports/demo
 
 python examples/demo/show_results.py reports/demo
@@ -46,7 +46,7 @@ directory that is not empty, so delete `reports/demo` first or choose another ou
 [plan.yaml](plan.yaml) and [design.csv](design.csv) are what `init` writes for the demo logs:
 
 ```bash
-inspect-safety-stats init --logs logs/demo --failure-values FAIL \
+safety-stats init --logs logs/demo --failure-values FAIL \
   --group-by risk_domain --baseline mockllm/baseline
 ```
 

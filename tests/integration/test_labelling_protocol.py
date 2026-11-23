@@ -15,12 +15,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.config.loader import canonical_plan_hash
-from inspect_safety_stats.schema.reports import Diagnostic, RiskIntervalResult, SafetyReport
-from inspect_safety_stats.schema.scopes import cohort_scope
-from inspect_safety_stats.stats import misclassification
-from inspect_safety_stats.stats.misclassification import JudgeStratumCounts
+from safety_stats import analyze, load_plan
+from safety_stats.config.loader import canonical_plan_hash
+from safety_stats.schema.reports import Diagnostic, RiskIntervalResult, SafetyReport
+from safety_stats.schema.scopes import cohort_scope
+from safety_stats.stats import misclassification
+from safety_stats.stats.misclassification import JudgeStratumCounts
 
 ROLLOUTS = 400
 JUDGE_UNSAFE = 80
@@ -150,10 +150,10 @@ def _patch_logs(
         ]
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, **_: samples,
     )
 

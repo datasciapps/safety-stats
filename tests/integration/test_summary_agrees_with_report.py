@@ -16,14 +16,14 @@ from itertools import zip_longest
 
 import pytest
 
-from inspect_safety_stats.schema.reports import (
+from safety_stats.schema.reports import (
     ComparisonResult,
     Diagnostic,
     HierarchyRiskResult,
     RiskIntervalResult,
     SafetyReport,
 )
-from inspect_safety_stats.schema.summary import is_headline_risk
+from safety_stats.schema.summary import is_headline_risk
 from tests.summary_fixtures import Variant, analysed, claim_spec, section, table
 
 _ADAPTIVE = {
@@ -249,7 +249,7 @@ def test_a_decision_the_claims_do_not_explain_says_so(
     A decision policy that leaves a PASS uncertified is the one such rule the summary names.
     """
 
-    from inspect_safety_stats.report.summary import decision_reason
+    from safety_stats.report.summary import decision_reason
 
     report, _ = _case(rendered, "passing")
     uncertified = Diagnostic(
@@ -534,7 +534,7 @@ def test_the_comparisons_read_each_way(rendered: dict[str, tuple[SafetyReport, s
 def test_the_written_page_is_the_one_report_json_renders(
     rendered: dict[str, tuple[SafetyReport, str]],
 ) -> None:
-    from inspect_safety_stats.report.summary import summary_markdown
+    from safety_stats.report.summary import summary_markdown
 
     for report, page in rendered.values():
         assert summary_markdown(report) == page
@@ -561,7 +561,7 @@ def test_info_codes_that_adjust_or_withhold_a_result_are_named(
     An info code that only records a fact is not named.
     """
 
-    from inspect_safety_stats.report.summary import summary_markdown
+    from safety_stats.report.summary import summary_markdown
 
     report, _ = _case(rendered, "passing")
     added = [
@@ -610,7 +610,7 @@ def test_the_breakdown_flag_counts_every_node_and_skips_unavailable_ones(
 ) -> None:
     """The flag counts the nodes beyond the rows shown, and never calls a missing one widest."""
 
-    from inspect_safety_stats.report.summary import precision_target, summary_markdown
+    from safety_stats.report.summary import precision_target, summary_markdown
 
     report, page = _case(rendered, "passing")
     target = precision_target(report)

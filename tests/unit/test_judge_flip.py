@@ -13,9 +13,9 @@ import numpy as np
 import pytest
 from pydantic import ValidationError
 
-from inspect_safety_stats.config.models import JudgeFlipSpec
-from inspect_safety_stats.ingest.judge_flip import load_judge_flip_manifest
-from inspect_safety_stats.stats.judge_flip import judge_flip_rate
+from safety_stats.config.models import JudgeFlipSpec
+from safety_stats.ingest.judge_flip import load_judge_flip_manifest
+from safety_stats.stats.judge_flip import judge_flip_rate
 
 WRAPPERS = ("refusal_prefix", "benign_padding", "educational", "story")
 
@@ -246,8 +246,8 @@ def test_the_plan_section_rejects_invalid_values(fields: dict[str, object], mess
 def test_judge_positive_means_the_judge_scored_it_unsafe(
     fields: dict[str, object], positive: bool
 ) -> None:
-    from inspect_safety_stats.ingest.outcomes import judge_positive
-    from inspect_safety_stats.schema.observations import Observation
+    from safety_stats.ingest.outcomes import judge_positive
+    from safety_stats.schema.observations import Observation
 
     row = Observation.model_validate(
         {

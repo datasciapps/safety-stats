@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 import yaml
 
-from inspect_safety_stats import analyze
-from inspect_safety_stats.registry import CODES
-from inspect_safety_stats.scaffold import scaffold_plan
+from safety_stats import analyze
+from safety_stats.registry import CODES
+from safety_stats.scaffold import scaffold_plan
 from tests.mock_inspect_logs import write_mock_logs
 from tests.report_rendering import rendering_differences
 

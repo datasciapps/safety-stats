@@ -10,8 +10,8 @@ import argparse
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from inspect_safety_stats.generative.schema import load_generative_plan
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+from safety_stats.generative.schema import load_generative_plan
+from safety_stats.generative.taxonomy import compile_taxonomy
 
 HERE = Path(__file__).parent
 

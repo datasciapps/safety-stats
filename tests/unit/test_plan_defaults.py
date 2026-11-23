@@ -8,12 +8,12 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
-from inspect_safety_stats import analyze
-from inspect_safety_stats.config.loader import canonical_plan_value, plan_defaults
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.ingest.manifest import check_zero_tolerance_field, load_manifest
-from inspect_safety_stats.report.writer import _defaults_markdown
-from inspect_safety_stats.schema.reports import PlanDefault
+from safety_stats import analyze
+from safety_stats.config.loader import canonical_plan_value, plan_defaults
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.ingest.manifest import check_zero_tolerance_field, load_manifest
+from safety_stats.report.writer import _defaults_markdown
+from safety_stats.schema.reports import PlanDefault
 
 ROOT = Path(__file__).resolve().parents[2]
 SIMPLEQA = ROOT / "examples" / "real_simpleqa"

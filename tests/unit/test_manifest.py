@@ -3,16 +3,16 @@ from pathlib import Path
 import pytest
 import yaml
 
-from inspect_safety_stats.config.models import AnalysisPlan, WeightSpec
-from inspect_safety_stats.ingest.manifest import (
+from safety_stats.config.models import AnalysisPlan, WeightSpec
+from safety_stats.ingest.manifest import (
     check_zero_tolerance_field,
     load_manifest,
     plan_manifest_columns,
     resolve_groups,
     resolve_weights,
 )
-from inspect_safety_stats.ingest.normalize import read_inputs
-from inspect_safety_stats.ingest.records import SourceData
+from safety_stats.ingest.normalize import read_inputs
+from safety_stats.ingest.records import SourceData
 
 
 def test_nested_equal_prevents_variant_count_weighting(tmp_path: Path) -> None:
@@ -227,7 +227,7 @@ def _labelled_plan(*groups: dict[str, object]) -> AnalysisPlan:
 
 def test_a_plan_groups_by_its_hierarchy_filters_and_blocks_but_not_its_numbers() -> None:
     # Imported here, so that the module's other tests still run against a source without it.
-    from inspect_safety_stats.ingest.manifest import plan_grouping_columns
+    from safety_stats.ingest.manifest import plan_grouping_columns
 
     assert plan_grouping_columns(_labelled_plan()) == (
         "cluster",
@@ -244,7 +244,7 @@ def test_the_selection_and_order_columns_stay_typed_when_a_group_filters_on_them
     """Taken for labels, they were read as text: a filter on the drawn items was refused as not
     text, and an adaptive claim found no integer order."""
 
-    from inspect_safety_stats.ingest.manifest import plan_grouping_columns
+    from safety_stats.ingest.manifest import plan_grouping_columns
 
     data = yaml.safe_load(_PLAN)
     data["design"] = {
@@ -284,7 +284,7 @@ def test_the_selection_and_order_columns_stay_typed_when_a_group_filters_on_them
 
 
 def test_numeric_columns_stay_numbers_beside_text_labels(tmp_path: Path) -> None:
-    from inspect_safety_stats.ingest.manifest import plan_grouping_columns
+    from safety_stats.ingest.manifest import plan_grouping_columns
 
     path = tmp_path / "design.csv"
     path.write_text(
@@ -310,7 +310,7 @@ def test_a_group_filter_on_a_weight_or_threshold_column_takes_a_number(tmp_path:
     """A filter makes its column a grouping column, but a weight or threshold column stays a
     number, so an unquoted number still selects its prompts and the weights still resolve."""
 
-    from inspect_safety_stats.ingest.manifest import plan_grouping_columns
+    from safety_stats.ingest.manifest import plan_grouping_columns
 
     plan = _labelled_plan(
         {"id": "light", "filter": {"w": 0.25}}, {"id": "loose", "filter": {"limit": 1}}

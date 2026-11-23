@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from inspect_safety_stats.generative.schema import load_generative_plan
+from safety_stats.generative.schema import load_generative_plan
 from tests.generative_fixtures import base_plan, compile_from, materialize
 
 

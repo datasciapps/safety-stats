@@ -24,12 +24,12 @@ from inspect_ai.solver import TaskState, generate
 from inspect_ai.util._early_stopping import EarlyStop
 from typer.testing import CliRunner
 
-from inspect_safety_stats import AnalysisPlan, analyze, load_plan, validate
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.ingest.records import SampleOrder
-from inspect_safety_stats.schema.reports import Diagnostic, SafetyReport
-from inspect_safety_stats.stats.sequential import anytime_upper_bound
-from inspect_safety_stats.validate.plan import validate_plan_references
+from safety_stats import AnalysisPlan, analyze, load_plan, validate
+from safety_stats.cli import app
+from safety_stats.ingest.records import SampleOrder
+from safety_stats.schema.reports import Diagnostic, SafetyReport
+from safety_stats.stats.sequential import anytime_upper_bound
+from safety_stats.validate.plan import validate_plan_references
 
 PROMPTS = 40
 STOP_AFTER = 25
@@ -673,14 +673,14 @@ def _read_frames(
 
     evals, samples = frames
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.read_inspect_sample_orders",
+        "safety_stats.ingest.inspect_logs.read_inspect_sample_orders",
         lambda sources, logs=None: {
             key: SampleOrder(
                 run_key=key,

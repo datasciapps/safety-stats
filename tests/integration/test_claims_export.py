@@ -11,11 +11,11 @@ import pytest
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.config.loader import canonical_plan_hash
-from inspect_safety_stats.report.artifacts import sha256
-from inspect_safety_stats.schema.claims import ClaimsExport
+from safety_stats import analyze, load_plan
+from safety_stats.cli import app
+from safety_stats.config.loader import canonical_plan_hash
+from safety_stats.report.artifacts import sha256
+from safety_stats.schema.claims import ClaimsExport
 from tests.claims_export import round_trip_differences
 from tests.cli_output import plain
 
@@ -225,10 +225,10 @@ def _patch_logs(monkeypatch: pytest.MonkeyPatch, failures: dict[str, int]) -> No
         ]
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
 

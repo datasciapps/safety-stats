@@ -15,13 +15,13 @@ import pytest
 from pydantic import BaseModel
 
 PUBLIC_MODULES = (
-    "inspect_safety_stats",
-    "inspect_safety_stats.stats",
-    "inspect_safety_stats.generative",
+    "safety_stats",
+    "safety_stats.stats",
+    "safety_stats.generative",
 )
 
 # A str instance cannot carry a docstring of its own: help() on it describes str.
-NOT_DOCUMENTABLE = {("inspect_safety_stats", "__version__")}
+NOT_DOCUMENTABLE = {("safety_stats", "__version__")}
 
 
 def _docstring_problem(name: str, value: object) -> str | None:

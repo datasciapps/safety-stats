@@ -12,18 +12,18 @@ from scipy.optimize import brentq
 from scipy.special import logsumexp
 from scipy.stats import binom
 
-from inspect_safety_stats.config.models import (
+from safety_stats.config.models import (
     DirectMeanIntervalsSpec,
     IndependenceSelectionSpec,
 )
-from inspect_safety_stats.stats import (
+from safety_stats.stats import (
     weighted_bounded_empirical_bernstein_mean_bounds,
     weighted_bounded_hoeffding_mean_bounds,
     weighted_bounded_kl_chernoff_mean_bounds,
 )
 
-# Experimental, so not in inspect_safety_stats.stats.__all__ until it graduates.
-from inspect_safety_stats.stats.direct_mean import (
+# Experimental, so not in safety_stats.stats.__all__ until it graduates.
+from safety_stats.stats.direct_mean import (
     _betting_log_capital,
     weighted_betting_mean_bounds,
     weighted_bounded_betting_mean_bounds,
@@ -507,7 +507,7 @@ def test_plan_accepts_betting_as_primary_and_reference_method() -> None:
 def test_horvitz_thompson_census_with_betting_matches_the_direct_engine() -> None:
     # A census (every frame item drawn with probability one) has inflation one
     # and must reproduce the ordinary block engine exactly.
-    from inspect_safety_stats.stats import InclusionDesign, horvitz_thompson_mean_bounds
+    from safety_stats.stats import InclusionDesign, horvitz_thompson_mean_bounds
 
     rng = np.random.default_rng(5)
     values = rng.uniform(0.0, 0.3, 12)

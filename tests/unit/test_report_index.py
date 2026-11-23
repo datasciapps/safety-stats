@@ -12,8 +12,8 @@ import pytest
 from jsonschema import Draft202012Validator
 from typer.testing import CliRunner
 
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.report.index import (
+from safety_stats.cli import app
+from safety_stats.report.index import (
     AGENT_GUIDE_URL,
     DIAGNOSTICS_URL,
     INDEX_JSON,
@@ -21,7 +21,7 @@ from inspect_safety_stats.report.index import (
     index_document,
     index_files,
 )
-from inspect_safety_stats.schema.reports import (
+from safety_stats.schema.reports import (
     STORED_REPORT,
     JudgeCalibrationPresentation,
     RiskIntervalResult,

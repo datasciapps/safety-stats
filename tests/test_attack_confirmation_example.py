@@ -18,9 +18,9 @@ import pytest
 import yaml
 from inspect_ai import eval as inspect_eval
 
-from inspect_safety_stats import analyze
-from inspect_safety_stats.stats import weighted_kl_chernoff_mean_bounds
-from inspect_safety_stats.stats.planning import maximum_certifying_failures
+from safety_stats import analyze
+from safety_stats.stats import weighted_kl_chernoff_mean_bounds
+from safety_stats.stats.planning import maximum_certifying_failures
 
 EXAMPLE_DIR = Path(__file__).parents[1] / "examples" / "attack_confirmation"
 sys.path.insert(0, str(EXAMPLE_DIR))

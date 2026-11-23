@@ -259,7 +259,7 @@ def test_compare_artifacts_cases_reach_the_paths_they_exist_for(
     """
     from _artifact_cases import BUILDERS, Builder, build_case
 
-    from inspect_safety_stats import analyze
+    from safety_stats import analyze
 
     builder = Builder(ROOT, tmp_path / "inputs", ROOT / "src", None)
     out: dict[str, Path] = {}
@@ -277,7 +277,7 @@ def test_compare_artifacts_cases_reach_the_paths_they_exist_for(
                 analyze(plan=inputs.plan, logs=inputs.logs).write(out[name])
             continue
         result = subprocess.run(
-            [sys.executable, "-m", "inspect_safety_stats.cli", *inputs.command,
+            [sys.executable, "-m", "safety_stats.cli", *inputs.command,
              "--plan", str(inputs.plan), "--logs", str(inputs.logs), *inputs.extra,
              "--output", str(out[name])],
             capture_output=True, text=True, encoding="utf-8", errors="replace", check=False,

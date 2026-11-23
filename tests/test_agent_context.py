@@ -19,14 +19,14 @@ import yaml
 from typer.core import TyperGroup, TyperOption
 from typer.testing import CliRunner
 
-from inspect_safety_stats import analyze, validate
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.config import AnalysisPlan
+from safety_stats import analyze, validate
+from safety_stats.cli import app
+from safety_stats.config import AnalysisPlan
 from tests.cli_output import plain
 
 ROOT = Path(__file__).resolve().parents[1]
 SIMPLEQA = ROOT / "examples" / "real_simpleqa"
-SKILL_DIR = ROOT / "skills" / "inspect-safety-stats"
+SKILL_DIR = ROOT / "skills" / "safety-stats"
 SKILL_FILE = SKILL_DIR / "SKILL.md"
 AGENT_CONTEXT_FILES = [
     ROOT / "llms.txt",
@@ -57,7 +57,7 @@ def _fenced_blocks(path: Path, language: str) -> list[tuple[int, str]]:
 
 def test_llms_txt_follows_index_structure() -> None:
     lines = (ROOT / "llms.txt").read_text(encoding="utf-8").splitlines()
-    assert lines[0] == "# inspect-safety-stats"
+    assert lines[0] == "# safety-stats"
     blockquote_lines = [line for line in lines[1:8] if line.startswith("> ")]
     assert blockquote_lines, "llms.txt must start with an H1 title and summary blockquote"
     headings = [line for line in lines if line.startswith("## ")]
@@ -140,7 +140,7 @@ def test_every_yaml_plan_in_agent_context_validates_and_analyzes(
 
 # --- Python API: names, signatures and import locations -------------------------------------
 
-_MODULE = r"inspect_safety_stats(?:\.[a-z_]+)*"
+_MODULE = r"safety_stats(?:\.[a-z_]+)*"
 # One documented call: `name(parameters)` or `name(parameters) -> Return`, a whole code span.
 _DOCUMENTED_CALL = re.compile(r"`([A-Za-z_]\w*)\(([^`]*)\)(?: -> ([^`]+))?`")
 _SECTION_IMPORT = re.compile(rf"Import\b(.*?)\bfrom `({_MODULE})`")
@@ -289,17 +289,17 @@ def test_skill_import_locations_hold() -> None:
 
 # --- CLI: documented commands and options ---------------------------------------------------
 
-_INLINE_COMMAND = re.compile(r"`(inspect-safety-stats [^`]+)`")
+_INLINE_COMMAND = re.compile(r"`(safety-stats [^`]+)`")
 _OPTION = re.compile(r"--[a-z][a-z0-9-]*")
 
 
 def _documented_command_lines(path: Path) -> list[str]:
-    """Every `inspect-safety-stats ...` invocation in a file, prose and bash blocks."""
+    """Every `safety-stats ...` invocation in a file, prose and bash blocks."""
     text = path.read_text(encoding="utf-8")
     lines = _INLINE_COMMAND.findall(text)
     for _, block in _fenced_blocks(path, "bash"):
         for line in block.replace("\\\n", " ").splitlines():
-            if line.strip().startswith("inspect-safety-stats "):
+            if line.strip().startswith("safety-stats "):
                 lines.append(line.strip())
     return lines
 
@@ -360,7 +360,7 @@ def test_the_skills_command_blocks_are_checked() -> None:
         line
         for _, block in _fenced_blocks(SKILL_FILE, "bash")
         for line in block.splitlines()
-        if line.startswith("inspect-safety-stats ")
+        if line.startswith("safety-stats ")
     ]
     assert len(lines) >= 2, lines
 
@@ -452,7 +452,7 @@ def test_documented_commands_run_offline_and_write_the_documented_files(
     assert len(commands) >= 2
     for index, line in enumerate(commands):
         words = shlex.split(line)
-        assert words[0] == "inspect-safety-stats", f"not a CLI command: {line!r}"
+        assert words[0] == "safety-stats", f"not a CLI command: {line!r}"
         args = words[1:]
         if "--output" in args:
             position = args.index("--output") + 1

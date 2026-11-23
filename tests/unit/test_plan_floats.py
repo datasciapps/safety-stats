@@ -14,7 +14,7 @@ import typing
 import pytest
 from pydantic import BaseModel, ValidationError
 
-from inspect_safety_stats.config.models import JudgeRateRangeSpec
+from safety_stats.config.models import JudgeRateRangeSpec
 from tests.plan_fields import annotation, contains, is_scalar, plan_fields
 
 
@@ -72,7 +72,7 @@ def test_the_walk_reaches_every_float_field_named_in_issue_107() -> None:
 
 def test_no_plan_field_hides_a_float_from_the_probes() -> None:
     # A float inside a list, a tuple or a wider union would escape both probes. Give it the
-    # PlanFloat type from inspect_safety_stats.config.models, and a probe of its own here.
+    # PlanFloat type from safety_stats.config.models, and a probe of its own here.
     hidden = [
         name
         for name, (model, field) in PLAN_FIELDS.items()

@@ -12,8 +12,8 @@ from typing import Any
 
 import yaml
 
-from inspect_safety_stats import analyze, validate
-from inspect_safety_stats.ingest.rollout_files import RolloutFiles
+from safety_stats import analyze, validate
+from safety_stats.ingest.rollout_files import RolloutFiles
 
 CATEGORICAL = {"failure_values": ["FAIL"], "safe_values": ["PASS"]}
 

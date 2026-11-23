@@ -14,7 +14,7 @@ from pathlib import Path
 from harness_eval import harness_versions
 from inspect_ai import eval as inspect_eval
 
-from inspect_safety_stats import SafetyReport, analyze
+from safety_stats import SafetyReport, analyze
 
 HERE = Path(__file__).resolve().parent
 LOGS = Path("logs/harness-versions")

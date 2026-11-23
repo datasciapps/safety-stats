@@ -22,8 +22,8 @@ from typing import Any, Literal
 import numpy as np
 from scipy.stats import binom
 
-from inspect_safety_stats.config.models import RiskMeasureSpec
-from inspect_safety_stats.stats import (
+from safety_stats.config.models import RiskMeasureSpec
+from safety_stats.stats import (
     DirectMeanBounds,
     weighted_bounded_empirical_bernstein_mean_bounds,
     weighted_bounded_hoeffding_mean_bounds,
@@ -33,8 +33,8 @@ from inspect_safety_stats.stats import (
     weighted_kl_chernoff_mean_bounds,
 )
 
-# Experimental, so not in inspect_safety_stats.stats.__all__ until it graduates.
-from inspect_safety_stats.stats.direct_mean import (
+# Experimental, so not in safety_stats.stats.__all__ until it graduates.
+from safety_stats.stats.direct_mean import (
     weighted_betting_mean_bounds,
     weighted_bounded_betting_mean_bounds,
 )

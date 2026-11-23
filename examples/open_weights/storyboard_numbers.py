@@ -32,9 +32,9 @@ import pandas as pd
 import yaml
 from scipy.special import comb
 
-from inspect_safety_stats.stats.direct_mean import weighted_bounded_kl_chernoff_mean_bounds
-from inspect_safety_stats.stats.planning import certification_sample_size
-from inspect_safety_stats.stats.risk import worst_of_k_risk
+from safety_stats.stats.direct_mean import weighted_bounded_kl_chernoff_mean_bounds
+from safety_stats.stats.planning import certification_sample_size
+from safety_stats.stats.risk import worst_of_k_risk
 
 TASK_GROUPS = {"harmful-compliance": "harm", "over-refusal": "over-refusal"}
 KS = (1, 2, 3, 5, 10, 15, 20)

@@ -10,11 +10,11 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from inspect_safety_stats import validate
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
-from inspect_safety_stats.config.registration import load_receipt, write_receipt
-from inspect_safety_stats.ingest.rollout_files import RolloutFiles
+from safety_stats import validate
+from safety_stats.cli import app
+from safety_stats.config.loader import canonical_plan_hash, load_plan
+from safety_stats.config.registration import load_receipt, write_receipt
+from safety_stats.ingest.rollout_files import RolloutFiles
 from tests.cli_output import plain
 
 runner = CliRunner()
@@ -156,7 +156,7 @@ def test_hash_plan_reports_an_unreadable_plan_on_one_line_and_exits_3(
 def test_a_validator_message_with_a_line_break_stays_on_one_line() -> None:
     from pydantic import BaseModel, ValidationError, field_validator
 
-    from inspect_safety_stats.cli import _one_line_error
+    from safety_stats.cli import _one_line_error
 
     class _Spec(BaseModel):
         size: int

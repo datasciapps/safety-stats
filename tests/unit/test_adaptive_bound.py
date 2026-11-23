@@ -7,12 +7,12 @@ import math
 import numpy as np
 import pytest
 
-from inspect_safety_stats.stats.adaptive import (
+from safety_stats.stats.adaptive import (
     MIXTURE_LAMBDAS,
     adaptive_lower_bound,
     log_mixture_e_value,
 )
-from inspect_safety_stats.stats.binomial import binomial_lower_bound
+from safety_stats.stats.binomial import binomial_lower_bound
 
 
 def _bisected(successes: int, runs: int, alpha: float) -> float:

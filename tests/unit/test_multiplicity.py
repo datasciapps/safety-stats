@@ -1,6 +1,6 @@
 import pytest
 
-from inspect_safety_stats.stats import bonferroni_allocate
+from safety_stats.stats import bonferroni_allocate
 
 
 def test_bonferroni_allocations_sum_to_alpha() -> None:

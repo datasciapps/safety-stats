@@ -17,13 +17,13 @@ import math
 import numpy as np
 import pytest
 
-from inspect_safety_stats.analysis.claims import coverage_event
-from inspect_safety_stats.analysis.policy import _policy_roll_up, _PolicyApplication
-from inspect_safety_stats.config.decision_policy import DecisionPolicy
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.decision.engine import decide_claim, roll_up
-from inspect_safety_stats.schema.reports import Decision, Diagnostic, RiskIntervalResult
-from inspect_safety_stats.stats.binomial import binomial_lower_bound, binomial_upper_bound
+from safety_stats.analysis.claims import coverage_event
+from safety_stats.analysis.policy import _policy_roll_up, _PolicyApplication
+from safety_stats.config.decision_policy import DecisionPolicy
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.decision.engine import decide_claim, roll_up
+from safety_stats.schema.reports import Decision, Diagnostic, RiskIntervalResult
+from safety_stats.stats.binomial import binomial_lower_bound, binomial_upper_bound
 
 ALPHA = 0.05
 CLAIMS = 10

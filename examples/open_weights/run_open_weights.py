@@ -430,7 +430,7 @@ def run(
 
 
 def analyze_run(output: Path) -> str:
-    from inspect_safety_stats import analyze
+    from safety_stats import analyze
 
     report = analyze(plan=output / "plan.yaml", logs=output / "logs")
     report.write(output / "report")

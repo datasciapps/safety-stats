@@ -15,11 +15,11 @@ The analyzer is offline. It does not call model providers or make network reques
 ## Install from PyPI
 
 ```bash
-python -m pip install 'inspect-safety-stats[inspect]'
+python -m pip install 'safety-stats[inspect]'
 ```
 
 The `inspect` extra installs Inspect AI and pyarrow, which reading Inspect logs needs. Leave it
-out to analyse only rollout files: `python -m pip install inspect-safety-stats`. The examples
+out to analyse only rollout files: `python -m pip install safety-stats`. The examples
 and the offline demo are not part of the package: run them from a checkout.
 
 ## Install from a checkout
@@ -64,15 +64,15 @@ Run static checks when the optional tools are installed:
 
 ```bash
 ruff check src tests examples research scripts
-mypy src/inspect_safety_stats
-pytest --cov=inspect_safety_stats
+mypy src/safety_stats
+pytest --cov=safety_stats
 ```
 
 ## Confirm installation
 
 ```bash
-inspect-safety-stats version
-inspect-safety-stats plan zero-failure --threshold 0.01 --alpha 0.05
+safety-stats version
+safety-stats plan zero-failure --threshold 0.01 --alpha 0.05
 ```
 
 The planner should report 299 rollouts.

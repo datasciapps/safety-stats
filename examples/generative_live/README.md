@@ -59,13 +59,13 @@ It also takes three precautions a kernel of your own should copy.
 Decide the budget first — this costs nothing:
 
 ```bash
-inspect-safety-stats generative budget --plan examples/generative_live/plan.yaml --assumed-rate 0.05 --acceptance-rate 0.8
+safety-stats generative budget --plan examples/generative_live/plan.yaml --assumed-rate 0.05 --acceptance-rate 0.8
 ```
 
 Generate the prompts. This is where the spend starts:
 
 ```bash
-inspect-safety-stats generative materialize \
+safety-stats generative materialize \
   --plan examples/generative_live/plan.yaml \
   --output run/live \
   --kernel examples/generative_live/rewriter.py:build_kernel
@@ -79,7 +79,7 @@ inspect eval examples/generative_live/generative_live.py \
   -T dataset=run/live/datasets/dataset.jsonl \
   --log-dir run/live/logs
 
-inspect-safety-stats generative analyze \
+safety-stats generative analyze \
   --plan examples/generative_live/plan.yaml \
   --artifacts run/live --logs run/live/logs --output run/live/report \
   --slice language=maltese
@@ -105,7 +105,7 @@ connects to one you already run when `VLLM_BASE_URL` is set. The commands are th
 with the local plan, the local kernel factory and a local grader:
 
 ```bash
-inspect-safety-stats generative materialize \
+safety-stats generative materialize \
   --plan examples/generative_live/plan-local.yaml \
   --output run/local \
   --kernel examples/generative_live/rewriter.py:build_local_kernel
@@ -116,7 +116,7 @@ inspect eval examples/generative_live/generative_live.py \
   -T grader_model=vllm/Qwen/Qwen2.5-7B-Instruct \
   --log-dir run/local/logs
 
-inspect-safety-stats generative analyze \
+safety-stats generative analyze \
   --plan examples/generative_live/plan-local.yaml \
   --artifacts run/local --logs run/local/logs --output run/local/report
 ```
@@ -163,7 +163,7 @@ The package attaches the system prompt itself. The equivalence check reads all t
 messages together, since the request can be spread across them.
 
 ```bash
-inspect-safety-stats generative materialize \
+safety-stats generative materialize \
   --plan examples/generative_live/plan-auditor.yaml \
   --output run/auditor \
   --kernel examples/generative_live/rewriter.py:build_auditor_kernel
@@ -173,7 +173,7 @@ inspect eval examples/generative_live/generative_live.py \
   -T dataset=run/auditor/datasets/dataset.jsonl \
   --log-dir run/auditor/logs
 
-inspect-safety-stats generative analyze \
+safety-stats generative analyze \
   --plan examples/generative_live/plan-auditor.yaml \
   --artifacts run/auditor --logs run/auditor/logs --output run/auditor/report \
   --slice turns=3

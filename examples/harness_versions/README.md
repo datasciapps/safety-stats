@@ -41,7 +41,7 @@ inspect eval examples/harness_versions/harness_eval.py -T harness=v1 \
 inspect eval examples/harness_versions/harness_eval.py -T harness=v2 \
   --model mockllm/model --log-dir logs/harness-versions
 
-inspect-safety-stats analyze --plan examples/harness_versions/plan.yaml \
+safety-stats analyze --plan examples/harness_versions/plan.yaml \
   --logs logs/harness-versions --output reports/harness-versions
 ```
 

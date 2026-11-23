@@ -6,7 +6,7 @@ This test is the snapshot: adding to it is a deliberate act, and so is taking aw
 
 from __future__ import annotations
 
-import inspect_safety_stats.generative as generative
+import safety_stats.generative as generative
 
 SURFACE = {
     # The plan and the tree it compiles to.
@@ -66,7 +66,7 @@ def test_internal_helpers_stay_internal() -> None:
 def test_the_documented_workflow_is_reachable_from_the_package_root() -> None:
     """The docstring's example must keep working."""
 
-    from inspect_safety_stats.generative import (  # noqa: F401
+    from safety_stats.generative import (  # noqa: F401
         analyze_run,
         compile_taxonomy,
         forecast,
@@ -78,7 +78,7 @@ def test_the_documented_workflow_is_reachable_from_the_package_root() -> None:
 def test_a_kernel_can_be_written_against_the_protocol_alone() -> None:
     """A user implementing RewriteKernel needs nothing beyond the exported names."""
 
-    from inspect_safety_stats.generative import RewriteKernel, RewriteOutcome, RewriteRequest
+    from safety_stats.generative import RewriteKernel, RewriteOutcome, RewriteRequest
 
     class Mine:
         kernel_id = "mine"

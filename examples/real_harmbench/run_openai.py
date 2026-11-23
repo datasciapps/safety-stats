@@ -13,7 +13,7 @@ import yaml
 from harmbench_live import _behavior_rows, harmbench_direct_request
 from inspect_ai import eval as inspect_eval
 
-from inspect_safety_stats import analyze
+from safety_stats import analyze
 
 HERE = Path(__file__).resolve().parent
 

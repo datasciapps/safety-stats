@@ -14,23 +14,23 @@ from typing import Any, Literal
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import analyze, load_plan, render_visualization, write_visualization
-from inspect_safety_stats.analysis import comparisons as comparisons_stage
-from inspect_safety_stats.analysis.claims import _claims, verdicts_by_profile
-from inspect_safety_stats.analysis.core import scorer_configurations
-from inspect_safety_stats.analysis.estimates import alpha_by_prompt, prompt_blocked
-from inspect_safety_stats.config.loader import canonical_plan_hash
-from inspect_safety_stats.config.models import CohortSpec, PromptBoundsSpec, RiskMeasureSpec
-from inspect_safety_stats.ingest.inspect_logs import (
+from safety_stats import analyze, load_plan, render_visualization, write_visualization
+from safety_stats.analysis import comparisons as comparisons_stage
+from safety_stats.analysis.claims import _claims, verdicts_by_profile
+from safety_stats.analysis.core import scorer_configurations
+from safety_stats.analysis.estimates import alpha_by_prompt, prompt_blocked
+from safety_stats.config.loader import canonical_plan_hash
+from safety_stats.config.models import CohortSpec, PromptBoundsSpec, RiskMeasureSpec
+from safety_stats.ingest.inspect_logs import (
     ErrorContext,
     NormalizedData,
     read_inspect_source,
 )
-from inspect_safety_stats.ingest.manifest import load_manifest
-from inspect_safety_stats.ingest.records import StopContext
-from inspect_safety_stats.registry import CODES
-from inspect_safety_stats.report import visualization
-from inspect_safety_stats.schema.reports import (
+from safety_stats.ingest.manifest import load_manifest
+from safety_stats.ingest.records import StopContext
+from safety_stats.registry import CODES
+from safety_stats.report import visualization
+from safety_stats.schema.reports import (
     Diagnostic,
     GroupRiskResult,
     RiskIntervalResult,
@@ -190,10 +190,10 @@ def test_end_to_end_pass_and_report(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     plan_path = _write_inputs(tmp_path)
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=plan_path, logs="ignored")
@@ -255,7 +255,7 @@ def test_end_to_end_pass_and_report(monkeypatch: pytest.MonkeyPatch, tmp_path: P
     )
     standalone = write_visualization(output / "report.json", tmp_path / "standalone.html")
     assert standalone.exists()
-    assert "__INSPECT_SAFETY_STATS_DATA__" not in standalone.read_text(encoding="utf-8")
+    assert "__SAFETY_STATS_DATA__" not in standalone.read_text(encoding="utf-8")
     report._resolved_plan["report"]["include_observations"] = False
     report.write(output, overwrite=True)
     assert not (output / "observations.csv").exists()
@@ -266,10 +266,10 @@ def _written_report(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     plan_path = _write_inputs(tmp_path)
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, **_: sample_frame,
     )
     return analyze(plan=plan_path, logs="ignored").write(tmp_path / "report")
@@ -344,7 +344,7 @@ def test_a_report_written_under_an_earlier_registry_still_visualizes(
     saved["integrity"]["diagnostics"].extend(written)
     (output / "report.json").write_text(json.dumps(saved), encoding="utf-8", newline="\n")
 
-    # What `inspect-safety-stats visualize --report` runs.
+    # What `safety-stats visualize --report` runs.
     html = write_visualization(output, tmp_path / "earlier.html").read_text(encoding="utf-8")
 
     payload = json.loads(html.split('type="application/json">', 1)[1].split("</script>", 1)[0])
@@ -360,10 +360,10 @@ def test_text_artifacts_have_the_same_bytes_on_every_platform(
     plan_path = _write_inputs(tmp_path)
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     output = analyze(plan=plan_path, logs="ignored").write(tmp_path / "report")
@@ -397,10 +397,10 @@ def test_empirical_hierarchy_intervals_and_independence_sensitivity(
     spec.independence.sensitivities = ["prompt"]
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -466,10 +466,10 @@ def test_weighted_kl_intervals_are_reported_at_root_and_hierarchy_nodes(
     spec.independence.sensitivities = ["prompt"]
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -513,10 +513,10 @@ def test_projected_intervals_report_the_simultaneous_floor_in_each_direction(
     spec.hierarchy_nodes = True
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -554,10 +554,10 @@ def test_frontier_sidak_calibrates_disjoint_hierarchy_nodes(
     spec.hierarchy_calibration = "frontier_sidak"
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -646,8 +646,8 @@ def test_every_measure_is_classified_for_clipping_to_the_unit_interval() -> None
     """A new measure must say whether it is a probability, and so whether it is clipped."""
     from typing import get_args
 
-    from inspect_safety_stats.analysis.measures import PROBABILITY_MEASURES
-    from inspect_safety_stats.config.models import RiskMeasureSpec
+    from safety_stats.analysis.measures import PROBABILITY_MEASURES
+    from safety_stats.config.models import RiskMeasureSpec
 
     types = set(get_args(RiskMeasureSpec.model_fields["type"].annotation))
     assert types - PROBABILITY_MEASURES == {"threshold_excess"}
@@ -679,10 +679,10 @@ def test_judge_calibration_emits_assumed_correction_sensitivities(
     plan.outputs.direct_mean_intervals.hierarchy_nodes = True
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -756,10 +756,10 @@ def test_validated_judge_calibration_produces_certifying_corrections(
     failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
     sample_frame.loc[failing, "score_harmful"] = "FAIL"
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -896,10 +896,10 @@ def _analyze_with_judge_labels(
     failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
     sample_frame.loc[failing, "score_harmful"] = "FAIL"
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -1040,10 +1040,10 @@ def test_validated_judge_calibration_reports_unmatched_labels(
     )
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -1075,10 +1075,10 @@ def test_assumed_judge_calibration_never_moves_a_claim(
     plan_path.write_text(plan_text, encoding="utf-8")
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -1125,10 +1125,10 @@ def _analyze_with_calibration(
     plan.outputs.direct_mean_intervals.hierarchy_nodes = True
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     return analyze(plan=plan, logs="ignored")
@@ -1208,10 +1208,10 @@ def test_a_transported_plan_without_a_corrected_risk_row_still_names_its_publish
     plan.claims = []
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -1244,7 +1244,7 @@ def test_a_transported_bound_adds_back_the_rollouts_an_excluding_policy_drops(
     p1's true risk is 0.5, and so are the maximum and the CVaR at beta 0.5 over the two
     prompts. Dividing the judge-system upper bound by the sensitivity bound gave 0.4625.
     """
-    from inspect_safety_stats.stats.binomial import binomial_upper_bound
+    from safety_stats.stats.binomial import binomial_upper_bound
 
     plan_path = _write_inputs(tmp_path)
     plan_path.write_text(
@@ -1259,10 +1259,10 @@ def test_a_transported_bound_adds_back_the_rollouts_an_excluding_policy_drops(
     unscored = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
     sample_frame.loc[unscored, "score_harmful"] = None
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=load_plan(plan_path), logs="ignored")
@@ -1436,10 +1436,10 @@ def test_two_arm_comparisons_are_judge_corrected_per_cohort(
     plan_path = _comparison_judge_plan(tmp_path, method=method, calibrated=False)
     eval_frame, sample_frame = _two_cohort_frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     _write_agreeing_labels(tmp_path, analyze(plan=load_plan(plan_path), logs="ignored"))
@@ -1481,10 +1481,10 @@ def test_contrast_only_comparisons_cannot_be_corrected(
     plan_path = _comparison_judge_plan(tmp_path, method=method, calibrated=False)
     eval_frame, sample_frame = _two_cohort_frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     _write_agreeing_labels(tmp_path, analyze(plan=load_plan(plan_path), logs="ignored"))
@@ -1507,7 +1507,7 @@ def test_two_arm_comparisons_are_judge_corrected_per_assumed_scenario(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """Each declared scenario corrects both arms, as the group risks are corrected."""
-    from inspect_safety_stats.stats.misclassification import JudgeCalibration, correct_judge_risk
+    from safety_stats.stats.misclassification import JudgeCalibration, correct_judge_risk
 
     plan_path = _comparison_judge_plan(
         tmp_path, method="weighted_kl_chernoff", calibrated=False, assumed=True
@@ -1617,7 +1617,7 @@ def test_assumed_scenarios_correct_each_cohort_and_arm_with_its_own_box(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """A scenario's cohort box replaces its default box there, on rows and comparison arms."""
-    from inspect_safety_stats.stats.misclassification import JudgeCalibration, correct_judge_risk
+    from safety_stats.stats.misclassification import JudgeCalibration, correct_judge_risk
 
     plan_path = _comparison_judge_plan(
         tmp_path, method="weighted_kl_chernoff", calibrated=False, assumed=True, cohort_boxes=True
@@ -1989,10 +1989,10 @@ def test_contrast_only_comparisons_say_the_assumed_correction_is_unavailable(
 def _patch_two_cohort_frames(monkeypatch: pytest.MonkeyPatch) -> None:
     eval_frame, sample_frame = _two_cohort_frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -2030,10 +2030,10 @@ def test_decision_presentation_is_opt_in(monkeypatch: pytest.MonkeyPatch, tmp_pa
     plan.report.include_decisions = True
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=plan, logs="ignored")
@@ -2063,10 +2063,10 @@ def test_exploratory_claims_show_what_the_bounds_would_decide(
     eval_frame, sample_frame = _frames()
     sample_frame["score_harmful"] = score
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=plan, logs="ignored")
@@ -2096,10 +2096,10 @@ def test_exploratory_claims_have_no_descriptive_status_without_valid_integrity(
     plan.analysis.intent = "exploratory"
     eval_frame, sample_frame = _frames(missing_score=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=plan, logs="ignored")
@@ -2155,10 +2155,10 @@ def test_visualization_escapes_inline_report_data(
     plan_path = _write_inputs(tmp_path)
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=plan_path, logs="ignored")
@@ -2172,10 +2172,10 @@ def test_missing_score_forces_inconclusive(monkeypatch: pytest.MonkeyPatch, tmp_
     plan_path = _write_inputs(tmp_path)
     eval_frame, sample_frame = _frames(missing_score=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=plan_path, logs="ignored")
@@ -2191,10 +2191,10 @@ def test_a_blocked_rollout_withholds_its_prompts_bounds(
     plan_path = _write_inputs(tmp_path)
     eval_frame, sample_frame = _frames(missing_score=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=plan_path, logs="ignored")
@@ -2215,10 +2215,10 @@ def test_missing_score_can_use_conservative_bounds(
     plan.inputs.score.missing = "conservative_bounds"
     eval_frame, sample_frame = _frames(missing_score=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=plan, logs="ignored")
@@ -2266,14 +2266,14 @@ def test_error_stage_controls_end_to_end_safe_classification(
     sample_frame.loc[target, "score_harmful"] = None
     sample_frame.loc[target, "error"] = "provider error"
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs._error_context",
+        "safety_stats.ingest.inspect_logs._error_context",
         lambda **kwargs: ErrorContext(  # noqa: ARG005
             stage=stage,  # type: ignore[arg-type]
             content_delivered=stage == "post_generation",
@@ -2309,10 +2309,10 @@ def _stopped_first_rollout(
         target = (sample_frame["id"] == "p1") & (sample_frame["epoch"] == 1)
         sample_frame.loc[target, "score_harmful"] = score
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     stop = StopContext(
@@ -2322,7 +2322,7 @@ def _stopped_first_rollout(
         block_error=False,
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs._stop_context",
+        "safety_stats.ingest.inspect_logs._stop_context",
         lambda **kwargs: stop if kwargs["sample_id"] == "p1-1" else None,
     )
 
@@ -2437,7 +2437,7 @@ def test_content_filter_stops_are_refused_for_a_source_that_cannot_report_them(
 ) -> None:
     from dataclasses import replace
 
-    from inspect_safety_stats.ingest import inspect_logs
+    from safety_stats.ingest import inspect_logs
 
     plan_path = _content_filter_plan(tmp_path, "safe")
     _stopped_first_rollout(monkeypatch, content_delivered=False)
@@ -2472,10 +2472,10 @@ def _truncated_first_rollout(monkeypatch: pytest.MonkeyPatch, *, scored: bool = 
         target = (sample_frame["id"] == "p1") & (sample_frame["epoch"] == 1)
         sample_frame.loc[target, "score_harmful"] = "FAIL"
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     stop = StopContext(
@@ -2486,7 +2486,7 @@ def _truncated_first_rollout(monkeypatch: pytest.MonkeyPatch, *, scored: bool = 
         stop_reason="max_tokens",
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs._stop_context",
+        "safety_stats.ingest.inspect_logs._stop_context",
         lambda **kwargs: stop if kwargs["sample_id"] == "p1-1" else None,
     )
 
@@ -2582,7 +2582,7 @@ def test_token_limit_is_refused_for_a_source_that_cannot_report_stops(
 ) -> None:
     from dataclasses import replace
 
-    from inspect_safety_stats.ingest import inspect_logs
+    from safety_stats.ingest import inspect_logs
 
     plan_path = _token_limit_plan(tmp_path, "missing", "conservative_bounds")
     _truncated_first_rollout(monkeypatch)
@@ -2605,10 +2605,10 @@ def test_inspect_blank_error_field_is_not_a_sample_error(
     eval_frame, sample_frame = _frames()
     sample_frame["error"] = ""
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=plan_path, logs="ignored")
@@ -2624,10 +2624,10 @@ def _two_sample_errors(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     sample_frame.loc[target, "score_harmful"] = None
     sample_frame.loc[target, "error"] = "provider error"
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     return plan_path
@@ -2643,7 +2643,7 @@ def test_an_unreadable_transcript_is_reported_not_swallowed(
         reads.append(path)
         raise FileNotFoundError(path)
 
-    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.read_eval_log", unreadable)
+    monkeypatch.setattr("safety_stats.ingest.inspect_logs.read_eval_log", unreadable)
     plan = load_plan(plan_path)
     plan.inputs.score.errors = "end_to_end"
     report = analyze(plan=plan, logs="ignored")
@@ -2669,7 +2669,7 @@ def test_a_defect_in_reading_a_transcript_is_not_an_unknown_error_stage(
     def broken(path: str) -> None:
         raise RuntimeError("a defect in the reader")
 
-    monkeypatch.setattr("inspect_safety_stats.ingest.inspect_logs.read_eval_log", broken)
+    monkeypatch.setattr("safety_stats.ingest.inspect_logs.read_eval_log", broken)
     report = analyze(plan=plan_path, logs="ignored")
     assert report.integrity.status == "invalid"
     failed = [item for item in report.integrity.diagnostics if item.code == "INGEST_FAILED"]
@@ -2781,10 +2781,10 @@ def test_zero_tolerance_failure_overrides_statistical_result(
         "score_harmful",
     ] = "FAIL"
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=plan_path, logs="ignored")
@@ -2844,10 +2844,10 @@ def test_paired_and_clustered_comparison_outputs(
     eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
     sample_frame = pd.concat([candidate_samples, baseline_samples], ignore_index=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -2924,10 +2924,10 @@ def test_unscored_pairs_are_bounded_instead_of_breaking_the_pairing(
     eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
     sample_frame = pd.concat([candidate_samples, baseline_samples], ignore_index=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -3016,10 +3016,10 @@ def test_a_pair_missing_from_one_arm_still_breaks_the_pairing(
     eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
     sample_frame = pd.concat([candidate_samples, baseline_samples], ignore_index=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -3096,10 +3096,10 @@ def test_too_many_unscored_pairs_withhold_only_the_newcombe_diagnostic(
     eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
     sample_frame = pd.DataFrame(samples)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -3188,10 +3188,10 @@ def test_first_class_direct_comparisons_expand_hierarchy_and_write_artifacts(
     eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
     sample_frame = pd.concat([candidate_samples, baseline_samples], ignore_index=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -3294,10 +3294,10 @@ def test_hierarchy_aware_kl_comparisons_project_difference_and_ratio_regions(
     eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
     sample_frame = pd.concat([candidate_samples, baseline_samples], ignore_index=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -3399,10 +3399,10 @@ def _three_arm_report(
     eval_frame = pd.concat([item[0] for item in frames], ignore_index=True)
     sample_frame = pd.concat([item[1] for item in frames], ignore_index=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -3616,10 +3616,10 @@ def _patch_frames(
 ) -> None:
     eval_frame, sample_frame = frames
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -4091,7 +4091,7 @@ def test_judge_claims_warn_about_a_configuration_field_they_cannot_read(
 def test_judge_claims_hash_each_log_once(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    import inspect_safety_stats.ingest.inspect_logs as inspect_logs
+    import safety_stats.ingest.inspect_logs as inspect_logs
 
     hashed: list[str] = []
 
@@ -4114,7 +4114,7 @@ def _without_stop_reasons(monkeypatch: pytest.MonkeyPatch) -> None:
 
     from dataclasses import replace
 
-    from inspect_safety_stats.ingest import inspect_logs
+    from safety_stats.ingest import inspect_logs
 
     read = inspect_logs.read_inspect_source
     monkeypatch.setattr(
@@ -4179,7 +4179,7 @@ def _mirroring_judge_frames() -> tuple[pd.DataFrame, pd.DataFrame]:
 
 
 def _decision_policy_file(plan_path: Path, *, sha: str | None, set_at: str) -> Path:
-    from inspect_safety_stats.config.decision_policy import inference_plan_hash
+    from safety_stats.config.decision_policy import inference_plan_hash
 
     path = plan_path.parent / "policy.json"
     path.write_text(
@@ -4208,7 +4208,7 @@ def test_judge_runs_carry_the_plans_own_errors(
 ) -> None:
     from datetime import datetime, timezone
 
-    from inspect_safety_stats.config.registration import write_receipt
+    from safety_stats.config.registration import write_receipt
 
     plan_path = _judge_claims_plan(tmp_path)
     _patch_frames(monkeypatch, _mirroring_judge_frames())
@@ -4674,7 +4674,7 @@ def test_a_judges_run_counts_truncated_answers_as_the_primary_does_unless_it_say
         score_harmful_a=sample_frame["score_harmful"], score_harmful_b=sample_frame["score_harmful"]
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -4780,7 +4780,7 @@ def _composite_primary_plan(tmp_path: Path, block: str) -> Path:
 def test_panel_derived_correction_is_reported_as_a_diagnostic(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from inspect_safety_stats.stats.judges import (
+    from safety_stats.stats.judges import (
         JudgeAccuracyBox,
         composite_accuracy_box,
         identified_risk_set,
@@ -5122,8 +5122,8 @@ def _label_everything(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 def test_noisy_valid_claim_is_decided_from_truth_strata(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from inspect_safety_stats.decision.engine import noisy_valid_verdict_range
-    from inspect_safety_stats.stats.misclassification import (
+    from safety_stats.decision.engine import noisy_valid_verdict_range
+    from safety_stats.stats.misclassification import (
         TruthStratumCounts,
         noisy_valid_certification,
     )
@@ -5207,7 +5207,7 @@ def test_a_noisy_valid_claim_whose_thresholds_the_test_cannot_take_has_no_known_
 def test_random_sample_labels_add_lang_reiczigel_limits_beside_the_exact_box(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from inspect_safety_stats.stats.misclassification import (
+    from safety_stats.stats.misclassification import (
         TruthStratumCounts,
         lang_reiczigel_corrected_risk,
     )
@@ -5328,7 +5328,7 @@ def test_a_noisy_valid_claim_without_both_true_classes_is_inconclusive_at_every_
 
 
 def test_noisy_valid_claim_requires_a_random_sample_calibration(tmp_path: Path) -> None:
-    from inspect_safety_stats.validate.plan import validate_plan_references
+    from safety_stats.validate.plan import validate_plan_references
 
     (tmp_path / "labels.csv").write_text("observation_id,human_label\nx,safe\n", encoding="utf-8")
     plan_path = _random_sample_validated_plan(
@@ -5345,10 +5345,10 @@ def test_worst_of_k_measure_propagates_prompt_envelope(
     plan_path = _write_inputs(tmp_path)
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=plan_path, logs="ignored")
@@ -5422,7 +5422,7 @@ def _opt_in_worst_of_k_interval(plan_path: Path, k: int = 2) -> None:
 def test_an_opted_in_worst_of_k_row_has_a_direct_interval_in_the_mean_family(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from inspect_safety_stats.stats import worst_of_k_kl_chernoff_bounds
+    from safety_stats.stats import worst_of_k_kl_chernoff_bounds
 
     eval_frame, sample_frame = _frames()
     sample_frame = sample_frame.copy()
@@ -5495,7 +5495,7 @@ def _worst_of_k_row_with_an_unscored_rollout(
 def test_a_worst_of_k_interval_completes_an_unscored_rollout_both_ways(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    from inspect_safety_stats.stats import worst_of_k_kl_chernoff_bounds
+    from safety_stats.stats import worst_of_k_kl_chernoff_bounds
 
     row = _worst_of_k_row_with_an_unscored_rollout(monkeypatch, tmp_path)
     assert row.primary_interval_id == "direct_worst_of_k_kl_chernoff"
@@ -5601,7 +5601,7 @@ def test_plans_keep_their_hash_without_the_worst_of_k_interval(tmp_path: Path) -
 def test_plans_refuse_a_worst_of_k_interval_they_cannot_calibrate(
     tmp_path: Path, edit: tuple[str, str], message: str
 ) -> None:
-    from inspect_safety_stats.validate.plan import validate_plan_references
+    from safety_stats.validate.plan import validate_plan_references
 
     plan_path = _write_inputs(tmp_path)
     _opt_in_worst_of_k_interval(plan_path)
@@ -5679,7 +5679,7 @@ def test_analyze_withholds_the_worst_of_k_interval_of_a_refused_plan(
 def test_a_worst_of_k_interval_alone_puts_the_direct_mean_intervals_to_use(
     tmp_path: Path,
 ) -> None:
-    from inspect_safety_stats.validate.plan import validate_plan_references
+    from safety_stats.validate.plan import validate_plan_references
 
     plan_path = _write_inputs(tmp_path)
     text = plan_path.read_text(encoding="utf-8")
@@ -5752,7 +5752,7 @@ def test_report_html_roots_the_hierarchy_tree_at_the_weighted_mean(
     with direct_, so the root has to be chosen by measure. The test runs the template's own
     function under Node.
     """
-    from inspect_safety_stats.report import visualization
+    from safety_stats.report import visualization
 
     eval_frame, sample_frame = _frames()
     sample_frame = sample_frame.copy()
@@ -5853,7 +5853,7 @@ def test_a_noisy_valid_claim_on_a_projected_base_spends_the_simultaneous_budget(
     So the noisy-but-valid test charges the simultaneous budget, not the alpha the raw
     endpoint was allocated.
     """
-    from inspect_safety_stats.stats.misclassification import (
+    from safety_stats.stats.misclassification import (
         TruthStratumCounts,
         noisy_valid_certification,
     )
@@ -5974,7 +5974,7 @@ def test_worst_of_k_is_not_judge_correctable() -> None:
     # The affine correction R* = R*rho1 + (1-R)*rho0 commutes only with
     # positively homogeneous, translation-equivariant measures; 1-(1-p)^k is
     # neither, so worst_of_k must stay outside the correction whitelist.
-    from inspect_safety_stats.analysis.judge_calibration import JUDGE_CORRECTABLE_MEASURES
+    from safety_stats.analysis.judge_calibration import JUDGE_CORRECTABLE_MEASURES
 
     assert "worst_of_k" not in JUDGE_CORRECTABLE_MEASURES
 
@@ -6090,10 +6090,10 @@ def _profiled_report(
     spec.independence.sensitivities = sensitivities
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     return analyze(plan=plan, logs="ignored")
@@ -6384,10 +6384,10 @@ def test_comparison_claims_show_their_verdict_under_every_independence_profile(
     eval_frame = pd.concat([candidate_eval, baseline_eval], ignore_index=True)
     sample_frame = pd.concat([candidate_samples, baseline_samples], ignore_index=True)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -6497,10 +6497,10 @@ def _validated_judge_report(
     failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= 10)
     sample_frame.loc[failing, "score_harmful"] = "FAIL"
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     baseline_dir = tmp_path / "baseline"
@@ -6549,10 +6549,10 @@ def _patch_frames_with_failures(
         failing = (sample_frame["id"] == "p1") & (sample_frame["epoch"] <= failing_epochs)
         sample_frame.loc[failing, "score_harmful"] = "FAIL"
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -6569,7 +6569,7 @@ def _patch_frames_with_failures(
 def test_single_valued_bound_is_reported_per_direct_interval_when_requested(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, method: str
 ) -> None:
-    from inspect_safety_stats.stats.single_valued import SINGLE_VALUED_BOUND_GUARANTEE
+    from safety_stats.stats.single_valued import SINGLE_VALUED_BOUND_GUARANTEE
 
     plan = load_plan(_write_inputs(tmp_path))
     spec = plan.outputs.direct_mean_intervals
@@ -6619,8 +6619,8 @@ def test_single_valued_bound_matches_the_engine_family_on_the_raw_bounds(
     """With rollout blocks and equal weights, M equals the standalone computation."""
     import numpy as np
 
-    from inspect_safety_stats.stats import weighted_bounded_hoeffding_mean_bounds
-    from inspect_safety_stats.stats.single_valued import single_valued_bound
+    from safety_stats.stats import weighted_bounded_hoeffding_mean_bounds
+    from safety_stats.stats.single_valued import single_valued_bound
 
     plan = load_plan(_write_inputs(tmp_path))
     plan.outputs.direct_mean_intervals.single_valued_bound = True
@@ -6674,14 +6674,14 @@ def test_reports_without_the_single_valued_bound_leave_its_fields_out(
 def test_single_valued_bound_needs_enabled_direct_mean_intervals() -> None:
     from pydantic import ValidationError
 
-    from inspect_safety_stats.config.models import DirectMeanIntervalsSpec
+    from safety_stats.config.models import DirectMeanIntervalsSpec
 
     with pytest.raises(ValidationError, match="single_valued_bound requires enabled"):
         DirectMeanIntervalsSpec(single_valued_bound=True)
 
 
 def test_single_valued_bound_is_refused_with_judge_calibration(tmp_path: Path) -> None:
-    from inspect_safety_stats.validate.plan import validate_plan_references
+    from safety_stats.validate.plan import validate_plan_references
 
     plan_path = _write_inputs(tmp_path)
     text = plan_path.read_text(encoding="utf-8")
@@ -6708,7 +6708,7 @@ def test_single_valued_bound_is_refused_with_judge_calibration(tmp_path: Path) -
 
 
 def test_single_valued_bound_is_refused_under_a_sampled_design(tmp_path: Path) -> None:
-    from inspect_safety_stats.validate.plan import validate_plan_references
+    from safety_stats.validate.plan import validate_plan_references
 
     plan = load_plan(_write_inputs(tmp_path))
     plan.outputs.direct_mean_intervals.single_valued_bound = True
@@ -6733,10 +6733,10 @@ def test_betting_intervals_are_reported_at_root_and_hierarchy_nodes(
     spec.hierarchy_nodes = True
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
 
@@ -6825,7 +6825,7 @@ def test_judge_calibration_corrects_betting_intervals(
 def test_comparisons_refuse_the_betting_method() -> None:
     from pydantic import ValidationError
 
-    from inspect_safety_stats.config.models import ComparisonSpec
+    from safety_stats.config.models import ComparisonSpec
 
     with pytest.raises(ValidationError, match="input_value='weighted_betting'"):
         ComparisonSpec.model_validate(
@@ -6861,10 +6861,10 @@ def test_a_manifest_needs_no_question_id_when_the_plan_never_names_it(
     _drop_question_level(tmp_path, plan_path)
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=plan_path, logs="ignored")
@@ -6891,10 +6891,10 @@ def test_blocking_by_question_id_still_requires_the_column(
     )
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     report = analyze(plan=plan_path, logs="ignored")

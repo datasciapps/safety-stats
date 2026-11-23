@@ -27,10 +27,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.schema.reports import GroupRiskResult, RiskIntervalResult, SafetyReport
-from inspect_safety_stats.stats.binomial import binomial_upper_bound
-from inspect_safety_stats.stats.misclassification import JudgeCalibration, correct_judge_risk
+from safety_stats import analyze, load_plan
+from safety_stats.schema.reports import GroupRiskResult, RiskIntervalResult, SafetyReport
+from safety_stats.stats.binomial import binomial_upper_bound
+from safety_stats.stats.misclassification import JudgeCalibration, correct_judge_risk
 
 ROLLOUTS = 1000
 UNSCORED = 600
@@ -148,10 +148,10 @@ def _analyze(
 ) -> SafetyReport:
     eval_frame, sample_frame = _frames()
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: sample_frame,
     )
     (tmp_path / "design.csv").write_text(

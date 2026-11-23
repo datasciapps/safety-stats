@@ -23,8 +23,8 @@ from pathlib import Path
 
 from inspect_ai.log import list_eval_logs, read_eval_log
 
-from inspect_safety_stats.ingest.outcomes import judge_positive
-from inspect_safety_stats.schema.observations import Observation
+from safety_stats.ingest.outcomes import judge_positive
+from safety_stats.schema.observations import Observation
 
 
 def _write(path: Path, header: list[str], rows: list[list[str]]) -> None:

@@ -1,6 +1,6 @@
 # Running Inspect for analysis
 
-inspect-safety-stats reads the logs of an evaluation you run yourself in
+safety-stats reads the logs of an evaluation you run yourself in
 [Inspect](https://inspect.aisi.org.uk/). How you run it decides what the analysis can use: how
 many rollouts each prompt has, which runs form a cohort, and whether long answers survive. This
 page covers four settings that matter for that and whose defaults can get in the way: epochs,

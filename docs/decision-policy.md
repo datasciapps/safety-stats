@@ -105,7 +105,7 @@ Any other change to the plan changes the inference hash, and an analysis refuses
 hash does not match.
 
 ```bash
-inspect-safety-stats hash-plan --plan plan.yaml --inference
+safety-stats hash-plan --plan plan.yaml --inference
 ```
 
 `hash-plan` without `--inference` still prints the full hash, which is what
@@ -147,17 +147,17 @@ thresholds of the last version that sets it, or at the plan's when no version do
 earlier versions in the file when revising it: the report records only the versions the file
 holds.
 
-`inspect-safety-stats schema decision-policy` prints the JSON schema.
+`safety-stats schema decision-policy` prints the JSON schema.
 
 ## Running an analysis with a policy
 
 ```bash
-inspect-safety-stats analyze --plan plan.yaml --logs logs/ --decision-policy policy.yaml
-inspect-safety-stats validate --plan plan.yaml --logs logs/ --decision-policy policy.yaml
+safety-stats analyze --plan plan.yaml --logs logs/ --decision-policy policy.yaml
+safety-stats validate --plan plan.yaml --logs logs/ --decision-policy policy.yaml
 ```
 
 From Python, pass `decision_policy=` to `analyze` or `validate`, as a path or as a
-`DecisionPolicy` from `inspect_safety_stats.config.decision_policy`.
+`DecisionPolicy` from `safety_stats.config.decision_policy`.
 
 A policy that fails a check is not applied. Its error makes integrity `invalid`, so every claim
 is `INCONCLUSIVE`, and `analyze` exits `3`:

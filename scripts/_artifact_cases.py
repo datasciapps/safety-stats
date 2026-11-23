@@ -334,7 +334,7 @@ def _labels(builder: Builder, directory: Path, plan: dict[str, Any], logs: Path)
     output = directory / "probe-report"
     completed = run_module(
         builder.base_source,
-        "inspect_safety_stats.cli",
+        "safety_stats.cli",
         ["analyze", "--plan", str(probe_plan), "--logs", str(logs), "--output", str(output),
          "--no-decision-exit-codes"],
         hidden=builder.hidden,
@@ -582,7 +582,7 @@ def _generative(builder: Builder, name: str, *, rollouts: int, coverage: str) ->
     artifacts = directory / "run"
     completed = run_module(
         builder.base_source,
-        "inspect_safety_stats.cli",
+        "safety_stats.cli",
         ["generative", "materialize", "--plan", str(plan_path), "--output", str(artifacts),
          "--kernel", "fake"],
         hidden=builder.hidden,

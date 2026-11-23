@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from inspect_safety_stats.stats.judge_calibration import (
+from safety_stats.stats.judge_calibration import (
     NO_STRATA,
     JudgeStrata,
     calibrate_cohort,
@@ -12,7 +12,7 @@ from inspect_safety_stats.stats.judge_calibration import (
     completion_diagnostic,
     count_judge_strata,
 )
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.stats.misclassification import (
     JudgeStratumCounts,
     estimate_judge_calibration,
 )

@@ -8,7 +8,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from inspect_safety_stats.registry import SourceKind
+from safety_stats.registry import SourceKind
 from tests.diagnostic_codes.harness import (
     BASE_RUN,
     Case,
@@ -200,8 +200,8 @@ def _policy(
     """A decision policy with one version that tightens a claim's thresholds."""
 
     def text(plan: Path) -> str:
-        from inspect_safety_stats.config.decision_policy import inference_plan_hash
-        from inspect_safety_stats.config.loader import load_plan
+        from safety_stats.config.decision_policy import inference_plan_hash
+        from safety_stats.config.loader import load_plan
 
         version = {
             "id": "v1",
@@ -234,8 +234,8 @@ def _two_gates_loosened(*claim_ids: str) -> Change:
     """
 
     def text(plan: Path) -> str:
-        from inspect_safety_stats.config.decision_policy import inference_plan_hash
-        from inspect_safety_stats.config.loader import load_plan
+        from safety_stats.config.decision_policy import inference_plan_hash
+        from safety_stats.config.loader import load_plan
 
         thresholds = {
             claim_id: {
@@ -309,8 +309,8 @@ def _receipt(*, registered_at: str = "2026-01-15T00:00:00+00:00", sha: str | Non
     """A registration receipt for the plan, written at ``registered_at``."""
 
     def text(plan: Path) -> str:
-        from inspect_safety_stats.config.loader import canonical_plan_hash, load_plan
-        from inspect_safety_stats.config.registration import write_receipt
+        from safety_stats.config.loader import canonical_plan_hash, load_plan
+        from safety_stats.config.registration import write_receipt
 
         written = plan.parent / "receipt.tmp"
         write_receipt(
@@ -418,7 +418,7 @@ def _sampled_sensitivities_withheld(triggered: Outcome, control: Outcome) -> Non
     assert profiles(triggered) == profiles(control) == ["frame_item"]
 
 
-# The kind of input, as inspect_safety_stats.registry.SOURCE_KINDS names them, that these
+# The kind of input, as safety_stats.registry.SOURCE_KINDS names them, that these
 # cases' triggers break. A case whose trigger breaks another kind names it as its source.
 SOURCE: SourceKind = "plan"
 

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from inspect_safety_stats.stats.direct_mean import (
+from safety_stats.stats.direct_mean import (
     weighted_bounded_empirical_bernstein_mean_bounds,
     weighted_bounded_kl_chernoff_mean_bounds,
 )

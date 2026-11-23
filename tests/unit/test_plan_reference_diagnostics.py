@@ -10,9 +10,9 @@ from typing import Any
 
 import pytest
 
-from inspect_safety_stats.config.models import AnalysisPlan
-from inspect_safety_stats.schema.reports import Diagnostic
-from inspect_safety_stats.validate.plan import validate_plan_references
+from safety_stats.config.models import AnalysisPlan
+from safety_stats.schema.reports import Diagnostic
+from safety_stats.validate.plan import validate_plan_references
 
 _FAMILY = {"id": "fam", "purpose": "simultaneous_intervals", "method": "bonferroni", "alpha": 0.05}
 _MEASURE = {"id": "mean", "type": "weighted_mean"}

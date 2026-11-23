@@ -49,8 +49,8 @@ jobs:
       - name: The distributions carry the tag's version
         run: |
           ls dist/
-          test -f "dist/inspect_safety_stats-${{ steps.release.outputs.version }}-py3-none-any.whl"
-          test -f "dist/inspect_safety_stats-${{ steps.release.outputs.version }}.tar.gz"
+          test -f "dist/safety_stats-${{ steps.release.outputs.version }}-py3-none-any.whl"
+          test -f "dist/safety_stats-${{ steps.release.outputs.version }}.tar.gz"
       - name: Install the built wheel into a clean environment
         run: bash scripts/check_wheel.sh "$(ls dist/*.whl)" /tmp/check
       - uses: actions/upload-artifact@v4
@@ -65,7 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: testpypi
-      url: https://test.pypi.org/project/inspect-safety-stats/${{ needs.build.outputs.version }}/
+      url: https://test.pypi.org/project/safety-stats/${{ needs.build.outputs.version }}/
     permissions:
       id-token: write
     steps:
@@ -84,7 +84,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: pypi
-      url: https://pypi.org/project/inspect-safety-stats/${{ needs.build.outputs.version }}/
+      url: https://pypi.org/project/safety-stats/${{ needs.build.outputs.version }}/
     permissions:
       id-token: write
     steps:

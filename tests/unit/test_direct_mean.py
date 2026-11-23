@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 from scipy.stats import binom
 
-from inspect_safety_stats.stats import (
+from safety_stats.stats import (
     weighted_bounded_kl_chernoff_mean_bounds,
     weighted_empirical_bernstein_mean_bounds,
     weighted_hoeffding_mean_bounds,

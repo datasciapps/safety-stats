@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 from unittest import mock
 
-from inspect_safety_stats.registry import SourceKind
+from safety_stats.registry import SourceKind
 from tests.diagnostic_codes.harness import BASE_RUN, Case, Inputs, Outcome, Run, analysis, rollout
 
 FAMILY = {"purpose": "simultaneous_intervals", "method": "bonferroni", "alpha": 0.05}
@@ -212,7 +212,7 @@ def _empty_region(name: str) -> Callable[..., Any]:
     """The projection ``name`` of ``stats.hierarchy_region``, on disjoint constraints."""
 
     def projection(constraints: list[Any], *args: Any, **kwargs: Any) -> Any:
-        from inspect_safety_stats.stats import hierarchy_region
+        from safety_stats.stats import hierarchy_region
 
         return getattr(hierarchy_region, name)(_disjoint(constraints), *args, **kwargs)
 
@@ -222,7 +222,7 @@ def _empty_region(name: str) -> Callable[..., Any]:
 def _refuse_nodes(**kwargs: Any) -> Any:
     """Refuse the direct interval of every hierarchy node, and compute the groups' as usual."""
 
-    from inspect_safety_stats.analysis.direct_mean import _direct_intervals
+    from safety_stats.analysis.direct_mean import _direct_intervals
 
     if not kwargs["target_id"].endswith("::root"):
         raise ValueError("refused for the case")
@@ -339,7 +339,7 @@ def _newcombe_withheld(triggered: Outcome, control: Outcome) -> None:
     assert (row.lower, row.upper) == (kept.lower, kept.upper)
 
 
-# The kind of input, as inspect_safety_stats.registry.SOURCE_KINDS names them, that these
+# The kind of input, as safety_stats.registry.SOURCE_KINDS names them, that these
 # cases' triggers break. A case whose trigger breaks another kind names it as its source.
 SOURCE: SourceKind = "analysis"
 
@@ -382,7 +382,7 @@ CASES = [
         code="COMPARISON_INTERVAL_INVALID",
         shows="invalid",
         trigger=patched(
-            "inspect_safety_stats.analysis.comparisons._difference_rectangle_from_blocks",
+            "safety_stats.analysis.comparisons._difference_rectangle_from_blocks",
             _refuse,
             analysis(_comparison(p3_weight=1)),
         ),
@@ -394,7 +394,7 @@ CASES = [
         code="HIERARCHY_MEAN_INTERVAL_INVALID",
         shows="invalid",
         trigger=patched(
-            "inspect_safety_stats.analysis.risks._direct_intervals",
+            "safety_stats.analysis.risks._direct_intervals",
             _refuse_nodes,
             analysis(_nodes),
         ),
@@ -406,7 +406,7 @@ CASES = [
         code="HIERARCHY_CONFIDENCE_REGION_EMPTY",
         shows="withheld",
         trigger=patched(
-            "inspect_safety_stats.analysis.regions.project_hierarchy_confidence_region",
+            "safety_stats.analysis.regions.project_hierarchy_confidence_region",
             _empty_region("project_hierarchy_confidence_region"),
             analysis(_nodes),
         ),
@@ -418,7 +418,7 @@ CASES = [
         code="COMPARISON_HIERARCHY_CONFIDENCE_REGION_EMPTY",
         shows="withheld",
         trigger=patched(
-            "inspect_safety_stats.analysis.comparison_regions."
+            "safety_stats.analysis.comparison_regions."
             "project_two_arm_difference_hierarchy_confidence_region",
             _empty_region("project_two_arm_difference_hierarchy_confidence_region"),
             analysis(_comparison(p3_weight=1)),
@@ -431,7 +431,7 @@ CASES = [
         code="MULTI_ARM_CONFIDENCE_REGION_EMPTY",
         shows="withheld",
         trigger=patched(
-            "inspect_safety_stats.analysis.comparison_regions.project_hierarchy_confidence_region",
+            "safety_stats.analysis.comparison_regions.project_hierarchy_confidence_region",
             _empty_region("project_hierarchy_confidence_region"),
             analysis(_comparison_set),
         ),
@@ -445,7 +445,7 @@ CASES = [
         code="PAIR_NEWCOMBE_UNAVAILABLE",
         shows="withheld",
         trigger=patched(
-            "inspect_safety_stats.stats.paired._PARTIAL_NEWCOMBE_COMPLETION_LIMIT",
+            "safety_stats.stats.paired._PARTIAL_NEWCOMBE_COMPLETION_LIMIT",
             1,
             analysis(_paired_unscored),
         ),

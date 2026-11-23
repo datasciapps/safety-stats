@@ -6,14 +6,14 @@ import math
 import numpy as np
 import pytest
 
-from inspect_safety_stats.stats.binomial import missingness_robust_binomial_bounds
-from inspect_safety_stats.stats.judge_stress import (
+from safety_stats.stats.binomial import missingness_robust_binomial_bounds
+from safety_stats.stats.judge_stress import (
     stress_verdict,
     true_risk_bounds,
     verdict_lines,
 )
-from inspect_safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
-from inspect_safety_stats.stats.risk import maximum_risk, top_k_mean, weighted_cvar, weighted_mean
+from safety_stats.stats.judges import JudgeAccuracyBox, identified_risk_set
+from safety_stats.stats.risk import maximum_risk, top_k_mean, weighted_cvar, weighted_mean
 
 
 def point(sensitivity: float, specificity: float) -> JudgeAccuracyBox:

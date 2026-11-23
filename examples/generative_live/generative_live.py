@@ -1,6 +1,6 @@
 """Evaluate a materialized generative dataset against a real target model.
 
-The dataset is whatever ``inspect-safety-stats generative materialize`` produced, so the
+The dataset is whatever ``safety-stats generative materialize`` produced, so the
 task is deliberately thin: it reads that file, generates, and grades with a model judge.
 """
 
@@ -136,7 +136,7 @@ def _resolve(dataset: str) -> str:
     locations = "\n  ".join(str(path) for path in tried)
     raise FileNotFoundError(
         f"no materialized dataset named {dataset!r}. Looked in:\n  {locations}\n"
-        "Run 'inspect-safety-stats generative materialize' first, or pass an absolute path."
+        "Run 'safety-stats generative materialize' first, or pass an absolute path."
     )
 
 

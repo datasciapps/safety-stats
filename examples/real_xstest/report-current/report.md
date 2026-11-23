@@ -73,4 +73,4 @@ Results apply to the declared fixed evaluation set and specified stochastic roll
 
 What these results establish, and what they do not: <https://github.com/aduncan001/safety_stats/blob/main/docs/what-results-establish.md>
 
-Every interval, sensitivity, prompt-level bound and diagnostic message is in `report-full.md`, the interactive `report.html` and the CSV files beside this page. Plan SHA-256 `6aa8818abe40e749c05e70868542753f738401ec49f49317fb8bcba8e5e8081c`; inspect-safety-stats 0.16.0.
+Every interval, sensitivity, prompt-level bound and diagnostic message is in `report-full.md`, the interactive `report.html` and the CSV files beside this page. Plan SHA-256 `6aa8818abe40e749c05e70868542753f738401ec49f49317fb8bcba8e5e8081c`; safety-stats 0.16.0.

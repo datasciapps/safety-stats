@@ -1,7 +1,7 @@
 """Show that a behaviour-neutral change leaves every report artifact byte-identical.
 
 A class A change, such as a refactor or a performance change, must not change a single output
-byte. This runs ``inspect-safety-stats analyze`` on the bundled examples, on a synthetic stress
+byte. This runs ``safety-stats analyze`` on the bundled examples, on a synthetic stress
 design, and on offline cases built for the paths the examples do not reach (two cohorts and
 comparisons, every error stage, judge panels and calibration, sampled designs, an incomplete run,
 and ``generative analyze``; see ``_artifact_cases.py``), twice: with the package source as
@@ -184,7 +184,7 @@ def _analyze(source: Path, hidden: Path | None, case: Case, output: Path) -> Run
     started = time.perf_counter()
     completed = run_module(
         source,
-        "inspect_safety_stats.cli",
+        "safety_stats.cli",
         [*arguments, "--output", str(output)],
         hidden=hidden,
         capture=True,

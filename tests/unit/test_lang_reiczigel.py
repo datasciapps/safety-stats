@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from inspect_safety_stats.stats.misclassification import (
+from safety_stats.stats.misclassification import (
     TruthStratumCounts,
     lang_reiczigel_corrected_risk,
 )

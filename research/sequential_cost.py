@@ -27,7 +27,7 @@ import math
 import numpy as np
 from scipy.stats import beta, binom
 
-from inspect_safety_stats.stats.direct_mean import _betting_prior
+from safety_stats.stats.direct_mean import _betting_prior
 
 ALPHA = 0.05
 THRESHOLD = 0.05

@@ -10,9 +10,9 @@ from typing import Any
 
 import pytest
 
-from inspect_safety_stats.registry import SourceKind
-from inspect_safety_stats.stats import JudgeCalibration, correct_judge_risk
-from inspect_safety_stats.stats.binomial import binomial_upper_bound
+from safety_stats.registry import SourceKind
+from safety_stats.stats import JudgeCalibration, correct_judge_risk
+from safety_stats.stats.binomial import binomial_upper_bound
 from tests.diagnostic_codes.harness import (
     Case,
     Inputs,
@@ -729,7 +729,7 @@ def _panel_withheld(triggered: Outcome, control: Outcome) -> None:
     assert _panel_rows(control) != []
 
 
-# The kind of input, as inspect_safety_stats.registry.SOURCE_KINDS names them, that these
+# The kind of input, as safety_stats.registry.SOURCE_KINDS names them, that these
 # cases' triggers break. A case whose trigger breaks another kind names it as its source.
 SOURCE: SourceKind = "judge_labels"
 
@@ -976,7 +976,7 @@ def _anytime(bounds: bool) -> Run:
         from inspect_ai.scorer import Score, Target, scorer
         from inspect_ai.solver import TaskState, generate
 
-        from inspect_safety_stats import analyze
+        from safety_stats import analyze
         from tests.diagnostic_codes.harness import write_inputs
 
         @scorer(metrics=[])

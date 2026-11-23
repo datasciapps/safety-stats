@@ -78,7 +78,7 @@ self-declared (`PLAN_SELF_DECLARED`). A registration receipt records when the pl
 registered, so that a reader can check it against the start of generation:
 
 ```bash
-inspect-safety-stats hash-plan --plan plan.yaml --register plan.receipt.json
+safety-stats hash-plan --plan plan.yaml --register plan.receipt.json
 ```
 
 The command prints the hash as before, then writes `plan.receipt.json`, which holds the plan's
@@ -1540,13 +1540,13 @@ validated calibration, but `judge_correction_unavailable` stays false; its null 
 that the claim was not decided. `reasons` says why each claim has its status.
 
 The file has its own `schema_version` (now `"1.0"`) and `"experimental": true`.
-`inspect-safety-stats schema claims` prints its JSON schema.
+`safety-stats schema claims` prints its JSON schema.
 
 ## Generate JSON schemas
 
 ```bash
-inspect-safety-stats schema plan > plan.schema.json
-inspect-safety-stats schema report > report.schema.json
-inspect-safety-stats schema claims > claims.schema.json
-inspect-safety-stats schema decision-policy > decision-policy.schema.json
+safety-stats schema plan > plan.schema.json
+safety-stats schema report > report.schema.json
+safety-stats schema claims > claims.schema.json
+safety-stats schema decision-policy > decision-policy.schema.json
 ```

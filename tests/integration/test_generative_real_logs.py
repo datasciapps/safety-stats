@@ -24,9 +24,9 @@ from inspect_ai.scorer import Score, Target, scorer
 from inspect_ai.solver import TaskState, generate
 from typer.testing import CliRunner
 
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.generative.runner import analyze_run, materialize_run
-from inspect_safety_stats.ingest.inspect_logs import read_inspect_runs
+from safety_stats.cli import app
+from safety_stats.generative.runner import analyze_run, materialize_run
+from safety_stats.ingest.inspect_logs import read_inspect_runs
 from tests.generative_fixtures import SEEDS_WITH_TEXT, base_plan
 from tests.planted_configuration import leaks, plant_configuration, written_texts
 
@@ -239,7 +239,7 @@ def test_the_live_examples_kernel_satisfies_the_protocol(tmp_path: Path) -> None
     finally:
         sys.path.remove(str(example))
 
-    from inspect_safety_stats.generative import RewriteKernel, RewriteRequest
+    from safety_stats.generative import RewriteKernel, RewriteRequest
 
     kernel = InspectRewriteKernel(
         model=MOCK_MODEL, template_path=example / "rewrite-template.txt"
@@ -262,7 +262,7 @@ def test_the_live_examples_kernel_satisfies_the_protocol(tmp_path: Path) -> None
 
 
 def test_the_live_example_plan_compiles_and_projects(tmp_path: Path) -> None:
-    from inspect_safety_stats.generative import compile_taxonomy, forecast, load_generative_plan
+    from safety_stats.generative import compile_taxonomy, forecast, load_generative_plan
 
     example = Path(__file__).resolve().parents[2] / "examples" / "generative_live"
     plan = load_generative_plan(example / "plan.yaml")

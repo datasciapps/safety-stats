@@ -85,7 +85,7 @@ described in their pull requests.
   node's row, or is null when the report holds none; other scopes below the comparison, such
   as a projection region's units, still point at the overall row.
 
-- **`inspect-safety-stats schema report` accepts the report.json files the package writes.**
+- **`safety-stats schema report` accepts the report.json files the package writes.**
   The schema left out `summary`, which every `report.json` now holds, while allowing no field
   it does not list, so every report failed validation against it with "'summary' was
   unexpected". It now lists `summary` with its fields, as optional and read-only: a report
@@ -102,7 +102,7 @@ described in their pull requests.
   its eligibility, whether the calibration was `validated` or `assumed`, its simultaneous
   coverage and a pointer to the interval. `index.md` adds true risk columns to its headline
   table, and `analyze` prints the true risk after each such rate. All of them, and `report.md`,
-  pick the interval by one rule (`inspect_safety_stats.schema.summary.judge_interval`): the
+  pick the interval by one rule (`safety_stats.schema.summary.judge_interval`): the
   validated correction or, under an assumed calibration, its primary scenario's, so a
   non-primary scenario that happens to be named `validated` is no longer shown in `report.md`
   as the true risk. Reports without a judge correction keep their bytes. The
@@ -360,7 +360,7 @@ described in their pull requests.
 - **Context files for coding agents.** `llms.txt` indexes the documentation for language-model
   tools, `llms-full.txt` gives a single-file reference (entry points, estimator choice, the
   standalone functions' signatures, the commands and their options, exit codes and runnable
-  recipes), and `skills/inspect-safety-stats/SKILL.md` gives a step-by-step workflow for a coding
+  recipes), and `skills/safety-stats/SKILL.md` gives a step-by-step workflow for a coding
   agent. `tests/test_agent_context.py` checks them against the code: links, Python and YAML
   blocks, signatures, import locations, and every command and option they name.
 
@@ -477,12 +477,12 @@ described in their pull requests.
   and each claim's status. Every entry carries a JSON pointer to its full record. The summary
   copies values from the rest of the report; it is dropped when a saved report is read back.
   `analyze` and `report.md` pick the headline rates by the same rule
-  (`inspect_safety_stats.schema.summary.is_headline_risk`).
+  (`safety_stats.schema.summary.is_headline_risk`).
 
 - **Each diagnostic in a report points at its item (changes `report.json`).** Every
   diagnostic in `report.json` gains `item`, a JSON pointer to the record its scope names:
   `/claims/<i>`, `/comparisons/<i>`, `/prompt_estimates/<i>`, `/group_risks/<i>` and the
-  others listed in `inspect_safety_stats.schema.pointers`. It is null when the report holds no
+  others listed in `safety_stats.schema.pointers`. It is null when the report holds no
   record of the item, such as a plan setting or a run. The report computes it from the scope,
   also when a saved `report.json` is read back.
 
@@ -506,7 +506,7 @@ described in their pull requests.
   plans that keep the default keep their `report.json` bytes. `analyze` prints each
   weighted-mean failure rate with its interval and the path of the summary, in place of the
   count of risk measures. New planning functions `rollouts_for_half_width` and
-  `rollout_scale_for_half_width` in `inspect_safety_stats.stats.planning` give the rollouts
+  `rollout_scale_for_half_width` in `safety_stats.stats.planning` give the rollouts
   that an interval width needs. The summary's "Scope" carries the link to
   [What results establish](docs/what-results-establish.md) as well.
 
@@ -524,7 +524,7 @@ described in their pull requests.
   now carries `source`, the kind of input it concerns (`plan`, `registration`, `manifest`,
   `logs`, `judge_labels`, `analysis` or `generation`), and `effect`, what it does to the
   results (`invalid`, `degraded`, `withheld`, `adjusted` or `recorded`). Both are filled from
-  the code's entry in `inspect_safety_stats.registry`, which also says what each value means;
+  the code's entry in `safety_stats.registry`, which also says what each value means;
   a `withheld` or `adjusted` diagnostic leaves integrity alone but can withhold a claim's PASS
   or the overall decision's.
   Every `report.json` and `report.html` with a diagnostic changes bytes; `report.md` and the
@@ -532,7 +532,7 @@ described in their pull requests.
   a stored report (`context={STORED_REPORT: True}`, as `visualize` and
   `examples/demo/show_results.py` do), a report keeps the `source` and `effect` it was written
   with and fills only those it lacks, so it still reads after a later version reclassifies a
-  code or retires it. In `inspect-safety-stats schema report` both are optional, so a report
+  code or retires it. In `safety-stats schema report` both are optional, so a report
   written before them validates, but neither is ever null.
 
 - **A diagnostic's scope is a path.** `scope` names where a finding sits as a `/`-separated
@@ -571,7 +571,7 @@ described in their pull requests.
   [The plan hash](docs/plan-reference.md#the-plan-hash).
 
 - **`init`: a starter plan from completed logs, with its assumptions noted (experimental).**
-  `inspect-safety-stats init --logs LOGS --failure-values V` writes `design.csv` and
+  `safety-stats init --logs LOGS --failure-values V` writes `design.csv` and
   `safety-plan.yaml`: one cohort per model, the root failure risk with a prompt-level
   sensitivity, an optional breakdown and a comparison of several models, for one task: logs of
   several tasks are refused, since a cohort that spans tasks fails `analyze`'s configuration
@@ -585,7 +585,7 @@ described in their pull requests.
   in each multiplicity family, which the plan's header and the output state. The plan's title
   names the task and the cohort ids, not the model names, which can be machine paths. The
   plan's header, and the command's output, list each choice `init` made with the assumption it
-  rests on from `inspect_safety_stats.registry`, rollout independence first, what goes wrong
+  rests on from `safety_stats.registry`, rollout independence first, what goes wrong
   if it does not hold, and the remedy. The plan is exploratory; `--intent confirmatory` is
   refused, because the plan is written after the logs exist. See
   [Command-line interface](docs/api-reference.md#command-line-interface).
@@ -720,7 +720,7 @@ described in their pull requests.
   judge-reported interval it was applied to. A claim that a validated calibration leaves
   `INCONCLUSIVE` for want of a certifying correction is flagged as such, because its bound is
   the uncorrected judge-reported one, and every record carries the claim's reasons.
-  `checksums.json` covers the file, and `inspect-safety-stats schema claims` prints its
+  `checksums.json` covers the file, and `safety-stats schema claims` prints its
   schema. The option needs `report.include_decisions: true`. Plans without it keep their hash
   and every artifact's bytes. See
   [claims.json](docs/plan-reference.md#claimsjson-experimental).
@@ -851,7 +851,7 @@ described in their pull requests.
   design's row says why the without-replacement reduction covers it (see
   [Fixed-size designs](docs/design-based-sampling.md#fixed-size-designs)).
   Comparisons do not accept it, and its functions are not exported from
-  `inspect_safety_stats.stats`. Plans that do not name it are unaffected. See
+  `safety_stats.stats`. Plans that do not name it are unaffected. See
   [Betting interval](docs/statistical-methods.md#betting-interval-from-a-fixed-mixture-of-common-bets-experimental).
 
 - **Direct `worst_of_k` interval (experimental).** A `worst_of_k` measure with
@@ -1038,7 +1038,7 @@ described in their pull requests.
   write the same report bytes as before. See
   [Single-valued bound for system models](docs/statistical-methods.md#single-valued-bound-for-system-models-experimental).
 
-- **Comparison planning (experimental).** `inspect-safety-stats plan comparison` says, before a
+- **Comparison planning (experimental).** `safety-stats plan comparison` says, before a
   run, which candidate-minus-baseline risk differences a design resolves at a margin: the
   largest whose upper bound falls at or below `--margin`, and the smallest whose lower bound
   reaches it, each at the target power. It reads the design manifest as `plan fixed-design`
@@ -1088,7 +1088,7 @@ described in their pull requests.
   weight each pilot prompt by `1 / pilot_inclusion_probability`, as the sampled-design
   analysis does. Analyse a pilot as exploratory: a pilot enlarged after its outcomes were seen
   is not a fixed-size confirmatory design, and a confirmatory analysis uses fresh rollouts
-  under a plan frozen before they ran. `draw_pilot` in `inspect_safety_stats.ingest.pilot`
+  under a plan frozen before they ran. `draw_pilot` in `safety_stats.ingest.pilot`
   does the same in Python, on a manifest read as text (`dtype=str, keep_default_na=False`);
   it refuses a `prompt_id` that is not text, which would hash differently from the command's.
   See [Drawing a random pilot](docs/design-based-sampling.md#drawing-a-random-pilot).
@@ -1190,9 +1190,15 @@ described in their pull requests.
 
 ### Changed
 
+- **The package is named `safety-stats` (#212).** It installs with `pip install safety-stats`,
+  its command is `safety-stats` and its import package is `safety_stats`; before this release
+  all three were `inspect-safety-stats` or `inspect_safety_stats`. Inspect AI logs are still
+  read by default, with the `inspect` extra. Reports name the package as `safety-stats`, and
+  the data element of `report.html` is `safety-stats-data`.
+
 - **The package says what it covers on PyPI.** The README's opening and the package
   description named only Inspect AI safety outputs. They now name pass/fail LLM evaluations in
-  general, rollout files from other harnesses, and the standalone `inspect_safety_stats.stats`
+  general, rollout files from other harnesses, and the standalone `safety_stats.stats`
   functions, and the package keywords add the terms people search for, such as
   `confidence-intervals`, `llm-evaluation` and `llm-as-a-judge`. `CITATION.cff`'s abstract
   follows the description.
@@ -1383,7 +1389,7 @@ described in their pull requests.
   `report.html` changes.
 
 - **The offline demo uses the plan `init` writes.** `examples/demo/plan.yaml` and
-  `design.csv` are now the output of `inspect-safety-stats init --group-by risk_domain
+  `design.csv` are now the output of `safety-stats init --group-by risk_domain
   --baseline mockllm/baseline` on the demo logs, plus two tail measures (`cvar_90`, `worst`).
   The demo task records each prompt's risk domain in its sample metadata so that `init` can
   group by it. The demo still compares the candidate with the baseline (now through a
@@ -1419,7 +1425,7 @@ described in their pull requests.
 
 - **The generative report writes `checksums.json`.** It holds the SHA-256 of every other file
   the report writes, as the fixed-design report's does. The other files keep their bytes.
-  Both reports now write their files through one module, `inspect_safety_stats.report.artifacts`.
+  Both reports now write their files through one module, `safety_stats.report.artifacts`.
 
 - **`report.json` holds everything the report shows (changes `report.json` and
   `report.html`).** `report.md`, `report.html` and the CSVs are rendered from the report model
@@ -1563,7 +1569,7 @@ described in their pull requests.
 
 
 - **Inspect AI is an optional extra (breaking for installation).** `inspect-ai` and `pyarrow`
-  are no longer installed by default. Install `inspect-safety-stats[inspect]` to read Inspect
+  are no longer installed by default. Install `safety-stats[inspect]` to read Inspect
   logs with `--logs` or `logs=`; without the extra, reading them fails with an error that names
   it. An installed extra that fails to import for another reason, such as a dependency of
   Inspect that lacks a module or a `pyarrow` built for another NumPy, reports that reason

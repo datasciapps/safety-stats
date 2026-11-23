@@ -17,11 +17,11 @@ from typing import Any
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import analyze, validate
-from inspect_safety_stats.config.models import DesignSpec
-from inspect_safety_stats.ingest.pilot import draw_pilot
-from inspect_safety_stats.registry import ASSUMPTIONS
-from inspect_safety_stats.report import visualization
+from safety_stats import analyze, validate
+from safety_stats.config.models import DesignSpec
+from safety_stats.ingest.pilot import draw_pilot
+from safety_stats.registry import ASSUMPTIONS
+from safety_stats.report import visualization
 from tests.diagnostic_codes.harness import (
     BASE_RUN,
     Inputs,
@@ -161,10 +161,10 @@ def _write_frame(
 
 def _patch(monkeypatch: pytest.MonkeyPatch, evals: pd.DataFrame, samples: pd.DataFrame) -> None:
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
 

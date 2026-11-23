@@ -3,13 +3,13 @@ requires = ["hatchling>=1.26"]
 build-backend = "hatchling.build"
 
 [project]
-name = "inspect-safety-stats"
+name = "safety-stats"
 version = "0.16.0"
 description = "Confidence intervals, model comparisons, rollout planning and LLM-judge correction for pass/fail LLM evaluations, from Inspect AI logs or any harness"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }
-authors = [{ name = "Inspect Safety Stats contributors" }]
+authors = [{ name = "Safety Stats contributors" }]
 keywords = [
   "inspect-ai",
   "ai-safety",
@@ -75,9 +75,9 @@ translation = [
   "transformers>=4.44,<6",
 ]
 dev = [
-  "inspect-safety-stats[inspect]",
+  "safety-stats[inspect]",
   "hypothesis>=6.100",
-  # Tests validate report.json against `inspect-safety-stats schema report`.
+  # Tests validate report.json against `safety-stats schema report`.
   "jsonschema>=4.18",
   "mypy>=1.10",
   "pandas-stubs>=2.0",
@@ -89,10 +89,10 @@ dev = [
 ]
 
 [project.scripts]
-inspect-safety-stats = "inspect_safety_stats.cli:app"
+safety-stats = "safety_stats.cli:app"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/inspect_safety_stats"]
+packages = ["src/safety_stats"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -111,4 +111,4 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-packages = ["inspect_safety_stats"]
+packages = ["safety_stats"]

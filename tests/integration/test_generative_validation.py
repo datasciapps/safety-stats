@@ -15,9 +15,9 @@ from typing import Any
 import pytest
 from typer.testing import CliRunner
 
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.generative.execution import execute_rewrites, load_seed_texts
-from inspect_safety_stats.generative.kernels import (
+from safety_stats.cli import app
+from safety_stats.generative.execution import execute_rewrites, load_seed_texts
+from safety_stats.generative.kernels import (
     DeterministicFakeKernel,
     DeterministicFakeValidator,
     RewriteOutcome,
@@ -26,11 +26,11 @@ from inspect_safety_stats.generative.kernels import (
     ValidationVerdict,
     resolve_kernel_fingerprint,
 )
-from inspect_safety_stats.generative.ledger import read_attempts, read_rewrites
-from inspect_safety_stats.generative.runner import materialize_run, resolve_validator
-from inspect_safety_stats.generative.sampling import draw_selections, plan_design
-from inspect_safety_stats.generative.schema import load_generative_plan
-from inspect_safety_stats.generative.taxonomy import compile_taxonomy
+from safety_stats.generative.ledger import read_attempts, read_rewrites
+from safety_stats.generative.runner import materialize_run, resolve_validator
+from safety_stats.generative.sampling import draw_selections, plan_design
+from safety_stats.generative.schema import load_generative_plan
+from safety_stats.generative.taxonomy import compile_taxonomy
 from tests.cli_output import plain
 from tests.generative_fixtures import SEEDS_WITH_TEXT, base_plan, materialize
 
@@ -271,7 +271,7 @@ def test_the_validator_option_on_the_command_line(tmp_path: Path) -> None:
 def test_a_validator_from_a_file(tmp_path: Path) -> None:
     source = tmp_path / "my_validator.py"
     source.write_text(
-        "from inspect_safety_stats.generative import ValidationVerdict\n"
+        "from safety_stats.generative import ValidationVerdict\n"
         "class Strict:\n"
         "    validator_id = 'strict-v1'\n"
         "    def validate(self, request, prompt):\n"
@@ -310,7 +310,7 @@ def test_resume_drops_the_attempts_of_unfinished_units(tmp_path: Path) -> None:
             # Odd calls reject, so every unit leaves an attempt row before it finishes.
             return ValidationVerdict(status="invalid" if self.calls % 2 else "valid")
 
-    import inspect_safety_stats.generative.runner as runner_module
+    import safety_stats.generative.runner as runner_module
 
     original = runner_module.resolve_validator
     try:
@@ -358,7 +358,7 @@ def test_the_attempt_ledger_ends_every_line_with_lf_through_a_resume(
 ) -> None:
     """The rows a resume keeps and the rows it appends must not mix line endings (#31)."""
 
-    import inspect_safety_stats.generative.runner as runner_module
+    import safety_stats.generative.runner as runner_module
 
     plan = write_run_plan(tmp_path)
     artifacts = tmp_path / "run"
@@ -417,7 +417,7 @@ def near_plan(**deduplication: Any) -> dict[str, Any]:
     ],
 )
 def test_normalized_text_ignores_case_punctuation_and_spacing(first: str, second: str) -> None:
-    from inspect_safety_stats.generative.execution import normalized_text
+    from safety_stats.generative.execution import normalized_text
 
     assert normalized_text(first) == normalized_text(second)
 
@@ -441,7 +441,7 @@ def test_normalized_text_removes_punctuation_and_invisible_characters(
 ) -> None:
     """Removed, as the docs say, not replaced by a space that still tells the two apart."""
 
-    from inspect_safety_stats.generative.execution import normalized_text
+    from safety_stats.generative.execution import normalized_text
 
     assert normalized_text(first) == normalized_text(second)
 
@@ -471,13 +471,13 @@ def test_normalized_text_removes_punctuation_and_invisible_characters(
 def test_normalized_text_removes_default_ignorable_code_points(first: str, second: str) -> None:
     """Characters that render as nothing, or only stretch a word, do not tell rewrites apart."""
 
-    from inspect_safety_stats.generative.execution import normalized_text
+    from safety_stats.generative.execution import normalized_text
 
     assert normalized_text(first) == normalized_text(second)
 
 
 def test_normalized_text_keeps_what_the_ignored_characters_sit_beside() -> None:
-    from inspect_safety_stats.generative.execution import normalized_text
+    from safety_stats.generative.execution import normalized_text
 
     assert normalized_text("1\ufe0f\u20e3 step") != normalized_text("2\ufe0f\u20e3 step")
     assert normalized_text("\u0628\ufe71") != normalized_text("\u0628"), "the vowel sign stays"
@@ -492,14 +492,14 @@ def test_normalized_text_keeps_what_the_ignored_characters_sit_beside() -> None:
 def test_normalized_text_joins_digits_across_separators(first: str, second: str) -> None:
     """Documented: a false match costs a retry, and never lets a duplicate through."""
 
-    from inspect_safety_stats.generative.execution import normalized_text
+    from safety_stats.generative.execution import normalized_text
 
     assert normalized_text(first) == normalized_text(second)
     assert normalized_text(first) != normalized_text(first.replace("1", "2", 1))
 
 
 def test_normalized_text_keeps_wording_and_order() -> None:
-    from inspect_safety_stats.generative.execution import normalized_text
+    from safety_stats.generative.execution import normalized_text
 
     assert normalized_text("tell me how") != normalized_text("how tell me")
     assert normalized_text("tell me how") != normalized_text("tell us how")

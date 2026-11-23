@@ -12,14 +12,14 @@ import pandas as pd
 import pytest
 from typer.testing import CliRunner
 
-from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.api import validate
-from inspect_safety_stats.cli import app
-from inspect_safety_stats.config.decision_policy import DecisionPolicy, inference_plan_hash
-from inspect_safety_stats.config.loader import canonical_plan_hash
-from inspect_safety_stats.config.registration import write_receipt
-from inspect_safety_stats.schema.reports import Diagnostic, SafetyReport
-from inspect_safety_stats.validate.decision_policy import validate_decision_policy
+from safety_stats import analyze, load_plan
+from safety_stats.api import validate
+from safety_stats.cli import app
+from safety_stats.config.decision_policy import DecisionPolicy, inference_plan_hash
+from safety_stats.config.loader import canonical_plan_hash
+from safety_stats.config.registration import write_receipt
+from safety_stats.schema.reports import Diagnostic, SafetyReport
+from safety_stats.validate.decision_policy import validate_decision_policy
 from tests.cli_output import plain
 
 PLAN = """
@@ -149,10 +149,10 @@ def plan_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
         ]
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
     return path
@@ -540,7 +540,7 @@ def _gate_inputs(tmp_path: Path, plan: dict[str, object], groups: list[str]) -> 
 
 
 def _gate_analysis(plan_path: Path, policy: Path | None = None) -> SafetyReport:
-    from inspect_safety_stats.ingest.rollout_files import RolloutFiles
+    from safety_stats.ingest.rollout_files import RolloutFiles
 
     directory = plan_path.parent
     return analyze(
@@ -871,11 +871,11 @@ def test_a_version_is_not_reported_before_the_run_when_a_start_is_unknown(
 
 
 def test_the_page_escapes_the_policy_text(tmp_path: Path) -> None:
-    from inspect_safety_stats.report.visualization import render_visualization
+    from safety_stats.report.visualization import render_visualization
 
     groups = ["g1"]
     plan_path = _gate_inputs(tmp_path, _gate_plan(groups, direct=None), groups)
-    reason = "<script>alert(1)</script> & __INSPECT_SAFETY_STATS_DATA__"
+    reason = "<script>alert(1)</script> & __SAFETY_STATS_DATA__"
     policy = tmp_path / "policy.json"
     policy.write_text(
         json.dumps(
@@ -896,14 +896,14 @@ def test_the_page_escapes_the_policy_text(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     page = render_visualization(_gate_analysis(plan_path, policy))
-    assert "<td>&lt;script&gt;alert(1)&lt;/script&gt; &amp; __INSPECT_SAFETY_STATS_DATA__</td>" in (
+    assert "<td>&lt;script&gt;alert(1)&lt;/script&gt; &amp; __SAFETY_STATS_DATA__</td>" in (
         page
     )
     assert "<td>v&lt;1&gt;</td>" in page
     assert "<script>alert(1)" not in page
     # The report's data is still inlined once, and the page keeps one audit section.
     assert page.count('<section aria-labelledby="audit-heading">') == 1
-    assert page.count('<script id="inspect-safety-stats-data" type="application/json">{') == 1
+    assert page.count('<script id="safety-stats-data" type="application/json">{') == 1
 
 
 def test_an_exploratory_reason_names_the_thresholds_it_reads(tmp_path: Path) -> None:

@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from inspect_safety_stats.config.models import InputsSpec
-from inspect_safety_stats.ingest.inspect_logs import _stop_of, _token_limit_stop_of
-from inspect_safety_stats.ingest.records import StopContext
+from safety_stats.config.models import InputsSpec
+from safety_stats.ingest.inspect_logs import _stop_of, _token_limit_stop_of
+from safety_stats.ingest.records import StopContext
 
 
 def _output(content: str = "", stop_reason: str = "stop") -> Any:

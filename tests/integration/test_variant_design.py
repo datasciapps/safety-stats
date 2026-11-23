@@ -16,17 +16,17 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.config.models import (
+from safety_stats import analyze, load_plan
+from safety_stats.config.models import (
     AnalysisPlan,
     IndependenceProfileSpec,
     RiskMeasureSpec,
 )
-from inspect_safety_stats.ingest.manifest import load_manifest, resolve_groups
-from inspect_safety_stats.schema.observations import Observation
-from inspect_safety_stats.schema.reports import RiskIntervalResult, SafetyReport
-from inspect_safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES
-from inspect_safety_stats.stats.independence import block_index, direct_bounded_blocks
+from safety_stats.ingest.manifest import load_manifest, resolve_groups
+from safety_stats.schema.observations import Observation
+from safety_stats.schema.reports import RiskIntervalResult, SafetyReport
+from safety_stats.stats.direct_mean import DIRECT_MEAN_ENGINES
+from safety_stats.stats.independence import block_index, direct_bounded_blocks
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "fixed_design"
 PLAN = EXAMPLE / "variant-plan.yaml"
@@ -143,10 +143,10 @@ def _analyze(
             )
     sample_frame = pd.DataFrame(rows)
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: eval_frame
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, **_: sample_frame,
     )
     return analyze(plan=PLAN if plan is None else plan, logs="ignored")

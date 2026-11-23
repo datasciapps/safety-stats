@@ -13,7 +13,7 @@ applies to people too.
 
   ```bash
   ruff check src tests examples research scripts
-  mypy src/inspect_safety_stats
+  mypy src/safety_stats
   pytest
   ```
 
@@ -37,7 +37,7 @@ applies to people too.
 | `k: true` in a plan was accepted as `k = 1` | `test_plans_reject_a_boolean_k` | Pydantic's lax mode turns booleans into integers. Reject them in a `mode="before"` validator. |
 | `1 - (1 - p) ** k` returned 0 for tiny `p` | `test_worst_of_k_stays_accurate_for_tiny_probabilities` | Use `-expm1(k * log1p(-p))` and similar forms, and test tiny inputs with `abs=0`. |
 | A missing `block_by` value changed how prompts were blocked, depending on pandas' dtype inference | `test_missing_manifest_block_values_are_rejected` | Reject missing values in declared grouping columns. Never let dtype inference decide. |
-| `import inspect_safety_stats` took seconds | `tests/unit/test_package_imports.py` | No module-level imports of pandas, Inspect or the pipeline in `__init__.py` or `cli.py` (CONTRIBUTING section 5.1). |
+| `import safety_stats` took seconds | `tests/unit/test_package_imports.py` | No module-level imports of pandas, Inspect or the pipeline in `__init__.py` or `cli.py` (CONTRIBUTING section 5.1). |
 
 ## Working in the tree
 

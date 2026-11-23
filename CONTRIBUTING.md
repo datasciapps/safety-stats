@@ -1,4 +1,4 @@
-# Contributing to inspect-safety-stats
+# Contributing to safety-stats
 
 This package produces statistical claims that people use to make safety decisions about AI
 systems, and institutions already consume its reports. That shapes everything below:
@@ -35,7 +35,7 @@ The gate that CI runs, and that every pull request must pass:
 
 ```bash
 ruff check src tests examples research scripts
-mypy src/inspect_safety_stats        # strict
+mypy src/safety_stats        # strict
 pytest
 ```
 
@@ -84,13 +84,13 @@ removing, and tightening validation so that previously accepted input is rejecte
 
 ### 4.1 Python API
 
-- **`inspect_safety_stats.__all__`:** `analyze`, `validate`, `load_plan`, `AnalysisPlan`,
+- **`safety_stats.__all__`:** `analyze`, `validate`, `load_plan`, `AnalysisPlan`,
   `SafetyReport`, `render_visualization`, `write_visualization`, `__version__`. These are the same
   objects as in their source modules. The package root loads them on first use (see 5.1).
-- **`inspect_safety_stats.stats.__all__`:** for every exported function, its name, parameters,
+- **`safety_stats.stats.__all__`:** for every exported function, its name, parameters,
   defaults, return type, and the fields of the dataclasses it returns.
 - **`SafetyReport.write(...)`** and the set of files it writes.
-- **Experimental:** `inspect_safety_stats.generative.__all__` may change in any minor release.
+- **Experimental:** `safety_stats.generative.__all__` may change in any minor release.
 - **Internal:** anything not in an `__all__`, or with a leading `_`, is internal. Class A
   pull requests may change it freely, provided report artifacts stay byte-identical.
 
@@ -109,7 +109,7 @@ Plans are strict (`extra="forbid"`).
 - changing a default;
 - changing what an existing value means.
 
-**Plan hash:** `inspect-safety-stats hash-plan` must give an unchanged plan file the same hash
+**Plan hash:** `safety-stats hash-plan` must give an unchanged plan file the same hash
 from any directory (#42). The hash covers only the fields the plan writes, so it also survives a
 package upgrade that adds a field or changes a default (#56). A field set by a validator, such
 as a schema version's defaults, must not count as written: set it with `object.__setattr__`, not
@@ -118,7 +118,7 @@ as a schema version's defaults, must not count as written: set it with `object._
 
 ### 4.3 Report outputs
 
-- **`report.json`:** field names, types, and meanings. `inspect-safety-stats schema report` is
+- **`report.json`:** field names, types, and meanings. `safety-stats schema report` is
   the contract. The report carries its own `schema_version`.
 - **Output files:** the names of the files in the report directory, and the CSV column names
   **and their order**.
@@ -161,7 +161,7 @@ as a schema version's defaults, must not count as written: set it with `object._
   - The package root serves its public names on first use (PEP 562).
   - CLI commands import what they need inside the command.
   - Do not add module-level imports of the analysis pipeline, Inspect, or pandas to
-    `inspect_safety_stats/__init__.py` or `cli.py`.
+    `safety_stats/__init__.py` or `cli.py`.
   - `tests/unit/test_package_imports.py` checks this in a fresh interpreter.
 - **Presentation never computes statistics.** `report/` formats results that the analysis
   already computed. If the HTML or Markdown needs a number or a sentence about a method, add it
@@ -257,7 +257,7 @@ as a schema version's defaults, must not count as written: set it with `object._
 - **Docs ship with the change.** A user-facing change updates the relevant guide in the same
   pull request, and `docs/plan-reference.md` for new plan fields.
 - **Version.** The version lives in four places: `pyproject.toml`,
-  `src/inspect_safety_stats/version.py`, `docs/independence-profiles.md`, and `CITATION.cff`.
+  `src/safety_stats/version.py`, `docs/independence-profiles.md`, and `CITATION.cff`.
   `tests/test_repository_consistency.py` fails if they disagree.
 
 ## 6. Linux, macOS, and Windows

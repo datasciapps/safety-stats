@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 
-from inspect_safety_stats import SafetyReport, analyze
-from inspect_safety_stats.ingest.rollout_files import RolloutFiles
+from safety_stats import SafetyReport, analyze
+from safety_stats.ingest.rollout_files import RolloutFiles
 
 _PLAN = """
 schema_version: "2.0"

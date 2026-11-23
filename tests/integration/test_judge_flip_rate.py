@@ -12,9 +12,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from inspect_safety_stats import analyze, load_plan
-from inspect_safety_stats.config.loader import canonical_plan_hash, report_plan
-from inspect_safety_stats.schema.reports import Diagnostic, SafetyReport
+from safety_stats import analyze, load_plan
+from safety_stats.config.loader import canonical_plan_hash, report_plan
+from safety_stats.schema.reports import Diagnostic, SafetyReport
 
 ROLLOUTS = 200
 POSITIVES = 40
@@ -121,10 +121,10 @@ def fake_logs(monkeypatch: pytest.MonkeyPatch) -> None:
         ]
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
+        "safety_stats.ingest.inspect_logs.evals_df", lambda logs, **_: evals
     )
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
 
@@ -289,7 +289,7 @@ def test_the_manifest_path_is_plan_relative_in_the_hash_and_the_report(tmp_path:
 
 
 def test_a_plan_without_the_section_leaves_it_out() -> None:
-    from inspect_safety_stats.config.models import InputsSpec
+    from safety_stats.config.models import InputsSpec
 
     inputs = InputsSpec.model_validate(
         {
@@ -313,7 +313,7 @@ POLICY_FAILURES = {41: "error", 42: "error", 43: "missing", 44: "missing"}
 def failures(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[int, str]:
     """Logs with the policy failures added; each failing epoch's observation identifier."""
 
-    import inspect_safety_stats.ingest.inspect_logs as inspect_logs
+    import safety_stats.ingest.inspect_logs as inspect_logs
 
     samples = inspect_logs.samples_df("ignored").copy()
     for epoch, kind in POLICY_FAILURES.items():
@@ -322,7 +322,7 @@ def failures(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[int, str]:
         if kind == "error":
             samples.loc[row, "error"] = "the provider failed"
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
     report = _analyze(tmp_path / "plain", "", counting=True)
@@ -393,13 +393,13 @@ def test_a_census_interval_is_descriptive_and_a_sample_interval_is_for_the_run(
 def test_the_diagnostic_counts_the_prompts_the_rescored_completions_come_from(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    import inspect_safety_stats.ingest.inspect_logs as inspect_logs
+    import safety_stats.ingest.inspect_logs as inspect_logs
 
     # Even epochs belong to a second prompt, so the 40 judge-positive completions come from two.
     samples = inspect_logs.samples_df("ignored").copy()
     samples.loc[samples["epoch"] % 2 == 0, "id"] = "p2"
     monkeypatch.setattr(
-        "inspect_safety_stats.ingest.inspect_logs.samples_df",
+        "safety_stats.ingest.inspect_logs.samples_df",
         lambda logs, parallel=False: samples,
     )
 

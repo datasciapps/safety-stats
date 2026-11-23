@@ -3,7 +3,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from inspect_safety_stats.analysis.design_effect import (
+from safety_stats.analysis.design_effect import (
     DESIGN_EFFECT_WARNING,
     design_effect,
     intracluster_correlation,

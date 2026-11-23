@@ -27,7 +27,7 @@ from inspect_ai.model import (
     GenerateConfig,
 )
 
-from inspect_safety_stats.generative import RewriteRequest, load_generative_plan, runner
+from safety_stats.generative import RewriteRequest, load_generative_plan, runner
 
 EXAMPLE = Path(__file__).resolve().parents[2] / "examples" / "generative_live"
 

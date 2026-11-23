@@ -74,11 +74,11 @@ The model is only an explicit provenance label here; the replay solver never inv
 Validate and analyze the completed log:
 
 ```bash
-inspect-safety-stats validate \
+safety-stats validate \
   --plan examples/real_xstest/safety-plan.yaml \
   --logs examples/real_xstest/current-log
 
-inspect-safety-stats analyze \
+safety-stats analyze \
   --plan examples/real_xstest/safety-plan.yaml \
   --logs examples/real_xstest/current-log \
   --output examples/real_xstest/report-current \
