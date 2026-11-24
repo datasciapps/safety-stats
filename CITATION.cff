@@ -15,9 +15,9 @@ authors:
   - given-names: Rahul
     family-names: Sharma
     affiliation: "DFKI and RPTU"
-  - given-names: Sebastian
-    family-names: Vollmer
-    affiliation: "DFKI and RPTU"
+  - given-names: Gaétan
+    family-names: Marceau Caron
+    affiliation: "Mila"
   - given-names: Jonas
     family-names: Hanselle
     affiliation: "DFKI"
@@ -28,12 +28,12 @@ authors:
   - given-names: Yahya
     family-names: Aalaila
     affiliation: "RPTU"
-  - given-names: Gaétan
-    family-names: Marceau Caron
-    affiliation: "Mila"
   - given-names: Toluwaleke
     family-names: Olutayo
     affiliation: "Mila"
+  - given-names: Kristian
+    family-names: Kersting
+    affiliation: "DFKI"
   - given-names: Arlindo
     family-names: Oliveira
     alias: arlindololiveira
@@ -42,9 +42,9 @@ authors:
     family-names: Martins
     alias: bgmartins
     affiliation: "INESC-ID"
-  - given-names: Kristian
-    family-names: Kersting
-    affiliation: "DFKI"
+  - given-names: Sebastian
+    family-names: Vollmer
+    affiliation: "DFKI and RPTU"
   - name: "safety_stats contributors"
 keywords:
   - inspect-ai
