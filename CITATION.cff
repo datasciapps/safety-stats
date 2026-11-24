@@ -8,14 +8,19 @@ license: MIT
 authors:
   - given-names: Andrew
     family-names: Duncan
+    affiliation: "Bessemer AI and Imperial College London"
   - given-names: Rahul
     family-names: Sharma
+    affiliation: "DFKI and RPTU"
   - given-names: Jonas
     family-names: Hanselle
+    affiliation: "DFKI"
   - given-names: Sergey
     family-names: Redyuk
+    affiliation: "DFKI"
   - given-names: Sebastian
     family-names: Vollmer
+    affiliation: "DFKI and RPTU"
   - given-names: Gaétan
     family-names: Marceau Caron
     affiliation: Mila
@@ -30,6 +35,13 @@ authors:
     family-names: Martins
     affiliation: INESC-ID
     alias: bgmartins
+  - given-names: Takashi
+    family-names: Ishida
+    email: ishi@k.u-tokyo.ac.jp
+    affiliation: "RIKEN AIP"
+  - given-names: Yahya
+    family-names: Aalaila
+    affiliation: RPTU
   - name: "safety_stats contributors"
 keywords:
   - inspect-ai
