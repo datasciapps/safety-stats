@@ -8,28 +8,55 @@ license: MIT
 authors:
   - given-names: Andrew
     family-names: Duncan
-  - given-names: Rahul
-    family-names: Sharma
-  - given-names: Jonas
-    family-names: Hanselle
+    affiliation: "Bessemer AI and Imperial College London"
   - given-names: Sergey
     family-names: Redyuk
-  - given-names: Sebastian
-    family-names: Vollmer
+    affiliation: "DFKI"
+  - given-names: Rahul
+    family-names: Sharma
+    affiliation: "DFKI and RPTU"
   - given-names: Gaétan
     family-names: Marceau Caron
-    affiliation: Mila
+    affiliation: "Mila"
+  - given-names: Jonas
+    family-names: Hanselle
+    affiliation: "DFKI"
+  - given-names: Takashi
+    family-names: Ishida
+    email: ishi@k.u-tokyo.ac.jp
+    affiliation: "RIKEN AIP"
+  - given-names: Yahya
+    family-names: Aalaila
+    affiliation: "RPTU"
+  - given-names: Nabeel
+    family-names: Asim
+    affiliation: "RPTU"
   - given-names: Toluwaleke
     family-names: Olutayo
-    affiliation: Mila
+    affiliation: "Mila"
+  - given-names: Kristian
+    family-names: Kersting
+    affiliation: "DFKI"
+  - given-names: Seth
+    family-names: Flaxman
+    affiliation: "RPTU"
+  - given-names: Ömer Deniz
+    family-names: Akyıldız
+    affiliation: "Imperial College London"
+  - given-names: James
+    family-names: Cuin
+    affiliation: "Imperial College London"
   - given-names: Arlindo
     family-names: Oliveira
-    affiliation: INESC-ID
     alias: arlindololiveira
+    affiliation: "INESC-ID"
   - given-names: Bruno
     family-names: Martins
-    affiliation: INESC-ID
     alias: bgmartins
+    affiliation: "INESC-ID"
+  - given-names: Sebastian
+    family-names: Vollmer
+    affiliation: "DFKI and RPTU"
   - name: "safety_stats contributors"
 keywords:
   - inspect-ai
